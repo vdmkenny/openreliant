@@ -1,0 +1,18 @@
+# Third-party toolchain fetched by `make setup`.
+/tools/
+
+# The game: disc images, extracted files, anything derived from them. Never commit these.
+/game/
+/ghidra/projects/
+/ghidra/export/
+
+# Other people's repositories, cloned for reading.
+/references/
+
+# Zig build products.
+/.zig-cache/
+/zig-out/
+
+# Local-only editor / agent state.
+/.claude/settings.local.json
+.DS_Store
