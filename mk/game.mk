@@ -20,8 +20,12 @@ DISC_URL_2  := $(ARCHIVE_ORG)/Microsoft%20StarLancer%20%28USA%29%20%28Disc%202%2
 DISC_MD5_1  := 9da87ffd24e61c28ad9760055ca19706
 DISC_MD5_2  := f966ba5a086464edf180b644ba73ccc5
 
+DECRYPTED_DIR := $(GAME_DIR)/decrypted
+# The payload executable, recovered from the SafeDisc wrapper. See docs/binary/safedisc.md.
+PAYLOAD := $(DECRYPTED_DIR)/LANCER.EXE
+
 .PHONY: game
-game: $(GAME_DIR)/.stamp-install $(GAME_DIR)/.stamp-cd2 ## Unpack the disc images into game/cd1, game/cd2 and game/install
+game: $(GAME_DIR)/.stamp-install $(GAME_DIR)/.stamp-cd2 $(PAYLOAD) ## Unpack the disc images and recover the payload executable
 
 .PHONY: fetch-game
 fetch-game: $(DISCS_DIR)/disc1.zip $(DISCS_DIR)/disc2.zip ## Download both disc images from archive.org (1.3 GB)
@@ -60,3 +64,13 @@ $(GAME_DIR)/.stamp-install: $(GAME_DIR)/.stamp-cd1
 	rmdir $(INSTALL_DIR).tmp
 	cp $(GAME_DIR)/cd1/GAME/CAB/* $(INSTALL_DIR)/
 	touch $@
+
+# Recovering the key is a 2^32 search, so the result is cached: pass KEY= to skip the search.
+KEY ?=
+
+$(PAYLOAD): $(INSTALL_DIR)/LANCER.ICD | $(SLTOOL)
+	mkdir -p $(DECRYPTED_DIR)
+	$(SLTOOL) safedisc decrypt $< $@ $(if $(KEY),--key $(KEY))
+
+$(INSTALL_DIR)/LANCER.ICD: $(GAME_DIR)/.stamp-install
+	@test -f $@

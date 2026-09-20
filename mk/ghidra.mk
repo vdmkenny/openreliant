@@ -18,8 +18,11 @@ HEADLESS := $(WITH_JDK) $(GHIDRA_HOME)/support/analyzeHeadless $(GHIDRA_PROJECT_
 HEADLESS_MAX_CPU ?= 8
 
 # Group -> files, relative to game/.
-GHIDRA_GROUPS := safedisc surrender vfx
+GHIDRA_GROUPS := game safedisc surrender vfx
 
+# The game itself: the executable recovered from the SafeDisc wrapper, plus the language resource
+# DLLs it loads. This is the subject of the decompilation.
+GHIDRA_FILES_game := decrypted/LANCER.EXE install/LANGUAGE.DLL
 # The SafeDisc 1.40 kit: the loader that stands in for the game, and its helpers on disc 1.
 GHIDRA_FILES_safedisc := install/LANCER.EXE cd1/DPLAYERX.DLL cd1/CLCD32.DLL cd1/DRVMGT.DLL cd1/SECDRV.SYS
 # "Surrender", the 3D renderer: DirectDraw and Direct3D 7 back ends, plus its math and allocator.

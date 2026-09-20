@@ -1,0 +1,23 @@
+# Documentation
+
+Reference notes on StarLancer (Digital Anvil / Microsoft, 2000; developed by Warthog) and on this
+repository's tooling. Everything here is derived from static analysis of a legally owned copy. No
+game code or assets are stored in this repository.
+
+| Path | Contents |
+|---|---|
+| [`toolchain.md`](toolchain.md) | What `make setup` installs and how the targets fit together. |
+| [`binary/executables.md`](binary/executables.md) | The shipped binaries, the middleware they are built on, and where each lives. |
+| [`binary/safedisc.md`](binary/safedisc.md) | The SafeDisc 1 copy protection and how the payload executable is recovered from it. |
+| [`formats/disc-images.md`](formats/disc-images.md) | Raw CD image layout and the ISO 9660 / Joliet filesystem on the two discs. |
+
+## Conventions
+
+Addresses are virtual addresses for the payload executable's image base of `0x400000` unless
+stated otherwise. Function names of the form `FUN_<address>` are Ghidra placeholders: the shipped
+binaries carry no symbols.
+
+Claims are marked where they are not directly verified:
+
+- **Unknown:** not yet determined.
+- **Unverified:** inferred from surrounding evidence but not confirmed.

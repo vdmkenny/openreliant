@@ -5,6 +5,11 @@
 pub const cdimage = @import("formats/cdimage.zig");
 pub const iso9660 = @import("formats/iso9660.zig");
 
+/// Windows executables: the game binary and the protection wrapped around it.
+pub const pe = @import("formats/pe.zig");
+pub const safedisc = @import("formats/safedisc.zig");
+pub const tea = @import("formats/tea.zig");
+
 test {
     @import("std").testing.refAllDecls(@This());
 }

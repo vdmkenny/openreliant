@@ -4,6 +4,7 @@ const std = @import("std");
 const Io = std.Io;
 
 const cd = @import("cd.zig");
+const safedisc = @import("safedisc.zig");
 
 /// What every subcommand needs to do its work.
 pub const Context = struct {
@@ -14,6 +15,7 @@ pub const Context = struct {
 
 const Command = union(enum) {
     cd: cd.Command,
+    safedisc: safedisc.Command,
     help,
 
     const usage =
@@ -21,7 +23,7 @@ const Command = union(enum) {
         \\
         \\commands:
         \\
-    ++ cd.Command.usage ++
+    ++ cd.Command.usage ++ safedisc.Command.usage ++
         \\  help                            show this text
         \\
     ;
@@ -31,13 +33,15 @@ const Command = union(enum) {
         const group = std.meta.stringToEnum(std.meta.Tag(Command), args[0]) orelse return error.Usage;
         return switch (group) {
             .cd => .{ .cd = try .parse(args[1..]) },
+            .safedisc => .{ .safedisc = try .parse(args[1..]) },
             .help => .help,
         };
     }
 
     fn run(command: Command, ctx: Context) !void {
         switch (command) {
-            .cd => |cd_command| try cd_command.run(ctx),
+            .cd => |group| try group.run(ctx),
+            .safedisc => |group| try group.run(ctx),
             .help => try ctx.stdout.writeAll(usage),
         }
     }
