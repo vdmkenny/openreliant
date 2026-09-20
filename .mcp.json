@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "ghydra": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/starsong-consulting/GhydraMCP@v3.0.0-rc.1",
+        "ghydramcp"
+      ],
+      "env": {
+        "GHIDRA_HYDRA_HOST": "localhost"
+      }
+    }
+  }
+}
