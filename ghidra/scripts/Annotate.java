@@ -11,7 +11,8 @@
 // A names table has rows of address, kind, name, type and comment, tab-separated; type and comment
 // may be empty. A `function` row names the function at its address, creating it if need be. Its
 // type is either the name of a function type from the schema or a signature in C without the
-// function's name, such as `void __fastcall (VmThread *thread)`. A `data` row labels its address,
+// function's name, such as `void __fastcall (VmThread *thread)`; Ghidra adds the `this` of a
+// `__thiscall` itself, so such a signature leaves it out. A `data` row labels its address,
 // and its type, such as `VmThread *` or `ConditionDescriptor[35]`, replaces whatever data was
 // defined there. The comment becomes a function's plate comment or the data's pre comment. Lines
 // starting with '#', blank lines and addresses the program does not contain are skipped, so one

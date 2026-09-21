@@ -80,6 +80,7 @@ pub const exported = [_]Export{
     // Live objects and their models.
     .{ "GameObject", lancer.game.GameObject },
     .{ "ModelNode", lancer.game.Node },
+    .{ "SurrenderFrame", lancer.game.Frame },
     .{ "ObjectComponent", lancer.game.Component },
     .{ "ShipTypeEntry", lancer.game.ShipType },
     .{ "MountedModel", lancer.game.MountedModel },

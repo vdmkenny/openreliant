@@ -18,6 +18,30 @@ pub const max_objects = 400;
 /// Components an object can list.
 pub const max_components = 60;
 
+/// Surrender's transform (`surrenderlib`), `0xB4` bytes, which `frame_create` (`0x004C51C0`)
+/// allocates: a node's place relative to its parent frame.
+pub const Frame = extern struct {
+    _unknown_00: u32,
+    /// Such as `GOroot object` for an object's root.
+    name: Pointer(u8),
+    _unknown_08: [8]u8,
+    parent: Pointer(Frame),
+    /// **Unknown**, mostly.
+    flags: u32,
+    /// Row-major 3x3.
+    orientation: [9]f32,
+    position: shp.Vec3,
+    /// **Unknown.** 1.0 when created.
+    _unknown_48: f32,
+    _unknown_4c: [0x68]u8,
+
+    comptime {
+        assert(@offsetOf(Frame, "orientation") == 0x18);
+        assert(@offsetOf(Frame, "position") == 0x3C);
+        assert(@sizeOf(Frame) == 0xB4);
+    }
+};
+
 /// A node of an object's model hierarchy (`objects.cpp`), allocated at `0x004991D0`: the object's
 /// root, then a node for each part of its model.
 pub const Node = extern struct {
@@ -26,12 +50,24 @@ pub const Node = extern struct {
     /// `0x20`: hidden, as a component's damaged parts are while it is intact. `0x100`: listed among
     /// the object's components. `0x2000`: the part has flag `0x1000`.
     flags: u32,
-    /// **Unverified:** the renderer's frame for the node.
-    frame: Pointer(anyopaque),
+    /// The node's transform for the renderer, which holds the same place as `position` and
+    /// `orientation`.
+    frame: Pointer(Frame),
     _unknown_0c: u32,
     /// **Unknown.** -1 when allocated.
     _unknown_10: i32,
-    _unknown_14: [0x90]u8,
+    /// Relative to the node it hangs from: a part's origin in its parent part. An object's root
+    /// holds the object's place in the world.
+    position: shp.Vec3,
+    /// Row-major 3x3, relative like `position`.
+    orientation: [9]f32,
+    _unknown_44: [0x18]u8,
+    /// **Unknown.** Set together with `position`, to the same value, when the part's node is made
+    /// or the object is placed.
+    _unknown_5c: shp.Vec3,
+    /// **Unknown.** Likewise for `orientation`.
+    _unknown_68: [9]f32,
+    _unknown_8c: [0x18]u8,
     /// The model part the node stands for, as loaded.
     part: Pointer(shp.Part),
     /// The object the node belongs to.
@@ -50,6 +86,8 @@ pub const Node = extern struct {
     children: Pointer(Pointer(Node)),
 
     comptime {
+        assert(@offsetOf(Node, "position") == 0x14);
+        assert(@offsetOf(Node, "orientation") == 0x20);
         assert(@offsetOf(Node, "part") == 0xA4);
         assert(@offsetOf(Node, "armor") == 0xE8);
         assert(@offsetOf(Node, "child_count") == 0xF8);

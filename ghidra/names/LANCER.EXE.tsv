@@ -194,3 +194,18 @@
 00476130	function	object_link_parts	void __fastcall (GameObject *object)	Links each part's node to its parent part's, or to the root
 00476180	function	object_link_part	void __fastcall (GameObject *object, int part, int parent)	Links a part's node to its parent part's, or to the root for none
 0049cce0	function	object_set_pilot	void __fastcall (int slot, int pilot)	Gives the object in a slot its pilot and the pilot's stats
+0049b600	function	object_set_position	void __fastcall (GameObject *object, Vec3 *position)	Places an object: its root node, the root's frame, and two more copies at 0x768 and 0x798
+0049b650	function	object_set_orientation	void __fastcall (GameObject *object, float *orientation)	Turns an object, into the same places as object_set_position
+0045a5f0	function	mission_ships_sync	void __fastcall (void)	Copies each live object's position into its mission ship's runtime position, and its heading into the runtime yaw and pitch
+
+# Surrender's vector and matrix helpers (surrenderlib)
+004c51c0	function	frame_create		Allocates a 0xB4-byte frame with a name, a position and angles
+004c0e30	function	vec3_zero	void __fastcall (Vec3 *v)
+004c0e60	function	vec3_set	void __thiscall (float x, float y, float z)	Sets the vector in ECX
+004c0e80	function	vec3_add	void __fastcall (Vec3 *a, Vec3 *b)	a += b
+004c0f30	function	vec3_sub	void __fastcall (Vec3 *a, Vec3 *b)	a -= b
+004c0f50	function	vec3_difference	void __fastcall (Vec3 *out, Vec3 *a, Vec3 *b)	out = a - b
+004c12d0	function	vec3_distance		Distance between two points
+004c14f0	function	vec3_copy	void __fastcall (Vec3 *to, Vec3 *from)
+004c1b50	function	mat3_copy	void __fastcall (float *to, float *from)	Copies a 3x3 matrix
+004c1be0	function	mat3_identity	void __fastcall (float *m)

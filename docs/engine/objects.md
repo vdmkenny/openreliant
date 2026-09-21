@@ -47,6 +47,9 @@ A node (`objects.cpp`, `node_alloc` at `0x004991D0`) is `0x104` bytes:
 |---|---|---|
 | `0x00` | 4 | Kind: 1 for a model part's node |
 | `0x04` | 4 | Flags. `0x20`: hidden. `0x100`: listed among the components. `0x2000`: its part has flag `0x1000` |
+| `0x08` | 4 | Its frame, the transform the renderer uses |
+| `0x14` | 12 | Position, relative to the node it hangs from |
+| `0x20` | 36 | Orientation, a 3x3 matrix, relative likewise |
 | `0xA4` | 4 | The model part it stands for: the part's record as loaded, which starts with the [`.SHP` part record](../formats/shp.md#part-tag-0x01) |
 | `0xA8` | 4 | The object that owns it, set in the root |
 | `0xE8` | 4 | A component's counterpart of the object's armor |
@@ -56,6 +59,16 @@ A node (`objects.cpp`, `node_alloc` at `0x004991D0`) is `0x104` bytes:
 | `0x100` | 4 | The child list |
 
 `node_owner` (`0x00499F20`) finds a node's object by climbing to its root.
+
+A part's node holds the part's origin in its parent part. An object's root holds the object's place
+in the world: `object_set_position` (`0x0049B600`) and `object_set_orientation` (`0x0049B650`) set
+it, together with the root's frame and further copies at `0x768` and `0x798`, and
+`mission_ships_sync` (`0x0045A5F0`) copies it into the mission ship's runtime position.
+
+A frame is Surrender's `0xB4`-byte transform, which `frame_create` (`0x004C51C0`) allocates with a
+name, such as `GOroot object` for an object's root. It holds a parent frame at `+0x10`, an
+orientation at `+0x18` and a position at `+0x3C`. A part's frame hangs from its parent part's, and
+the root frame of an object mounted on an attachment point from the part's.
 
 ## Components
 

@@ -110,7 +110,8 @@ pub const Ship = extern struct {
     /// Byte offset into the string pool.
     name: u16,
     _unknown_06: u16,
-    /// Mirrored from `position` when the mission loads.
+    /// Mirrored from `position` when the mission loads, then copied from the live object's position
+    /// by `mission_ships_sync` (`0x0045A5F0`).
     runtime_position: [3]f32,
     /// Index of the ship's flight group, or `no_flight_group`.
     flight_group: u8,
