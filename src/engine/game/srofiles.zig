@@ -156,6 +156,9 @@ pub const Settings = struct {
     /// The model's objects get colours of their own to fade and cloak by: the model's header
     /// flag `cloak`, or a ship type's model in a multiplayer mission (`model_load`).
     cloak: bool = false,
+    /// A static light stands in this part's class, which `staticLightsMark` works out, so its
+    /// meshes take baked colours for `staticLightsBake` to fill.
+    static_light: bool = false,
 };
 
 /// The most surfaces a mesh holds (`mesh_create`, `0x004C4440`).
@@ -204,10 +207,11 @@ pub fn build(
         for (face.vertices) |corner| if (corner >= source.vertices.len) return error.CornerOutOfRange;
     }
     const part_flags = part.part.flags;
+    const static_light = part_flags.has_static_light or settings.static_light;
     flags.lit = true;
     flags.sun_occluder = true;
     if (settings.cloak) flags.baked_object = true;
-    if (part_flags.has_static_light) flags.baked_mesh = true;
+    if (static_light) flags.baked_mesh = true;
     const coarser: ?shp.Mesh = if (level + 1 < part.meshes.len) part.meshes[level + 1] else null;
     if (coarser != null) {
         if (part_flags.geomorph_normals) flags.geomorph_normals = true;
@@ -249,7 +253,7 @@ pub fn build(
     errdefer if (morph_positions) |m| gpa.free(m);
     const morph_normals: ?[]Vector = if (coarser != null and part_flags.geomorph_normals) try gpa.alloc(Vector, vertex_count) else null;
     errdefer if (morph_normals) |m| gpa.free(m);
-    const baked: ?[][4]f32 = if (part_flags.has_static_light) try gpa.alloc([4]f32, vertex_count) else null;
+    const baked: ?[][4]f32 = if (static_light) try gpa.alloc([4]f32, vertex_count) else null;
     errdefer if (baked) |b| gpa.free(b);
     if (baked) |b| @memset(b, @splat(0));
     const polygons = try gpa.alloc(srapiext.Polygon, polygon_count);
@@ -420,7 +424,10 @@ pub fn modelLoad(gpa: Allocator, textures: *srtexture.Table, model: *const shp.M
         }
         gpa.free(parts);
     }
+    const lit_classes = staticLightsMark(model);
     for (model.parts, parts) |*part, *loaded| {
+        var part_settings = level_settings;
+        part_settings.static_light = lit_classes[@intFromBool(part.part.flags.damaged)];
         const meshes = try gpa.alloc(srapiext.Mesh, part.meshes.len);
         var built: usize = 0;
         errdefer {
@@ -429,7 +436,7 @@ pub fn modelLoad(gpa: Allocator, textures: *srtexture.Table, model: *const shp.M
         }
         var flags: srapiext.ObjectFlags = .{};
         for (meshes, 0..) |*mesh, level| {
-            mesh.* = try build(gpa, textures, part, level, level_settings, &flags, &.{}) orelse empty;
+            mesh.* = try build(gpa, textures, part, level, part_settings, &flags, &.{}) orelse empty;
             built += 1;
         }
         const levels = try gpa.alloc(srapiext.Level, meshes.len);
@@ -440,7 +447,103 @@ pub fn modelLoad(gpa: Allocator, textures: *srtexture.Table, model: *const shp.M
         loaded.* = .{ .flags = flags, .meshes = meshes, .levels = levels };
         made += 1;
     }
+    staticLightsBake(model, parts);
     return .{ .parts = parts };
+}
+
+// --- Static lights ------------------------------------------------------------------------
+
+/// A light an attachment holds, baked into the meshes of the parts of its class when the model is
+/// loaded rather than lit each frame.
+pub const StaticLight = struct {
+    /// In the model's frame: where the attachment sits on the part it hangs from.
+    position: Vector,
+    colour: [3]f32,
+    /// Scales both how far it reaches and the colour it adds.
+    brightness: f32,
+    /// How far it reaches, past which it adds nothing.
+    radius: f32,
+};
+
+/// Whether an attachment holds a static light (`static_lights_mark`): a light with a brightness
+/// above zero that does not blink.
+fn isStaticLight(attachment: shp.Attachment) bool {
+    return attachment.kind == .light and attachment.light_brightness > 0 and
+        attachment.blink[0] +% attachment.blink[1] == 0;
+}
+
+/// The light an attachment of a part holds, in the model's frame.
+fn staticLight(part: *const shp.PartData, attachment: shp.Attachment) StaticLight {
+    const origin = part.part.position;
+    return .{
+        .position = .{
+            attachment.position.x + origin.x,
+            attachment.position.y + origin.y,
+            attachment.position.z + origin.z,
+        },
+        // The id stands for the colour, and for nothing the engine knows past red.
+        .colour = switch (attachment.id) {
+            0 => .{ 0, 0, 1 },
+            1 => .{ 0, 1, 0 },
+            2 => .{ 1, 1, 0 },
+            3 => .{ 1, 0, 0 },
+            else => .{ 0, 0, 0 },
+        },
+        .brightness = attachment.light_brightness,
+        .radius = attachment.light_brightness * attachment.light_range,
+    };
+}
+
+/// `static_lights_mark` (`0x004A4070`): whether each class of parts holds a static light, the
+/// intact parts first and the damaged ones second. Every part of a class whose light exists takes
+/// baked colours, since a light shines on its whole class.
+pub fn staticLightsMark(model: *const shp.Model) [2]bool {
+    var lit: [2]bool = .{ false, false };
+    for (model.parts) |part| {
+        for (part.attachments) |attachment| {
+            if (isStaticLight(attachment)) lit[@intFromBool(part.part.flags.damaged)] = true;
+        }
+    }
+    return lit;
+}
+
+/// `static_lights_bake` (`0x004A4310`): bakes every static light into the meshes of every level of
+/// the parts of its own class.
+pub fn staticLightsBake(model: *const shp.Model, parts: []LoadedPart) void {
+    for (model.parts) |*part| {
+        for (part.attachments) |attachment| {
+            if (!isStaticLight(attachment)) continue;
+            const light = staticLight(part, attachment);
+            for (model.parts, parts) |*other, *loaded| {
+                if (other.part.flags.damaged != part.part.flags.damaged) continue;
+                for (loaded.meshes) |*mesh| staticLightBake(light, other.part.position, mesh);
+            }
+        }
+    }
+}
+
+/// `static_light_bake` (`0x004A4130`): adds a light to one mesh's baked colours. A vertex within
+/// the light's radius that faces it takes the light times `((radius - distance) / radius)` squared
+/// and the cosine of the angle between its normal and the light, which is what the falloff below
+/// works out to for a normal of unit length. A baked colour stops at white.
+pub fn staticLightBake(light: StaticLight, origin: shp.Vec3, mesh: *srapiext.Mesh) void {
+    const baked = mesh.baked orelse return;
+    // The light in the part's own frame, where its vertices stand.
+    const at = light.position - Vector{ origin.x, origin.y, origin.z };
+    const radius = light.radius;
+    if (!(radius > 0)) return;
+    for (mesh.positions, mesh.normals, baked) |position, normal, *colour| {
+        const away = at - position;
+        const distance_squared = math.dot(away, away);
+        if (distance_squared >= radius * radius) continue;
+        const facing = math.dot(away, normal);
+        if (facing <= 0) continue;
+        const distance = @sqrt(distance_squared);
+        const fall = (1 / distance + distance / (radius * radius) - 2 / radius) * facing;
+        for (colour[0..3], light.colour) |*channel, c| {
+            channel.* = @min(channel.* + fall * light.brightness * c, 1);
+        }
+    }
 }
 
 /// A mesh with nothing in it.
@@ -778,4 +881,72 @@ test fanMerges {
     // Records that would run past the end.
     faces[0].remaining = 2;
     try std.testing.expect(!fanMerges(&faces, 0));
+}
+
+/// A light attachment sitting `at` along X, reaching `range` times its brightness.
+fn testLight(id: u32, at: f32, brightness: f32, range: f32) shp.Attachment {
+    var attachment = std.mem.zeroes(shp.Attachment);
+    attachment.kind = .light;
+    attachment.id = id;
+    attachment.position = .{ .x = at, .y = 0, .z = 0 };
+    attachment.light_brightness = brightness;
+    attachment.light_range = range;
+    return attachment;
+}
+
+test staticLightsMark {
+    var meshes = [_]shp.Mesh{};
+    var lights = [_]shp.Attachment{testLight(3, 0, 1, 100)};
+    var intact = testPart(&meshes, std.mem.zeroes(shp.Part.Flags));
+    intact.attachments = &lights;
+    var damaged_flags = std.mem.zeroes(shp.Part.Flags);
+    damaged_flags.damaged = true;
+    const damaged = testPart(&meshes, damaged_flags);
+
+    // A light on an intact part marks that class alone.
+    var parts = [_]shp.PartData{ intact, damaged };
+    const model: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &parts, .tail_count = 0, .trailing_bytes = 0 };
+    try std.testing.expectEqual([2]bool{ true, false }, staticLightsMark(&model));
+
+    // A light that blinks, or one with no brightness, is not baked at all.
+    lights[0].blink = .{ 5, 0 };
+    try std.testing.expectEqual([2]bool{ false, false }, staticLightsMark(&model));
+    lights[0].blink = .{ 0, 0 };
+    lights[0].light_brightness = 0;
+    try std.testing.expectEqual([2]bool{ false, false }, staticLightsMark(&model));
+}
+
+test staticLightBake {
+    const gpa = std.testing.allocator;
+    // Three vertices facing a light 100 along X: at its foot, halfway out, and past its reach.
+    var positions = [_]Vector{ .{ 50, 0, 0 }, .{ 0, 0, 0 }, .{ -200, 0, 0 } };
+    var normals = [_]Vector{ .{ 1, 0, 0 }, .{ 1, 0, 0 }, .{ 1, 0, 0 } };
+    const baked = try gpa.alloc([4]f32, 3);
+    defer gpa.free(baked);
+    @memset(baked, @splat(0));
+    var mesh = empty;
+    mesh.positions = &positions;
+    mesh.normals = &normals;
+    mesh.baked = baked;
+
+    // Red, brightness 1, reaching 100.
+    const light: StaticLight = .{ .position = .{ 100, 0, 0 }, .colour = .{ 1, 0, 0 }, .brightness = 1, .radius = 100 };
+    staticLightBake(light, shp.Vec3.zero, &mesh);
+    // Halfway out it takes a quarter of the light, the falloff being the square of what is left.
+    try std.testing.expectApproxEqAbs(0.25, baked[0][0], 1e-5);
+    // A vertex exactly at its reach takes none, and one past it nothing at all.
+    try std.testing.expectEqual(0, baked[1][0]);
+    try std.testing.expectEqual(0, baked[2][0]);
+    // Only the light's own colour is added.
+    try std.testing.expectEqual(0, baked[0][1]);
+    try std.testing.expectEqual(0, baked[0][2]);
+
+    // A vertex facing away takes nothing, and a second light stops the colour at white.
+    normals[0] = .{ -1, 0, 0 };
+    const was = baked[0][0];
+    staticLightBake(light, shp.Vec3.zero, &mesh);
+    try std.testing.expectEqual(was, baked[0][0]);
+    normals[0] = .{ 1, 0, 0 };
+    for (0..8) |_| staticLightBake(light, shp.Vec3.zero, &mesh);
+    try std.testing.expectEqual(1, baked[0][0]);
 }

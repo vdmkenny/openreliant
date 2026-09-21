@@ -215,9 +215,20 @@ pub const Attachment = extern struct {
     position: Vec3,
     /// Row-major 3x3.
     orientation: [9]f32,
-    /// Which model of its kind the engine mounts: `models.attachment(kind, id)`.
+    /// Which model of its kind the engine mounts: `models.attachment(kind, id)`. A `light` takes
+    /// its colour from it instead: 0 blue, 1 green, 2 yellow, 3 red, and nothing beyond
+    /// (`static_lights_bake`).
     id: u32,
-    _unknown_38: [0x44]u8,
+    _unknown_38: [0x1C]u8,
+    /// **Unverified:** how the light blinks. `static_lights_bake` bakes a light only while both
+    /// are zero, which is what it takes for a light not to blink.
+    blink: [2]i32,
+    _unknown_5c: [0x18]u8,
+    /// How far a `light` reaches, times its brightness: the radius within which it lights a vertex.
+    light_range: f32,
+    /// A `light`'s brightness, which scales both its reach and the colour it adds. An attachment
+    /// counts as a static light only while this is above zero.
+    light_brightness: f32,
 
     /// Named after the models the engine loads for each kind. **Unknown:** kinds 2, 3 and 6 to 9.
     pub const Kind = enum(u32) {
@@ -232,6 +243,9 @@ pub const Attachment = extern struct {
 
     comptime {
         assert(@offsetOf(Attachment, "id") == 0x34);
+        assert(@offsetOf(Attachment, "blink") == 0x54);
+        assert(@offsetOf(Attachment, "light_range") == 0x74);
+        assert(@offsetOf(Attachment, "light_brightness") == 0x78);
         assert(@sizeOf(Attachment) == 0x7C);
     }
 };

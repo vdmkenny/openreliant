@@ -52,8 +52,9 @@ cockpit, left, right, rear, flyby, target, external and missile views, the cockp
 cockpit mode while in it, and in the target and external views the arrow keys orbit and Shift with
 up or down zooms. Added for the port: F2 and F3 step back and forth through the ship types, passing
 over any whose files the game lacks, Alt and Enter switch between the window and the full screen,
-and Escape quits. The chase view keeps its offsets for the ships the player flies, so a capital ship
-fills it; the external view orbits any ship at a distance by its size.
+and Escape quits. A ship is shown in the chase view, or, where its own radius is larger than the distance that view
+sits behind it, in the external view, which orbits at a distance worked out from its size, so that
+a capital ship or a station is seen whole.
 
 A Zig built for Intel Macs runs under Rosetta on Apple silicon and builds for Intel by default;
 `make play` asks for Apple silicon, and `build.zig` then hands SDL and the linker the SDK's paths

@@ -213,7 +213,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     // The mission's clocks, which `mission_run` zeroes before it loops.
     var clock: game.main.Clock = .{};
     clock.start(platform.window.ticks());
-    _ = view.setView(.chase, 0, false, false, 0);
+    _ = view.setView(startingView(ship), 0, false, false, 0);
     // A screenshot waits for the chase view to settle, a tick a frame, and for the second frame,
     // which draws the sun by how much of it the first found showing.
     var frames_left: ?usize = null;
@@ -281,6 +281,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
                 };
                 ship.unload();
                 ship = next;
+                // A ship of another size wants another view to be seen in.
+                _ = view.setView(startingView(ship), 0, false, true, @intCast(@max(clock.mission_ticks, 0)));
                 break;
             }
         }
@@ -334,6 +336,15 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         }
         if (options.frameRate(window)) |rate| pacer.wait(rate);
     }
+}
+
+/// The view a ship is shown in at first: the chase view sits a fixed distance behind, which the
+/// camera keeps per ship type, so a ship whose own radius is larger than that distance would not
+/// fit in it. Those are shown in the external view, which orbits at a distance worked out from the
+/// ship's own size.
+fn startingView(ship: Ship) camera.View {
+    const behind = camera.Chase.offset(@intCast(ship.ship_type)).distance;
+    return if (ship.object.radius > behind) .external else .chase;
 }
 
 /// Frames the chase view takes to settle, at a tick a frame.

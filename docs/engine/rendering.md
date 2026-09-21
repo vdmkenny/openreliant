@@ -179,6 +179,25 @@ vertex's colour is the sum, each channel then clamped to 1, of:
 Point and directional lights add no alpha. A light reaches an object unless their light masks
 share a bit; an object whose mask is all ones takes no lights.
 
+## Static lights
+
+A model carries its own lights as attachments, and the loader bakes them into vertex colours once
+rather than lighting them each frame. An attachment counts as one while its kind is `light`, its
+brightness is above zero and it does not blink, which is both of its blink values being zero
+(`static_lights_mark`, `0x004A4070`). Its `id` is its colour: 0 blue, 1 green, 2 yellow, 3 red, and
+nothing at all beyond, so a light of any further id adds no colour.
+
+Parts fall into two classes by their `damaged` flag, and a light shines only on the parts of its
+own class, so a component's damaged model is lit separately from its intact one. Every part of a
+class that holds a light takes baked colours for all of its levels, which is what the part flag
+`has_static_light` marks (`static_lights_bake`, `0x004A4310`).
+
+Each light adds to a vertex what a point light would (`static_light_bake`, `0x004A4130`): its
+colour times its brightness, the cosine between the vertex's normal and the direction to the light,
+and `(1 - r / R)^2`, with `R` the brightness times the range. So a vertex at the light's own reach
+takes nothing, and the colour stops at white. The radius is the same `R` the point lights above
+use, and the falloff the same shape, applied once at load instead of every frame.
+
 ## Sprites
 
 A set of sprites (`sprite_set_create`, `0x004C4DB0`) shares one material. Each sprite has a centre,

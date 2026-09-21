@@ -82,7 +82,7 @@ Deliberate differences from the original, each marked **Improvement** where it i
 ## Not yet ported
 
 - The software renderer, `srddraw.dll`, and the software renderer's sky dome.
-- The static lights `model_load` bakes into meshes, and the mesh sets it builds for cloaking.
+- The mesh sets `model_load` builds for cloaking.
 - Hanging each part from its parent part's node (`object_link_parts`), which leaves every part
   where it is, and the moment of inertia `object_bounds` sums.
 - What `node_draw` draws besides model parts: lights, engine glows, the cloak; and its leaving out

@@ -159,6 +159,30 @@ fn info(ctx: Context, model: shp.Model) !void {
                 entry.group_count, entry.trigger_count,
             });
         }
+        for (entry.attachments) |attachment| {
+            try ctx.stdout.print("          {s} {d} at ({d:.0},{d:.0},{d:.0})", .{
+                switch (attachment.kind) {
+                    .missile => "missile",
+                    .gun => "gun",
+                    .light => "light",
+                    .pod => "pod",
+                    _ => "kind",
+                },
+                @intFromEnum(attachment.kind),
+                attachment.position.x,
+                attachment.position.y,
+                attachment.position.z,
+            });
+            if (attachment.kind == .light) {
+                try ctx.stdout.print("  id {d} brightness {d:.2} range {d:.0}{s}", .{
+                    attachment.id,
+                    attachment.light_brightness,
+                    attachment.light_range,
+                    if (attachment.blink[0] != 0 or attachment.blink[1] != 0) "  blinks" else "",
+                });
+            }
+            try ctx.stdout.writeByte('\n');
+        }
     }
 
     // Materials are per mesh, but the set across the model is what matters for texturing.
