@@ -51,7 +51,9 @@ pub const Font = struct {
     header: *align(1) const Header,
     /// Offsets from the start of the file, one per character code; `0` for no glyph.
     offsets: []align(1) const u32,
-    /// The trailing palette, when the file has one. **Unknown:** what reads it.
+    /// The trailing palette, when the file has one: a glyph's bytes are indices into it. The
+    /// shipped fonts run from those using its first seventeen entries as levels of coverage to
+    /// those reaching past two hundred for glyphs of their own colours.
     palette: ?*const [palette_size]u8,
 
     pub fn parse(bytes: []const u8) Error!Font {

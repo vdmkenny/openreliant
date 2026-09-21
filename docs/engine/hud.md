@@ -57,7 +57,17 @@ the cache `font_open` (`0x00480D70`) fills: a record of the font and a width for
 `VFX_string_draw` at `0x00594858`, `VFX_character_width` and `VFX_shape_draw_mirrored`.
 `VFX_string_draw` draws each code with `VFX_character_draw` and moves along by what it returns, and
 `VFX_character_draw` blits the glyph into a pane, clipped. The display is therefore drawn by the
-processor into a buffer, whichever renderer is running.
+processor into a buffer whichever renderer is running: `hud_draw` branches on `sr + 0x1AC` in six
+places, but both sides reach the same `hud_text`.
+
+A glyph's bytes are indices into the font's own palette. The shipped fonts run from those using its
+first seventeen entries as levels of coverage, `FONT.FNT` and `ITACSML.FNT` among them, to
+`BLUFONT.FNT` and `MED_RED.FNT` reaching past two hundred for glyphs of their own colours.
+
+**Improvement:** the port draws a glyph as a textured rectangle on the GPU rather than blitting it,
+so the display costs the processor nothing and scales without blurring. What it draws is the same:
+the font's palette looked up for each byte, index 0 left clear, over the scene with the engine's own
+overlay-layer depth and alpha blend.
 
 ## Art
 

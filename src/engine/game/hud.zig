@@ -2,14 +2,25 @@
 //! draws it once a frame; `mission_run` puts it in `sr + 0x88` and Surrender calls it while it
 //! renders. [`hud.md`](../../../docs/engine/hud.md) describes the file.
 //!
-//! Ported so far: where an element stands, and the width and alignment of a line of its text.
-//! Not yet: `hud_draw` itself, and the drawing, which goes through `vfx.dll`'s panes.
+//! Ported so far: where an element stands, the width and alignment of a line of its text, and
+//! drawing that line. Not yet: `hud_draw` itself, and so what the display actually shows.
+//!
+//! **Improvement.** The game draws the display with the processor, whichever renderer is running:
+//! `hud_text` hands its line to `VFX_string_draw`, out of `vfx.dll`, which blits each glyph into a
+//! pane a pixel at a time. The port draws a glyph as a textured rectangle instead, so the display
+//! costs the processor nothing and scales without blurring. What it draws is the same: a glyph's
+//! bytes index the font's own palette, as they do for `VFX_character_draw`, and index 0 is left
+//! clear. The state is the engine's own, an overlay-layer depth and its alpha blend.
 
 const std = @import("std");
 const assert = std.debug.assert;
+const Allocator = std.mem.Allocator;
 
 const fnt = @import("../../formats/fnt.zig");
 const math = @import("../surrender/math.zig");
+const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
+const srd3d = @import("../surrender/srd3d/srd3d.zig");
+const device = @import("../surrender/srd3d/device.zig");
 
 /// What `hud_place` takes off the screen's size before working a place out, and what it adds back
 /// afterwards. An element therefore keeps its place at any resolution.
@@ -78,6 +89,8 @@ pub const cached_codes = fnt.engine_limit;
 pub const Opened = struct {
     font: fnt.Font,
     widths: [cached_codes]u16,
+    /// What the GPU draws each code with, made as each is first drawn.
+    images: [cached_codes]?srtexture.Image = @splat(null),
 
     /// Takes the widths out of `font`, as `font_open` does with `VFX_character_width`.
     pub fn open(font: fnt.Font) Opened {
@@ -88,6 +101,15 @@ pub const Opened = struct {
             opened.widths[code] = @truncate(glyph.width);
         }
         return opened;
+    }
+
+    /// Frees the glyphs the GPU was given.
+    pub fn deinit(opened: *Opened, gpa: Allocator) void {
+        for (&opened.images) |*image| if (image.*) |made| {
+            gpa.free(made.levels[0].rgba);
+            gpa.free(made.levels);
+            image.* = null;
+        };
     }
 
     /// How wide `text` is drawn, the sum of its codes' cached widths (`font_text_width`,
@@ -108,6 +130,76 @@ pub const Align = enum(u32) {
     right = 2,
     _,
 };
+
+/// A glyph as the GPU draws it: the font's palette looked up for each of its bytes, with index 0
+/// left clear. Made the first time the glyph is drawn and kept for the rest of the run.
+fn glyphImage(opened: *Opened, gpa: Allocator, code: u8) Allocator.Error!?*srtexture.Image {
+    if (opened.images[code]) |*made| return made;
+    const glyph = opened.font.glyph(code) orelse return null;
+    const palette = opened.font.palette orelse return null;
+    if (glyph.width == 0 or opened.font.header.height == 0) return null;
+
+    const rgba = try gpa.alloc(u8, glyph.pixels.len * 4);
+    errdefer gpa.free(rgba);
+    for (glyph.pixels, 0..) |index, at| {
+        const entry = palette[@as(usize, index) * 3 ..][0..3];
+        // The palette holds 6-bit levels, as the sprites' does.
+        for (0..3) |channel| rgba[at * 4 + channel] = expand(entry[channel]);
+        rgba[at * 4 + 3] = if (index == 0) 0 else 255;
+    }
+    const levels = try gpa.alloc(srtexture.Level, 1);
+    errdefer gpa.free(levels);
+    levels[0] = .{ .width = glyph.width, .height = opened.font.header.height, .rgba = rgba };
+    opened.images[code] = .{ .levels = levels };
+    return &opened.images[code].?;
+}
+
+/// A 6-bit palette level as an 8-bit one, as `spr.expandPalette` does.
+fn expand(level: u8) u8 {
+    const six: u8 = level & 0x3F;
+    return (six << 2) | (six >> 4);
+}
+
+/// Draws `text` at `at`, tinted by `colour`, `scale` times the font's own size, and returns where
+/// the line ends. `hud_text` aligns the line first; the glyphs then follow one another by their
+/// own widths, as `VFX_string_draw` moves along by what each glyph returns.
+pub fn drawText(
+    opened: *Opened,
+    gpa: Allocator,
+    target: device.Device,
+    at: [2]i32,
+    text: []const u8,
+    colour: [4]f32,
+    alignment: Align,
+    scale: f32,
+) Allocator.Error!i32 {
+    if (text.len == 0) return at[0];
+    var x: f32 = @floatFromInt(textLeft(opened.*, at[0], text, alignment, scale));
+    const top: f32 = @floatFromInt(at[1]);
+    const height = @as(f32, @floatFromInt(opened.font.header.height)) * scale;
+    const tint = device.pack(colour);
+    // The display stands over the scene, blended by what it covers.
+    const state: device.State = .{
+        .texture = null,
+        .depth = srd3d.depth(.overlay, .alpha),
+        .blend = srd3d.factors(.alpha),
+    };
+    for (text) |code| {
+        const width = @as(f32, @floatFromInt(opened.widths[code])) * scale;
+        defer x += width;
+        const image = try glyphImage(opened, gpa, code) orelse continue;
+        var drawn = state;
+        drawn.texture = image;
+        const corners = [4]device.Vertex{
+            .{ .x = x, .y = top, .z = 1, .rhw = 1, .diffuse = tint, .u = 0, .v = 0 },
+            .{ .x = x + width, .y = top, .z = 1, .rhw = 1, .diffuse = tint, .u = 1, .v = 0 },
+            .{ .x = x + width, .y = top + height, .z = 1, .rhw = 1, .diffuse = tint, .u = 1, .v = 1 },
+            .{ .x = x, .y = top + height, .z = 1, .rhw = 1, .diffuse = tint, .u = 0, .v = 1 },
+        };
+        target.draw(drawn, .fan, &corners, null);
+    }
+    return @intFromFloat(x);
+}
 
 /// Where a line of `text` starts, for a line drawn at `x` with `alignment` and `scale`: `hud_text`
 /// takes half its width off a centred line and the whole of it off one to the right. The width is
@@ -207,4 +299,59 @@ test textLeft {
     try std.testing.expectEqual(100 - width, textLeft(opened, 100, &text, .right, 1));
     // Drawn larger, the line is wider, so a centred one starts further back.
     try std.testing.expectEqual(100 - width * 2, textLeft(opened, 100, &text, .right, 2));
+}
+
+test drawText {
+    const gpa = std.testing.allocator;
+    var opened: Opened = .open(try fnt.Font.parse(comptime fnt.testing.font(true)));
+    defer opened.deinit(gpa);
+
+    // A device that keeps what it was asked to draw.
+    const Recorder = struct {
+        drawn: std.ArrayList([4]device.Vertex) = .empty,
+        states: std.ArrayList(device.State) = .empty,
+        gpa: Allocator,
+
+        fn begin(_: *anyopaque) void {}
+        fn end(_: *anyopaque) void {}
+        fn draw(context: *anyopaque, state: device.State, primitive: device.Primitive, vertices: []const device.Vertex, indices: ?[]const u16) void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            std.debug.assert(primitive == .fan and indices == null and vertices.len == 4);
+            self.drawn.append(self.gpa, vertices[0..4].*) catch unreachable;
+            self.states.append(self.gpa, state) catch unreachable;
+        }
+        fn interface(self: *@This()) device.Device {
+            return .{ .ptr = self, .vtable = &.{ .begin = begin, .end = end, .draw = draw } };
+        }
+    };
+    var recorder: Recorder = .{ .gpa = gpa };
+    defer recorder.drawn.deinit(gpa);
+    defer recorder.states.deinit(gpa);
+
+    // The fixture's code 1 is the only one with a glyph; code 0 has none and draws nothing.
+    const text = [_]u8{ 1, 0, 1 };
+    const ended = try drawText(&opened, gpa, recorder.interface(), .{ 10, 20 }, &text, .{ 1, 1, 1, 1 }, .left, 1);
+    try std.testing.expectEqual(2, recorder.drawn.items.len);
+
+    // The first glyph stands where the line does, and the second follows the first's width along,
+    // the code with no glyph having moved nothing.
+    const width: f32 = @floatFromInt(opened.widths[1]);
+    try std.testing.expectEqual(10, recorder.drawn.items[0][0].x);
+    try std.testing.expectEqual(20, recorder.drawn.items[0][0].y);
+    try std.testing.expectEqual(10 + width, recorder.drawn.items[1][0].x);
+    try std.testing.expectEqual(@as(i32, @intFromFloat(10 + width * 2)), ended);
+
+    // Each is as tall as the font and as wide as the glyph, and drawn over the scene.
+    const height: f32 = @floatFromInt(opened.font.header.height);
+    try std.testing.expectEqual(10 + width, recorder.drawn.items[0][2].x);
+    try std.testing.expectEqual(20 + height, recorder.drawn.items[0][2].y);
+    try std.testing.expect(!recorder.states.items[0].depth.testing);
+    try std.testing.expect(!recorder.states.items[0].depth.writing);
+    try std.testing.expectEqual(srd3d.factors(.alpha), recorder.states.items[0].blend);
+
+    // Drawn twice the size, a glyph covers twice as much and the line is twice as long.
+    recorder.drawn.clearRetainingCapacity();
+    _ = try drawText(&opened, gpa, recorder.interface(), .{ 0, 0 }, text[0..1], .{ 1, 1, 1, 1 }, .left, 2);
+    try std.testing.expectEqual(width * 2, recorder.drawn.items[0][2].x);
+    try std.testing.expectEqual(height * 2, recorder.drawn.items[0][2].y);
 }
