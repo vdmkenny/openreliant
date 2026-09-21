@@ -109,9 +109,9 @@ root, plus whatever the animation has moved it by, turned about the part's mount
 part's angles and the animation's. `object_link_part` runs it through `node_animate`
 (`0x00499F40`) at time zero, which reads the part's animation track, and copies the place it
 leaves into the node and its frame. With no animation the sums cancel and every part stands where
-it stood, which is what makes the linking invisible.
+it stood.
 
-The centre of mass, then:
+The centre of mass:
 
 - `node_mass_add` (`0x004764A0`) sums over the shown part nodes, a node's children first, the
   density times the part's first moment about the root: its origin there times its volume, plus its
@@ -141,8 +141,8 @@ id, twenty ids to a kind.
 A mounted object is built the way any other is: a node for each part of its model, then
 `object_link_parts`, which also moves its origin to its own centre of mass. Its root then hangs
 from the node of the part that carries the attachment, and stands where the attachment does: the
-attachment's position, plus that centre turned by the attachment's orientation, which puts the
-model's geometry back where its author had it. Its orientation is the attachment's.
+attachment's position, plus that centre turned by the attachment's orientation, so its geometry
+stands where its own model puts it. Its orientation is the attachment's.
 
 A capital ship carries its turrets this way, where a fighter carries its own as a model part of
 subsystem class 3 with its own yaw and pitch limits.

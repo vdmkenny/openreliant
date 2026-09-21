@@ -197,9 +197,9 @@ attachment's id, clamped to between 1 and 7, so an attachment naming none of the
 
 Each mesh is four quads of sixteen vertices (`engine_glow_mesh_build`, `0x00469400`): one across
 the nozzle, with corners at plus and minus one on X and Y, and three blades 60 degrees apart, each
-running from the nozzle to one unit along Z, so that the plume reads from any side. A blade is one
-quad crossing the axis, standing for two, which is why a sixth of a turn between them spreads the
-three evenly. The nozzle wears the kind's `matflarea` texture and the blades its `matflareb` one,
+running from the nozzle to one unit along Z, so the plume shows from any side. A blade is one quad
+crossing the axis, so it stands for two, and a sixth of a turn between them spreads the three
+evenly. The nozzle wears the kind's `matflarea` texture and the blades its `matflareb` one,
 both added to what stands behind them and unlit. Their texture coordinates span 0.04 to 0.99, a
 little inside the texture's edges, and each polygon is biased ten nearer so that a glow draws in
 front of the hull it sits on. Nothing gives the quads their planes, so none of them is ever culled
@@ -214,8 +214,7 @@ ship is burning: `mission_frame` hands `object_draw` the ship's `last_throttle` 
 A glow of attachment id 7 burns its full length whatever the throttle, and never flickers. The
 rest take the throttle itself, negated where the attachment's Z axis and its length point the same
 way, since such a glow reaches forward and so burns on reverse thrust alone; one that comes to
-nothing is left out. A burning glow is then flickered by `rand` to between 0.8 and 1 of its length,
-so that no plume is quite still.
+nothing is left out. A burning glow is then flickered by `rand` to between 0.8 and 1 of its length.
 
 The Ripper is the exception, and `node_draw` names its parts outright: while it flies forward it
 draws only `Ripper_l_thrust` and `Ripper_r_thrust`, and while it backs up only its four
