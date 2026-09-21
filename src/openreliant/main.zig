@@ -238,6 +238,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         .target = undefined,
         .screen = .{ 0, 0 },
         .ship = &ship,
+        .clock = &clock,
     };
 
     var scene: srcore.Scene = .{};
@@ -334,6 +335,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         _ = frame_arena.reset(.retain_capacity);
         display.target = screen.interface();
         display.screen = size;
+        display.last_view = last_view;
         try game.main.drawFrame(arena, frame_arena.allocator(), &scene, &context, .{
             .models = (&ship.object)[0..1],
             .space = space,
@@ -500,7 +502,10 @@ const Display = struct {
     /// Filled in each frame, before the scene is drawn.
     target: srd3d.device.Device,
     screen: [2]u32,
+    /// Last frame's view, which is what `hud_draw` reads to know whether to draw the instruments.
+    last_view: camera.View = .cockpit,
     ship: *const Ship,
+    clock: *const game.main.Clock,
 
     fn overlay(display: *Display) srcore.Overlay {
         return .{ .context = display, .draw = draw };
@@ -508,6 +513,8 @@ const Display = struct {
 
     fn draw(context: *anyopaque) Allocator.Error!void {
         const display: *Display = @ptrCast(@alignCast(context));
+        // `hud_draw` leaves the instruments out of every view but the one ahead from the cockpit.
+        if (!game.hud.instrumented(display.last_view)) return;
         const scale = game.hud.scaleFor(display.screen);
         // `hud_draw` shows the fuel in hundreds.
         const fuel = @divTrunc(display.ship.live.afterburner_fuel, 100);
@@ -526,6 +533,16 @@ const Display = struct {
             // A shape the file does not hold draws nothing, as it does in the game.
             else => {},
         };
+        try game.hud.drawClock(
+            &display.font,
+            display.gpa,
+            display.target,
+            display.screen,
+            display.clock.play.minutes,
+            display.clock.play.seconds,
+            .{ 1, 1, 1, 1 },
+            scale,
+        );
     }
 };
 

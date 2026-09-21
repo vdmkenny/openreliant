@@ -21,6 +21,7 @@ const Allocator = std.mem.Allocator;
 const fnt = @import("../../formats/fnt.zig");
 const math = @import("../surrender/math.zig");
 const spr = @import("../../formats/spr.zig");
+const camera = @import("camera.zig");
 const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
 const srd3d = @import("../surrender/srd3d/srd3d.zig");
 const device = @import("../surrender/srd3d/device.zig");
@@ -531,4 +532,59 @@ test Readout {
     // An offset the display measures in its own pixels grows with it.
     try std.testing.expectEqual([2]i32{ 100 - 8, 20 }, scaled(.{ 100, 20 }, .{ -4, 0 }, 2));
     try std.testing.expectEqual([2]i32{ 100 + 0x10, 20 + 0x1E }, scaled(.{ 100, 20 }, Readout.text_offset, 1));
+}
+
+/// Whether the display's instruments are drawn at all: `hud_draw` leaves out everything from the
+/// readouts to the clock unless last frame's view was the one ahead from the cockpit, so the rest
+/// of the views get a line or two of text in their place.
+pub fn instrumented(last_view: camera.View) bool {
+    return last_view == .cockpit;
+}
+
+/// Where `hud_draw` centres the mission's clock: half of the way across, at the foot of the screen
+/// and `130` up.
+pub const clock_offset: [2]i32 = .{ 0, -130 };
+pub const clock_across: f32 = 0.5;
+pub const clock_down: f32 = 1;
+
+/// Draws the mission's clock as `hud_draw` does: the minutes and the seconds, each of two figures,
+/// centred at its place. The game shows the time played, or the mission's own countdown where it
+/// runs one.
+pub fn drawClock(
+    opened: *Opened,
+    gpa: Allocator,
+    target: device.Device,
+    screen: [2]u32,
+    minutes: u16,
+    seconds: u16,
+    colour: [4]f32,
+    scale: f32,
+) Allocator.Error!void {
+    var buffer: [16]u8 = undefined;
+    const text = std.fmt.bufPrint(&buffer, "{d:0>2}:{d:0>2}", .{ minutes, seconds }) catch return;
+    const at = place(screen, clock_offset, clock_across, clock_down, scale);
+    _ = try drawText(opened, gpa, target, at, text, colour, .centre, scale);
+}
+
+test drawClock {
+    // The clock stands at the foot of the screen, 130 of the display's own pixels up.
+    const at = place(.{ 640, 480 }, clock_offset, clock_across, clock_down, 1);
+    try std.testing.expectEqual([2]i32{ 320, 480 - 33 + 16 - 130 }, at);
+    // Drawn larger, it keeps to the foot and rises by as much more.
+    const larger = place(.{ 640, 480 }, clock_offset, clock_across, clock_down, 2);
+    try std.testing.expectEqual(480 - 66 + 32 - 260, larger[1]);
+
+    // The figures are padded to two as "%02d:%02d" does.
+    var buffer: [16]u8 = undefined;
+    try std.testing.expectEqualStrings("09:06", try std.fmt.bufPrint(&buffer, "{d:0>2}:{d:0>2}", .{ @as(u16, 9), @as(u16, 6) }));
+}
+
+test instrumented {
+    // The view ahead from the cockpit has the instruments; the others do not, the cockpit's own
+    // side and rear views among them.
+    try std.testing.expect(instrumented(.cockpit));
+    try std.testing.expect(!instrumented(.cockpit_left));
+    try std.testing.expect(!instrumented(.chase));
+    try std.testing.expect(!instrumented(.external));
+    try std.testing.expect(!instrumented(.flyby));
 }

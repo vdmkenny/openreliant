@@ -74,6 +74,16 @@ It has no fallback yet: `--original` draws the display the same way, and the sof
 has no GPU to draw rectangles with, cannot draw it at all. Both want `VFX_character_draw` ported,
 after which `--original` takes it too.
 
+## Which views have it
+
+`hud_draw` reads `camera_view_last` (`0x00539A64`) rather than the current view, and branches on it
+in five places. Everything from the readouts to the clock is skipped unless it is 0, the view ahead
+from the cockpit, so the cockpit's own side and rear views do not have the instruments either. The
+views that do not draw them get a line of text at the top instead, except the cutaways from `0x24`
+to `0x26`, which get none. The view ahead also draws a block of its own that no other does.
+
+It does not read `hit_shake` (`0x00588724`), so nothing of the display moves when the ship is hit.
+
 ## The readouts
 
 `hud_draw` puts three readouts in a row across the top of the screen, each a shape of the display's
