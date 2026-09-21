@@ -1,7 +1,8 @@
 //! The payload, the game executable, as it lies in memory on 32-bit x86. Modules follow its source
 //! tree, `C:\lancer`, where a structure's file is known, and are named for their contents where it
 //! is not. [`lancer/sources.zig`](lancer/sources.zig) places the code in its files;
-//! [`lancer/libcmt.zig`](lancer/libcmt.zig) is the C runtime.
+//! [`lancer/libcmt.zig`](lancer/libcmt.zig) is the C runtime. `surrender/srd3d` is the Direct3D
+//! driver, built from the same tree as a DLL of its own.
 //!
 //! The engine uses mission records in place, pointing each section at the file's bytes, so those
 //! are the structures in `formats/dte.zig`. The ones here are those it builds itself. They describe

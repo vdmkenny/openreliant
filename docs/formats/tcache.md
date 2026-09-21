@@ -48,6 +48,7 @@ part.
 | `0xE0` | u32 | File offset of the pixels |
 | `0xE4` | f32 | Brightness: added to every channel on upload, as a fraction of full scale |
 | `0xE8` | f32 | Contrast: every channel is scaled by `1 + contrast` on upload |
+| `0xEC` | u32 | The driver's record of the uploaded texture. Run-time state |
 
 The other bytes are zero. Before reading an entry's pixels, the loader copies `0x00` to `0x47` over
 `0x78` to `0xBF`, since the upload may convert or resize the image in memory. In the shipped caches

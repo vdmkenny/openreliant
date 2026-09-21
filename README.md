@@ -88,7 +88,7 @@ Documentation index: [`docs/README.md`](docs/README.md).
 | `src/tools/ghidragen/` | Writes the names and data types the Ghidra scripts apply. |
 | `mk/`, `scripts/` | Makefile fragments and their helpers. |
 | `ghidra/scripts/` | Ghidra scripts, run headless by `make`. |
-| `ghidra/names/` | Names and types for the payload's identified functions and data, applied by `make ghidra-annotate`. |
+| `ghidra/names/` | Names and types for the payload's and the Direct3D driver's identified functions and data, applied by `make ghidra-annotate`. |
 | `docs/` | Reference documentation. |
 | `tools/`, `game/`, `references/` | Git-ignored: toolchain, game files, other projects read for reference. |
 

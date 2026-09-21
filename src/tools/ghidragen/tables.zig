@@ -18,6 +18,7 @@ pub const Table = struct {
 pub const hand = [_]Table{
     .{ .name = "LANCER.EXE.runtime.tsv", .text = @embedFile("LANCER.EXE.runtime.tsv") },
     .{ .name = "LANCER.EXE.tsv", .text = @embedFile("LANCER.EXE.tsv") },
+    .{ .name = "srd3d.dll.tsv", .text = @embedFile("srd3d.dll.tsv") },
 };
 
 pub const Kind = enum { function, data };

@@ -388,3 +388,21 @@
 004ca9b0	function	SR_TGA_get_palette	void __fastcall (byte *tga, byte *palette)	Copies the first 256 colour map entries of a colour-mapped TGA, as red, green, blue
 004cacb0	function	SR_TGA_allocate_palette	byte * __fastcall (char *name)	Loads an 8-bit TGA and returns its palette
 004cb9d0	function	SR_CCB_load	void * __fastcall (char *name)	Loads a colour cube: a palette and a 64x64x64 table of indices
+
+# Meshes and drawing (srofiles.cpp, srAPIext.cpp, the mesh pipeline)
+004a3040	function	mesh_build	void * __fastcall (void *model, void *part, int level)	A part's mesh for one level of detail: a group with a material of its own for each run of faces with the same shading and material
+004c4440	function	mesh_create	void * __fastcall (int polygons, int vertices, int indices, uint flags)	Allocates a mesh, zeroed
+004c4bd0	function	mesh_object_create		A scene object of type 1 showing a mesh; its face mask starts all ones
+004c3c50	function	SR_mesh_set_poly_flags	void __fastcall (void *mesh, byte keep, byte set)	Each polygon's flags become flags & keep | set. No callers
+004c78a0	function	sr_render	int __fastcall (void)	Draws a frame with sr_draw_layers, then counts it and its time
+004c7960	function	sr_draw_layers	int __fastcall (void)	Begins the scene; for each layer, runs each object through its pipeline and the device, then sorts and flushes the layer's blended polygons; ends the scene
+004c75c0	function	SR_meshpipe_init	int __fastcall (void *object)	Culls, projects and lights a mesh object's vertices for the frame; non-zero when nothing is left to draw
+004c6280	function	mesh_cull	int __fastcall (void *object)	Lists each group's polygons that face the camera, with the face mask applied to polygon flags, and marks their vertices
+004c6d40	function	mesh_project	int __fastcall (void *object)	Turns the marked vertices into the camera's frame and projects them; depth is sqrt(1/z), scaled
+004c7060	function	mesh_light	int __fastcall (void *object)	Vertex colours: the object's colour and ambient lights, baked colours, then point and directional lights, clamped to 1
+004c7590	function	mesh_generated_coordinates	int __fastcall (void *object)	mesh_sphere_map for each pass the object's flags 0x200 and 0x400 ask for
+004c7360	function	mesh_sphere_map	int __fastcall (void *object, int pass)	A pass's texture coordinates from the vertex normals turned into the camera's frame: 0.5 + 0.5 * x, 0.5 + 0.5 * y
+004c7b30	function	depth_sort	void * __fastcall (void *list)	Radix-sorts a layer's blended polygons by depth key, farthest first
+004cde40	function	SR_mesh_pointlight	int __fastcall (void *object, void *light)	Adds a point light to the vertex colours: its colour times intensity, the cosine, and (1 - r/R) squared
+004ce120	function	SR_mesh_dirlight	int __fastcall (void *object, void *light)	Adds a directional light to the vertex colours: its colour times intensity and the normal's dot product with its forward axis
+005d5618	data	light_maps	int	Lmaps in the Device section of the settings, default 1: light maps and highlights

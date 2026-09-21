@@ -1,7 +1,9 @@
-//! `C:\lancer\surrender`: the Surrender renderer's sources linked into the payload.
+//! `C:\lancer\surrender`: the Surrender renderer. The library is linked into the payload; each
+//! driver is a DLL of its own.
 
 const std = @import("std");
 
+pub const srd3d = @import("surrender/srd3d.zig");
 pub const surrenderlib = @import("surrender/surrenderlib.zig");
 
 test {

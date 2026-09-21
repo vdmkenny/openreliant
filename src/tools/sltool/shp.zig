@@ -298,6 +298,34 @@ fn check(ctx: Context, model: shp.Model) !void {
     }
 }
 
+/// Writes a level's faces as OBJ faces, all wound alike, and returns how many. Odd strip members
+/// list their last two corners the other way round, so those are swapped back. Wire faces are lines
+/// rather than a surface, and caps are hidden on an intact object, so both are left out.
+fn writeFaces(out: *Io.Writer, mesh: shp.Mesh, vertex_base: usize, uv_base: usize) Io.Writer.Error!usize {
+    var triangles: usize = 0;
+    var current_material: ?u32 = null;
+    for (mesh.faces, 0..) |face, face_index| {
+        if (face.shading.mode == .wire or face.flags.cap) continue;
+        if (current_material == null or current_material.? != face.material) {
+            current_material = face.material;
+            const name = if (face.material < mesh.materials.len)
+                mesh.materials[face.material].name()
+            else
+                "";
+            try out.print("usemtl {s}\n", .{if (name.len > 0) name else "none"});
+        }
+        const corners: [3]usize = if (face.polygon == .strip_odd) .{ 0, 2, 1 } else .{ 0, 1, 2 };
+        try out.writeAll("f");
+        for (corners) |corner| {
+            const vertex = vertex_base + face.vertices[corner];
+            try out.print(" {d}/{d}/{d}", .{ vertex, uv_base + face_index * 3 + corner, vertex });
+        }
+        try out.writeAll("\n");
+        triangles += 1;
+    }
+    return triangles;
+}
+
 /// Writes the requested level of every part as one OBJ object each.
 ///
 /// Every face record is emitted as its own triangle. Records carrying fan or strip grouping would
@@ -367,24 +395,7 @@ fn writeObj(ctx: Context, model: shp.Model, out_path: []const u8, lod: u32, mode
             }
         }
 
-        var current_material: ?u32 = null;
-        for (mesh.faces, 0..) |face, face_index| {
-            if (face.shading.mode == .wire) continue; // lines, not a surface
-            if (current_material == null or current_material.? != face.material) {
-                current_material = face.material;
-                const name = if (face.material < mesh.materials.len)
-                    mesh.materials[face.material].name()
-                else
-                    "";
-                try out.print("usemtl {s}\n", .{if (name.len > 0) name else "none"});
-            }
-            try out.print("f {d}/{d}/{d} {d}/{d}/{d} {d}/{d}/{d}\n", .{
-                vertex_base + face.vertices[0], uv_base + face_index * 3 + 0, vertex_base + face.vertices[0],
-                vertex_base + face.vertices[1], uv_base + face_index * 3 + 1, vertex_base + face.vertices[1],
-                vertex_base + face.vertices[2], uv_base + face_index * 3 + 2, vertex_base + face.vertices[2],
-            });
-            triangles += 1;
-        }
+        triangles += try writeFaces(out, mesh, vertex_base, uv_base);
 
         vertex_base += mesh.vertices.len;
         uv_base += mesh.faces.len * 3;
@@ -410,4 +421,26 @@ test Command {
     try std.testing.expectError(error.Usage, Command.parse(&.{ "obj", "SHIP.SHP", "ship.obj", "--lod", "two" }));
     try std.testing.expectError(error.Usage, Command.parse(&.{ "obj", "SHIP.SHP", "ship.obj", "--flat" }));
     try std.testing.expectError(error.Usage, Command.parse(&.{ "obj", "SHIP.SHP" }));
+}
+
+test writeFaces {
+    var faces: [4]shp.Face = @splat(std.mem.zeroes(shp.Face));
+    for (&faces) |*face| {
+        face.vertices = .{ 0, 1, 2 };
+        face.shading.mode = .lit;
+    }
+    faces[1].polygon = .strip_odd;
+    faces[2].flags.cap = true;
+    faces[3].shading.mode = .wire;
+    const mesh: shp.Mesh = .{ .lod = .{ .switch_distance = 0 }, .vertices = &.{}, .faces = &faces, .materials = &.{} };
+
+    var buffer: [256]u8 = undefined;
+    var out: Io.Writer = .fixed(&buffer);
+    try std.testing.expectEqual(2, try writeFaces(&out, mesh, 1, 1));
+    try std.testing.expectEqualStrings(
+        \\usemtl none
+        \\f 1/1/1 2/2/2 3/3/3
+        \\f 1/4/1 3/6/3 2/5/2
+        \\
+    , out.buffered());
 }

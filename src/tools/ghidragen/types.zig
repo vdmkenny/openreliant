@@ -142,6 +142,12 @@ pub const exported = [_]Export{
     .{ "TextureFlags", tcache.Flags },
     .{ "PixelFormat", tcache.PixelFormat },
     .{ "PixelChannel", tcache.Channel },
+
+    // Meshes.
+    .{ "SurrenderMaterial", lancer.surrender.surrenderlib.srapiext.Material },
+    .{ "MaterialCoordinates", lancer.surrender.surrenderlib.srapiext.Material.Coordinates },
+    .{ "MaterialBlend", lancer.surrender.surrenderlib.srapiext.Material.Blend },
+    .{ "MeshGroup", lancer.surrender.surrenderlib.srapiext.Group },
 };
 
 comptime {

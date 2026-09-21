@@ -162,7 +162,8 @@ pub const Part = extern struct {
         geomorph_positions: bool,
         /// Set by the loader when a static light exists in this part's class.
         has_static_light: bool,
-        /// On multitexture hardware, bind a second texture named `l<material>`.
+        /// With `Lmaps` set, the loader also binds a texture named `l<material>`, which a
+        /// hardware renderer adds over the part's `lit` faces.
         lightmap: bool,
         _unknown8: u4,
         /// A component the player can target: `object_collect_components` marks its node
@@ -255,8 +256,7 @@ pub const Face = extern struct {
     /// Index into this level's material list.
     material: u32,
     shading: Shading,
-    /// The low two bits reach the renderer's per-face flags.
-    flags: u32,
+    flags: Flags,
     /// Indices into this level's vertex list.
     vertices: [3]u32,
     /// Texture coordinates, per corner.
@@ -265,33 +265,54 @@ pub const Face = extern struct {
     /// Unit length in almost every record. Not read by the loader.
     normal: Vec3,
     unknown_15: u32,
-    unknown_16: f32,
+    /// A third of it is added to the depth by which blended faces are sorted.
+    sort_bias: f32,
     /// For wire shading: edge *k* is drawn unless bit *k* is set.
     edge_mask: u32,
     polygon: Polygon,
     /// Records still to come in the same polygon or strip, counting down to zero.
     remaining: u32,
 
+    /// Each mode's material is in `lancer/game/srofiles.zig`, and what the renderer does with it
+    /// in `docs/engine/rendering.md`.
     pub const Shading = packed struct(u32) {
         mode: Mode,
-        /// Forwarded to the renderer for `multitexture` shading.
+        /// For `lit_highlight`, which of the Direct3D driver's highlight textures the second pass
+        /// adds. Other modes ignore it.
         sub_mode: u4,
         _unused: u24,
 
         pub const Mode = enum(u4) {
-            flat = 0,
-            /// Line primitives for the edges `edge_mask` leaves unset, not a filled triangle.
+            /// Untextured, lit, opaque.
+            untextured = 0,
+            /// Lines along the edges `edge_mask` leaves unset, drawn as `untextured`.
             wire = 1,
-            wire_shaded = 2,
-            textured = 3,
-            textured_alpha = 4,
-            textured_blend = 5,
-            /// The common case: textured and lit.
+            /// Untextured, lit, added.
+            untextured_additive = 2,
+            /// Textured, unlit, opaque.
+            unlit = 3,
+            /// Textured, unlit, added.
+            unlit_additive = 4,
+            /// Textured, unlit, blended by the texture's alpha.
+            unlit_blended = 5,
+            /// Textured, lit, opaque; on parts flagged `lightmap`, a light map added over it.
             lit = 6,
-            multitexture = 7,
-            lit_alpha = 8,
+            /// Textured, lit, opaque, with a highlight added over it.
+            lit_highlight = 7,
+            /// Textured, lit, added. The loader treats `10` the same.
+            lit_additive = 8,
             _,
         };
+    };
+
+    pub const Flags = packed struct(u32) {
+        /// Hidden while bit 0 of the object's face mask is set, as it is from creation. The
+        /// fighters close the body and the cockpit where the two parts meet with such faces.
+        cap: bool = false,
+        /// Never culled for facing away while bit 1 of the object's face mask is set, as it is
+        /// from creation.
+        two_sided: bool = false,
+        _unread: u30 = 0,
     };
 
     /// How a record joins to its neighbours to form a larger polygon.
@@ -301,6 +322,8 @@ pub const Face = extern struct {
         /// coplanar to within about 2.6 degrees.
         fan = 1,
         strip_even = 2,
+        /// Lists its last two corners the other way round: its front is the side
+        /// `(v2 - v0) x (v1 - v0)` points to, where every other face's is `(v1 - v0) x (v2 - v0)`.
         strip_odd = 3,
         _,
     };

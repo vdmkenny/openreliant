@@ -15,6 +15,7 @@ pub const hog_snd = @import("game/hog_snd.zig");
 pub const missiles = @import("game/missiles.zig");
 pub const objects = @import("game/objects.zig");
 pub const pilots = @import("game/pilots.zig");
+pub const srofiles = @import("game/srofiles.zig");
 
 test {
     std.testing.refAllDecls(@This());

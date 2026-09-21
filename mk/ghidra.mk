@@ -67,14 +67,16 @@ $(foreach group,$(GHIDRA_GROUPS),$(eval $(call GHIDRA_GROUP_RULES,$(group))))
 
 # Runs one Ghidra script against a group, with the program writable so the script may annotate it.
 # SCRIPT names a file in ghidra/scripts, ARGS are passed to it, and GROUP defaults to the game.
-SCRIPT ?=
-ARGS   ?=
-GROUP  ?= game
+SCRIPT  ?=
+ARGS    ?=
+GROUP   ?= game
+# One program of the group, such as srd3d.dll; every program in it when empty.
+PROGRAM ?=
 
 .PHONY: ghidra-run
-ghidra-run: | $(GHIDRA_PROJECT_DIR)/.imported-$(GROUP) ## Run a Ghidra script: make ghidra-run SCRIPT=Name.java [ARGS="..."] [GROUP=game]
+ghidra-run: | $(GHIDRA_PROJECT_DIR)/.imported-$(GROUP) ## Run a Ghidra script: make ghidra-run SCRIPT=Name.java [ARGS="..."] [GROUP=game] [PROGRAM=name]
 	@test -n "$(SCRIPT)" || { echo "set SCRIPT=<file in ghidra/scripts>"; exit 1; }
-	$(HEADLESS) $(GHIDRA_PROJECT)/$(GROUP) -process -noanalysis \
+	$(HEADLESS) $(GHIDRA_PROJECT)/$(GROUP) -process $(PROGRAM) -noanalysis \
 	    -scriptPath $(GHIDRA_SCRIPTS_DIR) -postScript $(SCRIPT) $(ARGS) \
 	    -max-cpu $(HEADLESS_MAX_CPU) -log $(GHIDRA_PROJECT_DIR)/script-$(GROUP).log
 
@@ -82,7 +84,7 @@ GHIDRA_NAMES_DIR := $(GHIDRA_DIR)/names
 GHIDRAGEN_DIR    := $(ROOT)/zig-out/ghidra
 
 .PHONY: ghidra-annotate
-ghidra-annotate: | $(GHIDRA_PROJECT_DIR)/.imported-game ## Name and type the payload's known functions and data, and group its code by source file, from ghidra/names and the Zig definitions
+ghidra-annotate: | $(GHIDRA_PROJECT_DIR)/.imported-game $(GHIDRA_PROJECT_DIR)/.imported-surrender ## Name and type the payload's and the Direct3D driver's known functions and data, and group the payload's code by source file, from ghidra/names and the Zig definitions
 	$(ZIG) build ghidragen
 	mkdir -p $(GHIDRAGEN_DIR)
 	$(ROOT)/zig-out/bin/ghidragen types $(GHIDRAGEN_DIR)/types.tsv
@@ -94,6 +96,10 @@ ghidra-annotate: | $(GHIDRA_PROJECT_DIR)/.imported-game ## Name and type the pay
 	        $(GHIDRAGEN_DIR)/names.tsv $(GHIDRA_NAMES_DIR)/LANCER.EXE.runtime.tsv \
 	        $(GHIDRA_NAMES_DIR)/LANCER.EXE.tsv \
 	    -postScript ApplySources.java $(GHIDRAGEN_DIR)/sources.tsv \
+	    -max-cpu $(HEADLESS_MAX_CPU) -log $(GHIDRA_PROJECT_DIR)/annotate.log
+	$(HEADLESS) $(GHIDRA_PROJECT)/surrender -process srd3d.dll -noanalysis \
+	    -scriptPath $(GHIDRA_SCRIPTS_DIR) \
+	    -postScript Annotate.java $(GHIDRAGEN_DIR)/types.tsv $(GHIDRA_NAMES_DIR)/srd3d.dll.tsv \
 	    -max-cpu $(HEADLESS_MAX_CPU) -log $(GHIDRA_PROJECT_DIR)/annotate.log
 
 .PHONY: ghidra-gui

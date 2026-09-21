@@ -76,8 +76,8 @@ code. Programs are grouped into project folders, one group per make target:
 make ghidra-import           # import and auto-analyse every group, headless
 make ghidra-import-game      # or one group
 make ghidra-export           # dump each program as text under ghidra/export/
-make ghidra-run SCRIPT=Name.java [ARGS="..."]   # run one script from ghidra/scripts, program writable
-make ghidra-annotate         # name and type the payload's known functions and data
+make ghidra-run SCRIPT=Name.java [ARGS="..."] [GROUP=game] [PROGRAM=name]   # run one script, programs writable
+make ghidra-annotate         # name and type the payload's and the Direct3D driver's known functions and data
 make ghidra-gui              # open the project
 ```
 
@@ -112,11 +112,14 @@ so override them; `zig build test` checks that every row is well formed and that
 twice among the hand tables. Then [`ApplySources.java`](../ghidra/scripts/ApplySources.java) builds
 the Sources program tree from `ghidragen sources`' rows for
 [`src/lancer/sources.zig`](../src/lancer/sources.zig) ([`binary/sources.md`](binary/sources.md)).
-`functions.tsv` gives each function's place in it.
+`functions.tsv` gives each function's place in it. Last, `Annotate.java` runs on `srd3d.dll` with the
+same types and [`ghidra/names/srd3d.dll.tsv`](../ghidra/names/srd3d.dll.tsv).
 
 To read code that auto-analysis missed before naming it, `make ghidra-run
 SCRIPT=DefineFunctions.java ARGS="0x00405010 ..."` defines functions at those addresses under
-Ghidra's default names, and the next export includes them.
+Ghidra's default names, and the next export includes them. `GROUP` picks the project folder and
+`PROGRAM` one program in it, such as `GROUP=surrender PROGRAM=srd3d.dll`; without `PROGRAM` the
+script runs on every program of the group.
 
 `make vm-opcodes` reads the export back: `src/tools/tablegen` derives the opcode table from the
 payload's dispatch table and its handlers and writes

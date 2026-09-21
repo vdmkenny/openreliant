@@ -160,7 +160,8 @@ pub const Image = extern struct {
     brightness: f32,
     /// Every channel is scaled by `1 + contrast` on upload.
     contrast: f32,
-    _unknown_a4: u32,
+    /// The driver's record of the uploaded texture. Run-time state, zero in the file.
+    device_texture: u32,
 
     comptime {
         assert(@offsetOf(Image, "flags") == 0x28);
