@@ -186,6 +186,29 @@ pub const EventValue = extern struct {
     }
 };
 
+/// An event waiting in the queue at `event_queue` for `events_flush`, which raises it on the ship
+/// and, for `groups`, on its flight group and the squads that hold it.
+pub const QueuedEvent = extern struct {
+    groups: bool,
+    _unknown_01: [3]u8,
+    ship: Pointer(dte.Ship),
+    condition: dte.Condition,
+    value_count: u8,
+    _unknown_0a: u16,
+    /// Room for eight; an event carries at most five.
+    values: [8]u32,
+    /// The component of the ship the event concerns, or `dte.Trigger.whole_object`.
+    qualifier: u8,
+    _unknown_2d: [3]u8,
+
+    comptime {
+        assert(@offsetOf(QueuedEvent, "ship") == 0x04);
+        assert(@offsetOf(QueuedEvent, "values") == 0x0C);
+        assert(@offsetOf(QueuedEvent, "qualifier") == 0x2C);
+        assert(@sizeOf(QueuedEvent) == 0x30);
+    }
+};
+
 /// The last events of the conditions that have a `slot`, kept for each object at `event_values`.
 pub const ObjectEvents = extern struct {
     shot_at: [5]u32,

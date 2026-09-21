@@ -117,6 +117,8 @@ pub const Ship = extern struct {
     /// Side. 255 marks the player's own record.
     iff: u8,
     _unknown_16: u8,
+    /// The engine's own state: zero in the files, and cleared for every ship when the mission's
+    /// script starts.
     flags: Flags,
     /// Role. Ordinary ships stay below `0x100`; nav points and markers use 999 and the `0x3E3` to
     /// `0x3E8` range, so reading this as a byte truncates many of them.
@@ -128,8 +130,9 @@ pub const Ship = extern struct {
     runtime_yaw: i16,
     /// Whole degrees. The engine scales it by pi/180, which is what proves the unit.
     yaw: i16,
-    /// Live object handle, `0xFFFFFFFF` until the mission arms.
-    handle: u32,
+    /// The ship's components that are still intact, a bit each. Set to all ones when the mission's
+    /// script starts; destroying component `n` clears bit `n & 31`.
+    intact_components: u32,
     _unknown_34: u32,
     runtime_pitch: i16,
     pitch: i16,
@@ -141,7 +144,8 @@ pub const Ship = extern struct {
     pub const no_flight_group: u8 = 0xFF;
 
     pub const Flags = packed struct(u8) {
-        disabled: bool,
+        /// Set when the engine raises the ship's Destroyed event, which it then raises no more.
+        destroyed: bool,
         _unknown: u7,
     };
 
@@ -288,7 +292,10 @@ pub const Trigger = extern struct {
     _unknown_04: [16]u8,
     /// Set for every trigger when the mission starts. Firing clears it, per `repeat`.
     armed: u8,
-    /// Must equal the qualifier the event is raised with. Ordinary events carry `0xFF`.
+    /// The component of the subject the trigger watches, by its index among the subject's
+    /// components, or `whole_object`. It must equal the event's: a ShotAt or Destroyed event on a
+    /// component, such as a capital ship's turret, carries the component's index, and every other
+    /// event `whole_object`.
     qualifier: u8,
     /// Zero runs the new thread at once, inside the event; any other value leaves it to the
     /// scheduler.
@@ -303,8 +310,8 @@ pub const Trigger = extern struct {
     /// condition marks as checked, and of those, the ones whose low halfword is not `0xFFFF`.
     operands: [5]u32,
 
-    /// The qualifier of an ordinary event.
-    pub const any_qualifier: u8 = 0xFF;
+    /// The qualifier of an event on the subject itself rather than one of its components.
+    pub const whole_object: u8 = 0xFF;
 
     pub const Repeat = enum(u8) {
         /// Disarms when it fires.
@@ -479,8 +486,11 @@ pub const SquadMember = extern struct {
     /// Index of the squad in `squads`. A squad's members are consecutive.
     squad: u16,
     _unknown_06: u16,
-    /// **Unknown.** `in_squad` matches a ship only when this equals its own third argument.
-    _unknown_08: u8,
+    /// The member's component, by its index among the object's components, or
+    /// `Trigger.whole_object`: a squad can hold single components of a ship, such as a capital
+    /// ship's turrets. An event on a squad member counts for the squad only on the component
+    /// named here.
+    component: u8,
     _unknown_09: [3]u8,
 
     comptime {
@@ -1448,7 +1458,7 @@ test "maps the script into trigger blocks and parts, with their constants" {
     both[0].condition = .destroyed;
     both[0].link = 0;
     both[0].armed = 1;
-    both[0].qualifier = Trigger.any_qualifier;
+    both[0].qualifier = Trigger.whole_object;
     both[1] = both[0];
     both[1].condition = .shot_at;
     both[1].link = 1;

@@ -80,11 +80,15 @@ Stride `0x4C`, one per placed object, nav points included.
 | `0x08` | f32 x3 | Position, copied from `0x1C` when the mission loads |
 | `0x14` | u8 | Flight group, or `0xFF` for none |
 | `0x15` | u8 | Side. 255 marks the player's own record |
-| `0x17` | u8 | Flags; bit 0 disables the record |
+| `0x17` | u8 | Flags, the engine's own: bit 0 marks the ship destroyed. Zero in the files |
 | `0x18` | u16 | Role. Ships stay below `0x100`; nav points and markers use 999 and `0x3E3` to `0x3E8` |
 | `0x1C` | f32 x3 | Position as authored |
 | `0x2E`, `0x3A`, `0x4A` | i16 | Yaw, pitch, roll, in whole degrees |
-| `0x30` | u32 | Live object handle, `0xFFFFFFFF` until the mission arms |
+| `0x30` | u32 | The ship's intact components, a bit each |
+
+When the mission's script starts, the engine clears the flags at `0x17` and sets every bit at
+`0x30`. Destroying component `n` of the ship clears bit `n & 31`, and destroying the ship sets bit 0
+of the flags and raises its Destroyed event, which it raises no more.
 
 Each angle sits two bytes after its runtime copy, at `0x2C`, `0x38` and `0x48`. Every record holds
 angles within [-360, 360]. Positions are absolute, on the order of 10^7. `in_flight_group` reads
@@ -108,8 +112,10 @@ membership walk behind `in_squad` reads the kind: a flight group member is teste
 `in_flight_group`, and a squad member recursively.
 
 A squad's `+0x08` is the index of its first record in section 13, or `0xFFFF`. A membership record
-holds the member's object ID at `+0` and the owning squad's index at `+4`, and a squad's records are
-consecutive. Members may be ships, flight groups or other squads.
+holds the member's object ID at `+0`, the owning squad's index at `+4`, and at `+8` one of the
+member's components by index, or `0xFF` for the whole member. A squad's records are consecutive.
+Members may be ships, flight groups, other squads, or single components of a ship, such as a capital
+ship's turrets.
 
 ## Triggers
 
@@ -121,7 +127,7 @@ Stride `0x30`. A trigger runs a block of script when an event it watches happens
 | `0x01` | Repeat mode |
 | `0x02` | Link: the block to run, as a halfword offset into the script; `0xFFFF` for none |
 | `0x14` | Armed, set at mission start for every trigger an object's slice holds |
-| `0x15` | Qualifier; `0xFF` for ordinary events |
+| `0x15` | Qualifier: the component of the subject watched, by index; `0xFF` for the subject itself |
 | `0x16` | Zero runs the block's thread at once, inside the event; otherwise the scheduler does |
 | `0x19` | Firings left, for repeat mode 2 |
 | `0x1C` | Operands, four bytes each, one for each value the condition's events carry: see [Operands](#operands) |
@@ -137,12 +143,18 @@ No trigger is in two slices, and a trigger in no slice can never fire. The condi
 kinds of object a trigger can belong to, and every trigger agrees with its condition's.
 
 Repeat mode `0` disarms the trigger when it fires, `1` never disarms it, and `2` disarms it when the
-counter at `0x19` runs out. For four conditions, ShotAt, Destroyed, Cloaked and Decloaked, a handler
-of the condition's can veto an event; a vetoed event still fires the triggers with the repeat mode
-the condition exempts, which is 1 for the last three.
+counter at `0x19` runs out.
 
-Most triggers carry qualifier `0xFF`, which three of the four call sites that raise events pass.
-**Unknown:** what the other qualifiers, `0` to `7`, select.
+The qualifier must equal the event's. A ship's components, such as a capital ship's turrets and
+subsystems, are numbered among the components of its live object. A hit on one raises ShotAt with
+its index and, except for hits of one kind, ShotAt for the ship; destroying one raises Destroyed
+with its index. Every other event carries `0xFF`, the subject itself.
+
+An event on a ship is raised on its flight group and on the squads that hold it too. Destroyed on a
+flight group or squad goes ahead only once every member, or the member's named component, is
+destroyed; until then it fires only the group's triggers with repeat mode 1. For ShotAt the group's
+event carries the members' average damage value instead of the ship's. See
+[Events](../engine/script-vm.md#events).
 
 ### Operands
 

@@ -130,7 +130,7 @@ fn ships(ctx: Context, mission: dte.Mission) !void {
             ship.yaw,
             ship.pitch,
             ship.roll,
-            if (ship.flags.disabled) "  disabled" else "",
+            if (ship.flags.destroyed) "  destroyed" else "",
         });
     }
 }
@@ -139,7 +139,7 @@ fn triggers(ctx: Context, mission: dte.Mission) !void {
     const owners = try mission.triggerObjects(ctx.arena);
     const all_objects = try mission.objects();
     const all_ships = try mission.ships();
-    try ctx.stdout.writeAll("index  condition                   qualifier  repeat   start  block  subject\n");
+    try ctx.stdout.writeAll("index  condition                   component  repeat   start  block  subject\n");
     for (try mission.triggers(), owners, 0..) |trigger, owner, i| {
         // A custom formatter does not pad, so render into a buffer to keep the columns straight.
         var condition: [28]u8 = undefined;
@@ -149,8 +149,8 @@ fn triggers(ctx: Context, mission: dte.Mission) !void {
         try ctx.stdout.print("{d:>5}  {s:<26}  {s:>9}  {s:<7}  {s:<5}  {s:>5}  ", .{
             i,
             std.fmt.bufPrint(&condition, "{f}", .{trigger.condition}) catch "?",
-            if (trigger.qualifier == dte.Trigger.any_qualifier)
-                "any"
+            if (trigger.qualifier == dte.Trigger.whole_object)
+                "-"
             else
                 std.fmt.bufPrint(&qualifier, "{d}", .{trigger.qualifier}) catch "?",
             std.fmt.bufPrint(&repeat, "{f}", .{trigger.repeat}) catch "?",

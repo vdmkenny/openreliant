@@ -83,8 +83,28 @@
 0045cbc0	function	mission_script_start	void __fastcall (void)	Installs conditions and commands, runs the start part, arms every trigger an object's slice holds
 0045cea0	function	trigger_match	void __fastcall (ushort object, byte qualifier, Condition condition, uint *values, ushort count)	Fires the object's armed triggers whose condition, qualifier and operands match an event
 0045d0d0	function	trigger_thread_running	bool __fastcall (Trigger *trigger)	Whether a thread the trigger started is still running, which keeps it from starting another
-0045ce70	function	trigger_raise_event		Raises an event on an object, then resets condition_verdict
+0045ce70	function	trigger_raise_event	void __fastcall (ushort object, byte qualifier, Condition condition, uint *values, ushort count)	Raises an event on an object, then resets condition_verdict
 00453210	function	condition_raise		Asks the condition's handlers for a verdict, then raises the event on the flight group and the squads holding it
+0045b7c0	function	event_post	void __fastcall (MissionShip *ship, byte qualifier, Condition condition, uint *values, byte count)	Queues an event on a ship
+0045b690	function	event_post_group	void __fastcall (MissionShip *ship, Condition condition, byte count, uint *values, byte qualifier)	Queues an event on a ship, to be raised on its flight group and squads as well
+0045b840	function	events_flush	void __fastcall (void)	Raises every queued event, then empties the queue
+0052abd8	data	event_queue		Events waiting for events_flush, 0x30 bytes each: QueuedEvent
+005373e4	data	event_queue_count	uint
+0045a9b0	function	event_launched		Queues Launched for a live object's ship
+0045a9e0	function	event_shot_at		Queues ShotAt: attacker, the victim's damage value twice, victim, and -1 for the weapon
+0045aa60	function	event_destroyed		Queues Destroyed for a ship, or for one of its components, marking it destroyed
+00404ee0	function	event_ship_reached		Queues ShipReached for a ship
+0045ac30	function	ship_object		The live object of a mission ship
+0045a970	function	object_ship		The mission ship of a live object, or null
+0045ade0	function	object_component_index		A component's index among a live object's components, or 0xFF
+00452cb0	function	ship_damage_value		The lowest of four floats of a ship's live object from +0x600, or a component's own at +0xE8, truncated
+00452bb0	function	shot_at_group_begin		Zeroes the damage sums
+00452bd0	function	shot_at_group_add		Adds a member's damage value to the sums
+00452c00	function	shot_at_group_verdict		Replaces the event's damage values with the members' average; never vetoes
+00452c40	function	destroyed_group_begin		Starts the verdict at true
+00452c50	function	destroyed_group_add		Clears the verdict for a member, or its named component, not yet destroyed
+00452ca0	function	destroyed_group_verdict		Returns the verdict
+0045d800	function	cloak_group_add		Passes every member
 0045d810	function	trigger_check_operand	bool __fastcall (EventValue *value, uint *operand, uint event_value, Trigger *trigger)	Checks one trigger operand against the event's value
 004530a0	function	trigger_operand_value	uint __fastcall (uint kinds, uint operand)	What an operand stands for: a number as it is, 0xFFFFFFFE for any ship, else the record a reference names
 004530d0	function	reference_resolve	void * __fastcall (uint reference)	The record a reference names

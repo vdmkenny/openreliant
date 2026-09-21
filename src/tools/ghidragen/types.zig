@@ -60,6 +60,7 @@ pub const exported = [_]Export{
     .{ "ConditionDescriptor", lancer.vm.ConditionDescriptor },
     .{ "EventValue", lancer.vm.EventValue },
     .{ "ObjectEvents", lancer.vm.ObjectEvents },
+    .{ "QueuedEvent", lancer.vm.QueuedEvent },
 
     // Stat tables.
     .{ "FlightModel", lancer.stats.FlightModel },

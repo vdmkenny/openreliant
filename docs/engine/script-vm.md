@@ -112,6 +112,14 @@ destroys the timer.
 
 ## Events
 
+The game queues events as they happen, in the `0x30`-byte records at `event_queue` (`0x52ABD8`):
+`event_post` (`0x0045B7C0`) for the ship alone, `event_post_group` (`0x0045B690`) for the ship, its
+flight group and the squads that hold it. `events_flush` (`0x0045B840`) raises them all and empties
+the queue. Each carries a condition, up to five values, and a qualifier: the component of the ship
+the event concerns, by its index among the components of the ship's live object, or `0xFF` for the
+ship itself. A hit on a component queues ShotAt for the component and, except for hits of one kind,
+for the ship; destroying one queues Destroyed for the component.
+
 `trigger_match` (`0x0045CEA0`) handles an event on an object: its condition, its qualifier and the
 values it carries. It walks the triggers in the object's slice of the trigger list, and takes each
 one that is armed, has the event's condition and qualifier, links to a block and is not held back
@@ -126,10 +134,20 @@ by a veto:
 A condition with a slot also has its last event kept for each object, in the `0x28`-byte records at
 `event_values`: ShotAt's five values, then Destroyed's. `push_event_value` reads them.
 
-`condition_raise` (`0x00453210`) raises an event on a ship's flight group and on the squads that
-hold the ship. For ShotAt, Destroyed, Cloaked and Decloaked it first calls the condition's
-handlers: one before, one for each member of the flight group, and one for a verdict, which can veto
-the event. A vetoed event fires only the triggers with the repeat mode the condition exempts.
+`condition_raise` (`0x00453210`) raises a group event on the ship's flight group and on the squads
+that hold the ship; a squad member that names a component counts only for events on that component.
+For ShotAt, Destroyed, Cloaked and Decloaked it first calls the condition's handlers: one before, one
+for each member of the group, and one for a verdict. A vetoed event fires only the triggers with the
+repeat mode the condition exempts.
+
+- **Destroyed:** the verdict holds only once every member, or the member's named component, is
+  destroyed. Until then the event fires only the group's triggers with repeat mode 1.
+- **ShotAt:** the handlers replace the two damage values with the members' average and never veto.
+- **Cloaked**, **Decloaked:** the handlers pass every event.
+
+ShotAt's damage values both carry the victim's damage value (`ship_damage_value`, `0x00452CB0`): the
+lowest of four floats of the ship's live object from `+0x600`, or the component's own at `+0xE8`,
+truncated. **Unknown:** what those floats measure. Its weapon value is always -1.
 
 ### Conditions
 
