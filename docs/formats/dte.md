@@ -209,7 +209,7 @@ and `0x2A`, `0x25` and `0x43`, `0x32` and `0x2E`, `0x55` and `0x47`.
 
 Every opcode's size and effect on the instruction pointer is read from its handler. The dispatcher
 calls a handler with `ECX` pointing at the cell holding the instruction pointer, already advanced
-past the opcode, and execution resumes wherever the handler leaves that cell. `src/tools/vmgen`
+past the opcode, and execution resumes wherever the handler leaves that cell. `src/tools/tablegen`
 reads the dispatch table from the binary, parses each handler from Ghidra's exported disassembly,
 and symbolically executes every path through it, tracking that cell. Paths must agree, or it reports
 the handler instead of guessing. Its output is

@@ -573,7 +573,7 @@ pub const Condition = enum(u8) {
 ///
 /// The handler table holds 86 entries, of which 71 are filled: `0x02` to `0x07` and `0x14` to
 /// `0x55`, minus `0x50`. Those 71 are the whole instruction set. Their sizes and shapes are in
-/// [`vm_opcodes`](vm_opcodes.zig), derived from the handlers themselves by `src/tools/vmgen`.
+/// [`vm_opcodes`](vm_opcodes.zig), derived from the handlers themselves by `src/tools/tablegen`.
 pub const Opcode = enum(u8) {
     // Comparisons pop `b`, then `a`, and push 1 or 0. Values are unsigned.
     equal = 0x02,
@@ -875,7 +875,7 @@ comptime {
 ///
 /// - `inline_data` (`0x2A`, `0x2B`): one byte holding the total length of the operand run.
 /// - `jump_table` (`0x51`): a count, a two-byte default target, then that many four-byte arms.
-///   The handler is the only one whose encoding this module reads rather than `vmgen` deriving
+///   The handler is the only one whose encoding this module reads rather than `tablegen` deriving
 ///   it, because its length depends on a byte the instruction-pointer analysis cannot follow.
 /// - `branch` and `transfer` are fixed sizes; only where execution resumes differs.
 pub fn instructionSize(code: []const u8, pos: usize) ?usize {

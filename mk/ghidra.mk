@@ -108,8 +108,8 @@ VM_DISASSEMBLY := $(GHIDRA_EXPORT_DIR)/game/LANCER.EXE/disassembly.asm
 .PHONY: vm-opcodes
 vm-opcodes: ## Re-derive the mission script VM's opcode table from the payload executable
 	@test -f $(VM_DISASSEMBLY) || { echo "missing $(VM_DISASSEMBLY); run 'make ghidra-export-game'" >&2; exit 1; }
-	$(ZIG) build vmgen
-	$(ROOT)/zig-out/bin/vmgen opcodes $(PAYLOAD) $(VM_DISASSEMBLY) $(VM_OPCODES)
+	$(ZIG) build tablegen
+	$(ROOT)/zig-out/bin/tablegen opcodes $(PAYLOAD) $(VM_DISASSEMBLY) $(VM_OPCODES)
 	$(ZIG) fmt $(VM_OPCODES)
 
 VM_COMMANDS   := $(ROOT)/src/formats/vm_commands.zig
@@ -118,13 +118,13 @@ VM_CONDITIONS := $(ROOT)/src/formats/vm_conditions.zig
 .PHONY: vm-commands
 vm-commands: ## Re-derive the mission script's command catalogue from the payload executable
 	@test -f $(PAYLOAD) || { echo "missing $(PAYLOAD); run 'make game'" >&2; exit 1; }
-	$(ZIG) build vmgen
-	$(ROOT)/zig-out/bin/vmgen commands $(PAYLOAD) $(VM_COMMANDS)
+	$(ZIG) build tablegen
+	$(ROOT)/zig-out/bin/tablegen commands $(PAYLOAD) $(VM_COMMANDS)
 	$(ZIG) fmt $(VM_COMMANDS)
 
 .PHONY: vm-conditions
 vm-conditions: ## Re-derive the trigger condition catalogue from the payload executable
 	@test -f $(PAYLOAD) || { echo "missing $(PAYLOAD); run 'make game'" >&2; exit 1; }
-	$(ZIG) build vmgen
-	$(ROOT)/zig-out/bin/vmgen conditions $(PAYLOAD) $(VM_CONDITIONS)
+	$(ZIG) build tablegen
+	$(ROOT)/zig-out/bin/tablegen conditions $(PAYLOAD) $(VM_CONDITIONS)
 	$(ZIG) fmt $(VM_CONDITIONS)

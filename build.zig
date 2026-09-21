@@ -23,12 +23,13 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(sltool);
 
-    // Derives the mission script VM's opcode table from the game binary. Not installed: it is a
-    // development tool, run by `make vm-opcodes`, and its output is committed.
-    const vmgen = b.addExecutable(.{
-        .name = "vmgen",
+    // Derives the engine's static tables from the game binary: the script VM's opcodes, commands
+    // and conditions, and the models it loads. Not installed: it is a development tool, run by the
+    // `make vm-*` and `make model-tables` targets, and its output is committed.
+    const tablegen = b.addExecutable(.{
+        .name = "tablegen",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/tools/vmgen/main.zig"),
+            .root_source_file = b.path("src/tools/tablegen/main.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -37,8 +38,8 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    const vmgen_step = b.step("vmgen", "Build the VM opcode table generator");
-    vmgen_step.dependOn(&b.addInstallArtifact(vmgen, .{}).step);
+    const tablegen_step = b.step("tablegen", "Build the generator of the engine's tables");
+    tablegen_step.dependOn(&b.addInstallArtifact(tablegen, .{}).step);
 
     // Writes the names and data types the Ghidra scripts apply, from the Zig definitions. Not
     // installed either: `make ghidra-annotate` runs it.
@@ -65,11 +66,11 @@ pub fn build(b: *std.Build) void {
 
     const lib_tests = b.addTest(.{ .root_module = lib });
     const exe_tests = b.addTest(.{ .root_module = sltool.root_module });
-    const vmgen_tests = b.addTest(.{ .root_module = vmgen.root_module });
+    const tablegen_tests = b.addTest(.{ .root_module = tablegen.root_module });
     const ghidragen_tests = b.addTest(.{ .root_module = ghidragen.root_module });
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&b.addRunArtifact(lib_tests).step);
     test_step.dependOn(&b.addRunArtifact(exe_tests).step);
-    test_step.dependOn(&b.addRunArtifact(vmgen_tests).step);
+    test_step.dependOn(&b.addRunArtifact(tablegen_tests).step);
     test_step.dependOn(&b.addRunArtifact(ghidragen_tests).step);
 }
