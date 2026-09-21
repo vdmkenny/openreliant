@@ -329,7 +329,7 @@
 004983a0	function	noop	void (void)	Returns at once; tables use it for a routine with nothing to do
 
 # Combat maneuvers
-00405010	function	maneuver_compile_line	void __fastcall (ManeuverScriptLine *script, int line)	Compiles a line of a maneuver script into maneuver_code, the first time the line runs: src/formats/maneuver_script.zig does the same
+00405010	function	maneuver_compile_line	void __fastcall (ManeuverScriptLine *script, int line)	Compiles a line of a maneuver script into maneuver_code, the first time the line runs: src/lancer/game/aidefend/script.zig does the same
 00404f00	function	script_skip_spaces	void __fastcall (char **cursor)	Skips spaces and tabs
 00404f20	function	script_read_word	void __fastcall (char **cursor, char *word)	Reads a word of letters, digits and _ . : -
 00404f80	function	script_read_arguments	int __fastcall (char **cursor, char **arguments)	Reads an argument list, (, words separated by commas, ), four words at most; returns the count

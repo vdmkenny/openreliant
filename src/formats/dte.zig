@@ -12,9 +12,9 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
-pub const vm_commands = @import("vm_commands.zig");
-pub const vm_conditions = @import("vm_conditions.zig");
-pub const vm_opcodes = @import("vm_opcodes.zig");
+const commands = @import("../lancer/game/executor/commands.zig");
+const conditions = @import("../lancer/vm/conditions.zig");
+const opcodes = @import("../lancer/vm/opcodes.zig");
 
 pub const section_count = 27;
 
@@ -380,7 +380,7 @@ pub const Operand = union(enum) {
     /// A tag the matcher cannot resolve.
     other: u32,
 
-    pub fn read(raw: u32, kinds: vm_commands.Kinds) Operand {
+    pub fn read(raw: u32, kinds: commands.Kinds) Operand {
         const reference: Reference = @bitCast(raw);
         if (reference.index == Reference.unset) return .unset;
         if (kinds.number) return .{ .number = raw };
@@ -393,7 +393,7 @@ pub const Operand = union(enum) {
 };
 
 test Operand {
-    const Kinds = vm_commands.Kinds;
+    const Kinds = commands.Kinds;
     const ship: Kinds = @bitCast(@as(u32, 0x400));
     const number: Kinds = @bitCast(@as(u32, 0x80));
     try std.testing.expectEqual(Operand.unset, Operand.read(0xFFFFFFFF, ship));
@@ -502,7 +502,8 @@ pub const SquadMember = extern struct {
 
 /// The 35 conditions, in the order of the engine's descriptor table at `0x4F6698`, named after its
 /// `TT_*` constants. The last two are internal and cannot be scripted. What each applies to and
-/// what its events carry is in [`vm_conditions`](vm_conditions.zig), generated from that table.
+/// what its events carry is in [`lancer/vm/conditions.zig`](../lancer/vm/conditions.zig), generated
+/// from that table.
 pub const Condition = enum(u8) {
     shot_at = 0x00,
     destroyed = 0x01,
@@ -545,14 +546,14 @@ pub const Condition = enum(u8) {
     pub const last_scriptable: Condition = .being_chased;
 
     /// The condition's entry in the engine's catalogue, or null for a value the catalogue lacks.
-    pub fn descriptor(condition: Condition) ?vm_conditions.Condition {
-        return vm_conditions.find(@intFromEnum(condition));
+    pub fn descriptor(condition: Condition) ?conditions.Condition {
+        return conditions.find(@intFromEnum(condition));
     }
 
     comptime {
         const tags = @typeInfo(Condition).@"enum".fields;
-        if (tags.len != vm_conditions.table.len) {
-            @compileError("dte.Condition does not name every entry of vm_conditions.table");
+        if (tags.len != conditions.table.len) {
+            @compileError("dte.Condition does not name every entry of conditions.table");
         }
         for (tags, 0..) |tag, index| {
             if (tag.value != index) @compileError("dte.Condition." ++ tag.name ++ " is out of order");
@@ -574,7 +575,8 @@ pub const Condition = enum(u8) {
 ///
 /// The handler table holds 86 entries, of which 71 are filled: `0x02` to `0x07` and `0x14` to
 /// `0x55`, minus `0x50`. Those 71 are the whole instruction set. Their sizes and shapes are in
-/// [`vm_opcodes`](vm_opcodes.zig), derived from the handlers themselves by `src/tools/tablegen`.
+/// [`lancer/vm/opcodes.zig`](../lancer/vm/opcodes.zig), derived from the handlers themselves by
+/// `src/tools/tablegen`.
 pub const Opcode = enum(u8) {
     // Comparisons pop `b`, then `a`, and push 1 or 0. Values are unsigned.
     equal = 0x02,
@@ -603,8 +605,8 @@ pub const Opcode = enum(u8) {
     logical_and = 0x1F,
     logical_or = 0x20,
 
-    /// Calls Executor command `n`, [`vm_commands`](vm_commands.zig), with its arguments popped off
-    /// the stack. Its result is kept for `push_result`.
+    /// Calls Executor command `n`, [`lancer/game/executor/commands.zig`](../lancer/game/executor/commands.zig),
+    /// with its arguments popped off the stack. Its result is kept for `push_result`.
     command = 0x21,
     /// Calls part `n` through the part table.
     call_part = 0x22,
@@ -800,7 +802,7 @@ pub const ArmIterator = struct {
 /// Decodes the instruction at `pos` in `code`, whose addresses it reports as offsets into `code`.
 pub fn decodeAt(code: []const u8, pos: usize) ?Instruction {
     const length = instructionSize(code, pos) orelse return null;
-    const info = vm_opcodes.find(code[pos]) orelse return null;
+    const info = opcodes.find(code[pos]) orelse return null;
     const opcode: Opcode = @enumFromInt(code[pos]);
     const operands = code[pos + 1 ..][0 .. length - 1];
 
@@ -831,13 +833,13 @@ pub fn opcodeName(byte: u8) ?[]const u8 {
 // Every opcode the handler table implements has a name, and every name is one it implements.
 comptime {
     @setEvalBranchQuota(20_000);
-    for (vm_opcodes.table) |info| {
+    for (opcodes.table) |info| {
         if (std.enums.tagName(Opcode, @enumFromInt(info.opcode)) == null) {
             @compileError(std.fmt.comptimePrint("opcode 0x{X:0>2} has no name", .{info.opcode}));
         }
     }
     for (std.meta.fields(Opcode)) |field| {
-        if (vm_opcodes.find(field.value) == null) {
+        if (opcodes.find(field.value) == null) {
             @compileError("no handler for opcode " ++ field.name);
         }
     }
@@ -862,7 +864,7 @@ fn transferKind(opcode: Opcode) ?TransferKind {
 }
 
 comptime {
-    for (vm_opcodes.table) |info| {
+    for (opcodes.table) |info| {
         if (info.form == .transfer and transferKind(@enumFromInt(info.opcode)) == null) {
             @compileError(std.fmt.comptimePrint("transfer opcode 0x{X:0>2} has no kind", .{info.opcode}));
         }
@@ -881,7 +883,7 @@ comptime {
 /// - `branch` and `transfer` are fixed sizes; only where execution resumes differs.
 pub fn instructionSize(code: []const u8, pos: usize) ?usize {
     if (pos >= code.len) return null;
-    const info = vm_opcodes.find(code[pos]) orelse return null;
+    const info = opcodes.find(code[pos]) orelse return null;
     const operands = code[pos + 1 ..];
     const length: usize = switch (info.form) {
         .inline_data => blk: {
@@ -1052,7 +1054,7 @@ pub const BlockReader = struct {
     pub fn stop(reader: BlockReader) Stop {
         const left = reader.rest();
         if (left.len == 0 or reader.padding().len != 0) return .complete;
-        return if (vm_opcodes.find(left[0]) == null) .unimplemented else .truncated;
+        return if (opcodes.find(left[0]) == null) .unimplemented else .truncated;
     }
 };
 
@@ -1515,6 +1517,6 @@ test "maps the script into trigger blocks and parts, with their constants" {
 }
 
 test {
-    _ = vm_commands;
-    _ = vm_opcodes;
+    _ = commands;
+    _ = opcodes;
 }

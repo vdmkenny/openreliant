@@ -80,10 +80,10 @@ Documentation index: [`docs/README.md`](docs/README.md).
 
 | Path | Contents |
 |---|---|
-| `src/formats/` | The `starlancer` module: readers for the game's formats and containers. |
-| `src/lancer.zig`, `src/lancer/` | The game executable's own run-time structures. |
+| `src/formats/` | Readers for the game's file formats and the containers it shipped in. |
+| `src/lancer.zig`, `src/lancer/` | The payload's structures and tables, laid out as its source tree: `game/` and `surrender/surrenderlib/` mirror `C:\lancer`, a module per original file; `sources.zig` places the code in those files; `libcmt.zig` is the C runtime; `vm.zig` and `input.zig` hold code whose file is unknown. |
 | `src/tools/sltool/` | `sltool`, the command line front end. |
-| `src/tools/tablegen/` | Derives the engine's static tables from the game binary: the script VM's, its model tables, the control bindings, the order table and the combat maneuvers. |
+| `src/tools/tablegen/` | Derives the engine's static tables from the game binary: the script VM's, its model tables, the control bindings, the order table, the combat maneuvers and the source map. |
 | `src/tools/ghidragen/` | Writes the names and data types the Ghidra scripts apply. |
 | `mk/`, `scripts/` | Makefile fragments and their helpers. |
 | `ghidra/scripts/` | Ghidra scripts, run headless by `make`. |

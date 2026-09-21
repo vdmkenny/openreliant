@@ -9,7 +9,7 @@ const std = @import("std");
 const Io = std.Io;
 
 const starlancer = @import("starlancer");
-const Record = starlancer.lancer.orders.Record;
+const Record = starlancer.lancer.game.ai.Record;
 
 const image = @import("image.zig");
 const testing = @import("testing.zig");
@@ -117,7 +117,7 @@ pub fn emit(w: *Io.Writer, table: Table, names: []const []const u8) Io.Writer.Er
         \\
         \\const std = @import("std");
         \\
-        \\pub const Flags = @import("../lancer/orders.zig").Record.Flags;
+        \\pub const Flags = @import("../ai.zig").Record.Flags;
         \\
         \\/// Every order in the table, by number.
         \\pub const Order = enum(i16) {{

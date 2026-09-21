@@ -14,7 +14,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
-const models = @import("models.zig");
+const models = @import("../lancer/game/create/models.zig");
 
 pub const Vec3 = extern struct {
     x: f32,

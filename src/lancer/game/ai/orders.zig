@@ -8,7 +8,7 @@
 
 const std = @import("std");
 
-pub const Flags = @import("../lancer/orders.zig").Record.Flags;
+pub const Flags = @import("../ai.zig").Record.Flags;
 
 /// Every order in the table, by number.
 pub const Order = enum(i16) {

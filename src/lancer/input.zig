@@ -1,8 +1,13 @@
 //! Player input as the game reads it: DirectInput's device states, the control bindings, and the
-//! setting that picks the device the player steers with.
+//! setting that picks the device the player steers with. [`input/controls.zig`](input/controls.zig)
+//! transcribes the actions and their default bindings. **Unknown:** the source files. The device
+//! code lies between `DPSession.cpp`'s and `srAPI.cpp`'s, the player's controls between
+//! `airipper.cpp`'s and `jump.cpp`'s.
 
 const std = @import("std");
 const assert = std.debug.assert;
+
+pub const controls = @import("input/controls.zig");
 
 /// DirectInput's `DIJOYSTATE`, which the game polls the joystick into at `joystick` each simulation
 /// step. The game sets the axes to run from -1000 to 1000.
@@ -66,7 +71,7 @@ pub const MouseState = extern struct {
     }
 };
 
-/// One action's bindings, an entry of `control_bindings`; `src/formats/controls.zig` lists the
+/// One action's bindings, an entry of `control_bindings`; [`input/controls.zig`](input/controls.zig) lists the
 /// actions and the bindings the game starts with.
 pub const ControlBinding = extern struct {
     /// A DirectInput scan code (`DIK_*`), an index into `keyboard`.

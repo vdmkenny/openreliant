@@ -5,7 +5,7 @@
 //! 0x004F7490, and the loader at 0x0045DE70 that fills the attachment table at 0x00538CA8. The
 //! file names are the engine's own. Do not edit by hand; run `make model-tables`.
 
-const Kind = @import("shp.zig").Attachment.Kind;
+const Kind = @import("../../../formats/shp.zig").Attachment.Kind;
 
 /// A ship type's model, and the sprite of it the comms screen shows. Types are numbered like
 /// the records of `shipstats.bin`.

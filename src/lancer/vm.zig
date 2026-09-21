@@ -1,4 +1,6 @@
-//! The mission script VM's run-time structures.
+//! The mission script VM's run-time structures. **Unknown:** its source file; the interpreter's
+//! code lies between `mission.cpp`'s and `attach.cpp`'s. [`vm/opcodes.zig`](vm/opcodes.zig) and
+//! [`vm/conditions.zig`](vm/conditions.zig) transcribe its opcode and condition tables.
 //!
 //! A thread runs one block with a stack of its own. While it runs, the interpreter (`vm_run`) keeps
 //! its stack pointer and block end in globals (`vm_stack_top`, `vm_block_end`) and hands every
@@ -8,23 +10,19 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const dte = @import("../formats/dte.zig");
-const vm_commands = @import("../formats/vm_commands.zig");
+const commands = @import("game/executor/commands.zig");
+const Command = @import("game/executor.zig").Command;
 const lancer = @import("../lancer.zig");
 const Code = lancer.Code;
 const Pointer = lancer.Pointer;
+
+pub const opcodes = @import("vm/opcodes.zig");
+pub const conditions = @import("vm/conditions.zig");
 
 /// An opcode handler, called through `vm_dispatch_table`. `ip` points at the thread's instruction
 /// pointer, already past the opcode, and `frame` at its frame pointer. `previous` is what the last
 /// handler returned. A handler returns it to carry on, or zero to end the loop.
 pub const Handler = Code("uint __fastcall (byte **ip, uint **frame, uint previous)");
-
-/// A command's implementation. `args` points at its first argument on the stack. The result is
-/// stored in `Thread.result`, and a zero result also ends the handler loop.
-pub const Command = Code("uint __fastcall (byte **ip, uint *args)");
-
-/// What a command hands `for_each_ship` to run for each ship its first argument names: the ship,
-/// and the command's remaining arguments.
-pub const ShipCommand = Code("uint __fastcall (MissionShip *ship, uint *args)");
 
 /// Threads the pool at `vm_threads` holds. `vm_thread_start` starts none while 31 are running.
 pub const max_threads = 32;
@@ -109,7 +107,7 @@ pub const Function = extern struct {
     };
 
     pub const Param = extern struct {
-        kinds: vm_commands.Kinds,
+        kinds: commands.Kinds,
         /// **Unknown.**
         extra: u32,
         label: Pointer(u8),
@@ -178,7 +176,7 @@ pub const ConditionDescriptor = extern struct {
 /// One value an event carries: an entry of a condition's `values` list.
 pub const EventValue = extern struct {
     label: Pointer(u8),
-    kinds: vm_commands.Kinds,
+    kinds: commands.Kinds,
     /// **Unknown.** `0xFF`, or `0x09` for the weapon of `ShotAt`.
     _unknown_08: u8,
     /// Whether a trigger's operand for this value is checked against the event's.

@@ -9,9 +9,9 @@
 
 const std = @import("std");
 
-const script = @import("maneuver_script.zig");
+const script = @import("script.zig");
 pub const Opcode = script.Opcode;
-pub const Mirror = @import("../lancer/maneuvers.zig").Mirror;
+pub const Mirror = @import("../aidefend.zig").Mirror;
 
 /// Where the tables are in the payload executable.
 pub const addresses = struct {

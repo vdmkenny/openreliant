@@ -4,8 +4,8 @@
 //! 0x004F6698, 35 entries, which `mission_script_start` installs. Names and labels are the
 //! developers' own. Do not edit by hand; run `make vm-conditions`.
 
-const dte = @import("dte.zig");
-const Kinds = @import("vm_commands.zig").Kinds;
+const dte = @import("../../formats/dte.zig");
+const Kinds = @import("../game/executor/commands.zig").Kinds;
 
 /// One value an event carries. A thread the event starts has them as its locals, and a
 /// trigger's operands follow the same order.

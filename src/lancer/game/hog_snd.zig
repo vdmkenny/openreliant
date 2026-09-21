@@ -1,4 +1,6 @@
-//! Sound playback state.
+//! `C:\lancer\game\hog_SND.CPP`: sound playback. `sound_play` (`0x00481F80`) and `sound_start`
+//! (`0x004826A0`) play the banks' sounds on the voices of `sound_voices`. **Unverified:** both lie
+//! outside this file's known code, on either side of it.
 
 const std = @import("std");
 const assert = std.debug.assert;

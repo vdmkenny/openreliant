@@ -171,9 +171,9 @@ is checked against the value. ShotAt carries the attacker, the shield damage, th
 victim and the weapon; Destroyed the killer and the victim. The damage values set kind bit `0x1000`,
 which no command parameter uses.
 
-Events pass ships as the addresses of their records, and the matcher turns a trigger's operands
-into the same form: the [mission format](../formats/dte.md#operands) gives the encoding.
+Events pass ships as the addresses of their records, and the matcher turns a trigger's operands into
+the same form: the [mission format](../formats/dte.md#operands) gives the encoding.
 `trigger_check_operand` (`0x0045D810`) compares a number operand of the proximity conditions as an
 upper bound rather than for equality, but their distance value is not marked as checked, so the
 matcher never compares it. The catalogue is also generated into
-[`src/formats/vm_conditions.zig`](../../src/formats/vm_conditions.zig).
+[`src/lancer/vm/conditions.zig`](../../src/lancer/vm/conditions.zig).

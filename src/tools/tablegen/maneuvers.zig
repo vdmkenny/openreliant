@@ -9,7 +9,7 @@ const std = @import("std");
 const Io = std.Io;
 
 const starlancer = @import("starlancer");
-const lancer_maneuvers = starlancer.lancer.maneuvers;
+const lancer_maneuvers = starlancer.lancer.game.aidefend;
 const Record = lancer_maneuvers.Maneuver;
 const Opcode = lancer_maneuvers.Opcode;
 
@@ -115,9 +115,9 @@ pub fn emit(arena: std.mem.Allocator, w: *Io.Writer, table: Table) !void {
         \\
         \\const std = @import("std");
         \\
-        \\const script = @import("maneuver_script.zig");
+        \\const script = @import("script.zig");
         \\pub const Opcode = script.Opcode;
-        \\pub const Mirror = @import("../lancer/maneuvers.zig").Mirror;
+        \\pub const Mirror = @import("../aidefend.zig").Mirror;
         \\
         \\/// Where the tables are in the payload executable.
         \\pub const addresses = struct {{

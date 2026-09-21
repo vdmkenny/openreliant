@@ -52,14 +52,14 @@ pub const exported = [_]Export{
 
     // The script VM.
     .{ "VmHandler", lancer.vm.Handler },
-    .{ "VmCommand", lancer.vm.Command },
-    .{ "VmShipCommand", lancer.vm.ShipCommand },
+    .{ "VmCommand", lancer.game.executor.Command },
+    .{ "VmShipCommand", lancer.game.executor.ShipCommand },
     .{ "VmThread", lancer.vm.Thread },
     .{ "VmCallRecord", lancer.vm.CallRecord },
     .{ "VmFunction", lancer.vm.Function },
     .{ "VmFunctionEntry", lancer.vm.Function.Entry },
     .{ "VmParam", lancer.vm.Function.Param },
-    .{ "ParamKinds", dte.vm_commands.Kinds },
+    .{ "ParamKinds", lancer.game.executor.commands.Kinds },
     .{ "VmTimer", lancer.vm.Timer },
     .{ "ConditionDescriptor", lancer.vm.ConditionDescriptor },
     .{ "EventValue", lancer.vm.EventValue },
@@ -68,14 +68,14 @@ pub const exported = [_]Export{
     .{ "ComponentTag", lancer.vm.ComponentTag },
 
     // Stat tables.
-    .{ "FlightModel", lancer.stats.FlightModel },
-    .{ "ShipCombat", lancer.stats.ShipCombat },
-    .{ "GunStats", lancer.stats.Gun },
-    .{ "MissileStats", lancer.stats.Missile },
-    .{ "PilotStats", lancer.stats.Pilot },
+    .{ "FlightModel", lancer.game.create.FlightModel },
+    .{ "ShipCombat", lancer.game.create.ShipCombat },
+    .{ "GunStats", lancer.game.guns.Gun },
+    .{ "MissileStats", lancer.game.missiles.Missile },
+    .{ "PilotStats", lancer.game.pilots.Pilot },
 
     // Sound.
-    .{ "SoundVoice", lancer.sound.Voice },
+    .{ "SoundVoice", lancer.game.hog_snd.Voice },
 
     // Player input.
     .{ "JoystickState", lancer.input.JoystickState },
@@ -83,51 +83,51 @@ pub const exported = [_]Export{
     .{ "MouseState", lancer.input.MouseState },
     .{ "ControlBinding", lancer.input.ControlBinding },
     .{ "ControlModifier", lancer.input.ControlBinding.Modifier },
-    .{ "ControlAction", starlancer.controls.Action },
+    .{ "ControlAction", lancer.input.controls.Action },
     .{ "ControlMode", lancer.input.ControlMode },
 
     // Orders.
-    .{ "Order", starlancer.orders.Order },
-    .{ "OrderRecord", lancer.orders.Record },
-    .{ "OrderFlags", lancer.orders.Record.Flags },
-    .{ "OrderTarget", lancer.orders.Target },
-    .{ "OrderTargetKind", lancer.orders.Target.Kind },
-    .{ "OrderEntry", lancer.orders.Entry },
-    .{ "OrderData", lancer.orders.Entry.Data },
-    .{ "QueuedOrder", lancer.orders.Queued },
-    .{ "OrderState", lancer.orders.State },
+    .{ "Order", lancer.game.ai.orders.Order },
+    .{ "OrderRecord", lancer.game.ai.Record },
+    .{ "OrderFlags", lancer.game.ai.Record.Flags },
+    .{ "OrderTarget", lancer.game.aigeneric.Target },
+    .{ "OrderTargetKind", lancer.game.aigeneric.Target.Kind },
+    .{ "OrderEntry", lancer.game.aigeneric.Entry },
+    .{ "OrderData", lancer.game.aigeneric.Entry.Data },
+    .{ "QueuedOrder", lancer.game.aigeneric.Queued },
+    .{ "OrderState", lancer.game.aigeneric.State },
 
     // Combat maneuvers.
-    .{ "ManeuverOpcode", lancer.maneuvers.Opcode },
-    .{ "ManeuverMirror", lancer.maneuvers.Mirror },
-    .{ "ManeuverCondition", lancer.maneuvers.Condition },
-    .{ "ManeuverRecord", lancer.maneuvers.Maneuver },
-    .{ "ManeuverScriptLine", lancer.maneuvers.ScriptLine },
-    .{ "ManeuverHandler", lancer.maneuvers.Handler },
-    .{ "ManeuverHandlers", lancer.maneuvers.Handlers },
-    .{ "ManeuverInstruction", lancer.maneuvers.Instruction },
-    .{ "ManeuverRange", lancer.maneuvers.Instruction.Range },
-    .{ "ManeuverTicks", lancer.maneuvers.Instruction.Ticks },
-    .{ "ManeuverFlag", lancer.maneuvers.Instruction.Flag },
-    .{ "ManeuverJump", lancer.maneuvers.Instruction.Jump },
-    .{ "ManeuverBranch", lancer.maneuvers.Instruction.Branch },
-    .{ "FightState", lancer.maneuvers.FightState },
-    .{ "FightData", lancer.maneuvers.FightData },
+    .{ "ManeuverOpcode", lancer.game.aidefend.Opcode },
+    .{ "ManeuverMirror", lancer.game.aidefend.Mirror },
+    .{ "ManeuverCondition", lancer.game.aidefend.Condition },
+    .{ "ManeuverRecord", lancer.game.aidefend.Maneuver },
+    .{ "ManeuverScriptLine", lancer.game.aidefend.ScriptLine },
+    .{ "ManeuverHandler", lancer.game.aidefend.Handler },
+    .{ "ManeuverHandlers", lancer.game.aidefend.Handlers },
+    .{ "ManeuverInstruction", lancer.game.aidefend.Instruction },
+    .{ "ManeuverRange", lancer.game.aidefend.Instruction.Range },
+    .{ "ManeuverTicks", lancer.game.aidefend.Instruction.Ticks },
+    .{ "ManeuverFlag", lancer.game.aidefend.Instruction.Flag },
+    .{ "ManeuverJump", lancer.game.aidefend.Instruction.Jump },
+    .{ "ManeuverBranch", lancer.game.aidefend.Instruction.Branch },
+    .{ "FightState", lancer.game.aifight.FightState },
+    .{ "FightData", lancer.game.aifight.FightData },
 
     // The C runtime.
     .{ "FILE", lancer.libcmt.File },
     .{ "FileFlags", lancer.libcmt.File.Flags },
 
     // Live objects and their models.
-    .{ "GameObject", lancer.game.GameObject },
-    .{ "ObjectFlags", lancer.game.GameObject.Flags },
-    .{ "ObjectRoutine", lancer.game.Routine },
-    .{ "ModelNode", lancer.game.Node },
-    .{ "NodeFlags", lancer.game.Node.Flags },
-    .{ "SurrenderFrame", lancer.game.Frame },
-    .{ "ObjectComponent", lancer.game.Component },
-    .{ "ShipTypeEntry", lancer.game.ShipType },
-    .{ "MountedModel", lancer.game.MountedModel },
+    .{ "GameObject", lancer.game.gameobj.GameObject },
+    .{ "ObjectFlags", lancer.game.gameobj.GameObject.Flags },
+    .{ "ObjectRoutine", lancer.game.gameobj.Routine },
+    .{ "ModelNode", lancer.game.objects.Node },
+    .{ "NodeFlags", lancer.game.objects.Node.Flags },
+    .{ "SurrenderFrame", lancer.surrender.surrenderlib.srapiext.Frame },
+    .{ "ObjectComponent", lancer.game.gameobj.Component },
+    .{ "ShipTypeEntry", lancer.game.create.ShipType },
+    .{ "MountedModel", lancer.game.create.MountedModel },
     .{ "ShpPart", shp.Part },
     .{ "ShpPartFlags", shp.Part.Flags },
     .{ "ShpAttachment", shp.Attachment },
@@ -282,7 +282,7 @@ test typeString {
 }
 
 test structRows {
-    const rows = comptime Definition(lancer.game.Node);
+    const rows = comptime Definition(lancer.game.objects.Node);
     try std.testing.expect(std.mem.indexOf(u8, rows, "_unknown_14") == null);
     try std.testing.expect(std.mem.indexOf(u8, rows, "field\tModelNode\t164\tpart\tShpPart *\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, comptime Definition(shp.Part), "\tname_bytes\tchar[64]\n") != null);

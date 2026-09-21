@@ -94,7 +94,7 @@ pub fn emit(w: *Io.Writer, bindings: []const Binding) Io.Writer.Error!void {
         \\const std = @import("std");
         \\
         \\/// The modifier held with a key; `docs/engine/controls.md` describes how each counts.
-        \\pub const Modifier = @import("../lancer/input.zig").ControlBinding.Modifier;
+        \\pub const Modifier = @import("../input.zig").ControlBinding.Modifier;
         \\
         \\/// Every action, numbered as the game numbers them.
         \\pub const Action = enum(u32) {{

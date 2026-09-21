@@ -120,16 +120,18 @@ Ghidra's default names, and the next export includes them.
 
 `make vm-opcodes` reads the export back: `src/tools/tablegen` derives the opcode table from the
 payload's dispatch table and its handlers and writes
-[`src/formats/vm_opcodes.zig`](../src/formats/vm_opcodes.zig). `make vm-commands` and `make
+[`src/lancer/vm/opcodes.zig`](../src/lancer/vm/opcodes.zig). `make vm-commands` and `make
 vm-conditions` read the Executor command catalogue and the trigger condition catalogue from the
-binary alone and write [`src/formats/vm_commands.zig`](../src/formats/vm_commands.zig) and
-[`src/formats/vm_conditions.zig`](../src/formats/vm_conditions.zig). `make model-tables` reads the
-ship type table from the binary and follows the code that loads the attachment models in the
-export, and writes [`src/formats/models.zig`](../src/formats/models.zig). `make control-tables`
-reads the player's actions and their default bindings from the binary and writes
-[`src/formats/controls.zig`](../src/formats/controls.zig), `make order-tables` reads the order
-table into [`src/formats/orders.zig`](../src/formats/orders.zig), and `make maneuver-tables` reads
-the combat maneuvers and their scripts into [`src/formats/maneuvers.zig`](../src/formats/maneuvers.zig).
-`make source-map` writes [`src/lancer/sources.zig`](../src/lancer/sources.zig), the source file of
-each stretch of code, from the binary and the export. The tables are committed, so building
-the tools never needs the game.
+binary alone and write
+[`src/lancer/game/executor/commands.zig`](../src/lancer/game/executor/commands.zig) and
+[`src/lancer/vm/conditions.zig`](../src/lancer/vm/conditions.zig). `make model-tables` reads the
+ship type table from the binary and follows the code that loads the attachment models in the export,
+and writes [`src/lancer/game/create/models.zig`](../src/lancer/game/create/models.zig). `make
+control-tables` reads the player's actions and their default bindings from the binary and writes
+[`src/lancer/input/controls.zig`](../src/lancer/input/controls.zig), `make order-tables` reads the
+order table into [`src/lancer/game/ai/orders.zig`](../src/lancer/game/ai/orders.zig), and `make
+maneuver-tables` reads the combat maneuvers and their scripts into
+[`src/lancer/game/aidefend/maneuvers.zig`](../src/lancer/game/aidefend/maneuvers.zig). `make
+source-map` writes [`src/lancer/sources.zig`](../src/lancer/sources.zig), the source file of each
+stretch of code, from the binary and the export. The tables are committed, so building the tools
+never needs the game.

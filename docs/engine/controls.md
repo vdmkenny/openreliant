@@ -50,9 +50,9 @@ The front-end screens read the keyboard themselves.
 
 `control_bindings` (`0x4E2380`) holds a `ControlBinding` for each action: a scan code, a modifier
 (none, Shift, Ctrl or Alt, either key of the pair), the name the game shows, and a joystick button
-or -1. [`src/formats/controls.zig`](../../src/formats/controls.zig) lists the actions, numbered as
-the game numbers them, with the bindings the game starts with; `make control-tables` transcribes
-it from the executable.
+or -1. [`src/lancer/input/controls.zig`](../../src/lancer/input/controls.zig) lists the actions,
+numbered as the game numbers them, with the bindings the game starts with; `make control-tables`
+transcribes it from the executable.
 
 `load_key_config` (`0x0042C800`) reads the input settings and the bindings from the `KeyConfig`
 and `JoyConfig` sections of `starlancer.ini` in the game's directory. The settings are in

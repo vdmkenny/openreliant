@@ -1,9 +1,11 @@
 # Live objects
 
-The ships, stations, gates, missiles and markers of a running mission. Each is a `0xB98`-byte
-object from `gameobj.cpp`, and each embeds the root of a hierarchy of nodes standing for the parts
-of its model. The layouts are defined in [`src/lancer/game.zig`](../../src/lancer/game.zig), and
-`make ghidra-annotate` applies them to the Ghidra project with the names used here.
+The ships, stations, gates, missiles and markers of a running mission. Each is a `0xB98`-byte object
+from `gameobj.cpp`, and each embeds the root of a hierarchy of nodes standing for the parts of its
+model. The layouts are defined in [`gameobj.zig`](../../src/lancer/game/gameobj.zig),
+[`objects.zig`](../../src/lancer/game/objects.zig), [`create.zig`](../../src/lancer/game/create.zig)
+and [`srapiext.zig`](../../src/lancer/surrender/surrenderlib/srapiext.zig), and `make
+ghidra-annotate` applies them to the Ghidra project with the names used here.
 
 ## The object array
 

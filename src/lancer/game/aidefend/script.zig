@@ -1,6 +1,6 @@
-//! The language of the combat maneuvers' scripts, and a compiler for it that does what the payload's
-//! own does (`maneuver_compile_line`, `0x00405010`). `docs/engine/maneuvers.md` describes what each
-//! command does when it runs.
+//! The language of the combat maneuvers' scripts, and a compiler for it that does what the
+//! payload's own does (`maneuver_compile_line`, `0x00405010`). `docs/engine/maneuvers.md` describes
+//! what each command does when it runs.
 //!
 //! A script is a list of lines, each one command. A command is a word, then for some commands a
 //! list of arguments in parentheses, separated by commas, of which the payload reads four at most.
@@ -13,7 +13,7 @@
 
 const std = @import("std");
 
-const maneuvers = @import("../lancer/maneuvers.zig");
+const maneuvers = @import("../aidefend.zig");
 pub const Opcode = maneuvers.Opcode;
 pub const Condition = maneuvers.Condition;
 

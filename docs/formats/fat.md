@@ -36,7 +36,7 @@ The engine reads a whole bank into memory with its generic file loader, `hog_rea
 WAVE file at `bank + offset`. The priority decides whether a sound may take over a voice already
 playing: the player finds the busy voice of lowest priority and stops it only for a sound whose
 priority is higher, then records the new sound's priority on the voice (`SoundVoice` in
-[`src/lancer/sound.zig`](../../src/lancer/sound.zig)).
+[`src/lancer/game/hog_snd.zig`](../../src/lancer/game/hog_snd.zig)).
 
 The shipped banks use priorities 1, 5, 50 and 10000. Most hold a single sound: those named for the
 flyable fighters, such as `PREDATOR.FAT`, each hold one at priority 10000. `betty.fat` holds the

@@ -1,4 +1,7 @@
-//! The game executable's own run-time structures, as the payload lays them out on 32-bit x86.
+//! The payload, the game executable, as it lies in memory on 32-bit x86. Modules follow its source
+//! tree, `C:\lancer`, where a structure's file is known, and are named for their contents where it
+//! is not. [`lancer/sources.zig`](lancer/sources.zig) places the code in its files;
+//! [`lancer/libcmt.zig`](lancer/libcmt.zig) is the C runtime.
 //!
 //! The engine uses mission records in place, pointing each section at the file's bytes, so those
 //! are the structures in `formats/dte.zig`. The ones here are those it builds itself. They describe
@@ -9,12 +12,9 @@ const std = @import("std");
 
 pub const game = @import("lancer/game.zig");
 pub const input = @import("lancer/input.zig");
-pub const maneuvers = @import("lancer/maneuvers.zig");
-pub const orders = @import("lancer/orders.zig");
 pub const libcmt = @import("lancer/libcmt.zig");
-pub const sound = @import("lancer/sound.zig");
 pub const sources = @import("lancer/sources.zig");
-pub const stats = @import("lancer/stats.zig");
+pub const surrender = @import("lancer/surrender.zig");
 pub const vm = @import("lancer/vm.zig");
 
 /// The 32-bit address of a `T` in the payload's address space.
