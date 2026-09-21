@@ -184,3 +184,12 @@
 00499240	function	node_child_slot	int __fastcall (ModelNode *node)	A free index in a node's child list, which it creates and grows up to its capacity
 004531c0	function	ship_index	uint __fastcall (MissionShip *ship)	Index of a ship record, or 0xFFFF
 004c3710	function	sr_assert_failed		Surrender's assertion failure: reports FATAL: SR Assertion Failed and breaks
+004f7490	data	ship_types	ShipTypeEntry[256]	A model and comms sprite name for each ship type, and the model once loaded
+00538ca8	data	attachment_models	MountedModel[180]	What attachment points mount: 20 ids for each of 9 kinds
+0045de70	function	attachment_models_load	void __fastcall (void)	Loads the models and sprites attachment points mount
+004a44d0	function	model_load	void * __fastcall (char *name)	Loads a .SHP model by file name
+004760c0	function	object_add_part	void __fastcall (GameObject *object, void *model, int part)	Gives an object a node for a part of its model
+00499430	function	node_add_part	ModelNode * __fastcall (ModelNode *parent, ShpPart *part)	Hangs a node for a model part from a node, then mounts what its attachment points hold
+00499a10	function	node_mount	void __fastcall (ModelNode *node, ShpAttachment *attachment)	Mounts what an attachment point holds: an object of its own for guns and pods
+00476130	function	object_link_parts	void __fastcall (GameObject *object)	Links each part's node to its parent part's, or to the root
+00476180	function	object_link_part	void __fastcall (GameObject *object, int part, int parent)	Links a part's node to its parent part's, or to the root for none

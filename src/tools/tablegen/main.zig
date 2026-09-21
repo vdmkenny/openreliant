@@ -1,8 +1,9 @@
-//! tablegen: derives the mission script VM's tables from the game binary.
+//! tablegen: derives the engine's static tables from the game binary.
 //!
 //!     tablegen opcodes <LANCER.EXE> <disassembly.asm> <output.zig>
 //!     tablegen commands <LANCER.EXE> <output.zig>
 //!     tablegen conditions <LANCER.EXE> <output.zig>
+//!     tablegen models <LANCER.EXE> <disassembly.asm> <output.zig>
 //!
 //! `opcodes`: the VM dispatches on a byte through a table of handler addresses. Reading that table
 //! gives the opcode set, and following each handler gives the size and shape of the instruction it
@@ -11,6 +12,9 @@
 //! `commands`: the Executor catalogue that `0x21 command` indexes, which needs only the binary.
 //!
 //! `conditions`: the trigger condition catalogue, which also needs only the binary.
+//!
+//! `models`: the model of each ship type, and the models mounted on attachment points, which the
+//! engine loads in code that the listing lets this follow.
 //!
 //! All come straight out of the binary, so the tables written are transcripts of the engine rather
 //! than readings of the mission files.
@@ -24,6 +28,7 @@ const pe = starlancer.pe;
 const commands = @import("commands.zig");
 const conditions = @import("conditions.zig");
 const eval = @import("eval.zig");
+const models = @import("models.zig");
 const x86 = @import("x86.zig");
 
 /// Virtual address of the dispatch table, found from the `CALL dword ptr [...]` that the
@@ -43,6 +48,7 @@ const usage =
     \\usage: tablegen opcodes <LANCER.EXE> <disassembly.asm> <output.zig>
     \\       tablegen commands <LANCER.EXE> <output.zig>
     \\       tablegen conditions <LANCER.EXE> <output.zig>
+    \\       tablegen models <LANCER.EXE> <disassembly.asm> <output.zig>
     \\
 ;
 
@@ -50,6 +56,7 @@ const Mode = union(enum) {
     opcodes: struct { binary: []const u8, listing: []const u8, output: []const u8 },
     commands: struct { binary: []const u8, output: []const u8 },
     conditions: struct { binary: []const u8, output: []const u8 },
+    models: struct { binary: []const u8, listing: []const u8, output: []const u8 },
 
     fn parse(args: []const [:0]const u8) ?Mode {
         if (args.len == 0) return null;
@@ -59,6 +66,7 @@ const Mode = union(enum) {
             .opcodes => if (rest.len == 3) .{ .opcodes = .{ .binary = rest[0], .listing = rest[1], .output = rest[2] } } else null,
             .commands => if (rest.len == 2) .{ .commands = .{ .binary = rest[0], .output = rest[1] } } else null,
             .conditions => if (rest.len == 2) .{ .conditions = .{ .binary = rest[0], .output = rest[1] } } else null,
+            .models => if (rest.len == 3) .{ .models = .{ .binary = rest[0], .listing = rest[1], .output = rest[2] } } else null,
         };
     }
 };
@@ -74,6 +82,7 @@ pub fn main(init: std.process.Init) !u8 {
         .opcodes => |paths| opcodes(init, arena, paths.binary, paths.listing, paths.output),
         .commands => |paths| catalogue(init, arena, paths.binary, paths.output),
         .conditions => |paths| conditionCatalogue(init, arena, paths.binary, paths.output),
+        .models => |paths| modelTables(init, arena, paths.binary, paths.listing, paths.output),
     };
 }
 
@@ -106,6 +115,29 @@ fn conditionCatalogue(init: std.process.Init, arena: std.mem.Allocator, binary_p
     try out.interface.flush();
 
     std.debug.print("{d} conditions -> {s}\n", .{ catalogue_read.conditions.len, output });
+    return 0;
+}
+
+fn modelTables(
+    init: std.process.Init,
+    arena: std.mem.Allocator,
+    binary_path: []const u8,
+    listing_path: []const u8,
+    output: []const u8,
+) !u8 {
+    const cwd: Io.Dir = .cwd();
+    const binary = try cwd.readFileAlloc(init.io, binary_path, arena, .limited(64 << 20));
+    const listing = try cwd.readFileAlloc(init.io, listing_path, arena, .limited(256 << 20));
+    const pe_image: pe.Image = try .parse(binary);
+    const tables = try models.read(arena, .init(pe_image, binary), try x86.parse(arena, listing));
+
+    var buffer: [16 << 10]u8 = undefined;
+    var out: Io.File.Writer = .init(try cwd.createFile(init.io, output, .{}), init.io, &buffer);
+    defer out.file.close(init.io);
+    try models.emit(&out.interface, tables);
+    try out.interface.flush();
+
+    std.debug.print("{d} ship types and the attachment models -> {s}\n", .{ tables.ship_types.len, output });
     return 0;
 }
 
@@ -260,5 +292,6 @@ test {
     _ = commands;
     _ = conditions;
     _ = eval;
+    _ = models;
     _ = x86;
 }

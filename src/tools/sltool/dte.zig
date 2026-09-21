@@ -7,6 +7,7 @@ const starlancer = @import("starlancer");
 const dte = starlancer.dte;
 
 const Context = @import("main.zig").Context;
+const Library = @import("library.zig").Library;
 
 pub const Command = union(enum) {
     info: struct { mission: []const u8 },
@@ -51,15 +52,19 @@ pub const Command = union(enum) {
         };
         const image = try Io.Dir.cwd().readFileAlloc(ctx.io, path, ctx.arena, .limited(16 << 20));
         const mission: dte.Mission = try .parse(image);
+        // Models, for naming components, are looked for beside the mission.
+        var library: ?Library = Library.beside(ctx, path) catch null;
+        defer if (library) |*found| found.deinit();
+        const models: ?*Library = if (library) |*found| found else null;
 
         switch (command) {
             .info => try info(ctx, mission),
             .sections => try sections(ctx, mission),
             .ships => try ships(ctx, mission),
-            .triggers => try triggers(ctx, mission),
+            .triggers => try triggers(ctx, mission, models),
             .strings => try strings(ctx, mission),
             .parts => try parts(ctx, mission),
-            .script => try script(ctx, mission),
+            .script => try script(ctx, mission, models),
         }
     }
 };
@@ -135,7 +140,7 @@ fn ships(ctx: Context, mission: dte.Mission) !void {
     }
 }
 
-fn triggers(ctx: Context, mission: dte.Mission) !void {
+fn triggers(ctx: Context, mission: dte.Mission, models: ?*Library) !void {
     const owners = try mission.triggerObjects(ctx.arena);
     const all_objects = try mission.objects();
     const all_ships = try mission.ships();
@@ -167,6 +172,10 @@ fn triggers(ctx: Context, mission: dte.Mission) !void {
             for (all_ships) |ship| {
                 if (ship.object_id == id) {
                     try ctx.stdout.print("  {s}", .{mission.name(ship.name)});
+                    if (trigger.qualifier != dte.Trigger.whole_object) {
+                        try ctx.stdout.writeAll(", component");
+                        try printComponent(ctx, models, ship, trigger.qualifier);
+                    }
                     break;
                 }
             }
@@ -250,7 +259,7 @@ fn parts(ctx: Context, mission: dte.Mission) !void {
     try ctx.stdout.print("\n{d} of {d} entry blocks decode cleanly\n", .{ decoded, filled });
 }
 
-fn script(ctx: Context, mission: dte.Mission) !void {
+fn script(ctx: Context, mission: dte.Mission, models: ?*Library) !void {
     const code = try mission.script();
     const all_parts = try mission.parts();
     const list = try mission.routines(ctx.arena);
@@ -278,7 +287,7 @@ fn script(ctx: Context, mission: dte.Mission) !void {
             try ctx.stdout.writeAll("  no block here\n");
             continue;
         };
-        try printListing(ctx, mission, listing, constants);
+        try printListing(ctx, mission, models, listing, constants);
         if (constants.len != 0) {
             try ctx.stdout.writeAll("  constants:");
             for (constants) |value| try ctx.stdout.print(" {d}", .{value});
@@ -290,6 +299,7 @@ fn script(ctx: Context, mission: dte.Mission) !void {
 fn printListing(
     ctx: Context,
     mission: dte.Mission,
+    models: ?*Library,
     listing: dte.Disassembly,
     constants: []align(1) const u32,
 ) !void {
@@ -314,7 +324,7 @@ fn printListing(
         try dte.formatTag(dte.Opcode, instruction.opcode, ctx.stdout);
 
         switch (instruction.flow) {
-            .call => try printIndex(ctx, mission, instruction),
+            .call => try printIndex(ctx, mission, models, instruction),
             .next => switch (instruction.opcode) {
                 .push_constant => {
                     const index = instruction.operands[0];
@@ -327,7 +337,7 @@ fn printListing(
                 .command => if (dte.vm_commands.find(instruction.operands[0])) |command| {
                     try ctx.stdout.print("   {s}", .{command.name});
                 },
-                else => try printIndex(ctx, mission, instruction),
+                else => try printIndex(ctx, mission, models, instruction),
             },
             .branch => |branch| try ctx.stdout.print("   -> {d}{s}", .{
                 branch.target, if (branch.conditional) " if zero" else "",
@@ -350,13 +360,14 @@ fn printListing(
 
 /// Shows the operand of an instruction that takes an index, and the name of what it indexes where
 /// the mission holds one.
-fn printIndex(ctx: Context, mission: dte.Mission, instruction: dte.Instruction) !void {
+fn printIndex(ctx: Context, mission: dte.Mission, models: ?*Library, instruction: dte.Instruction) !void {
     switch (instruction.opcode) {
         .push_component, .push_component_alt => if (instruction.operands.len == 2) {
             const index = instruction.operands[0];
             const all = try mission.ships();
-            const name = if (index < all.len) mission.name(all[index].name) else "";
-            return ctx.stdout.print("   {d}  {s}, component {d}", .{ index, name, instruction.operands[1] });
+            if (index >= all.len) return ctx.stdout.print("   {d}, component {d}", .{ index, instruction.operands[1] });
+            try ctx.stdout.print("   {d}  {s}, component {d}", .{ index, mission.name(all[index].name), instruction.operands[1] });
+            return printComponent(ctx, models, all[index], instruction.operands[1]);
         },
         else => {},
     }
@@ -379,6 +390,21 @@ fn printIndex(ctx: Context, mission: dte.Mission, instruction: dte.Instruction) 
         else => "",
     };
     if (name.len != 0) try ctx.stdout.print("  {s}", .{name});
+}
+
+/// Names component `index` of a ship: the part it is in the model of the ship's type, found beside
+/// the mission. Nothing when the model cannot be found.
+fn printComponent(ctx: Context, models: ?*Library, ship: dte.Ship, index: u8) !void {
+    const library = models orelse return;
+    const ship_type = starlancer.models.shipType(ship.kind) orelse return;
+    const model = ship_type.model orelse return;
+    const list = try library.components(model) orelse return;
+    if (index >= list.len) {
+        return ctx.stdout.print(" out of range: {s} lists {d}", .{ model, list.len });
+    }
+    const component = list[index];
+    try ctx.stdout.print(" \"{s}\"", .{std.mem.trimEnd(u8, component.part.name(), " ")});
+    if (component.depth != 0) try ctx.stdout.print(" on {s}", .{component.model});
 }
 
 /// Renders an inline run as text when it is one, and as hex otherwise.

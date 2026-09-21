@@ -7,6 +7,7 @@ const starlancer = @import("starlancer");
 const shp = starlancer.shp;
 
 const Context = @import("main.zig").Context;
+const Library = @import("library.zig").Library;
 
 pub const Command = union(enum) {
     info: struct { model: []const u8 },
@@ -14,6 +15,8 @@ pub const Command = union(enum) {
     check: struct { model: []const u8 },
     /// Lists the chunk stream as it appears in the file.
     chunks: struct { model: []const u8 },
+    /// Lists the parts objects of the model name as components, by index.
+    components: struct { model: []const u8 },
     /// Writes Wavefront OBJ, one object per part.
     obj: struct { model: []const u8, out: []const u8, lod: u32 = 0, model_space: bool = false },
 
@@ -21,6 +24,8 @@ pub const Command = union(enum) {
         \\  shp info <model>                parts, meshes, materials and bounds
         \\  shp check <model>               validate indices, bounds and normals
         \\  shp chunks <model>              list the raw chunk stream
+        \\  shp components <model>          list the components objects of the model name by index,
+        \\                                  finding mounted models beside it
         \\  shp obj <model> <out.obj> [--lod <n>] [--model-space]
         \\                                  export geometry as Wavefront OBJ, righted to Y-up
         \\
@@ -34,6 +39,7 @@ pub const Command = union(enum) {
             .info => return if (operands.len == 1) .{ .info = .{ .model = operands[0] } } else error.Usage,
             .check => return if (operands.len == 1) .{ .check = .{ .model = operands[0] } } else error.Usage,
             .chunks => return if (operands.len == 1) .{ .chunks = .{ .model = operands[0] } } else error.Usage,
+            .components => return if (operands.len == 1) .{ .components = .{ .model = operands[0] } } else error.Usage,
             .obj => {
                 if (operands.len < 2) return error.Usage;
                 var command: Command = .{ .obj = .{ .model = operands[0], .out = operands[1] } };
@@ -60,6 +66,7 @@ pub const Command = union(enum) {
 
         switch (command) {
             .chunks => try chunks(ctx, data),
+            .components => try listComponents(ctx, path),
             .info => try info(ctx, try shp.Model.parse(ctx.arena, data)),
             .check => try check(ctx, try shp.Model.parse(ctx.arena, data)),
             .obj => |operands| try writeObj(
@@ -72,6 +79,28 @@ pub const Command = union(enum) {
         }
     }
 };
+
+fn listComponents(ctx: Context, path: []const u8) !void {
+    var library: Library = try .beside(ctx, path);
+    defer library.deinit();
+    const name = std.fs.path.basename(path);
+    const model = try library.load(name) orelse return error.FileNotFound;
+    if (!model.header.flags.components) {
+        try ctx.stdout.writeAll("the model's header does not ask for components, so its objects list none\n");
+        return;
+    }
+    const list = try shp.components(ctx.arena, model, name, &library);
+    try ctx.stdout.writeAll("index  part  class  link  model                 name\n");
+    for (list, 0..) |component, index| {
+        try ctx.stdout.print("{d:>5}  {d:>4}  {d:>5}  {d:>4}  {s:<20}  {s}\n", .{
+            index,                  component.part_index, component.part.part_type,
+            component.part.link_id, component.model,      component.part.name(),
+        });
+    }
+    if (list.len > shp.max_components) {
+        try ctx.stdout.print("more than the {d} an object can list: the engine stops with a fatal error\n", .{shp.max_components});
+    }
+}
 
 fn chunks(ctx: Context, data: []const u8) !void {
     var reader: shp.Reader = .init(data);
@@ -124,9 +153,9 @@ fn info(ctx: Context, model: shp.Model) !void {
             try ctx.stdout.writeByte('\n');
         }
 
-        if (entry.attachment_count + entry.node_count + entry.clip_count + entry.trigger_count > 0) {
+        if (entry.attachments.len + entry.node_count + entry.clip_count + entry.trigger_count > 0) {
             try ctx.stdout.print("        {d} nodes, {d} attachments, {d} clips, {d} groups, {d} triggers\n", .{
-                entry.node_count,  entry.attachment_count, entry.clip_count,
+                entry.node_count,  entry.attachments.len, entry.clip_count,
                 entry.group_count, entry.trigger_count,
             });
         }

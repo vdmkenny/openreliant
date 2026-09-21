@@ -14,6 +14,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
+const models = @import("models.zig");
+
 pub const Vec3 = extern struct {
     x: f32,
     y: f32,
@@ -95,7 +97,8 @@ pub const Header = extern struct {
     _reserved: [64]u8,
 
     pub const Flags = packed struct(u32) {
-        _unknown0: u1,
+        /// Objects of the model list their components, and get no renderer object of their own.
+        components: bool,
         /// The loader builds a second mesh set, used for the cloak effect.
         cloak: bool,
         _unknown2: u30,
@@ -187,6 +190,36 @@ pub const Part = extern struct {
         assert(@offsetOf(Part, "link_id") == 0xD4);
         assert(@offsetOf(Part, "flags") == 0xF0);
         assert(@sizeOf(Part) == 312);
+    }
+};
+
+/// Tag `0x09`. A point on a part where the engine mounts something: a gun or turret, a missile
+/// pod, a light, a cargo pod. The engine keeps 124 bytes of each record, and exporters that write
+/// longer ones add nothing it reads.
+pub const Attachment = extern struct {
+    kind: Kind,
+    /// Relative to the part.
+    position: Vec3,
+    /// Row-major 3x3.
+    orientation: [9]f32,
+    /// Which model of its kind the engine mounts: `models.attachment(kind, id)`.
+    id: u32,
+    _unknown_38: [0x44]u8,
+
+    /// Named after the models the engine loads for each kind. **Unknown:** kinds 2, 3 and 6 to 9.
+    pub const Kind = enum(u32) {
+        missile = 0,
+        /// Mounted as an object of its own, whose components follow the model's.
+        gun = 1,
+        light = 4,
+        /// Mounted as an object of its own, like a gun.
+        pod = 5,
+        _,
+    };
+
+    comptime {
+        assert(@offsetOf(Attachment, "id") == 0x34);
+        assert(@sizeOf(Attachment) == 0x7C);
     }
 };
 
@@ -409,9 +442,9 @@ pub const Mesh = struct {
 pub const PartData = struct {
     part: Part,
     meshes: []Mesh,
+    attachments: []Attachment,
     /// Chunks that are read but not yet interpreted, kept as counts.
     node_count: usize,
-    attachment_count: usize,
     clip_count: usize,
     group_count: usize,
     trigger_count: usize,
@@ -443,7 +476,7 @@ pub const Model = struct {
         for (parts, out) |part, *entry| {
             const lods = try reader.takeRecords(Lod, gpa, .lod);
             const nodes = try reader.take(.tree_node);
-            const attachments = try reader.take(.attachment);
+            const attachments = try reader.takeRecords(Attachment, gpa, .attachment);
             const clips = try reader.take(.animation_clip);
             const groups = try reader.take(.face_group);
             const triggers = try reader.take(.trigger_polygon);
@@ -474,7 +507,7 @@ pub const Model = struct {
                 .part = part,
                 .meshes = meshes,
                 .node_count = node_count,
-                .attachment_count = if (attachments) |chunk| chunk.count else 0,
+                .attachments = attachments,
                 .clip_count = clip_count,
                 .group_count = group_count,
                 .trigger_count = if (triggers) |chunk| chunk.count else 0,
@@ -659,4 +692,65 @@ test "record sizes and field offsets match the format" {
     try std.testing.expectEqual(@as(usize, 0x44), @offsetOf(Part, "position"));
     try std.testing.expectEqual(@as(usize, 0xD8), @offsetOf(Part, "yaw_min"));
     try std.testing.expectEqual(@as(usize, 24), @offsetOf(Face, "u"));
+}
+
+// --- components -------------------------------------------------------------------------------
+
+/// A part that the engine lists among an object's components, which triggers, squads and scripts
+/// name by index.
+pub const Component = struct {
+    /// The model the part is in: the object's own, or one mounted on it.
+    model: []const u8,
+    part: *const Part,
+    /// Index of the part in its model.
+    part_index: usize,
+    /// Mounts between the object's model and the part's: zero for its own parts.
+    depth: usize,
+};
+
+/// Components an object can list; the engine stops with a fatal error past the last.
+pub const max_components = 60;
+
+/// How deep `components` follows mounts before giving up, which also stops a model that mounts
+/// itself.
+pub const max_mount_depth = 8;
+
+/// The components of an object of the model `name`, in the engine's order
+/// (`object_collect_components`): first the model's own parts whose flags mark them, then for each
+/// part, in order, the components of the models mounted on its gun and pod attachment points,
+/// found the same way. `mounts.load(file_name)` returns a mounted model, or null when it is
+/// missing, which leaves that model's components out of the list.
+///
+/// Empty unless the model's header flags ask for components.
+pub fn components(gpa: Allocator, model: Model, name: []const u8, mounts: anytype) ![]Component {
+    var list: std.ArrayList(Component) = .empty;
+    if (model.header.flags.components) try collect(gpa, &list, model, name, 0, mounts);
+    return list.toOwnedSlice(gpa);
+}
+
+fn collect(
+    gpa: Allocator,
+    list: *std.ArrayList(Component),
+    model: Model,
+    name: []const u8,
+    depth: usize,
+    mounts: anytype,
+) !void {
+    if (depth > max_mount_depth) return error.MountsTooDeep;
+    for (model.parts, 0..) |*entry, index| {
+        if (!entry.part.flags.component) continue;
+        try list.append(gpa, .{ .model = name, .part = &entry.part, .part_index = index, .depth = depth });
+    }
+    for (model.parts) |entry| {
+        for (entry.attachments) |attachment| {
+            switch (attachment.kind) {
+                .gun, .pod => {},
+                else => continue,
+            }
+            const mounted = models.attachment(attachment.kind, attachment.id) orelse continue;
+            const file = mounted.model orelse continue;
+            const sub = try mounts.load(file) orelse continue;
+            try collect(gpa, list, sub, file, depth + 1, mounts);
+        }
+    }
 }

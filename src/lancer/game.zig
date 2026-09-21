@@ -81,13 +81,14 @@ pub const GameObject = extern struct {
     /// Its slot in `game_objects`.
     index: u32,
     /// **Unknown**, mostly. `0x02`: its components are listed. `0x400`: disabled, not processed:
-    /// `DisableObject`, and `DisableObjectAtNextJump` at the next jump. `0x4000`: its model has a
-    /// part of subsystem class 6.
+    /// `DisableObject`, and `DisableObjectAtNextJump` at the next jump. `0x4000`: it has a shield
+    /// generator, a part of subsystem class 6, which destroying the part clears.
     flags: u32,
     _unknown_0c: u32,
     combat: Pointer(stats.ShipCombat),
     flight: Pointer(stats.FlightModel),
-    _unknown_18: u32,
+    /// The type's model, as loaded.
+    model: Pointer(anyopaque),
     /// Data kept for the ship type and shared by its objects.
     type_data: Pointer(anyopaque),
     /// The renderer's object for it, or null.
@@ -105,11 +106,10 @@ pub const GameObject = extern struct {
     /// finds them: each node's marked children, then each child's in turn.
     components: [max_components]Component,
     _unknown_518: [0xB8]u8,
-    /// The parts of subsystem class 5 in its model.
-    class_5_parts: u32,
-    /// **Unknown.** 1.0 when created; `DestroySubObject` lowers it by `1 / class_5_parts` for each
-    /// part of class 5 it destroys.
-    _unknown_5d4: f32,
+    /// Engines in its model: parts of subsystem class 5.
+    engines: u32,
+    /// The share of its engines left: 1.0 when created, less `1 / engines` for each one destroyed.
+    engines_intact: f32,
     _unknown_5d8: [0x10]u8,
     /// `100 * ShipCombat.afterburner_fuel` when created, or zero in one of the game's modes.
     afterburner_fuel: i32,
@@ -137,13 +137,46 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "_unknown_12c") == 0x12C);
         assert(@offsetOf(GameObject, "component_count") == 0x152);
         assert(@offsetOf(GameObject, "components") == 0x248);
-        assert(@offsetOf(GameObject, "class_5_parts") == 0x5D0);
+        assert(@offsetOf(GameObject, "engines") == 0x5D0);
         assert(@offsetOf(GameObject, "afterburner_fuel") == 0x5E8);
         assert(@offsetOf(GameObject, "shields") == 0x5F0);
         assert(@offsetOf(GameObject, "armor") == 0x600);
         assert(@offsetOf(GameObject, "hostile") == 0x644);
         assert(@offsetOf(GameObject, "created") == 0xB94);
         assert(@sizeOf(GameObject) == 0xB98);
+    }
+};
+
+/// An entry of `ship_types`, one for each ship type; `src/formats/models.zig` has the names.
+pub const ShipType = extern struct {
+    model_name: Pointer(u8),
+    schematic_name: Pointer(u8),
+    /// Objects of the type, which `create_object` counts up, loading the model for the first.
+    objects: u16,
+    _unknown_0a: u16,
+    /// The model, once loaded.
+    model: Pointer(anyopaque),
+    /// What its objects keep as `GameObject.type_data`.
+    type_data: Pointer(anyopaque),
+
+    comptime {
+        assert(@offsetOf(ShipType, "model") == 0x0C);
+        assert(@sizeOf(ShipType) == 0x14);
+    }
+};
+
+/// An entry of `attachment_models`: what attachment points of one kind and id mount, as loaded.
+/// `src/formats/models.zig` has the file names.
+pub const MountedModel = extern struct {
+    model: Pointer(anyopaque),
+    /// A second model: the missile, for a missile pod.
+    second_model: Pointer(anyopaque),
+    /// **Unknown.** 1 unless the loader sets it.
+    count: u32,
+    sprite: Pointer(anyopaque),
+
+    comptime {
+        assert(@sizeOf(MountedModel) == 0x10);
     }
 };
 

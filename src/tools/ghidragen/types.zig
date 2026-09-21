@@ -81,8 +81,12 @@ pub const exported = [_]Export{
     .{ "GameObject", lancer.game.GameObject },
     .{ "ModelNode", lancer.game.Node },
     .{ "ObjectComponent", lancer.game.Component },
+    .{ "ShipTypeEntry", lancer.game.ShipType },
+    .{ "MountedModel", lancer.game.MountedModel },
     .{ "ShpPart", shp.Part },
     .{ "ShpPartFlags", shp.Part.Flags },
+    .{ "ShpAttachment", shp.Attachment },
+    .{ "ShpAttachmentKind", shp.Attachment.Kind },
     .{ "Vec3", shp.Vec3 },
 };
 

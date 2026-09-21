@@ -81,7 +81,7 @@ noted in [§ Unread fields](#unread-fields).
 | Off | Type | Field |
 |---|---|---|
 | `0x00` | u32 | Version: `107`, or `200` in a few models. Not read by the loader. |
-| `0x14` | u32 | Flags. Bit 1 makes the loader build a second mesh set, used for the cloak effect. |
+| `0x14` | u32 | Flags. Bit 0: objects of the model list their [components](../engine/objects.md#components) and get no renderer object of their own. Bit 1 makes the loader build a second mesh set, used for the cloak effect. |
 
 ### Part (tag `0x01`)
 
@@ -91,7 +91,7 @@ carries its own levels of detail.
 | Off | Type | Field |
 |---|---|---|
 | `0x00` | char[64] | Name, NUL-terminated: `Crusader Cockpit`, `Rus Big Tur Guns`, `Stalag Door 1 DEST` |
-| `0x40` | u32 | Subsystem class. The engine tests for 1, 5 and 6, and treats 3, 9, 10 and 18 as turrets |
+| `0x40` | u32 | Subsystem class. 5 marks engines and 6 shield generators, which the engine counts; 3, 9, 10 and 18 are turrets; 1 marks hull sections, going by their names |
 | `0x44` | vec3 | Origin, relative to the parent |
 | `0x50` | vec3 | Bounding box minimum (see [Bounding boxes](#bounding-boxes)) |
 | `0x5C` | vec3 | Bounding box maximum |
@@ -115,6 +115,26 @@ Part flags at `0xF0`:
 | `0x40` | Set by the loader when a static light exists in this part's class |
 | `0x80` | On multitexture hardware, bind a second texture named `l<material>` |
 | `0x1000` | Propagated to the spawned sub-object |
+
+### Attachment point (tag `0x09`)
+
+A point on a part where the engine mounts something. Exporters wrote records of 100 to 168 bytes;
+the engine keeps 124 bytes of each.
+
+| Off | Type | Field |
+|---|---|---|
+| `0x00` | u32 | Kind |
+| `0x04` | vec3 | Position, relative to the part |
+| `0x10` | f32[9] | Orientation, row-major 3x3 |
+| `0x34` | u32 | Id: which model of its kind |
+
+The engine's attachment table, filled when the game starts, gives the models and sprites for each
+kind and id; [`src/formats/models.zig`](../../src/formats/models.zig) transcribes it (`make
+model-tables`). Kind 0 holds missiles and their pods, 1 guns and turrets, 4 flare and light sprites,
+5 cargo and fuel pods. **Unknown:** kinds 2, 3 and 6 to 9.
+
+For kinds 1 and 5 the engine mounts the model as an object of its own, hanging from the part's
+node, whose components join the owner's.
 
 ### Level of detail (tag `0x02`)
 
@@ -210,9 +230,9 @@ These are present in every record and read by nothing in the engine: the header'
 `0x08` vector, the part's six floats at `0x68` and its `0x80` block, and the face's normal and
 `0x3C` word. The reader preserves them.
 
-**Unknown:** the interpretation of tree nodes (`0x07`), attachment points (`0x09`), animation
-clips (`0x0A`) and trigger polygons (`0x0F`). They are parsed and counted, and their records are
-available, but their fields are not decoded here.
+**Unknown:** the interpretation of tree nodes (`0x07`), animation clips (`0x0A`) and trigger
+polygons (`0x0F`). They are parsed and counted, and their records are available, but their fields
+are not decoded here.
 
 ## Prior art
 

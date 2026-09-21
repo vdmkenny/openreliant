@@ -111,5 +111,7 @@ payload's dispatch table and its handlers and writes
 [`src/formats/vm_opcodes.zig`](../src/formats/vm_opcodes.zig). `make vm-commands` and `make
 vm-conditions` read the Executor command catalogue and the trigger condition catalogue from the
 binary alone and write [`src/formats/vm_commands.zig`](../src/formats/vm_commands.zig) and
-[`src/formats/vm_conditions.zig`](../src/formats/vm_conditions.zig). The tables are committed, so
-building the tools never needs the game.
+[`src/formats/vm_conditions.zig`](../src/formats/vm_conditions.zig). `make model-tables` reads the
+ship type table from the binary and follows the code that loads the attachment models in the
+export, and writes [`src/formats/models.zig`](../src/formats/models.zig). The tables are
+committed, so building the tools never needs the game.

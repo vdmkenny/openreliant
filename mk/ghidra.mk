@@ -128,3 +128,12 @@ vm-conditions: ## Re-derive the trigger condition catalogue from the payload exe
 	$(ZIG) build tablegen
 	$(ROOT)/zig-out/bin/tablegen conditions $(PAYLOAD) $(VM_CONDITIONS)
 	$(ZIG) fmt $(VM_CONDITIONS)
+
+MODEL_TABLES := $(ROOT)/src/formats/models.zig
+
+.PHONY: model-tables
+model-tables: ## Re-derive the ship type and attachment model tables from the payload executable
+	@test -f $(VM_DISASSEMBLY) || { echo "missing $(VM_DISASSEMBLY); run 'make ghidra-export-game'" >&2; exit 1; }
+	$(ZIG) build tablegen
+	$(ROOT)/zig-out/bin/tablegen models $(PAYLOAD) $(VM_DISASSEMBLY) $(MODEL_TABLES)
+	$(ZIG) fmt $(MODEL_TABLES)
