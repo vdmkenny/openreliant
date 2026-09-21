@@ -28,7 +28,7 @@
 00537468	data	vm_timer_count	ushort
 00538c9c	data	vm_clock	uint	Seconds of mission time, which timers and waiting threads count by
 00457c10	function	vm_clock_start	void __fastcall (void)	Zeroes vm_clock and starts the timer that advances it once a second
-00458910	function	vm_clock_tick		Timer callback: advances vm_clock, unless the script debugger holds it or 0x57E04C is set
+00458910	function	vm_clock_tick		Timer callback: advances vm_clock, unless the script debugger holds it or the game is paused
 004a70f0	function	timer_start		Starts a periodic multimedia timer: 1000 / ECX milliseconds, clamped to what the device supports
 00537570	data	vm_stack_top	uint *	Running thread's stack pointer
 005373f0	data	vm_block_end	byte *	Running block's end, where its constants start (push_constant)
@@ -227,3 +227,18 @@
 004744c0	function	motion_forward	void __fastcall (int slot)	object_fly with thrust 1
 004744d0	function	motion_backward	void __fastcall (int slot)	object_fly with thrust -1
 00403060	function	object_cruise_speed	float __fastcall (GameObject *object)	max_speed, times the factor at 0x738, engines_intact and, outside one mode, the armor factor at 0x668
+
+# The game loop
+00494040	function	mission_run	void __fastcall (void)	Runs a mission: resets the clocks, then loops, running a game tick for each timer tick since the last pass
+004827c0	function	tick_timer		Timer callback, 100 times a second: advances game_ticks and the play time, unless paused
+00477850	function	game_tick	void __fastcall (void)	One tick: the simulation step, unless paused
+004774d0	function	simulation_step	void __fastcall (void)	Every fourth tick: each object's own updates, then objects_update and the rest
+00468fa0	function	objects_update	void __fastcall (void)	Moves every object, then finds colliding pairs by sorting their extents along X
+00466170	function	objects_collide	bool __fastcall (int *a, int *b)	Handles two objects whose spheres may meet, pushing them apart when they overlap
+00565064	data	game_ticks	uint	Ticks since the mission started
+00565070	data	play_time_ticks	ushort	Play time: ticks, rolled into seconds after 101
+00565072	data	play_time_seconds	ushort
+00565074	data	play_time_minutes	ushort
+00565076	data	play_time_hours	ushort
+0057e04c	data	paused	ushort	Nonzero while the game is paused, which stops the ticks and the script clock
+00539aa0	data	game_object_count	short	Slots of game_objects in use, which create_object extends when given no slot

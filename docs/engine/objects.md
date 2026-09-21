@@ -90,6 +90,7 @@ and records the length of the velocity as the speed (`0x5D8`). The root keeps th
 | `0x5C8` | 4 | Lateral input |
 | `0x5CC` | 1 | Afterburner |
 | `0x5CD` | 1 | **Unknown.** A reverse burn |
+| `0x59C` | 4 | Collision radius |
 | `0x5D8` | 4 | Speed |
 | `0x5DC`, `0x5E0`, `0x5E4` | 4 each | Roll, pitch and yaw rates |
 | `0x640` | 4 | Motion function |

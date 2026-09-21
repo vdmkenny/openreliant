@@ -92,7 +92,7 @@ then.
 
 `vm_clock` (`0x538C9C`) counts the seconds of the mission: `vm_clock_start` (`0x00457C10`) zeroes it
 and starts a periodic multimedia timer at one second, whose callback (`0x00458910`) increments it
-unless the script debugger holds it or the word at `0x57E04C` is set.
+unless the script debugger holds it or the game is [paused](loop.md).
 
 `CreateTimer` fills one of the 16 timers at `vm_timer_table` (`0x537470`), first destroying any
 timer with the same ID:

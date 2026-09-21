@@ -139,7 +139,7 @@ pub const GameObject = extern struct {
     _unknown_26: u16,
     /// The root of its model hierarchy.
     root: Node,
-    /// **Unknown.** 1.0 when created.
+    /// **Unknown.** 1.0 when created; the collision sweep multiplies `radius` by it.
     _unknown_12c: f32,
     _unknown_130: [0x22]u8,
     component_count: i16,
@@ -153,7 +153,8 @@ pub const GameObject = extern struct {
     rotation: [9]f32,
     /// Added to its position each update.
     velocity: shp.Vec3,
-    _unknown_59c: f32,
+    /// The radius of the sphere collisions test it by.
+    radius: f32,
     /// **Unverified:** the corners of its model's bounding box, which `0x004769F0` accumulates.
     bounds_min: shp.Vec3,
     bounds_max: shp.Vec3,

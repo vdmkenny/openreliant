@@ -19,7 +19,8 @@ no game code or assets.
 | [`formats/dte.md`](formats/dte.md) | `.DTE` missions: directory, ships, triggers, and the script VM. |
 | [`formats/stats.md`](formats/stats.md) | Ship, gun, missile and pilot stat tables. |
 | [`engine/script-vm.md`](engine/script-vm.md) | The script VM at run time: threads, calls, commands, timers, events. |
-| [`engine/objects.md`](engine/objects.md) | Live objects: the object array, model hierarchies, components. |
+| [`engine/objects.md`](engine/objects.md) | Live objects: the object array, model hierarchies, components, the flight model. |
+| [`engine/loop.md`](engine/loop.md) | The game loop: the 100 Hz tick, the 25 Hz simulation step, collisions. |
 
 ## Conventions
 
