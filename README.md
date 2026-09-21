@@ -59,10 +59,11 @@ does not write them back.
 | `sltool hog` | `.HOG` archives and their RefPack compression | [hog](docs/formats/hog.md), [refpack](docs/formats/refpack.md) |
 | `sltool shp` | `.SHP` models; exports Wavefront OBJ | [shp](docs/formats/shp.md) |
 | `sltool spr` | `.SPR` interface sprites; exports indexed PNG | [spr](docs/formats/spr.md) |
+| `sltool fat` | `.fat` sound banks; exports WAV | [fat](docs/formats/fat.md) |
 | `sltool dte` | `.DTE` missions, including a disassembler for their script | [dte](docs/formats/dte.md) |
 | `sltool stats` | Ship, gun, missile and pilot stat tables | [stats](docs/formats/stats.md) |
 
-`make assets`, `models` and `sprites` run the extractors over every file; `check-models` and
+`make assets`, `models`, `sprites` and `sounds` run the extractors over every file; `check-models` and
 `check-missions` validate them. The script VM's opcode and command tables are derived from the game
 binary by `src/tools/vmgen` (`make vm-opcodes`, `make vm-commands`).
 

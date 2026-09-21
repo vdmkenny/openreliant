@@ -14,6 +14,7 @@ no game code or assets.
 | [`formats/refpack.md`](formats/refpack.md) | RefPack, the compression inside them. |
 | [`formats/shp.md`](formats/shp.md) | `.SHP` models: chunks, parts, levels of detail, geometry, coordinate frame. |
 | [`formats/spr.md`](formats/spr.md) | `.SPR` sprites: the WinVFX interface imagery. |
+| [`formats/fat.md`](formats/fat.md) | `.fat` sound banks. |
 | [`formats/dte.md`](formats/dte.md) | `.DTE` missions: directory, ships, triggers, and the script VM. |
 | [`formats/stats.md`](formats/stats.md) | Ship, gun, missile and pilot stat tables. |
 

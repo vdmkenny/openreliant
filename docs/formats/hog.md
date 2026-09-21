@@ -71,7 +71,7 @@ record, rather than trusting the count.
 | `CD2.HOG` | 174 | 510.6 MiB | 0 | Bink video, MP3 music, sprites |
 
 Member types by extension in `resource.hog`: `.shp` 440 models, `.spr` 269 sprites, `.tga` 146
-images, `.dte` 44 missions, `.fat` 34 sound banks, `.fnt` 19 fonts, `.bin` 5 (the four stat
+images, `.dte` 44 missions, `.fat` 34 [sound banks](fat.md), `.fnt` 19 fonts, `.bin` 5 (the four stat
 tables and `profile.bin`), `.ccb` 5 colour tables.
 
 ## RefPack compression

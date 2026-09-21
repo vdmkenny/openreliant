@@ -8,6 +8,7 @@
 #   game/assets/<archive>/   the contents of each .HOG, decompressed
 #   game/models/             the .SHP models as Wavefront OBJ
 #   game/sprites/            the .SPR shapes as PNG
+#   game/sounds/             the .fat sound banks' sounds as WAV
 #
 # Extraction is pure Zig (sltool reads raw sectors and ISO 9660 itself) except for LANCER.CAB, an
 # LZX-compressed Microsoft cabinet, which still goes through 7z.
@@ -61,6 +62,18 @@ $(GAME_DIR)/.stamp-sprites: | $(GAME_DIR)/.stamp-hog-resource $(SLTOOL)
 	@for f in $(ASSETS_DIR)/resource/*.[sS][pP][rR]; do \
 	    $(SLTOOL) spr extract "$$f" $(SPRITES_DIR) > /dev/null; \
 	done; echo "exported $$(ls $(SPRITES_DIR) | wc -l | tr -d ' ') images to $(SPRITES_DIR)"
+	touch $@
+
+SOUNDS_DIR := $(GAME_DIR)/sounds
+
+.PHONY: sounds
+sounds: $(GAME_DIR)/.stamp-sounds ## Export every .fat sound bank's sounds to game/sounds as WAV
+
+$(GAME_DIR)/.stamp-sounds: | $(GAME_DIR)/.stamp-hog-resource $(SLTOOL)
+	mkdir -p $(SOUNDS_DIR)
+	@for f in $(ASSETS_DIR)/resource/*.[fF][aA][tT]; do \
+	    $(SLTOOL) fat extract "$$f" $(SOUNDS_DIR) > /dev/null; \
+	done; echo "exported $$(ls $(SOUNDS_DIR) | wc -l | tr -d ' ') sounds to $(SOUNDS_DIR)"
 	touch $@
 
 .PHONY: check-missions

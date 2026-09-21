@@ -5,6 +5,7 @@ const Io = std.Io;
 
 const cd = @import("cd.zig");
 const dte = @import("dte.zig");
+const fat = @import("fat.zig");
 const hog = @import("hog.zig");
 const safedisc = @import("safedisc.zig");
 const shp = @import("shp.zig");
@@ -21,6 +22,7 @@ pub const Context = struct {
 const Command = union(enum) {
     cd: cd.Command,
     dte: dte.Command,
+    fat: fat.Command,
     hog: hog.Command,
     safedisc: safedisc.Command,
     shp: shp.Command,
@@ -33,7 +35,7 @@ const Command = union(enum) {
         \\
         \\commands:
         \\
-    ++ cd.Command.usage ++ dte.Command.usage ++ hog.Command.usage ++ safedisc.Command.usage ++ shp.Command.usage ++ spr.Command.usage ++ stats.Command.usage ++
+    ++ cd.Command.usage ++ dte.Command.usage ++ fat.Command.usage ++ hog.Command.usage ++ safedisc.Command.usage ++ shp.Command.usage ++ spr.Command.usage ++ stats.Command.usage ++
         \\  help                            show this text
         \\
     ;
@@ -44,6 +46,7 @@ const Command = union(enum) {
         return switch (group) {
             .cd => .{ .cd = try .parse(args[1..]) },
             .dte => .{ .dte = try .parse(args[1..]) },
+            .fat => .{ .fat = try .parse(args[1..]) },
             .hog => .{ .hog = try .parse(args[1..]) },
             .safedisc => .{ .safedisc = try .parse(args[1..]) },
             .shp => .{ .shp = try .parse(args[1..]) },
@@ -57,6 +60,7 @@ const Command = union(enum) {
         switch (command) {
             .cd => |group| try group.run(ctx),
             .dte => |group| try group.run(ctx),
+            .fat => |group| try group.run(ctx),
             .hog => |group| try group.run(ctx),
             .safedisc => |group| try group.run(ctx),
             .shp => |group| try group.run(ctx),
