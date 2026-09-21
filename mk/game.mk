@@ -117,7 +117,7 @@ $(RENDERS_DIR)/predator.png:
 	$(RENDER) $@ --model USLF_Prd.SHP
 
 $(RENDERS_DIR)/predator-sun.png:
-	$(RENDER) $@ --model USLF_Prd.SHP --toward 1,-0.3,0.45 --heading -0.3,0.2,1 --flares
+	$(RENDER) $@ --model USLF_Prd.SHP --toward 1,-0.3,0.45 --heading -0.3,0.2,1
 
 .PHONY: check-missions
 check-missions: | $(GAME_DIR)/.stamp-hog-resource $(SLTOOL) ## Parse every .DTE mission

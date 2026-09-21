@@ -17,7 +17,7 @@ and drawn on the background layer, except the lens flares, which go on the overl
 `backdrop_frame` (`0x004A5CD0`) and `nebula_frame` (`0x00498E10`) add them to the scene each frame.
 The dome is the one opaque object, so it is drawn first and the rest add over it.
 [`src/lancer/game/backdrop.zig`](../../src/lancer/game/backdrop.zig) and
-[`nebula.zig`](../../src/lancer/game/nebula.zig) state the geometry and tables below.
+[`nebula.zig`](../../src/lancer/game/nebula.zig) port the functions below.
 
 ## Sky dome
 
@@ -28,10 +28,11 @@ A band of 15 by 8 vertices around the camera (`nebula_dome`, `0x00498810`). For 
   22 degrees short of either pole;
 - colour: the pixel of `starref12.tga` at `(255u, 255v)`, rounded down, top row first, over 256.
 
-Each quad of the grid is two triangles, split along the diagonal from its lower left corner to its
-upper right. The dome's object has flag `0x800`, so none is culled. No light reaches it: each vertex
-keeps its colour. `backdrop_place` turns it with the sun marker. The software renderer builds a
-different dome.
+Each row of quads is one strip of triangles, split along the diagonal from each quad's first
+corner to the one below its next. The mesh holds no texture coordinates, normals or bounds. Its
+object has flags `0x800`, so none is culled, `0x1000`, so it is not tested against the view and is
+always clipped, and `0x80000`, so each vertex takes the object's own colour and no light reaches
+it. `backdrop_place` turns it with the sun marker. The software renderer builds a different dome.
 
 ## Nebula
 
@@ -69,9 +70,11 @@ column `j` is centred on the axis at polar angle `θ = 9 + 18i` degrees from `+Y
 axis = (cos φ sin θ, cos θ, sin φ sin θ)
 ```
 
-A star at pixel `(x, y)` of its field lies at `(sin a, sin b, 1)` in the field's frame, `a` and `b`
-being `x - 18` and `y - 18` half degrees. The field's frame is turned about `Y`, then `X`, to face
-the axis (`mat3_look_at`, `0x004C1940`).
+A star at pixel `(x, y)` of its field lies at `(sin b, sin a, 1)` in the field's frame, `a` and `b`
+being `x - 18` and `y - 18` half degrees: the pixel's row gives `x` and its column `y`. The field's
+frame is turned about `Y`, then `X`, to face the axis (`mat3_look_at`, `0x004C1940`). A star takes
+the pixel's bytes as the file stores them, blue first, and the driver draws the first as red, so the
+map's few tinted stars show with red and blue swapped.
 The fields cover the half of the sky where `z` is positive; a field behind the camera is drawn
 mirrored through it, so they cover the other half too.
 
@@ -89,7 +92,7 @@ After a camera cut, `backdrop_reset_streaks` (`0x004A5C80`) stops the next frame
 
 ## Dust
 
-200 motes at random in a cube of side 8191, grey at half brightness. They are fixed in the world,
+200 motes in a cube of side 8191, placed by the C runtime's `rand`, grey at half brightness. They are fixed in the world,
 repeating every 8192 units: each frame a mote is placed within 4096 of the camera on each axis. Its
 brightness is `16 * (0.25 - d² / 8191²) / (100m + 1)`, clamped to 0 to 1, with `d` its distance, so
 motes fade out by 4096 away. They streak like stars.
@@ -118,8 +121,9 @@ uses the last frame's.
 The six flares are drawn on the overlay layer on the line through the sun and the middle of the
 view, at a multiple of the sun's offset from the middle: `sunflare2` at 0.5, `sunflare1` at 0.33,
 `sunflare3` at 0.2, `sunflare2` at -0.2, `sunflare3` at -0.6 and `sunflare4` at -0.5, each at size 1
-and grey `f`, while `f` is above 0. **Unknown:** which views show them (`0x00539A34`,
-`0x00539A9C`).
+and grey `f`, while `f` is above 0. They show in every view but the cockpit's ahead, and in that
+one too while the cockpit mode is the chase view and any of the sun shows (`camera_view`,
+`0x00539A34`; `cockpit_mode`, `0x00539A9C`). Each sorts as if at the near plane.
 
 ## Lights
 

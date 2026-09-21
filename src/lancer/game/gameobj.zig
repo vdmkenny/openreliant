@@ -78,7 +78,8 @@ pub const GameObject = extern struct {
     velocity: shp.Vec3,
     /// The radius of the sphere collisions test it by.
     radius: f32,
-    /// **Unverified:** the corners of its model's bounding box, which `0x004769F0` accumulates.
+    /// **Unverified:** the corners of its model's bounding box, which `object_recentre`
+    /// (`0x004769F0`) accumulates.
     bounds_min: shp.Vec3,
     bounds_max: shp.Vec3,
     /// Up to 1 in flight, 2 while `afterburner` is set, and -1 while `reverse_thrust` is.

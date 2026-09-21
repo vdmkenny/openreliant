@@ -58,14 +58,14 @@ import slot, so it does not write them back.
 | `sltool cd` | Raw CD images and their ISO 9660 filesystem | [disc-images](docs/formats/disc-images.md) |
 | `sltool safedisc` | The protected executable | [safedisc](docs/binary/safedisc.md) |
 | `sltool hog` | `.HOG` archives and their RefPack compression | [hog](docs/formats/hog.md), [refpack](docs/formats/refpack.md) |
-| `sltool shp` | `.SHP` models; exports Wavefront OBJ; lists an object's components and the meshes the engine builds | [shp](docs/formats/shp.md) |
+| `sltool shp` | `.SHP` models; exports Wavefront OBJ; lists an object's components | [shp](docs/formats/shp.md) |
 | `sltool spr` | `.SPR` interface sprites; exports indexed PNG | [spr](docs/formats/spr.md) |
 | `sltool tcache` | Texture caches, the models' and effects' textures; exports PNG | [tcache](docs/formats/tcache.md) |
 | `sltool fat` | `.fat` sound banks; exports WAV | [fat](docs/formats/fat.md) |
 | `sltool fnt` | `.fnt` fonts; renders glyph atlases | [fnt](docs/formats/fnt.md) |
 | `sltool dte` | `.DTE` missions, including a disassembler for their script | [dte](docs/formats/dte.md) |
 | `sltool stats` | Ship, gun, missile and pilot stat tables | [stats](docs/formats/stats.md) |
-| `sltool render` | Draws a model against the backdrop by the engine's rules, as PNG | [renderer](docs/port/renderer.md) |
+| `sltool render` | Draws a model against the backdrop through the engine's pipeline, as PNG | [renderer](docs/port/renderer.md) |
 
 `make assets`, `models`, `sprites`, `textures`, `sounds` and `fonts` run the extractors over every
 file; `check-models` and `check-missions` validate them; `render` draws reference images. The script VM's opcode, command and
@@ -84,7 +84,6 @@ Documentation index: [`docs/README.md`](docs/README.md).
 |---|---|
 | `src/formats/` | Readers for the game's file formats and the containers it shipped in. |
 | `src/lancer.zig`, `src/lancer/` | The payload's structures and tables, laid out as its source tree: `game/`, `surrender/surrenderlib/` and `surrender/srd3d/` mirror `C:\lancer`, a module per original file; `sources.zig` places the code in those files; `libcmt.zig` is the C runtime; `vm.zig` and `input.zig` hold code whose file is unknown. |
-| `src/render.zig`, `src/render/` | The reference renderer, which draws a scene in software by the engine's rules. |
 | `src/tools/sltool/` | `sltool`, the command line front end. |
 | `src/tools/tablegen/` | Derives the engine's static tables from the game binary: the script VM's, its model tables, the control bindings, the order table, the combat maneuvers and the source map. |
 | `src/tools/ghidragen/` | Writes the names and data types the Ghidra scripts apply. |

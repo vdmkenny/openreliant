@@ -379,6 +379,84 @@ pub fn build(
     return mesh;
 }
 
+/// A part as `model_load` leaves it for the objects that show it (`part + 0x10C` on): the flags its
+/// object takes, and each level's mesh with the depth it is drawn to. A level without faces holds
+/// an empty mesh, where the game leaves no mesh at all.
+pub const LoadedPart = struct {
+    flags: srapiext.ObjectFlags,
+    meshes: []srapiext.Mesh,
+    levels: []srapiext.Level,
+};
+
+/// A model's parts, their meshes built (`model_load`, `0x004A44D0`, once it has read the file).
+pub const Loaded = struct {
+    parts: []LoadedPart,
+
+    pub fn deinit(loaded: Loaded, gpa: Allocator) void {
+        for (loaded.parts) |part| {
+            for (part.meshes) |mesh| mesh.deinit(gpa);
+            gpa.free(part.meshes);
+            gpa.free(part.levels);
+        }
+        gpa.free(loaded.parts);
+    }
+};
+
+/// Builds every level of every part of `model` (`model_load`). `multiplayer_ship` is a ship type's
+/// model in a multiplayer mission, which with the model's header flag `cloak` gives its objects
+/// colours of their own. Not yet ported: the static lights `model_load` marks the parts for and
+/// bakes into their meshes (`0x004A4070`, `0x004A4310`), and the second and third mesh sets it
+/// builds for cloaking (`cloak_mesh_build`).
+pub fn modelLoad(gpa: Allocator, textures: *srtexture.Table, model: *const shp.Model, settings: Settings, multiplayer_ship: bool) Error!Loaded {
+    var level_settings = settings;
+    level_settings.cloak = model.header.flags.cloak or multiplayer_ship;
+    const parts = try gpa.alloc(LoadedPart, model.parts.len);
+    var made: usize = 0;
+    errdefer {
+        for (parts[0..made]) |part| {
+            for (part.meshes) |mesh| mesh.deinit(gpa);
+            gpa.free(part.meshes);
+            gpa.free(part.levels);
+        }
+        gpa.free(parts);
+    }
+    for (model.parts, parts) |*part, *loaded| {
+        const meshes = try gpa.alloc(srapiext.Mesh, part.meshes.len);
+        var built: usize = 0;
+        errdefer {
+            for (meshes[0..built]) |mesh| mesh.deinit(gpa);
+            gpa.free(meshes);
+        }
+        var flags: srapiext.ObjectFlags = .{};
+        for (meshes, 0..) |*mesh, level| {
+            mesh.* = try build(gpa, textures, part, level, level_settings, &flags, &.{}) orelse empty;
+            built += 1;
+        }
+        const levels = try gpa.alloc(srapiext.Level, meshes.len);
+        // One level is always drawn: its object has no set of levels to choose from.
+        for (levels, meshes, part.meshes) |*level, *mesh, source| {
+            level.* = .{ .mesh = mesh, .until = if (meshes.len > 1) source.lod.switch_distance else std.math.inf(f32) };
+        }
+        loaded.* = .{ .flags = flags, .meshes = meshes, .levels = levels };
+        made += 1;
+    }
+    return .{ .parts = parts };
+}
+
+/// A mesh with nothing in it.
+pub const empty: srapiext.Mesh = .{
+    .positions = &.{},
+    .normals = &.{},
+    .polygons = &.{},
+    .indices = &.{},
+    .uv = .{ null, null },
+    .planes = &.{},
+    .biases = &.{},
+    .surfaces = &.{},
+    .bounds = .{ @splat(0), @splat(0) },
+    .radius = 0,
+};
+
 /// Whether a fan's records become one polygon (`fan_merges`, `0x004A2FD0`): a fan's first record,
 /// whose normal lies within a dot product of 0.999, about 2.6 degrees, of each later record's. A
 /// fan whose records would run past the level's end is not merged.

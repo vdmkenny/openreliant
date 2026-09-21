@@ -189,6 +189,9 @@
 0045de70	function	attachment_models_load	void __fastcall (void)	Loads the models and sprites attachment points mount
 004a44d0	function	model_load	void * __fastcall (char *name)	Loads a .SHP model by file name
 004760c0	function	object_add_part	void __fastcall (GameObject *object, void *model, int part)	Gives an object a node for a part of its model
+0049a8c0	function	node_draw	void __fastcall (GameObject *object, ModelNode *node, uint flags, float glow)	Adds a node's frame to the scene and draws its children: a model part's mesh on the world layer, or the overlay with flag 0x40; lights, engine glows and the cloak by the node's kind; skips hidden nodes and objects too far away to see
+004769f0	function	object_recentre	void __fastcall (GameObject *object)	Moves the object's origin to its parts' centre of mass, adding the shift to +0x524, the root and the position, and finds its bounds
+004764a0	function	node_mass_add	void __fastcall (GameObject *object, ModelNode *node)	Adds a node's mass and its mass times its centre to the object's totals, children first; parts by their mass fields, others by their meshes' boxes
 00499430	function	node_add_part	ModelNode * __fastcall (ModelNode *parent, ShpPart *part)	Hangs a node for a model part from a node, then mounts what its attachment points hold
 00499a10	function	node_mount	void __fastcall (ModelNode *node, ShpAttachment *attachment)	Mounts what an attachment point holds: an object of its own for guns and pods
 00476130	function	object_link_parts	void __fastcall (GameObject *object)	Links each part's node to its parent part's, or to the root
@@ -200,6 +203,7 @@
 
 # Surrender's vector and matrix helpers (surrenderlib)
 004c51c0	function	frame_create		Allocates a 0xB4-byte frame with a name, a position and angles
+004c2a60	function	vec4_set	void __thiscall (float x, float y, float z, float w)	Sets the four floats in ECX
 004c0e30	function	vec3_zero	void __fastcall (Vec3 *v)
 004c0e60	function	vec3_set	void __thiscall (float x, float y, float z)	Sets the vector in ECX
 004c0e80	function	vec3_add	void __fastcall (Vec3 *a, Vec3 *b)	a += b
@@ -259,6 +263,7 @@
 0045ed40	function	camera_chase_level	void __fastcall (void)	Zeroes the chase view's swing
 00414060	function	frame_controls	void __fastcall (int slot)	The controls read once a frame, from mission_frame: the camera keys, steering the orbiting views with the arrow keys, and the wingman and other frame keys
 004f72a8	data	camera_view_table	byte[38][4]	For each view: a number, 0, whether the bars slide in, and whether it is from the cockpit
+00539a64	data	camera_view_last	int	Last frame's camera_view: mission_frame resets the star streaks when they differ
 00539a34	data	camera_view	short
 00539a8c	data	camera_object	short	The object the view shows
 00539a9c	data	cockpit_mode	int	What the cockpit view shows: 0 no cockpit, 1 the cockpit's model, 2 the chase view; the cockpit key cycles it
@@ -426,9 +431,14 @@
 004cb9d0	function	SR_CCB_load	void * __fastcall (char *name)	Loads a colour cube: a palette and a 64x64x64 table of indices
 
 # Meshes and drawing (srofiles.cpp, srAPIext.cpp, the mesh pipeline)
+004a4070	function	static_lights_mark	void __fastcall (void *model)	Sets part flag 0x40 on the parts of each class, damaged or not, that holds a static light: an attachment of kind 4 with a range and no blinking
+004a4310	function	static_lights_bake	void __fastcall (void *model)	Bakes each static light into the meshes of every level of the parts of its class
+004a4130	function	static_light_bake	void __fastcall (void *part, int level, void *light)	Adds a static light to the baked colours of a part's level
+004c4f30	function	light_create	void * __thiscall (float x, float y, float z, float pitch, float yaw, float roll)	Allocates a light object, 0xDC bytes, at a position and turned by three angles; the caller sets its kind and the rest
+004c3490	function	SR_object_concate_parents	void __fastcall (void *object)	An object's place in the world at +0x4C and +0x70: its own, after its parent's, once a frame
 004a3040	function	mesh_build	void * __fastcall (void *model, void *part, int level)	A part's mesh for one level of detail: a group with a material of its own for each run of faces with the same shading and material
 004c4440	function	mesh_create	void * __fastcall (int polygons, int vertices, int indices, uint flags)	Allocates a mesh, zeroed
-004c4bd0	function	mesh_object_create		A scene object of type 1 showing a mesh; its face mask starts all ones
+004c4bd0	function	mesh_object_create	void * __fastcall (void *levels, void *mesh, uint flags)	A scene object of type 1 showing a set of levels (count, distances, meshes) or, without one, a single mesh; its face mask starts all ones, and it takes colours of its own when the mesh has flag 0x1000
 004c3c50	function	SR_mesh_set_poly_flags	void __fastcall (void *mesh, byte keep, byte set)	Each polygon's flags become flags & keep | set. No callers
 004a3cb0	function	cloak_mesh_build	void * __fastcall (void *model, void *part, int level)	The mesh the cloak effect draws for a part's level: one surface, textured by coordinates from the normals, lit on hardware, added
 004c3e30	function	SR_mesh_calc_vertex_normals	void __fastcall (void *mesh)	Each vertex normal as the normalized sum of the planes of the polygons using it

@@ -146,8 +146,11 @@ pub const Driver = struct {
     /// The eight highlight textures (`make_highlights`, `0x10001820`).
     highlights: [8]srtexture.Image,
     context: *srapi.Context = undefined,
+    /// The vertices and triangles a pass gathers before drawing them at once.
     vertices: std.ArrayList(Vertex) = .empty,
     indices: std.ArrayList(u16) = .empty,
+    /// A polygon drawn on its own, clipped or put aside, apart from what a pass is gathering.
+    single: std.ArrayList(Vertex) = .empty,
 
     pub fn init(gpa: Allocator, target: device.Device) Allocator.Error!Driver {
         var driver: Driver = .{ .gpa = gpa, .target = target, .highlights = undefined };
@@ -169,6 +172,7 @@ pub const Driver = struct {
         for (driver.highlights) |h| h.deinit(driver.gpa);
         driver.vertices.deinit(driver.gpa);
         driver.indices.deinit(driver.gpa);
+        driver.single.deinit(driver.gpa);
     }
 
     /// The driver as `srcore.render` takes it.
@@ -333,7 +337,7 @@ pub const Driver = struct {
                     }
                 },
                 .lines => {
-                    driver.target.draw(st, .lines, driver.vertices.items, null);
+                    driver.target.draw(st, .lines, driver.vertices.items[start..], null);
                     driver.vertices.shrinkRetainingCapacity(start);
                     continue;
                 },
@@ -383,9 +387,9 @@ pub const Driver = struct {
     /// last list it drew; the port tests the polygon's own.
     fn drawPolygon(driver: *Driver, drawn: *const srmesh.Drawn, v: srmesh.Visible, material: Material, pass: u1, st: device.State) Allocator.Error!void {
         const p = drawn.mesh.polygons[v.polygon];
-        driver.vertices.clearRetainingCapacity();
-        for (0..p.count) |c| try driver.vertices.append(driver.gpa, corner(drawn, p.first + c, material, pass));
-        const vertices = driver.vertices.items;
+        driver.single.clearRetainingCapacity();
+        for (0..p.count) |c| try driver.single.append(driver.gpa, corner(drawn, p.first + c, material, pass));
+        const vertices = driver.single.items;
         if (p.kind == .lines) return driver.target.draw(st, .lines, vertices, null);
         driver.target.draw(st, .fan, vertices, null);
         if (pass == 0 and drawn.object.flags.sun_occluder) {
@@ -415,11 +419,11 @@ pub const Driver = struct {
             for (positions, 0..) |position, i| polygon[i] = clipCorner(drawn, position);
             const count = clipPolygon(driver.context.projection, v.clip, &polygon, positions.len);
             if (count < (if (lines) @as(usize, 2) else 3)) continue;
-            driver.vertices.clearRetainingCapacity();
+            driver.single.clearRetainingCapacity();
             for (polygon[0..count]) |c| {
                 const screen = driver.context.projection.transform(c.view);
                 const uv = if (material.coordinates[pass] == .mesh) c.mesh_uv[pass] else c.generated[pass];
-                try driver.vertices.append(driver.gpa, .{
+                try driver.single.append(driver.gpa, .{
                     .x = screen.x,
                     .y = screen.y,
                     .z = screen.depth,
@@ -429,7 +433,7 @@ pub const Driver = struct {
                     .v = uv[1],
                 });
             }
-            const vertices = driver.vertices.items;
+            const vertices = driver.single.items;
             if (lines) {
                 driver.target.draw(st, .lines, vertices[0..2], null);
                 continue;
@@ -672,6 +676,68 @@ test "a frame from the scene to the device" {
     var lit: usize = 0;
     for (screen.colour) |c| lit += @intFromBool(c[0] > 0);
     try std.testing.expect(lit > 0);
+}
+
+test "a pass keeps what it gathers while it clips a polygon" {
+    const gpa = std.testing.allocator;
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var screen: @import("software.zig").Software = try .init(gpa, 64, 48);
+    defer screen.deinit(gpa);
+    var driver: Driver = try .init(gpa, screen.interface());
+    defer driver.deinit();
+
+    // Three triangles facing the camera: one to the left, one above the middle through the near
+    // plane, one to the right. The pass gathers the first, clips the second, and draws the first
+    // with the third.
+    var positions = [_]math.Vector{
+        .{ -300, -100, 1000 }, .{ -100, 100, 1000 },  .{ -100, -100, 1000 },
+        .{ 0, -20, 60 },       .{ -40, -150, 600 },   .{ 40, -150, 600 },
+        .{ 100, -100, 1000 },  .{ 300, 100, 1000 },   .{ 300, -100, 1000 },
+    };
+    var normals: [9]math.Vector = @splat(.{ 0, 0, -1 });
+    var polygons = [_]srapiext.Polygon{
+        .{ .kind = .triangle, .continues = 0, .first = 0, .count = 3 },
+        .{ .kind = .triangle, .continues = 0, .first = 3, .count = 3 },
+        .{ .kind = .triangle, .continues = 0, .first = 6, .count = 3 },
+    };
+    var indices = [_]u16{ 0, 1, 2, 3, 4, 5, 6, 7, 8 };
+    var planes: [3]srapiext.Plane = undefined;
+    var biases = [_]f32{ 0, 0, 0 };
+    var surfaces = [_]srapiext.Surface{.{
+        .polygons = 3,
+        .material = .{ .two_pass = false, ._unknown_01 = 0, .coordinates = .{ .none, .none }, .lit = .{ false, false }, .blend = .{ .off, .off }, .image = .{ .null, .null } },
+    }};
+    var mesh: srapiext.Mesh = .{
+        .positions = &positions,
+        .normals = &normals,
+        .polygons = &polygons,
+        .indices = &indices,
+        .uv = .{ null, null },
+        .planes = &planes,
+        .biases = &biases,
+        .surfaces = &surfaces,
+        .bounds = undefined,
+        .radius = undefined,
+    };
+    srapi.calcPolyNormals(&mesh);
+    srapi.findBoundingBox(&mesh);
+    const levels = [_]srapiext.Level{.{ .mesh = &mesh, .until = std.math.inf(f32) }};
+    var object: srapiext.MeshObject = .{ .flags = .{}, .position = @splat(0), .radius = mesh.radius, .levels = &levels };
+
+    var scene: srcore.Scene = .{};
+    defer scene.deinit(gpa);
+    try scene.layers.getPtr(.world).append(gpa, .{ .mesh = &object });
+    var context: srapi.Context = .{ .projection = .init(64, 48, srapi.full_screen, .{ 0.6, 0.8 }) };
+    try srcore.render(arena, &context, &scene, driver.interface());
+
+    // Unlit, the triangles draw white, each where it lies; below the middle stays black.
+    for ([_][2]usize{ .{ 26, 22 }, .{ 42, 22 }, .{ 32, 14 } }) |at| {
+        try std.testing.expectApproxEqAbs(1, screen.colour[at[1] * 64 + at[0]][0], 1e-5);
+    }
+    try std.testing.expectEqual([3]f32{ 0, 0, 0 }, screen.colour[40 * 64 + 32]);
 }
 
 test depth {

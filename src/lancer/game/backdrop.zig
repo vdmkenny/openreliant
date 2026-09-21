@@ -3,13 +3,28 @@
 //! (`0x004A5A00`) aims them from a mission's markers and `backdrop_frame` (`0x004A5CD0`) adds them to
 //! the scene each frame. The binary does not name the file; its code lies between `srofiles.cpp`'s
 //! and `timer.cpp`'s. [`nebula.zig`](nebula.zig) has the sky dome and the nebula.
+//!
+//! The port builds the hardware renderers' backdrop. **Unknown:** what sets bit 2 of `sr + 0x38`,
+//! with which `backdrop_create` has the star fields blend by `add_alpha` instead of adding; the port
+//! leaves it clear. Not yet ported: `backdrop_place`, which needs the mission's markers, and the
+//! objects `backdrop_frame` turns and makes glow at the end.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const tga = @import("../../formats/tga.zig");
+const libcmt = @import("../libcmt.zig");
 const math = @import("../surrender/math.zig");
+const srapi = @import("../surrender/surrenderlib/srapi.zig");
+const srapiext = @import("../surrender/surrenderlib/srapiext.zig");
+const srcore = @import("../surrender/surrenderlib/srcore.zig");
 const srlight = @import("../surrender/surrenderlib/srlight.zig");
+const srstars = @import("../surrender/surrenderlib/srstars.zig");
+const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
+const camera = @import("camera.zig");
+const matmanager = @import("matmanager.zig");
+const xtrabits = @import("xtrabits.zig");
+const Vector = math.Vector;
 
 /// The star map, in `resource.hog`: grey pixels on black, one star each.
 pub const star_map_name = "space.tga";
@@ -25,22 +40,6 @@ pub const field_size = 36;
 pub const fields_per_side = star_map_size / field_size;
 pub const field_count = fields_per_side * fields_per_side;
 
-pub const Star = struct {
-    /// In the field's frame: `(sin(dx), sin(dy), 1)`, with `dx` and `dy` the pixel's angles from
-    /// the field's centre.
-    position: [3]f32,
-    /// The pixel's colour.
-    colour: [3]u8,
-};
-
-pub const Field = struct {
-    /// Where the field is centred: its frame's forward axis.
-    axis: [3]f32,
-    /// The field's frame, turned to face `axis` (`mat3_look_at`, `0x004C1940`).
-    orientation: math.Matrix,
-    stars: []const Star,
-};
-
 /// Field `row`, `column`'s axis: the polar angle, from `+Y`, follows the map's rows and the azimuth,
 /// from `+X` toward `+Z`, its columns, so the fields cover the half of the sky where `z` is positive.
 pub fn fieldAxis(row: usize, column: usize) [3]f32 {
@@ -49,77 +48,46 @@ pub fn fieldAxis(row: usize, column: usize) [3]f32 {
     return .{ @cos(azimuth) * @sin(polar), @cos(polar), @sin(azimuth) * @sin(polar) };
 }
 
-/// The fields `backdrop_create` builds from the star map, in its order: by rows of fields, then
-/// columns, and within a field by rows of pixels. Every pixel that is not black is a star.
-pub fn fields(gpa: Allocator, map: tga.Image) (error{WrongSize} || Allocator.Error)![field_count]Field {
-    if (map.width != star_map_size or map.height != star_map_size) return error.WrongSize;
-    var result: [field_count]Field = undefined;
-    var made: usize = 0;
-    errdefer for (result[0..made]) |field| gpa.free(field.stars);
-    for (0..fields_per_side) |row| {
-        for (0..fields_per_side) |column| {
-            var stars: std.ArrayList(Star) = .empty;
-            errdefer stars.deinit(gpa);
-            for (0..field_size) |y| {
-                for (0..field_size) |x| {
-                    const colour = map.pixel(column * field_size + x, row * field_size + y);
-                    if (std.mem.allEqual(u8, &colour, 0)) continue;
-                    try stars.append(gpa, .{ .position = .{ offsetSine(x), offsetSine(y), 1 }, .colour = colour });
-                }
-            }
-            const axis = fieldAxis(row, column);
-            result[made] = .{ .axis = axis, .orientation = math.lookAt(axis), .stars = try stars.toOwnedSlice(gpa) };
-            made += 1;
-        }
-    }
-    return result;
-}
-
-fn offsetSine(pixel: usize) f32 {
-    const offset: f32 = @as(f32, @floatFromInt(pixel)) - field_size / 2;
-    return @sin(offset * half_degree);
-}
-
-pub fn freeFields(gpa: Allocator, all: *const [field_count]Field) void {
-    for (all) |field| gpa.free(field.stars);
-}
-
 /// The dust: motes in a cube around the camera, grey at half brightness, placed at random.
 pub const dust_count = 200;
 pub const dust_cube_mask = 0x1FFF;
 pub const dust_grey: f32 = 0.5;
 
-pub const Light = srlight.Light;
+/// Toward the sun, where no marker says otherwise: the key lights' direction.
+pub const sun_direction: Vector = math.normalize(.{ 1, -0.5, 0.2 });
 
-/// The key light: the sun, warm white, where no marker says otherwise.
-pub const sun_direction: [3]f32 = math.normalize(.{ 1, -0.5, 0.2 });
+/// The fill lights' direction, where no marker says otherwise.
+pub const fill_direction: Vector = math.normalize(.{ -1, 0.5, 0 });
 
-/// The fill light, which the nebula colours.
-pub const fill_direction: [3]f32 = math.normalize(.{ -1, 0.5, 0 });
+/// How far toward the sun its sprites lie.
+pub const sun_distance: f32 = 1000;
+
+/// The six lights (`light_key_01` and the rest), each named after its mask. Models whose objects
+/// list components take the first three and the last; the rest take the last four
+/// (`objects.lightMask`).
+pub const LightRole = enum { key_01, fill_02, ambient_04, key_08, fill_10, ambient_20 };
+pub const Lights = std.EnumArray(LightRole, srlight.Light);
 
 /// The fill lights' colour until `nebula_select` gives them the nebula's.
 pub const default_fill: [3]f32 = .{ 0, 0.5, 1 };
 
-/// The lights `backdrop_create` makes, with the fill lights in `fill`. Models whose objects list
-/// components take the first three and the last; the rest take the last four
-/// (`objects.lightMask`).
-pub fn lightsWith(fill: [3]f32) [6]Light {
-    return .{
-        .{ .mask = 0x01, .intensity = 1, .colour = .{ 1, 1, 0.8 }, .kind = .{ .directional = sun_direction } },
-        .{ .mask = 0x02, .intensity = 1, .colour = fill, .kind = .{ .directional = fill_direction } },
-        .{ .mask = 0x04, .intensity = 1, .colour = .{ 0.04, 0.04, 0.04 }, .kind = .ambient },
-        .{ .mask = 0x08, .intensity = 1, .colour = .{ 1, 1, 0.8 }, .kind = .{ .directional = sun_direction } },
-        .{ .mask = 0x10, .intensity = 0.7, .colour = fill, .kind = .{ .directional = fill_direction } },
-        .{ .mask = 0x20, .intensity = 1, .colour = .{ 0.09, 0.09, 0.09 }, .kind = .ambient },
-    };
+/// The lights as `backdrop_create` makes them.
+pub fn initialLights() Lights {
+    const key: [3]f32 = .{ 1, 1, 0.8 };
+    return .init(.{
+        .key_01 = .{ .mask = 0x01, .intensity = 1, .colour = key, .kind = .{ .directional = sun_direction } },
+        .fill_02 = .{ .mask = 0x02, .intensity = 1, .colour = default_fill, .kind = .{ .directional = fill_direction } },
+        .ambient_04 = .{ .mask = 0x04, .intensity = 1, .colour = @splat(0.04), .kind = .ambient },
+        .key_08 = .{ .mask = 0x08, .intensity = 1, .colour = key, .kind = .{ .directional = sun_direction } },
+        .fill_10 = .{ .mask = 0x10, .intensity = 0.7, .colour = default_fill, .kind = .{ .directional = fill_direction } },
+        .ambient_20 = .{ .mask = 0x20, .intensity = 1, .colour = @splat(0.09), .kind = .ambient },
+    });
 }
 
-pub const lights = lightsWith(default_fill);
-
 /// A sprite's half width and half height, in the camera's units, against its texture's width and
-/// height in pixels times its depth (`backdrop_frame`); the sprite pipeline (`0x004CE4D0`) draws it
-/// that far to each side of its centre. On screen it reaches its texture's size times the view's
-/// scale over 768, in pixels, each way, whatever the distance.
+/// height in pixels times its depth (`backdrop_frame`); the sprite pipeline draws it that far to
+/// each side of its centre. On screen it reaches its texture's size times the view's scale over
+/// 768, in pixels, each way, whatever the distance.
 pub const sprite_scale: f32 = 1.0 / 768.0;
 
 /// The sun's sprites, each textured, coloured grey and added on the background layer toward the sun.
@@ -132,6 +100,15 @@ pub const SunLayer = enum {
         return @tagName(layer);
     }
 
+    /// Its place among the sun's sprite sets.
+    pub fn sprite(layer: SunLayer) usize {
+        return switch (layer) {
+            .sunlayer1 => 0,
+            .sunlayer3 => 1,
+            .sunlayer2 => 8,
+        };
+    }
+
     /// Its size against a lens flare's.
     pub fn size(layer: SunLayer) f32 {
         return switch (layer) {
@@ -140,48 +117,43 @@ pub const SunLayer = enum {
         };
     }
 
-    /// Whether it is drawn, for the sun's visibility and the flares' brightness. Only the hardware
-    /// renderers have `sunlayer2`.
-    pub fn shown(layer: SunLayer, visibility: f32, brightness: f32) bool {
-        return switch (layer) {
-            .sunlayer1 => true,
-            .sunlayer2 => brightness > 0,
-            .sunlayer3 => visibility > 0.5,
-        };
-    }
-
     /// Its grey, for the flares' brightness. `sunlayer2` and `sunlayer3` take theirs while the
     /// brightness is above 0 and keep it otherwise.
     pub fn grey(layer: SunLayer, brightness: f32) f32 {
         return switch (layer) {
             .sunlayer1 => 1,
-            .sunlayer2 => @min(2 * brightness, 1),
-            .sunlayer3 => if (brightness < 0.8) 0.15 * brightness + 0.1 else 0.3 * brightness,
+            .sunlayer2 => if (brightness >= 0.5) 1 else 2 * brightness,
+            .sunlayer3 => if (brightness >= 0.8) brightness * 0.3 else brightness * 0.15 + 0.1,
         };
     }
 };
 
-/// How much of the sun shows (`backdrop_frame`): its distance in pixels from the nearest edge of
-/// the screen, at most `max_visibility`, and 0 when it is off the screen. The renderer then lessens
-/// it for each triangle of an object flagged `0x8000` that covers the sun's point. It is worked out
-/// after the sprites are placed, so each frame uses the last frame's.
+/// The most of the sun that shows: its distance in pixels from the nearest edge of the screen is
+/// kept to this.
 pub const max_visibility: f32 = 10;
 
+/// How much of the sun shows (`backdrop_frame`): its distance in pixels from the nearest edge of
+/// the screen, at most `max_visibility`, and 0 when it is off the screen. The driver then lessens
+/// it for each triangle of an object flagged `sun_occluder` that covers the sun's point. It is
+/// worked out after the sprites are placed, so each frame uses the last frame's.
 pub fn sunVisibility(point: [2]f32, width: f32, height: f32) f32 {
-    const edge = @min(@min(point[0], point[1]), @min(width - point[0], height - point[1]));
-    return std.math.clamp(edge, 0, max_visibility);
+    var visibility = max_visibility;
+    if (point[0] < visibility) visibility = point[0];
+    if (point[1] < visibility) visibility = point[1];
+    if (width - point[0] < visibility) visibility = width - point[0];
+    if (height - point[1] < visibility) visibility = height - point[1];
+    return if (visibility < 0) 0 else visibility;
 }
 
 /// The flares' brightness, for the sun's visibility and `offset`, its distance from the middle of
 /// the view in view units: position over depth.
 pub fn flareBrightness(visibility: f32, offset: f32) f32 {
-    return (0.5 + 0.05 * visibility) * (1 - @min(offset, 1));
+    return (visibility * 0.05 + 0.5) * (1 - @min(offset, 1));
 }
 
 /// The lens flares, textured, coloured by the flares' brightness and added on the overlay layer:
 /// each at `along` times the sun's offset from the middle of the view, so on the line through the
-/// sun and the middle, past it when negative. **Unknown:** which views show them (`0x00539A34`,
-/// `0x00539A9C`).
+/// sun and the middle, past it when negative.
 pub const Flare = struct { texture: []const u8, along: f32 };
 pub const flares = [6]Flare{
     .{ .texture = "sunflare2", .along = 0.5 },
@@ -192,10 +164,208 @@ pub const flares = [6]Flare{
     .{ .texture = "sunflare4", .along = -0.5 },
 };
 
+/// Whether a view shows the lens flares: every view but the cockpit's ahead, and that one too in
+/// the chase mode while any of the sun shows.
+pub fn flaresShown(view: camera.View, cockpit_mode: camera.CockpitMode, visibility: f32) bool {
+    return view != .cockpit or (cockpit_mode == .chase and visibility > 0);
+}
+
 /// Object types that `backdrop_place` reads a mission's markers from: the sun's aims the key light
 /// and the sun, the nebula's the fill light and the nebula.
 pub const sun_marker_type = 0x3DC;
 pub const nebula_marker_type = 0x3DD;
+
+/// The sun's sprite sets (`sun_sprites`, `0x00595A04`): `sunlayer1`, `sunlayer3`, the six flares,
+/// then `sunlayer2`.
+pub const sun_sprite_count = 9;
+const first_flare = 2;
+
+/// The backdrop as `backdrop_create` builds it: the star fields (`star_fields`, `0x00595A30`), the
+/// dust (`space_dust`, `0x00595A28`), the lights, the sun's direction and its sprites.
+pub const Backdrop = struct {
+    fields: [field_count]srstars.Field,
+    dust: srstars.Field,
+    lights: Lights,
+    /// Toward the sun, `sun_distance` long (`sun_direction`, `0x00595BE0`).
+    sun_direction: Vector,
+    sun: [sun_sprite_count]srapiext.SpriteSet,
+    /// Each sun set's one sprite.
+    sprites: [sun_sprite_count][1]srapiext.Sprite,
+    /// Every field's stars, field after field.
+    stars: []srstars.Star,
+    motes: [dust_count]srstars.Star,
+
+    /// Builds the backdrop (`backdrop_create`) from the star map, the sun's textures and `rand`,
+    /// the flares sorting as if at `near`, the near plane.
+    pub fn create(gpa: Allocator, textures: *srtexture.Table, map: tga.Image, rand: *libcmt.Rand, near: f32) (matmanager.Error || error{WrongSize})!*Backdrop {
+        if (map.width != star_map_size or map.height != star_map_size) return error.WrongSize;
+        const backdrop = try gpa.create(Backdrop);
+        errdefer gpa.destroy(backdrop);
+
+        var count: usize = 0;
+        for (0..star_map_size) |y| {
+            for (0..star_map_size) |x| count += @intFromBool(!std.mem.allEqual(u8, &map.pixel(x, y), 0));
+        }
+        backdrop.stars = try gpa.alloc(srstars.Star, count);
+        errdefer gpa.free(backdrop.stars);
+        var at: usize = 0;
+        for (0..fields_per_side) |row| {
+            for (0..fields_per_side) |column| {
+                const first = at;
+                for (0..field_size) |y| {
+                    for (0..field_size) |x| {
+                        const pixel = map.pixel(column * field_size + x, row * field_size + y);
+                        if (std.mem.allEqual(u8, &pixel, 0)) continue;
+                        // The pixel's row gives `x`, its column `y`. Its bytes go in as the file
+                        // stores them, blue first; the driver takes the first for red.
+                        backdrop.stars[at] = .{
+                            .position = .{ offsetSine(y), offsetSine(x), 1 },
+                            .colour = .{ channel(pixel[2]), channel(pixel[1]), channel(pixel[0]) },
+                        };
+                        at += 1;
+                    }
+                }
+                backdrop.fields[row * fields_per_side + column] = .{
+                    .kind = .sky,
+                    .orientation = math.lookAt(fieldAxis(row, column)),
+                    .stars = backdrop.stars[first..at],
+                };
+            }
+        }
+
+        for (&backdrop.motes) |*mote| {
+            var position: [3]f32 = undefined;
+            for (&position) |*axis| {
+                axis.* = @as(f32, @floatFromInt(rand.rand())) * (1.0 / @as(f32, libcmt.Rand.max)) * @as(f32, dust_cube_mask);
+            }
+            mote.* = .{ .position = position, .colour = @splat(dust_grey) };
+        }
+        backdrop.dust = .{ .kind = .dust, .stars = &backdrop.motes, .cube_mask = dust_cube_mask };
+        backdrop.lights = initialLights();
+        backdrop.sun_direction = sun_direction * @as(Vector, @splat(sun_distance));
+
+        for (&backdrop.sun, &backdrop.sprites) |*set, *sprite| {
+            sprite.* = .{.{}};
+            set.* = .{ .flags = .{ ._unknown_6 = 1 }, .sprites = sprite };
+        }
+        for ([_]SunLayer{ .sunlayer1, .sunlayer2, .sunlayer3 }) |layer| {
+            const set = &backdrop.sun[layer.sprite()];
+            set.surface = sunSurface(try matmanager.textureRequire(textures, layer.texture()));
+            set.sprites[0].offset = backdrop.sun_direction;
+        }
+        for (flares, backdrop.sun[first_flare..][0..flares.len]) |flare, *set| {
+            set.surface = sunSurface(try matmanager.textureRequire(textures, flare.texture));
+            set.sprites[0].bias = near;
+        }
+        return backdrop;
+    }
+
+    pub fn destroy(backdrop: *Backdrop, gpa: Allocator) void {
+        gpa.free(backdrop.stars);
+        gpa.destroy(backdrop);
+    }
+
+    /// Makes every star field take this frame as its last, so a cut draws no streaks
+    /// (`backdrop_reset_streaks`, `0x004A5C80`).
+    pub fn resetStreaks(backdrop: *Backdrop) void {
+        for (&backdrop.fields) |*field| field.flags.fresh = true;
+        backdrop.dust.flags.fresh = true;
+    }
+
+    /// Adds the lights, the star fields, the dust, the sun and the lens flares to the scene
+    /// (`backdrop_frame`), placing the flares, sizing the sprites and finding the sun's point and
+    /// visibility for the frame.
+    pub fn frame(backdrop: *Backdrop, gpa: Allocator, scene: *srcore.Scene, context: *srapi.Context, view: camera.View, cockpit_mode: camera.CockpitMode) Allocator.Error!void {
+        for (&backdrop.lights.values) |*light| try xtrabits.sceneAdd(gpa, scene, .{ .light = light }, .background);
+        // Toward the sun, in the camera's frame.
+        const toward = context.turn(backdrop.sun_direction);
+        for (&backdrop.fields) |*field| try xtrabits.sceneAdd(gpa, scene, .{ .stars = field }, .background);
+        try xtrabits.sceneAdd(gpa, scene, .{ .stars = &backdrop.dust }, .background);
+
+        const projection = context.projection;
+        const sun1 = &backdrop.sun[SunLayer.sunlayer1.sprite()];
+        const sun2 = &backdrop.sun[SunLayer.sunlayer2.sprite()];
+        const sun3 = &backdrop.sun[SunLayer.sunlayer3.sprite()];
+        if (toward[2] == 0) {
+            context.sun_visibility = 0;
+        } else {
+            const across = toward[0] / toward[2];
+            const down = toward[1] / toward[2];
+            context.sun = .{ across * projection.scale[0] + projection.centre[0], down * projection.scale[1] + projection.centre[1] };
+            const offset = @sqrt(across * across + down * down);
+            if (context.sun_visibility > 0.5) try xtrabits.sceneAdd(gpa, scene, .{ .sprites = sun3 }, .background);
+            const brightness = flareBrightness(context.sun_visibility, offset);
+            sun1.sprites[0].colour = @splat(SunLayer.sunlayer1.grey(brightness));
+            if (brightness > 0) {
+                if (context.hardware) {
+                    sun2.sprites[0].colour = @splat(SunLayer.sunlayer2.grey(brightness));
+                    sun3.sprites[0].colour = @splat(SunLayer.sunlayer3.grey(brightness));
+                    try xtrabits.sceneAdd(gpa, scene, .{ .sprites = sun2 }, .background);
+                }
+                const sets = backdrop.sun[first_flare..][0..flares.len];
+                for (flares, sets) |flare, *set| {
+                    set.sprites[0].offset = .{ toward[0] * flare.along, toward[1] * flare.along, toward[2] };
+                }
+                if (flaresShown(view, cockpit_mode, context.sun_visibility)) {
+                    for (sets) |*set| {
+                        const sprite = &set.sprites[0];
+                        sprite.offset = math.transform(context.camera.orientation, sprite.offset);
+                        sprite.colour = @splat(brightness);
+                        try xtrabits.sceneAdd(gpa, scene, .{ .sprites = set }, .overlay);
+                    }
+                }
+            }
+            context.sun_visibility = sunVisibility(context.sun, @floatFromInt(projection.screen[0]), @floatFromInt(projection.screen[1]));
+        }
+        try xtrabits.sceneAdd(gpa, scene, .{ .sprites = sun1 }, .background);
+
+        // Each sprite as far to each side as its texture is wide and high, times its depth.
+        const sized: usize = if (context.hardware) sun_sprite_count else sun_sprite_count - 1;
+        for (backdrop.sun[0..sized]) |*set| {
+            set.position = context.camera.position;
+            const sprite = &set.sprites[0];
+            const depth = context.turn(sprite.offset)[2];
+            if (depth > 0) {
+                const image = switch (set.surface.textures[0]) {
+                    .image => |image| image,
+                    .none, .highlight => continue,
+                };
+                sprite.half_size = .{
+                    @as(f32, @floatFromInt(image.width())) * depth * sprite_scale,
+                    @as(f32, @floatFromInt(image.height())) * depth * sprite_scale,
+                };
+            }
+        }
+        for ([_]SunLayer{ .sunlayer2, .sunlayer1, .sunlayer3 }) |layer| {
+            const sprite = &backdrop.sun[layer.sprite()].sprites[0];
+            sprite.half_size = .{ sprite.half_size[0] * layer.size(), sprite.half_size[1] * layer.size() };
+        }
+    }
+};
+
+fn offsetSine(pixel: usize) f32 {
+    const offset: f32 = @floatFromInt(@as(i32, @intCast(pixel)) - field_size / 2);
+    return @sin(offset * half_degree);
+}
+
+fn channel(byte: u8) f32 {
+    return @as(f32, @floatFromInt(byte)) * (1.0 / 255.0);
+}
+
+/// A sun sprite's surface: textured, lit and added, so it takes its sprite's colour.
+fn sunSurface(image: *srtexture.Image) srapiext.Surface {
+    return .{
+        .material = .{
+            .two_pass = false,
+            ._unknown_01 = 0,
+            .coordinates = .{ .mesh, .none },
+            .lit = .{ true, false },
+            .blend = .{ .add, .off },
+            .image = .{ .null, .null },
+        },
+        .textures = .{ .{ .image = image }, .none },
+    };
+}
 
 test fieldAxis {
     // The first field is 9 degrees from +Y, toward +X and +Z; the middle ones straddle the horizon.
@@ -206,40 +376,13 @@ test fieldAxis {
     }
 }
 
-test fields {
-    const gpa = std.testing.allocator;
-    const rgb = try gpa.alloc(u8, star_map_size * star_map_size * 3);
-    defer gpa.free(rgb);
-    @memset(rgb, 0);
-    // A star at the centre of the first field, and one at the corner of the last.
-    rgb[(18 * star_map_size + 18) * 3 ..][0..3].* = .{ 90, 90, 90 };
-    rgb[((star_map_size - 1) * star_map_size + star_map_size - 1) * 3 ..][0..3].* = .{ 200, 200, 200 };
-    const map: tga.Image = .{ .width = star_map_size, .height = star_map_size, .rgb = rgb };
-
-    const all = try fields(gpa, map);
-    defer freeFields(gpa, &all);
-    try std.testing.expectEqual(1, all[0].stars.len);
-    try std.testing.expectEqual([3]f32{ 0, 0, 1 }, all[0].stars[0].position);
-    try std.testing.expectEqual(1, all[field_count - 1].stars.len);
-    try std.testing.expectApproxEqAbs(@sin(17 * half_degree), all[field_count - 1].stars[0].position[0], 1e-6);
-    try std.testing.expectEqual(0, all[50].stars.len);
-
-    const wrong: tga.Image = .{ .width = 1, .height = 1, .rgb = rgb[0..3] };
-    try std.testing.expectError(error.WrongSize, fields(gpa, wrong));
-}
-
 test SunLayer {
     try std.testing.expectEqualStrings("sunlayer3", SunLayer.sunlayer3.texture());
+    try std.testing.expectEqual(8, SunLayer.sunlayer2.sprite());
     try std.testing.expectEqual(0.5, SunLayer.sunlayer1.size());
-    // A sun in full view: every layer shows, `sunlayer2` at full grey.
-    try std.testing.expect(SunLayer.sunlayer3.shown(max_visibility, 1));
     try std.testing.expectEqual(1, SunLayer.sunlayer2.grey(0.75));
     try std.testing.expectApproxEqAbs(0.19, SunLayer.sunlayer3.grey(0.6), 1e-6);
     try std.testing.expectApproxEqAbs(0.27, SunLayer.sunlayer3.grey(0.9), 1e-6);
-    // Off the screen only `sunlayer1` is left.
-    try std.testing.expect(!SunLayer.sunlayer3.shown(0, 0));
-    try std.testing.expect(!SunLayer.sunlayer2.shown(0, 0));
-    try std.testing.expect(SunLayer.sunlayer1.shown(0, 0));
 }
 
 test sunVisibility {
@@ -255,23 +398,127 @@ test flareBrightness {
     try std.testing.expectEqual(0, flareBrightness(max_visibility, 2));
 }
 
-test lights {
+test flaresShown {
+    try std.testing.expect(flaresShown(.chase, .open, 0));
+    try std.testing.expect(!flaresShown(.cockpit, .open, max_visibility));
+    try std.testing.expect(!flaresShown(.cockpit, .chase, 0));
+    try std.testing.expect(flaresShown(.cockpit, .chase, 1));
+}
+
+test initialLights {
     // Each class of model takes four of the six.
-    const with_components: u32 = 24;
-    const without: u32 = 3;
+    const lights = initialLights();
+    const with_components: u32 = 0x18;
+    const without: u32 = 0x03;
     var reaching_with: usize = 0;
     var reaching_without: usize = 0;
-    for (lights) |light| {
-        if (light.mask & with_components == 0) reaching_with += 1;
-        if (light.mask & without == 0) reaching_without += 1;
+    for (lights.values) |light| {
+        reaching_with += @intFromBool(light.reaches(with_components));
+        reaching_without += @intFromBool(light.reaches(without));
     }
     try std.testing.expectEqual(4, reaching_with);
     try std.testing.expectEqual(4, reaching_without);
+    try std.testing.expectEqual(0.7, lights.get(.fill_10).intensity);
+}
 
-    // A nebula colours both fill lights and nothing else.
-    const orange = lightsWith(.{ 0.92, 0.66, 0.33 });
-    try std.testing.expectEqual([3]f32{ 0.92, 0.66, 0.33 }, orange[1].colour);
-    try std.testing.expectEqual([3]f32{ 0.92, 0.66, 0.33 }, orange[4].colour);
-    try std.testing.expectEqual(lights[0], orange[0]);
-    try std.testing.expectEqual(lights[5], orange[5]);
+/// A texture table holding the sun's textures and the nebulae's, each 8 by 4.
+pub const testing = struct {
+    pub const Textures = struct {
+        bytes: []u8,
+        cache: @import("../../formats/tcache.zig").Cache,
+        table: srtexture.Table,
+
+        pub fn init(gpa: Allocator) !*Textures {
+            const tcache = @import("../../formats/tcache.zig");
+            const names = [_][]const u8{ "sunlayer1", "sunlayer2", "sunlayer3", "sunflare1", "sunflare2", "sunflare3", "sunflare4", "neb01", "neb06" };
+            var specs: [names.len]tcache.testing.Spec = undefined;
+            for (&specs, names) |*spec, name| spec.* = .{ .name = name, .encoding = .index8, .width = 8, .height = 4 };
+            const textures = try gpa.create(Textures);
+            errdefer gpa.destroy(textures);
+            textures.bytes = try tcache.testing.build(gpa, &specs);
+            errdefer gpa.free(textures.bytes);
+            textures.cache = try .parse(gpa, textures.bytes);
+            textures.table = .init(gpa, textures.cache, std.mem.zeroes(tga.Palette));
+            return textures;
+        }
+
+        pub fn deinit(textures: *Textures, gpa: Allocator) void {
+            textures.table.deinit();
+            textures.cache.deinit(gpa);
+            gpa.free(textures.bytes);
+            gpa.destroy(textures);
+        }
+    };
+};
+
+test Backdrop {
+    const gpa = std.testing.allocator;
+    const textures = try testing.Textures.init(gpa);
+    defer textures.deinit(gpa);
+
+    const rgb = try gpa.alloc(u8, star_map_size * star_map_size * 3);
+    defer gpa.free(rgb);
+    @memset(rgb, 0);
+    // A star at the centre of the first field; one below and to the right of the last's centre,
+    // tinted blue.
+    rgb[(18 * star_map_size + 18) * 3 ..][0..3].* = .{ 90, 90, 90 };
+    rgb[((star_map_size - 16) * star_map_size + star_map_size - 12) * 3 ..][0..3].* = .{ 0, 0, 255 };
+    const map: tga.Image = .{ .width = star_map_size, .height = star_map_size, .rgb = rgb };
+
+    var rand: libcmt.Rand = .{};
+    const backdrop = try Backdrop.create(gpa, &textures.table, map, &rand, 100);
+    defer backdrop.destroy(gpa);
+    try std.testing.expectEqual(1, backdrop.fields[0].stars.len);
+    try std.testing.expectEqual(@as(Vector, .{ 0, 0, 1 }), backdrop.fields[0].stars[0].position);
+    // The pixel's row gives `x`, its column `y`; its blue goes first.
+    const tinted = backdrop.fields[field_count - 1].stars[0];
+    try std.testing.expectApproxEqAbs(@sin(2 * half_degree), tinted.position[0], 1e-6);
+    try std.testing.expectApproxEqAbs(@sin(6 * half_degree), tinted.position[1], 1e-6);
+    try std.testing.expectEqual([3]f32{ 1, 0, 0 }, tinted.colour);
+    for (backdrop.motes) |mote| {
+        const position: [3]f32 = mote.position;
+        for (position) |p| try std.testing.expect(p >= 0 and p <= dust_cube_mask);
+    }
+    try std.testing.expectEqual(100, backdrop.sun[first_flare].sprites[0].bias);
+
+    const wrong: tga.Image = .{ .width = 1, .height = 1, .rgb = rgb[0..3] };
+    try std.testing.expectError(error.WrongSize, Backdrop.create(gpa, &textures.table, wrong, &rand, 100));
+}
+
+test "Backdrop.frame" {
+    const gpa = std.testing.allocator;
+    const textures = try testing.Textures.init(gpa);
+    defer textures.deinit(gpa);
+    const rgb = try gpa.alloc(u8, star_map_size * star_map_size * 3);
+    defer gpa.free(rgb);
+    @memset(rgb, 0);
+    var rand: libcmt.Rand = .{};
+    const backdrop = try Backdrop.create(gpa, &textures.table, .{ .width = star_map_size, .height = star_map_size, .rgb = rgb }, &rand, 100);
+    defer backdrop.destroy(gpa);
+
+    var scene: srcore.Scene = .{};
+    defer scene.deinit(gpa);
+    // Looking straight at the sun, with all of it showing last frame.
+    var context: srapi.Context = .{
+        .camera = .{ .position = .{ 10, 20, 30 }, .orientation = math.lookAt(sun_direction) },
+        .projection = .init(640, 480, srapi.full_screen, .{ 0.6, 0.8 }),
+        .sun_visibility = max_visibility,
+    };
+    try backdrop.frame(gpa, &scene, &context, .chase, .open);
+    try std.testing.expectEqual(6, scene.lights.items.len);
+    // The fields, the dust, `sunlayer3`, `sunlayer2` and `sunlayer1`; the flares on the overlay.
+    try std.testing.expectEqual(field_count + 4, scene.layers.get(.background).items.len);
+    try std.testing.expectEqual(flares.len, scene.layers.get(.overlay).items.len);
+    try std.testing.expectApproxEqAbs(320, context.sun[0], 1e-2);
+    try std.testing.expectEqual(max_visibility, context.sun_visibility);
+    // An 8-pixel-wide texture at depth 1000 reaches 8 * 1000 / 768 to each side, halved for
+    // `sunlayer1`.
+    const sun1 = backdrop.sun[SunLayer.sunlayer1.sprite()];
+    try std.testing.expectApproxEqAbs(8.0 * 1000.0 / 768.0 * 0.5, sun1.sprites[0].half_size[0], 1e-2);
+    try std.testing.expectEqual(context.camera.position, sun1.position);
+
+    // From the cockpit the flares stay off the overlay.
+    scene.clear();
+    try backdrop.frame(gpa, &scene, &context, .cockpit, .open);
+    try std.testing.expectEqual(0, scene.layers.get(.overlay).items.len);
 }

@@ -1,43 +1,55 @@
-# Reference renderer
+# Renderer
 
-[`src/render/`](../../src/render) draws a scene in software by the engine's rules, as the modules
-under [`src/lancer/`](../../src/lancer) state them. It is the reference the port's GPU renderer is
-checked against: the same scene gives the same image.
+The port draws with Surrender's own pipeline, ported function by function into the modules of
+its original files, and with its Direct3D 7 driver, ported to draw through a device interface in
+place of `IDirect3DDevice7`.
 
-`sltool render` draws a model against the backdrop; `make render` draws the Predator toward the
-nebula and toward the sun into `game/renders/`.
-
-| Module | Does | Rules from |
+| Module | Original | Does |
 |---|---|---|
-| `texture.zig` | Textures by name from the texture cache, decoded with a palette; the highlight textures | `tcache`, `srd3d.highlight` |
-| `scene.zig` | The camera; a frame's triangles, lines, points and sprites, by layer | |
-| `model.zig` | A model's object: parts placed, faces culled, vertices lit, each face's passes | `srmesh`, `srlight`, `srofiles.look`, `objects.lightMask` |
-| `backdrop.zig` | The dome, the nebula, the stars and the sun | `nebula`, `backdrop`, `srstars` |
-| `raster.zig` | The layers into a colour buffer and a depth buffer | `srd3d.depth`, `srd3d.shade`, `srd3d.blend` |
+| [`surrenderlib/srcore.zig`](../../src/lancer/surrender/surrenderlib/srcore.zig) | `srCore.cpp` | The scene's lists; a frame, layer by layer; the sort of what the driver puts aside |
+| [`surrenderlib/srmesh.zig`](../../src/lancer/surrender/surrenderlib/srmesh.zig) | `srMesh.cpp` | The mesh pipeline: view test, level of detail, culling, projection or clipping, lighting |
+| [`surrenderlib/srbmo.zig`](../../src/lancer/surrender/surrenderlib/srbmo.zig) | `srBMO.cpp` | The sprite pipeline |
+| [`surrenderlib/srstars.zig`](../../src/lancer/surrender/surrenderlib/srstars.zig) | `srstars.cpp` | The star pipeline |
+| [`surrenderlib/srapi.zig`](../../src/lancer/surrender/surrenderlib/srapi.zig) | `srAPI.cpp` | The projection; a mesh's planes and bounds |
+| [`surrenderlib/srapiext.zig`](../../src/lancer/surrender/surrenderlib/srapiext.zig) | `srAPIext.cpp` | Meshes, mesh objects, sprite sets |
+| [`srd3d/srd3d.zig`](../../src/lancer/surrender/srd3d/srd3d.zig) | `srd3d.dll` | The driver: render states, batching, clipping, the sun test |
+| [`srd3d/device.zig`](../../src/lancer/surrender/srd3d/device.zig) | Direct3D 7 | The device the driver draws with |
+| [`srd3d/software.zig`](../../src/lancer/surrender/srd3d/software.zig) | | A device that rasterizes as Direct3D 7 does, in software |
+| [`game/srofiles.zig`](../../src/lancer/game/srofiles.zig) | `srofiles.cpp` | Meshes from `.SHP` models |
+| [`game/objects.zig`](../../src/lancer/game/objects.zig) | `objects.cpp` | A live object's part nodes, placed and drawn |
+| [`game/nebula.zig`](../../src/lancer/game/nebula.zig), [`game/backdrop.zig`](../../src/lancer/game/backdrop.zig) | `nebula.cpp`, backdrop | The sky dome, the nebula, the stars, the dust, the sun, the lights |
+| [`game/xtrabits.zig`](../../src/lancer/game/xtrabits.zig) | `xtrabits.cpp` | `scene_add` |
 
-## Frame
+The software device is the reference the GPU device is checked against: the same scene gives the
+same image. Pixel centres lie at whole numbers, as in Direct3D 7; screen positions are kept in
+sixteenths of a pixel, and a pixel whose centre lies on an edge belongs to the triangle whose top
+or left edge it is. Colours, alpha and texture coordinates are interpolated in perspective, depth
+straight across the screen. Textures are sampled bilinearly, wrapping, from the mip level nearest
+to the texels a pixel spans.
 
-The camera's frame has `x` right, `y` down and `z` forward. A point lies on screen at its position
-over its depth, times the view's scale, from the middle.
+`sltool render` draws a model against the backdrop through all of it, two frames as the game draws
+them one after another, the first finding how much of the sun shows; `make render` draws the
+Predator toward the nebula and toward the sun into `game/renders/`.
 
-Each layer is drawn in turn ([Rendering](../engine/rendering.md#frame)): the opaque triangles and
-lines as they come, a triangle's second pass straight after its first, then the blended triangles
-sorted farthest first, every first pass and then the second passes, then the points and sprites.
-Everything the backdrop puts among the points and sprites is added, so their order does not change
-the image.
+## Improvements
 
-A triangle's colour, alpha and texture coordinates are interpolated in perspective; its depth,
-`sqrt(1 / z)`, straight across the screen. Screen positions are kept in sixteenths of a pixel, and a
-pixel whose centre lies on an edge belongs to the triangle whose top or left edge it is, so
-triangles sharing an edge cover each pixel along it once. Textures are sampled bilinearly, wrapping,
-from the mip level nearest to the texels a pixel spans.
+Deliberate differences from the original, each marked **Improvement** where it is made:
 
-## Differences
+- The view is unstretched on any screen: the factor across keeps pixels square, and a wider screen
+  shows more at the sides ([Camera](../engine/camera.md#projection)).
+- The driver tests a blended polygon's triangles against the sun with the polygon's own corners,
+  where the original uses indices left over from the last list it drew.
+- A vertex with no counterpart in the next level of detail morphs toward itself, where the original
+  reads whatever lies before that level's vertices.
 
-- Pixel centres lie at half-pixel positions; Direct3D 7 has them at whole ones.
-- Polygons and lines are clipped at a depth of 1. **Unknown:** Surrender's own near plane. Points
-  and sprites are only kept in front of the camera: the backdrop's lie a unit from it.
-- Every star is a point, as for a still camera: there are no streaks.
-- Left out: the dust, which the game places at random; baked colours from static lights; the
-  objects that cover the sun and lessen its visibility.
-- `sltool render` uses the game's view, [unstretched](../engine/camera.md#projection).
+## Not yet ported
+
+- The software renderer, `srddraw.dll`, and the software renderer's sky dome.
+- The static lights `model_load` bakes into meshes, and the mesh sets it builds for cloaking.
+- Hanging each part from its parent part's node, and moving an object's origin to its parts'
+  centre of mass (`object_link_parts`): parts hang from the root at their origins in the model.
+- What `node_draw` draws besides model parts: lights, engine glows, the cloak; and its leaving out
+  objects too far away to see.
+- `backdrop_place`, which aims the sun, the lights and the nebula from a mission's markers, and the
+  objects `backdrop_frame` turns and makes glow.
+- Scene objects of kinds 5 and 6.

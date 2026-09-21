@@ -5,11 +5,6 @@ const Io = std.Io;
 
 const starlancer = @import("starlancer");
 const shp = starlancer.shp;
-const tcache = starlancer.tcache;
-const tga = starlancer.tga;
-const srapiext = starlancer.lancer.surrender.surrenderlib.srapiext;
-const srtexture = starlancer.lancer.surrender.surrenderlib.srtexture;
-const srofiles = starlancer.lancer.game.srofiles;
 
 const Context = @import("main.zig").Context;
 const Library = @import("library.zig").Library;
@@ -24,8 +19,6 @@ pub const Command = union(enum) {
     components: struct { model: []const u8 },
     /// Writes Wavefront OBJ, one object per part.
     obj: struct { model: []const u8, out: []const u8, lod: u32 = 0, model_space: bool = false },
-    /// Lists the meshes the engine builds of each part's levels.
-    meshes: struct { model: []const u8, cache: []const u8, palette: []const u8 },
 
     pub const usage =
         \\  shp info <model>                parts, meshes, materials and bounds
@@ -35,9 +28,6 @@ pub const Command = union(enum) {
         \\                                  finding mounted models beside it
         \\  shp obj <model> <out.obj> [--lod <n>] [--model-space]
         \\                                  export geometry as Wavefront OBJ, righted to Y-up
-        \\  shp meshes <model> <tcachehw.dat> <palette.tga>
-        \\                                  list the meshes the engine builds of each level, in
-        \\                                  flight, on a hardware renderer
         \\
     ;
 
@@ -50,7 +40,6 @@ pub const Command = union(enum) {
             .check => return if (operands.len == 1) .{ .check = .{ .model = operands[0] } } else error.Usage,
             .chunks => return if (operands.len == 1) .{ .chunks = .{ .model = operands[0] } } else error.Usage,
             .components => return if (operands.len == 1) .{ .components = .{ .model = operands[0] } } else error.Usage,
-            .meshes => return if (operands.len == 3) .{ .meshes = .{ .model = operands[0], .cache = operands[1], .palette = operands[2] } } else error.Usage,
             .obj => {
                 if (operands.len < 2) return error.Usage;
                 var command: Command = .{ .obj = .{ .model = operands[0], .out = operands[1] } };
@@ -87,40 +76,9 @@ pub const Command = union(enum) {
                 operands.lod,
                 operands.model_space,
             ),
-            .meshes => |operands| try listMeshes(ctx, try shp.Model.parse(ctx.arena, data), operands.cache, operands.palette),
         }
     }
 };
-
-fn listMeshes(ctx: Context, model: shp.Model, cache_path: []const u8, palette_path: []const u8) !void {
-    const gpa = ctx.arena;
-    const cache: tcache.Cache = try .parse(gpa, try Io.Dir.cwd().readFileAlloc(ctx.io, cache_path, gpa, .limited(256 << 20)));
-    const palette = try tga.palette(try Io.Dir.cwd().readFileAlloc(ctx.io, palette_path, gpa, .limited(1 << 20)));
-    var textures: srtexture.Table = .init(gpa, cache, palette);
-    defer textures.deinit();
-
-    for (model.parts, 0..) |*part, index| {
-        try ctx.stdout.print("[{d:>3}] {s}\n", .{ index, part.part.name() });
-        var flags: srapiext.ObjectFlags = .{};
-        for (0..part.meshes.len) |level| {
-            const mesh = try srofiles.build(gpa, &textures, part, level, .{ .cloak = model.header.flags.cloak }, &flags, &.{}) orelse {
-                try ctx.stdout.print("        lod {d}: no faces\n", .{level});
-                continue;
-            };
-            defer mesh.deinit(gpa);
-            var spare: usize = 0;
-            var merged: usize = 0;
-            for (mesh.polygons) |polygon| {
-                if (polygon.count == 0) spare += 1;
-                if (polygon.count > 3) merged += 1;
-            }
-            try ctx.stdout.print("        lod {d}: {d:>5} vertices {d:>5} polygons ({d} empty, {d} merged fans) {d:>2} surfaces  radius {d:.0}\n", .{
-                level, mesh.positions.len, mesh.polygons.len, spare, merged, mesh.surfaces.len, mesh.radius,
-            });
-        }
-        try ctx.stdout.print("        object flags 0x{x:0>8}\n", .{@as(u32, @bitCast(flags))});
-    }
-}
 
 fn listComponents(ctx: Context, path: []const u8) !void {
     var library: Library = try .beside(ctx, path);
@@ -400,22 +358,13 @@ fn writeObj(ctx: Context, model: shp.Model, out_path: []const u8, lod: u32, mode
     var exported: usize = 0;
     var triangles: usize = 0;
 
-    for (model.parts, 0..) |entry, index| {
+    for (model.parts) |entry| {
         if (lod >= entry.meshes.len) continue;
         const mesh = entry.meshes[lod];
         if (mesh.vertices.len == 0) continue;
 
-        // Part positions are relative to the parent, so walk up to place the part in model space.
-        var offset = shp.Vec3.zero;
-        var walk: i32 = @intCast(index);
-        while (walk >= 0) {
-            const parent = model.parts[@intCast(walk)].part;
-            offset.x += parent.position.x;
-            offset.y += parent.position.y;
-            offset.z += parent.position.z;
-            if (parent.parent == walk) break; // guard against a self-referential parent
-            walk = parent.parent;
-        }
+        // A part's origin is in the model's frame, whatever its parent.
+        const offset = entry.part.position;
 
         try out.print("\no {s}\n", .{if (entry.part.name().len > 0) entry.part.name() else "part"});
         for (mesh.vertices) |vertex| {

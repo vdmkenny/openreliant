@@ -11,6 +11,8 @@ const Vector = math.Vector;
 /// of the screen, left, top, right and bottom, and a factor across and one down. The view's middle
 /// is the screen's, whatever the viewport.
 pub const Projection = struct {
+    /// The screen's width and height in pixels (`sr + 0x1666`, `sr + 0x166A`).
+    screen: [2]u32,
     /// Pixels to a view unit, a point's position over its depth, across and down: the screen's
     /// size less a tenth of a pixel, times the factor.
     scale: [2]f32,
@@ -31,7 +33,7 @@ pub const Projection = struct {
 
     pub fn init(width: u32, height: u32, viewport: [4]f32, factors: [2]f32) Projection {
         const size = [2]f32{ @floatFromInt(width), @floatFromInt(height) };
-        var projection: Projection = .{ .scale = undefined, .centre = undefined, .bounds = undefined, .viewport = undefined, .sides = undefined };
+        var projection: Projection = .{ .screen = .{ width, height }, .scale = undefined, .centre = undefined, .bounds = undefined, .viewport = undefined, .sides = undefined };
         for (0..2) |axis| {
             projection.scale[axis] = (size[axis] - 0.1) * factors[axis];
             projection.centre[axis] = size[axis] * 0.5;

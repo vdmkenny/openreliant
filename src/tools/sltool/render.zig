@@ -1,5 +1,5 @@
-//! `sltool render ...`: draw a model against the backdrop with the reference renderer, by the
-//! engine's rules as the library states them.
+//! `sltool render ...`: draw a model against the backdrop as the game does, through Surrender's
+//! pipeline and its Direct3D driver onto the software device.
 
 const std = @import("std");
 const Io = std.Io;
@@ -9,11 +9,17 @@ const png = starlancer.png;
 const shp = starlancer.shp;
 const tcache = starlancer.tcache;
 const tga = starlancer.tga;
-const render = starlancer.render;
-const math = starlancer.lancer.surrender.math;
-const backdrop = starlancer.lancer.game.backdrop;
-const camera = starlancer.lancer.game.camera;
-const nebula = starlancer.lancer.game.nebula;
+const lancer = starlancer.lancer;
+const math = lancer.surrender.math;
+const srapi = lancer.surrender.surrenderlib.srapi;
+const srcore = lancer.surrender.surrenderlib.srcore;
+const srtexture = lancer.surrender.surrenderlib.srtexture;
+const srd3d = lancer.surrender.srd3d;
+const backdrop = lancer.game.backdrop;
+const camera = lancer.game.camera;
+const nebula = lancer.game.nebula;
+const objects = lancer.game.objects;
+const srofiles = lancer.game.srofiles;
 
 const Context = @import("main.zig").Context;
 const Library = @import("library.zig").Library;
@@ -28,21 +34,22 @@ pub const Command = struct {
     nebula: usize = nebula.default_nebula,
     width: u32 = 1280,
     height: u32 = 720,
-    /// Where the camera looks, from the middle of the backdrop.
+    /// Where the camera looks.
     toward: [3]f32 = .{ -1, 0, 0 },
     /// Where the model's nose points.
     heading: [3]f32 = .{ 1, -0.25, 0.75 },
     /// How far ahead of the camera the model is; by default, far enough to fill most of the view.
     distance: ?f32 = null,
-    level: usize = 0,
-    flares: bool = false,
+    /// The view the camera is in, which decides whether the lens flares show.
+    view: camera.View = .chase,
 
     pub const usage =
         \\  render <resource-dir> <tcachehw.dat> <out.png> [--model <file>] [--nebula <0-6>]
         \\         [--size <w>x<h>] [--toward <x,y,z>] [--heading <x,y,z>] [--distance <d>]
-        \\         [--lod <n>] [--flares]
-        \\                                  draw a model against the backdrop by the engine's
-        \\                                  rules, looking along a direction with Y down
+        \\         [--cockpit]
+        \\                                  draw a model against the backdrop as the game does,
+        \\                                  looking along a direction with Y down; the flares show
+        \\                                  but from the cockpit
         \\
     ;
 
@@ -51,8 +58,8 @@ pub const Command = struct {
         var command: Command = .{ .resources = args[0], .cache = args[1], .out = args[2] };
         var i: usize = 3;
         while (i < args.len) : (i += 1) {
-            if (std.mem.eql(u8, args[i], "--flares")) {
-                command.flares = true;
+            if (std.mem.eql(u8, args[i], "--cockpit")) {
+                command.view = .cockpit;
                 continue;
             }
             const option = std.meta.stringToEnum(Option, args[i]) orelse return error.Usage;
@@ -74,14 +81,13 @@ pub const Command = struct {
                 .@"--toward" => command.toward = try direction(value),
                 .@"--heading" => command.heading = try direction(value),
                 .@"--distance" => command.distance = std.fmt.parseFloat(f32, value) catch return error.Usage,
-                .@"--lod" => command.level = std.fmt.parseInt(usize, value, 10) catch return error.Usage,
             }
         }
         return command;
     }
 
     /// The options that take a value.
-    const Option = enum { @"--model", @"--nebula", @"--size", @"--toward", @"--heading", @"--distance", @"--lod" };
+    const Option = enum { @"--model", @"--nebula", @"--size", @"--toward", @"--heading", @"--distance" };
 
     pub fn run(command: Command, ctx: Context) !void {
         try draw(ctx, command);
@@ -104,64 +110,66 @@ fn draw(ctx: Context, command: Command) !void {
 
     const cache: tcache.Cache = try .parse(gpa, try Io.Dir.cwd().readFileAlloc(ctx.io, command.cache, gpa, .limited(256 << 20)));
     const palette = try tga.palette(try need(&resources, "palette.tga"));
-    var textures: render.texture.Library = try .init(gpa, cache, palette);
+    var textures: srtexture.Table = .init(gpa, cache, palette);
     defer textures.deinit();
 
-    // The game's view, unstretched: its pixels are square, so one scale serves both ways.
-    const scale = (camera.Camera{}).projection(command.width, command.height).scale[1];
-    var target: render.scene.Scene = .{ .camera = .looking(@splat(0), command.toward, command.width, command.height, scale) };
-    defer target.deinit(gpa);
-
-    const dome = try render.backdrop.dome(try tga.decode(gpa, try need(&resources, nebula.dome_image_name)));
-    try render.backdrop.addDome(gpa, &target, &dome);
-    const choice = nebula.nebulae[command.nebula];
-    const image = try textures.find(choice.texture) orelse return missingTexture(choice.texture);
-    try render.backdrop.addNebula(gpa, &target, image, command.nebula, nebula.patch_orientation);
-    const fields = try backdrop.fields(gpa, try tga.decode(gpa, try need(&resources, backdrop.star_map_name)));
-    try render.backdrop.addStars(gpa, &target, &fields);
-    render.backdrop.addSun(gpa, &target, &textures, backdrop.sun_direction, command.flares) catch |err| switch (err) {
-        error.TextureNotFound => return missingTexture("the sun's"),
-        else => return err,
+    // The game's view, unstretched, from the middle of the backdrop.
+    var context: srapi.Context = .{
+        .camera = .{ .position = @splat(0), .orientation = math.lookAt(math.normalize(command.toward)) },
+        .projection = (camera.Camera{}).projection(command.width, command.height),
     };
 
+    var rand: starlancer.lancer.libcmt.Rand = .{};
+    const star_map = try tga.decode(gpa, try need(&resources, backdrop.star_map_name));
+    const space = try backdrop.Backdrop.create(gpa, &textures, star_map, &rand, context.projection.near);
+    defer space.destroy(gpa);
+    const sky = try nebula.Sky.create(gpa, &textures, try tga.decode(gpa, try need(&resources, nebula.dome_image_name)));
+    defer sky.destroy(gpa);
+    try sky.select(&textures, command.nebula, &space.lights);
+
+    var object: ?objects.Model = null;
+    var polygons: usize = 0;
     if (command.model) |name| {
-        const model = try resources.load(name) orelse {
+        const model = try gpa.create(shp.Model);
+        model.* = try resources.load(name) orelse {
             std.debug.print("no model {s} in {s}\n", .{ name, command.resources });
             return error.FileNotFound;
         };
-        const distance = command.distance orelse radius(model, command.level) * scale / (0.35 * @as(f32, @floatFromInt(command.height)));
-        var diagnostics: render.model.Diagnostics = .{};
-        const lights = backdrop.lightsWith(choice.fill);
-        render.model.add(gpa, &target, &textures, .{
-            .model = model,
-            .position = math.normalize(command.toward) * @as(math.Vector, @splat(distance)),
-            .orientation = math.lookAt(math.normalize(command.heading)),
-            .level = command.level,
-        }, &lights, .{}, &diagnostics) catch |err| switch (err) {
-            error.TextureNotFound => return missingTexture(diagnostics.material),
-            else => return err,
-        };
+        const loaded = try srofiles.modelLoad(gpa, &textures, model, .{}, false);
+        var placed: objects.Model = try .create(gpa, model, &loaded);
+        const distance = command.distance orelse radius(placed, loaded) * context.projection.scale[1] / (0.35 * @as(f32, @floatFromInt(command.height)));
+        placed.place(math.normalize(command.toward) * @as(math.Vector, @splat(distance)), math.lookAt(math.normalize(command.heading)));
+        for (loaded.parts) |part| polygons += part.meshes[0].polygons.len;
+        object = placed;
     }
 
-    const frame: render.raster.Frame = try .init(gpa, command.width, command.height);
-    try render.raster.draw(gpa, frame, &target);
+    var software: srd3d.software.Software = try .init(gpa, command.width, command.height);
+    defer software.deinit(gpa);
+    var driver: srd3d.srd3d.Driver = try .init(gpa, software.interface());
+    defer driver.deinit();
+    var scene: srcore.Scene = .{};
+    defer scene.deinit(gpa);
+
+    // Two frames, as the game draws them one after another: the first finds how much of the sun
+    // shows, which the second draws by.
+    for (0..2) |_| {
+        var frame_arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+        defer frame_arena.deinit();
+        scene.clear();
+        if (object) |*o| try o.draw(gpa, &scene, .world);
+        try space.frame(gpa, &scene, &context, command.view, .open);
+        try sky.frame(gpa, &scene, &context);
+        try srcore.render(frame_arena.allocator(), &context, &scene, driver.interface());
+    }
 
     if (std.fs.path.dirname(command.out)) |dir| try Io.Dir.cwd().createDirPath(ctx.io, dir);
     const file = try Io.Dir.cwd().createFile(ctx.io, command.out, .{});
     defer file.close(ctx.io);
     var buffer: [64 * 1024]u8 = undefined;
     var writer = file.writer(ctx.io, &buffer);
-    try png.writeRgba(gpa, &writer.interface, command.width, command.height, try frame.rgba(gpa));
+    try png.writeRgba(gpa, &writer.interface, command.width, command.height, try software.rgba(gpa));
     try writer.interface.flush();
-
-    var triangles: usize = 0;
-    for (target.layers.values) |layer| triangles += layer.triangles.items.len;
-    try ctx.stdout.print("wrote {s}: {d} triangles, {d} stars, {d} sprites\n", .{
-        command.out,
-        triangles,
-        target.layers.get(.background).points.items.len,
-        target.layers.get(.background).sprites.items.len + target.layers.get(.overlay).sprites.items.len,
-    });
+    try ctx.stdout.print("wrote {s}: {d} polygons in the model's finest levels, sun visibility {d:.1}\n", .{ command.out, polygons, context.sun_visibility });
 }
 
 fn need(resources: *Library, name: []const u8) ![]u8 {
@@ -171,21 +179,12 @@ fn need(resources: *Library, name: []const u8) ![]u8 {
     };
 }
 
-fn missingTexture(name: []const u8) error{TextureNotFound} {
-    std.debug.print("the texture cache has no texture for {s}\n", .{name});
-    return error.TextureNotFound;
-}
-
-/// The farthest a vertex of the model's level `level` lies from its origin.
-fn radius(model: shp.Model, level: usize) f32 {
+/// The farthest a vertex of the model's finest levels lies from its origin.
+fn radius(model: objects.Model, loaded: srofiles.Loaded) f32 {
     var farthest: f32 = 1;
-    for (model.parts, 0..) |part, index| {
-        if (part.meshes.len == 0) continue;
-        const origin = render.model.partOrigin(model, index);
-        for (part.meshes[@min(level, part.meshes.len - 1)].vertices) |vertex| {
-            const p = vertex.position;
-            farthest = @max(farthest, math.length(origin + math.Vector{ p.x, p.y, p.z }));
-        }
+    for (model.parts, loaded.parts) |part, levels| {
+        if (levels.meshes.len == 0) continue;
+        for (levels.meshes[0].positions) |position| farthest = @max(farthest, math.length(part.origin + position));
     }
     return farthest;
 }
@@ -194,16 +193,16 @@ test Command {
     const plain = try Command.parse(&.{ "resource", "tcachehw.dat", "out.png" });
     try std.testing.expectEqual(null, plain.model);
     try std.testing.expectEqual(1280, plain.width);
-    try std.testing.expect(!plain.flares);
+    try std.testing.expectEqual(camera.View.chase, plain.view);
 
     const full = try Command.parse(&.{
-        "resource", "tcachehw.dat", "out.png",  "--model",  "USLF_Prd.SHP", "--nebula",   "5",
-        "--size",   "640x480",      "--flares", "--toward", "1,-0.5,0.2",   "--distance", "900",
+        "resource", "tcachehw.dat", "out.png",   "--model",  "USLF_Prd.SHP", "--nebula",   "5",
+        "--size",   "640x480",      "--cockpit", "--toward", "1,-0.5,0.2",   "--distance", "900",
     });
     try std.testing.expectEqualStrings("USLF_Prd.SHP", full.model.?);
     try std.testing.expectEqual(5, full.nebula);
     try std.testing.expectEqual(480, full.height);
-    try std.testing.expect(full.flares);
+    try std.testing.expectEqual(camera.View.cockpit, full.view);
     try std.testing.expectEqual([3]f32{ 1, -0.5, 0.2 }, full.toward);
     try std.testing.expectEqual(900, full.distance.?);
 

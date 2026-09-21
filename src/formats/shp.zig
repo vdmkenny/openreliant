@@ -117,7 +117,8 @@ pub const Part = extern struct {
     name_bytes: [64]u8,
     /// Subsystem class. The engine special-cases 1, 6, and the turret set {3, 9, 10, 18}.
     part_type: u32,
-    /// Origin, relative to the parent part.
+    /// Origin, in the model's frame whatever the parent: the engine hangs every part from the
+    /// object's root at it (`object_add_part`).
     position: Vec3,
     bounds_min: Vec3,
     bounds_max: Vec3,

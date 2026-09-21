@@ -8,7 +8,6 @@ sltool shp info <model>                 # parts, levels, materials, turret limit
 sltool shp chunks <model>               # the raw chunk stream
 sltool shp check <model>                # validate indices, parents and bounds
 sltool shp obj <model> <out.obj> [--lod n]
-sltool shp meshes <model> <tcachehw.dat> <palette.tga>   # the meshes the engine builds
 make models                             # export every model to game/models
 make check-models                       # validate every model
 ```
@@ -94,7 +93,7 @@ carries its own levels of detail.
 |---|---|---|
 | `0x00` | char[64] | Name, NUL-terminated: `Crusader Cockpit`, `Rus Big Tur Guns`, `Stalag Door 1 DEST` |
 | `0x40` | u32 | Subsystem class. 5 marks engines and 6 shield generators, which the engine counts; 3, 9, 10 and 18 are turrets; 1 marks hull sections, going by their names |
-| `0x44` | vec3 | Origin, relative to the parent |
+| `0x44` | vec3 | Origin, in the model's frame whatever the parent |
 | `0x50` | vec3 | Bounding box minimum (see [Bounding boxes](#bounding-boxes)) |
 | `0x5C` | vec3 | Bounding box maximum |
 | `0x94` | i32 | Parent part index, or `-1` for a root |
@@ -232,8 +231,10 @@ Wavefront OBJ also numbers texture coordinates from the bottom up, the opposite 
 the exporter emits `1 - v`.
 
 Positions are in model units. The Predator light fighter spans about 1,100 units nose to tail, which
-puts a unit near a centimetre (**unverified**: it assumes a fighter about 11 m long). Part positions are relative to the parent, so
-placing a part in model space means summing the chain up to the root.
+puts a unit near a centimetre (**unverified**: it assumes a fighter about 11 m long). A part's
+origin is in the model's frame, whatever its parent: `object_add_part` (`0x004760C0`) hangs every
+part's node from the object's root at it, and `object_link_parts` (`0x00476130`) then hangs each
+from its parent part's, keeping it where it is.
 
 ## Unread fields
 

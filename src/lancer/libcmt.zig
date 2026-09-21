@@ -65,12 +65,37 @@ pub const File = extern struct {
     }
 };
 
+/// `rand` (`0x004CF555`) and `srand` (`0x004CF548`), for one thread: the seed, 1 until seeded.
+pub const Rand = struct {
+    seed: u32 = 1,
+
+    pub const max = 0x7FFF;
+
+    pub fn srand(r: *Rand, seed: u32) void {
+        r.seed = seed;
+    }
+
+    /// The seed times 214013 plus 2531011, then bits 16 to 30 of the new seed.
+    pub fn rand(r: *Rand) u15 {
+        r.seed = r.seed *% 214013 +% 2531011;
+        return @truncate(r.seed >> 16);
+    }
+};
+
 test "stream flags match the runtime's constants" {
     // `sprintf`'s stream is `_IOWRT | _IOSTRG`, and a stream is in use while any of `_IOREAD`,
     // `_IOWRT` and `_IORW` is set.
     try std.testing.expectEqual(0x42, @as(u32, @bitCast(File.Flags{ .write = true, .string = true })));
     try std.testing.expectEqual(0x83, @as(u32, @bitCast(File.Flags{ .read = true, .write = true, .read_write = true })));
     try std.testing.expectEqual(0x4000, @as(u32, @bitCast(File.Flags{ .commit = true })));
+}
+
+test Rand {
+    // The runtime's first numbers from its default seed.
+    var r: Rand = .{};
+    try std.testing.expectEqual(41, r.rand());
+    try std.testing.expectEqual(18467, r.rand());
+    try std.testing.expectEqual(6334, r.rand());
 }
 
 test {
