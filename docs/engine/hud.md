@@ -16,7 +16,8 @@ it without being told; `make ghidra-run SCRIPT=DefineFunctions.java ARGS="0x0048
 `hud_init` (`0x00483150`) sets the display up once, from the device reset at `0x004AD0A0` rather
 than per frame: it copies the element names into the table at `0x0057BC5C`, a hundred bytes each,
 allocates the file's work buffer, takes `oldpalette.tga` and `powerball.tga`, and works out the 62
-by 62 table of shading the shield ball is drawn from.
+by 62 table of shading the power ball is drawn from: the power distribution display, which the
+game binds as POWERBALL WINDOW.
 
 `mission_frame` itself calls only three of the file's routines: the element state machine
 (`0x0048B510` and `0x0048B590`), which runs each element through states 1, 2 and 3 on a timer of 60
