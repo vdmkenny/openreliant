@@ -73,8 +73,11 @@ pub const Section = enum(u8) {
     transient_21 = 21,
     operands_b = 22,
     unknown_23 = 23,
-    unknown_24 = 24,
-    unknown_25 = 25,
+    /// One `u16` of flags per Executor command. `command` passes bit 0, inverted, to the engine
+    /// before each call. **Unknown:** what the flags mean.
+    command_flags = 24,
+    /// The same for the second, empty command catalogue.
+    command_flags_b = 25,
     unknown_26 = 26,
     _,
 };
@@ -170,7 +173,7 @@ pub const Part = extern struct {
     _unknown_04: [6]u8,
     /// Start of the part, in **halfwords** from the start of the script section.
     offset: u16,
-    _unknown_0c: u8,
+    flags: Flags,
     /// Arguments the part takes. The caller reserves `4 * arguments + 16` bytes of frame for it.
     arguments: u8,
     _unknown_0e: u16,
@@ -184,6 +187,13 @@ pub const Part = extern struct {
 
     /// An `offset` meaning the part has no block.
     pub const no_block: u16 = 0xFFFF;
+
+    pub const Flags = packed struct(u8) {
+        /// Run when the mission starts, before any trigger is armed. Every mission has one such
+        /// part (`mission_script_start`, `0x0045CBC0`).
+        start: bool,
+        _unknown: u7,
+    };
 
     pub fn isEmpty(part: Part) bool {
         return part.offset == no_block;

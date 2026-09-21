@@ -202,7 +202,7 @@ fn parts(ctx: Context, mission: dte.Mission) !void {
                 part.start(), part.size(), part.arguments, block,
             });
         }
-        try ctx.stdout.print("{s}\n", .{mission.name(part.name)});
+        try ctx.stdout.print("{s}{s}\n", .{ mission.name(part.name), if (part.flags.start) "  (runs at start)" else "" });
     }
     try ctx.stdout.print("\n{d} of {d} entry blocks decode cleanly\n", .{ decoded, filled });
 }

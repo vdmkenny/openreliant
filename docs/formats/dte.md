@@ -54,8 +54,13 @@ the count says how much of the reserved room is filled, so most missions are exa
 | 17 | parts_b | `0x1C` | Part descriptors for section 18 |
 | 18 | script_b | | A second bytecode section |
 | 22 | operands_b | 2 | |
+| 24 | command_flags | 2 | One `u16` per Executor command |
+| 25 | command_flags_b | 2 | The same for the second command catalogue |
 
-Sections 17 to 21 and 25 are empty in all 44 missions. In every mission `script_flags` holds twice
+Sections 17 to 21 and 25 are empty in all 44 missions. Section 24, where a mission has it, holds one
+entry per command of the [catalogue](#commands): `command` passes bit 0 of the entry, inverted, to
+the engine before each call. **Unknown:** what the flags mean; their values are cumulative masks
+such as 1, 3 and 7. In every mission `script_flags` holds twice
 the count of section 6: one entry per script byte.
 
 ## String pool
@@ -115,7 +120,7 @@ Stride `0x30`. A trigger runs a block of script when an event it watches happens
 | `0x00` | Condition |
 | `0x01` | Repeat mode |
 | `0x02` | Link: the block to run, as a halfword offset into the script; `0xFFFF` for none |
-| `0x14` | Armed, set for every trigger when the mission starts |
+| `0x14` | Armed, set at mission start for every trigger an object's slice holds |
 | `0x15` | Qualifier; `0xFF` for ordinary events |
 | `0x16` | Zero runs the block's thread at once, inside the event; otherwise the scheduler does |
 | `0x19` | Firings left, for repeat mode 2 |
@@ -307,6 +312,7 @@ Section 8 holds one 28-byte descriptor per **part**, a named routine. The loader
 |---|---|---|
 | `0x00` | 2 | Name, as a string pool offset |
 | `0x0A` | 2 | Start, in halfwords from the start of the script; `0xFFFF` for none |
+| `0x0C` | 1 | Flags; bit 0 runs the part when the mission starts |
 | `0x0D` | 1 | Argument count |
 | `0x10` | 2 | Extent, in halfwords |
 | `0x19` | 1 | Passed by the loader to the routine that fills the runtime entry |
@@ -326,7 +332,9 @@ Missions carry their authors' names for them, as in `mission1`:
  31    7524     28     0     20  <F>Objective window
 ```
 
-Nearly every part takes no arguments.
+Nearly every part takes no arguments. Every mission has exactly one start part, with names such as
+`<F>Start Launch`, `(F)start` or `(F)setup`: `mission_script_start`, `0x0045CBC0`, runs it before
+arming the triggers.
 
 ### Blocks
 
