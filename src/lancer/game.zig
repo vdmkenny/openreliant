@@ -23,9 +23,11 @@ pub const max_components = 60;
 pub const Node = extern struct {
     /// **Unknown.** 1 for the node of a model part.
     kind: u32,
-    /// `0x100`: listed among the object's components. `0x2000`: the part has flag `0x1000`.
+    /// `0x20`: hidden, as a component's damaged parts are while it is intact. `0x100`: listed among
+    /// the object's components. `0x2000`: the part has flag `0x1000`.
     flags: u32,
-    _unknown_08: u32,
+    /// **Unverified:** the renderer's frame for the node.
+    frame: Pointer(anyopaque),
     _unknown_0c: u32,
     /// **Unknown.** -1 when allocated.
     _unknown_10: i32,
@@ -62,7 +64,9 @@ pub const Component = extern struct {
     node: Pointer(Node),
     /// Where the node's parent lists it.
     slot: Pointer(Pointer(Node)),
-    _unknown_08: u32,
+    /// Nonzero while the component is invulnerable: `SetInvulnerability` on the component.
+    invulnerable: u16,
+    _unknown_0a: u16,
 
     comptime {
         assert(@sizeOf(Component) == 0x0C);
@@ -76,8 +80,9 @@ pub const GameObject = extern struct {
     type: u32,
     /// Its slot in `game_objects`.
     index: u32,
-    /// **Unknown**, mostly. `0x02`: its components are listed. `0x4000`: its model has a part of
-    /// subsystem class 6.
+    /// **Unknown**, mostly. `0x02`: its components are listed. `0x400`: disabled, not processed:
+    /// `DisableObject`, and `DisableObjectAtNextJump` at the next jump. `0x4000`: its model has a
+    /// part of subsystem class 6.
     flags: u32,
     _unknown_0c: u32,
     combat: Pointer(stats.ShipCombat),
@@ -114,11 +119,16 @@ pub const GameObject = extern struct {
     /// Four values, each `6 * ShipCombat.armor_class - 1` when created. `ship_damage_value` reports
     /// the lowest.
     armor: [4]f32,
-    _unknown_610: [0x584]u8,
+    _unknown_610: [0x34]u8,
+    /// Nonzero while it is hostile: `SetHostile`. When created, a value of its combat stats'
+    /// (`+0x2A`), or in one of the game's modes one worked out otherwise.
+    hostile: i32,
+    _unknown_648: [0x54C]u8,
     /// Set once `create_object` has filled the slot; it stops with a fatal error if it is set
     /// already.
     created: bool,
-    _unknown_b95: u8,
+    /// Nonzero while it is invulnerable: `SetInvulnerability`.
+    invulnerable: u8,
     _unknown_b96: u16,
 
     comptime {
@@ -131,6 +141,7 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "afterburner_fuel") == 0x5E8);
         assert(@offsetOf(GameObject, "shields") == 0x5F0);
         assert(@offsetOf(GameObject, "armor") == 0x600);
+        assert(@offsetOf(GameObject, "hostile") == 0x644);
         assert(@offsetOf(GameObject, "created") == 0xB94);
         assert(@sizeOf(GameObject) == 0xB98);
     }

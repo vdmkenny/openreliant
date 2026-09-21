@@ -47,6 +47,10 @@ pub const Command = struct {
     flag: u32,
     /// Address of the implementation in the payload executable.
     implementation: u32,
+    /// The callback the implementation hands `for_each_ship` (`0x0045D460`), which runs it for
+    /// each ship of the ship, flight group or squad the first argument names. Null for a
+    /// command that does not.
+    per_ship: ?u32,
 };
 
 /// Every command, indexed by the operand of `0x21 command`.
@@ -61,6 +65,7 @@ pub const table = [_]Command{
         .description = "Test Function",
         .flag = 0,
         .implementation = 0x00458AB0,
+        .per_ship = null,
     },
     // 0x01
     .{
@@ -74,6 +79,7 @@ pub const table = [_]Command{
         .description = "Creates a timer to invoke a function",
         .flag = 0,
         .implementation = 0x0045D210,
+        .per_ship = null,
     },
     // 0x02
     .{
@@ -84,6 +90,7 @@ pub const table = [_]Command{
         .description = "Destroys all timers associated with a function",
         .flag = 0,
         .implementation = 0x0045D290,
+        .per_ship = null,
     },
     // 0x03
     .{
@@ -94,6 +101,7 @@ pub const table = [_]Command{
         .description = "Initializes a flight group",
         .flag = 0,
         .implementation = 0x00457C40,
+        .per_ship = null,
     },
     // 0x04
     .{
@@ -104,6 +112,7 @@ pub const table = [_]Command{
         .description = "Destroys a flight group",
         .flag = 0,
         .implementation = 0x00457FD0,
+        .per_ship = null,
     },
     // 0x05
     .{
@@ -114,6 +123,7 @@ pub const table = [_]Command{
         .description = "Stop Executing for N Seconds",
         .flag = 1,
         .implementation = 0x0045D2E0,
+        .per_ship = null,
     },
     // 0x06
     .{
@@ -124,6 +134,7 @@ pub const table = [_]Command{
         .description = "Play a speech file",
         .flag = 0,
         .implementation = 0x00458090,
+        .per_ship = null,
     },
     // 0x07
     .{
@@ -132,6 +143,7 @@ pub const table = [_]Command{
         .description = "Pause script until speech is complete",
         .flag = 1,
         .implementation = 0x00458100,
+        .per_ship = null,
     },
     // 0x08
     .{
@@ -144,6 +156,7 @@ pub const table = [_]Command{
         .description = "Play a movie in the comms window",
         .flag = 0,
         .implementation = 0x00458120,
+        .per_ship = null,
     },
     // 0x09
     .{
@@ -152,6 +165,7 @@ pub const table = [_]Command{
         .description = "Pause script until comms movie is complete",
         .flag = 1,
         .implementation = 0x00458180,
+        .per_ship = null,
     },
     // 0x0A
     .{
@@ -162,6 +176,7 @@ pub const table = [_]Command{
         .description = "Prints a debugging message on screen",
         .flag = 0,
         .implementation = 0x004581A0,
+        .per_ship = null,
     },
     // 0x0B
     .{
@@ -175,6 +190,7 @@ pub const table = [_]Command{
         .description = "Sets a Ship or Flight Group's AI pattern",
         .flag = 0,
         .implementation = 0x004581F0,
+        .per_ship = 0x00458220,
     },
     // 0x0C
     .{
@@ -185,6 +201,7 @@ pub const table = [_]Command{
         .description = "Resets all AI intructions for an entity",
         .flag = 0,
         .implementation = 0x004588C0,
+        .per_ship = 0x004588E0,
     },
     // 0x0D
     .{
@@ -196,6 +213,7 @@ pub const table = [_]Command{
         .description = "Sends a Ship to follow a patrol route",
         .flag = 0,
         .implementation = 0x00458860,
+        .per_ship = 0x00458880,
     },
     // 0x0E
     .{
@@ -207,6 +225,7 @@ pub const table = [_]Command{
         .description = "Assigns a pilot to fly a ship",
         .flag = 0,
         .implementation = 0x00458830,
+        .per_ship = null,
     },
     // 0x0F
     .{
@@ -219,6 +238,7 @@ pub const table = [_]Command{
         .description = "Enables or disables the state of a trigger",
         .flag = 0,
         .implementation = 0x0045D300,
+        .per_ship = null,
     },
     // 0x10
     .{
@@ -233,6 +253,7 @@ pub const table = [_]Command{
         .description = "Sets the camera to start following a predefined path",
         .flag = 0,
         .implementation = 0x004582E0,
+        .per_ship = null,
     },
     // 0x11
     .{
@@ -244,6 +265,7 @@ pub const table = [_]Command{
         .description = "Starts a specific animation for a ship",
         .flag = 0,
         .implementation = 0x00458720,
+        .per_ship = null,
     },
     // 0x12
     .{
@@ -256,6 +278,7 @@ pub const table = [_]Command{
         .description = "Sets an ship/flight group to follow a predefined path",
         .flag = 0,
         .implementation = 0x004585D0,
+        .per_ship = 0x004585F0,
     },
     // 0x13
     .{
@@ -268,6 +291,7 @@ pub const table = [_]Command{
         .description = "Sets up a ship ready to launch",
         .flag = 0,
         .implementation = 0x00458970,
+        .per_ship = 0x004589A0,
     },
     // 0x14
     .{
@@ -278,6 +302,7 @@ pub const table = [_]Command{
         .description = "Launches a ship",
         .flag = 0,
         .implementation = 0x00458A40,
+        .per_ship = 0x00458A60,
     },
     // 0x15
     .{
@@ -288,6 +313,7 @@ pub const table = [_]Command{
         .description = "Prints a subtitle so we can understand those foreign bods",
         .flag = 0,
         .implementation = 0x00458A80,
+        .per_ship = null,
     },
     // 0x16
     .{
@@ -298,6 +324,7 @@ pub const table = [_]Command{
         .description = "Clears/removes any priortiy order of the entity",
         .flag = 0,
         .implementation = 0x00458A90,
+        .per_ship = 0x00458AB0,
     },
     // 0x17
     .{
@@ -306,6 +333,7 @@ pub const table = [_]Command{
         .description = "Stops script execution, will resume when trigger re-enabled",
         .flag = 0,
         .implementation = 0x0045D450,
+        .per_ship = null,
     },
     // 0x18
     .{
@@ -318,6 +346,7 @@ pub const table = [_]Command{
         .description = "Play a movie in the comms window",
         .flag = 0,
         .implementation = 0x00458AC0,
+        .per_ship = null,
     },
     // 0x19
     .{
@@ -330,6 +359,7 @@ pub const table = [_]Command{
         .description = "Play a movie in the comms window",
         .flag = 0,
         .implementation = 0x00458B10,
+        .per_ship = null,
     },
     // 0x1A
     .{
@@ -341,6 +371,7 @@ pub const table = [_]Command{
         .description = "Makes or stops a ship being invulnerable",
         .flag = 0,
         .implementation = 0x00458BC0,
+        .per_ship = 0x00458BE0,
     },
     // 0x1B
     .{
@@ -354,6 +385,7 @@ pub const table = [_]Command{
         .description = "Sets an ship/flight group to follow a predefined path",
         .flag = 0,
         .implementation = 0x004585A0,
+        .per_ship = 0x004585C0,
     },
     // 0x1C
     .{
@@ -365,6 +397,7 @@ pub const table = [_]Command{
         .description = "Stops entities from being processed",
         .flag = 0,
         .implementation = 0x004583C0,
+        .per_ship = 0x004583E0,
     },
     // 0x1D
     .{
@@ -376,6 +409,7 @@ pub const table = [_]Command{
         .description = "Positions an entity relative to a ship/point's movement",
         .flag = 0,
         .implementation = 0x004584D0,
+        .per_ship = 0x004584F0,
     },
     // 0x1E
     .{
@@ -384,6 +418,7 @@ pub const table = [_]Command{
         .description = "Returns the number of seconds ago when the player jumped",
         .flag = 0,
         .implementation = 0x00458580,
+        .per_ship = null,
     },
     // 0x1F
     .{
@@ -394,6 +429,7 @@ pub const table = [_]Command{
         .description = "Starts director cam for a missile",
         .flag = 0,
         .implementation = 0x00458B60,
+        .per_ship = null,
     },
     // 0x20
     .{
@@ -404,6 +440,7 @@ pub const table = [_]Command{
         .description = "Starts chase cam",
         .flag = 0,
         .implementation = 0x00458B80,
+        .per_ship = null,
     },
     // 0x21
     .{
@@ -415,6 +452,7 @@ pub const table = [_]Command{
         .description = "Sets player's target",
         .flag = 0,
         .implementation = 0x00458C80,
+        .per_ship = null,
     },
     // 0x22
     .{
@@ -426,6 +464,7 @@ pub const table = [_]Command{
         .description = "Sets an entity to be targetable or not",
         .flag = 0,
         .implementation = 0x00458D50,
+        .per_ship = 0x00458D70,
     },
     // 0x23
     .{
@@ -437,6 +476,7 @@ pub const table = [_]Command{
         .description = "Play a Music Track",
         .flag = 0,
         .implementation = 0x00458DF0,
+        .per_ship = null,
     },
     // 0x24
     .{
@@ -445,6 +485,7 @@ pub const table = [_]Command{
         .description = "Stops the Current Director Camera",
         .flag = 0,
         .implementation = 0x00458E30,
+        .per_ship = null,
     },
     // 0x25
     .{
@@ -456,6 +497,7 @@ pub const table = [_]Command{
         .description = "Sets the sphere for the action to be contained in.",
         .flag = 0,
         .implementation = 0x00458E60,
+        .per_ship = null,
     },
     // 0x26
     .{
@@ -468,6 +510,7 @@ pub const table = [_]Command{
         .description = "Dock Ship.",
         .flag = 0,
         .implementation = 0x00458EB0,
+        .per_ship = null,
     },
     // 0x27
     .{
@@ -478,6 +521,7 @@ pub const table = [_]Command{
         .description = "Stops bad guys from taunting the player",
         .flag = 0,
         .implementation = 0x00458F40,
+        .per_ship = null,
     },
     // 0x28
     .{
@@ -490,6 +534,7 @@ pub const table = [_]Command{
         .description = "Fly",
         .flag = 0,
         .implementation = 0x00458F50,
+        .per_ship = 0x00458F70,
     },
     // 0x29
     .{
@@ -502,6 +547,7 @@ pub const table = [_]Command{
         .description = "Play a movie in the comms window (without looping)",
         .flag = 0,
         .implementation = 0x00458FD0,
+        .per_ship = null,
     },
     // 0x2A
     .{
@@ -514,6 +560,7 @@ pub const table = [_]Command{
         .description = "Play a movie in the comms window (without looping)",
         .flag = 0,
         .implementation = 0x00459020,
+        .per_ship = null,
     },
     // 0x2B
     .{
@@ -525,6 +572,7 @@ pub const table = [_]Command{
         .description = "Disable Object lights",
         .flag = 0,
         .implementation = 0x00459070,
+        .per_ship = 0x00459100,
     },
     // 0x2C
     .{
@@ -536,6 +584,7 @@ pub const table = [_]Command{
         .description = "Sets an environment effect",
         .flag = 0,
         .implementation = 0x00459170,
+        .per_ship = null,
     },
     // 0x2D
     .{
@@ -544,6 +593,7 @@ pub const table = [_]Command{
         .description = "Jay's shit",
         .flag = 0,
         .implementation = 0x004591E0,
+        .per_ship = null,
     },
     // 0x2E
     .{
@@ -554,6 +604,7 @@ pub const table = [_]Command{
         .description = "Stops hard coded comms events from triggering",
         .flag = 0,
         .implementation = 0x004591F0,
+        .per_ship = null,
     },
     // 0x2F
     .{
@@ -565,6 +616,7 @@ pub const table = [_]Command{
         .description = "Disables guns",
         .flag = 0,
         .implementation = 0x00459200,
+        .per_ship = 0x00459220,
     },
     // 0x30
     .{
@@ -576,6 +628,7 @@ pub const table = [_]Command{
         .description = "Set Nav Point",
         .flag = 0,
         .implementation = 0x00459270,
+        .per_ship = 0x00459290,
     },
     // 0x31
     .{
@@ -587,6 +640,7 @@ pub const table = [_]Command{
         .description = "Set Escort Point",
         .flag = 0,
         .implementation = 0x004592F0,
+        .per_ship = 0x00459310,
     },
     // 0x32
     .{
@@ -595,6 +649,7 @@ pub const table = [_]Command{
         .description = "Reset the player's afterburner fuel",
         .flag = 1,
         .implementation = 0x004594C0,
+        .per_ship = null,
     },
     // 0x33
     .{
@@ -606,6 +661,7 @@ pub const table = [_]Command{
         .description = "Disables missiles",
         .flag = 0,
         .implementation = 0x00459370,
+        .per_ship = 0x00459390,
     },
     // 0x34
     .{
@@ -617,6 +673,7 @@ pub const table = [_]Command{
         .description = "Disables engines",
         .flag = 0,
         .implementation = 0x004593E0,
+        .per_ship = 0x00459400,
     },
     // 0x35
     .{
@@ -628,6 +685,7 @@ pub const table = [_]Command{
         .description = "Disables eject",
         .flag = 0,
         .implementation = 0x00459450,
+        .per_ship = 0x00459470,
     },
     // 0x36
     .{
@@ -639,6 +697,7 @@ pub const table = [_]Command{
         .description = "Sets entity(s) to be hostile or not",
         .flag = 0,
         .implementation = 0x004594F0,
+        .per_ship = 0x00459510,
     },
     // 0x37
     .{
@@ -647,6 +706,7 @@ pub const table = [_]Command{
         .description = "Resets the player to a random spawn location (deathmatch only)",
         .flag = 0,
         .implementation = 0x004591B0,
+        .per_ship = null,
     },
     // 0x38
     .{
@@ -655,6 +715,7 @@ pub const table = [_]Command{
         .description = "Updates state of environment FX instead of waiting for next jump",
         .flag = 0,
         .implementation = 0x004591A0,
+        .per_ship = null,
     },
     // 0x39
     .{
@@ -665,6 +726,7 @@ pub const table = [_]Command{
         .description = "Set Primary Target",
         .flag = 0,
         .implementation = 0x00459550,
+        .per_ship = null,
     },
     // 0x3A
     .{
@@ -675,6 +737,7 @@ pub const table = [_]Command{
         .description = "Wait for ships to finish jumping or launching",
         .flag = 0,
         .implementation = 0x004595A0,
+        .per_ship = 0x004595E0,
     },
     // 0x3B
     .{
@@ -686,6 +749,7 @@ pub const table = [_]Command{
         .description = "Sets entity(s) so comms can/cant disturb them",
         .flag = 0,
         .implementation = 0x00459640,
+        .per_ship = 0x00459660,
     },
     // 0x3C
     .{
@@ -696,6 +760,7 @@ pub const table = [_]Command{
         .description = "Sets the nebula material and lighting",
         .flag = 0,
         .implementation = 0x00459190,
+        .per_ship = null,
     },
     // 0x3D
     .{
@@ -707,6 +772,7 @@ pub const table = [_]Command{
         .description = "Starts a specific animation for a ship in reverse",
         .flag = 0,
         .implementation = 0x004587D0,
+        .per_ship = null,
     },
     // 0x3E
     .{
@@ -718,6 +784,7 @@ pub const table = [_]Command{
         .description = "Snaps a ship to a specific point",
         .flag = 0,
         .implementation = 0x004596A0,
+        .per_ship = null,
     },
     // 0x3F
     .{
@@ -726,6 +793,7 @@ pub const table = [_]Command{
         .description = "Plays the Foster's Last Stand movie!",
         .flag = 1,
         .implementation = 0x00459740,
+        .per_ship = null,
     },
     // 0x40
     .{
@@ -736,6 +804,7 @@ pub const table = [_]Command{
         .description = "Opens up a window on the HUD",
         .flag = 0,
         .implementation = 0x0045D9D0,
+        .per_ship = null,
     },
     // 0x41
     .{
@@ -746,6 +815,7 @@ pub const table = [_]Command{
         .description = "Closes a window on the HUD",
         .flag = 0,
         .implementation = 0x0045DA30,
+        .per_ship = null,
     },
     // 0x42
     .{
@@ -757,6 +827,7 @@ pub const table = [_]Command{
         .description = "Destroys Subobject",
         .flag = 0,
         .implementation = 0x00459750,
+        .per_ship = null,
     },
     // 0x43
     .{
@@ -768,6 +839,7 @@ pub const table = [_]Command{
         .description = "Sets a Mission Objective's status",
         .flag = 0,
         .implementation = 0x00459870,
+        .per_ship = null,
     },
     // 0x44
     .{
@@ -780,6 +852,7 @@ pub const table = [_]Command{
         .description = "Sets an Ejected pod's chances of survival",
         .flag = 0,
         .implementation = 0x004598D0,
+        .per_ship = null,
     },
     // 0x45
     .{
@@ -790,6 +863,7 @@ pub const table = [_]Command{
         .description = "Returns TRUE if ship is the players ship",
         .flag = 0,
         .implementation = 0x004598F0,
+        .per_ship = null,
     },
     // 0x46
     .{
@@ -801,6 +875,7 @@ pub const table = [_]Command{
         .description = "Sets a Flyback marker on a ship or a group of ships after a set range",
         .flag = 0,
         .implementation = 0x00459910,
+        .per_ship = 0x00459960,
     },
     // 0x47
     .{
@@ -809,6 +884,7 @@ pub const table = [_]Command{
         .description = "Resets all flyback markers",
         .flag = 0,
         .implementation = 0x004599E0,
+        .per_ship = null,
     },
     // 0x48
     .{
@@ -820,6 +896,7 @@ pub const table = [_]Command{
         .description = "Stops a specific animation for a ship",
         .flag = 0,
         .implementation = 0x00458770,
+        .per_ship = null,
     },
     // 0x49
     .{
@@ -831,6 +908,7 @@ pub const table = [_]Command{
         .description = "Enables/Disables ship avoidance for the ship(s)",
         .flag = 0,
         .implementation = 0x00459A30,
+        .per_ship = 0x00459A50,
     },
     // 0x4A
     .{
@@ -842,6 +920,7 @@ pub const table = [_]Command{
         .description = "Enables/Disables Match Speed with target",
         .flag = 0,
         .implementation = 0x00459A90,
+        .per_ship = null,
     },
     // 0x4B
     .{
@@ -855,6 +934,7 @@ pub const table = [_]Command{
         .description = "Sets an ship/flight group to follow a predefined path",
         .flag = 0,
         .implementation = 0x00458670,
+        .per_ship = 0x00458690,
     },
     // 0x4C
     .{
@@ -865,6 +945,7 @@ pub const table = [_]Command{
         .description = "Stops script until key pressed",
         .flag = 1,
         .implementation = 0x00459AE0,
+        .per_ship = null,
     },
     // 0x4D
     .{
@@ -873,6 +954,7 @@ pub const table = [_]Command{
         .description = "End the mission, and drop to death sequence",
         .flag = 1,
         .implementation = 0x00459BB0,
+        .per_ship = null,
     },
     // 0x4E
     .{
@@ -884,6 +966,7 @@ pub const table = [_]Command{
         .description = "Sets the target for a ships turret",
         .flag = 0,
         .implementation = 0x00459BD0,
+        .per_ship = 0x00459BF0,
     },
     // 0x4F
     .{
@@ -897,6 +980,7 @@ pub const table = [_]Command{
         .description = "Enables or disables the state of a trigger",
         .flag = 0,
         .implementation = 0x0045D3A0,
+        .per_ship = null,
     },
     // 0x50
     .{
@@ -905,6 +989,7 @@ pub const table = [_]Command{
         .description = "Waits for director cam to finish",
         .flag = 0,
         .implementation = 0x00459C90,
+        .per_ship = null,
     },
     // 0x51
     .{
@@ -913,6 +998,7 @@ pub const table = [_]Command{
         .description = "DANGER DANGER:Cancels ALL current script execution except the caller",
         .flag = 0,
         .implementation = 0x0045D990,
+        .per_ship = null,
     },
     // 0x52
     .{
@@ -927,6 +1013,7 @@ pub const table = [_]Command{
         .description = "Sets the camera to start following a predefined path",
         .flag = 0,
         .implementation = 0x00458300,
+        .per_ship = null,
     },
     // 0x53
     .{
@@ -937,6 +1024,7 @@ pub const table = [_]Command{
         .description = "Sets the scanner off",
         .flag = 0,
         .implementation = 0x00459CB0,
+        .per_ship = null,
     },
     // 0x54
     .{
@@ -948,6 +1036,7 @@ pub const table = [_]Command{
         .description = "Replaces subobject with another object",
         .flag = 0,
         .implementation = 0x00459CF0,
+        .per_ship = null,
     },
     // 0x55
     .{
@@ -959,6 +1048,7 @@ pub const table = [_]Command{
         .description = "Fires ships guns",
         .flag = 0,
         .implementation = 0x00459DD0,
+        .per_ship = null,
     },
     // 0x56
     .{
@@ -969,6 +1059,7 @@ pub const table = [_]Command{
         .description = "Syncs scripts",
         .flag = 0,
         .implementation = 0x00459DF0,
+        .per_ship = null,
     },
     // 0x57
     .{
@@ -977,6 +1068,7 @@ pub const table = [_]Command{
         .description = "Friendly Fire",
         .flag = 0,
         .implementation = 0x00459F30,
+        .per_ship = null,
     },
     // 0x58
     .{
@@ -988,6 +1080,7 @@ pub const table = [_]Command{
         .description = "Cloak",
         .flag = 0,
         .implementation = 0x00459F40,
+        .per_ship = 0x00459F60,
     },
     // 0x59
     .{
@@ -998,6 +1091,7 @@ pub const table = [_]Command{
         .description = "Replenish Weapons",
         .flag = 0,
         .implementation = 0x00459FA0,
+        .per_ship = null,
     },
     // 0x5A
     .{
@@ -1008,6 +1102,7 @@ pub const table = [_]Command{
         .description = "Blag blag blag blag blag",
         .flag = 0,
         .implementation = 0x0045A1C0,
+        .per_ship = null,
     },
     // 0x5B
     .{
@@ -1019,6 +1114,7 @@ pub const table = [_]Command{
         .description = "Show Hud Icon",
         .flag = 0,
         .implementation = 0x0045A1F0,
+        .per_ship = null,
     },
     // 0x5C
     .{
@@ -1030,6 +1126,7 @@ pub const table = [_]Command{
         .description = "Disable Listing",
         .flag = 0,
         .implementation = 0x0045A210,
+        .per_ship = null,
     },
     // 0x5D
     .{
@@ -1041,6 +1138,7 @@ pub const table = [_]Command{
         .description = "Disables/enables object (e.g. planet) when the next jump/warp is made",
         .flag = 0,
         .implementation = 0x0045A250,
+        .per_ship = null,
     },
     // 0x5E
     .{
@@ -1052,6 +1150,7 @@ pub const table = [_]Command{
         .description = "Darrens Naughty Blag",
         .flag = 0,
         .implementation = 0x0045A290,
+        .per_ship = null,
     },
 };
 

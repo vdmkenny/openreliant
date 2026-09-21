@@ -22,6 +22,10 @@ pub const Handler = Code("uint __fastcall (byte **ip, uint **frame, uint previou
 /// stored in `Thread.result`, and a zero result also ends the handler loop.
 pub const Command = Code("uint __fastcall (byte **ip, uint *args)");
 
+/// What a command hands `for_each_ship` to run for each ship its first argument names: the ship,
+/// and the command's remaining arguments.
+pub const ShipCommand = Code("uint __fastcall (MissionShip *ship, uint *args)");
+
 /// Threads the pool at `vm_threads` holds. `vm_thread_start` starts none while 31 are running.
 pub const max_threads = 32;
 

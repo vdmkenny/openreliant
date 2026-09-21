@@ -17,6 +17,17 @@ pub const catalogue: u32 = 0x004F0F50;
 pub const entry_size = 0x74;
 pub const max_params = 8;
 
+/// `for_each_ship`: runs a callback for each ship of the ship, flight group or squad record in
+/// `ECX`, passing it the rest of the arguments.
+pub const for_each_ship: u32 = 0x0045D460;
+
+/// How far past an implementation to look for its call to `for_each_ship`, short of the next
+/// implementation.
+const max_body = 0x400;
+
+/// How far before that call to look for the `PUSH imm32` of the callback.
+const max_push_distance = 12;
+
 /// Offsets within an entry.
 const layout = struct {
     const implementation = 0x00;
@@ -41,9 +52,10 @@ pub const Command = struct {
     params: []const Param,
     description: []const u8,
     flag: u32,
+    per_ship: ?u32 = null,
 };
 
-pub const Error = image.Error || error{TooManyParams};
+pub const Error = image.Error || error{ TooManyParams, NoCallback, TwoCallbacks };
 
 pub fn read(arena: std.mem.Allocator, reader: image.Reader) (Error || std.mem.Allocator.Error)![]const Command {
     var commands: std.ArrayList(Command) = .empty;
@@ -72,7 +84,35 @@ pub fn read(arena: std.mem.Allocator, reader: image.Reader) (Error || std.mem.Al
             .flag = try reader.word(at + layout.flag),
         });
     }
+    for (commands.items) |*command| command.per_ship = try perShip(reader, commands.items, command.implementation);
     return commands.toOwnedSlice(arena);
+}
+
+/// The callback an implementation hands `for_each_ship`, found by its call and the `PUSH` of the
+/// callback just before it. The body is taken to end at the next implementation.
+fn perShip(reader: image.Reader, all: []const Command, implementation: u32) Error!?u32 {
+    var end = implementation + max_body;
+    for (all) |other| {
+        if (other.implementation > implementation) end = @min(end, other.implementation);
+    }
+    const body = try reader.slice(implementation, end - implementation);
+    var found: ?u32 = null;
+    for (0..body.len -| 4) |i| {
+        if (body[i] != 0xE8) continue;
+        const next = implementation + @as(u32, @intCast(i)) + 5;
+        const displacement = std.mem.readInt(i32, body[i + 1 ..][0..4], .little);
+        if (next +% @as(u32, @bitCast(displacement)) != for_each_ship) continue;
+
+        const callback = for (1..@min(i, max_push_distance) + 1) |back| {
+            const at = i - back;
+            if (body[at] == 0x68 and at + 5 <= i) break std.mem.readInt(u32, body[at + 1 ..][0..4], .little);
+        } else return error.NoCallback;
+        if (found) |earlier| {
+            if (earlier != callback) return error.TwoCallbacks;
+        }
+        found = callback;
+    }
+    return found;
 }
 
 pub fn emit(w: *Io.Writer, commands: []const Command) !void {
@@ -127,6 +167,10 @@ pub fn emit(w: *Io.Writer, commands: []const Command) !void {
         \\    flag: u32,
         \\    /// Address of the implementation in the payload executable.
         \\    implementation: u32,
+        \\    /// The callback the implementation hands `for_each_ship` (`0x0045D460`), which runs it for
+        \\    /// each ship of the ship, flight group or squad the first argument names. Null for a
+        \\    /// command that does not.
+        \\    per_ship: ?u32,
         \\}};
         \\
         \\/// Every command, indexed by the operand of `0x21 command`.
@@ -151,7 +195,12 @@ pub fn emit(w: *Io.Writer, commands: []const Command) !void {
         }
         try w.print("        .description = \"{f}\",\n", .{std.zig.fmtString(command.description)});
         try w.print("        .flag = {d},\n", .{command.flag});
-        try w.print("        .implementation = 0x{X:0>8},\n    }},\n", .{command.implementation});
+        try w.print("        .implementation = 0x{X:0>8},\n", .{command.implementation});
+        if (command.per_ship) |callback| {
+            try w.print("        .per_ship = 0x{X:0>8},\n    }},\n", .{callback});
+        } else {
+            try w.writeAll("        .per_ship = null,\n    },\n");
+        }
     }
 
     try w.writeAll(

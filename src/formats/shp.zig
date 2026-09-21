@@ -148,8 +148,10 @@ pub const Part = extern struct {
         /// A component of the object: the game object lists the part among its components, by
         /// whose index trigger qualifiers and squad members name it.
         component: bool,
-        /// Splits parts into two classes when baking static lights.
-        light_class: bool,
+        /// A part of a component's damaged model: hidden while the component is intact, shown
+        /// when it is disabled, or destroyed with its damaged model kept. Static lights are baked
+        /// separately for the two classes.
+        damaged: bool,
         _unknown3: u1,
         /// Geomorph normals: the mesh builder also copies each vertex's next-level normal.
         geomorph_normals: bool,

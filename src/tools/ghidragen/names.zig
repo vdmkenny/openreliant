@@ -37,13 +37,29 @@ fn handlers(w: *Io.Writer) Io.Writer.Error!void {
     }
 }
 
-/// A row per command implementation, named `cmd_` and the developers' name for the command.
+/// A row per command implementation, named `cmd_` and the developers' name for the command, and
+/// one for each command's per-ship callback, named after it with `_ship`. An implementation that is
+/// also a callback, as the test command `PrintShipName`'s is, is named as the callback.
 fn commands(w: *Io.Writer) Io.Writer.Error!void {
     for (dte.vm_commands.table, 0..) |command, index| {
-        try w.print("{x:0>8}\tfunction\tcmd_{s}\tVmCommand\t", .{ command.implementation, command.name });
-        for (command.description) |c| try w.writeByte(if (c == '\t' or c == '\n') ' ' else c);
-        try w.print(" (command 0x{X:0>2})\n", .{index});
+        const callback_too = for (dte.vm_commands.table) |other| {
+            if (other.per_ship == command.implementation) break true;
+        } else false;
+        if (!callback_too) {
+            try w.print("{x:0>8}\tfunction\tcmd_{s}\tVmCommand\t", .{ command.implementation, command.name });
+            try description(w, command.description);
+            try w.print(" (command 0x{X:0>2})\n", .{index});
+        }
+        if (command.per_ship) |callback| {
+            try w.print("{x:0>8}\tfunction\tcmd_{s}_ship\tVmShipCommand\t", .{ callback, command.name });
+            try description(w, command.description);
+            try w.print(", for each ship (command 0x{X:0>2})\n", .{index});
+        }
     }
+}
+
+fn description(w: *Io.Writer, text: []const u8) Io.Writer.Error!void {
+    for (text) |c| try w.writeByte(if (c == '\t' or c == '\n') ' ' else c);
 }
 
 test write {
@@ -54,4 +70,5 @@ test write {
     try std.testing.expect(std.mem.indexOf(u8, rows, "\tfunction\tvm_return\tVmHandler\topcode 0x43, also 0x25\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, rows, "vm_return_alt") == null);
     try std.testing.expect(std.mem.indexOf(u8, rows, "0045d210\tfunction\tcmd_CreateTimer\tVmCommand\t") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rows, "004588e0\tfunction\tcmd_ClearAI_ship\tVmShipCommand\t") != null);
 }

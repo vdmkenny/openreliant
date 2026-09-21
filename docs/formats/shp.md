@@ -109,7 +109,7 @@ Part flags at `0xF0`:
 | Bit | Meaning |
 |---|---|
 | `0x02` | A component: the live object lists the part among its [components](../engine/objects.md#components) |
-| `0x04` | Splits parts into two classes for static-light baking |
+| `0x04` | A part of a component's damaged model: hidden while the component is intact, shown when it is disabled, or destroyed with its damaged model kept. Static lights are baked separately for the two classes |
 | `0x10` | Geomorph normals: the mesh builder also copies each vertex's next-level normal |
 | `0x20` | Geomorph positions, likewise |
 | `0x40` | Set by the loader when a static light exists in this part's class |

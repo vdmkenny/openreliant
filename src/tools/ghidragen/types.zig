@@ -53,6 +53,7 @@ pub const exported = [_]Export{
     // The script VM.
     .{ "VmHandler", lancer.vm.Handler },
     .{ "VmCommand", lancer.vm.Command },
+    .{ "VmShipCommand", lancer.vm.ShipCommand },
     .{ "VmThread", lancer.vm.Thread },
     .{ "VmCallRecord", lancer.vm.CallRecord },
     .{ "VmFunction", lancer.vm.Function },
