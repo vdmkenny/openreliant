@@ -3,8 +3,8 @@
 const std = @import("std");
 const Io = std.Io;
 
-const starlancer = @import("starlancer");
-const fat = starlancer.fat;
+const openreliant = @import("openreliant");
+const fat = openreliant.fat;
 
 const Context = @import("main.zig").Context;
 

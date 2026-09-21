@@ -15,7 +15,7 @@
 const std = @import("std");
 const Io = std.Io;
 
-const starlancer = @import("starlancer");
+const openreliant = @import("openreliant");
 
 const image = @import("image.zig");
 const testing = @import("testing.zig");

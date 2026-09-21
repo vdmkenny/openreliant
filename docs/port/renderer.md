@@ -15,7 +15,7 @@ place of `IDirect3DDevice7`.
 | [`srd3d/srd3d.zig`](../../src/lancer/surrender/srd3d/srd3d.zig) | `srd3d.dll` | The driver: render states, batching, clipping, the sun test |
 | [`srd3d/device.zig`](../../src/lancer/surrender/srd3d/device.zig) | Direct3D 7 | The device the driver draws with |
 | [`srd3d/software.zig`](../../src/lancer/surrender/srd3d/software.zig) | | A device that rasterizes as Direct3D 7 does, in software |
-| [`platform/gpu.zig`](../../src/platform/gpu.zig) | Direct3D 7 | The device the `starlancer` executable draws with: SDL's GPU interface |
+| [`platform/gpu.zig`](../../src/platform/gpu.zig) | Direct3D 7 | The device the `openreliant` executable draws with: SDL's GPU interface |
 | [`platform/shaders/device.glsl`](../../src/platform/shaders/device.glsl) | Direct3D 7's texture stages | The GPU device's one shader |
 | [`game/srofiles.zig`](../../src/lancer/game/srofiles.zig) | `srofiles.cpp` | Meshes from `.SHP` models |
 | [`game/objects.zig`](../../src/lancer/game/objects.zig) | `objects.cpp` | A live object's part nodes, placed and drawn |
@@ -29,7 +29,7 @@ or left edge it is. Colours, alpha and texture coordinates are interpolated in p
 straight across the screen. Textures are sampled bilinearly, wrapping, from the mip level nearest
 to the texels a pixel spans.
 
-The `starlancer` executable draws with the GPU device, or with the software device when asked
+The `openreliant` executable draws with the GPU device, or with the software device when asked
 ([Platform](platform.md)). `sltool render` draws a model against the backdrop through all of it onto
 the software device, two frames as the game draws them one after another, the first finding how much
 of the sun shows; `make render` draws the Predator toward the nebula and toward the sun into
@@ -76,8 +76,8 @@ Deliberate differences from the original, each marked **Improvement** where it i
   from the nearest level, and magnifies them with a Catmull-Rom filter, which keeps the small
   textures sharp up close.
 - It draws in 32-bit colour, where the original drew in 16 bits. `--original` restores the
-  original's look: 16-bit colour, dithered, into a 16-bit buffer where the GPU has one, with a 16-bit
-  depth buffer, one sample a pixel and bilinear filtering.
+  original's look: 16-bit colour, dithered, into a 16-bit buffer where the GPU has one, with a
+  16-bit depth buffer, one sample a pixel and bilinear filtering.
 
 ## Not yet ported
 

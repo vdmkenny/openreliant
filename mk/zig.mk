@@ -13,14 +13,14 @@ $(SLTOOL): $(ZIG_SOURCES)
 	$(ZIG) build -Doptimize=ReleaseSafe
 	@touch $@
 
-# The game, optimized, for the host's own processor: a Zig built for Intel Macs, run under Rosetta
-# on Apple silicon, would otherwise build the game for Intel too.
+# The engine, optimized, for the host's own processor: a Zig built for Intel Macs, run under Rosetta
+# on Apple silicon, would otherwise build it for Intel too.
 GAME_TARGET := $(if $(and $(filter Darwin,$(HOST_OS)),$(filter arm64 aarch64,$(HOST_ARCH))),-Dtarget=aarch64-macos,)
 
 .PHONY: play
-play: | $(GAME_DIR)/.stamp-install ## Build the game optimized and run it on the installed game files
+play: | $(GAME_DIR)/.stamp-install ## Build OpenReliant optimized and run it on the installed game files
 	$(ZIG) build -Doptimize=ReleaseFast $(GAME_TARGET)
-	$(ROOT)/zig-out/bin/starlancer $(INSTALL_DIR)
+	$(ROOT)/zig-out/bin/openreliant $(INSTALL_DIR)
 
 # The game's one shader, for each GPU interface SDL runs on: SPIR-V for Vulkan, and Metal's
 # language from that. The outputs are committed, so building needs neither tool; regenerating needs

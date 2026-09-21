@@ -35,8 +35,8 @@
 const std = @import("std");
 const Io = std.Io;
 
-const starlancer = @import("starlancer");
-const pe = starlancer.pe;
+const openreliant = @import("openreliant");
+const pe = openreliant.pe;
 
 const commands = @import("commands.zig");
 const conditions = @import("conditions.zig");

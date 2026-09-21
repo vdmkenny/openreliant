@@ -8,8 +8,8 @@
 const std = @import("std");
 const Io = std.Io;
 
-const starlancer = @import("starlancer");
-const Record = starlancer.lancer.game.ai.Record;
+const openreliant = @import("openreliant");
+const Record = openreliant.lancer.game.ai.Record;
 
 const image = @import("image.zig");
 const testing = @import("testing.zig");

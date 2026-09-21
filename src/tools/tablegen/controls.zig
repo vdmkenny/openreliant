@@ -7,8 +7,8 @@
 const std = @import("std");
 const Io = std.Io;
 
-const starlancer = @import("starlancer");
-const ControlBinding = starlancer.lancer.input.ControlBinding;
+const openreliant = @import("openreliant");
+const ControlBinding = openreliant.lancer.input.ControlBinding;
 const Modifier = ControlBinding.Modifier;
 
 const image = @import("image.zig");

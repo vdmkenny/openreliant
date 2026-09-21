@@ -3,8 +3,8 @@
 
 const std = @import("std");
 
-const starlancer = @import("starlancer");
-const pe = starlancer.pe;
+const openreliant = @import("openreliant");
+const pe = openreliant.pe;
 
 const image = @import("image.zig");
 

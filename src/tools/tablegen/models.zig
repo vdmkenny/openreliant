@@ -8,8 +8,8 @@
 const std = @import("std");
 const Io = std.Io;
 
-const starlancer = @import("starlancer");
-const Kind = starlancer.shp.Attachment.Kind;
+const openreliant = @import("openreliant");
+const Kind = openreliant.shp.Attachment.Kind;
 
 const image = @import("image.zig");
 const testing = @import("testing.zig");

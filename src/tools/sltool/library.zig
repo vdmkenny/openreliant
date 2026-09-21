@@ -4,8 +4,8 @@
 const std = @import("std");
 const Io = std.Io;
 
-const starlancer = @import("starlancer");
-const shp = starlancer.shp;
+const openreliant = @import("openreliant");
+const shp = openreliant.shp;
 
 const Context = @import("main.zig").Context;
 

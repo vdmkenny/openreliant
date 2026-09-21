@@ -3,8 +3,8 @@
 const std = @import("std");
 const Io = std.Io;
 
-const starlancer = @import("starlancer");
-const stats = starlancer.stats;
+const openreliant = @import("openreliant");
+const stats = openreliant.stats;
 
 const Context = @import("main.zig").Context;
 
@@ -104,7 +104,7 @@ fn printValue(ctx: Context, value: anytype) !void {
             // Render into a buffer first: `formatTag` does not pad, and the column must.
             var buffer: [16]u8 = undefined;
             var writer: Io.Writer = .fixed(&buffer);
-            starlancer.dte.formatTag(T, value, &writer) catch {};
+            openreliant.dte.formatTag(T, value, &writer) catch {};
             try ctx.stdout.print(" {s:>14}", .{writer.buffered()});
         },
         else => @compileError("no column format for " ++ @typeName(T)),

@@ -6,7 +6,7 @@ pub fn build(b: *std.Build) void {
 
     // The library: readers for the game's files and the port of the game itself, shared by the
     // game and every tool.
-    const lib = b.addModule("starlancer", .{
+    const lib = b.addModule("openreliant", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
     });
@@ -37,7 +37,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "starlancer", .module = lib },
+            .{ .name = "openreliant", .module = lib },
             .{ .name = "sdl", .module = sdl_c.createModule() },
         },
     });
@@ -46,22 +46,22 @@ pub fn build(b: *std.Build) void {
         platform.addSystemFrameworkPath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "System/Library/Frameworks" }) });
         platform.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "usr/lib" }) });
     }
-    const starlancer = b.addExecutable(.{
-        .name = "starlancer",
+    const openreliant = b.addExecutable(.{
+        .name = "openreliant",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/starlancer/main.zig"),
+            .root_source_file = b.path("src/openreliant/main.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "starlancer", .module = lib },
+                .{ .name = "openreliant", .module = lib },
                 .{ .name = "platform", .module = platform },
             },
         }),
     });
-    b.installArtifact(starlancer);
+    b.installArtifact(openreliant);
 
     const play_step = b.step("play", "Run the game");
-    const play_cmd = b.addRunArtifact(starlancer);
+    const play_cmd = b.addRunArtifact(openreliant);
     play_step.dependOn(&play_cmd.step);
     play_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| play_cmd.addArgs(args);
@@ -73,7 +73,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "starlancer", .module = lib },
+                .{ .name = "openreliant", .module = lib },
             },
         }),
     });
@@ -89,7 +89,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "starlancer", .module = lib },
+                .{ .name = "openreliant", .module = lib },
             },
         }),
     });
@@ -106,7 +106,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "starlancer", .module = lib },
+                .{ .name = "openreliant", .module = lib },
             },
         }),
     });
@@ -131,13 +131,13 @@ pub fn build(b: *std.Build) void {
     const exe_tests = b.addTest(.{ .root_module = sltool.root_module });
     const tablegen_tests = b.addTest(.{ .root_module = tablegen.root_module });
     const ghidragen_tests = b.addTest(.{ .root_module = ghidragen.root_module });
-    const starlancer_tests = b.addTest(.{ .root_module = starlancer.root_module });
+    const openreliant_tests = b.addTest(.{ .root_module = openreliant.root_module });
     const platform_tests = b.addTest(.{ .root_module = platform });
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&b.addRunArtifact(lib_tests).step);
     test_step.dependOn(&b.addRunArtifact(exe_tests).step);
     test_step.dependOn(&b.addRunArtifact(tablegen_tests).step);
     test_step.dependOn(&b.addRunArtifact(ghidragen_tests).step);
-    test_step.dependOn(&b.addRunArtifact(starlancer_tests).step);
+    test_step.dependOn(&b.addRunArtifact(openreliant_tests).step);
     test_step.dependOn(&b.addRunArtifact(platform_tests).step);
 }

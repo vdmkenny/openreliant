@@ -8,8 +8,8 @@
 const std = @import("std");
 const Io = std.Io;
 
-const starlancer = @import("starlancer");
-const Repeat = starlancer.dte.Trigger.Repeat;
+const openreliant = @import("openreliant");
+const Repeat = openreliant.dte.Trigger.Repeat;
 
 const image = @import("image.zig");
 const testing = @import("testing.zig");

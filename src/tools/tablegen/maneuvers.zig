@@ -8,8 +8,8 @@
 const std = @import("std");
 const Io = std.Io;
 
-const starlancer = @import("starlancer");
-const lancer_maneuvers = starlancer.lancer.game.aidefend;
+const openreliant = @import("openreliant");
+const lancer_maneuvers = openreliant.lancer.game.aidefend;
 const Record = lancer_maneuvers.Maneuver;
 const Opcode = lancer_maneuvers.Opcode;
 

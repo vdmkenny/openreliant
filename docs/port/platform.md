@@ -1,6 +1,6 @@
 # Platform
 
-The `starlancer` executable runs the game on SDL3, which stands in for everything the original
+The `openreliant` executable runs the game on SDL3, which stands in for everything the original
 takes from Windows: the Win32 window and message loop, DirectDraw and Direct3D 7, DirectInput. The
 game's own code, under [`src/lancer/`](../../src/lancer), reaches the platform only through
 [`src/platform/`](../../src/platform), so the same code builds for macOS, Linux and Windows.
@@ -11,7 +11,7 @@ game's own code, under [`src/lancer/`](../../src/lancer), reaches the platform o
 | [`platform/gpu.zig`](../../src/platform/gpu.zig) | Direct3D 7's device, `IDirect3DDevice7`, which the driver draws with ([Renderer](renderer.md#the-gpu-device)) |
 | [`platform/keyboard.zig`](../../src/platform/keyboard.zig) | DirectInput's keyboard: SDL's scan codes as DirectInput's (`DIK_*`) |
 | [`platform/macos.zig`](../../src/platform/macos.zig) | Nothing: what macOS needs before SDL starts |
-| [`starlancer/main.zig`](../../src/starlancer/main.zig) | `WinMain`: opening the game's files and running the frame loop |
+| [`openreliant/main.zig`](../../src/openreliant/main.zig) | `WinMain`: opening the game's files and running the frame loop |
 
 SDL comes from the [castholm/SDL](https://github.com/castholm/SDL) package, which builds it from
 source for the target, so no SDL has to be installed. `build.zig` translates its header into the
@@ -21,15 +21,16 @@ source for the target, so no SDL has to be installed. `build.zig` translates its
 
 ```bash
 make play                                      # optimized, for the host, on game/install
-zig build -Doptimize=ReleaseFast               # zig-out/bin/starlancer
-zig build -Dtarget=x86_64-windows              # starlancer.exe
+zig build -Doptimize=ReleaseFast               # zig-out/bin/openreliant
+zig build -Dtarget=x86_64-windows              # openreliant.exe
 zig build -Dtarget=x86_64-linux-gnu
 zig build -Dtarget=aarch64-macos               # Apple silicon, from any Zig
 ```
 
-`starlancer [<game-directory>] [<option>...]` runs in the game's installed directory, or the one
+`openreliant [<game-directory>] [<option>...]` runs in the game's installed directory, or the one
 given, and reads `resource.hog` and `tcachehw.dat` from it as the original does
-([`bigfile.zig`](../../src/lancer/game/bigfile.zig)).
+([`bigfile.zig`](../../src/lancer/game/bigfile.zig)). It has no data of its own: without those
+files it says what it needs and exits.
 
 | Option | Does |
 |---|---|

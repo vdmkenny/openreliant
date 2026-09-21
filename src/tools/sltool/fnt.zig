@@ -3,9 +3,9 @@
 const std = @import("std");
 const Io = std.Io;
 
-const starlancer = @import("starlancer");
-const fnt = starlancer.fnt;
-const png = starlancer.png;
+const openreliant = @import("openreliant");
+const fnt = openreliant.fnt;
+const png = openreliant.png;
 
 const Context = @import("main.zig").Context;
 

@@ -1,7 +1,7 @@
 .{
-    .name = .starlancer,
+    .name = .openreliant,
     .version = "0.0.0",
-    .fingerprint = 0xd8804e7472ea15d0,
+    .fingerprint = 0x51560fdd72ea15d0,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .sdl = .{

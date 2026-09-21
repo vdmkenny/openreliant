@@ -1,4 +1,4 @@
-//! The `starlancer` module: readers for the game's file formats, and the payload's own structures and
+//! The `openreliant` module: readers for the game's file formats, and the payload's own structures and
 //! tables, shared by every tool in this repository and, eventually, by the engine reimplementation.
 
 /// Containers the game shipped in, rather than formats the game itself reads.

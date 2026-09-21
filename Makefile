@@ -1,4 +1,4 @@
-# StarLancer decompilation project.
+# OpenReliant: an engine reimplementation of StarLancer, and the study of the game behind it.
 #
 # `make help` lists the targets. The work is split over mk/*.mk:
 #

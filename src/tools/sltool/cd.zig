@@ -3,9 +3,9 @@
 const std = @import("std");
 const Io = std.Io;
 
-const starlancer = @import("starlancer");
-const cdimage = starlancer.cdimage;
-const iso9660 = starlancer.iso9660;
+const openreliant = @import("openreliant");
+const cdimage = openreliant.cdimage;
+const iso9660 = openreliant.iso9660;
 
 const Context = @import("main.zig").Context;
 

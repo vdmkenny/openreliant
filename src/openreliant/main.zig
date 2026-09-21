@@ -1,5 +1,6 @@
-//! `starlancer`: the game, on SDL3 in place of Win32 and DirectX. It runs in the game's directory,
-//! or in the one given, and reads `resource.hog` and the texture cache as the game does.
+//! `openreliant`: the engine, on SDL3 in place of Win32 and DirectX. It has no data of its own: it
+//! runs in the directory of an installed copy of StarLancer, or in the one given, and reads
+//! `resource.hog` and the texture cache from it as the game does.
 //!
 //! So far it shows a ship in space, drawn through Surrender's pipeline and its Direct3D driver with
 //! the GPU, or onto the software device, from the camera's views, which the game's camera keys pick
@@ -10,12 +11,12 @@ const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
-const starlancer = @import("starlancer");
+const openreliant = @import("openreliant");
 const platform = @import("platform");
-const shp = starlancer.shp;
-const tcache = starlancer.tcache;
-const tga = starlancer.tga;
-const lancer = starlancer.lancer;
+const shp = openreliant.shp;
+const tcache = openreliant.tcache;
+const tga = openreliant.tga;
+const lancer = openreliant.lancer;
 const math = lancer.surrender.math;
 const srapi = lancer.surrender.surrenderlib.srapi;
 const srcore = lancer.surrender.surrenderlib.srcore;
@@ -25,8 +26,9 @@ const game = lancer.game;
 const camera = game.camera;
 
 const usage =
-    \\usage: starlancer [<game-directory>] [<option>...]
-    \\  <game-directory>          where the game is installed, with resource.hog and tcachehw.dat
+    \\usage: openreliant [<game-directory>] [<option>...]
+    \\  <game-directory>          where StarLancer is installed, with resource.hog and
+    \\                            tcachehw.dat; the current directory by default
     \\  --ship <type>             the ship type to show, by its number in shipstats.bin; 0 is the
     \\                            Predator
     \\  --screenshot <file.png>   draw one frame, with the camera settled, to a PNG, and quit
@@ -127,13 +129,46 @@ pub fn main(init: std.process.Init) !u8 {
         std.debug.print("{s}", .{usage});
         return 2;
     };
-    try run(init.io, init.gpa, arena, options);
+    run(init.io, init.gpa, arena, options) catch |err| switch (err) {
+        error.MissingGameFiles => return 1,
+        else => return err,
+    };
     return 0;
 }
 
+/// The game's files the engine reads before anything else. It has none of its own.
+const game_files = [_][]const u8{ game.bigfile.resource_name, "tcachehw.dat" };
+
+/// The first of the game's files `dir` lacks, or null when it has them all.
+fn missingGameFile(io: Io, dir: Io.Dir) ?[]const u8 {
+    for (game_files) |name| dir.access(io, name, .{}) catch return name;
+    return null;
+}
+
+/// Says that `directory` holds no installed copy of the game, and what the engine needs.
+fn missingGameFiles(directory: []const u8, file: ?[]const u8) error{MissingGameFiles} {
+    if (file) |name| {
+        std.debug.print("openreliant: {s} is missing from {s}.\n", .{ name, directory });
+    } else {
+        std.debug.print("openreliant: there is no directory {s}.\n", .{directory});
+    }
+    std.debug.print(
+        \\OpenReliant is an engine only: it plays the files of a legally obtained copy of
+        \\StarLancer. Run it in the directory the game is installed in, or name that directory:
+        \\
+        \\    openreliant <game-directory>
+        \\
+    , .{});
+    return error.MissingGameFiles;
+}
+
 fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
-    const directory = try Io.Dir.cwd().openDir(io, options.directory, .{});
+    const directory = Io.Dir.cwd().openDir(io, options.directory, .{}) catch |err| switch (err) {
+        error.FileNotFound, error.NotDir => return missingGameFiles(options.directory, null),
+        else => return err,
+    };
     defer directory.close(io);
+    if (missingGameFile(io, directory)) |name| return missingGameFiles(options.directory, name);
 
     // What `WinMain` opens at start-up, and the texture cache `renderer_start` opens.
     var resources: game.bigfile.Hog = try .open(arena, io, directory, game.bigfile.resource_name);
@@ -143,7 +178,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     const palette = try tga.palette(try resources.readFile(arena, "palette.tga"));
     var textures: srtexture.Table = .init(arena, cache, palette);
 
-    var window: platform.window.Window = try .open("StarLancer", 1280, 720, options.fullscreen);
+    var window: platform.window.Window = try .open("OpenReliant", 1280, 720, options.fullscreen);
     defer window.close();
     // The device the driver draws with, and the driver.
     const screen = try arena.create(Screen);
@@ -273,7 +308,7 @@ fn save(io: Io, gpa: Allocator, path: []const u8, rgba: []const u8, size: [2]u32
     defer file.close(io);
     var buffer: [64 * 1024]u8 = undefined;
     var writer = file.writer(io, &buffer);
-    try starlancer.png.writeRgba(gpa, &writer.interface, size[0], size[1], rgba);
+    try openreliant.png.writeRgba(gpa, &writer.interface, size[0], size[1], rgba);
     try writer.interface.flush();
 }
 
@@ -336,6 +371,18 @@ test nextShipType {
     const last = nextShipType(0, -1);
     try std.testing.expect(game.create.models.ship_types[last].model != null);
     try std.testing.expectEqual(0, nextShipType(last, 1));
+}
+
+test missingGameFile {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // Each of the game's files in turn, and none once all are there.
+    try std.testing.expectEqualStrings(game.bigfile.resource_name, missingGameFile(io, tmp.dir).?);
+    try tmp.dir.writeFile(io, .{ .sub_path = game.bigfile.resource_name, .data = "" });
+    try std.testing.expectEqualStrings("tcachehw.dat", missingGameFile(io, tmp.dir).?);
+    try tmp.dir.writeFile(io, .{ .sub_path = "tcachehw.dat", .data = "" });
+    try std.testing.expectEqual(null, missingGameFile(io, tmp.dir));
 }
 
 test Options {

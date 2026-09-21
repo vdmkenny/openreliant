@@ -6,9 +6,9 @@
 const std = @import("std");
 const Io = std.Io;
 
-const starlancer = @import("starlancer");
-const dte = starlancer.dte;
-const lancer = starlancer.lancer;
+const openreliant = @import("openreliant");
+const dte = openreliant.dte;
+const lancer = openreliant.lancer;
 const opcodes = lancer.vm.opcodes;
 const command_table = lancer.game.executor.commands;
 const orders = lancer.game.ai.orders;

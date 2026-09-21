@@ -3,8 +3,8 @@
 const std = @import("std");
 const Io = std.Io;
 
-const starlancer = @import("starlancer");
-const dte = starlancer.dte;
+const openreliant = @import("openreliant");
+const dte = openreliant.dte;
 
 const Context = @import("main.zig").Context;
 const Library = @import("library.zig").Library;
@@ -334,7 +334,7 @@ fn printListing(
                         try ctx.stdout.writeAll("   (past the constants)");
                     }
                 },
-                .command => if (starlancer.lancer.game.executor.commands.find(instruction.operands[0])) |command| {
+                .command => if (openreliant.lancer.game.executor.commands.find(instruction.operands[0])) |command| {
                     try ctx.stdout.print("   {s}", .{command.name});
                 },
                 else => try printIndex(ctx, mission, models, instruction),
@@ -396,7 +396,7 @@ fn printIndex(ctx: Context, mission: dte.Mission, models: ?*Library, instruction
 /// the mission. Nothing when the model cannot be found.
 fn printComponent(ctx: Context, models: ?*Library, ship: dte.Ship, index: u8) !void {
     const library = models orelse return;
-    const ship_type = starlancer.lancer.game.create.models.shipType(ship.kind) orelse return;
+    const ship_type = openreliant.lancer.game.create.models.shipType(ship.kind) orelse return;
     const model = ship_type.model orelse return;
     const list = try library.components(model) orelse return;
     if (index >= list.len) {

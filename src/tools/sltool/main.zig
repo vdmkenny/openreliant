@@ -1,4 +1,4 @@
-//! sltool: command-line front end to the `starlancer` format library.
+//! sltool: command-line front end to the `openreliant` format library.
 
 const std = @import("std");
 const Io = std.Io;

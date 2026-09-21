@@ -3,9 +3,9 @@
 const std = @import("std");
 const Io = std.Io;
 
-const starlancer = @import("starlancer");
-const hog = starlancer.hog;
-const refpack = starlancer.refpack;
+const openreliant = @import("openreliant");
+const hog = openreliant.hog;
+const refpack = openreliant.refpack;
 
 const Context = @import("main.zig").Context;
 

@@ -21,11 +21,11 @@
 const std = @import("std");
 const Io = std.Io;
 
-const starlancer = @import("starlancer");
-const dte = starlancer.dte;
-const lancer = starlancer.lancer;
-const shp = starlancer.shp;
-const tcache = starlancer.tcache;
+const openreliant = @import("openreliant");
+const dte = openreliant.dte;
+const lancer = openreliant.lancer;
+const shp = openreliant.shp;
+const tcache = openreliant.tcache;
 
 const Export = struct { []const u8, type };
 

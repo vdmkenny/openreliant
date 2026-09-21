@@ -17,10 +17,10 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const c = @import("sdl");
 
-const starlancer = @import("starlancer");
-const device = starlancer.lancer.surrender.srd3d.device;
-const srd3d = starlancer.lancer.surrender.srd3d.srd3d;
-const srtexture = starlancer.lancer.surrender.surrenderlib.srtexture;
+const openreliant = @import("openreliant");
+const device = openreliant.lancer.surrender.srd3d.device;
+const srd3d = openreliant.lancer.surrender.srd3d.srd3d;
+const srtexture = openreliant.lancer.surrender.surrenderlib.srtexture;
 
 const log = std.log.scoped(.gpu);
 

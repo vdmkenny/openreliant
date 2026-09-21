@@ -4,12 +4,12 @@
 const std = @import("std");
 const Io = std.Io;
 
-const starlancer = @import("starlancer");
-const png = starlancer.png;
-const shp = starlancer.shp;
-const tcache = starlancer.tcache;
-const tga = starlancer.tga;
-const lancer = starlancer.lancer;
+const openreliant = @import("openreliant");
+const png = openreliant.png;
+const shp = openreliant.shp;
+const tcache = openreliant.tcache;
+const tga = openreliant.tga;
+const lancer = openreliant.lancer;
 const math = lancer.surrender.math;
 const srapi = lancer.surrender.surrenderlib.srapi;
 const srcore = lancer.surrender.surrenderlib.srcore;
@@ -119,7 +119,7 @@ fn draw(ctx: Context, command: Command) !void {
         .projection = (camera.Camera{}).projection(command.width, command.height),
     };
 
-    var rand: starlancer.lancer.libcmt.Rand = .{};
+    var rand: openreliant.lancer.libcmt.Rand = .{};
     const star_map = try tga.decode(gpa, try need(&resources, backdrop.star_map_name));
     const space = try backdrop.Backdrop.create(gpa, &textures, star_map, &rand, context.projection.near);
     defer space.destroy(gpa);

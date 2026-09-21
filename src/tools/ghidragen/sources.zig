@@ -6,9 +6,9 @@
 const std = @import("std");
 const Io = std.Io;
 
-const starlancer = @import("starlancer");
-const sources = starlancer.lancer.sources;
-const libcmt = starlancer.lancer.libcmt;
+const openreliant = @import("openreliant");
+const sources = openreliant.lancer.sources;
+const libcmt = openreliant.lancer.libcmt;
 
 /// The directory every path starts from, which the tree leaves out.
 const root = "C:\\lancer\\";

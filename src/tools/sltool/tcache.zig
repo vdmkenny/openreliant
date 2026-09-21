@@ -3,10 +3,10 @@
 const std = @import("std");
 const Io = std.Io;
 
-const starlancer = @import("starlancer");
-const png = starlancer.png;
-const tcache = starlancer.tcache;
-const tga = starlancer.tga;
+const openreliant = @import("openreliant");
+const png = openreliant.png;
+const tcache = openreliant.tcache;
+const tga = openreliant.tga;
 
 const Context = @import("main.zig").Context;
 

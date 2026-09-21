@@ -1,8 +1,8 @@
 # Documentation
 
-Reference notes on StarLancer (Digital Anvil / Microsoft, 2000; developed by Warthog) and on this
-repository's tooling, derived from static analysis of a legally owned copy. The repository stores
-no game code or assets.
+Reference notes on StarLancer (Digital Anvil / Microsoft, 2000; developed by Warthog), on how
+OpenReliant reimplements its engine, and on the repository's tooling, derived from static analysis
+of a legally owned copy. The repository holds none of the game's files.
 
 | Path | Contents |
 |---|---|
@@ -30,7 +30,7 @@ no game code or assets.
 | [`engine/controls.md`](engine/controls.md) | Player input: devices, bindings, settings, steering and throttle. |
 | [`engine/orders.md`](engine/orders.md) | Orders: the table of what objects can be told to do, each object's stack, and how orders run. |
 | [`engine/maneuvers.md`](engine/maneuvers.md) | Combat maneuvers: the scripts Fight runs, their language, and how it chooses them. |
-| [`port/platform.md`](port/platform.md) | The platform: the `starlancer` executable on SDL3, how to build and run it on each system. |
+| [`port/platform.md`](port/platform.md) | The platform: the `openreliant` executable on SDL3, how to build and run it on each system. |
 | [`port/renderer.md`](port/renderer.md) | The renderer: Surrender's pipeline and Direct3D driver as ported, the software reference device, improvements and what is not yet ported. |
 
 ## Conventions
