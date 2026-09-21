@@ -35,6 +35,16 @@ middle of the screen, the inset and the margin cancelling. `hud_grid_place` (`0x
 the item of an index in a grid from half-way across, `0x30` apart across and `0x26` down, two to a
 row, its first item `156` to the left.
 
+The places move with the screen, but the shapes and the glyphs do not: the game draws them at their
+own size whatever the resolution, and the window it makes is 640 by 480 (`0x004A85BC`).
+
+**Improvement:** the port draws the display as large against the window as it stood against that
+640 by 480 screen, by whichever side has room for less, so it keeps its shape. What the display
+measures in its own pixels, the inset and the margin and an element's offset, is scaled with it;
+the fraction of the window is not, so the display still reaches the edges of a window of any shape.
+At a scale of 1 the arithmetic is the game's own. Half of the way across then falls within a pixel
+or so of the middle rather than exactly on it, the inset having grown.
+
 ## Text
 
 `hud_text` (`0x00480E40`) draws a line through `VFX_string_draw`, left where its alignment is 0,

@@ -16,14 +16,35 @@ const math = @import("../surrender/math.zig");
 const inset: i32 = 0x21;
 const margin: i32 = 0x10;
 
+/// The screen the display is drawn for: the size the game gives its window (`0x004A85BC`). At that
+/// size `scaleFor` is 1 and the port draws the display as the game does.
+pub const base_screen: [2]u32 = .{ 640, 480 };
+
+/// **Improvement.** How much larger than its own art the display is drawn in a window of `screen`.
+/// The game drew its shapes and its glyphs at their own size whatever the window's, so on a screen
+/// several times the one it was drawn for they come out a fraction of the size they had. The port
+/// draws them as large against the window as they stood against `base_screen`, by whichever side
+/// has room for less so that the display keeps its shape. Drawing at 1 is what the game does.
+pub fn scaleFor(screen: [2]u32) f32 {
+    var least: f32 = std.math.floatMax(f32);
+    for (screen, base_screen) |size, base| {
+        least = @min(least, @as(f32, @floatFromInt(size)) / @as(f32, @floatFromInt(base)));
+    }
+    return least;
+}
+
 /// Where an element stands, for a fraction of the screen across and down and an offset in pixels
-/// (`hud_place`, `0x00482E90`). `screen` is the screen's size, which the engine keeps at
-/// `sr + 0x1666` and `sr + 0x166A`.
-pub fn place(screen: [2]u32, offset: [2]i32, across: f32, down: f32) [2]i32 {
+/// (`hud_place`, `0x00482E90`), drawn `scale` times its own size. `screen` is the window's size,
+/// which the engine keeps at `sr + 0x1666` and `sr + 0x166A`.
+///
+/// The fraction is of the window itself, as the game takes it, so the display reaches the edges of
+/// a window of any shape. What the display measures in its own pixels, the inset and the margin
+/// and the offset, is what `scale` multiplies. At a scale of 1 this is the game's own arithmetic.
+pub fn place(screen: [2]u32, offset: [2]i32, across: f32, down: f32, scale: f32) [2]i32 {
     var at: [2]i32 = undefined;
     for (&at, screen, offset, [2]f32{ across, down }) |*out, size, from, fraction| {
-        const span: f32 = @floatFromInt(@as(i32, @intCast(size)) - inset);
-        out.* = round(span * fraction) + from + margin;
+        const span = @as(f32, @floatFromInt(size)) - @as(f32, inset) * scale;
+        out.* = round(span * fraction) + round(@as(f32, @floatFromInt(margin + from)) * scale);
     }
     return at;
 }
@@ -35,10 +56,11 @@ pub const grid_down: i32 = 0x26;
 pub const grid_offset: [2]i32 = .{ -156, 0 };
 
 /// Where the item of `index` stands in the grid: from half-way across the screen, two to a row.
-pub fn gridPlace(screen: [2]u32, index: i32) [2]i32 {
-    var at = place(screen, grid_offset, 0.5, 0);
-    at[0] += @rem(index, 2) * grid_across;
-    at[1] += @divTrunc(index, 2) * grid_down;
+/// The grid is measured in the display's own pixels, so `scale` carries it too.
+pub fn gridPlace(screen: [2]u32, index: i32, scale: f32) [2]i32 {
+    var at = place(screen, grid_offset, 0.5, 0, scale);
+    at[0] += round(@as(f32, @floatFromInt(@rem(index, 2) * grid_across)) * scale);
+    at[1] += round(@as(f32, @floatFromInt(@divTrunc(index, 2) * grid_down)) * scale);
     return at;
 }
 
@@ -87,36 +109,64 @@ pub const Align = enum(u32) {
     _,
 };
 
-/// Where a line of `text` starts, for a line drawn at `x` with `alignment`: `hud_text` takes half
-/// its width off a centred line and the whole of it off one to the right.
-pub fn textLeft(opened: Opened, x: i32, text: []const u8, alignment: Align) i32 {
+/// Where a line of `text` starts, for a line drawn at `x` with `alignment` and `scale`: `hud_text`
+/// takes half its width off a centred line and the whole of it off one to the right. The width is
+/// in the display's own pixels, so `scale` carries it too.
+pub fn textLeft(opened: Opened, x: i32, text: []const u8, alignment: Align, scale: f32) i32 {
     const width: i32 = @intCast(opened.textWidth(text));
-    return switch (alignment) {
-        .centre => x - (width >> 1),
-        .right => x - width,
-        else => x,
+    const shift: i32 = switch (alignment) {
+        .centre => width >> 1,
+        .right => width,
+        else => return x,
     };
+    return x - round(@as(f32, @floatFromInt(shift)) * scale);
 }
 
 test place {
     // Half of the way across is the middle of the screen, which is what the inset and the margin
     // between them come to: (640 - 0x21) / 2 rounded is 304, and 0x10 on top is 320.
-    try std.testing.expectEqual([2]i32{ 320, 240 }, place(.{ 640, 480 }, .{ 0, 0 }, 0.5, 0.5));
-    try std.testing.expectEqual([2]i32{ 960, 540 }, place(.{ 1920, 1080 }, .{ 0, 0 }, 0.5, 0.5));
+    try std.testing.expectEqual([2]i32{ 320, 240 }, place(.{ 640, 480 }, .{ 0, 0 }, 0.5, 0.5, 1));
+    try std.testing.expectEqual([2]i32{ 960, 540 }, place(.{ 1920, 1080 }, .{ 0, 0 }, 0.5, 0.5, 1));
     // The offset is added as it stands, and a fraction of nothing leaves only the margin.
-    try std.testing.expectEqual([2]i32{ 6, 116 }, place(.{ 640, 480 }, .{ -10, 100 }, 0, 0));
+    try std.testing.expectEqual([2]i32{ 6, 116 }, place(.{ 640, 480 }, .{ -10, 100 }, 0, 0, 1));
     // The whole way across stops a margin and an inset short of the far edge.
-    try std.testing.expectEqual([2]i32{ 1903, 1063 }, place(.{ 1920, 1080 }, .{ 0, 0 }, 1, 1));
+    try std.testing.expectEqual([2]i32{ 1903, 1063 }, place(.{ 1920, 1080 }, .{ 0, 0 }, 1, 1, 1));
+}
+
+test "a scaled element keeps its share of the window" {
+    // Drawn twice its own size, what the display measures in its own pixels doubles: the margin,
+    // the offset and the inset. The fraction of the window does not.
+    try std.testing.expectEqual([2]i32{ 12, 232 }, place(.{ 640, 480 }, .{ -10, 100 }, 0, 0, 2));
+    // Half of the way across stays within a pixel or so of the middle of the window: the inset
+    // grows with the display, which moves the middle by half of it.
+    try std.testing.expectEqual([2]i32{ 319, 239 }, place(.{ 640, 480 }, .{ 0, 0 }, 0.5, 0.5, 2));
+    try std.testing.expectEqual([2]i32{ 1278, 718 }, place(.{ 2560, 1440 }, .{ 0, 0 }, 0.5, 0.5, 3));
+    // The whole way across keeps the margin and the inset, both grown with the display.
+    try std.testing.expectEqual([2]i32{ 2509, 1389 }, place(.{ 2560, 1440 }, .{ 0, 0 }, 1, 1, 3));
+}
+
+test scaleFor {
+    // The screen the display is drawn for leaves it at its own size.
+    try std.testing.expectEqual(1, scaleFor(base_screen));
+    // Three times as tall and four times as wide: the side with room for less wins.
+    try std.testing.expectEqual(3, scaleFor(.{ 2560, 1440 }));
+    try std.testing.expectEqual(2, scaleFor(.{ 1280, 960 }));
+    // A window smaller than the screen it was drawn for draws it smaller, so that it still fits.
+    try std.testing.expectEqual(0.5, scaleFor(.{ 320, 240 }));
 }
 
 test gridPlace {
-    const first = gridPlace(.{ 640, 480 }, 0);
+    const first = gridPlace(.{ 640, 480 }, 0, 1);
     // From half-way across, less the grid's own offset.
-    try std.testing.expectEqual(place(.{ 640, 480 }, grid_offset, 0.5, 0), first);
+    try std.testing.expectEqual(place(.{ 640, 480 }, grid_offset, 0.5, 0, 1), first);
     // Two to a row: the next stands a column across, the one after a row down.
-    try std.testing.expectEqual([2]i32{ first[0] + grid_across, first[1] }, gridPlace(.{ 640, 480 }, 1));
-    try std.testing.expectEqual([2]i32{ first[0], first[1] + grid_down }, gridPlace(.{ 640, 480 }, 2));
-    try std.testing.expectEqual([2]i32{ first[0] + grid_across, first[1] + grid_down }, gridPlace(.{ 640, 480 }, 3));
+    try std.testing.expectEqual([2]i32{ first[0] + grid_across, first[1] }, gridPlace(.{ 640, 480 }, 1, 1));
+    try std.testing.expectEqual([2]i32{ first[0], first[1] + grid_down }, gridPlace(.{ 640, 480 }, 2, 1));
+    try std.testing.expectEqual([2]i32{ first[0] + grid_across, first[1] + grid_down }, gridPlace(.{ 640, 480 }, 3, 1));
+    // Scaled, the grid's own spacing grows with it.
+    const scaled = gridPlace(.{ 640, 480 }, 3, 2);
+    const scaled_first = gridPlace(.{ 640, 480 }, 0, 2);
+    try std.testing.expectEqual([2]i32{ scaled_first[0] + grid_across * 2, scaled_first[1] + grid_down * 2 }, scaled);
 }
 
 test Opened {
@@ -152,7 +202,9 @@ test textLeft {
     const text = [2]u8{ code, code };
     const width: i32 = @intCast(opened.textWidth(&text));
 
-    try std.testing.expectEqual(100, textLeft(opened, 100, &text, .left));
-    try std.testing.expectEqual(100 - (width >> 1), textLeft(opened, 100, &text, .centre));
-    try std.testing.expectEqual(100 - width, textLeft(opened, 100, &text, .right));
+    try std.testing.expectEqual(100, textLeft(opened, 100, &text, .left, 1));
+    try std.testing.expectEqual(100 - (width >> 1), textLeft(opened, 100, &text, .centre, 1));
+    try std.testing.expectEqual(100 - width, textLeft(opened, 100, &text, .right, 1));
+    // Drawn larger, the line is wider, so a centred one starts further back.
+    try std.testing.expectEqual(100 - width * 2, textLeft(opened, 100, &text, .right, 2));
 }
