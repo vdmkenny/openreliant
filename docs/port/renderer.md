@@ -27,7 +27,9 @@ or left edge it is. Colours, alpha and texture coordinates are interpolated in p
 straight across the screen. Textures are sampled bilinearly, wrapping, from the mip level nearest
 to the texels a pixel spans.
 
-`sltool render` draws a model against the backdrop through all of it, two frames as the game draws
+The `starlancer` executable draws with it ([Platform](platform.md)), putting the software device's
+frames on the screen until the GPU device replaces it. `sltool render` draws a model against the
+backdrop through all of it, two frames as the game draws
 them one after another, the first finding how much of the sun shows; `make render` draws the
 Predator toward the nebula and toward the sun into `game/renders/`.
 

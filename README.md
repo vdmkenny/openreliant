@@ -45,6 +45,13 @@ make ghidra-gui       # open the project
 
 `make help` lists every target.
 
+The game itself, as far as it is ported, runs on SDL3 for macOS, Linux and Windows
+([Platform](docs/port/platform.md)):
+
+```bash
+make play      # build the starlancer executable optimized and run it on game/install
+```
+
 ## What is here
 
 The shipped `LANCER.EXE` is a SafeDisc 1 loader; the game is the encrypted `LANCER.ICD` beside it.
@@ -83,7 +90,9 @@ Documentation index: [`docs/README.md`](docs/README.md).
 | Path | Contents |
 |---|---|
 | `src/formats/` | Readers for the game's file formats and the containers it shipped in. |
-| `src/lancer.zig`, `src/lancer/` | The payload's structures and tables, laid out as its source tree: `game/`, `surrender/surrenderlib/` and `surrender/srd3d/` mirror `C:\lancer`, a module per original file; `sources.zig` places the code in those files; `libcmt.zig` is the C runtime; `vm.zig` and `input.zig` hold code whose file is unknown. |
+| `src/lancer.zig`, `src/lancer/` | The payload's structures and tables, and the port of its code, laid out as its source tree: `game/`, `surrender/surrenderlib/` and `surrender/srd3d/` mirror `C:\lancer`, a module per original file; `sources.zig` places the code in those files; `libcmt.zig` is the C runtime; `vm.zig` and `input.zig` hold code whose file is unknown. |
+| `src/starlancer/` | `starlancer`, the game's executable. |
+| `src/platform.zig`, `src/platform/` | The platform layer: SDL3 in place of Win32 and DirectX. |
 | `src/tools/sltool/` | `sltool`, the command line front end. |
 | `src/tools/tablegen/` | Derives the engine's static tables from the game binary: the script VM's, its model tables, the control bindings, the order table, the combat maneuvers and the source map. |
 | `src/tools/ghidragen/` | Writes the names and data types the Ghidra scripts apply. |

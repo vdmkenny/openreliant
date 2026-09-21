@@ -158,7 +158,20 @@
 004ec278	data	loadout_ship_stats		Per-ship loadout values, 0x22C bytes apart
 
 # Files, sound, fonts
-004c7f60	function	hog_read_file		Reads a file from the archives, expanding RefPack
+004c7e20	function	hog_open	void * __fastcall (char *path)	Opens a .HOG archive (bigfile.cpp): the file, a Win32 handle to it, and its header and directory read whole; null unless it starts BIGF
+004c7f20	function	hog_close	void __fastcall (void *hog)
+004c7f60	function	hog_read_file	void * __fastcall (void *hog, char *name)	Reads a file from the archive, expanding RefPack: the name less an extension beginning ut, from its last backslash on; a missing one is fatal (HOG bigread2)
+004c8110	function	hog_read_file_as_named	void * __fastcall (void *hog, char *name)	hog_read_file without shortening the name
+004c81f0	function	hog_file_size	int __fastcall (void *hog, char *name)	A member's size, expanded for a RefPack one; 0 when missing
+004c8370	function	hog_seek	int __fastcall (void *hog, char *name)	Finds a member by name, ignoring case, and seeks the archive's stream to it; its stored size, or 0 when missing
+004c83f0	function	hog_locate	int __fastcall (void *hog, char *name)	Likewise, moving the archive's Win32 handle instead
+004c8480	function	hog_unpack	void * __fastcall (void *hog, int size)	Reads a RefPack member at the stream and expands it, in place with 0x2800 bytes to spare, then copies it out
+004c7df0	function	read_be32	uint __fastcall (void *bytes, int count)	The first count bytes as a big-endian number
+004c5be0	function	hog_file_read	void * __fastcall (char *path, void *buffer)	Reads a loose file whole (hog_file.cpp)
+004c5b90	function	hog_file_length	int __fastcall (char *path)	A loose file's length; 0 when it cannot be opened
+005e830c	data	resource_hog	void *	resource.hog, opened by WinMain
+0057bc48	data	speech_hog	void *	msspeech.hog, opened for the HUD
+005e8308	data	hog_last_size	int	The size of the last file read
 004c5bd0	function	hog_load
 00480d70	function	font_open		Wraps a loaded font and caches the widths of codes below 255
 00481f80	function	sound_play		Plays sound n of a bank, taking over a lower-priority voice if none is free
