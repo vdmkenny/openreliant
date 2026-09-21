@@ -3,7 +3,7 @@
 //! The engine loads a whole bank into memory and plays entry `n` by handing Miles the WAVE file at
 //! `bank + offset`. An entry's priority decides whether it may take over a voice that is already
 //! playing: the player finds the busy voice of lowest priority and stops it only for a sound whose
-//! priority is higher (`FUN_00481F80`).
+//! priority is higher (`sound_play`, `0x00481F80`).
 
 const std = @import("std");
 const assert = std.debug.assert;

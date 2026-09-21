@@ -31,11 +31,12 @@ other is 16-bit PCM. `sltool fat extract` writes them unchanged.
 
 ## Playback
 
-The engine reads a whole bank into memory with its generic file loader, `FUN_004C7F60`, and plays
-sound `n` of it with `FUN_00481F80`, which passes Miles the WAVE file at `bank + offset`. The
-priority decides whether a sound may take over a voice already playing: the player finds the busy
-voice of lowest priority and stops it only for a sound whose priority is higher, then records the
-new sound's priority on the voice.
+The engine reads a whole bank into memory with its generic file loader, `hog_read_file`
+(`0x004C7F60`), and plays sound `n` of it with `sound_play` (`0x00481F80`), which passes Miles the
+WAVE file at `bank + offset`. The priority decides whether a sound may take over a voice already
+playing: the player finds the busy voice of lowest priority and stops it only for a sound whose
+priority is higher, then records the new sound's priority on the voice (`SoundVoice` in
+[`src/lancer/sound.zig`](../../src/lancer/sound.zig)).
 
 The shipped banks use priorities 1, 5, 50 and 10000. Most hold a single sound: those named for the
 flyable fighters, such as `PREDATOR.FAT`, each hold one at priority 10000. `betty.fat` holds the

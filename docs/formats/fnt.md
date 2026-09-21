@@ -36,7 +36,7 @@ colour. `sltool fnt render` shows the levels as grey, with 0 transparent.
 
 Codes 0 to 31 are empty. Codes 32 to 127 are ASCII, and in the larger fonts 128 to 255 hold
 accented letters and symbols. Some tables run past 255, but those entries are empty, and the
-payload's font setup, `FUN_00480D70`, caches the width of codes below 255 only.
+payload's font setup, `font_open` (`0x00480D70`), caches the width of codes below 255 only.
 
 ## Prior art
 

@@ -51,7 +51,7 @@ pub const Section = enum(u8) {
     /// `call_part` indexes.
     parts = 8,
     unknown_9 = 9,
-    /// One flag per bytecode byte, marking where the VM may yield.
+    /// One flag per bytecode byte, which the interpreter consults for the script debugger.
     script_flags = 10,
     targets = 11,
     /// Squads, stride `0x0C`. Each starts with its object ID, and lists its members in
@@ -276,7 +276,8 @@ pub const Objective = extern struct {
 /// which gives the index of the ship's first trigger and how many follow, so a trigger that no
 /// ship lists can never fire. When an event happens to a ship, the engine fires each of that
 /// ship's triggers that is armed, whose `condition` and `qualifier` are the event's, and whose
-/// operands pass the condition's checks. Firing starts a thread on the block `link` names.
+/// operands pass the condition's checks. Firing starts a thread on the block `link` names, unless
+/// a thread the trigger started is still running.
 pub const Trigger = extern struct {
     condition: Condition,
     repeat: Repeat,
@@ -297,8 +298,8 @@ pub const Trigger = extern struct {
     /// Firings left, for `counted`.
     repeat_counter: u8,
     _unknown_1a: [2]u8,
-    /// Condition arguments, four bytes each, which the condition's handler checks against the
-    /// event's own.
+    /// Condition arguments, four bytes each, checked against the event's values: those the
+    /// condition marks as checked, and of those, the ones whose low halfword is not `0xFFFF`.
     operands: [5]u32,
 
     /// The qualifier of an ordinary event.
@@ -387,6 +388,24 @@ pub const Squad = extern struct {
     }
 };
 
+/// One member of a squad, in section `squad_members`. A member can itself be a flight group or a
+/// squad, and `in_squad` follows those.
+pub const SquadMember = extern struct {
+    object_id: u16,
+    _unknown_02: u16,
+    /// Index of the squad in `squads`. A squad's members are consecutive.
+    squad: u16,
+    _unknown_06: u16,
+    /// **Unknown.** `in_squad` matches a ship only when this equals its own third argument.
+    _unknown_08: u8,
+    _unknown_09: [3]u8,
+
+    comptime {
+        assert(@offsetOf(SquadMember, "squad") == 0x04);
+        assert(@sizeOf(SquadMember) == 0x0C);
+    }
+};
+
 /// The 35 conditions, in the order of the engine's descriptor table at `0x4F6698`, named after its
 /// `TT_*` constants. The last two are internal and cannot be scripted.
 pub const Condition = enum(u8) {
@@ -439,8 +458,9 @@ pub const Condition = enum(u8) {
 ///
 /// The interpreter is a plain dispatch loop: fetch one byte, index a 256-entry handler table,
 /// advance the instruction pointer by one, call the handler, and repeat until a handler returns
-/// zero. A parallel flag array, section `script_flags`, is indexed by the same instruction pointer
-/// and marks where the VM may suspend across frames.
+/// zero. A parallel flag array, section `script_flags`, is indexed by the same instruction pointer:
+/// with the script debugger attached, the interpreter can stop a thread at a flagged byte and
+/// report where it is.
 ///
 /// The handler table holds 86 entries, of which 71 are filled: `0x02` to `0x07` and `0x14` to
 /// `0x55`, minus `0x50`. Those 71 are the whole instruction set. Their sizes and shapes are in

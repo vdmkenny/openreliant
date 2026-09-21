@@ -78,17 +78,19 @@ ghidra-run: | $(GHIDRA_PROJECT_DIR)/.imported-$(GROUP) ## Run a Ghidra script: m
 	    -max-cpu $(HEADLESS_MAX_CPU) -log $(GHIDRA_PROJECT_DIR)/script-$(GROUP).log
 
 GHIDRA_NAMES_DIR := $(GHIDRA_DIR)/names
-VM_HANDLER_NAMES := $(ROOT)/zig-out/names/vm_handlers.tsv
+GHIDRAGEN_DIR    := $(ROOT)/zig-out/ghidra
 
-.PHONY: ghidra-names
-ghidra-names: | $(GHIDRA_PROJECT_DIR)/.imported-game ## Name the payload's known functions and data, from ghidra/names and the opcode table
-	$(ZIG) build vmgen
-	mkdir -p $(dir $(VM_HANDLER_NAMES))
-	$(ROOT)/zig-out/bin/vmgen names $(VM_HANDLER_NAMES)
-	$(HEADLESS) $(GHIDRA_PROJECT)/game -process -noanalysis \
+.PHONY: ghidra-annotate
+ghidra-annotate: | $(GHIDRA_PROJECT_DIR)/.imported-game ## Name and type the payload's known functions and data, from ghidra/names and the Zig definitions
+	$(ZIG) build ghidragen
+	mkdir -p $(GHIDRAGEN_DIR)
+	$(ROOT)/zig-out/bin/ghidragen types $(GHIDRAGEN_DIR)/types.tsv
+	$(ROOT)/zig-out/bin/ghidragen names $(GHIDRAGEN_DIR)/names.tsv
+	$(HEADLESS) $(GHIDRA_PROJECT)/game -process LANCER.EXE -noanalysis \
 	    -scriptPath $(GHIDRA_SCRIPTS_DIR) \
-	    -postScript ApplyNames.java $(GHIDRA_NAMES_DIR)/LANCER.EXE.tsv $(VM_HANDLER_NAMES) \
-	    -max-cpu $(HEADLESS_MAX_CPU) -log $(GHIDRA_PROJECT_DIR)/names.log
+	    -postScript Annotate.java $(GHIDRAGEN_DIR)/types.tsv \
+	        $(GHIDRAGEN_DIR)/names.tsv $(GHIDRA_NAMES_DIR)/LANCER.EXE.tsv \
+	    -max-cpu $(HEADLESS_MAX_CPU) -log $(GHIDRA_PROJECT_DIR)/annotate.log
 
 .PHONY: ghidra-gui
 ghidra-gui: | $(STAMPS_DIR)/ghidra-natives ## Open the project in the Ghidra GUI; the Ghydra plugin serves HTTP on :8192+ per open program

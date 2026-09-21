@@ -2,7 +2,7 @@
 //!
 //! The catalogue is self-describing: each entry carries its implementation, its name, a label and
 //! a type for each parameter, and a one-line description, all written by the developers. The
-//! engine counts entries until one has no implementation (`FUN_00452A80`), and this reader applies
+//! engine counts entries until one has no implementation (`catalogue_count`, `0x00452A80`), and this reader applies
 //! the same rule.
 
 const std = @import("std");
@@ -11,7 +11,7 @@ const Io = std.Io;
 const starlancer = @import("starlancer");
 const pe = starlancer.pe;
 
-/// Virtual address of the catalogue, which `FUN_0045CE30` installs as the command table.
+/// Virtual address of the catalogue, which `vm_install_commands` (`0x0045CE30`) installs as the command table.
 pub const catalogue: u32 = 0x004F0F50;
 
 pub const entry_size = 0x74;

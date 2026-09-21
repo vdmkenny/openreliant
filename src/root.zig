@@ -19,6 +19,9 @@ pub const png = @import("formats/png.zig");
 pub const safedisc = @import("formats/safedisc.zig");
 pub const tea = @import("formats/tea.zig");
 
+/// The game executable's own run-time structures.
+pub const lancer = @import("lancer.zig");
+
 test {
     @import("std").testing.refAllDecls(@This());
 }

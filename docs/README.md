@@ -18,12 +18,14 @@ no game code or assets.
 | [`formats/fnt.md`](formats/fnt.md) | `.fnt` bitmap fonts. |
 | [`formats/dte.md`](formats/dte.md) | `.DTE` missions: directory, ships, triggers, and the script VM. |
 | [`formats/stats.md`](formats/stats.md) | Ship, gun, missile and pilot stat tables. |
+| [`engine/script-vm.md`](engine/script-vm.md) | The script VM at run time: threads, calls, commands, timers, events. |
 
 ## Conventions
 
 Addresses are virtual addresses for the payload executable's image base of `0x400000` unless
-stated otherwise. Function names of the form `FUN_<address>` are Ghidra placeholders: the shipped
-binaries carry no symbols.
+stated otherwise. The shipped binaries carry no symbols. Function and data names are those
+`make ghidra-annotate` gives the Ghidra project; names of the form `FUN_<address>` are Ghidra's
+placeholders.
 
 Claims are marked where they are not directly verified:
 

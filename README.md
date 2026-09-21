@@ -65,7 +65,8 @@ SafeDisc hides, but not their order, which SafeDisc shuffles, so it does not wri
 
 `make assets`, `models`, `sprites`, `sounds` and `fonts` run the extractors over every file; `check-models` and
 `check-missions` validate them. The script VM's opcode and command tables are derived from the game
-binary by `src/tools/vmgen` (`make vm-opcodes`, `make vm-commands`).
+binary by `src/tools/vmgen` (`make vm-opcodes`, `make vm-commands`), and `make ghidra-annotate` names
+and types the Ghidra project from the Zig definitions.
 
 Documentation index: [`docs/README.md`](docs/README.md).
 
@@ -74,11 +75,13 @@ Documentation index: [`docs/README.md`](docs/README.md).
 | Path | Contents |
 |---|---|
 | `src/formats/` | The `starlancer` module: readers for the game's formats and containers. |
+| `src/lancer.zig`, `src/lancer/` | The game executable's own run-time structures. |
 | `src/tools/sltool/` | `sltool`, the command line front end. |
 | `src/tools/vmgen/` | Derives the script VM's opcode and command tables from the game binary. |
+| `src/tools/ghidragen/` | Writes the names and data types the Ghidra scripts apply. |
 | `mk/`, `scripts/` | Makefile fragments and their helpers. |
 | `ghidra/scripts/` | Ghidra scripts, run headless by `make`. |
-| `ghidra/names/` | Names for the payload's identified functions and data, applied by `make ghidra-names`. |
+| `ghidra/names/` | Names and types for the payload's identified functions and data, applied by `make ghidra-annotate`. |
 | `docs/` | Reference documentation. |
 | `tools/`, `game/`, `references/` | Git-ignored: toolchain, game files, other projects read for reference. |
 

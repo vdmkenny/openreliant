@@ -19,7 +19,7 @@ pub const palette_size = 0x300;
 pub const full_coverage = 16;
 
 /// The engine caches widths for character codes below this, so higher glyphs are never drawn
-/// (`FUN_00480D70`).
+/// (`font_open`, `0x00480D70`).
 pub const engine_limit = 0xFF;
 
 pub const Error = error{ NotAFont, Truncated, BadGlyph };

@@ -40,6 +40,23 @@ pub fn build(b: *std.Build) void {
     const vmgen_step = b.step("vmgen", "Build the VM opcode table generator");
     vmgen_step.dependOn(&b.addInstallArtifact(vmgen, .{}).step);
 
+    // Writes the names and data types the Ghidra scripts apply, from the Zig definitions. Not
+    // installed either: `make ghidra-annotate` runs it.
+    const ghidragen = b.addExecutable(.{
+        .name = "ghidragen",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tools/ghidragen/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "starlancer", .module = lib },
+            },
+        }),
+    });
+
+    const ghidragen_step = b.step("ghidragen", "Build the Ghidra name and type table generator");
+    ghidragen_step.dependOn(&b.addInstallArtifact(ghidragen, .{}).step);
+
     const run_step = b.step("run", "Run sltool");
     const run_cmd = b.addRunArtifact(sltool);
     run_step.dependOn(&run_cmd.step);
@@ -49,8 +66,10 @@ pub fn build(b: *std.Build) void {
     const lib_tests = b.addTest(.{ .root_module = lib });
     const exe_tests = b.addTest(.{ .root_module = sltool.root_module });
     const vmgen_tests = b.addTest(.{ .root_module = vmgen.root_module });
+    const ghidragen_tests = b.addTest(.{ .root_module = ghidragen.root_module });
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&b.addRunArtifact(lib_tests).step);
     test_step.dependOn(&b.addRunArtifact(exe_tests).step);
     test_step.dependOn(&b.addRunArtifact(vmgen_tests).step);
+    test_step.dependOn(&b.addRunArtifact(ghidragen_tests).step);
 }

@@ -221,8 +221,8 @@ pub const Missile = extern struct {
     name: [name_size]u8,
     /// Shown as **Speed**.
     speed: f32,
-    /// Copied into three places at runtime.
-    _unknown_44: f32,
+    /// Copied into all three rates of the missile's flight model.
+    turn_rate: f32,
     /// **Range** on the loadout screen is `speed * flight_time`. The loader stores the field
     /// multiplied by 100, truncated.
     flight_time: f32,

@@ -46,7 +46,7 @@ the count says how much of the reserved room is filled, so most missions are exa
 | 6 | script | | Bytecode. **The count is in halfwords** |
 | 7 | objects | 8 | The object table, indexed by object ID: see [Objects](#objects) |
 | 8 | parts | `0x1C` | One descriptor per named script routine |
-| 10 | script_flags | 1 | One flag per script byte, marking where the VM may yield |
+| 10 | script_flags | 1 | One flag per script byte, which the interpreter consults for the script debugger |
 | 12 | squads | `0x0C` | Squads |
 | 13 | squad_members | `0x0C` | Squad membership records |
 | 15 | nav_geometry | `0x10` | |
@@ -127,16 +127,19 @@ Stride `0x30`. A trigger runs a block of script when an event it watches happens
 | `0x1C` | Operands, four bytes each, which the condition checks against the event's |
 
 A trigger holds no subject: it sits in its subject's slice of the trigger list, in the
-[object table](#objects). When an event happens to an object, `FUN_0045CEA0` walks the slice and
-fires each trigger that is armed, has the event's condition and qualifier, and whose operands pass.
-Firing starts a thread at `script + link * 2`.
+[object table](#objects). When an event happens to an object, `trigger_match` (`0x0045CEA0`) walks
+the slice and fires each trigger that is armed, has the event's condition and qualifier, and whose
+operands pass. Firing starts a thread at `script + link * 2`, unless a thread the trigger started
+is still running. An operand whose low halfword is `0xFFFF` is not checked. The
+[VM at run time](../engine/script-vm.md#events) describes the matching in full.
 
-No trigger is in two slices, and a trigger in no slice can never fire.
+No trigger is in two slices, and a trigger in no slice can never fire. The condition decides which
+kinds of object a trigger can belong to, and every trigger agrees with its condition's.
 
 Repeat mode `0` disarms the trigger when it fires, `1` never disarms it, and `2` disarms it when the
 counter at `0x19` runs out. For four conditions, ShotAt, Destroyed, Cloaked and Decloaked, a handler
-of the condition's can veto an event; a vetoed event still fires the triggers whose repeat mode
-equals the condition's descriptor byte `+0x0D`, which is 1 for the last three.
+of the condition's can veto an event; a vetoed event still fires the triggers with the repeat mode
+the condition exempts, which is 1 for the last three.
 
 Most triggers carry qualifier `0xFF`, which three of the four call sites that raise events pass.
 **Unknown:** what the other qualifiers, `0` to `7`, select.
@@ -144,9 +147,10 @@ Most triggers carry qualifier `0xFF`, which three of the four call sites that ra
 ### Conditions
 
 The engine's descriptor table at `0x4F6698` lists 35 conditions, named in the payload as `TT_*`
-constants; the last two are internal. Each descriptor is `0x1C` bytes: a name pointer, a slot and a
-discriminator byte at `+0x0C` and `+0x0D`, and three handler pointers from `+0x10`, set only for
-ShotAt, Destroyed, Cloaked and Decloaked. The table lies just past the VM's dispatch table.
+constants; the last two are internal. A descriptor gives the kinds of object the condition applies
+to, the values its events carry, and the handlers that can veto them: see
+[Conditions](../engine/script-vm.md#conditions). The table lies just past the VM's dispatch table,
+followed by the lists of event values.
 
 ## Script
 
@@ -176,13 +180,13 @@ the handler instead of guessing. Its output is
 [`src/formats/vm_opcodes.zig`](../../src/formats/vm_opcodes.zig):
 
 ```bash
-make ghidra-run SCRIPT=DefineVmHandlers.java   # define the handlers as functions
+make ghidra-annotate   # define and name the handlers, among the rest
 make ghidra-export-game
 make vm-opcodes
 ```
 
-`DefineVmHandlers.java` is needed because nothing calls a handler directly, so auto-analysis leaves
-most of them undefined.
+Nothing calls a handler directly, so auto-analysis leaves most of them undefined; `make
+ghidra-annotate` defines each one from the committed opcode table.
 
 | Form | Opcodes | Next instruction |
 |---|---|---|
@@ -272,9 +276,9 @@ A thread keeps its block's end in `[0x5373F0]`, which is where `push_constant` r
 
 ### Commands
 
-`command n` calls entry `n` of the Executor catalogue at `0x4F0F50`, which the engine installs at
-`FUN_0045CE30` and counts up to the first entry with no implementation: **95 commands**. An entry is
-`0x74` bytes and describes itself in the developers' words:
+`command n` calls entry `n` of the Executor catalogue at `0x4F0F50`, which `vm_install_commands`
+(`0x0045CE30`) installs and counts up to the first entry with no implementation: **95 commands**.
+An entry is `0x74` bytes and describes itself in the developers' words:
 
 | Offset | Field |
 |---|---|

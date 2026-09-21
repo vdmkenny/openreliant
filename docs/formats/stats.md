@@ -25,12 +25,18 @@ Each table has its own loader in the payload executable. It reads one record at 
 buffer and copies the fields it wants into a runtime table. **No loader reads the name, or anything
 past its table's last field**, and in the shipped files those bytes are zero in every record.
 
-| Table | Loader | Records read | Runtime table |
+| Table | Loader | Records read | Runtime tables |
 |---|---|---|---|
-| Ships | `FUN_00466500` | Exactly 256 | Two parallel arrays, strides `0x28` and `0x30` |
-| Guns | `FUN_004788F0` | Until end of file | 15 entries of `0x2C` at `0x500CE4` |
-| Missiles | `FUN_00494BC0` | **At most 11** | Two parallel arrays of `0x28` |
-| Pilots | `FUN_0049CAE0` | Until end of file | 194 entries of `0x24` at `0x58A968` |
+| Ships | `stats_load_ships` (`0x00466500`) | Exactly 256 | `ship_flight_stats` (`0x4F9E70`) and `ship_combat_stats` (`0x4FC670`), `0x28` and `0x30` bytes a ship |
+| Guns | `stats_load_guns` (`0x004788F0`) | Until end of file | `gun_stats` (`0x500CE4`), 15 entries of `0x2C` |
+| Missiles | `stats_load_missiles` (`0x00494BC0`) | **At most 11** | `missile_flight_stats` (`0x5035E8`) and `missile_stats` (`0x5037A8`), `0x28` bytes a missile each |
+| Pilots | `stats_load_pilots` (`0x0049CAE0`) | Until end of file | `pilot_stats` (`0x58A968`), 194 entries of `0x24` |
+
+Ships and missiles share one runtime layout for how they fly: a live object points at its flight
+model at `+0x14` whichever it is. The flight model holds the max speed, the roll, pitch and yaw
+rates, the four inertias, and the max speed divided by the pitch rate, which the ship loader
+computes after reading the file. A missile's has only its speed and rates. The runtime layouts,
+with the source of every field, are in [`src/lancer/stats.zig`](../../src/lancer/stats.zig).
 
 The gun and pilot loaders have no bound: a file with more records than the runtime table writes past
 its end. The missile loader stops after 11, so the last five of the 16 missiles, Blazer, Iron Tooth,
@@ -69,9 +75,9 @@ which located fields by diffing known mods.
 
 "Truncated" means the loader converts the float to an integer with `_ftol`.
 
-The loader copies `0x40` to `0x5C` into one runtime array in the order speed, `0x58`, `0x50`, `0x48`,
-`0x44`, `0x5C`, `0x54`, `0x4C`: the three rates together, then the four inertias, as the mod diffs
-pair them. It also derives `0x40 / 0x50` per ship.
+The loader copies `0x40` to `0x5C` into the ship's flight model in the order speed, `0x58`, `0x50`,
+`0x48`, `0x44`, `0x5C`, `0x54`, `0x4C`: the three rates together, then the four inertias, as the mod
+diffs pair them. It also derives `0x40 / 0x50` per ship.
 
 The loadout screen places each ship on a bar between the minimum and maximum of that stat across the
 ships it lists: the Alliance fighters the player can fly, and in a second list Coalition fighters.
@@ -89,8 +95,9 @@ ships it lists: the Alliance fighters the player can fly, and in a second list C
 
 The loader stores `100 / fire_rate`, the interval between shots.
 
-The two damage values are **not a minimum and a maximum**: in several guns the first is the larger. `FUN_00415430` uses the first alone: it counts each gun type among
-nearby ships, weights each count by that damage, and records the most dangerous type other than the
+The two damage values are **not a minimum and a maximum**: in several guns the first is the larger.
+`threat_pick_gun_type` (`0x00415430`) uses the first alone: it counts each gun type among nearby
+ships, weights each count by that damage, and records the most dangerous type other than the
 two capital-ship guns.
 
 ## Missiles
@@ -98,7 +105,7 @@ two capital-ship guns.
 | Offset | Field | Loaded as | Evidence |
 |---|---|---|---|
 | `0x40` | Speed | float | Screen: **Speed** bar. Mods: MaxVelocity |
-| `0x44` | | float, copied to three places | **Unknown** |
+| `0x44` | Turn rate | float | Copied into all three rates of the missile's flight model |
 | `0x48` | Flight time | `x * 100`, truncated | Screen: **Range** is `speed * flight_time`. Mods: Range |
 | `0x4C` | Damage | float | Screen: **Damage** is `0x4C + 0x50` |
 | `0x50` | Damage | float | Screen |
