@@ -2,16 +2,16 @@
 //!
 //! The catalogue is self-describing: each entry carries its implementation, its name, a label and
 //! a type for each parameter, and a one-line description, all written by the developers. The
-//! engine counts entries until one has no implementation (`catalogue_count`, `0x00452A80`), and this reader applies
-//! the same rule.
+//! engine counts entries until one has no implementation (`catalogue_count`, `0x00452A80`), and
+//! this reader applies the same rule.
 
 const std = @import("std");
 const Io = std.Io;
 
-const starlancer = @import("starlancer");
-const pe = starlancer.pe;
+const image = @import("image.zig");
 
-/// Virtual address of the catalogue, which `vm_install_commands` (`0x0045CE30`) installs as the command table.
+/// Virtual address of the catalogue, which `vm_install_commands` (`0x0045CE30`) installs as the
+/// command table.
 pub const catalogue: u32 = 0x004F0F50;
 
 pub const entry_size = 0x74;
@@ -43,39 +43,9 @@ pub const Command = struct {
     flag: u32,
 };
 
-pub const Error = error{ OutOfImage, BadString, TooManyParams };
+pub const Error = image.Error || error{TooManyParams};
 
-/// Reads virtual addresses out of a PE image.
-const Reader = struct {
-    image: pe.Image,
-    bytes: []const u8,
-    base: u32,
-
-    fn slice(reader: Reader, va: u32, len: usize) Error![]const u8 {
-        if (va < reader.base) return error.OutOfImage;
-        const offset = reader.image.fileOffset(va - reader.base) orelse return error.OutOfImage;
-        if (offset + len > reader.bytes.len) return error.OutOfImage;
-        return reader.bytes[offset..][0..len];
-    }
-
-    fn word(reader: Reader, va: u32) Error!u32 {
-        return std.mem.readInt(u32, (try reader.slice(va, 4))[0..4], .little);
-    }
-
-    /// A NUL-terminated string at `va`, or empty for a null pointer.
-    fn string(reader: Reader, va: u32) Error![]const u8 {
-        if (va == 0) return "";
-        if (va < reader.base) return error.BadString;
-        const offset = reader.image.fileOffset(va - reader.base) orelse return error.BadString;
-        const rest = reader.bytes[offset..];
-        const end = std.mem.indexOfScalar(u8, rest, 0) orelse return error.BadString;
-        for (rest[0..end]) |c| if (c < 0x20 or c > 0x7E) return error.BadString;
-        return rest[0..end];
-    }
-};
-
-pub fn read(arena: std.mem.Allocator, image: pe.Image, bytes: []const u8) (Error || std.mem.Allocator.Error)![]const Command {
-    const reader: Reader = .{ .image = image, .bytes = bytes, .base = image.optional_header.image_base };
+pub fn read(arena: std.mem.Allocator, reader: image.Reader) (Error || std.mem.Allocator.Error)![]const Command {
     var commands: std.ArrayList(Command) = .empty;
 
     var at = catalogue;

@@ -146,7 +146,7 @@ pub const ConditionDescriptor = extern struct {
     /// **Unknown.** Zero, except `0x400` for the internal `ExplosionShip`.
     _unknown_04: u16,
     /// The kinds of object whose triggers can have this condition.
-    subjects: Subjects,
+    subjects: dte.Object.KindSet,
     /// The values an event of this condition carries, in order, up to an entry with a null label.
     /// Null for none.
     values: Pointer(EventValue),
@@ -162,14 +162,6 @@ pub const ConditionDescriptor = extern struct {
     add_member: Pointer(anyopaque),
     /// Returns whether the event goes ahead: the value of `condition_verdict`.
     verdict: Pointer(anyopaque),
-
-    /// A bit for each `dte.Object.Kind`.
-    pub const Subjects = packed struct(u16) {
-        ship: bool,
-        flight_group: bool,
-        squad: bool,
-        _unused: u13,
-    };
 
     comptime {
         assert(@offsetOf(ConditionDescriptor, "subjects") == 0x06);

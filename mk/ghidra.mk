@@ -112,7 +112,8 @@ vm-opcodes: ## Re-derive the mission script VM's opcode table from the payload e
 	$(ROOT)/zig-out/bin/vmgen opcodes $(PAYLOAD) $(VM_DISASSEMBLY) $(VM_OPCODES)
 	$(ZIG) fmt $(VM_OPCODES)
 
-VM_COMMANDS := $(ROOT)/src/formats/vm_commands.zig
+VM_COMMANDS   := $(ROOT)/src/formats/vm_commands.zig
+VM_CONDITIONS := $(ROOT)/src/formats/vm_conditions.zig
 
 .PHONY: vm-commands
 vm-commands: ## Re-derive the mission script's command catalogue from the payload executable
@@ -120,3 +121,10 @@ vm-commands: ## Re-derive the mission script's command catalogue from the payloa
 	$(ZIG) build vmgen
 	$(ROOT)/zig-out/bin/vmgen commands $(PAYLOAD) $(VM_COMMANDS)
 	$(ZIG) fmt $(VM_COMMANDS)
+
+.PHONY: vm-conditions
+vm-conditions: ## Re-derive the trigger condition catalogue from the payload executable
+	@test -f $(PAYLOAD) || { echo "missing $(PAYLOAD); run 'make game'" >&2; exit 1; }
+	$(ZIG) build vmgen
+	$(ROOT)/zig-out/bin/vmgen conditions $(PAYLOAD) $(VM_CONDITIONS)
+	$(ZIG) fmt $(VM_CONDITIONS)

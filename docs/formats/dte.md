@@ -124,7 +124,7 @@ Stride `0x30`. A trigger runs a block of script when an event it watches happens
 | `0x15` | Qualifier; `0xFF` for ordinary events |
 | `0x16` | Zero runs the block's thread at once, inside the event; otherwise the scheduler does |
 | `0x19` | Firings left, for repeat mode 2 |
-| `0x1C` | Operands, four bytes each, which the condition checks against the event's |
+| `0x1C` | Operands, four bytes each, one for each value the condition's events carry: see [Operands](#operands) |
 
 A trigger holds no subject: it sits in its subject's slice of the trigger list, in the
 [object table](#objects). When an event happens to an object, `trigger_match` (`0x0045CEA0`) walks
@@ -144,13 +144,36 @@ the condition exempts, which is 1 for the last three.
 Most triggers carry qualifier `0xFF`, which three of the four call sites that raise events pass.
 **Unknown:** what the other qualifiers, `0` to `7`, select.
 
+### Operands
+
+Operand `n` goes with value `n` of the condition's events, such as the attacker of ShotAt or the
+distance of Proximity. The matcher checks an operand against the event's value when the condition
+marks the value as checked and the operand's low halfword is not `0xFFFF`. It reads the operand by
+the value's kind mask (`trigger_operand_value`, `0x004530A0`):
+
+- A number is taken as it is.
+- For a ship value, bit `0x2000` of the low halfword matches any ship.
+- Anything else is a reference to a ship, a flight group or a squad, which the matcher turns into
+  the address of its record, the form in which events pass them:
+
+| Bits | Field |
+|---|---|
+| 0 to 15 | Index into the section the tag selects |
+| 16 to 23 | Tag: `0x00` ships, `0x01` flight groups, `0x16` squads |
+| 24 to 31 | **Unknown.** Ignored |
+
+Any other tag in a checked operand is a fatal error: the game reports `NULL entity referenced in
+script`, or `oh dear dear`, and exits. `sltool dte triggers` lists each trigger's set operands under
+their values' labels, naming referenced objects by object ID.
+
 ### Conditions
 
 The engine's descriptor table at `0x4F6698` lists 35 conditions, named in the payload as `TT_*`
 constants; the last two are internal. A descriptor gives the kinds of object the condition applies
 to, the values its events carry, and the handlers that can veto them: see
 [Conditions](../engine/script-vm.md#conditions). The table lies just past the VM's dispatch table,
-followed by the lists of event values.
+followed by the lists of event values. `make vm-conditions` regenerates
+[`src/formats/vm_conditions.zig`](../../src/formats/vm_conditions.zig) from the binary alone.
 
 ## Script
 

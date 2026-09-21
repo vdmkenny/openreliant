@@ -13,6 +13,7 @@ const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
 pub const vm_commands = @import("vm_commands.zig");
+pub const vm_conditions = @import("vm_conditions.zig");
 pub const vm_opcodes = @import("vm_opcodes.zig");
 
 pub const section_count = 27;
@@ -337,6 +338,65 @@ pub const Trigger = extern struct {
     }
 };
 
+/// How a trigger operand names a ship, a flight group or a squad: an index into the section the tag
+/// selects. The matcher turns a reference into the address of the record (`FUN_004530A0`), which is
+/// how event values name them.
+pub const Reference = packed struct(u32) {
+    index: u16,
+    tag: Tag,
+    /// **Unknown.** The matcher ignores it.
+    _unknown_24: u8,
+
+    pub const Tag = enum(u8) {
+        ship = 0x00,
+        flight_group = 0x01,
+        squad = 0x16,
+        _,
+    };
+
+    /// An operand whose low halfword is this is not set, and is not checked.
+    pub const unset: u16 = 0xFFFF;
+
+    /// Set in the index of an operand for a ship value, it matches any ship.
+    pub const any_ship: u16 = 0x2000;
+};
+
+/// A trigger operand, read the way the matcher reads it for a value of the given kinds.
+pub const Operand = union(enum) {
+    unset,
+    /// For a value that is a number: taken as it is.
+    number: u32,
+    /// For a ship value: any ship matches.
+    any_ship,
+    reference: Reference,
+    /// A tag the matcher cannot resolve.
+    other: u32,
+
+    pub fn read(raw: u32, kinds: vm_commands.Kinds) Operand {
+        const reference: Reference = @bitCast(raw);
+        if (reference.index == Reference.unset) return .unset;
+        if (kinds.number) return .{ .number = raw };
+        if (kinds.ship and reference.index & Reference.any_ship != 0) return .any_ship;
+        return switch (reference.tag) {
+            .ship, .flight_group, .squad => .{ .reference = reference },
+            _ => .{ .other = raw },
+        };
+    }
+};
+
+test Operand {
+    const Kinds = vm_commands.Kinds;
+    const ship: Kinds = @bitCast(@as(u32, 0x400));
+    const number: Kinds = @bitCast(@as(u32, 0x80));
+    try std.testing.expectEqual(Operand.unset, Operand.read(0xFFFFFFFF, ship));
+    try std.testing.expectEqual(Operand{ .number = 50 }, Operand.read(50, number));
+    try std.testing.expectEqual(Operand.any_ship, Operand.read(0xFF002000, ship));
+    const reference = Operand.read(0x00010004, ship).reference;
+    try std.testing.expectEqual(Reference.Tag.flight_group, reference.tag);
+    try std.testing.expectEqual(@as(u16, 4), reference.index);
+    try std.testing.expectEqual(Operand{ .other = 0x000C0050 }, Operand.read(0x000C0050, @bitCast(@as(u32, 0x1000))));
+}
+
 /// One entry of the object table, section `objects`, indexed by object ID.
 ///
 /// Ships, flight groups and squads each carry an object ID at their start, and an event names its
@@ -357,6 +417,29 @@ pub const Object = extern struct {
 
         pub fn format(kind: Kind, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             return formatTag(Kind, kind, writer);
+        }
+    };
+
+    /// A set of kinds, a bit for each.
+    pub const KindSet = packed struct(u16) {
+        ship: bool,
+        flight_group: bool,
+        squad: bool,
+        _unused: u13,
+
+        pub fn has(set: KindSet, kind: Kind) bool {
+            return switch (kind) {
+                .ship => set.ship,
+                .flight_group => set.flight_group,
+                .squad => set.squad,
+                _ => false,
+            };
+        }
+
+        comptime {
+            for (.{ "ship", "flight_group", "squad" }) |name| {
+                assert(@bitOffsetOf(KindSet, name) == @intFromEnum(@field(Kind, name)));
+            }
         }
     };
 
@@ -407,7 +490,8 @@ pub const SquadMember = extern struct {
 };
 
 /// The 35 conditions, in the order of the engine's descriptor table at `0x4F6698`, named after its
-/// `TT_*` constants. The last two are internal and cannot be scripted.
+/// `TT_*` constants. The last two are internal and cannot be scripted. What each applies to and
+/// what its events carry is in [`vm_conditions`](vm_conditions.zig), generated from that table.
 pub const Condition = enum(u8) {
     shot_at = 0x00,
     destroyed = 0x01,
@@ -448,6 +532,21 @@ pub const Condition = enum(u8) {
 
     /// Conditions above this are internal to the engine.
     pub const last_scriptable: Condition = .being_chased;
+
+    /// The condition's entry in the engine's catalogue, or null for a value the catalogue lacks.
+    pub fn descriptor(condition: Condition) ?vm_conditions.Condition {
+        return vm_conditions.find(@intFromEnum(condition));
+    }
+
+    comptime {
+        const tags = @typeInfo(Condition).@"enum".fields;
+        if (tags.len != vm_conditions.table.len) {
+            @compileError("dte.Condition does not name every entry of vm_conditions.table");
+        }
+        for (tags, 0..) |tag, index| {
+            if (tag.value != index) @compileError("dte.Condition." ++ tag.name ++ " is out of order");
+        }
+    }
 
     pub fn format(condition: Condition, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         return formatTag(Condition, condition, writer);

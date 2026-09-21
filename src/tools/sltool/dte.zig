@@ -171,7 +171,50 @@ fn triggers(ctx: Context, mission: dte.Mission) !void {
                 }
             }
         }
+        try printOperands(ctx, mission, trigger);
         try ctx.stdout.writeByte('\n');
+    }
+}
+
+/// The trigger's set operands, labelled with the values of its condition they stand for.
+fn printOperands(ctx: Context, mission: dte.Mission, trigger: dte.Trigger) !void {
+    const condition = trigger.condition.descriptor() orelse return;
+    var first = true;
+    for (condition.values, trigger.operands[0..condition.values.len]) |value, raw| {
+        const operand: dte.Operand = .read(raw, value.kinds);
+        if (operand == .unset) continue;
+        try ctx.stdout.print("{s}{s}=", .{ if (first) "  " else ", ", value.label });
+        first = false;
+        switch (operand) {
+            .unset => unreachable,
+            .number => |number| try ctx.stdout.print("{d}", .{number}),
+            .any_ship => try ctx.stdout.writeAll("any ship"),
+            .reference => |reference| try printReference(ctx, mission, reference),
+            .other => |bits| try ctx.stdout.print("0x{X:0>8}", .{bits}),
+        }
+    }
+}
+
+/// A referenced ship, flight group or squad, by object ID as the subject column shows them.
+fn printReference(ctx: Context, mission: dte.Mission, reference: dte.Reference) !void {
+    switch (reference.tag) {
+        .ship => {
+            const all = try mission.ships();
+            if (reference.index >= all.len) return ctx.stdout.print("ship #{d}, out of range", .{reference.index});
+            const ship = all[reference.index];
+            try ctx.stdout.print("ship {d} {s}", .{ ship.object_id, mission.name(ship.name) });
+        },
+        .flight_group => {
+            const all = try mission.flightGroups();
+            if (reference.index >= all.len) return ctx.stdout.print("flight group #{d}, out of range", .{reference.index});
+            try ctx.stdout.print("flight_group {d}", .{all[reference.index].object_id});
+        },
+        .squad => {
+            const all = try mission.squads();
+            if (reference.index >= all.len) return ctx.stdout.print("squad #{d}, out of range", .{reference.index});
+            try ctx.stdout.print("squad {d}", .{all[reference.index].object_id});
+        },
+        _ => try ctx.stdout.print("0x{X:0>8}", .{@as(u32, @bitCast(reference))}),
     }
 }
 

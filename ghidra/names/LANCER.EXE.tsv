@@ -86,6 +86,12 @@
 0045ce70	function	trigger_raise_event		Raises an event on an object, then resets condition_verdict
 00453210	function	condition_raise		Asks the condition's handlers for a verdict, then raises the event on the flight group and the squads holding it
 0045d810	function	trigger_check_operand	bool __fastcall (EventValue *value, uint *operand, uint event_value, Trigger *trigger)	Checks one trigger operand against the event's value
+004530a0	function	trigger_operand_value	uint __fastcall (uint kinds, uint operand)	What an operand stands for: a number as it is, 0xFFFFFFFE for any ship, else the record a reference names
+004530d0	function	reference_resolve	void * __fastcall (uint reference)	The record a reference names
+00453190	function	reference_tag	uint __fastcall (uint reference)	Bits 16 to 23 of a reference
+00453100	function	reference_tag_kind	ushort __fastcall (ushort tag)	The object kind a reference tag selects; a fatal error for any other tag
+00453150	function	object_record	void * __fastcall (uint kind, uint index)	A ship's, flight group's or squad's record by index
+0045a440	function	fatal_error		Reports an emergency and exits the game
 004531a0	function	trigger_index	uint __fastcall (Trigger *trigger)	Index of a trigger record
 00453070	function	squad_index	uint __fastcall (Squad *squad)	Index of a squad record, or 0xFFFF
 00452aa0	function	ship_flight_group	FlightGroup * __fastcall (MissionShip *ship)	The flight group a ship names, or null

@@ -106,8 +106,10 @@ command. Auto-analysis never finds that code, so the script disassembles it firs
 user-defined, re-running changes nothing that is already in place, and the tables are the record of
 what is named and typed: re-import a program and one command restores it.
 
-`make vm-opcodes` reads the export back: `src/tools/vmgen` derives the opcode table from the payload's dispatch table and its
-handlers and writes [`src/formats/vm_opcodes.zig`](../src/formats/vm_opcodes.zig). `make
-vm-commands` reads the Executor command catalogue from the binary alone and writes
-[`src/formats/vm_commands.zig`](../src/formats/vm_commands.zig). Both tables are committed, so
+`make vm-opcodes` reads the export back: `src/tools/vmgen` derives the opcode table from the
+payload's dispatch table and its handlers and writes
+[`src/formats/vm_opcodes.zig`](../src/formats/vm_opcodes.zig). `make vm-commands` and `make
+vm-conditions` read the Executor command catalogue and the trigger condition catalogue from the
+binary alone and write [`src/formats/vm_commands.zig`](../src/formats/vm_commands.zig) and
+[`src/formats/vm_conditions.zig`](../src/formats/vm_conditions.zig). The tables are committed, so
 building the tools never needs the game.
