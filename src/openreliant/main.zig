@@ -206,8 +206,10 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
 
     var view: camera.Camera = .{};
     var last_view = view.view;
-    var last_tick = platform.window.ticks();
-    _ = view.setView(.chase, 0, false, false, @truncate(last_tick));
+    // The mission's clocks, which `mission_run` zeroes before it loops.
+    var clock: game.main.Clock = .{};
+    clock.start(platform.window.ticks());
+    _ = view.setView(.chase, 0, false, false, 0);
     // A screenshot waits for the chase view to settle, a tick a frame, and for the second frame,
     // which draws the sun by how much of it the first found showing.
     var frames_left: ?usize = null;
@@ -227,9 +229,14 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .quit => return,
             .key => |key| keyboard.down[key.scan] = key.down,
         };
-        // What `read_keyboard` does once it has the keys. The game reads them each simulation step;
-        // this, with no simulation yet, each frame.
-        keyboard.read();
+        // The timer's ticks since the last pass, then a game tick for each, as `mission_run` paces
+        // them: the simulation steps on every fourth, reading the keyboard as it goes. A screenshot
+        // takes one tick a frame so that the camera settles the same way on every run.
+        const now = platform.window.ticks();
+        if (frames_left != null) clock.advanceBy(now, 1) else clock.advanceTo(now);
+        _ = clock.runTicks(&keyboard);
+        clock.frameBegin();
+
         if (keyboard.pressed(lancer.input.scan.escape, .none, true)) return;
         for ([_]struct { u8, isize }{ .{ f2, -1 }, .{ f3, 1 } }) |step| {
             if (!keyboard.pressed(step[0], .none, true)) continue;
@@ -248,12 +255,12 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             }
         }
 
-        const now = platform.window.ticks();
-        const ticks: u32 = if (frames_left != null) 1 else @truncate(now - last_tick);
-        last_tick = now;
-        view.frameControls(&keyboard, 0, ticks, @truncate(now));
+        // `frame_controls` and the camera run once a frame, over the ticks the frame spans.
+        const ticks: u32 = @intCast(@max(clock.frame_duration, 0));
+        const at: u32 = @intCast(@max(clock.mission_ticks, 0));
+        view.frameControls(&keyboard, 0, ticks, at);
         if (view.frame(.{ .object = ship.subject, .player = ship.subject, .ticks = ticks })) |next| {
-            _ = view.setView(next, 0, false, true, @truncate(now));
+            _ = view.setView(next, 0, false, true, at);
         }
         // From its cockpit, the ship is not drawn, as `camera_set_view` sees to.
         ship.object.hidden = view.inside(0);

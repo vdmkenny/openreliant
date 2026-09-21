@@ -542,3 +542,7 @@
 0058a6b4	data	nebula_shown	int
 00504000	data	nebula_fill_colours	float[21]	Red, green and blue for each of the seven nebulae
 004ff808	data	environment_effects		Thirteen 32-byte entries: switch-on and switch-off handlers, then a name
+005db8e8	data	timer_ticks	uint	Every tick of the timer, the paused ones included; tick_timer advances it before it looks at paused
+00587cb0	data	paused_ticks	int	Ticks game_tick has skipped while the game is paused
+00588718	data	simulation_counter	int	game_tick calls since the simulation step last did its work, which it does on the fourth
+00562ffc	data	simulation_turn	int	The object whose turn it is for the extra work simulation_step gives one object a step; it cycles through the live objects

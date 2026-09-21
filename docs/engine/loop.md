@@ -32,6 +32,24 @@ collisions. The rates and speeds of the [flight model](objects.md#motion) are th
 twenty-fifth of a second, and afterburner fuel, which burns 4 units an update from 100 per second
 of the ship's stat, lasts that many seconds.
 
+## Porting
+
+[`game/main.zig`](../../src/lancer/game/main.zig) holds the clocks and the pacing as `Clock`:
+`timerTick` for what `tick_timer` does to them, `gameTick`, `simulationStep`, `frameBegin` and
+`frameReset`, and `runTicks` for `mission_run`'s pacing, one game tick for each tick of the timer.
+
+**Improvement:** the port has no periodic timer. `advanceTo` takes the platform's monotonic count of
+hundredths of a second, and the ticks come from the difference between two counts rather than from
+the length of a frame, so the clocks keep to that count however the frames fall and nothing
+accumulates. The frame rate is therefore decoupled from the tick rate in both directions: a frame
+shorter than a hundredth runs no tick, a frame that spans several runs all of them at once, and a
+second of play is 100 ticks and 25 simulation steps whatever the rate the engine draws at.
+
+Ported so far: the clocks, the pacing, and the keyboard, which the simulation step reads 25 times a
+second as `read_keyboard` does rather than once a frame. Not yet: the joystick and the mouse the
+step also reads, each object's own updates and `objects_update`, the countdown `game_tick` steps
+once a second, and the sound streaming that shares `tick_timer`.
+
 ## Collisions
 
 After moving the objects, `objects_update` lists each one's extent along X, its next position
