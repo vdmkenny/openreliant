@@ -5,6 +5,7 @@
 #   game/install/            what the installer would put on disk: LANCER.CAB unpacked, plus the
 #                            loader and language DLLs it copies from the disc
 #   game/decrypted/          the payload executable, recovered from the SafeDisc wrapper
+#   game/assets/<archive>/   the contents of each .HOG, decompressed
 #
 # Extraction is pure Zig (sltool reads raw sectors and ISO 9660 itself) except for LANCER.CAB, an
 # LZX-compressed Microsoft cabinet, which still goes through 7z.
@@ -18,8 +19,21 @@ DECRYPTED_DIR := $(GAME_DIR)/decrypted
 # The payload executable, recovered from the SafeDisc wrapper. See docs/binary/safedisc.md.
 PAYLOAD := $(DECRYPTED_DIR)/LANCER.EXE
 
+ASSETS_DIR := $(GAME_DIR)/assets
+
+# The archives worth unpacking by default: resource.hog holds the models, sprites, images,
+# missions and stat tables. The disc archives are mostly video and the speech archive is large.
+HOG_ARCHIVES := install/resource.hog install/pilots/pilots.hog
+
 .PHONY: game
 game: $(GAME_DIR)/.stamp-install $(GAME_DIR)/.stamp-cd2 $(PAYLOAD) ## Unpack your disc images and recover the payload executable
+
+.PHONY: assets
+assets: $(addprefix $(GAME_DIR)/.stamp-hog-,$(notdir $(basename $(HOG_ARCHIVES)))) ## Extract the .HOG archives into game/assets
+
+$(GAME_DIR)/.stamp-hog-%: | $(GAME_DIR)/.stamp-install $(SLTOOL)
+	$(SLTOOL) hog extract $(firstword $(filter %/$*.hog,$(addprefix $(GAME_DIR)/,$(HOG_ARCHIVES)))) $(ASSETS_DIR)/$*
+	touch $@
 
 $(DISCS_DIR):
 	mkdir -p $@

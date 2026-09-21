@@ -52,6 +52,11 @@ recoverable from the table and is left unresolved rather than guessed.
 extracting the discs needs no mounting or conversion. See
 [`docs/formats/disc-images.md`](docs/formats/disc-images.md).
 
+`sltool hog` reads the `.HOG` asset archives (EA's `BIGF` container) and decompresses the RefPack
+members inside them: `make assets` unpacks `resource.hog` into 967 models, sprites, images,
+missions and stat tables. See [`docs/formats/hog.md`](docs/formats/hog.md) and
+[`docs/formats/refpack.md`](docs/formats/refpack.md).
+
 Documentation index: [`docs/README.md`](docs/README.md).
 
 ## Layout
@@ -72,6 +77,8 @@ used here.
 
 - [LordBlacksun/Starlancer-OSS](https://github.com/LordBlacksun/Starlancer-OSS): format
   documentation, modern-Windows patches and editors, in Python.
+- [mini/starlancereditor](https://src.ug.gg/mini/starlancereditor): a .NET library and tools for
+  the archive, mission and save formats.
 - [DMJC/neoslancer](https://github.com/DMJC/neoslancer) and
   [DMJC/StarLanceDecomp](https://github.com/DMJC/StarLanceDecomp): a C++/SDL2 port and its
   reverse-engineering notes.

@@ -10,6 +10,8 @@ game code or assets are stored in this repository.
 | [`binary/executables.md`](binary/executables.md) | The shipped binaries, the middleware they are built on, and where each lives. |
 | [`binary/safedisc.md`](binary/safedisc.md) | The SafeDisc 1 copy protection and how the payload executable is recovered from it. |
 | [`formats/disc-images.md`](formats/disc-images.md) | Raw CD image layout and the ISO 9660 / Joliet filesystem on the two discs. |
+| [`formats/hog.md`](formats/hog.md) | `.HOG` asset archives: the EA `BIGF` container. |
+| [`formats/refpack.md`](formats/refpack.md) | RefPack, the compression used inside them. |
 
 ## Conventions
 
