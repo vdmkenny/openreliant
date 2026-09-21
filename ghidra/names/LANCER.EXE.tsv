@@ -546,3 +546,6 @@
 00587cb0	data	paused_ticks	int	Ticks game_tick has skipped while the game is paused
 00588718	data	simulation_counter	int	game_tick calls since the simulation step last did its work, which it does on the fourth
 00562ffc	data	simulation_turn	int	The object whose turn it is for the extra work simulation_step gives one object a step; it cycles through the live objects
+00499540	function	node_mount_glow	void __fastcall (void *node, ShpAttachment *attachment)	Makes an engine glow node, kind 2, for an attachment of kind 2: its mesh is the Engine Mesh, and its cull radius the largest of the attachment sizes
+00499730	function	node_mount_light	void __fastcall (void *node, ShpAttachment *attachment)	Makes a light node for an attachment of kind 4, which node_draw draws as a sprite and a light
+004697d0	function	engine_glow_create	void __fastcall (void *node)	Gives an engine glow node its mesh object, the one named Engine Mesh

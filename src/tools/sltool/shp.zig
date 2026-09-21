@@ -164,6 +164,7 @@ fn info(ctx: Context, model: shp.Model) !void {
                 switch (attachment.kind) {
                     .missile => "missile",
                     .gun => "gun",
+                    .engine_glow => "engine glow",
                     .light => "light",
                     .pod => "pod",
                     _ => "kind",
@@ -173,12 +174,17 @@ fn info(ctx: Context, model: shp.Model) !void {
                 attachment.position.y,
                 attachment.position.z,
             });
+            if (attachment.kind == .engine_glow) {
+                try ctx.stdout.print("  size ({d:.0},{d:.0},{d:.0})", .{
+                    attachment.size[0], attachment.size[1], attachment.size[2],
+                });
+            }
             if (attachment.kind == .light) {
                 try ctx.stdout.print("  id {d} brightness {d:.2} range {d:.0} size {d:.1}{s}", .{
                     attachment.id,
                     attachment.light_brightness,
                     attachment.light_range,
-                    attachment.light_size,
+                    attachment.size[1],
                     if (attachment.blink[0] != 0 or attachment.blink[1] != 0) "  blinks" else "",
                 });
             }

@@ -179,6 +179,22 @@ vertex's colour is the sum, each channel then clamped to 1, of:
 Point and directional lights add no alpha. A light reaches an object unless their light masks
 share a bit; an object whose mask is all ones takes no lights.
 
+## Engine glows
+
+An attachment of kind 2 becomes a node of kind 2 (`node_mount`, `0x00499A10`), which draws the
+mesh named `Engine Mesh` scaled by the attachment's three sizes: across, up, and along its length.
+`node_draw` stretches that length each frame by how much throttle the ship carries, so a thruster
+grows as it burns, and shakes it by a random amount so that it flickers. An attachment of id 7 is
+not stretched or flickered at all, and a glow that would come to nothing is left out, except on the
+Ripper, whose thrusters and rear pincers `node_draw` names outright and treats apart.
+
+The Predator carries two, at the back of its hull either side of the centre line, each 120 across,
+60 up and 440 long.
+
+**Open:** where the `Engine Mesh` geometry comes from. Its name is in the binary once, in the
+routine that gives a glow its mesh object (`engine_glow_create`, `0x004697D0`), and nothing else
+found so far builds it.
+
 ## Static lights
 
 A model carries its own lights as attachments, and the loader bakes them into vertex colours once

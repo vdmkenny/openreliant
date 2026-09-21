@@ -216,7 +216,7 @@ pub const Model = struct {
                         attachment.position.z + origin.z,
                     },
                     .colour = lightColour(attachment.id),
-                    .size = attachment.light_size,
+                    .size = attachment.size[1],
                     .blink = attachment.blink,
                     .phase = attachment.blink_phase,
                     .sprite = .{.{}},

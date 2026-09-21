@@ -219,11 +219,11 @@ pub const Attachment = extern struct {
     /// its colour from it instead: 0 blue, 1 green, 2 yellow, 3 red, and nothing beyond
     /// (`static_lights_bake`).
     id: u32,
-    _unknown_38: [0x14]u8,
-    /// How large a `light` is drawn: the sprite reaches this far either side of its centre at its
-    /// largest, seven times over (`node_draw`).
-    light_size: f32,
-    _unknown_50: u32,
+    _unknown_38: [0x10]u8,
+    /// How large what the attachment holds is drawn. An `engine_glow` is scaled by all three, its
+    /// length along Z then stretched by the throttle; a `light`'s sprite takes the second, seven
+    /// times over, as how far it reaches either side of its centre (`node_draw`).
+    size: [3]f32,
     /// How a `light` blinks, in ticks: the first is how long it stays on, the second how long it
     /// stays off. A light is baked into the meshes only while both are zero, so only a light that
     /// never blinks is baked (`static_lights_mark`).
@@ -238,11 +238,15 @@ pub const Attachment = extern struct {
     /// counts as a static light only while this is above zero.
     light_brightness: f32,
 
-    /// Named after the models the engine loads for each kind. **Unknown:** kinds 2, 3 and 6 to 9.
+    /// Named after the models the engine loads for each kind, or what `node_mount` (`0x00499A10`)
+    /// makes of them. **Unknown:** kinds 3 and 6 to 9; kind 3 becomes a node of kind 4, whose
+    /// drawing is not yet understood.
     pub const Kind = enum(u32) {
         missile = 0,
         /// Mounted as an object of its own, whose components follow the model's.
         gun = 1,
+        /// An engine's glow, which `node_draw` scales along its length by the throttle.
+        engine_glow = 2,
         light = 4,
         /// Mounted as an object of its own, like a gun.
         pod = 5,
@@ -251,7 +255,7 @@ pub const Attachment = extern struct {
 
     comptime {
         assert(@offsetOf(Attachment, "id") == 0x34);
-        assert(@offsetOf(Attachment, "light_size") == 0x4C);
+        assert(@offsetOf(Attachment, "size") == 0x48);
         assert(@offsetOf(Attachment, "blink") == 0x54);
         assert(@offsetOf(Attachment, "blink_phase") == 0x5C);
         assert(@offsetOf(Attachment, "light_range") == 0x74);
