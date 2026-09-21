@@ -84,3 +84,15 @@ ghidra-gui: | $(STAMPS_DIR)/ghidra-natives ## Open the project in the Ghidra GUI
 .PHONY: ghydra-status
 ghydra-status: | $(STAMPS_DIR)/ghydra-cli ## List the Ghidra instances the ghydra CLI / MCP bridge can reach
 	$(VENV_DIR)/bin/ghydra instances list
+
+##@ Derived tables
+
+VM_OPCODES     := $(ROOT)/src/formats/vm_opcodes.zig
+VM_DISASSEMBLY := $(GHIDRA_EXPORT_DIR)/game/LANCER.EXE/disassembly.asm
+
+.PHONY: vm-opcodes
+vm-opcodes: ## Re-derive the mission script VM's opcode table from the payload executable
+	@test -f $(VM_DISASSEMBLY) || { echo "missing $(VM_DISASSEMBLY); run 'make ghidra-export-game'" >&2; exit 1; }
+	$(ZIG) build vmgen
+	$(ROOT)/zig-out/bin/vmgen $(PAYLOAD) $(VM_DISASSEMBLY) $(VM_OPCODES)
+	$(ZIG) fmt $(VM_OPCODES)

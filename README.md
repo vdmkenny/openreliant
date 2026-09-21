@@ -74,8 +74,11 @@ missions and stat tables. See [`docs/formats/hog.md`](docs/formats/hog.md) and
 schematics, and saves their 3,724 shapes as indexed PNG: `make sprites`. See
 [`docs/formats/spr.md`](docs/formats/spr.md).
 
-`sltool dte` reads the 44 `.DTE` missions: their ships, triggers, globals and string pools. See
-[`docs/formats/dte.md`](docs/formats/dte.md).
+`sltool dte` reads the 44 `.DTE` missions: their ships, triggers, globals, string pools and script
+bytecode. The mission scripting VM's instruction set is derived from the game binary rather than
+guessed: `src/tools/vmgen` reads the dispatch table and symbolically executes each handler to
+recover every opcode's size and control flow, which decodes all 44 missions' opening blocks end to
+end. See [`docs/formats/dte.md`](docs/formats/dte.md).
 
 Documentation index: [`docs/README.md`](docs/README.md).
 
@@ -85,6 +88,7 @@ Documentation index: [`docs/README.md`](docs/README.md).
 |---|---|
 | `src/formats/` | The `starlancer` module: readers for the game's formats and containers. |
 | `src/tools/sltool/` | `sltool`, the command line front end. |
+| `src/tools/vmgen/` | Derives the script VM's opcode table from the game binary. |
 | `mk/`, `scripts/` | Makefile fragments and their helpers. |
 | `ghidra/scripts/` | Ghidra scripts, run headless by `make ghidra-export`. |
 | `docs/` | Reference documentation. |

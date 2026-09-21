@@ -150,33 +150,69 @@ fn triggers(ctx: Context, mission: dte.Mission) !void {
 /// the part table; the rest are reached by `call_part`.
 fn script(ctx: Context, mission: dte.Mission) !void {
     const code = try mission.script();
-    if (code.len < 2) return;
-    const length = std.mem.readInt(u16, code[0..2], .little);
-    if (length == 0 or 2 + @as(usize, length) > code.len) {
-        try ctx.stdout.print("section is {d} bytes but its first block claims {d}\n", .{ code.len, length });
+    var reader = dte.BlockReader.at(code, 0) orelse {
+        try ctx.stdout.print("section is {d} bytes with no block at its start\n", .{code.len});
         return;
-    }
+    };
+    const instructions = reader.code.len;
 
-    try ctx.stdout.print("section {d} bytes; first block {d} bytes\n\n", .{ code.len, length });
+    try ctx.stdout.print("section {d} bytes; first block {d} instruction bytes", .{
+        code.len, instructions,
+    });
+    if (reader.isShort()) try ctx.stdout.print(
+        " of the {d} it declares, the rest past the end of the section",
+        .{reader.declared - dte.BlockReader.header_len},
+    );
+    try ctx.stdout.writeAll("\n\n");
     try ctx.stdout.writeAll("offset  bytes       opcode\n");
 
-    var reader: dte.BlockReader = .{ .code = code[2..][0..length] };
     while (reader.next()) |instruction| {
-        var bytes: [10]u8 = undefined;
+        // Long inline runs are shown as their text, so only the head needs a hex column.
+        var bytes: [11]u8 = undefined;
         var at: usize = 0;
         at += (std.fmt.bufPrint(bytes[at..], "{x:0>2}", .{@intFromEnum(instruction.opcode)}) catch break).len;
         for (instruction.operands) |b| {
             at += (std.fmt.bufPrint(bytes[at..], " {x:0>2}", .{b}) catch break).len;
         }
-        try ctx.stdout.print("{d:>6}  {s:<11} ", .{ instruction.address, bytes[0..at] });
+        try ctx.stdout.print("{d:>6}  {s:<11} ", .{ instruction.address, bytes[0..@min(at, bytes.len)] });
         try dte.formatTag(dte.Opcode, instruction.opcode, ctx.stdout);
-        if (instruction.control) try ctx.stdout.writeAll("   (control flow)");
+        switch (instruction.form) {
+            .sequential => {},
+            .branch => try ctx.stdout.print("   -> {d}", .{branchTarget(instruction)}),
+            .inline_data => try printInline(ctx, instruction.inlineData().?),
+            .transfer => try ctx.stdout.writeAll("   (transfer)"),
+        }
         try ctx.stdout.writeByte('\n');
     }
-    const trailer = length - reader.pos;
-    try ctx.stdout.print("\nstopped: {t} after {d} of {d} bytes", .{ reader.stop(), reader.pos, length });
-    if (trailer > 0) try ctx.stdout.print(", {d} byte trailer", .{trailer});
+    try ctx.stdout.print("\nstopped: {t} after {d} of {d} bytes", .{ reader.stop(), reader.pos, instructions });
+    if (reader.padding().len != 0) try ctx.stdout.print(", {d} bytes of padding", .{reader.padding().len}) else if (instructions > reader.pos) try ctx.stdout.print(", {d} bytes undecoded", .{instructions - reader.pos});
     try ctx.stdout.writeByte('\n');
+}
+
+/// Where a branch goes, as an offset into the block's instructions.
+///
+/// The displacement is big-endian, the one place the format is not little-endian, and counts from
+/// its own position rather than from the end of the instruction.
+fn branchTarget(instruction: dte.Instruction) usize {
+    const displacement = std.mem.readInt(u16, instruction.operands[0..2], .big);
+    return instruction.address + 1 + displacement;
+}
+
+/// Renders an inline run as text when it is one, and as hex otherwise.
+fn printInline(ctx: Context, data: []const u8) !void {
+    const text = std.mem.sliceTo(data, 0);
+    const printable = text.len + 1 == data.len and
+        text.len != 0 and
+        for (text) |c| {
+            if (!std.ascii.isPrint(c)) break false;
+        } else true;
+
+    if (printable) {
+        try ctx.stdout.print("   \"{s}\"", .{text});
+        return;
+    }
+    try ctx.stdout.writeAll("  ");
+    for (data) |b| try ctx.stdout.print(" {x:0>2}", .{b});
 }
 
 fn strings(ctx: Context, mission: dte.Mission) !void {

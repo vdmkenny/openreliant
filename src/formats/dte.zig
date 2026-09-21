@@ -12,6 +12,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
+pub const vm_opcodes = @import("vm_opcodes.zig");
+
 pub const section_count = 27;
 
 /// Writes an enum's tag name, or its number when the file carries a value this enum does not name.
@@ -251,8 +253,9 @@ pub const Condition = enum(u8) {
 /// zero. A parallel flag array, section `script_flags`, is indexed by the same instruction pointer
 /// and marks where the VM may suspend across frames.
 ///
-/// The handler table is stored in the payload with **`0x02` to `0x07` and `0x14` to `0x55`
-/// filled**; every other entry is null, so only those 72 opcodes exist.
+/// The handler table holds 86 entries, of which 71 are filled: `0x02` to `0x07` and `0x14` to
+/// `0x55`, minus `0x50`. Those 71 are the whole instruction set. Their sizes and shapes are in
+/// [`vm_opcodes`](vm_opcodes.zig), derived from the handlers themselves by `src/tools/vmgen`.
 pub const Opcode = enum(u8) {
     /// Compare not-equal.
     compare_ne = 0x02,
@@ -262,14 +265,21 @@ pub const Opcode = enum(u8) {
     membership = 0x14,
     /// Call Executor command `n` from the catalogue the engine installs at load.
     command = 0x21,
-    push_immediate_a = 0x23,
-    push_immediate_b = 0x24,
+    /// Calls the script part named by its operand, through a table of parts.
+    call_part = 0x22,
+    /// Pops a value and branches when it is zero, over a big-endian displacement counted from the
+    /// displacement's own position. `0x24` runs the same handler, so the two are one operation.
+    branch_if_zero = 0x23,
+    branch_if_zero_alt = 0x24,
     /// Read the value of global `n`.
     read_global = 0x27,
     /// Wait, or fetch an operand in a compare.
     wait = 0x28,
-    /// Play speech `n`.
+    /// Pushes a pointer to the bytes that follow and steps over them. The operand byte is the
+    /// length of the whole run, itself included, and what follows is a NUL-terminated file name:
+    /// a `.wav` of speech or a `.ut` cutscene. `0x2B` runs the same handler.
     speech = 0x2A,
+    speech_alt = 0x2B,
     /// Reference a single object.
     object = 0x2C,
     /// Reference a flight group.
@@ -280,15 +290,18 @@ pub const Opcode = enum(u8) {
     array_slot = 0x3F,
     /// Push the address of global `n`, as somewhere to write.
     write_global = 0x40,
-    /// Calls the script part named by its operand, through a table of parts.
-    call_part = 0x22,
     /// Jumps by a **big-endian** 16-bit displacement, the one place the format is not
     /// little-endian.
     jump = 0x42,
-    /// End of a block.
-    end = 0x43,
+    /// Returns from a part: restores the caller's frame, instruction pointer and block end. When
+    /// the call depth is already zero the thread is finished instead. `0x25` is the same handler.
+    @"return" = 0x43,
+    return_alt = 0x25,
     /// Branch into part `n`.
     jump_part = 0x4D,
+    /// Branches to one of a table of arms, chosen by a roll against each arm's threshold. A count
+    /// byte, a big-endian default target, then that many four-byte arms.
+    random_branch = 0x51,
     _,
 
     /// Opcodes the payload's handler table implements.
@@ -303,153 +316,144 @@ pub const Opcode = enum(u8) {
 };
 
 /// What an opcode does to the instruction pointer.
-pub const OpcodeInfo = struct {
-    opcode: u8,
-    /// Operand bytes that follow the opcode.
-    operands: u8,
-    /// Whether the handler redirects the instruction pointer rather than stepping past its
-    /// operands: a call, a jump, or the end of a block.
-    control: bool,
-};
-
-/// Every opcode the VM implements, with how far its handler moves the instruction pointer.
-///
-/// Derived from the handlers themselves rather than from patterns in the mission data: the
-/// payload's handler table is read, `ghidra/scripts/DefineVmHandlers.java` defines a function at
-/// each entry so the decompiler can reach them, and each handler's first action on the pointer
-/// gives its width. A handler that steps past operands reports that count; one that assigns the
-/// pointer from elsewhere is a call or jump, and its width is however many bytes it read first.
-pub const opcodes = [_]OpcodeInfo{
-    .{ .opcode = 0x02, .operands = 0, .control = false },
-    .{ .opcode = 0x03, .operands = 0, .control = false },
-    .{ .opcode = 0x04, .operands = 0, .control = false },
-    .{ .opcode = 0x05, .operands = 0, .control = false },
-    .{ .opcode = 0x06, .operands = 0, .control = false },
-    .{ .opcode = 0x07, .operands = 0, .control = false },
-    .{ .opcode = 0x14, .operands = 0, .control = false },
-    .{ .opcode = 0x15, .operands = 0, .control = false },
-    .{ .opcode = 0x16, .operands = 0, .control = false },
-    .{ .opcode = 0x17, .operands = 0, .control = false },
-    .{ .opcode = 0x18, .operands = 0, .control = false },
-    .{ .opcode = 0x19, .operands = 0, .control = false },
-    .{ .opcode = 0x1A, .operands = 0, .control = false },
-    .{ .opcode = 0x1B, .operands = 0, .control = false },
-    .{ .opcode = 0x1C, .operands = 0, .control = false },
-    .{ .opcode = 0x1D, .operands = 0, .control = false },
-    .{ .opcode = 0x1E, .operands = 0, .control = false },
-    .{ .opcode = 0x1F, .operands = 0, .control = false },
-    .{ .opcode = 0x20, .operands = 0, .control = false },
-    .{ .opcode = 0x21, .operands = 1, .control = false },
-    .{ .opcode = 0x22, .operands = 1, .control = false },
-    .{ .opcode = 0x23, .operands = 2, .control = true },
-    .{ .opcode = 0x24, .operands = 2, .control = true },
-    .{ .opcode = 0x25, .operands = 0, .control = true },
-    .{ .opcode = 0x26, .operands = 1, .control = false },
-    .{ .opcode = 0x27, .operands = 1, .control = false },
-    .{ .opcode = 0x28, .operands = 1, .control = false },
-    .{ .opcode = 0x29, .operands = 2, .control = false },
-    .{ .opcode = 0x2A, .operands = 1, .control = true },
-    .{ .opcode = 0x2B, .operands = 1, .control = true },
-    .{ .opcode = 0x2C, .operands = 1, .control = false },
-    .{ .opcode = 0x2D, .operands = 1, .control = false },
-    .{ .opcode = 0x2E, .operands = 1, .control = false },
-    .{ .opcode = 0x2F, .operands = 1, .control = false },
-    .{ .opcode = 0x30, .operands = 1, .control = false },
-    .{ .opcode = 0x31, .operands = 1, .control = false },
-    .{ .opcode = 0x32, .operands = 1, .control = false },
-    .{ .opcode = 0x33, .operands = 0, .control = false },
-    .{ .opcode = 0x34, .operands = 0, .control = false },
-    .{ .opcode = 0x35, .operands = 0, .control = false },
-    .{ .opcode = 0x36, .operands = 0, .control = false },
-    .{ .opcode = 0x37, .operands = 0, .control = false },
-    .{ .opcode = 0x38, .operands = 0, .control = false },
-    .{ .opcode = 0x39, .operands = 0, .control = false },
-    .{ .opcode = 0x3A, .operands = 0, .control = false },
-    .{ .opcode = 0x3B, .operands = 0, .control = false },
-    .{ .opcode = 0x3C, .operands = 0, .control = false },
-    .{ .opcode = 0x3D, .operands = 0, .control = false },
-    .{ .opcode = 0x3E, .operands = 0, .control = false },
-    .{ .opcode = 0x3F, .operands = 1, .control = false },
-    .{ .opcode = 0x40, .operands = 1, .control = false },
-    .{ .opcode = 0x41, .operands = 1, .control = false },
-    .{ .opcode = 0x42, .operands = 2, .control = true },
-    .{ .opcode = 0x43, .operands = 0, .control = true },
-    .{ .opcode = 0x44, .operands = 1, .control = false },
-    .{ .opcode = 0x45, .operands = 0, .control = false },
-    .{ .opcode = 0x46, .operands = 0, .control = false },
-    .{ .opcode = 0x47, .operands = 1, .control = true },
-    .{ .opcode = 0x48, .operands = 0, .control = false },
-    .{ .opcode = 0x49, .operands = 1, .control = false },
-    .{ .opcode = 0x4A, .operands = 1, .control = false },
-    .{ .opcode = 0x4B, .operands = 0, .control = true },
-    .{ .opcode = 0x4C, .operands = 0, .control = false },
-    .{ .opcode = 0x4D, .operands = 1, .control = false },
-    .{ .opcode = 0x4E, .operands = 1, .control = false },
-    .{ .opcode = 0x4F, .operands = 1, .control = false },
-    .{ .opcode = 0x51, .operands = 2, .control = true },
-    .{ .opcode = 0x52, .operands = 0, .control = true },
-    .{ .opcode = 0x53, .operands = 0, .control = false },
-    .{ .opcode = 0x54, .operands = 1, .control = false },
-    .{ .opcode = 0x55, .operands = 1, .control = true },
-    .{ .opcode = 0xD6, .operands = 0, .control = false },
-    .{ .opcode = 0xD7, .operands = 0, .control = false },
-    .{ .opcode = 0xD8, .operands = 0, .control = false },
-    .{ .opcode = 0xDD, .operands = 0, .control = false },
-    .{ .opcode = 0xDE, .operands = 0, .control = false },
-    .{ .opcode = 0xDF, .operands = 0, .control = false },
-};
-
-/// Looks up an opcode, or null when the handler table leaves it unimplemented.
-pub fn opcodeInfo(opcode: u8) ?OpcodeInfo {
-    for (opcodes) |info| {
-        if (info.opcode == opcode) return info;
-    }
-    return null;
-}
-
 pub const Instruction = struct {
-    /// Offset from the start of the block.
+    /// Offset from the start of the block's instructions.
     address: usize,
     opcode: Opcode,
+    /// The operand bytes, and for `inline_data` the data they introduce.
     operands: []const u8,
-    control: bool,
+    form: vm_opcodes.Form,
+
+    /// Bytes the whole instruction occupies.
+    pub fn size(instruction: Instruction) usize {
+        return 1 + instruction.operands.len;
+    }
+
+    /// The bytes an `inline_data` instruction carries, after the length byte. Null for every
+    /// other form.
+    pub fn inlineData(instruction: Instruction) ?[]const u8 {
+        if (instruction.form != .inline_data) return null;
+        return instruction.operands[1..];
+    }
 };
+
+/// How many bytes the instruction at `code[pos]` occupies, or null when it cannot be decoded.
+///
+/// Most opcodes are a fixed size. Three shapes are not, and each carries its length in its own
+/// operands, so the size is still known without tracking any state:
+///
+/// - `inline_data` (`0x2A`, `0x2B`): one byte holding the total length of the operand run.
+/// - `jump_table` (`0x51`): a count, a two-byte default target, then that many four-byte arms.
+///   The handler is the only one whose encoding this module reads rather than `vmgen` deriving
+///   it, because its length depends on a byte the instruction-pointer analysis cannot follow.
+/// - `branch` and `transfer` are fixed sizes; only where execution resumes differs.
+fn instructionSize(code: []const u8, pos: usize) ?usize {
+    const info = vm_opcodes.find(code[pos]) orelse return null;
+    const operands = code[pos + 1 ..];
+    const length: usize = switch (info.form) {
+        .inline_data => blk: {
+            if (operands.len < 1) return null;
+            // The byte counts itself, so a run of 1 is the byte alone.
+            break :blk @max(operands[0], 1);
+        },
+        else => if (info.opcode == @intFromEnum(Opcode.random_branch)) blk: {
+            if (operands.len < 3) return null;
+            break :blk 3 + 4 * @as(usize, operands[0]);
+        } else info.operands,
+    };
+    if (pos + 1 + length > code.len) return null;
+    return 1 + length;
+}
 
 /// Decodes one block of bytecode.
 ///
-/// A block begins with a `u16` length and ends at an `end` opcode; anything after that within the
-/// length is a trailer the decoder does not interpret. Blocks are entered by address, from a part
-/// table a `call_part` reaches, so a section cannot simply be walked from its start.
+/// A block begins with a `u16` length that **counts its own two bytes**: the engine starts a
+/// thread with its instruction pointer at `block + 2` and its limit at `block + length`, so the
+/// instructions occupy `length - 2` bytes. The last of those is a `return`, followed by up to
+/// three bytes of padding that bring the block to a four-byte boundary. Decoding therefore runs to
+/// the limit rather than stopping at the first `return`, which may be an early exit from a branch,
+/// and treats only a short run after a `return` as padding.
+///
+/// Blocks are entered by address, from a part table a `call_part` reaches, so a section cannot
+/// simply be walked from its start.
 pub const BlockReader = struct {
     code: []const u8,
     pos: usize = 0,
-    finished: bool = false,
+    /// Set once a `return` has been decoded, after which a short tail is padding.
+    returned: bool = false,
+    /// The length the block's header declares. A handful of missions declare more than their
+    /// script section holds, so `code` is clamped to the section and this records the claim.
+    declared: u16 = 0,
 
-    pub const Stop = enum { end, unimplemented, truncated };
+    /// Blocks are padded out to this many bytes.
+    pub const alignment = 4;
 
-    pub fn next(reader: *BlockReader) ?Instruction {
-        if (reader.finished or reader.pos >= reader.code.len) return null;
-        const opcode = reader.code[reader.pos];
-        const info = opcodeInfo(opcode) orelse return null;
-        if (reader.pos + 1 + info.operands > reader.code.len) return null;
+    /// Bytes of a block header, which its length field includes.
+    pub const header_len = 2;
 
-        const address = reader.pos;
-        const operands = reader.code[reader.pos + 1 ..][0..info.operands];
-        reader.pos += 1 + info.operands;
-        if (opcode == @intFromEnum(Opcode.end)) reader.finished = true;
+    /// Reads the block at `offset` in `section`, returning a reader over its instructions.
+    pub fn at(section: []const u8, offset: usize) ?BlockReader {
+        if (offset + header_len > section.len) return null;
+        const declared = std.mem.readInt(u16, section[offset..][0..header_len], .little);
+        if (declared <= header_len) return null;
+        const body = section[offset + header_len ..];
         return .{
-            .address = address,
-            .opcode = @enumFromInt(opcode),
-            .operands = operands,
-            .control = info.control,
+            .code = body[0..@min(declared - header_len, body.len)],
+            .declared = declared,
         };
     }
 
+    /// Whether the block runs past the end of its section.
+    pub fn isShort(reader: BlockReader) bool {
+        return reader.code.len + header_len < reader.declared;
+    }
+
     /// Why decoding stopped, once `next` has returned null.
+    pub const Stop = enum {
+        /// The block's instructions were decoded in full.
+        complete,
+        /// A byte the handler table leaves unimplemented.
+        unimplemented,
+        /// An instruction runs past the block's end.
+        truncated,
+    };
+
+    /// The bytes from the cursor to the end of the block.
+    pub fn rest(reader: BlockReader) []const u8 {
+        return reader.code[reader.pos..];
+    }
+
+    /// The block's trailing padding, once decoding has reached it. Empty until then, and empty
+    /// once the block is exhausted.
+    pub fn padding(reader: BlockReader) []const u8 {
+        const left = reader.rest();
+        const is_padding = reader.returned and left.len != 0 and left.len < alignment;
+        return if (is_padding) left else &.{};
+    }
+
+    pub fn next(reader: *BlockReader) ?Instruction {
+        const left = reader.rest();
+        if (left.len == 0 or reader.padding().len != 0) return null;
+
+        const opcode = left[0];
+        const info = vm_opcodes.find(opcode) orelse return null;
+        const length = instructionSize(reader.code, reader.pos) orelse return null;
+
+        const address = reader.pos;
+        reader.pos += length;
+        if (opcode == @intFromEnum(Opcode.@"return")) reader.returned = true;
+        return .{
+            .address = address,
+            .opcode = @enumFromInt(opcode),
+            .operands = left[1..length],
+            .form = info.form,
+        };
+    }
+
     pub fn stop(reader: BlockReader) Stop {
-        if (reader.finished) return .end;
-        if (reader.pos >= reader.code.len) return .truncated;
-        return if (opcodeInfo(reader.code[reader.pos]) == null) .unimplemented else .truncated;
+        const left = reader.rest();
+        if (left.len == 0 or reader.padding().len != 0) return .complete;
+        return if (vm_opcodes.find(left[0]) == null) .unimplemented else .truncated;
     }
 };
 
@@ -600,27 +604,48 @@ test "condition names cover the scriptable range" {
     try std.testing.expect(std.enums.tagName(Condition, internal) == null);
 }
 
-test "decodes a block and stops at its end marker" {
+test "decodes a block down to its alignment padding" {
     // The opening block of mission1: call, command, read a global, wait, compare, branch, call,
-    // jump, call, command, set AI, end, then a trailer the block length still covers.
-    const block = [_]u8{
-        0x22, 0x01, 0x21, 0x17, 0x27, 0x00, 0x28, 0x00, 0x02, 0x24, 0x00, 0x07,
-        0x22, 0x15, 0x42, 0x00, 0x04, 0x22, 0x18, 0x21, 0x17, 0x32, 0x01, 0x43,
-        0x32, 0x01, 0x01, 0x00,
+    // jump, call, command, set AI, return, then two bytes that pad the block to a multiple of four.
+    const section = [_]u8{
+        0x1C, 0x00, 0x22, 0x01, 0x21, 0x17, 0x27, 0x00, 0x28, 0x00, 0x02, 0x24, 0x00, 0x07,
+        0x22, 0x15, 0x42, 0x00, 0x04, 0x22, 0x18, 0x21, 0x17, 0x32, 0x01, 0x43, 0x32, 0x01,
     };
-    var reader: BlockReader = .{ .code = &block };
+    var reader = BlockReader.at(&section, 0).?;
+    try std.testing.expectEqual(@as(u16, 0x1C), reader.declared);
+    try std.testing.expect(!reader.isShort());
+    try std.testing.expectEqual(@as(usize, 26), reader.code.len);
 
     const expected = [_]Opcode{
-        .call_part, .command, .read_global, .wait,    .compare_ne, .push_immediate_b,
-        .call_part, .jump,    .call_part,   .command, .ai,         .end,
+        .call_part, .command, .read_global, .wait,    .compare_ne, .branch_if_zero_alt,
+        .call_part, .jump,    .call_part,   .command, .ai,         .@"return",
     };
     for (expected) |opcode| {
         try std.testing.expectEqual(opcode, reader.next().?.opcode);
     }
-    // The end opcode terminates the block; the four trailing bytes are not instructions.
     try std.testing.expectEqual(@as(?Instruction, null), reader.next());
-    try std.testing.expectEqual(BlockReader.Stop.end, reader.stop());
+    try std.testing.expectEqual(BlockReader.Stop.complete, reader.stop());
     try std.testing.expectEqual(@as(usize, 24), reader.pos);
+    try std.testing.expectEqualSlices(u8, &.{ 0x32, 0x01 }, reader.padding());
+}
+
+test "decodes an inline string and steps over it" {
+    // The opening block of mission81, which cues a speech file by name.
+    const section = [_]u8{
+        0x58, 0x00, 0x28, 0x00, 0x21, 0x05, 0x2A, 0x0F,
+    } ++ "new_sim02.wav\x00".* ++ [_]u8{ 0x28, 0x01 };
+    var reader = BlockReader.at(&section, 0).?;
+    // The block claims more than the section holds, so it is clamped rather than rejected.
+    try std.testing.expect(reader.isShort());
+
+    try std.testing.expectEqual(Opcode.wait, reader.next().?.opcode);
+    try std.testing.expectEqual(Opcode.command, reader.next().?.opcode);
+
+    const speech = reader.next().?;
+    try std.testing.expectEqual(Opcode.speech, speech.opcode);
+    try std.testing.expectEqual(vm_opcodes.Form.inline_data, speech.form);
+    try std.testing.expectEqualStrings("new_sim02.wav", speech.inlineData().?[0..13]);
+    try std.testing.expectEqual(Opcode.wait, reader.next().?.opcode);
 }
 
 test "the implemented opcode range matches the payload's handler table" {

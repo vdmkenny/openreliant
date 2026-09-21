@@ -87,6 +87,11 @@ and delete the folder in the GUI first.
 
 The Ghidra project is single-user. Close the GUI before running a headless target, and vice versa.
 
+`make vm-opcodes` reads that export back: `src/tools/vmgen` derives the mission script VM's opcode
+table from the payload's dispatch table and its handlers, and writes
+[`src/formats/vm_opcodes.zig`](../src/formats/vm_opcodes.zig). The table is committed, so building
+the tools never needs the game.
+
 `ghidra-export` runs [`ghidra/scripts/ExportProgram.java`](../ghidra/scripts/ExportProgram.java),
 which writes per program: `segments.tsv`, `imports.tsv`, `exports.tsv`, `strings.tsv`,
 `functions.tsv`, `disassembly.asm` and `decompiled.c`. That output is derived from the game and is

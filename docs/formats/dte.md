@@ -148,65 +148,114 @@ Section 10 is a flag array indexed by the same instruction pointer, marking the 
 VM may suspend and resume on a later frame, which is how a long script runs without blocking the
 frame.
 
-**Opcodes `0x02` to `0x07` and `0x14` to `0x55` exist**, 72 in all. That is read from the handler
-table itself, which the payload stores with exactly those entries filled and every other entry
-null. Of the named ones, `0x21` calls an Executor command, `0x32` sets an AI behaviour, `0x22` and
-`0x4D` mark and branch to script parts, `0x27` and `0x40` read and write a global, `0x2C` and
-`0x2D` reference an object and a flight group, and `0x43` ends a line.
+**The instruction set is opcodes `0x02` to `0x55`, minus `0x08` to `0x13` and `0x50`: 71 in all.**
+The handler table holds 86 entries; the 15 gaps are null. Past entry `0x55` the data is a different
+structure, which holds a few values that look like code addresses but are not handlers.
 
-Frequency in `mission1` agrees: after operand bytes, the commonest are `0x21` command (386),
-`0x28` wait (282), `0x2C` object (264) and `0x32` AI (182).
+Five opcodes share a handler with another, so the two are one operation: `0x24` with `0x23`, `0x2B`
+with `0x2A`, `0x25` with `0x43`, `0x32` with `0x2E`, and `0x55` with `0x47`.
 
-### Operand widths
+### Deriving the instruction set
 
-Each opcode's width is read from its own handler rather than inferred from the data. The payload
-stores the handler table, `ghidra/scripts/DefineVmHandlers.java` defines a function at every entry
-so the decompiler can reach them (nothing calls them directly, so auto-analysis leaves them
-undefined), and each handler's first action on the instruction pointer gives its width:
+The opcode set, each instruction's size and where execution goes next are all read out of the
+payload rather than guessed from the mission files.
 
-| Class | Opcodes |
-|---|---|
-| No operand | 42 |
-| One operand byte | 22 |
-| Two operand bytes | 1 |
-| Control flow, 0 to 2 operand bytes | 12 |
+The dispatcher reads an opcode byte at `P`, sets the instruction pointer to `P + 1`, and calls the
+handler with `ECX` pointing at the cell that holds it. Whatever the handler leaves in that cell is
+where execution resumes, so the shape of an instruction is exactly what its handler does to `[ECX]`.
 
-Three opcodes carry the structure:
+`src/tools/vmgen` does this mechanically: it reads the dispatch table out of the binary, parses
+each handler out of Ghidra's exported disassembly, and symbolically executes every path through it,
+tracking the instruction pointer. The paths must agree, so a handler it cannot pin down is reported
+rather than guessed at. The result is [`src/formats/vm_opcodes.zig`](../../src/formats/vm_opcodes.zig),
+regenerated with `make vm-opcodes` after `make ghidra-export-game`.
 
-- **`0x22` call_part** reads a one-byte index, looks the part up in a table of stride `0x74`,
-  pushes the return state, jumps to that block and steps over its leading length. It is a
-  subroutine call, which is why blocks are reached by address rather than laid end to end.
-- **`0x42` jump** adds a **big-endian** 16-bit displacement to the instruction pointer. It is the
-  one place in the format that is not little-endian.
-- **`0x43` end** terminates a block.
+`ghidra/scripts/DefineVmHandlers.java` defines a function at every table entry first, because
+nothing calls the handlers directly and auto-analysis leaves them undefined.
+
+Four shapes come out of it:
+
+| Form | Opcodes | Next instruction pointer |
+|---|---|---|
+| `sequential` | 63 | After the operands |
+| `branch` | `0x23`, `0x24`, `0x42` | The operands are a displacement |
+| `inline_data` | `0x2A`, `0x2B` | After the run the operand byte measures |
+| `transfer` | `0x22`, `0x25`, `0x43`, `0x4A`, `0x51` | Not statically known |
+
+Operand counts: 41 opcodes take none, 24 take one byte, 5 take two and `0x4B` takes three.
+
+The three that are not a fixed size each carry their own length, so an instruction's size is always
+known without tracking any state:
+
+- **`0x2A` speech** (and `0x2B`) reads its operand byte as the length of the whole operand run,
+  itself included, then pushes a pointer to the bytes after it and steps over them. What follows is
+  a NUL-terminated file name: a `.wav` of speech, or a `.ut` cutscene. `mission81` opens by cueing
+  `new_sim02.wav` this way.
+- **`0x51` random_branch** is a count byte, a big-endian default target, then that many four-byte
+  arms of target and threshold. It picks an arm by rolling against the thresholds. Its size is
+  `3 + 4n`, the one encoding read by hand rather than derived, because its length depends on a byte
+  the instruction-pointer analysis cannot follow.
+- **`0x22` call_part** is a fixed three bytes, but transfers control.
+
+### Control flow
+
+- **`0x22` call_part** reads a one-byte part index, looks the part up in a table of stride `0x74`
+  whose entry holds the block pointer at `+0` and the argument count at `+4`, pushes the argument
+  count, the return address, the caller's frame base and the caller's block end, sets the frame
+  base to `stack - (4n + 16)`, and enters the block. It is a subroutine call, which is why blocks
+  are reached by address rather than laid end to end.
+- **`0x43` return** (and `0x25`) unwinds all of that. When the call depth is already zero the
+  thread is finished instead.
+- **`0x23` branch_if_zero** (and `0x24`) pops a value and branches when it is zero. **`0x42` jump**
+  branches unconditionally. Both take a **big-endian** 16-bit displacement, counted from the
+  displacement's own position rather than from the end of the instruction. This is the one place in
+  the format that is not little-endian.
 
 `0x21` command reads a one-byte index into the Executor catalogue, also stride `0x74`, whose entry
 carries the command's argument count at `+4` and its implementation pointer at `+0`.
 
-### Decoding a block
+### Blocks
 
-A block is a `u16` length followed by instructions, ending at `end`. Anything between `end` and the
-length is a trailer this decoder does not interpret, typically 2 to 5 bytes.
+A block is a `u16` length followed by instructions. **The length counts its own two bytes**: the
+engine starts a thread with its instruction pointer at `block + 2` and its limit at
+`block + length`, both of which `call_part` and the thread creator compute the same way.
+
+The instructions end with a `return`, after which up to three bytes pad the block out to a
+four-byte boundary. Decoding runs to the block's limit rather than stopping at the first `return`,
+which may be an early exit from a branch.
 
 ```
 sltool dte script <mission>
 ```
 
-decodes the block at the start of the section. `mission1` opens with:
+decodes the block at the start of the section. **All 44 missions' opening blocks decode end to
+end.** `mission1` opens with an if-else:
 
 ```
-call_part 1, command 0x17, read_global 0, wait 0, compare_ne,
-push_immediate_b, call_part 0x15, jump +4, call_part 0x18,
-command 0x17, ai 1, end
+offset  bytes       opcode
+     0  22 01       call_part   (transfer)
+     2  21 17       command
+     4  27 00       read_global
+     6  28 00       wait
+     8  02          compare_ne
+     9  24 00 07    branch_if_zero_alt   -> 17
+    12  22 15       call_part   (transfer)
+    14  42 00 04    jump   -> 19
+    17  22 18       call_part   (transfer)
+    19  21 17       command
+    21  32 01       ai
+    23  43          return   (transfer)
 ```
 
-**32 of the 44 missions' opening blocks decode to their end marker.** The other 12 stop on an
-opcode whose width is still wrong, so a handful of the 72 widths need a closer read than the first
-pointer assignment gives.
+Every branch target lands on an instruction boundary, which is the check that the widths are right.
 
-**Open:** the part table that `call_part` indexes. Without it only the block at the start of a
-section can be found; the rest are reached by address. The table is built at load, from
-`DAT_00538c94`, and locating what fills it is the next step.
+Five missions, the `new_sim` training sessions, declare a block longer than their script section
+holds: `mission81` claims 86 bytes of a section of 82. The reader clamps to the section and reports
+the claim rather than refusing the block.
+
+**Open:** the part table that `call_part` indexes. Its stride and field layout are known from the
+handler, but it is built at load from `DAT_00538c94` and what fills it is not yet located. Without
+it only the block at the start of a section can be found; the rest are reached by address.
 
 ## Prior art
 
