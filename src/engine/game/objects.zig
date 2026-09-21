@@ -378,9 +378,10 @@ pub const Model = struct {
     }
 
     /// Adds each shown part's object to `layer`, the world's or, for a cockpit, the overlay
-    /// (`node_draw`, `0x0049A8C0`, for the model's part nodes), none while the object is hidden.
-    /// Not yet ported: what else it draws (lights, engine glows, the cloak) and its leaving out an
-    /// object too far away to see.
+    /// (`node_draw`, `0x0049A8C0`, for the model's part nodes), none while the object is hidden,
+    /// then the lights and the engine glows its shown parts carry.
+    /// Not yet ported: the cloak, the nodes of kinds 4 and 6, and its leaving out an object too far
+    /// away to see.
     pub fn draw(model: *Model, gpa: Allocator, scene: *srcore.Scene, layer: srcore.Layer, view: View) Allocator.Error!void {
         if (model.hidden) return;
         for (model.parts) |*part| {

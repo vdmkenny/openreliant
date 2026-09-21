@@ -406,11 +406,10 @@ pub const Loaded = struct {
     }
 };
 
-/// Builds every level of every part of `model` (`model_load`). `multiplayer_ship` is a ship type's
-/// model in a multiplayer mission, which with the model's header flag `cloak` gives its objects
-/// colours of their own. Not yet ported: the static lights `model_load` marks the parts for and
-/// bakes into their meshes (`0x004A4070`, `0x004A4310`), and the second and third mesh sets it
-/// builds for cloaking (`cloak_mesh_build`).
+/// Builds every level of every part of `model` (`model_load`), and bakes the static lights it
+/// carries into their vertex colours. `multiplayer_ship` is a ship type's model in a multiplayer
+/// mission, which with the model's header flag `cloak` gives its objects colours of their own.
+/// Not yet ported: the second and third mesh sets it builds for cloaking (`cloak_mesh_build`).
 pub fn modelLoad(gpa: Allocator, textures: *srtexture.Table, model: *const shp.Model, settings: Settings, multiplayer_ship: bool) Error!Loaded {
     var level_settings = settings;
     level_settings.cloak = model.header.flags.cloak or multiplayer_ship;
