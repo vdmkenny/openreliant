@@ -406,3 +406,50 @@
 004cde40	function	SR_mesh_pointlight	int __fastcall (void *object, void *light)	Adds a point light to the vertex colours: its colour times intensity, the cosine, and (1 - r/R) squared
 004ce120	function	SR_mesh_dirlight	int __fastcall (void *object, void *light)	Adds a directional light to the vertex colours: its colour times intensity and the normal's dot product with its forward axis
 005d5618	data	light_maps	int	Lmaps in the Device section of the settings, default 1: light maps and highlights
+
+# Backdrop (nebula.cpp, srstars.cpp, the environment effects, and a file between srofiles.cpp and timer.cpp)
+004a4e70	function	backdrop_create	void __fastcall (void)	Builds the star fields from space.tga, the dust, the lights and the sun's sprites
+004a5930	function	backdrop_free	void __fastcall (void)
+004a5a00	function	backdrop_place	void __fastcall (void)	Aims the sun, the key lights and the dome from the sun marker, and the fill lights and the nebula from the nebula marker
+004a5c80	function	backdrop_reset_streaks	void __fastcall (void)	Makes every star field take this frame as its last, so a cut draws no streaks
+004a5cd0	function	backdrop_frame	void __fastcall (void)	Adds the lights, star fields, dust, sun and lens flares to the scene, placing the flares and sizing the sun's sprites
+004adb30	function	scene_add	void __fastcall (void *object, int layer)	Pushes an object onto its layer's list, lights onto list 3 and type 8 onto list 4; mission_frame empties the lists each frame
+004c4200	function	object_unlink	void __fastcall (void *object)	Takes an object out of whichever scene list holds it
+004c42c0	function	SR_object_add	void __fastcall (void *object)	Pushes an object onto the list its type names. No callers
+004c5240	function	stars_create	Stars * __fastcall (int count)	A star field: untextured, lit and added
+004c5380	function	stars_project	int __fastcall (Stars *stars)	Projects a star field for the frame, with last frame's positions for streaks; non-zero when none shows
+00498450	function	nebula_dome_software	void __fastcall (void)	The software renderer's sky dome: a 20x10 band at radius 1000
+00498810	function	nebula_dome	void __fastcall (void)	The sky dome: a 15x8 band at radius 5000, coloured from starref12.tga
+00498b30	function	nebula_create	void __fastcall (void)	Builds the sky dome and both nebula patches
+00498c80	function	nebula_free	void __fastcall (void)
+00498d00	function	nebula_select	void __fastcall (void)	Shows the nebula nebula_requested names: its texture, its fill light colour, and the smaller patch for nebula 5
+00498e10	function	nebula_frame	void __fastcall (void)	Centres the dome and the nebula on the camera and adds them to the background layer
+00498ea0	function	sky_patch_create	void * __fastcall (void *texture, int columns, float radius, float pitch_min, float pitch_max, float yaw_min, float yaw_max, int rows)	A textured patch of a sphere around the camera: unlit and added
+00469c60	function	environment_effect_set	void __fastcall (int effect, char on)	Sets or clears an environment effect's bit and runs its handler; Ice Field and Planet Bombard have none
+00469d30	function	environment_update	void __fastcall (void)	Applies a pending nebula choice, object flag 0x400 changes and environment effect changes
+004cabe0	function	SR_TGA_allocate_raw	byte * __fastcall (char *name)	A TGA's pixels, top row first; 24-bit ones widened to 4 bytes
+004cad60	function	SR_TGA_rle_uncompress
+004c1940	function	mat3_look_at	void __fastcall (float *m, Vec3 *from, Vec3 *to, float roll)	An orientation whose forward axis points from one point to another: turned about Y, then X, then rolled
+004c2190	function	mat3_turn_y	void __thiscall (float angle)	Turns the matrix in ECX about Y
+004c2100	function	mat3_turn_x	void __thiscall (float angle)	Turns the matrix in ECX about X
+004c2220	function	mat3_turn_z	void __thiscall (float angle)	Turns the matrix in ECX about Z
+004c3200	function	sr_atan2	float __cdecl (float y, float x)	The angle whose tangent is y / x, from a table
+00595a30	data	star_fields	Stars *[100]
+00595bc8	data	star_field_count	int
+00595a28	data	space_dust	Stars *
+005959fc	data	light_key_01	void *	The key light for models whose objects list components (mask 0x01)
+00595bcc	data	light_fill_02	void *	The fill light for models whose objects list components (mask 0x02)
+00595bd4	data	light_ambient_04	void *	Ambient, 0.04 (mask 0x04)
+00595bd0	data	light_key_08	void *	The key light for the other models (mask 0x08)
+00595a00	data	light_fill_10	void *	The fill light for the other models, at 0.7 (mask 0x10)
+00595bd8	data	light_ambient_20	void *	Ambient, 0.09 (mask 0x20)
+00595be0	data	sun_direction	Vec3
+00595a04	data	sun_sprites	void *[9]	sunlayer1, sunlayer3, six lens flares, sunlayer2
+0058a6a4	data	sky_dome	void *
+0058a6a8	data	nebula_patch	void *
+0058a6ac	data	nebula_patch_small	void *	Nebula 5's
+0058a100	data	nebula_shown_patch	void *
+0058a6b8	data	nebula_requested	int	Set by SetEnvironmentFXNebula
+0058a6b4	data	nebula_shown	int
+00504000	data	nebula_fill_colours	float[21]	Red, green and blue for each of the seven nebulae
+004ff808	data	environment_effects		Thirteen 32-byte entries: switch-on and switch-off handlers, then a name

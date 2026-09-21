@@ -148,6 +148,8 @@ pub const exported = [_]Export{
     .{ "MaterialCoordinates", lancer.surrender.surrenderlib.srapiext.Material.Coordinates },
     .{ "MaterialBlend", lancer.surrender.surrenderlib.srapiext.Material.Blend },
     .{ "MeshGroup", lancer.surrender.surrenderlib.srapiext.Group },
+    .{ "Stars", lancer.surrender.surrenderlib.srstars.Stars },
+    .{ "StarsKind", lancer.surrender.surrenderlib.srstars.Stars.Kind },
 };
 
 comptime {

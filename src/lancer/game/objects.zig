@@ -89,6 +89,17 @@ pub const Node = extern struct {
     }
 };
 
+/// The light mask `node_add_part` gives a part's Surrender object: a light reaches the object unless
+/// their masks share a bit (`docs/engine/rendering.md`).
+pub fn lightMask(model_lists_components: bool) u32 {
+    return if (model_lists_components) 0x18 else 0x03;
+}
+
+test lightMask {
+    try std.testing.expectEqual(0x18, lightMask(true));
+    try std.testing.expectEqual(0x03, lightMask(false));
+}
+
 test {
     std.testing.refAllDecls(@This());
 }

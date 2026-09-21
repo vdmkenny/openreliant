@@ -4,6 +4,7 @@
 const std = @import("std");
 
 pub const srapiext = @import("surrenderlib/srapiext.zig");
+pub const srstars = @import("surrenderlib/srstars.zig");
 
 test {
     std.testing.refAllDecls(@This());

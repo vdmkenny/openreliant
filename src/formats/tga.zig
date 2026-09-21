@@ -1,11 +1,13 @@
-//! Truevision TGA images: the header, and the colour map of a palette image.
+//! Truevision TGA images: the header, a palette image's colour map, and the pixels.
 //!
 //! The engine's palettes are the colour maps of 8-bit colour-mapped TGA files in `resource.hog`:
 //! `palette.tga`, `softpal.tga` and `palette3.tga`. `SR_TGA_allocate_palette` (`0x004CACB0`)
 //! loads one and `SR_TGA_get_palette` (`0x004CA9B0`) copies out its colour map; the image under it
-//! is not used.
+//! is not used. `SR_TGA_allocate_raw` (`0x004CABE0`) reads an image's pixels, top row first, for
+//! the star map and the sky dome's colours.
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 pub const header_size = 18;
 
@@ -71,7 +73,7 @@ pub const Header = struct {
     }
 };
 
-pub const Error = error{ Truncated, NotColorMapped, UnsupportedColorMap };
+pub const Error = error{ Truncated, NotColorMapped, UnsupportedColorMap, UnsupportedImage };
 
 /// The palette of a colour-mapped image, as `SR_TGA_get_palette` reads it: the first 256 entries of
 /// its colour map, stored blue, green, red.
@@ -94,6 +96,74 @@ pub fn palette(bytes: []const u8) Error!Palette {
         colour.* = .{ entry[2], entry[1], entry[0] };
     }
     return result;
+}
+
+/// An image's pixels as red, green and blue, row by row from the top.
+pub const Image = struct {
+    width: u16,
+    height: u16,
+    rgb: []u8,
+
+    pub fn pixel(image: Image, x: usize, y: usize) [3]u8 {
+        return image.rgb[(y * image.width + x) * 3 ..][0..3].*;
+    }
+
+    pub fn deinit(image: Image, gpa: Allocator) void {
+        gpa.free(image.rgb);
+    }
+};
+
+/// The pixels of a true-colour image of 24 or 32 bits, uncompressed or run-length encoded, or of an
+/// 8-bit colour-mapped one. Alpha is dropped.
+pub fn decode(gpa: Allocator, bytes: []const u8) (Error || Allocator.Error)!Image {
+    if (bytes.len < header_size) return error.Truncated;
+    const header: Header = .parse(bytes[0..header_size]);
+    const encoded = switch (header.image_type) {
+        .color_mapped, .true_color => false,
+        .rle_color_mapped, .rle_true_color => true,
+        else => return error.UnsupportedImage,
+    };
+    const colour_mapped = header.image_type == .color_mapped or header.image_type == .rle_color_mapped;
+    const map: ?Palette = if (colour_mapped) try palette(bytes) else null;
+    const bytes_per_pixel: usize = switch (header.pixel_bits) {
+        8 => if (colour_mapped) 1 else return error.UnsupportedImage,
+        24 => if (colour_mapped) return error.UnsupportedImage else 3,
+        32 => if (colour_mapped) return error.UnsupportedImage else 4,
+        else => return error.UnsupportedImage,
+    };
+    if (header.descriptor.right_to_left) return error.UnsupportedImage;
+
+    var at = header.colorMapOffset();
+    if (header.color_map_type == 1) at += @as(usize, header.color_map_length) * ((@as(usize, header.color_map_entry_bits) + 7) / 8);
+    const count = @as(usize, header.width) * header.height;
+    const rgb = try gpa.alloc(u8, count * 3);
+    errdefer gpa.free(rgb);
+
+    // Pixels come in file order, bottom row first unless the descriptor says otherwise.
+    var written: usize = 0;
+    while (written < count) {
+        var run: usize = 1;
+        var repeat = false;
+        if (encoded) {
+            if (at >= bytes.len) return error.Truncated;
+            run = (bytes[at] & 0x7F) + 1;
+            repeat = bytes[at] & 0x80 != 0;
+            at += 1;
+        }
+        if (written + run > count) return error.Truncated;
+        for (0..run) |i| {
+            const source = if (repeat) at else at + i * bytes_per_pixel;
+            if (source + bytes_per_pixel > bytes.len) return error.Truncated;
+            const colour: [3]u8 = if (map) |m| m[bytes[source]] else .{ bytes[source + 2], bytes[source + 1], bytes[source] };
+            const file_row = (written + i) / header.width;
+            const row = if (header.descriptor.top_to_bottom) file_row else header.height - 1 - file_row;
+            const column = (written + i) % header.width;
+            rgb[(row * header.width + column) * 3 ..][0..3].* = colour;
+        }
+        at += if (repeat) bytes_per_pixel else run * bytes_per_pixel;
+        written += run;
+    }
+    return .{ .width = header.width, .height = header.height, .rgb = rgb };
 }
 
 /// A colour-mapped image with a 256-entry map in which entry `i` is `(i, i + 1, i + 2)`, and a
@@ -147,4 +217,32 @@ test palette {
     var small_entries = buffer;
     small_entries[7] = 16;
     try std.testing.expectError(error.UnsupportedColorMap, palette(&small_entries));
+}
+
+test decode {
+    const gpa = std.testing.allocator;
+    // A 2x2 true-colour image, bottom row first: blue, green, then red, white.
+    const plain = [_]u8{ 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 2, 0, 24, 0 } ++
+        [_]u8{ 0xFF, 0, 0, 0, 0xFF, 0 } ++ [_]u8{ 0, 0, 0xFF, 0xFF, 0xFF, 0xFF };
+    const image = try decode(gpa, &plain);
+    defer image.deinit(gpa);
+    try std.testing.expectEqual([3]u8{ 255, 0, 0 }, image.pixel(0, 0));
+    try std.testing.expectEqual([3]u8{ 255, 255, 255 }, image.pixel(1, 0));
+    try std.testing.expectEqual([3]u8{ 0, 0, 255 }, image.pixel(0, 1));
+    try std.testing.expectEqual([3]u8{ 0, 255, 0 }, image.pixel(1, 1));
+
+    // The same pixels run-length encoded, top row first: a run of two reds, then two raw pixels.
+    const rle = [_]u8{ 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 2, 0, 24, 0x20 } ++
+        [_]u8{ 0x81, 0, 0, 0xFF } ++ [_]u8{ 0x01, 0xFF, 0, 0, 0, 0xFF, 0 };
+    const encoded = try decode(gpa, &rle);
+    defer encoded.deinit(gpa);
+    try std.testing.expectEqual([3]u8{ 255, 0, 0 }, encoded.pixel(1, 0));
+    try std.testing.expectEqual([3]u8{ 0, 0, 255 }, encoded.pixel(0, 1));
+    try std.testing.expectEqual([3]u8{ 0, 255, 0 }, encoded.pixel(1, 1));
+
+    try std.testing.expectError(error.Truncated, decode(gpa, rle[0 .. rle.len - 1]));
+    var mapped: [1024]u8 = undefined;
+    const indexed = try decode(gpa, testImage(&mapped, ""));
+    defer indexed.deinit(gpa);
+    try std.testing.expectEqual([3]u8{ 0, 1, 2 }, indexed.pixel(0, 0));
 }
