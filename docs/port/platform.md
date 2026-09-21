@@ -41,6 +41,8 @@ files it says what it needs and exits.
 | `--16-bit` | 16-bit colour, dithered |
 | `--msaa <1\|2\|4\|8>` | Samples a pixel; 4 by default |
 | `--filter <original\|trilinear\|crisp>` | How textures are filtered; `crisp` by default |
+| `--no-bloom` | Draws without the bloom around bright things |
+| `--no-dither` | Draws without dithering 32-bit colour |
 | `--no-vsync` | Draws without waiting for the display |
 | `--fps <rate>` | Frames a second at most; 0 for no limit |
 | `--software` | Draws on the software device, the port's reference, at the window's size in points |

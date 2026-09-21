@@ -75,7 +75,12 @@ Deliberate differences from the original, each marked **Improvement** where it i
 - It filters textures trilinearly, sixteen times anisotropic, where the original sampled bilinearly
   from the nearest level, and magnifies them with a Catmull-Rom filter, which keeps the small
   textures sharp up close.
-- It draws in 32-bit colour, where the original drew in 16 bits. `--original` restores the
+- The frame's bright parts, its lights, flares and the sun, bleed a little light into what stands
+  around them, as a camera does. What passes a threshold is taken into a half-size target, blurred
+  along each axis in turn and added back, so that a light reads as a light rather than as a bright
+  texel. The original drew none.
+- It draws in 32-bit colour, where the original drew in 16 bits, and dithers that too, which costs
+  nothing and keeps a dark gradient, such as the nebula or a light's falloff, from banding. `--original` restores the
   original's look: 16-bit colour, dithered, into a 16-bit buffer where the GPU has one, with a
   16-bit depth buffer, one sample a pixel and bilinear filtering.
 

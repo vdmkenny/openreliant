@@ -40,6 +40,11 @@ pub const Settings = struct {
     /// took one.
     samples: u8 = 4,
     filter: Filter = .crisp,
+    /// Bleeds a little light out of the frame's bright parts, its lights, glows, flares and the
+    /// sun, as a camera does. The original drew none.
+    bloom: bool = true,
+    /// Dithers 32-bit colour as well, which keeps a dark gradient from banding.
+    dither: bool = true,
     /// Waits for the display to show each frame, as DirectDraw's flip did.
     vsync: bool = true,
 
@@ -53,7 +58,13 @@ pub const Settings = struct {
     };
 
     /// The original's look: 16-bit colour, one sample a pixel, bilinear filtering.
-    pub const original: Settings = .{ .sixteen_bit = true, .samples = 1, .filter = .original };
+    pub const original: Settings = .{
+        .sixteen_bit = true,
+        .samples = 1,
+        .filter = .original,
+        .bloom = false,
+        .dither = false,
+    };
 };
 
 /// A vertex as the shader takes it: the driver's, less the specular colour, which Direct3D 7 left
@@ -131,6 +142,12 @@ pub const Gpu = struct {
     vertex_shader: *c.SDL_GPUShader,
     fragment_shader: *c.SDL_GPUShader,
     sampler: *c.SDL_GPUSampler,
+    /// What the bloom passes read with: no wrapping, so a blur does not pull in the far edge.
+    screen_sampler: *c.SDL_GPUSampler,
+    bloom_vertex_shader: ?*c.SDL_GPUShader = null,
+    bloom_fragment_shader: ?*c.SDL_GPUShader = null,
+    /// Draws each bloom pass, all of them into targets of the frame's own format.
+    bloom_pipeline: ?*c.SDL_GPUGraphicsPipeline = null,
     pipelines: std.AutoHashMapUnmanaged(PipelineKey, *c.SDL_GPUGraphicsPipeline) = .empty,
     arrays: std.ArrayList(Array) = .empty,
     uploads: std.ArrayList(Upload) = .empty,
@@ -160,10 +177,23 @@ pub const Gpu = struct {
         /// What the samples resolve to, when there are several.
         resolved: ?*c.SDL_GPUTexture,
         depth: *c.SDL_GPUTexture,
+        /// Half the frame across and down, which the bloom is worked out in: two, to blur along
+        /// one axis into the other and back.
+        bloom: ?[2]*c.SDL_GPUTexture,
+        bloom_width: u32 = 0,
+        bloom_height: u32 = 0,
+        /// The frame with its bloom added back, which is what goes to the screen and to a
+        /// screenshot; null where nothing blooms and the frame itself is what is shown.
+        composed: ?*c.SDL_GPUTexture,
 
-        /// What holds the finished frame.
+        /// What the frame was drawn into.
         fn frame(targets: Targets) *c.SDL_GPUTexture {
             return targets.resolved orelse targets.colour;
+        }
+
+        /// What is shown: the frame, or the frame with its bloom.
+        fn finished(targets: Targets) *c.SDL_GPUTexture {
+            return targets.composed orelse targets.frame();
         }
     };
 
@@ -172,7 +202,15 @@ pub const Gpu = struct {
         const vertex_msl = @embedFile("shaders/device.vert.msl");
         const fragment_spirv = @embedFile("shaders/device.frag.spv");
         const fragment_msl = @embedFile("shaders/device.frag.msl");
+        const bloom_vertex_spirv = @embedFile("shaders/bloom.vert.spv");
+        const bloom_vertex_msl = @embedFile("shaders/bloom.vert.msl");
+        const bloom_fragment_spirv = @embedFile("shaders/bloom.frag.spv");
+        const bloom_fragment_msl = @embedFile("shaders/bloom.frag.msl");
     };
+
+    /// How bright a colour must be before it blooms, and how much of the bloom is added back.
+    const bloom_threshold: f32 = 0.35;
+    const bloom_strength: f32 = 0.9;
 
     /// One GPU device a run: the textures' slots it keeps in their images are its own.
     pub fn init(gpa: Allocator, handle: *c.SDL_GPUDevice, window: *c.SDL_Window, settings: Settings) Error!Gpu {
@@ -222,7 +260,7 @@ pub const Gpu = struct {
                 c.SDL_GPUTextureSupportsSampleCount(handle, depth_format, option[1])) samples = option[1];
         }
 
-        const present: c.SDL_GPUPresentMode = if (settings.vsync)
+        const present_mode: c.SDL_GPUPresentMode = if (settings.vsync)
             c.SDL_GPU_PRESENTMODE_VSYNC
         else if (c.SDL_WindowSupportsGPUPresentMode(handle, window, c.SDL_GPU_PRESENTMODE_IMMEDIATE))
             c.SDL_GPU_PRESENTMODE_IMMEDIATE
@@ -230,10 +268,21 @@ pub const Gpu = struct {
             c.SDL_GPU_PRESENTMODE_MAILBOX
         else
             c.SDL_GPU_PRESENTMODE_VSYNC;
-        if (!c.SDL_SetGPUSwapchainParameters(handle, window, c.SDL_GPU_SWAPCHAINCOMPOSITION_SDR, present)) return fail("SDL_SetGPUSwapchainParameters");
+        if (!c.SDL_SetGPUSwapchainParameters(handle, window, c.SDL_GPU_SWAPCHAINCOMPOSITION_SDR, present_mode)) return fail("SDL_SetGPUSwapchainParameters");
+
+        var screen_info = std.mem.zeroes(c.SDL_GPUSamplerCreateInfo);
+        screen_info.min_filter = c.SDL_GPU_FILTER_LINEAR;
+        screen_info.mag_filter = c.SDL_GPU_FILTER_LINEAR;
+        screen_info.mipmap_mode = c.SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
+        screen_info.address_mode_u = c.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+        screen_info.address_mode_v = c.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+        screen_info.address_mode_w = c.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+        const screen_sampler = c.SDL_CreateGPUSampler(handle, &screen_info) orelse return fail("SDL_CreateGPUSampler");
+        errdefer c.SDL_ReleaseGPUSampler(handle, screen_sampler);
 
         var gpu: Gpu = .{
             .gpa = gpa,
+            .screen_sampler = screen_sampler,
             .handle = handle,
             .window = window,
             .settings = settings,
@@ -245,6 +294,7 @@ pub const Gpu = struct {
             .sampler = sampler,
         };
         gpu.blank = try gpu.place(&blank_levels);
+        if (settings.bloom) try gpu.startBloom(spirv);
         return gpu;
     }
 
@@ -261,9 +311,62 @@ pub const Gpu = struct {
         gpu.runs.deinit(gpu.gpa);
         gpu.releaseBuffers();
         gpu.releaseTargets();
+        if (gpu.bloom_pipeline) |p| c.SDL_ReleaseGPUGraphicsPipeline(gpu.handle, p);
+        if (gpu.bloom_vertex_shader) |shader_| c.SDL_ReleaseGPUShader(gpu.handle, shader_);
+        if (gpu.bloom_fragment_shader) |shader_| c.SDL_ReleaseGPUShader(gpu.handle, shader_);
+        c.SDL_ReleaseGPUSampler(gpu.handle, gpu.screen_sampler);
         c.SDL_ReleaseGPUSampler(gpu.handle, gpu.sampler);
         c.SDL_ReleaseGPUShader(gpu.handle, gpu.vertex_shader);
         c.SDL_ReleaseGPUShader(gpu.handle, gpu.fragment_shader);
+    }
+
+    /// The shaders and pipelines the bloom passes draw with: a triangle over the whole screen, so
+    /// there is nothing to bind but what it reads.
+    fn startBloom(gpu: *Gpu, spirv: bool) Error!void {
+        gpu.bloom_vertex_shader = try shader(gpu.handle, spirv, c.SDL_GPU_SHADERSTAGE_VERTEX, if (spirv) shaders.bloom_vertex_spirv else shaders.bloom_vertex_msl, 0);
+        gpu.bloom_fragment_shader = try shader(gpu.handle, spirv, c.SDL_GPU_SHADERSTAGE_FRAGMENT, if (spirv) shaders.bloom_fragment_spirv else shaders.bloom_fragment_msl, 2);
+        gpu.bloom_pipeline = try gpu.screenPipeline(gpu.colour_format);
+    }
+
+    fn screenPipeline(gpu: *Gpu, format: c.SDL_GPUTextureFormat) error{Sdl}!*c.SDL_GPUGraphicsPipeline {
+        var colour = std.mem.zeroes(c.SDL_GPUColorTargetDescription);
+        colour.format = format;
+        var info = std.mem.zeroes(c.SDL_GPUGraphicsPipelineCreateInfo);
+        info.vertex_shader = gpu.bloom_vertex_shader;
+        info.fragment_shader = gpu.bloom_fragment_shader;
+        info.primitive_type = c.SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        info.rasterizer_state.fill_mode = c.SDL_GPU_FILLMODE_FILL;
+        info.rasterizer_state.cull_mode = c.SDL_GPU_CULLMODE_NONE;
+        info.multisample_state.sample_count = c.SDL_GPU_SAMPLECOUNT_1;
+        info.target_info = .{ .color_target_descriptions = &colour, .num_color_targets = 1 };
+        return c.SDL_CreateGPUGraphicsPipeline(gpu.handle, &info) orelse fail("SDL_CreateGPUGraphicsPipeline");
+    }
+
+    /// One pass of the bloom: draws the screen-wide triangle into `target`, reading `source` and,
+    /// for the last pass, the frame itself.
+    fn bloomPass(
+        gpu: *Gpu,
+        commands: *c.SDL_GPUCommandBuffer,
+        into: *c.SDL_GPUTexture,
+        pipeline_: *c.SDL_GPUGraphicsPipeline,
+        source: *c.SDL_GPUTexture,
+        frame_image: *c.SDL_GPUTexture,
+        settings: [4]f32,
+    ) error{Sdl}!void {
+        var colour = std.mem.zeroes(c.SDL_GPUColorTargetInfo);
+        colour.texture = into;
+        colour.load_op = c.SDL_GPU_LOADOP_DONT_CARE;
+        colour.store_op = c.SDL_GPU_STOREOP_STORE;
+        const pass = c.SDL_BeginGPURenderPass(commands, &colour, 1, null) orelse return fail("SDL_BeginGPURenderPass");
+        defer c.SDL_EndGPURenderPass(pass);
+        c.SDL_BindGPUGraphicsPipeline(pass, pipeline_);
+        const bindings = [_]c.SDL_GPUTextureSamplerBinding{
+            .{ .texture = source, .sampler = gpu.screen_sampler },
+            .{ .texture = frame_image, .sampler = gpu.screen_sampler },
+        };
+        c.SDL_BindGPUFragmentSamplers(pass, 0, &bindings, bindings.len);
+        c.SDL_PushGPUFragmentUniformData(commands, 0, &settings, @sizeOf(@TypeOf(settings)));
+        c.SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
     }
 
     pub fn interface(gpu: *Gpu) device.Device {
@@ -395,14 +498,39 @@ pub const Gpu = struct {
             return fail("SDL_WaitAndAcquireGPUSwapchainTexture");
         }
         if (swapchain) |texture| {
-            var blit = std.mem.zeroes(c.SDL_GPUBlitInfo);
-            blit.source = .{ .texture = targets.frame(), .w = targets.width, .h = targets.height };
-            blit.destination = .{ .texture = texture, .w = width, .h = height };
-            blit.load_op = c.SDL_GPU_LOADOP_DONT_CARE;
-            blit.filter = c.SDL_GPU_FILTER_LINEAR;
-            c.SDL_BlitGPUTexture(commands, &blit);
+            gpu.present(commands, targets, texture, width, height) catch |err| {
+                _ = c.SDL_CancelGPUCommandBuffer(commands);
+                return err;
+            };
         }
         if (!c.SDL_SubmitGPUCommandBuffer(commands)) return fail("SDL_SubmitGPUCommandBuffer");
+    }
+
+    /// Puts the finished frame on the screen: through the bloom, which takes its bright parts,
+    /// blurs them along each axis in turn and adds them back, or straight there without it.
+    fn present(gpu: *Gpu, commands: *c.SDL_GPUCommandBuffer, targets: Targets, swapchain: *c.SDL_GPUTexture, width: u32, height: u32) error{Sdl}!void {
+        try gpu.compose(commands, targets);
+        var blit = std.mem.zeroes(c.SDL_GPUBlitInfo);
+        blit.source = .{ .texture = targets.finished(), .w = targets.width, .h = targets.height };
+        blit.destination = .{ .texture = swapchain, .w = width, .h = height };
+        blit.load_op = c.SDL_GPU_LOADOP_DONT_CARE;
+        blit.filter = c.SDL_GPU_FILTER_LINEAR;
+        c.SDL_BlitGPUTexture(commands, &blit);
+    }
+
+    /// Adds the frame's bloom back into it, leaving what is shown in `composed`: its bright parts
+    /// are taken into a half-size target, blurred along each axis in turn, and added back.
+    fn compose(gpu: *Gpu, commands: *c.SDL_GPUCommandBuffer, targets: Targets) error{Sdl}!void {
+        const bloom = targets.bloom orelse return;
+        const composed = targets.composed orelse return;
+        const pipeline_ = gpu.bloom_pipeline orelse return;
+        const frame_image = targets.frame();
+        const across = 1 / @as(f32, @floatFromInt(targets.bloom_width));
+        const down = 1 / @as(f32, @floatFromInt(targets.bloom_height));
+        try gpu.bloomPass(commands, bloom[0], pipeline_, frame_image, frame_image, .{ 0, 0, 0, bloom_threshold });
+        try gpu.bloomPass(commands, bloom[1], pipeline_, bloom[0], frame_image, .{ 1, across, 0, 0 });
+        try gpu.bloomPass(commands, bloom[0], pipeline_, bloom[1], frame_image, .{ 1, 0, down, 0 });
+        try gpu.bloomPass(commands, composed, pipeline_, bloom[0], frame_image, .{ 2, 0, 0, bloom_strength });
     }
 
     /// The frame's copy pass and render pass.
@@ -440,7 +568,7 @@ pub const Gpu = struct {
         const frame_settings = [4]f32{
             @floatFromInt(@intFromBool(gpu.settings.sixteen_bit)),
             @floatFromInt(@intFromBool(gpu.settings.filter == .crisp)),
-            0,
+            @floatFromInt(@intFromBool(gpu.settings.dither)),
             0,
         };
         c.SDL_PushGPUFragmentUniformData(commands, 0, &frame_settings, @sizeOf(@TypeOf(frame_settings)));
@@ -561,7 +689,29 @@ pub const Gpu = struct {
         const resolved = if (many) try gpu.target(size, gpu.colour_format, finished, one) else null;
         errdefer if (resolved) |r| c.SDL_ReleaseGPUTexture(gpu.handle, r);
         const depth = try gpu.target(size, gpu.depth_format, c.SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET, gpu.samples);
-        gpu.targets = .{ .width = size[0], .height = size[1], .colour = colour, .resolved = resolved, .depth = depth };
+        errdefer c.SDL_ReleaseGPUTexture(gpu.handle, depth);
+        const half = [2]u32{ @max(size[0] / 2, 1), @max(size[1] / 2, 1) };
+        var bloom: ?[2]*c.SDL_GPUTexture = null;
+        var composed: ?*c.SDL_GPUTexture = null;
+        if (gpu.bloom_pipeline != null) {
+            const first = try gpu.target(half, gpu.colour_format, finished, one);
+            errdefer c.SDL_ReleaseGPUTexture(gpu.handle, first);
+            const second = try gpu.target(half, gpu.colour_format, finished, one);
+            errdefer c.SDL_ReleaseGPUTexture(gpu.handle, second);
+            bloom = .{ first, second };
+            composed = try gpu.target(size, gpu.colour_format, finished, one);
+        }
+        gpu.targets = .{
+            .width = size[0],
+            .height = size[1],
+            .colour = colour,
+            .resolved = resolved,
+            .depth = depth,
+            .bloom = bloom,
+            .bloom_width = half[0],
+            .bloom_height = half[1],
+            .composed = composed,
+        };
     }
 
     fn target(gpu: *Gpu, size: [2]u32, format: c.SDL_GPUTextureFormat, usage: c.SDL_GPUTextureUsageFlags, samples: c.SDL_GPUSampleCount) error{Sdl}!*c.SDL_GPUTexture {
@@ -582,6 +732,8 @@ pub const Gpu = struct {
         c.SDL_ReleaseGPUTexture(gpu.handle, targets.colour);
         if (targets.resolved) |r| c.SDL_ReleaseGPUTexture(gpu.handle, r);
         c.SDL_ReleaseGPUTexture(gpu.handle, targets.depth);
+        if (targets.bloom) |bloom| for (bloom) |texture| c.SDL_ReleaseGPUTexture(gpu.handle, texture);
+        if (targets.composed) |texture| c.SDL_ReleaseGPUTexture(gpu.handle, texture);
         gpu.targets = null;
     }
 
@@ -655,7 +807,7 @@ pub const Gpu = struct {
 
         const commands = c.SDL_AcquireGPUCommandBuffer(gpu.handle) orelse return fail("SDL_AcquireGPUCommandBuffer");
         var blit = std.mem.zeroes(c.SDL_GPUBlitInfo);
-        blit.source = .{ .texture = targets.frame(), .w = size[0], .h = size[1] };
+        blit.source = .{ .texture = targets.finished(), .w = size[0], .h = size[1] };
         blit.destination = .{ .texture = plain, .w = size[0], .h = size[1] };
         blit.load_op = c.SDL_GPU_LOADOP_DONT_CARE;
         blit.filter = c.SDL_GPU_FILTER_NEAREST;

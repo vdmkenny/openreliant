@@ -40,6 +40,8 @@ const usage =
     \\  --msaa <1|2|4|8>          samples a pixel; 4 by default
     \\  --filter <original|trilinear|crisp>
     \\                            how textures are filtered; crisp by default
+    \\  --no-bloom                draw without the bloom around bright things
+    \\  --no-dither               draw without dithering 32-bit colour
     \\  --no-vsync                draw without waiting for the display
     \\  --fps <rate>              frames a second at most; without vsync, the display's rate by
     \\                            default; 0 for no limit
@@ -57,7 +59,7 @@ const Options = struct {
     /// Frames a second at most, 0 for no limit; null for the display's rate without vsync.
     fps: ?f32 = null,
 
-    const Flag = enum { @"--fullscreen", @"--original", @"--16-bit", @"--no-vsync", @"--software" };
+    const Flag = enum { @"--fullscreen", @"--original", @"--16-bit", @"--no-vsync", @"--no-bloom", @"--no-dither", @"--software" };
     const Option = enum { @"--ship", @"--screenshot", @"--msaa", @"--filter", @"--fps" };
 
     fn parse(args: []const [:0]const u8) error{Usage}!Options {
@@ -70,6 +72,8 @@ const Options = struct {
                 .@"--original" => options.settings = .original,
                 .@"--16-bit" => options.settings.sixteen_bit = true,
                 .@"--no-vsync" => options.settings.vsync = false,
+                .@"--no-bloom" => options.settings.bloom = false,
+                .@"--no-dither" => options.settings.dither = false,
                 .@"--software" => options.software = true,
             } else if (std.meta.stringToEnum(Option, arg)) |option| {
                 i += 1;

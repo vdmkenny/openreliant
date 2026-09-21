@@ -26,16 +26,16 @@ play: | $(GAME_DIR)/.stamp-install ## Build OpenReliant optimized and run it on 
 # language from that. The outputs are committed, so building needs neither tool; regenerating needs
 # glslc (from shaderc) on the PATH, and SPIRV-Cross, which this builds.
 SHADER_DIR := $(ROOT)/src/platform/shaders
-SHADERS    := $(foreach stage,vert frag,$(SHADER_DIR)/device.$(stage).spv $(SHADER_DIR)/device.$(stage).msl)
+SHADERS    := $(foreach name,device bloom,$(foreach stage,vert frag,$(SHADER_DIR)/$(name).$(stage).spv $(SHADER_DIR)/$(name).$(stage).msl))
 GLSLC      ?= glslc
 
 .PHONY: shaders
 shaders: $(SHADERS) ## Compile the game's shader for Vulkan and Metal (needs glslc)
 
-$(SHADER_DIR)/device.vert.spv: $(SHADER_DIR)/device.glsl
+$(SHADER_DIR)/%.vert.spv: $(SHADER_DIR)/%.glsl
 	$(GLSLC) -fshader-stage=vertex -DVERTEX -O $< -o $@
 
-$(SHADER_DIR)/device.frag.spv: $(SHADER_DIR)/device.glsl
+$(SHADER_DIR)/%.frag.spv: $(SHADER_DIR)/%.glsl
 	$(GLSLC) -fshader-stage=fragment -DFRAGMENT -O $< -o $@
 
 $(SHADER_DIR)/%.msl: $(SHADER_DIR)/%.spv | $(SPIRV_CROSS)

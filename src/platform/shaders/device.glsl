@@ -45,7 +45,8 @@ layout(set = 2, binding = 0) uniform sampler2DArray images;
 
 layout(set = 3, binding = 0) uniform Frame {
     // x: 1 to draw in 16-bit colour, dithered. y: 1 to magnify textures with a Catmull-Rom filter
-    // rather than bilinearly.
+    // rather than bilinearly. z: 1 to dither 32-bit colour as well, which costs nothing and keeps
+    // a dark gradient, such as the nebula or a light's falloff, from banding.
     vec4 settings;
 } frame;
 
@@ -92,12 +93,13 @@ vec4 sampled() {
 void main() {
     // Direct3D 7's stages: the texture times the colour, or the colour alone.
     vec4 c = image < 0 ? colour : sampled() * colour;
-    if (frame.settings.x > 0.0) {
-        // 16-bit colour: five bits of red and blue and six of green, over a 4 by 4 ordered dither.
+    if (frame.settings.x > 0.0 || frame.settings.z > 0.0) {
+        // Over a 4 by 4 ordered dither, to the levels the frame is kept in: five bits of red and
+        // blue and six of green in 16-bit colour, eight bits a channel otherwise.
         const float bayer[16] = float[](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
         ivec2 cell = ivec2(gl_FragCoord.xy) & 3;
         float threshold = (bayer[cell.y * 4 + cell.x] + 0.5) / 16.0;
-        vec3 levels = vec3(31.0, 63.0, 31.0);
+        vec3 levels = frame.settings.x > 0.0 ? vec3(31.0, 63.0, 31.0) : vec3(255.0);
         c.rgb = floor(c.rgb * levels + threshold) / levels;
     }
     result = c;
