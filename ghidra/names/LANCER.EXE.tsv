@@ -256,6 +256,7 @@
 004a8b10	function	WinMain	int __stdcall (uint instance, uint previous, char *command_line, int show)	The game's entry, from _WinMainCRTStartup. A second copy finds the first by its StarlancerRunning mutex and restores the first's window instead
 00494040	function	mission_run	void __fastcall (void)	Runs a mission: resets the clocks, then loops, running a game tick for each timer tick since the last pass
 004827c0	function	tick_timer		Timer callback, 100 times a second: advances game_ticks and the play time, unless paused
+00483150	function	hud_init	void __cdecl (void)	Sets the HUD up once, on the first frame that draws it: copies the element names into the table at 0x57BC5C, a hundred bytes each, allocates hud.cpp's work buffer, takes oldpalette.tga and powerball.tga, and works out the 62 by 62 table of shading the shield ball is drawn from
 00477850	function	game_tick	void __fastcall (void)	One tick: the simulation step, unless paused
 004774d0	function	simulation_step	void __fastcall (void)	Every fourth tick: each object's own updates, then objects_update and the rest
 00468fa0	function	objects_update	void __fastcall (void)	Moves every object, then finds colliding pairs by sorting their extents along X
