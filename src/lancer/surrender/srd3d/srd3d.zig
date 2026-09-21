@@ -693,9 +693,9 @@ test "a pass keeps what it gathers while it clips a polygon" {
     // plane, one to the right. The pass gathers the first, clips the second, and draws the first
     // with the third.
     var positions = [_]math.Vector{
-        .{ -300, -100, 1000 }, .{ -100, 100, 1000 },  .{ -100, -100, 1000 },
-        .{ 0, -20, 60 },       .{ -40, -150, 600 },   .{ 40, -150, 600 },
-        .{ 100, -100, 1000 },  .{ 300, 100, 1000 },   .{ 300, -100, 1000 },
+        .{ -300, -100, 1000 }, .{ -100, 100, 1000 }, .{ -100, -100, 1000 },
+        .{ 0, -20, 60 },       .{ -40, -150, 600 },  .{ 40, -150, 600 },
+        .{ 100, -100, 1000 },  .{ 300, 100, 1000 },  .{ 300, -100, 1000 },
     };
     var normals: [9]math.Vector = @splat(.{ 0, 0, -1 });
     var polygons = [_]srapiext.Polygon{

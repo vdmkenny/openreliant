@@ -99,8 +99,8 @@ pub const CockpitMode = enum(u2) {
 
 /// The camera keys, in the order `frame_controls` reads them.
 pub const camera_actions = [_]controls.Action{
-    .cockpit_camera,  .left_view_camera, .right_view_camera, .rear_view_camera,
-    .flyby_camera,    .target_camera,    .external_camera,   .missile_camera,
+    .cockpit_camera, .left_view_camera, .right_view_camera, .rear_view_camera,
+    .flyby_camera,   .target_camera,    .external_camera,   .missile_camera,
 };
 
 /// The view a camera key picks (`frame_controls`), or null for another action. The cockpit key
