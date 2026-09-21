@@ -36,6 +36,12 @@ view; the test passes on greater or equal, and the buffer clears to 0. The drive
 
 **Unknown:** types 5 and 6 (`0x004CE830`, `0x004CE7B0`).
 
+The device's render states are set once, with the display mode (`D3D_set_screen_mode`,
+`0x10004840`, or `D3D_set_screen_mode_windowed`, `0x10003C20`); afterwards the driver changes only
+the depth states and the blending. Anti-aliasing, of the scene or of edges, is off, and no setting
+turns it on. Dithering is on, textures are perspective-correct, and there is no alpha test and no
+fog.
+
 ## Meshes
 
 `mesh_build` (`0x004A3040`) makes a part's mesh for each level of detail. A run of consecutive faces

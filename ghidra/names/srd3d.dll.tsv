@@ -2,6 +2,11 @@
 # (make ghidra-annotate). Columns as in LANCER.EXE.tsv. The driver draws what the payload has
 # transformed and lit; SR_driver_init fills the payload's device table with the functions here.
 
+# Device
+10004840	function	D3D_set_screen_mode		Sets a full-screen display mode: the front, back and depth buffers, the device, and the render states the driver keeps
+10003c20	function	D3D_set_screen_mode_windowed		The same in a window
+100084a0	function	set_render_state	void __fastcall (int state, int value)	Sets a render state unless it already has the value
+
 # Frame
 100077a0	function	begin_scene	int __fastcall (void)	Clears to black and to depth 0, begins the scene, and draws a background image when one is set
 10007c10	function	end_scene	int __fastcall (void)	Ends the scene
