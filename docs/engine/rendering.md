@@ -191,9 +191,16 @@ Ripper, whose thrusters and rear pincers `node_draw` names outright and treats a
 The Predator carries two, at the back of its hull either side of the centre line, each 120 across,
 60 up and 440 long.
 
-**Open:** where the `Engine Mesh` geometry comes from. Its name is in the binary once, in the
-routine that gives a glow its mesh object (`engine_glow_create`, `0x004697D0`), and nothing else
-found so far builds it.
+The mesh is one of seven, built at start-up (`engine_glows_build`, `0x00469620`) into
+`engine_glow_meshes` and chosen by the attachment's id, clamped to between 1 and 7. Each is four
+quads of sixteen vertices (`engine_glow_mesh_build`, `0x00469400`): one across the nozzle, with
+corners at plus and minus one on X and Y, and three blades 60 degrees apart, each running from the
+nozzle to one unit along Z, so that the plume reads from any side. Their texture coordinates span
+0.04 to 0.99 of one of the `matflareb` flare textures, and each polygon is biased ten nearer so
+that a glow draws in front of the hull it sits on.
+
+`node_draw` then scales that unit mesh by the attachment's own sizes, and its length by the
+throttle, which is why a thruster grows as it burns.
 
 ## Static lights
 

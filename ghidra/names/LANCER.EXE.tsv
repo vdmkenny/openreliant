@@ -452,7 +452,7 @@
 004c3490	function	SR_object_concate_parents	void __fastcall (void *object)	An object's place in the world at +0x4C and +0x70: its own, after its parent's, once a frame
 004a3040	function	mesh_build	void * __fastcall (void *model, void *part, int level)	A part's mesh for one level of detail: a group with a material of its own for each run of faces with the same shading and material
 004c4440	function	mesh_create	void * __fastcall (int polygons, int vertices, int indices, uint flags)	Allocates a mesh, zeroed
-004c4bd0	function	mesh_object_create	void * __fastcall (void *levels, void *mesh, uint flags)	A scene object of type 1 showing a set of levels (count, distances, meshes) or, without one, a single mesh; its face mask starts all ones, and it takes colours of its own when the mesh has flag 0x1000
+004c4bd0	function	mesh_object_create	void * __fastcall (void *levels, void *mesh, uint flags, char *name)	A scene object of type 1 showing a set of levels (count, distances, meshes) or, without one, a single mesh; its face mask starts all ones, and it takes colours of its own when the mesh has flag 0x1000
 004c3c50	function	SR_mesh_set_poly_flags	void __fastcall (void *mesh, byte keep, byte set)	Each polygon's flags become flags & keep | set. No callers
 004a3cb0	function	cloak_mesh_build	void * __fastcall (void *model, void *part, int level)	The mesh the cloak effect draws for a part's level: one surface, textured by coordinates from the normals, lit on hardware, added
 004c3e30	function	SR_mesh_calc_vertex_normals	void __fastcall (void *mesh)	Each vertex normal as the normalized sum of the planes of the polygons using it
@@ -548,4 +548,8 @@
 00562ffc	data	simulation_turn	int	The object whose turn it is for the extra work simulation_step gives one object a step; it cycles through the live objects
 00499540	function	node_mount_glow	void __fastcall (void *node, ShpAttachment *attachment)	Makes an engine glow node, kind 2, for an attachment of kind 2: its mesh is the Engine Mesh, and its cull radius the largest of the attachment sizes
 00499730	function	node_mount_light	void __fastcall (void *node, ShpAttachment *attachment)	Makes a light node for an attachment of kind 4, which node_draw draws as a sprite and a light
-004697d0	function	engine_glow_create	void __fastcall (void *node)	Gives an engine glow node its mesh object, the one named Engine Mesh
+004697d0	function	engine_glow_create	void __fastcall (void *node)	Gives an engine glow node its mesh object: the mesh engine_glow_meshes holds for its attachment's id, clamped to 1 to 7
+00469400	function	engine_glow_mesh_build	void * __fastcall (int kind)	Builds one of the seven engine glow meshes: a quad at the nozzle, then three blades 60 degrees apart running its length, on one of the matflareb textures, each polygon biased 10 nearer
+00469620	function	engine_glows_build	void __fastcall (void)	Builds the seven engine glow meshes into engine_glow_meshes and takes the flare textures they wear
+00469770	function	engine_glows_free	void __fastcall (void)	Frees the seven engine glow meshes
+0054ea18	data	engine_glow_meshes	void *[8]	The engine glow mesh for each attachment id, which the glow reads at id clamped to 1 to 7; slot 0 is unused
