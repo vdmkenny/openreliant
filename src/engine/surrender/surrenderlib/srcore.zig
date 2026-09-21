@@ -93,6 +93,9 @@ pub const Driver = struct {
         mesh: *const fn (*anyopaque, *const srmesh.Drawn, Layer, *Blended) Allocator.Error!void,
         sprites: *const fn (*anyopaque, *const srbmo.Drawn, Layer, *Blended) Allocator.Error!void,
         stars: *const fn (*anyopaque, *const srstars.Drawn, Layer, *Blended) Allocator.Error!void,
+        /// Marks where the scene ends and what is drawn over it begins, so that a driver adding
+        /// anything to the frame of its own leaves out what follows.
+        overlay: *const fn (*anyopaque) void,
         /// `flush_blended`: draws a layer's sorted blended things, every first pass, then the
         /// second passes.
         flush: *const fn (*anyopaque, []const Deferred, Layer) void,
@@ -156,7 +159,10 @@ pub fn render(arena: Allocator, context: *srapi.Context, scene: *Scene, driver: 
         depthSort(blended.list.items);
         driver.vtable.flush(driver.ptr, blended.list.items, layer);
     }
-    if (overlay) |over| try over.draw(over.context);
+    if (overlay) |over| {
+        driver.vtable.overlay(driver.ptr);
+        try over.draw(over.context);
+    }
     driver.vtable.end(driver.ptr);
 }
 

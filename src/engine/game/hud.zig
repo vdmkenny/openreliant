@@ -409,6 +409,7 @@ test drawText {
 
         fn begin(_: *anyopaque) void {}
         fn end(_: *anyopaque) void {}
+        fn mark(_: *anyopaque) void {}
         fn draw(context: *anyopaque, state: device.State, primitive: device.Primitive, vertices: []const device.Vertex, indices: ?[]const u16) void {
             const self: *@This() = @ptrCast(@alignCast(context));
             std.debug.assert(primitive == .fan and indices == null and vertices.len == 4);
@@ -416,7 +417,7 @@ test drawText {
             self.states.append(self.gpa, state) catch unreachable;
         }
         fn interface(self: *@This()) device.Device {
-            return .{ .ptr = self, .vtable = &.{ .begin = begin, .end = end, .draw = draw } };
+            return .{ .ptr = self, .vtable = &.{ .begin = begin, .end = end, .draw = draw, .overlay = mark } };
         }
     };
     var recorder: Recorder = .{ .gpa = gpa };

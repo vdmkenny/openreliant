@@ -470,6 +470,7 @@ const Ship = struct {
         live.engines_intact = 1;
         live.radius = object.radius;
         live.afterburner_fuel = @intFromFloat(100 * ship_stats[ship_type].afterburner_fuel);
+        live.coil_count = game.gameobj.coil_count_when_created;
         return .{
             .arena = arena,
             .ship_type = ship_type,
@@ -518,25 +519,32 @@ const Display = struct {
         // `hud_draw` leaves the instruments out of every view but the one ahead from the cockpit.
         if (!game.hud.instrumented(display.last_view)) return;
         const scale = game.hud.scaleFor(display.screen);
-        // `hud_draw` shows the fuel in hundreds.
-        const fuel = @divTrunc(display.ship.live.afterburner_fuel, 100);
-        game.hud.Readout.draw(
-            .fuel,
-            &display.art,
-            &display.font,
-            display.gpa,
-            display.target,
-            display.screen,
-            fuel,
-            .{ 1, 1, 1, 1 },
-            scale,
-        ) catch |err| switch (err) {
-            error.OutOfMemory => |out| return out,
-            // A shape the file does not hold draws nothing, as it does in the game.
-            else => {},
-        };
-        // Only the light for holding a target's speed has a condition the port knows.
-        var lit: [game.hud.lights.len]bool = @splat(false);
+        for ([_]game.hud.Readout{ .fuel, .skull, .coil }) |readout| {
+            const value: i32 = switch (readout) {
+                // `hud_draw` shows the fuel in hundreds.
+                .fuel => @divTrunc(display.ship.live.afterburner_fuel, 100),
+                // The tally a mission's start zeroes; the sandbox runs no mission, so it stays 0.
+                .skull => 0,
+                .coil => display.ship.live.coil_count,
+            };
+            readout.draw(
+                &display.art,
+                &display.font,
+                display.gpa,
+                display.target,
+                display.screen,
+                value,
+                .{ 1, 1, 1, 1 },
+                scale,
+            ) catch |err| switch (err) {
+                error.OutOfMemory => |out| return out,
+                // A shape the file does not hold draws nothing, as it does in the game.
+                else => {},
+            };
+        }
+        // The sandbox shows every light, to see them: only the one for holding a target's speed
+        // has a condition the port knows, and the rest read globals it has no names for.
+        var lit: [game.hud.lights.len]bool = @splat(true);
         lit[game.hud.match_speed_light] = display.player.matching_speed;
         game.hud.drawLights(
             &display.art,

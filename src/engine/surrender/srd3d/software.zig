@@ -41,11 +41,15 @@ pub const Software = struct {
         gpa.free(software.depth);
     }
 
+    /// The software device draws the frame itself and adds nothing to it, so what is drawn over
+    /// the scene needs no keeping apart.
+    fn overlayNothing(_: *anyopaque) void {}
+
     pub fn interface(software: *Software) device.Device {
         return .{ .ptr = software, .vtable = &vtable };
     }
 
-    const vtable: device.Device.VTable = .{ .begin = begin, .end = end, .draw = draw };
+    const vtable: device.Device.VTable = .{ .begin = begin, .end = end, .draw = draw, .overlay = overlayNothing };
 
     fn from(ptr: *anyopaque) *Software {
         return @ptrCast(@alignCast(ptr));

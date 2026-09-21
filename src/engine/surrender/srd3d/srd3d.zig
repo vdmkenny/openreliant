@@ -176,6 +176,12 @@ pub const Driver = struct {
     }
 
     /// The driver as `srcore.render` takes it.
+    /// Hands the mark to the device, which keeps what follows out of anything it adds to the
+    /// frame of its own.
+    fn overlayMark(ptr: *anyopaque) void {
+        from(ptr).target.overlay();
+    }
+
     pub fn interface(driver: *Driver) srcore.Driver {
         return .{ .ptr = driver, .vtable = &vtable };
     }
@@ -187,6 +193,7 @@ pub const Driver = struct {
         .stars = drawStars,
         .flush = flushBlended,
         .end = end,
+        .overlay = overlayMark,
     };
 
     fn from(ptr: *anyopaque) *Driver {

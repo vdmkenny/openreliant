@@ -70,6 +70,10 @@ pub const Device = struct {
         /// Draws `vertices`, or those `indices` pick, as `primitive` (`DrawPrimitive`,
         /// `DrawIndexedPrimitive`).
         draw: *const fn (*anyopaque, State, Primitive, []const Vertex, ?[]const u16) void,
+        /// Marks where the scene ends and what is drawn over it begins. The game drew its display
+        /// straight over the finished frame, so a device that adds anything to the frame of its
+        /// own, as the GPU's bloom does, leaves out what follows this.
+        overlay: *const fn (*anyopaque) void,
     };
 
     pub fn begin(device: Device) void {
@@ -82,6 +86,10 @@ pub const Device = struct {
 
     pub fn draw(device: Device, state: State, primitive: Primitive, vertices: []const Vertex, indices: ?[]const u16) void {
         device.vtable.draw(device.ptr, state, primitive, vertices, indices);
+    }
+
+    pub fn overlay(device: Device) void {
+        device.vtable.overlay(device.ptr);
     }
 };
 

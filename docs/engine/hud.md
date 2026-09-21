@@ -65,6 +65,12 @@ A glyph's bytes are indices into the font's own palette. The shipped fonts run f
 first seventeen entries as levels of coverage, `FONT.FNT` and `ITACSML.FNT` among them, to
 `BLUFONT.FNT` and `MED_RED.FNT` reaching past two hundred for glyphs of their own colours.
 
+**Improvement:** the display is drawn over the finished frame, after the bloom, rather than into
+it, so that nothing of it blooms. The game has no bloom to keep it out of; the port's is an
+improvement over the scene alone. The device is told where the scene ends
+(`device.Device.overlay`), and the GPU one draws what follows into the composed frame with
+pipelines of a single sample. The software device adds nothing of its own and ignores the mark.
+
 **Improvement:** the port draws a glyph as a textured rectangle on the GPU rather than blitting it,
 so the display costs the processor nothing and scales without blurring. What it draws is the same:
 the font's palette looked up for each byte, index 0 left clear, over the scene with the engine's own
@@ -121,3 +127,15 @@ target boxes, ammunition, and the silhouettes the target display shows.
 
 The element names `hud_init` copies come from `0x00515D70`, which the decrypted dump holds as
 zeroes, so they are not readable from it.
+
+## What is not known yet
+
+- What the skull readout counts, and what the coil readout counts. Their shapes, their places and
+  the fields they read are known; the fields themselves have no names.
+- What shows six of the seven status lights. Each reads a global or an object field with no name.
+- The names of the display's elements, which `hud_init` copies from `0x00515D70`.
+- What the rest of `hud_draw`'s 946 lines draw: the radar, the target display, the shields and the
+  armour, the ship's own schematic, the reticle, and the lines of text the views without
+  instruments show instead.
+- How the display reaches the screen in the game, which is `vfx.dll`'s panes rather than anything
+  in the payload.

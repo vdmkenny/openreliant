@@ -90,6 +90,9 @@ const PipelineKey = struct {
     topology: Topology,
     depth: srd3d.Depth,
     blend: ?srd3d.Factors,
+    /// Drawn into the frame, which takes several samples a pixel, rather than over the finished
+    /// one, which takes a single sample.
+    multisampled: bool = true,
 };
 
 /// A texture's size and levels: textures alike share arrays.
@@ -156,6 +159,8 @@ pub const Gpu = struct {
     vertices: std.ArrayList(Vertex) = .empty,
     indices: std.ArrayList(u32) = .empty,
     runs: std.ArrayList(Run) = .empty,
+    /// Where the runs drawn over the finished frame begin; null while the frame holds none.
+    overlay_from: ?u32 = null,
     buffers: ?Buffers = null,
     targets: ?Targets = null,
     /// Set when a draw was lost for want of memory: the frame is not shown.
@@ -373,7 +378,14 @@ pub const Gpu = struct {
         return .{ .ptr = gpu, .vtable = &vtable };
     }
 
-    const vtable: device.Device.VTable = .{ .begin = begin, .end = end, .draw = draw };
+    const vtable: device.Device.VTable = .{ .begin = begin, .end = end, .draw = draw, .overlay = overlay };
+
+    /// What follows is drawn over the finished frame rather than into it, so that the bloom, which
+    /// the game has none of, does not reach it.
+    fn overlay(ptr: *anyopaque) void {
+        const gpu = from(ptr);
+        gpu.overlay_from = @intCast(gpu.runs.items.len);
+    }
 
     fn from(ptr: *anyopaque) *Gpu {
         return @ptrCast(@alignCast(ptr));
@@ -392,6 +404,7 @@ pub const Gpu = struct {
         gpu.vertices.clearRetainingCapacity();
         gpu.indices.clearRetainingCapacity();
         gpu.runs.clearRetainingCapacity();
+        gpu.overlay_from = null;
         gpu.failed = false;
     }
 
@@ -420,7 +433,12 @@ pub const Gpu = struct {
         const count: u32 = @as(u32, @intCast(gpu.indices.items.len)) - first;
         if (count == 0) return;
         const run: Run = .{
-            .key = .{ .topology = topology(primitive), .depth = state.depth, .blend = state.blend },
+            .key = .{
+                .topology = topology(primitive),
+                .depth = state.depth,
+                .blend = state.blend,
+                .multisampled = gpu.overlay_from == null,
+            },
             .array = if (slot) |s| s.array else null,
             .first = first,
             .count = count,
@@ -508,8 +526,9 @@ pub const Gpu = struct {
 
     /// Puts the finished frame on the screen: through the bloom, which takes its bright parts,
     /// blurs them along each axis in turn and adds them back, or straight there without it.
-    fn present(gpu: *Gpu, commands: *c.SDL_GPUCommandBuffer, targets: Targets, swapchain: *c.SDL_GPUTexture, width: u32, height: u32) error{Sdl}!void {
+    fn present(gpu: *Gpu, commands: *c.SDL_GPUCommandBuffer, targets: Targets, swapchain: *c.SDL_GPUTexture, width: u32, height: u32) Error!void {
         try gpu.compose(commands, targets);
+        try gpu.drawOverlay(commands, targets);
         var blit = std.mem.zeroes(c.SDL_GPUBlitInfo);
         blit.source = .{ .texture = targets.finished(), .w = targets.width, .h = targets.height };
         blit.destination = .{ .texture = swapchain, .w = width, .h = height };
@@ -575,7 +594,41 @@ pub const Gpu = struct {
         const buffers = gpu.buffers orelse return;
         c.SDL_BindGPUVertexBuffers(pass, 0, &c.SDL_GPUBufferBinding{ .buffer = buffers.vertices, .offset = 0 }, 1);
         c.SDL_BindGPUIndexBuffer(pass, &c.SDL_GPUBufferBinding{ .buffer = buffers.indices, .offset = 0 }, c.SDL_GPU_INDEXELEMENTSIZE_32BIT);
-        for (gpu.runs.items) |run| {
+        for (gpu.runs.items[0 .. gpu.overlay_from orelse gpu.runs.items.len]) |run| {
+            c.SDL_BindGPUGraphicsPipeline(pass, gpu.pipelines.get(run.key).?);
+            const array = gpu.arrays.items[run.array orelse gpu.blank.array];
+            c.SDL_BindGPUFragmentSamplers(pass, 0, &c.SDL_GPUTextureSamplerBinding{ .texture = array.texture, .sampler = gpu.sampler }, 1);
+            c.SDL_DrawGPUIndexedPrimitives(pass, run.count, 1, run.first, 0, 0);
+        }
+    }
+
+    /// Draws what was recorded over the finished frame, after the bloom has been added to it, so
+    /// that the display the game drew over its own frame is not bloomed with the scene.
+    fn drawOverlay(gpu: *Gpu, commands: *c.SDL_GPUCommandBuffer, targets: Targets) Error!void {
+        const first = gpu.overlay_from orelse return;
+        const runs = gpu.runs.items[@min(first, gpu.runs.items.len)..];
+        if (runs.len == 0) return;
+        const buffers = gpu.buffers orelse return;
+        for (runs) |run| _ = try gpu.pipeline(run.key);
+
+        var colour = std.mem.zeroes(c.SDL_GPUColorTargetInfo);
+        colour.texture = targets.finished();
+        colour.load_op = c.SDL_GPU_LOADOP_LOAD;
+        colour.store_op = c.SDL_GPU_STOREOP_STORE;
+        const pass = c.SDL_BeginGPURenderPass(commands, &colour, 1, null) orelse return fail("SDL_BeginGPURenderPass");
+        defer c.SDL_EndGPURenderPass(pass);
+        const target_size = [4]f32{ @floatFromInt(targets.width), @floatFromInt(targets.height), 0, 0 };
+        c.SDL_PushGPUVertexUniformData(commands, 0, &target_size, @sizeOf(@TypeOf(target_size)));
+        const frame_settings = [4]f32{
+            @floatFromInt(@intFromBool(gpu.settings.sixteen_bit)),
+            @floatFromInt(@intFromBool(gpu.settings.filter == .crisp)),
+            @floatFromInt(@intFromBool(gpu.settings.dither)),
+            0,
+        };
+        c.SDL_PushGPUFragmentUniformData(commands, 0, &frame_settings, @sizeOf(@TypeOf(frame_settings)));
+        c.SDL_BindGPUVertexBuffers(pass, 0, &c.SDL_GPUBufferBinding{ .buffer = buffers.vertices, .offset = 0 }, 1);
+        c.SDL_BindGPUIndexBuffer(pass, &c.SDL_GPUBufferBinding{ .buffer = buffers.indices, .offset = 0 }, c.SDL_GPU_INDEXELEMENTSIZE_32BIT);
+        for (runs) |run| {
             c.SDL_BindGPUGraphicsPipeline(pass, gpu.pipelines.get(run.key).?);
             const array = gpu.arrays.items[run.array orelse gpu.blank.array];
             c.SDL_BindGPUFragmentSamplers(pass, 0, &c.SDL_GPUTextureSamplerBinding{ .texture = array.texture, .sampler = gpu.sampler }, 1);
@@ -778,11 +831,17 @@ pub const Gpu = struct {
         info.rasterizer_state.cull_mode = c.SDL_GPU_CULLMODE_NONE;
         // Direct3D 7 clipped transformed vertices to the screen but not in depth.
         info.rasterizer_state.enable_depth_clip = false;
-        info.multisample_state.sample_count = gpu.samples;
+        info.multisample_state.sample_count = if (key.multisampled) gpu.samples else c.SDL_GPU_SAMPLECOUNT_1;
         info.depth_stencil_state.enable_depth_test = key.depth.testing;
         info.depth_stencil_state.enable_depth_write = key.depth.writing;
         info.depth_stencil_state.compare_op = c.SDL_GPU_COMPAREOP_GREATER_OR_EQUAL;
-        info.target_info = .{ .color_target_descriptions = &colour, .num_color_targets = 1, .depth_stencil_format = gpu.depth_format, .has_depth_stencil_target = true };
+        info.target_info = .{
+            .color_target_descriptions = &colour,
+            .num_color_targets = 1,
+            .depth_stencil_format = gpu.depth_format,
+            // What is drawn over the finished frame has no depth buffer to go with it.
+            .has_depth_stencil_target = key.multisampled,
+        };
         const made = c.SDL_CreateGPUGraphicsPipeline(gpu.handle, &info) orelse return fail("SDL_CreateGPUGraphicsPipeline");
         gpu.pipelines.putAssumeCapacity(key, made);
         return made;
