@@ -177,10 +177,10 @@ plain triangles.
 
 ### Material (tag `0x06`)
 
-A single NUL-terminated 64-byte texture name without its extension. The engine resolves it through
-the image registry with a context-dependent prefix: `g` while the loadout screen preloads ships,
-`r` for its missile and gun loops, bare in flight, and a second `l<name>` lookup when the part's
-`0x80` flag is set on multitexture hardware.
+A single NUL-terminated 64-byte texture name without its extension. The engine looks it up in the
+[texture cache](tcache.md) with a context-dependent prefix: `g` while the loadout screen preloads
+ships, `r` for its missile and gun loops, bare in flight, and a second `l<name>` lookup when the
+part's `0x80` flag is set on multitexture hardware.
 
 ## Bounding boxes
 

@@ -16,6 +16,7 @@ no game code or assets.
 | [`formats/refpack.md`](formats/refpack.md) | RefPack, the compression inside them. |
 | [`formats/shp.md`](formats/shp.md) | `.SHP` models: chunks, parts, levels of detail, geometry, coordinate frame. |
 | [`formats/spr.md`](formats/spr.md) | `.SPR` sprites: the WinVFX interface imagery. |
+| [`formats/tcache.md`](formats/tcache.md) | Texture caches: every model and effect texture, their palettes and colour cubes. |
 | [`formats/fat.md`](formats/fat.md) | `.fat` sound banks. |
 | [`formats/fnt.md`](formats/fnt.md) | `.fnt` bitmap fonts. |
 | [`formats/dte.md`](formats/dte.md) | `.DTE` missions: directory, ships, triggers, and the script VM. |

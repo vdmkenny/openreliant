@@ -357,3 +357,34 @@
 00409be0	function	fight_aim	void __fastcall (int slot, FightState *state, OrderEntry *entry)	Aims the guns: every pilot tier_c_count ticks at the target, leading it by a quarter of its velocity, then moves the aim each update and fires through 0x4096B0
 00409d10	function	fight_call_for_help		Has a ship the player has hurt badly send its nearest fighting wingman at the player
 00409ec0	function	fight_update_cloak	void __fastcall (int slot, FightState *state)	Uncloaks the ship when its maneuver asked for no cloak, and cloaks it once cloak_at passes when it asked for one
+
+# Textures (srTexture.cpp, srImage.cpp, srTGA.cpp, srColor.cpp)
+004c3830	function	SR_init	void * __fastcall (void)	Clears sr_context and returns it
+005e6b50	data	sr_context		Surrender's state: the device, its texture limits, the palette and colour cube in use
+00588730	data	sr	void *	What SR_init returned: sr_context
+004acbe0	function	renderer_start		Starts Surrender on a device: palette and colour cube, texture size cap from texture_detail, texture cache
+00595d7c	data	texture_detail	int	Tdetail in the Device section of the settings: 0, 1 or 2 caps textures at 128, 256 or 2048
+004c9a40	function	texture_cache_open	void __fastcall (char *path, char fresh)	Reads the header and directory, or starts an empty cache when the file is missing or of another version, or fresh is set
+004c9c50	function	texture_cache_close	void __fastcall (void)	Unloads every texture and closes the file
+004c9c90	function	texture_upload	void __fastcall (TextureImage *image)	Fits an image to the device's limits, applies brightness and contrast, converts it and hands it to the device
+004c9df0	function	path_file_name	char * __fastcall (char *path)	What follows the last \, / or : of a path
+004c9e20	function	texture_find	TextureImage * __fastcall (char *name)	The texture of that file name, ignoring case, its pixels read and uploaded on first use; null when absent
+004c9f40	function	texture_add	TextureImage * __fastcall (char *name, int width, int height, int bytes, uint flags)	Appends an entry and allocates its pixels. No callers
+004c9ff0	function	texture_create_transient	TextureImage * __fastcall (char *name, int width, int height, int bytes, uint flags)	Makes or remakes an entry kept in memory only
+004ca120	function	texture_commit	void __fastcall (TextureImage *image)	Builds a new texture's mipmaps if flagged, keeps its pixels, in memory when transient, else appended to the file with the directory rewritten, and uploads it
+004ca2b0	function	texture_release	void __fastcall (TextureImage *image)	Drops a use; the last frees the pixels
+004ca320	function	textures_unload	void __fastcall (void)	Frees the pixels of every texture in use
+004ca370	function	textures_reload	void __fastcall (void)	Reads and uploads the pixels of every texture in use again
+00494a30	function	texture_require	TextureImage * __fastcall (char *name)	texture_find, asserting Could not find image %s on a miss
+005e83d0	data	texture_cache_header	TextureCacheHeader
+005e83e0	data	texture_cache	TextureEntry[1000]
+00622e60	data	texture_cache_file	FILE *
+004c85b0	function	image_pixel_count	int __fastcall (TextureImage *image)	Pixels in all of an image's levels; sets levels to 1 without mipmaps
+004c8600	function	image_convert	void __fastcall (TextureImage *image, PixelFormat *format)	Converts an image's pixels to another format, through the palette for indices
+004c8e70	function	image_build_mipmaps	void __fastcall (TextureImage *image)	Converts an image to 32 bits and appends its mipmap levels, down to a smaller side of 2
+004c9840	function	image_adjust	void __thiscall (float brightness, float contrast)	Converts the image in ECX to 32 bits, then scales every byte by 1 + contrast and adds brightness times 256
+004c3430	function	pixel_format_set	void __fastcall (PixelFormat *format, uint index, uint alpha, uint red, uint green, uint blue)	A format from masks: 4 bytes a pixel with a bit above 15, else 2 with one above 7, else 1
+004c33e0	function	pixel_format_shifts	void __fastcall (PixelFormat *format)	Each channel's shift and loss from its mask
+004ca9b0	function	SR_TGA_get_palette	void __fastcall (byte *tga, byte *palette)	Copies the first 256 colour map entries of a colour-mapped TGA, as red, green, blue
+004cacb0	function	SR_TGA_allocate_palette	byte * __fastcall (char *name)	Loads an 8-bit TGA and returns its palette
+004cb9d0	function	SR_CCB_load	void * __fastcall (char *name)	Loads a colour cube: a palette and a 64x64x64 table of indices

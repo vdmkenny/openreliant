@@ -12,6 +12,7 @@ const safedisc = @import("safedisc.zig");
 const shp = @import("shp.zig");
 const spr = @import("spr.zig");
 const stats = @import("stats.zig");
+const tcache = @import("tcache.zig");
 
 /// What every subcommand needs to do its work.
 pub const Context = struct {
@@ -30,6 +31,7 @@ const Command = union(enum) {
     shp: shp.Command,
     spr: spr.Command,
     stats: stats.Command,
+    tcache: tcache.Command,
     help,
 
     const usage =
@@ -37,7 +39,7 @@ const Command = union(enum) {
         \\
         \\commands:
         \\
-    ++ cd.Command.usage ++ dte.Command.usage ++ fat.Command.usage ++ fnt.Command.usage ++ hog.Command.usage ++ safedisc.Command.usage ++ shp.Command.usage ++ spr.Command.usage ++ stats.Command.usage ++
+    ++ cd.Command.usage ++ dte.Command.usage ++ fat.Command.usage ++ fnt.Command.usage ++ hog.Command.usage ++ safedisc.Command.usage ++ shp.Command.usage ++ spr.Command.usage ++ stats.Command.usage ++ tcache.Command.usage ++
         \\  help                            show this text
         \\
     ;
@@ -55,6 +57,7 @@ const Command = union(enum) {
             .shp => .{ .shp = try .parse(args[1..]) },
             .spr => .{ .spr = try .parse(args[1..]) },
             .stats => .{ .stats = try .parse(args[1..]) },
+            .tcache => .{ .tcache = try .parse(args[1..]) },
             .help => .help,
         };
     }
@@ -70,6 +73,7 @@ const Command = union(enum) {
             .shp => |group| try group.run(ctx),
             .spr => |group| try group.run(ctx),
             .stats => |group| try group.run(ctx),
+            .tcache => |group| try group.run(ctx),
             .help => try ctx.stdout.writeAll(usage),
         }
     }

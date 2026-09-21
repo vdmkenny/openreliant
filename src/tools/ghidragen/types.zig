@@ -25,6 +25,7 @@ const starlancer = @import("starlancer");
 const dte = starlancer.dte;
 const lancer = starlancer.lancer;
 const shp = starlancer.shp;
+const tcache = starlancer.tcache;
 
 const Export = struct { []const u8, type };
 
@@ -133,6 +134,14 @@ pub const exported = [_]Export{
     .{ "ShpAttachment", shp.Attachment },
     .{ "ShpAttachmentKind", shp.Attachment.Kind },
     .{ "Vec3", shp.Vec3 },
+
+    // Textures.
+    .{ "TextureCacheHeader", tcache.Header },
+    .{ "TextureEntry", tcache.Entry },
+    .{ "TextureImage", tcache.Image },
+    .{ "TextureFlags", tcache.Flags },
+    .{ "PixelFormat", tcache.PixelFormat },
+    .{ "PixelChannel", tcache.Channel },
 };
 
 comptime {

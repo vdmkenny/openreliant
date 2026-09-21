@@ -94,14 +94,7 @@ None of the textures the `.SHP` models name is a sprite set:
 - The rest are named for their screens: `BRIEF`, `FRONTEND`, `HUDHARD`, `LOADOUT`, `CURSORS`,
   `NEWSREP`, `KILLS`, `LAUNCH`, `CAPSHIPS`.
 
-All twelve playable fighters resolve, each to a single texture carried under the `g` and `r`
-prefixes the loadout screen uses (`gYank_1.TGA`, `rYank_1.tga`). Most other models, the capital
-ships, turrets, stations and debris, name textures no archive holds, although most of their faces
-use the textured-and-lit shading mode, so the engine does ask for a texture.
-
-**Unknown:** where those come from. No archive, `resource.hog`, `CD1.HOG`, `CD2.HOG`, `msspeech.hog`
-or `pilots.hog`, holds them under their material names, with or without a prefix. The `.fat` files
-are sound banks, not textures: a `2.00` header, a table of offsets, and RIFF/WAVE files.
+The models' textures are in the [texture caches](tcache.md).
 
 ## Prior art
 

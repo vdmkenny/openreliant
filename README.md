@@ -60,19 +60,20 @@ import slot, so it does not write them back.
 | `sltool hog` | `.HOG` archives and their RefPack compression | [hog](docs/formats/hog.md), [refpack](docs/formats/refpack.md) |
 | `sltool shp` | `.SHP` models; exports Wavefront OBJ; lists an object's components | [shp](docs/formats/shp.md) |
 | `sltool spr` | `.SPR` interface sprites; exports indexed PNG | [spr](docs/formats/spr.md) |
+| `sltool tcache` | Texture caches, the models' and effects' textures; exports PNG | [tcache](docs/formats/tcache.md) |
 | `sltool fat` | `.fat` sound banks; exports WAV | [fat](docs/formats/fat.md) |
 | `sltool fnt` | `.fnt` fonts; renders glyph atlases | [fnt](docs/formats/fnt.md) |
 | `sltool dte` | `.DTE` missions, including a disassembler for their script | [dte](docs/formats/dte.md) |
 | `sltool stats` | Ship, gun, missile and pilot stat tables | [stats](docs/formats/stats.md) |
 
-`make assets`, `models`, `sprites`, `sounds` and `fonts` run the extractors over every file; `check-models` and
-`check-missions` validate them. The script VM's opcode, command and condition tables, the engine's
-model tables, the player's control bindings, the order table and the combat maneuvers are derived
-from the game binary by `src/tools/tablegen` (`make vm-opcodes`, `make vm-commands`, `make
-vm-conditions`, `make model-tables`, `make control-tables`, `make order-tables`, `make
-maneuver-tables`), as is the map of which source file each stretch of code was compiled from (`make
-source-map`); `make ghidra-annotate` names and types the Ghidra project from the Zig definitions and
-groups its code by source file.
+`make assets`, `models`, `sprites`, `textures`, `sounds` and `fonts` run the extractors over every
+file; `check-models` and `check-missions` validate them. The script VM's opcode, command and
+condition tables, the engine's model tables, the player's control bindings, the order table and the
+combat maneuvers are derived from the game binary by `src/tools/tablegen` (`make vm-opcodes`, `make
+vm-commands`, `make vm-conditions`, `make model-tables`, `make control-tables`, `make order-tables`,
+`make maneuver-tables`), as is the map of which source file each stretch of code was compiled from
+(`make source-map`); `make ghidra-annotate` names and types the Ghidra project from the Zig
+definitions and groups its code by source file.
 
 Documentation index: [`docs/README.md`](docs/README.md).
 

@@ -1,8 +1,9 @@
-//! A minimal PNG writer, enough to save the game's indexed images.
+//! A minimal PNG writer, enough to save the game's images.
 //!
-//! The game's sprites and textures are 8-bit indexed with one colour reserved for transparency,
-//! which PNG represents directly as colour type 3 plus a `tRNS` chunk. Keeping the indices means
-//! the output is the original data, not a re-quantised copy of it.
+//! The game's sprites are 8-bit indexed with one colour reserved for transparency, which PNG
+//! represents directly as colour type 3 plus a `tRNS` chunk. Keeping the indices means the output
+//! is the original data, not a re-quantised copy of it. Textures, whose formats vary, are written
+//! as 8-bit RGBA.
 //!
 //! Pixel data is deflated as stored blocks: no compression, but the result is a valid zlib stream
 //! every reader accepts, and it keeps this file free of any dependency on a compressor.
@@ -38,17 +39,7 @@ pub fn writeIndexed(
     if (options.palette.len != 256 * 3) return error.PaletteInvalid;
     if (pixels.len != @as(usize, options.width) * options.height) return error.PixelCountMismatch;
 
-    try out.writeAll(signature);
-
-    var header: [13]u8 = undefined;
-    std.mem.writeInt(u32, header[0..4], options.width, .big);
-    std.mem.writeInt(u32, header[4..8], options.height, .big);
-    header[8] = 8; // bits per sample
-    header[9] = 3; // colour type: indexed
-    header[10] = 0; // deflate
-    header[11] = 0; // adaptive filtering
-    header[12] = 0; // no interlace
-    try writeChunk(out, "IHDR", &header);
+    try writeHeader(out, options.width, options.height, .indexed);
     try writeChunk(out, "PLTE", options.palette);
 
     if (options.transparent) |index| {
@@ -60,11 +51,54 @@ pub fn writeIndexed(
         try writeChunk(out, "tRNS", alpha);
     }
 
+    try writePixels(gpa, out, options.width, options.height, 1, pixels);
+}
+
+/// Writes an 8-bit RGBA PNG. `pixels` is `width * height` red, green, blue, alpha quadruples,
+/// row-major.
+pub fn writeRgba(
+    gpa: Allocator,
+    out: *Writer,
+    width: u32,
+    height: u32,
+    pixels: []const u8,
+) (Error || Allocator.Error || Writer.Error)!void {
+    if (width == 0 or height == 0) return error.DimensionsInvalid;
+    if (pixels.len != @as(usize, width) * height * 4) return error.PixelCountMismatch;
+    try writeHeader(out, width, height, .rgba);
+    try writePixels(gpa, out, width, height, 4, pixels);
+}
+
+const ColourType = enum(u8) { indexed = 3, rgba = 6 };
+
+/// The signature and the `IHDR` chunk, for 8 bits per sample.
+fn writeHeader(out: *Writer, width: u32, height: u32, colour_type: ColourType) Writer.Error!void {
+    try out.writeAll(signature);
+    var header: [13]u8 = undefined;
+    std.mem.writeInt(u32, header[0..4], width, .big);
+    std.mem.writeInt(u32, header[4..8], height, .big);
+    header[8] = 8; // bits per sample
+    header[9] = @intFromEnum(colour_type);
+    header[10] = 0; // deflate
+    header[11] = 0; // adaptive filtering
+    header[12] = 0; // no interlace
+    try writeChunk(out, "IHDR", &header);
+}
+
+/// The `IDAT` and `IEND` chunks.
+fn writePixels(
+    gpa: Allocator,
+    out: *Writer,
+    width: u32,
+    height: u32,
+    bytes_per_pixel: u3,
+    pixels: []const u8,
+) (Allocator.Error || Writer.Error)!void {
     // Each scanline is prefixed with its filter type, which is always "none" here.
-    const raw = try gpa.alloc(u8, pixels.len + options.height);
+    const stride = @as(usize, width) * bytes_per_pixel;
+    const raw = try gpa.alloc(u8, pixels.len + height);
     defer gpa.free(raw);
-    for (0..options.height) |row| {
-        const stride = options.width;
+    for (0..height) |row| {
         raw[row * (stride + 1)] = 0;
         @memcpy(raw[row * (stride + 1) + 1 ..][0..stride], pixels[row * stride ..][0..stride]);
     }
@@ -143,6 +177,26 @@ test "writes a readable indexed PNG" {
         at += 12 + length;
     }
     try std.testing.expectEqual(png.len, at);
+}
+
+test "writes an RGBA PNG" {
+    const gpa = std.testing.allocator;
+    var buffer: std.Io.Writer.Allocating = .init(gpa);
+    defer buffer.deinit();
+
+    const pixels = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8 };
+    try writeRgba(gpa, &buffer.writer, 2, 1, &pixels);
+
+    const png = buffer.written();
+    try std.testing.expectEqualStrings("IHDR", png[12..16]);
+    try std.testing.expectEqual(6, png[16 + 9]); // colour type
+    // IDAT holds the one scanline, its filter byte, then the pixels, in a single stored block.
+    const idat = 8 + 12 + 13;
+    try std.testing.expectEqualStrings("IDAT", png[idat + 4 ..][0..4]);
+    try std.testing.expectEqualSlices(u8, &(.{0} ++ pixels), png[idat + 8 + 7 ..][0..9]);
+
+    try std.testing.expectError(error.PixelCountMismatch, writeRgba(gpa, &buffer.writer, 2, 2, &pixels));
+    try std.testing.expectError(error.DimensionsInvalid, writeRgba(gpa, &buffer.writer, 0, 1, &.{}));
 }
 
 test "rejects mismatched input" {

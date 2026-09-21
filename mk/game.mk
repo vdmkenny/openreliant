@@ -8,6 +8,7 @@
 #   game/assets/<archive>/   the contents of each .HOG, decompressed
 #   game/models/             the .SHP models as Wavefront OBJ
 #   game/sprites/            the .SPR shapes as PNG
+#   game/textures/           the hardware texture cache's textures as PNG
 #   game/sounds/             the .fat sound banks' sounds as WAV
 #   game/fonts/              the .fnt fonts as glyph atlases
 #
@@ -63,6 +64,17 @@ $(GAME_DIR)/.stamp-sprites: | $(GAME_DIR)/.stamp-hog-resource $(SLTOOL)
 	@for f in $(ASSETS_DIR)/resource/*.[sS][pP][rR]; do \
 	    $(SLTOOL) spr extract "$$f" $(SPRITES_DIR) > /dev/null; \
 	done; echo "exported $$(ls $(SPRITES_DIR) | wc -l | tr -d ' ') images to $(SPRITES_DIR)"
+	touch $@
+
+TEXTURES_DIR := $(GAME_DIR)/textures
+
+# Palette indices are looked up in the in-flight palette; the loadout screen's textures use
+# palette3.tga instead. See docs/formats/tcache.md.
+.PHONY: textures
+textures: $(GAME_DIR)/.stamp-textures ## Export the hardware texture cache to game/textures as PNG
+
+$(GAME_DIR)/.stamp-textures: | $(GAME_DIR)/.stamp-install $(GAME_DIR)/.stamp-hog-resource $(SLTOOL)
+	$(SLTOOL) tcache extract $(INSTALL_DIR)/tcachehw.dat $(ASSETS_DIR)/resource/palette.tga $(TEXTURES_DIR)
 	touch $@
 
 SOUNDS_DIR := $(GAME_DIR)/sounds
