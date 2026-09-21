@@ -123,7 +123,13 @@ pub const GameObject = extern struct {
     /// Nonzero while it is hostile: `SetHostile`. When created, a value of its combat stats'
     /// (`+0x2A`), or in one of the game's modes one worked out otherwise.
     hostile: i32,
-    _unknown_648: [0x54C]u8,
+    _unknown_648: [0xF8]u8,
+    /// Its pilot: the record in `pilotstats.bin`, which `object_set_pilot` gives it.
+    pilot: i32,
+    /// **Unknown.** A 24-byte record for the pilot, from a table at `0x5048D8`.
+    pilot_record: Pointer(anyopaque),
+    pilot_stats: Pointer(stats.Pilot),
+    _unknown_74c: [0x448]u8,
     /// Set once `create_object` has filled the slot; it stops with a fatal error if it is set
     /// already.
     created: bool,
@@ -142,6 +148,7 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "shields") == 0x5F0);
         assert(@offsetOf(GameObject, "armor") == 0x600);
         assert(@offsetOf(GameObject, "hostile") == 0x644);
+        assert(@offsetOf(GameObject, "pilot") == 0x740);
         assert(@offsetOf(GameObject, "created") == 0xB94);
         assert(@sizeOf(GameObject) == 0xB98);
     }

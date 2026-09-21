@@ -193,3 +193,4 @@
 00499a10	function	node_mount	void __fastcall (ModelNode *node, ShpAttachment *attachment)	Mounts what an attachment point holds: an object of its own for guns and pods
 00476130	function	object_link_parts	void __fastcall (GameObject *object)	Links each part's node to its parent part's, or to the root
 00476180	function	object_link_part	void __fastcall (GameObject *object, int part, int parent)	Links a part's node to its parent part's, or to the root for none
+0049cce0	function	object_set_pilot	void __fastcall (int slot, int pilot)	Gives the object in a slot its pilot and the pilot's stats

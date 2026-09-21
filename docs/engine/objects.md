@@ -31,6 +31,8 @@ slot, stopping the game with a fatal error past the last slot or for a slot fill
 | `0x5F0` | 16 | Shields: four values, each `6 * shield_power - 1` when created |
 | `0x600` | 16 | Armor: four values, each `6 * armor_class - 1` when created |
 | `0x644` | 4 | Nonzero while hostile: `SetHostile` |
+| `0x740` | 4 | Its pilot, a record of `pilotstats.bin` (`object_set_pilot`, `0x0049CCE0`) |
+| `0x748` | 4 | The pilot's entry in `pilot_stats` |
 | `0xB94` | 1 | Set once `create_object` has filled the slot |
 | `0xB95` | 1 | Nonzero while invulnerable: `SetInvulnerability` |
 
