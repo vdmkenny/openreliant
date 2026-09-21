@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Refuses a commit that holds a file from the game (scripts/check-files.sh). `make hooks` installs
+# it.
+exec "$(git rev-parse --show-toplevel)/scripts/check-files.sh" --staged

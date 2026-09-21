@@ -6,6 +6,50 @@
 /ghidra/projects/
 /ghidra/export/
 
+# The game's file types, those of its discs and what the extractors write, wherever they turn up.
+# `scripts/check-files.sh`, run by the pre-commit hook and by CI, refuses them too.
+*.[hH][oO][gG]
+*.[sS][hH][pP]
+*.[sS][pP][rR]
+*.[dD][tT][eE]
+*.[fF][aA][tT]
+*.[fF][nN][tT]
+*.[fF][rR][cC]
+*.[tT][gG][aA]
+*.[bB][iI][kK]
+*.[iI][cC][dD]
+*.[eE][xX][eE]
+*.[dD][lL][lL]
+*.[mM]3[dD]
+*.[aA][sS][iI]
+*.[cC][cC][bB]
+*.[cC][aA][bB]
+*.[bB][iI][nN]
+*.[dD][aA][tT]
+*.[iI][sS][oO]
+*.[cC][uU][eE]
+*.[mM][dD][fF]
+*.[mM][dD][sS]
+*.[nN][rR][gG]
+*.[iI][mM][gG]
+*.[wW][aA][vV]
+*.[mM][pP]3
+*.[oO][gG][gG]
+*.[pP][nN][gG]
+*.[jJ][pP][gG]
+*.[jJ][pP][eE][gG]
+*.[gG][iI][fF]
+*.[bB][mM][pP]
+*.[pP][cC][xX]
+*.[pP][pP][mM]
+*.[oO][bB][jJ]
+*.[pP][dD][fF]
+*.[rR][tT][fF]
+*.[dD][oO][cC]
+*.[iI][nN][iI]
+*.[sS][aA][vV]
+*.[zZ][iI][pP]
+
 # Other people's repositories, cloned for reading.
 /references/
 

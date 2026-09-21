@@ -1,0 +1,13 @@
+# Fails a push or pull request whose commits hold a file from the game, or one that looks like it.
+name: No game files
+
+on: [push, pull_request]
+
+jobs:
+  check-files:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: scripts/check-files.sh --history

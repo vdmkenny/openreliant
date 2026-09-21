@@ -7,6 +7,7 @@
 #   mk/zig.mk         our own code (delegates to build.zig)
 #   mk/game.mk        disc images -> game/cd1, game/cd2, game/install
 #   mk/ghidra.mk      headless import/analysis, exports, the GUI
+#   mk/repo.mk        the check that keeps the game's files out of the repository, the git hooks
 #
 # Written for GNU Make 3.81, which is what macOS ships.
 
@@ -21,6 +22,7 @@ include mk/toolchain.mk
 include mk/zig.mk
 include mk/game.mk
 include mk/ghidra.mk
+include mk/repo.mk
 
 .PHONY: help
 help: ## Show this help
