@@ -89,31 +89,32 @@ and records the length of the velocity as the speed (`0x5D8`). The root keeps th
 | `0x5BC`, `0x5C0`, `0x5C4` | 4 each | Roll, pitch and yaw inputs, between -1 and 1 |
 | `0x5C8` | 4 | Lateral input |
 | `0x5CC` | 1 | Afterburner |
-| `0x5CD` | 1 | **Unknown.** A reverse burn |
+| `0x5CD` | 1 | Reverse thrust |
 | `0x59C` | 4 | Collision radius |
 | `0x5D8` | 4 | Speed |
 | `0x5DC`, `0x5E0`, `0x5E4` | 4 each | Roll, pitch and yaw rates |
 | `0x640` | 4 | Motion function |
 | `0x650` | 4 | The last update's throttle |
 
+For the player's ship, the [controls](controls.md) set the inputs, the throttle and the two burns.
+
 The flight model works in the ship's own frame, the
 [model frame](../formats/shp.md#coordinate-frame): X lateral, Y down, Z forward. Each quantity
 moves toward a target through an inertia from the ship's [flight stats](../formats/stats.md):
 `new = old * inertia + target * (1 - inertia)`.
 
-1. **Throttle.** It stays between 0 and 1, but is 2 while the afterburner burns and -1 while the
-   byte at `0x5CD` is set. Either burns 4 units of afterburner fuel an update, and fuel stops at
-   zero.
+1. **Throttle.** It stays between 0 and 1, but is 2 while the afterburner burns and -1 under
+   reverse thrust. Either burns 4 units of afterburner fuel an update, and fuel stops at zero.
 2. **Turning** (`object_steer`, `0x00474150`). Each input is clamped to between -1 and 1, and each
    angular rate moves toward the ship's rate for that axis times the input, through that axis's
    inertia. For callers that ask, the target is divided by `3 - 2 * |throttle|` where that exceeds
    1, so the ship turns slower at low throttle. The three rates then make the rotation.
 3. **Speed.** The velocity is turned into the ship's frame. Along Z, `v * |v|` moves toward
    `u * |u| * target * target`, where `u` is the thrust times the throttle and `target` the cruise
-   speed, or `max_speed` while the afterburner or the byte at `0x5CD` is set; the square root, with
-   its sign, is the new forward speed. Along X, the speed moves toward a quarter of the target times
-   the lateral input. Along Y it only decays. All three use the ship's `inertia`, and the velocity
-   is turned back.
+   speed, or `max_speed` under afterburner or reverse thrust; the square root, with its sign, is
+   the new forward speed. Along X, the speed moves toward a quarter of the target times the lateral
+   input. Along Y it only decays. All three use the ship's `inertia`, and the velocity is turned
+   back.
 
 The cruise speed (`object_cruise_speed`, `0x00403060`) is `max_speed` times a factor at `0x738`,
 1.0 when created, times the share of engines left, and, outside one mode of the game, a factor at

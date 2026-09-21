@@ -4,6 +4,7 @@
 //!     tablegen commands <LANCER.EXE> <output.zig>
 //!     tablegen conditions <LANCER.EXE> <output.zig>
 //!     tablegen models <LANCER.EXE> <disassembly.asm> <output.zig>
+//!     tablegen controls <LANCER.EXE> <output.zig>
 //!
 //! `opcodes`: the VM dispatches on a byte through a table of handler addresses. Reading that table
 //! gives the opcode set, and following each handler gives the size and shape of the instruction it
@@ -16,6 +17,8 @@
 //! `models`: the model of each ship type, and the models mounted on attachment points, which the
 //! engine loads in code that the listing lets this follow.
 //!
+//! `controls`: the player's actions and the bindings the game starts with.
+//!
 //! All come straight out of the binary, so the tables written are transcripts of the engine rather
 //! than readings of the mission files.
 
@@ -27,6 +30,7 @@ const pe = starlancer.pe;
 
 const commands = @import("commands.zig");
 const conditions = @import("conditions.zig");
+const controls = @import("controls.zig");
 const eval = @import("eval.zig");
 const models = @import("models.zig");
 const x86 = @import("x86.zig");
@@ -49,6 +53,7 @@ const usage =
     \\       tablegen commands <LANCER.EXE> <output.zig>
     \\       tablegen conditions <LANCER.EXE> <output.zig>
     \\       tablegen models <LANCER.EXE> <disassembly.asm> <output.zig>
+    \\       tablegen controls <LANCER.EXE> <output.zig>
     \\
 ;
 
@@ -57,6 +62,7 @@ const Mode = union(enum) {
     commands: struct { binary: []const u8, output: []const u8 },
     conditions: struct { binary: []const u8, output: []const u8 },
     models: struct { binary: []const u8, listing: []const u8, output: []const u8 },
+    controls: struct { binary: []const u8, output: []const u8 },
 
     fn parse(args: []const [:0]const u8) ?Mode {
         if (args.len == 0) return null;
@@ -67,6 +73,7 @@ const Mode = union(enum) {
             .commands => if (rest.len == 2) .{ .commands = .{ .binary = rest[0], .output = rest[1] } } else null,
             .conditions => if (rest.len == 2) .{ .conditions = .{ .binary = rest[0], .output = rest[1] } } else null,
             .models => if (rest.len == 3) .{ .models = .{ .binary = rest[0], .listing = rest[1], .output = rest[2] } } else null,
+            .controls => if (rest.len == 2) .{ .controls = .{ .binary = rest[0], .output = rest[1] } } else null,
         };
     }
 };
@@ -83,6 +90,7 @@ pub fn main(init: std.process.Init) !u8 {
         .commands => |paths| catalogue(init, arena, paths.binary, paths.output),
         .conditions => |paths| conditionCatalogue(init, arena, paths.binary, paths.output),
         .models => |paths| modelTables(init, arena, paths.binary, paths.listing, paths.output),
+        .controls => |paths| controlTable(init, arena, paths.binary, paths.output),
     };
 }
 
@@ -138,6 +146,22 @@ fn modelTables(
     try out.interface.flush();
 
     std.debug.print("{d} ship types and the attachment models -> {s}\n", .{ tables.ship_types.len, output });
+    return 0;
+}
+
+fn controlTable(init: std.process.Init, arena: std.mem.Allocator, binary_path: []const u8, output: []const u8) !u8 {
+    const cwd: Io.Dir = .cwd();
+    const binary = try cwd.readFileAlloc(init.io, binary_path, arena, .limited(64 << 20));
+    const pe_image: pe.Image = try .parse(binary);
+    const bindings = try controls.read(arena, .init(pe_image, binary));
+
+    var buffer: [16 << 10]u8 = undefined;
+    var out: Io.File.Writer = .init(try cwd.createFile(init.io, output, .{}), init.io, &buffer);
+    defer out.file.close(init.io);
+    try controls.emit(&out.interface, bindings);
+    try out.interface.flush();
+
+    std.debug.print("{d} actions -> {s}\n", .{ bindings.len, output });
     return 0;
 }
 
@@ -285,12 +309,19 @@ test Mode {
     try std.testing.expectEqualStrings("out.zig", both.commands.output);
     try std.testing.expectEqual(@as(?Mode, null), Mode.parse(&.{ "opcodes", "LANCER.EXE" }));
     try std.testing.expectEqual(@as(?Mode, null), Mode.parse(&.{"bogus"}));
+
+    const models_mode = Mode.parse(&.{ "models", "LANCER.EXE", "disassembly.asm", "out.zig" }).?;
+    try std.testing.expectEqualStrings("disassembly.asm", models_mode.models.listing);
+    const controls_mode = Mode.parse(&.{ "controls", "LANCER.EXE", "out.zig" }).?;
+    try std.testing.expectEqualStrings("LANCER.EXE", controls_mode.controls.binary);
+    try std.testing.expectEqual(@as(?Mode, null), Mode.parse(&.{ "controls", "LANCER.EXE" }));
 }
 
 test {
     std.testing.refAllDecls(@This());
     _ = commands;
     _ = conditions;
+    _ = controls;
     _ = eval;
     _ = models;
     _ = x86;

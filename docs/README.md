@@ -21,6 +21,7 @@ no game code or assets.
 | [`engine/script-vm.md`](engine/script-vm.md) | The script VM at run time: threads, calls, commands, timers, events. |
 | [`engine/objects.md`](engine/objects.md) | Live objects: the object array, model hierarchies, components, the flight model. |
 | [`engine/loop.md`](engine/loop.md) | The game loop: the 100 Hz tick, the 25 Hz simulation step, collisions. |
+| [`engine/controls.md`](engine/controls.md) | Player input: devices, bindings, settings, steering and throttle. |
 
 ## Conventions
 

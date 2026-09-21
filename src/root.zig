@@ -3,6 +3,8 @@
 
 /// Containers the game shipped in, rather than formats the game itself reads.
 pub const cdimage = @import("formats/cdimage.zig");
+/// The player's actions and the bindings the game starts with, transcribed from the executable.
+pub const controls = @import("formats/controls.zig");
 pub const dte = @import("formats/dte.zig");
 pub const fat = @import("formats/fat.zig");
 pub const fnt = @import("formats/fnt.zig");

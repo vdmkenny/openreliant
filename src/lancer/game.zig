@@ -158,7 +158,7 @@ pub const GameObject = extern struct {
     /// **Unverified:** the corners of its model's bounding box, which `0x004769F0` accumulates.
     bounds_min: shp.Vec3,
     bounds_max: shp.Vec3,
-    /// Up to 1 in flight, 2 while `afterburner` is set, and -1 while `_unknown_5cd` is.
+    /// Up to 1 in flight, 2 while `afterburner` is set, and -1 while `reverse_thrust` is.
     throttle: f32,
     /// Steering inputs, each between -1 and 1.
     roll_input: f32,
@@ -168,8 +168,8 @@ pub const GameObject = extern struct {
     lateral_input: f32,
     /// Set while the afterburner burns, 4 units of `afterburner_fuel` an update.
     afterburner: bool,
-    /// **Unknown.** Sets the throttle to -1 and burns fuel like the afterburner.
-    _unknown_5cd: u8,
+    /// Set while reverse thrust burns: the throttle is -1, and it uses afterburner fuel.
+    reverse_thrust: bool,
     _unknown_5ce: u16,
     /// Engines in its model: parts of subsystem class 5.
     engines: u32,
@@ -181,7 +181,8 @@ pub const GameObject = extern struct {
     roll_rate: f32,
     pitch_rate: f32,
     yaw_rate: f32,
-    /// `100 * ShipCombat.afterburner_fuel` when created, or zero in one of the game's modes.
+    /// In hundredths of a second: `100 * ShipCombat.afterburner_fuel` when created, or zero in one
+    /// of the game's modes.
     afterburner_fuel: i32,
     _unknown_5ec: [4]u8,
     /// Four values, each `6 * ShipCombat.shield_power - 1` when created.

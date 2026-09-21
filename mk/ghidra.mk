@@ -137,3 +137,12 @@ model-tables: ## Re-derive the ship type and attachment model tables from the pa
 	$(ZIG) build tablegen
 	$(ROOT)/zig-out/bin/tablegen models $(PAYLOAD) $(VM_DISASSEMBLY) $(MODEL_TABLES)
 	$(ZIG) fmt $(MODEL_TABLES)
+
+CONTROL_TABLES := $(ROOT)/src/formats/controls.zig
+
+.PHONY: control-tables
+control-tables: ## Re-derive the player's actions and default bindings from the payload executable
+	@test -f $(PAYLOAD) || { echo "missing $(PAYLOAD); run 'make game'" >&2; exit 1; }
+	$(ZIG) build tablegen
+	$(ROOT)/zig-out/bin/tablegen controls $(PAYLOAD) $(CONTROL_TABLES)
+	$(ZIG) fmt $(CONTROL_TABLES)

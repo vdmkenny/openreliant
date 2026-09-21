@@ -64,10 +64,11 @@ SafeDisc hides, but not their order, which SafeDisc shuffles, so it does not wri
 | `sltool stats` | Ship, gun, missile and pilot stat tables | [stats](docs/formats/stats.md) |
 
 `make assets`, `models`, `sprites`, `sounds` and `fonts` run the extractors over every file; `check-models` and
-`check-missions` validate them. The script VM's opcode, command and condition tables, and the
-engine's model tables, are derived from the game binary by `src/tools/tablegen` (`make vm-opcodes`,
-`make vm-commands`, `make vm-conditions`, `make model-tables`), and `make ghidra-annotate` names and
-types the Ghidra project from the Zig definitions.
+`check-missions` validate them. The script VM's opcode, command and condition tables, the engine's
+model tables and the player's control bindings are derived from the game binary by
+`src/tools/tablegen` (`make vm-opcodes`, `make vm-commands`, `make vm-conditions`, `make
+model-tables`, `make control-tables`), and `make ghidra-annotate` names and types the Ghidra
+project from the Zig definitions.
 
 Documentation index: [`docs/README.md`](docs/README.md).
 

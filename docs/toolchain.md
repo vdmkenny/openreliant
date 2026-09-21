@@ -113,5 +113,7 @@ vm-conditions` read the Executor command catalogue and the trigger condition cat
 binary alone and write [`src/formats/vm_commands.zig`](../src/formats/vm_commands.zig) and
 [`src/formats/vm_conditions.zig`](../src/formats/vm_conditions.zig). `make model-tables` reads the
 ship type table from the binary and follows the code that loads the attachment models in the
-export, and writes [`src/formats/models.zig`](../src/formats/models.zig). The tables are
-committed, so building the tools never needs the game.
+export, and writes [`src/formats/models.zig`](../src/formats/models.zig). `make control-tables`
+reads the player's actions and their default bindings from the binary and writes
+[`src/formats/controls.zig`](../src/formats/controls.zig). The tables are committed, so building
+the tools never needs the game.

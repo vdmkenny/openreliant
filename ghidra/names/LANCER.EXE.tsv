@@ -242,3 +242,51 @@
 00565076	data	play_time_hours	ushort
 0057e04c	data	paused	ushort	Nonzero while the game is paused, which stops the ticks and the script clock
 00539aa0	data	game_object_count	short	Slots of game_objects in use, which create_object extends when given no slot
+
+# Player input
+00588340	data	joystick	JoystickState	The joystick as read_joystick last polled it
+00588398	data	mouse	MouseState	The mouse as read_mouse last read it: its movement since the read before
+00595c68	data	keyboard	byte[256]	DirectInput's keyboard state, by scan code (DIK_*): nonzero while the key is down
+005d54ec	data	key_latched	byte[256]	Set for a key once key_pressed has counted it once, until read_keyboard sees it released
+005ddc98	data	button_latched	ushort[32]	Set for a joystick button once control_active has counted it once, until read_joystick sees it released
+005d5744	data	shift_latched	bool	Set once key_pressed has counted a Shift combination once, until both Shift keys are up
+005d5634	data	control_latched	bool	Set once key_pressed has counted a Ctrl combination once, until both Ctrl keys are up
+00595d80	data	alt_latched	bool	Set once key_pressed has counted an Alt combination once, until both Alt keys are up
+004e2380	data	control_bindings	ControlBinding[74]	Each action's key, modifier, name and joystick button
+0057e064	data	control_mode	ControlMode	What player_controls steers with: the Controller setting
+0051d610	data	joystick_invert	int	The JoystickInvert setting, 1 by default: while it is clear, player_controls reverses pitch from the stick, keys and mouse
+00595d88	data	twist_enabled	bool	The TwistEnable setting: the joystick's twist (Rz) rolls the ship when it has one
+0050e1a4	data	force_feedback	bool	Set while the joystick in use has force feedback
+005ddd18	data	direct_input		The IDirectInput7 interface
+005ddd1c	data	keyboard_device		The keyboard's IDirectInputDevice7
+005ddd20	data	mouse_device		The mouse's IDirectInputDevice7
+005ddd24	data	joystick_device		The joystick's IDirectInputDevice7, or null without one
+005ddb48	data	joystick_name	char[260]	The joystick's product name
+005ddc4c	data	joystick_has_x	bool	Set when the joystick has an X axis, set to run from -1000 to 1000
+005ddc4d	data	joystick_has_y	bool	Set when the joystick has a Y axis, set to run from -1000 to 1000
+005ddc4e	data	joystick_has_z	bool	Set when the joystick has a Z axis, set to run from 0 to 1000; it sets the throttle
+005ddc51	data	joystick_has_rz	bool	Set when the joystick has a twist (Rz) axis, set to run from -1000 to 1000
+005ddc52	data	joystick_has_slider	bool	Set when the joystick has a slider, set to run from 0 to 1000; it sets the throttle without a Z axis
+005ddc54	data	joystick_buttons	short	The joystick's button count
+005ddc56	data	joystick_hats	short	The joystick's point-of-view hat count
+0051cf7c	data	throttle_setting	float	The throttle the keys set; the ship's throttle follows it while the afterburner is off
+00579984	data	matching_speed	ushort	Flipped by MATCH SPEED; while set, match_target_speed runs each update. ZERO THROTTLE and FULL THROTTLE clear it
+00566794	data	throttle_before_match	float	The throttle match_target_speed puts back when the target leaves range
+0051cefe	data	afterburner_toggled	ushort	Flipped by AFTERBURNER TOGGLE; the afterburner burns while it is set
+005799c0	data	fuel_warning_tick	int	The game_ticks value before which the afterburner fuel warning does not sound again
+0040c5f0	function	object_orders	void __fastcall (int slot)	Starts an object's queued orders that are due, clears its burn flags, then runs its current order's update
+0042c800	function	load_key_config	void (void)	Reads the KeyConfig and JoyConfig sections of starlancer.ini: the input settings and each action's binding
+004bcd90	function	input_init	int (void)	Creates DirectInput and the keyboard, mouse and joystick devices, preferring a force-feedback joystick
+004bd190	function	joystick_found	int __stdcall (void *instance, void *context)	DirectInput's callback for each joystick it enumerates
+004bd050	function	joystick_object_found	int __stdcall (void *object, void *context)	DirectInput's callback for each axis, button and hat of the joystick
+004bd780	function	input_acquire	void (void)	Acquires the keyboard, mouse and joystick, or unacquires them while the word at 0x5DDD28 is set
+004bd3f0	function	input_shutdown	void (void)	Unacquires and releases the devices and DirectInput
+004bd490	function	read_keyboard	void (void)	Reads the keyboard, then clears the latches of released keys and modifiers
+004bd300	function	read_joystick	int __fastcall (JoystickState *state)	Polls the joystick into state, then clears the latches of released buttons
+004bd3a0	function	read_mouse	int __fastcall (MouseState *state)	Reads the mouse's movement since the previous read, and its buttons
+004bd570	function	key_pressed	int __fastcall (int key, int modifier, int once)	Whether a key is down with a modifier (ControlModifier); with once, only once for each press
+004bd800	function	load_force_effects	int (void)	Loads the force-feedback effects, forces\*.frc
+00412630	function	control_active	int __fastcall (ControlAction action, int once)	Whether an action's joystick button, or its key with its modifier, is down; with once, only once for each press
+00413410	function	player_controls	void __fastcall (int slot)	The Player Control order's update: steering, throttle, weapons and the other flight actions from the controls
+00412c10	function	match_target_speed	void (void)	Sets the throttle to the target's speed over the player's cruise speed while the target is within 330000 units; otherwise puts the throttle back and stops matching
+004132c0	function	player_throttle_keys	void __fastcall (void)	Steps the throttle while ACCELERATE or DECELERATE is held; ZERO THROTTLE and FULL THROTTLE set it

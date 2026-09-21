@@ -77,6 +77,14 @@ pub const exported = [_]Export{
     // Sound.
     .{ "SoundVoice", lancer.sound.Voice },
 
+    // Player input.
+    .{ "JoystickState", lancer.input.JoystickState },
+    .{ "MouseState", lancer.input.MouseState },
+    .{ "ControlBinding", lancer.input.ControlBinding },
+    .{ "ControlModifier", lancer.input.ControlBinding.Modifier },
+    .{ "ControlAction", starlancer.controls.Action },
+    .{ "ControlMode", lancer.input.ControlMode },
+
     // Live objects and their models.
     .{ "GameObject", lancer.game.GameObject },
     .{ "ObjectMotion", lancer.game.Motion },
