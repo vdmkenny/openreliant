@@ -12,6 +12,8 @@ pub const hog = @import("formats/hog.zig");
 pub const iso9660 = @import("formats/iso9660.zig");
 /// The models the engine loads by number, transcribed from the game executable.
 pub const models = @import("formats/models.zig");
+/// The orders objects follow, transcribed from the game executable.
+pub const orders = @import("formats/orders.zig");
 pub const refpack = @import("formats/refpack.zig");
 pub const shp = @import("formats/shp.zig");
 pub const spr = @import("formats/spr.zig");

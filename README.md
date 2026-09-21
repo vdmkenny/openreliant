@@ -66,10 +66,10 @@ SafeDisc hides, but not their order, which SafeDisc shuffles, so it does not wri
 
 `make assets`, `models`, `sprites`, `sounds` and `fonts` run the extractors over every file; `check-models` and
 `check-missions` validate them. The script VM's opcode, command and condition tables, the engine's
-model tables and the player's control bindings are derived from the game binary by
-`src/tools/tablegen` (`make vm-opcodes`, `make vm-commands`, `make vm-conditions`, `make
-model-tables`, `make control-tables`), and `make ghidra-annotate` names and types the Ghidra
-project from the Zig definitions.
+model tables, the player's control bindings and the order table are derived from the game binary
+by `src/tools/tablegen` (`make vm-opcodes`, `make vm-commands`, `make vm-conditions`, `make
+model-tables`, `make control-tables`, `make order-tables`), and `make ghidra-annotate` names and
+types the Ghidra project from the Zig definitions.
 
 Documentation index: [`docs/README.md`](docs/README.md).
 
@@ -80,7 +80,7 @@ Documentation index: [`docs/README.md`](docs/README.md).
 | `src/formats/` | The `starlancer` module: readers for the game's formats and containers. |
 | `src/lancer.zig`, `src/lancer/` | The game executable's own run-time structures. |
 | `src/tools/sltool/` | `sltool`, the command line front end. |
-| `src/tools/tablegen/` | Derives the engine's static tables from the game binary: the script VM's, its model tables and the control bindings. |
+| `src/tools/tablegen/` | Derives the engine's static tables from the game binary: the script VM's, its model tables, the control bindings and the order table. |
 | `src/tools/ghidragen/` | Writes the names and data types the Ghidra scripts apply. |
 | `mk/`, `scripts/` | Makefile fragments and their helpers. |
 | `ghidra/scripts/` | Ghidra scripts, run headless by `make`. |

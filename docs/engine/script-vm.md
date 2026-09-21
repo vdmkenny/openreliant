@@ -114,8 +114,8 @@ destroys the timer.
 
 The game queues events as they happen, in the `0x30`-byte records at `event_queue` (`0x52ABD8`):
 `event_post` (`0x0045B7C0`) for the ship alone, `event_post_group` (`0x0045B690`) for the ship, its
-flight group and the squads that hold it. `events_flush` (`0x0045B840`) raises them all and empties
-the queue. Each carries a condition, up to five values, and a qualifier: the component of the ship
+flight group and the squads that hold it. `events_flush` (`0x0045B840`), which `mission_frame`
+calls once a frame, raises them all and empties the queue. Each carries a condition, up to five values, and a qualifier: the component of the ship
 the event concerns, by its index among the components of the ship's live object, or `0xFF` for the
 ship itself. A hit on a component queues ShotAt for the component and, except for hits of one kind,
 for the ship; destroying one queues Destroyed for the component.

@@ -79,15 +79,26 @@ pub const exported = [_]Export{
 
     // Player input.
     .{ "JoystickState", lancer.input.JoystickState },
+    .{ "JoystickAxes", lancer.input.JoystickAxes },
     .{ "MouseState", lancer.input.MouseState },
     .{ "ControlBinding", lancer.input.ControlBinding },
     .{ "ControlModifier", lancer.input.ControlBinding.Modifier },
     .{ "ControlAction", starlancer.controls.Action },
     .{ "ControlMode", lancer.input.ControlMode },
 
+    // Orders.
+    .{ "Order", starlancer.orders.Order },
+    .{ "OrderRecord", lancer.orders.Record },
+    .{ "OrderFlags", lancer.orders.Record.Flags },
+    .{ "OrderTarget", lancer.orders.Target },
+    .{ "OrderTargetKind", lancer.orders.Target.Kind },
+    .{ "OrderEntry", lancer.orders.Entry },
+    .{ "QueuedOrder", lancer.orders.Queued },
+    .{ "OrderState", lancer.orders.State },
+
     // Live objects and their models.
     .{ "GameObject", lancer.game.GameObject },
-    .{ "ObjectMotion", lancer.game.Motion },
+    .{ "ObjectRoutine", lancer.game.Routine },
     .{ "ModelNode", lancer.game.Node },
     .{ "SurrenderFrame", lancer.game.Frame },
     .{ "ObjectComponent", lancer.game.Component },

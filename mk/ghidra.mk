@@ -146,3 +146,12 @@ control-tables: ## Re-derive the player's actions and default bindings from the 
 	$(ZIG) build tablegen
 	$(ROOT)/zig-out/bin/tablegen controls $(PAYLOAD) $(CONTROL_TABLES)
 	$(ZIG) fmt $(CONTROL_TABLES)
+
+ORDER_TABLES := $(ROOT)/src/formats/orders.zig
+
+.PHONY: order-tables
+order-tables: ## Re-derive the order table, what objects are told to do, from the payload executable
+	@test -f $(PAYLOAD) || { echo "missing $(PAYLOAD); run 'make game'" >&2; exit 1; }
+	$(ZIG) build tablegen
+	$(ROOT)/zig-out/bin/tablegen orders $(PAYLOAD) $(ORDER_TABLES)
+	$(ZIG) fmt $(ORDER_TABLES)

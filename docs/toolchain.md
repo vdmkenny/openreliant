@@ -115,5 +115,6 @@ binary alone and write [`src/formats/vm_commands.zig`](../src/formats/vm_command
 ship type table from the binary and follows the code that loads the attachment models in the
 export, and writes [`src/formats/models.zig`](../src/formats/models.zig). `make control-tables`
 reads the player's actions and their default bindings from the binary and writes
-[`src/formats/controls.zig`](../src/formats/controls.zig). The tables are committed, so building
+[`src/formats/controls.zig`](../src/formats/controls.zig), and `make order-tables` reads the order
+table into [`src/formats/orders.zig`](../src/formats/orders.zig). The tables are committed, so building
 the tools never needs the game.

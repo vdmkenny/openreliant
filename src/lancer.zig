@@ -9,6 +9,7 @@ const std = @import("std");
 
 pub const game = @import("lancer/game.zig");
 pub const input = @import("lancer/input.zig");
+pub const orders = @import("lancer/orders.zig");
 pub const sound = @import("lancer/sound.zig");
 pub const stats = @import("lancer/stats.zig");
 pub const vm = @import("lancer/vm.zig");

@@ -96,7 +96,8 @@ and records the length of the velocity as the speed (`0x5D8`). The root keeps th
 | `0x640` | 4 | Motion function |
 | `0x650` | 4 | The last update's throttle |
 
-For the player's ship, the [controls](controls.md) set the inputs, the throttle and the two burns.
+For the player's ship, the [controls](controls.md) set the inputs, the throttle and the two burns;
+for the others, the routines of their [orders](orders.md).
 
 The flight model works in the ship's own frame, the
 [model frame](../formats/shp.md#coordinate-frame): X lateral, Y down, Z forward. Each quantity

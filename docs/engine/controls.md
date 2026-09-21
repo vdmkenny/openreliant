@@ -16,15 +16,16 @@ Ghidra project; [`src/lancer/input.zig`](../../src/lancer/input.zig) defines the
   set, `load_force_effects` (`0x004BD800`) loads the effects from `forces\*.frc`.
 
 For the joystick, `joystick_object_found` (`0x004BD050`) sets the range of each axis the game uses
-and records that the device has it:
+and records that the device has it in `joystick_axes` (`0x5DDC4C`), a `JoystickAxes` with a flag
+for each axis in the order of `DIJOYSTATE`:
 
 | Axis | Range | Flag |
 |---|---|---|
-| X | -1000 to 1000 | `joystick_has_x` (`0x5DDC4C`) |
-| Y | -1000 to 1000 | `joystick_has_y` (`0x5DDC4D`) |
-| Z | 0 to 1000 | `joystick_has_z` (`0x5DDC4E`) |
-| Rz, the twist | -1000 to 1000 | `joystick_has_rz` (`0x5DDC51`) |
-| First slider | 0 to 1000 | `joystick_has_slider` (`0x5DDC52`) |
+| X | -1000 to 1000 | `x` |
+| Y | -1000 to 1000 | `y` |
+| Z | 0 to 1000 | `z` |
+| Rz, the twist | -1000 to 1000 | `rz` |
+| First slider | 0 to 1000 | `slider` |
 
 A dead zone of a tenth of the range applies to the whole device. `joystick_buttons` (`0x5DDC54`)
 holds the button count and `joystick_name` (`0x5DDB48`) the product name.
@@ -99,21 +100,22 @@ latch once the key is up, and a modifier's once both its keys are up.
 ## Steering
 
 `player_controls` (`0x00413410`) is the update of the order numbered 100, `Player Control`, which
-the player's ship follows in flight. `object_orders` (`0x0040C5F0`) runs an object's current
-order; while the player's is `Player Control`, `simulation_step` runs it before the objects
-move. `player_controls` sets
-the ship's roll, pitch, yaw and lateral inputs and its throttle. Axis values are scaled by 0.001,
-so the stick's travel spans -1 to 1.
+the player's ship follows in flight (see [orders](orders.md)). It runs whenever the ship's orders
+run: once a frame, from `orders_update`, and once each simulation step, from `simulation_step`,
+before the objects move. The devices are read only at each step, so the runs in between see the
+same state, and what `player_controls` steps each time it runs changes at a rate that depends on
+the frame rate. It sets the ship's roll, pitch, yaw and lateral inputs and its throttle. Axis
+values are scaled by 0.001, so the stick's travel spans -1 to 1.
 
 - **Joystick** (`control_mode` 0). X yaws and Y pitches. The keys ROLL SHIP CLOCKWISE and ROLL SHIP
   ANTI-CLOCKWISE roll at 1 and -1, and while JOYSTICK ROLL is held, X rolls instead of yawing.
   With `twist_enabled` and a twist axis, X, Y and the twist yaw, pitch and roll. The throttle
   axis, Z or else the first slider, sets the throttle to `1 - value * 0.001`, so 0 is full
   throttle and 1000 none. Without either, the keys set it (see below).
-- **Keyboard** (1). Each update that ROTATE CLOCKWISE or ROTATE ANTI-CLOCKWISE is held steps yaw by
+- **Keyboard** (1). Each run while ROTATE CLOCKWISE or ROTATE ANTI-CLOCKWISE is held steps yaw by
   -0.3 or 0.3, and NOSE UP or NOSE DOWN steps pitch by 0.3 or -0.3; with neither key of a pair
   held, that input is zero. The flight model clamps each input to between -1 and 1, so a held key
-  reaches full deflection on its fourth update. The roll keys roll as with the joystick. While the
+  reaches full deflection on the fourth run. The roll keys roll as with the joystick. While the
   word at `0x539A34` is 6 or 12, yaw and pitch stay zero.
 - **Mouse** (2). The mouse's movement gathers into a stick position, each axis held to within 800
   counts of the centre. As a fraction `v` of 800, each axis gives 0 while `|v|` is under 0.3,
@@ -132,8 +134,8 @@ are: while any is set, the stick position goes to other routines (`0x00412D40`, 
 
 With the keyboard or the mouse, or a joystick without a throttle axis, `player_controls` calls
 `player_throttle_keys` (`0x004132C0`). It steps `throttle_setting` (`0x51CF7C`) and the ship's
-throttle by 0.02 each update that ACCELERATE or DECELERATE is held, so two seconds from none to
-full, and ZERO THROTTLE and FULL THROTTLE, once for each press, set them to 0 or 1 and stop MATCH
+throttle by 0.02 each run while ACCELERATE or DECELERATE is held, fifty runs from none to full,
+and ZERO THROTTLE and FULL THROTTLE, once for each press, set them to 0 or 1 and stop MATCH
 SPEED. Then it sets the ship's throttle to `throttle_setting`; its check of `afterburner` first
 always passes there, since `object_orders` has cleared the flag. `player_controls` keeps the
 throttle between 0 and 1, and at most 0.5 while the word at `0x754` of the player's object is 7.
@@ -148,7 +150,7 @@ throttle from before, `throttle_before_match` (`0x566794`), and stops matching.
 AFTERBURNERS, while held, and AFTERBURNER TOGGLE, which flips `afterburner_toggled` (`0x51CEFE`)
 once for each press, set the ship's `afterburner`. REVERSE THRUST, while held, sets its
 `reverse_thrust`. `object_orders` clears both before each order update, so each lasts until the
-next update unless set again. After the update it clears both when the ship has no afterburner
+order next runs unless set again. After the update it clears both when the ship has no afterburner
 fuel, both and the throttle while the ship's flags have `0x20000`, and `reverse_thrust` when they
 lack `0x80`.
 

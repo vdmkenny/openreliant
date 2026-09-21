@@ -25,6 +25,32 @@ pub const JoystickState = extern struct {
     }
 };
 
+/// Which of the joystick's axes the game set up: a byte for each axis, in the order of
+/// `JoystickState`, which `joystick_object_found` sets when it gives the axis a range.
+pub const JoystickAxes = extern struct {
+    x: bool,
+    y: bool,
+    /// The throttle, when the joystick has one.
+    z: bool,
+    /// Never set: the game gives the axis no range and never reads it.
+    rx: bool,
+    /// Never set, like `rx`.
+    ry: bool,
+    /// The twist.
+    rz: bool,
+    /// The first slider, which the game reads as the throttle without a Z axis.
+    slider: bool,
+    /// Never set, like `rx`.
+    second_slider: bool,
+
+    comptime {
+        // Each flag sits at its axis's offset in `JoystickState` over four.
+        assert(@offsetOf(JoystickAxes, "rz") == @offsetOf(JoystickState, "rz") / 4);
+        assert(@offsetOf(JoystickAxes, "slider") == @offsetOf(JoystickState, "sliders") / 4);
+        assert(@sizeOf(JoystickAxes) == @offsetOf(JoystickState, "pov") / 4);
+    }
+};
+
 /// DirectInput's `DIMOUSESTATE2`, which the game reads the mouse into at `mouse` each simulation
 /// step: the movement since the previous read, and eight buttons.
 pub const MouseState = extern struct {

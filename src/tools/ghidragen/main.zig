@@ -3,12 +3,12 @@
 //!     ghidragen names <output.tsv>
 //!     ghidragen types <output.tsv>
 //!
-//! `names`: a row naming each VM opcode handler and command implementation, which nothing calls
-//! directly, for `ghidra/scripts/ApplyNames.java`. It comes from the committed opcode and command
-//! tables and `dte.Opcode`.
+//! `names`: a row naming each VM opcode handler, command implementation and order routine, which
+//! nothing calls directly, and each group of the order table, for `ghidra/scripts/Annotate.java`.
+//! It comes from the committed opcode, command and order tables and `dte.Opcode`.
 //!
 //! `types`: the data types of `src/lancer.zig` and the mission records of `src/formats/dte.zig`, for
-//! `ghidra/scripts/ApplyTypes.java`. The schema is built at compile time.
+//! `ghidra/scripts/Annotate.java`. The schema is built at compile time.
 
 const std = @import("std");
 const Io = std.Io;

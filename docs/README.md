@@ -22,6 +22,7 @@ no game code or assets.
 | [`engine/objects.md`](engine/objects.md) | Live objects: the object array, model hierarchies, components, the flight model. |
 | [`engine/loop.md`](engine/loop.md) | The game loop: the 100 Hz tick, the 25 Hz simulation step, collisions. |
 | [`engine/controls.md`](engine/controls.md) | Player input: devices, bindings, settings, steering and throttle. |
+| [`engine/orders.md`](engine/orders.md) | Orders: the table of what objects can be told to do, each object's stack, and how orders run. |
 
 ## Conventions
 

@@ -5,6 +5,7 @@
 //!     tablegen conditions <LANCER.EXE> <output.zig>
 //!     tablegen models <LANCER.EXE> <disassembly.asm> <output.zig>
 //!     tablegen controls <LANCER.EXE> <output.zig>
+//!     tablegen orders <LANCER.EXE> <output.zig>
 //!
 //! `opcodes`: the VM dispatches on a byte through a table of handler addresses. Reading that table
 //! gives the opcode set, and following each handler gives the size and shape of the instruction it
@@ -18,6 +19,8 @@
 //! engine loads in code that the listing lets this follow.
 //!
 //! `controls`: the player's actions and the bindings the game starts with.
+//!
+//! `orders`: the orders objects follow, with their routines, flags and priorities.
 //!
 //! All come straight out of the binary, so the tables written are transcripts of the engine rather
 //! than readings of the mission files.
@@ -34,6 +37,7 @@ const controls = @import("controls.zig");
 const eval = @import("eval.zig");
 const image = @import("image.zig");
 const models = @import("models.zig");
+const orders = @import("orders.zig");
 const x86 = @import("x86.zig");
 
 /// Virtual address of the dispatch table, found from the `CALL dword ptr [...]` that the
@@ -55,6 +59,7 @@ const usage =
     \\       tablegen conditions <LANCER.EXE> <output.zig>
     \\       tablegen models <LANCER.EXE> <disassembly.asm> <output.zig>
     \\       tablegen controls <LANCER.EXE> <output.zig>
+    \\       tablegen orders <LANCER.EXE> <output.zig>
     \\
 ;
 
@@ -64,6 +69,7 @@ const Mode = union(enum) {
     conditions: struct { binary: []const u8, output: []const u8 },
     models: struct { binary: []const u8, listing: []const u8, output: []const u8 },
     controls: struct { binary: []const u8, output: []const u8 },
+    orders: struct { binary: []const u8, output: []const u8 },
 
     fn parse(args: []const [:0]const u8) ?Mode {
         if (args.len == 0) return null;
@@ -75,6 +81,7 @@ const Mode = union(enum) {
             .conditions => if (rest.len == 2) .{ .conditions = .{ .binary = rest[0], .output = rest[1] } } else null,
             .models => if (rest.len == 3) .{ .models = .{ .binary = rest[0], .listing = rest[1], .output = rest[2] } } else null,
             .controls => if (rest.len == 2) .{ .controls = .{ .binary = rest[0], .output = rest[1] } } else null,
+            .orders => if (rest.len == 2) .{ .orders = .{ .binary = rest[0], .output = rest[1] } } else null,
         };
     }
 };
@@ -92,6 +99,7 @@ pub fn main(init: std.process.Init) !u8 {
         .conditions => |paths| conditionCatalogue(init, arena, paths.binary, paths.output),
         .models => |paths| modelTables(init, arena, paths.binary, paths.listing, paths.output),
         .controls => |paths| controlTable(init, arena, paths.binary, paths.output),
+        .orders => |paths| orderTable(init, arena, paths.binary, paths.output),
     };
 }
 
@@ -163,6 +171,22 @@ fn controlTable(init: std.process.Init, arena: std.mem.Allocator, binary_path: [
     try out.interface.flush();
 
     std.debug.print("{d} actions -> {s}\n", .{ bindings.len, output });
+    return 0;
+}
+
+fn orderTable(init: std.process.Init, arena: std.mem.Allocator, binary_path: []const u8, output: []const u8) !u8 {
+    const cwd: Io.Dir = .cwd();
+    const binary = try cwd.readFileAlloc(init.io, binary_path, arena, .limited(64 << 20));
+    const pe_image: pe.Image = try .parse(binary);
+    const table = try orders.read(arena, .init(pe_image, binary));
+
+    var buffer: [16 << 10]u8 = undefined;
+    var out: Io.File.Writer = .init(try cwd.createFile(init.io, output, .{}), init.io, &buffer);
+    defer out.file.close(init.io);
+    try orders.emit(&out.interface, table, try orders.identifiers(arena, table.orders));
+    try out.interface.flush();
+
+    std.debug.print("{d} orders in {d} groups -> {s}\n", .{ table.orders.len, table.groups.len, output });
     return 0;
 }
 
@@ -326,5 +350,6 @@ test {
     _ = eval;
     _ = image;
     _ = models;
+    _ = orders;
     _ = x86;
 }

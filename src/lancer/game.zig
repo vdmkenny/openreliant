@@ -9,12 +9,14 @@ const assert = std.debug.assert;
 
 const shp = @import("../formats/shp.zig");
 const lancer = @import("../lancer.zig");
+const orders = @import("orders.zig");
 const Pointer = lancer.Pointer;
 const stats = lancer.stats;
 
-/// What an object's `motion` points at: code that moves the object in a slot for one update, such as
-/// `motion_forward` (`0x004744C0`), which flies it forward by the flight model.
-pub const Motion = lancer.Code("void __fastcall (int slot)");
+/// Code that acts for the object in a slot: its `motion`, which moves it for one update, such as
+/// `motion_forward` (`0x004744C0`), which flies it forward by the flight model, and the routines
+/// of its orders.
+pub const Routine = lancer.Code("void __fastcall (int slot)");
 
 /// Slots in `game_objects`. `create_object` stops the game with a fatal error past the last.
 pub const max_objects = 400;
@@ -192,20 +194,41 @@ pub const GameObject = extern struct {
     armor: [4]f32,
     _unknown_610: [0x30]u8,
     /// Moves it each update; `motion_forward` when created.
-    motion: Pointer(Motion),
+    motion: Pointer(Routine),
     /// Nonzero while it is hostile: `SetHostile`. When created, a value of its combat stats'
     /// (`+0x2A`), or in one of the game's modes one worked out otherwise.
     hostile: i32,
     _unknown_648: [8]u8,
     /// The throttle of the last update.
     last_throttle: f32,
-    _unknown_654: [0xEC]u8,
+    _unknown_654: [0x2C]u8,
+    /// Orders on its stack.
+    order_count: i16,
+    _unknown_682: u16,
+    /// Its order stack, the current order first: `orders.max_stack` entries, allocated with its
+    /// first order.
+    orders: Pointer(orders.Entry),
+    /// Set while the current order has yet to start: `object_orders` runs its `init` first.
+    order_starting: bool,
+    _unknown_689: [3]u8,
+    /// What the current order keeps between updates, allocated with the stack.
+    order_state: Pointer(orders.State),
+    /// Damage of kinds 0, 1 and 5 taken since `orders_update` last zeroed it, which it does every
+    /// 500 ticks.
+    recent_damage: f32,
+    /// The slot of the object that last damaged it, or -1.
+    last_attacker: i32,
+    _unknown_698: [0xA8]u8,
     /// Its pilot: the record in `pilotstats.bin`, which `object_set_pilot` gives it.
     pilot: i32,
     /// **Unknown.** A 24-byte record for the pilot, from a table at `0x5048D8`.
     pilot_record: Pointer(anyopaque),
     pilot_stats: Pointer(stats.Pilot),
-    _unknown_74c: [0x448]u8,
+    _unknown_74c: [0x440]u8,
+    /// Orders from other players waiting for their frame, in a multiplayer game.
+    queued_order_count: i32,
+    /// Its queue of `orders.max_queued` entries, allocated when the first order arrives.
+    queued_orders: Pointer(orders.Queued),
     /// Set once `create_object` has filled the slot; it stops with a fatal error if it is set
     /// already.
     created: bool,
@@ -231,6 +254,11 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "motion") == 0x640);
         assert(@offsetOf(GameObject, "hostile") == 0x644);
         assert(@offsetOf(GameObject, "last_throttle") == 0x650);
+        assert(@offsetOf(GameObject, "order_count") == 0x680);
+        assert(@offsetOf(GameObject, "orders") == 0x684);
+        assert(@offsetOf(GameObject, "order_state") == 0x68C);
+        assert(@offsetOf(GameObject, "last_attacker") == 0x694);
+        assert(@offsetOf(GameObject, "queued_orders") == 0xB90);
         assert(@offsetOf(GameObject, "pilot") == 0x740);
         assert(@offsetOf(GameObject, "created") == 0xB94);
         assert(@sizeOf(GameObject) == 0xB98);

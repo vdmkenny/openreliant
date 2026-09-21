@@ -15,9 +15,11 @@ and stops for the pause too.
 
 ## The loop
 
-`mission_run` (`0x00494040`) zeroes the clocks, then loops. Each pass runs the frame's other work,
-then `game_tick` (`0x00477850`) once for each tick of `game_ticks` since the previous pass. So the
-game state advances at a fixed rate whatever the frame rate.
+`mission_run` (`0x00494040`) zeroes the clocks, then loops. Each pass runs `game_tick`
+(`0x00477850`) once for each tick of `game_ticks` since the previous pass, then, unless the game is
+paused, the frame's work, `mission_frame` (`0x004924B0`). So the simulation advances at a fixed
+rate whatever the frame rate. The frame's work runs every object's [orders](orders.md), through
+`orders_update`, and flushes the script's events, once a frame.
 
 `game_tick` runs `simulation_step` (`0x004774D0`) unless the game is paused. `simulation_step`
 does its work on every fourth call, so 25 times a second: each object's own updates, then
