@@ -143,6 +143,7 @@ pub const Model = struct {
     order: []const usize,
     lights: []Light,
     glows: []Glow,
+    mounts: []Mount,
     /// Where the model's origin lies from the object's, less (`GameObject + 0x524`): the centres
     /// of mass `recentre` moved the origin to.
     centre: Vector = @splat(0),
@@ -211,6 +212,18 @@ pub const Model = struct {
         }
     };
 
+    /// A model an attachment point holds: a gun or a pod, which `node_mount` (`0x00499A10`) mounts
+    /// as an object of its own, hung from the node of the part that carries the attachment. Its own
+    /// parts, lights, glows and mounts come with it.
+    pub const Mount = struct {
+        /// The part that carries the attachment.
+        part: usize,
+        /// Where the attachment stands on that part, and how it is turned there.
+        origin: Vector,
+        orientation: math.Matrix,
+        model: Model,
+    };
+
     pub const Part = struct {
         /// The node's `hidden` flag.
         hidden: bool,
@@ -269,6 +282,11 @@ pub const Model = struct {
     /// `model_load` left the part (`loaded`), reached by the lights `lightMask` lets through, and as
     /// far across as its largest level. A part of a component's damaged model is hidden.
     pub fn create(gpa: Allocator, model: *const shp.Model, loaded: *const srofiles.Loaded, effects: Effects) Allocator.Error!Model {
+        return build(gpa, model, loaded, effects, 0);
+    }
+
+    /// `create`, with how many mounts deep this model already stands.
+    fn build(gpa: Allocator, model: *const shp.Model, loaded: *const srofiles.Loaded, effects: Effects, depth: usize) Allocator.Error!Model {
         const parts = try gpa.alloc(Part, model.parts.len);
         errdefer gpa.free(parts);
         for (parts, model.parts, loaded.parts, 0..) |*node, source, part, index| {
@@ -294,11 +312,14 @@ pub const Model = struct {
         errdefer gpa.free(order);
         const lights = try createLights(gpa, model, effects.light_sprite);
         errdefer gpa.free(lights);
+        const glows = try createGlows(gpa, model, effects.glows);
+        errdefer gpa.free(glows);
         return .{
             .parts = parts,
             .order = order,
             .lights = lights,
-            .glows = try createGlows(gpa, model, effects.glows),
+            .glows = glows,
+            .mounts = try createMounts(gpa, model, effects, depth),
         };
     }
 
@@ -379,10 +400,39 @@ pub const Model = struct {
     }
 
     pub fn deinit(model: Model, gpa: Allocator) void {
+        for (model.mounts) |mount| mount.model.deinit(gpa);
+        gpa.free(model.mounts);
         gpa.free(model.parts);
         gpa.free(model.order);
         gpa.free(model.lights);
         gpa.free(model.glows);
+    }
+
+    /// The model each gun and pod attachment holds, mounted on the part that carries it
+    /// (`node_mount`). A mount is left out where nothing answers for its model, and a model that
+    /// mounts itself stops at `shp.max_mount_depth`.
+    fn createMounts(gpa: Allocator, model: *const shp.Model, effects: Effects, depth: usize) Allocator.Error![]Mount {
+        const mounts = effects.mounts orelse return gpa.alloc(Mount, 0);
+        if (depth >= shp.max_mount_depth) return gpa.alloc(Mount, 0);
+        var made: std.ArrayList(Mount) = .empty;
+        errdefer {
+            for (made.items) |mount| mount.model.deinit(gpa);
+            made.deinit(gpa);
+        }
+        for (model.parts, 0..) |part, index| {
+            for (part.attachments) |attachment| {
+                const mounted = mounts.of(attachment) orelse continue;
+                try made.append(gpa, .{
+                    .part = index,
+                    .origin = .{ attachment.position.x, attachment.position.y, attachment.position.z },
+                    .orientation = attachment.orientation,
+                    .model = try build(gpa, mounted.model, mounted.loaded, effects, depth + 1),
+                });
+                // A mounted model stands on its own centre of mass, as an object of its own does.
+                made.items[made.items.len - 1].model.recentre(mounted.model);
+            }
+        }
+        return made.toOwnedSlice(gpa);
     }
 
     /// Moves the object's origin to its parts' centre of mass, as `object_link_parts` ends
@@ -445,6 +495,14 @@ pub const Model = struct {
             part.object.position = math.transform(turn, part.origin) + at;
             part.object.orientation = turn;
         }
+        for (model.mounts) |*mount| {
+            const carrier = model.parts[mount.part].object;
+            // The attachment's own turn, on the part that carries it.
+            const turn = math.product(carrier.orientation, mount.orientation);
+            const at = math.transform(carrier.orientation, mount.origin) + carrier.position;
+            // The mounted model stands on its own centre of mass, so its origin goes back by it.
+            mount.model.place(math.transform(turn, mount.model.centre) + at, turn);
+        }
     }
 
     /// Adds each shown part's object to `layer`, the world's or, for a cockpit, the overlay
@@ -485,14 +543,47 @@ pub const Model = struct {
             glow.object.orientation = math.product(math.product(carrier.orientation, glow.orientation), scale);
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &glow.object }, layer);
         }
+        for (model.mounts) |*mount| {
+            // What a hidden part carries is hidden with it, as a light and a glow are.
+            if (model.parts[mount.part].hidden) continue;
+            try mount.model.draw(gpa, scene, layer, view);
+        }
     }
 };
 
-/// What a model draws its attachments with: the sprite every light draws, and the meshes the engine
-/// glows draw. A model carries only the ones it is given.
+/// What a model draws its attachments with: the sprite every light draws, the meshes the engine
+/// glows draw, and where the models a gun or a pod attachment holds come from. A model carries only
+/// the ones it is given.
 pub const Effects = struct {
     light_sprite: ?*srtexture.Image = null,
     glows: ?*const environfx.Glows = null,
+    mounts: ?Mounts = null,
+};
+
+/// Where the model an attachment point holds comes from: a gun's or a pod's, parsed and built the
+/// way the ship's own is, and living at least as long as the model that mounts it. Whoever has the
+/// game's files answers; `load` returns null for a model the game lacks, which mounts nothing.
+pub const Mounts = struct {
+    context: *anyopaque,
+    /// Null for a model the game lacks or cannot read; whoever answers says why.
+    load: *const fn (context: *anyopaque, file: []const u8) ?Mounted,
+
+    pub const Mounted = struct {
+        model: *const shp.Model,
+        loaded: *const srofiles.Loaded,
+    };
+
+    /// The model `attachment` mounts, or null where its kind mounts none, the table names none, or
+    /// the game lacks the file (`node_mount`, `0x00499A10`).
+    fn of(mounts: Mounts, attachment: shp.Attachment) ?Mounted {
+        switch (attachment.kind) {
+            .gun, .pod => {},
+            else => return null,
+        }
+        const entry = create.models.attachment(attachment.kind, attachment.id) orelse return null;
+        const file = entry.model orelse return null;
+        return mounts.load(mounts.context, file);
+    }
 };
 
 /// What a model's lights are drawn by: where the camera stands, since a light's size and brightness
@@ -635,7 +726,7 @@ test Model {
         .sprite = .{.{}},
     }};
     lights[0].set.sprites = lights[0].sprite[0..1];
-    var model: Model = .{ .parts = &parts, .order = &.{0}, .lights = &lights, .glows = &.{} };
+    var model: Model = .{ .parts = &parts, .order = &.{0}, .lights = &lights, .glows = &.{}, .mounts = &.{} };
     // A part hangs at its origin, turned with the root.
     model.place(.{ 1000, 0, 0 }, math.rotation(.y, std.math.pi / 2.0));
     try std.testing.expectApproxEqAbs(1100, parts[0].object.position[0], 1e-3);
@@ -797,7 +888,7 @@ test "a model draws the glows its parts carry" {
         .object = .{ .flags = .{ .not_culled = true }, .position = @splat(0), .radius = 20, .levels = &.{} },
     }};
     glows[0].object.levels = glows[0].level[0..1];
-    var model: Model = .{ .parts = &parts, .order = &.{0}, .lights = &.{}, .glows = &glows };
+    var model: Model = .{ .parts = &parts, .order = &.{0}, .lights = &.{}, .glows = &glows, .mounts = &.{} };
     model.place(.{ 0, 0, 1000 }, math.identity);
 
     var scene: srcore.Scene = .{};
@@ -879,4 +970,105 @@ test "a part whose parents run in a circle stands at the root" {
     const order = try Model.linkOrder(gpa, &source);
     defer gpa.free(order);
     try std.testing.expectEqualSlices(usize, &.{ 0, 1 }, order);
+}
+
+test "a gun attachment mounts the model its id names" {
+    const gpa = std.testing.allocator;
+    const srmesh = @import("../surrender/surrenderlib/srmesh.zig");
+    const mesh = try srmesh.testing.square(gpa);
+    defer mesh.deinit(gpa);
+    var levels = [_]srapiext.Level{.{ .mesh = &mesh, .until = std.math.inf(f32) }};
+    var loaded_parts = [1]srofiles.LoadedPart{.{ .flags = .{}, .levels = &levels, .meshes = &.{} }};
+    const loaded: srofiles.Loaded = .{ .parts = &loaded_parts };
+
+    // The gun the mount answers with: one part at the model's origin.
+    var gun_data = [1]shp.PartData{std.mem.zeroes(shp.PartData)};
+    gun_data[0].part.parent = -1;
+    gun_data[0].part.volume = 1;
+    gun_data[0].part.density = 1;
+    const gun: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &gun_data, .tail_count = 0, .trailing_bytes = 0 };
+
+    // A hull carrying one gun attachment, out along X, and one of a kind that mounts nothing.
+    var attachments = [2]shp.Attachment{ std.mem.zeroes(shp.Attachment), std.mem.zeroes(shp.Attachment) };
+    attachments[0] = .{
+        .kind = .gun,
+        .position = .{ .x = 50, .y = 0, .z = 0 },
+        .orientation = math.identity,
+        .id = 0,
+        ._unknown_38 = @splat(0),
+        .size = @splat(0),
+        .blink = .{ 0, 0 },
+        .blink_phase = 0,
+        ._unknown_60 = @splat(0),
+        .light_range = 0,
+        .light_brightness = 0,
+    };
+    attachments[1] = attachments[0];
+    attachments[1].kind = .missile;
+    var hull = [1]shp.PartData{std.mem.zeroes(shp.PartData)};
+    hull[0].part.parent = -1;
+    hull[0].attachments = &attachments;
+    const model: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &hull, .tail_count = 0, .trailing_bytes = 0 };
+
+    const Answer = struct {
+        gun: *const shp.Model,
+        loaded: *const srofiles.Loaded,
+        asked: usize = 0,
+        fn load(context: *anyopaque, file: []const u8) ?Mounts.Mounted {
+            const answer: *@This() = @ptrCast(@alignCast(context));
+            answer.asked += 1;
+            // Only the gun the table names for kind 1 id 0 is answered for.
+            if (!std.mem.eql(u8, file, create.models.attachment(.gun, 0).?.model.?)) return null;
+            return .{ .model = answer.gun, .loaded = answer.loaded };
+        }
+    };
+    var answer: Answer = .{ .gun = &gun, .loaded = &loaded };
+    var built: Model = try .create(gpa, &model, &loaded, .{
+        .mounts = .{ .context = &answer, .load = Answer.load },
+    });
+    defer built.deinit(gpa);
+
+    // Only the gun is mounted; the missile attachment mounts nothing and is not even looked for.
+    try std.testing.expectEqual(1, built.mounts.len);
+    try std.testing.expectEqual(1, answer.asked);
+    try std.testing.expectEqual(0, built.mounts[0].part);
+    try std.testing.expectEqual(@as(Vector, .{ 50, 0, 0 }), built.mounts[0].origin);
+    try std.testing.expectEqual(1, built.mounts[0].model.parts.len);
+
+    // Placed, the mounted model stands at the attachment on the part that carries it.
+    built.place(.{ 0, 0, 1000 }, math.identity);
+    try std.testing.expectEqual(@as(Vector, .{ 50, 0, 1000 }), built.mounts[0].model.parts[0].object.position);
+    // Turned a quarter about Y, the attachment goes with the hull.
+    built.place(@splat(0), math.rotation(.y, std.math.pi / 2.0));
+    try std.testing.expectApproxEqAbs(0, built.mounts[0].model.parts[0].object.position[0], 1e-3);
+    try std.testing.expectApproxEqAbs(-50, built.mounts[0].model.parts[0].object.position[2], 1e-3);
+
+    // It is drawn with the hull, and goes dark with the part that carries it.
+    var scene: srcore.Scene = .{};
+    defer scene.deinit(gpa);
+    try built.draw(gpa, &scene, .world, .{});
+    try std.testing.expectEqual(2, scene.layers.get(.world).items.len);
+    scene.clear();
+    built.parts[0].hidden = true;
+    try built.draw(gpa, &scene, .world, .{});
+    try std.testing.expectEqual(0, scene.layers.get(.world).items.len);
+
+    // A model that mounts itself stops rather than running on: the gun answers with the hull.
+    const Circle = struct {
+        model: *const shp.Model,
+        loaded: *const srofiles.Loaded,
+        fn load(context: *anyopaque, _: []const u8) ?Mounts.Mounted {
+            const circle: *@This() = @ptrCast(@alignCast(context));
+            return .{ .model = circle.model, .loaded = circle.loaded };
+        }
+    };
+    var circle: Circle = .{ .model = &model, .loaded = &loaded };
+    var deep: Model = try .create(gpa, &model, &loaded, .{
+        .mounts = .{ .context = &circle, .load = Circle.load },
+    });
+    defer deep.deinit(gpa);
+    var depth: usize = 0;
+    var at = &deep;
+    while (at.mounts.len > 0) : (depth += 1) at = &at.mounts[0].model;
+    try std.testing.expectEqual(shp.max_mount_depth, depth);
 }

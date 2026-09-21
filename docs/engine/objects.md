@@ -131,6 +131,22 @@ name, such as `GOroot object` for an object's root. It holds a parent frame at `
 orientation at `+0x18` and a position at `+0x3C`. A part's frame hangs from its parent part's, and
 the root frame of an object mounted on an attachment point from the part's.
 
+## What an attachment point holds
+
+`node_mount` (`0x00499A10`) mounts what a part's attachment points carry, by the attachment's kind:
+an engine glow for kind 2 and a light for kind 4, which are nodes of the part's own, and for a gun
+or a pod an object of its own, whose model `attachment_models` names by the attachment's kind and
+id, twenty ids to a kind.
+
+A mounted object is built the way any other is: a node for each part of its model, then
+`object_link_parts`, which also moves its origin to its own centre of mass. Its root then hangs
+from the node of the part that carries the attachment, and stands where the attachment does: the
+attachment's position, plus that centre turned by the attachment's orientation, which puts the
+model's geometry back where its author had it. Its orientation is the attachment's.
+
+A capital ship carries its turrets this way, where a fighter carries its own as a model part of
+subsystem class 3 with its own yaw and pitch limits.
+
 ## Motion
 
 `object_move` (`0x00473FF0`) moves an object for one update. It calls the object's motion function,

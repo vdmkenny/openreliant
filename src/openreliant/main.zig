@@ -380,6 +380,41 @@ const f3 = 0x3D;
 
 /// A ship of a type, as `create_object` makes one: its model's meshes and its object's nodes, all
 /// in an arena of its own so that the next can take its place.
+/// The models an attachment point holds, read from the game's files as they are asked for and kept
+/// for the ship that mounts them: a ship of three of the same turret reads that turret once. It
+/// lives in the ship's own arena, so unloading the ship lets the lot go.
+const Library = struct {
+    gpa: Allocator,
+    resources: *game.bigfile.Hog,
+    textures: *srtexture.Table,
+    read: std.StringHashMapUnmanaged(?game.objects.Mounts.Mounted) = .empty,
+
+    fn mounts(library: *Library) game.objects.Mounts {
+        return .{ .context = library, .load = load };
+    }
+
+    fn load(context: *anyopaque, file: []const u8) ?game.objects.Mounts.Mounted {
+        const library: *Library = @ptrCast(@alignCast(context));
+        // A model the game lacks is remembered as missing, so it is looked for only once.
+        if (library.read.get(file)) |found| return found;
+        const mounted = library.build(file) catch |err| missing: {
+            std.log.warn("the model {s} is not mounted: {s}", .{ file, @errorName(err) });
+            break :missing null;
+        };
+        library.read.put(library.gpa, file, mounted) catch return mounted;
+        return mounted;
+    }
+
+    fn build(library: *Library, file: []const u8) !game.objects.Mounts.Mounted {
+        const gpa = library.gpa;
+        const model = try gpa.create(shp.Model);
+        model.* = try .parse(gpa, try library.resources.readFile(gpa, file));
+        const loaded = try gpa.create(game.srofiles.Loaded);
+        loaded.* = try game.srofiles.modelLoad(gpa, library.textures, model, .{}, false);
+        return .{ .model = model, .loaded = loaded };
+    }
+};
+
 const Ship = struct {
     arena: std.heap.ArenaAllocator,
     ship_type: usize,
@@ -399,9 +434,12 @@ const Ship = struct {
         model.* = try .parse(gpa, try resources.readFile(gpa, game.create.models.ship_types[ship_type].model.?));
         const loaded = try gpa.create(game.srofiles.Loaded);
         loaded.* = try game.srofiles.modelLoad(gpa, textures, model, .{}, false);
+        const library = try gpa.create(Library);
+        library.* = .{ .gpa = gpa, .resources = resources, .textures = textures };
         var object: game.objects.Model = try .create(gpa, model, loaded, .{
             .light_sprite = try game.objects.lightSprite(textures),
             .glows = glows,
+            .mounts = library.mounts(),
         });
         object.recentre(model);
         object.place(@splat(0), math.identity);
