@@ -326,3 +326,33 @@
 00491e00	function	frame_begin	void (void)	Starts a frame: frame_duration becomes the ticks since frame_start, and frame_start becomes mission_ticks
 00491de0	function	frame_reset	void (void)	frame_start becomes mission_ticks, and frame_duration zero
 004983a0	function	noop	void (void)	Returns at once; tables use it for a routine with nothing to do
+
+# Combat maneuvers
+00405010	function	maneuver_compile_line	void __fastcall (ManeuverScriptLine *script, int line)	Compiles a line of a maneuver script into maneuver_code, the first time the line runs: src/formats/maneuver_script.zig does the same
+00404f00	function	script_skip_spaces	void __fastcall (char **cursor)	Skips spaces and tabs
+00404f20	function	script_read_word	void __fastcall (char **cursor, char *word)	Reads a word of letters, digits and _ . : -
+00404f80	function	script_read_arguments	int __fastcall (char **cursor, char **arguments)	Reads an argument list, (, words separated by commas, ), four words at most; returns the count
+004069b0	function	maneuver_run	void __fastcall (int slot)	Runs the Fight order's maneuver for an update: starts lines until one waits, compiling each the first time, then runs the waiting one
+00405b20	function	maneuver_start_timer	ManeuverHandler	The start of most waiting instructions: their time is up min + random * (max - min) ticks after frame_start
+00405b70	function	maneuver_jump	ManeuverHandler	The start of Goto and Else: goes on after the instruction's line
+00405e60	function	maneuver_fly_to_point	ManeuverHandler	The run of Runaway and Outofactionsphere: steers at the state's point until the time is up
+00405c50	function	maneuver_stop_weaving	void __fastcall (int slot, FightState *state)	Clears weaving
+00405c60	function	maneuver_steer_to_point	void __fastcall (int slot, FightState *state)	Steers at the state's point at full throttle; once the point is nearly dead ahead it pitches at full rate until the point is 45 degrees off, weaving. With anything to avoid, ai_steer with flags 3 instead
+004c18a0	function	mat3_forward	void __fastcall (Vec3 *out, float *m)	out = the third column of m: for an orientation, the forward axis
+004c11c0	function	vec3_dot	float __fastcall (Vec3 *a, Vec3 *b)
+004c1370	function	vec3_normalize	void __cdecl (Vec3 *v)	Scales v to length 1, or makes it a tiny forward vector when it has none
+004e0cb8	data	maneuver_code_end	byte *	Where maneuver_compile_line writes the next instruction
+00515da4	data	maneuver_code		The compiled lines of the maneuver scripts, packed as the compiler writes them
+004e1918	data	maneuver_choices	byte *[9]	The lists Fight picks a maneuver from, a count and then maneuver numbers, by where the target is from the ship's nose, then where the ship is from the target's
+004e193c	data	pursue_distances	float[3]	How far off a target Fight pursues it, by the pilot's value 3, before the target's speed scales it
+00515d74	data	action_sphere_radius	float	The action sphere's radius: 220000
+00515d78	data	action_sphere_center		The object the action sphere is around, which fighters away from the fight return to
+0040a3a0	function	fight_choose_maneuver	void __fastcall (int slot)	Chooses the Fight order's next maneuver into its entry's data: by the matchup, then its length
+0040a000	function	fight_choose_by_position	bool __fastcall (int slot, FightData *data, OrderEntry *entry)	Chooses between fighters: pursue when far, run away when close, else from maneuver_choices by where the two ships are
+0040a220	function	fight_choose_against_massive	void __fastcall (int slot, FightData *data)	Attack massive object, for 20000 ticks, against a target with components
+0040a230	function	fight_choose_out_of_sphere	bool __fastcall (int slot, FightData *data, OrderEntry *entry)	Out of action sphere, for 500 ticks, for a ship away from the action sphere with no player near
+0040a390	function	fight_choose_as_massive	void __fastcall (int slot, FightData *data)	Attack medium fighter, for 10000 ticks, for a ship with components
+00409f00	function	fight_find_ship_to_run_to	bool __fastcall (int slot, FightData *data)	Finds the nearest friendly ship with components and combat class 2 or 3 to run to; false when there is none or the ship is near one already
+00409be0	function	fight_aim	void __fastcall (int slot, FightState *state, OrderEntry *entry)	Aims the guns: every pilot tier_c_count ticks at the target, leading it by a quarter of its velocity, then moves the aim each update and fires through 0x4096B0
+00409d10	function	fight_call_for_help		Has a ship the player has hurt badly send its nearest fighting wingman at the player
+00409ec0	function	fight_update_cloak	void __fastcall (int slot, FightState *state)	Uncloaks the ship when its maneuver asked for no cloak, and cloaks it once cloak_at passes when it asked for one

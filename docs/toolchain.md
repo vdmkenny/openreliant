@@ -76,7 +76,7 @@ code. Programs are grouped into project folders, one group per make target:
 make ghidra-import           # import and auto-analyse every group, headless
 make ghidra-import-game      # or one group
 make ghidra-export           # dump each program as text under ghidra/export/
-make ghidra-run SCRIPT=Name.java   # run one script from ghidra/scripts, program writable
+make ghidra-run SCRIPT=Name.java [ARGS="..."]   # run one script from ghidra/scripts, program writable
 make ghidra-annotate         # name and type the payload's known functions and data
 make ghidra-gui              # open the project
 ```
@@ -100,11 +100,16 @@ place. They go in the `/StarLancer` category and replace earlier versions, so a 
 definition reaches the project on the next run. It then applies names, comments, data types and
 function signatures from two tables of address, kind, name, type and comment:
 [`ghidra/names/LANCER.EXE.tsv`](../ghidra/names/LANCER.EXE.tsv), kept by hand as functions and
-data are identified, and one `ghidragen names` writes for the code the VM reaches only through its
-tables, naming each opcode handler after its opcode and each command implementation after its
-command. Auto-analysis never finds that code, so the script disassembles it first. Names are
+data are identified, and one `ghidragen names` writes for the code the payload reaches only through
+its tables: each VM opcode handler after its opcode, each command implementation after its command,
+each order routine after its order and each maneuver opcode handler after its opcode, and the
+tables themselves. Auto-analysis never finds that code, so the script disassembles it first. Names are
 user-defined, re-running changes nothing that is already in place, and the tables are the record of
 what is named and typed: re-import a program and one command restores it.
+
+To read code that auto-analysis missed before naming it, `make ghidra-run
+SCRIPT=DefineFunctions.java ARGS="0x00405010 ..."` defines functions at those addresses under
+Ghidra's default names, and the next export includes them.
 
 `make vm-opcodes` reads the export back: `src/tools/tablegen` derives the opcode table from the
 payload's dispatch table and its handlers and writes
@@ -115,6 +120,7 @@ binary alone and write [`src/formats/vm_commands.zig`](../src/formats/vm_command
 ship type table from the binary and follows the code that loads the attachment models in the
 export, and writes [`src/formats/models.zig`](../src/formats/models.zig). `make control-tables`
 reads the player's actions and their default bindings from the binary and writes
-[`src/formats/controls.zig`](../src/formats/controls.zig), and `make order-tables` reads the order
-table into [`src/formats/orders.zig`](../src/formats/orders.zig). The tables are committed, so building
+[`src/formats/controls.zig`](../src/formats/controls.zig), `make order-tables` reads the order
+table into [`src/formats/orders.zig`](../src/formats/orders.zig), and `make maneuver-tables` reads
+the combat maneuvers and their scripts into [`src/formats/maneuvers.zig`](../src/formats/maneuvers.zig). The tables are committed, so building
 the tools never needs the game.

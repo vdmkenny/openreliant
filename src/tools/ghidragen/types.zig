@@ -93,8 +93,26 @@ pub const exported = [_]Export{
     .{ "OrderTarget", lancer.orders.Target },
     .{ "OrderTargetKind", lancer.orders.Target.Kind },
     .{ "OrderEntry", lancer.orders.Entry },
+    .{ "OrderData", lancer.orders.Entry.Data },
     .{ "QueuedOrder", lancer.orders.Queued },
     .{ "OrderState", lancer.orders.State },
+
+    // Combat maneuvers.
+    .{ "ManeuverOpcode", lancer.maneuvers.Opcode },
+    .{ "ManeuverMirror", lancer.maneuvers.Mirror },
+    .{ "ManeuverCondition", lancer.maneuvers.Condition },
+    .{ "ManeuverRecord", lancer.maneuvers.Maneuver },
+    .{ "ManeuverScriptLine", lancer.maneuvers.ScriptLine },
+    .{ "ManeuverHandler", lancer.maneuvers.Handler },
+    .{ "ManeuverHandlers", lancer.maneuvers.Handlers },
+    .{ "ManeuverInstruction", lancer.maneuvers.Instruction },
+    .{ "ManeuverRange", lancer.maneuvers.Instruction.Range },
+    .{ "ManeuverTicks", lancer.maneuvers.Instruction.Ticks },
+    .{ "ManeuverFlag", lancer.maneuvers.Instruction.Flag },
+    .{ "ManeuverJump", lancer.maneuvers.Instruction.Jump },
+    .{ "ManeuverBranch", lancer.maneuvers.Instruction.Branch },
+    .{ "FightState", lancer.maneuvers.FightState },
+    .{ "FightData", lancer.maneuvers.FightData },
 
     // Live objects and their models.
     .{ "GameObject", lancer.game.GameObject },

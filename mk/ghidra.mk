@@ -66,15 +66,16 @@ endef
 $(foreach group,$(GHIDRA_GROUPS),$(eval $(call GHIDRA_GROUP_RULES,$(group))))
 
 # Runs one Ghidra script against a group, with the program writable so the script may annotate it.
-# SCRIPT names a file in ghidra/scripts; GROUP defaults to the game itself.
+# SCRIPT names a file in ghidra/scripts, ARGS are passed to it, and GROUP defaults to the game.
 SCRIPT ?=
+ARGS   ?=
 GROUP  ?= game
 
 .PHONY: ghidra-run
-ghidra-run: | $(GHIDRA_PROJECT_DIR)/.imported-$(GROUP) ## Run a Ghidra script: make ghidra-run SCRIPT=Name.java [GROUP=game]
+ghidra-run: | $(GHIDRA_PROJECT_DIR)/.imported-$(GROUP) ## Run a Ghidra script: make ghidra-run SCRIPT=Name.java [ARGS="..."] [GROUP=game]
 	@test -n "$(SCRIPT)" || { echo "set SCRIPT=<file in ghidra/scripts>"; exit 1; }
 	$(HEADLESS) $(GHIDRA_PROJECT)/$(GROUP) -process -noanalysis \
-	    -scriptPath $(GHIDRA_SCRIPTS_DIR) -postScript $(SCRIPT) \
+	    -scriptPath $(GHIDRA_SCRIPTS_DIR) -postScript $(SCRIPT) $(ARGS) \
 	    -max-cpu $(HEADLESS_MAX_CPU) -log $(GHIDRA_PROJECT_DIR)/script-$(GROUP).log
 
 GHIDRA_NAMES_DIR := $(GHIDRA_DIR)/names
@@ -155,3 +156,12 @@ order-tables: ## Re-derive the order table, what objects are told to do, from th
 	$(ZIG) build tablegen
 	$(ROOT)/zig-out/bin/tablegen orders $(PAYLOAD) $(ORDER_TABLES)
 	$(ZIG) fmt $(ORDER_TABLES)
+
+MANEUVER_TABLES := $(ROOT)/src/formats/maneuvers.zig
+
+.PHONY: maneuver-tables
+maneuver-tables: ## Re-derive the combat maneuvers, their scripts and handlers from the payload executable
+	@test -f $(PAYLOAD) || { echo "missing $(PAYLOAD); run 'make game'" >&2; exit 1; }
+	$(ZIG) build tablegen
+	$(ROOT)/zig-out/bin/tablegen maneuvers $(PAYLOAD) $(MANEUVER_TABLES)
+	$(ZIG) fmt $(MANEUVER_TABLES)

@@ -8,6 +8,7 @@ const assert = std.debug.assert;
 const lancer = @import("../lancer.zig");
 const Pointer = lancer.Pointer;
 const dte = @import("../formats/dte.zig");
+const maneuvers = @import("maneuvers.zig");
 const Order = @import("../formats/orders.zig").Order;
 
 /// An order's `init`, `update` or `exit`.
@@ -95,9 +96,15 @@ pub const Entry = extern struct {
     target: Target,
     /// A running count from `0x5185A8` while the byte at `0x5185B1` is set, otherwise zero.
     sequence: i16,
-    /// The order's own data, zero when the order is pushed. `player_controls` keeps the mouse's
-    /// stick position in the first two words.
-    data: [8]i16,
+    /// The order's own data, zero when the order is pushed.
+    data: Data,
+
+    pub const Data = extern union {
+        /// `player_controls` keeps the mouse's stick position in the first two.
+        words: [8]i16,
+        /// Fight's: the maneuver to start next.
+        fight: maneuvers.FightData,
+    };
 
     comptime {
         assert(@offsetOf(Entry, "target") == 0x2);
@@ -124,8 +131,13 @@ pub const Queued = extern struct {
 
 /// What the current order keeps between updates, zeroed when an order starts; each order uses it
 /// its own way.
-pub const State = extern struct {
+pub const State = extern union {
     bytes: [0x90]u8,
+    fight: maneuvers.FightState,
+
+    comptime {
+        assert(@sizeOf(State) == 0x90);
+    }
 };
 
 test {

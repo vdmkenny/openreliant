@@ -23,6 +23,7 @@ no game code or assets.
 | [`engine/loop.md`](engine/loop.md) | The game loop: the 100 Hz tick, the 25 Hz simulation step, collisions. |
 | [`engine/controls.md`](engine/controls.md) | Player input: devices, bindings, settings, steering and throttle. |
 | [`engine/orders.md`](engine/orders.md) | Orders: the table of what objects can be told to do, each object's stack, and how orders run. |
+| [`engine/maneuvers.md`](engine/maneuvers.md) | Combat maneuvers: the scripts Fight runs, their language, and how it chooses them. |
 
 ## Conventions
 

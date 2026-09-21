@@ -176,6 +176,7 @@ set from C's `rand()` when the object is created, that steps as `seed * 0x343FD 
 | Immediately set ship to zero velocity and rotation (44) | `object_stop` (`0x00403000`), then it pops. |
 | Fly ship backwards (45) | Throttle -0.5, no turning. |
 | Multiplayer Control (101) | Disables the object once it has object flag `0x10000000`. |
+| Fight (105) | Fights its target by running [combat maneuvers](maneuvers.md), one after another. |
 | Disrupted (114) | On starting, sets object flag `0x8`, sets the ship tumbling with random turn rates, and keeps the tick to end at, the duration in its data after `frame_start`. It pops at that tick, and its `exit` clears the flag. |
 
 **Unknown:** what the other orders do.

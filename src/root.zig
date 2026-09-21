@@ -10,6 +10,10 @@ pub const fat = @import("formats/fat.zig");
 pub const fnt = @import("formats/fnt.zig");
 pub const hog = @import("formats/hog.zig");
 pub const iso9660 = @import("formats/iso9660.zig");
+/// The combat maneuvers the Fight order runs, transcribed from the game executable, and the
+/// language of their scripts.
+pub const maneuvers = @import("formats/maneuvers.zig");
+pub const maneuver_script = @import("formats/maneuver_script.zig");
 /// The models the engine loads by number, transcribed from the game executable.
 pub const models = @import("formats/models.zig");
 /// The orders objects follow, transcribed from the game executable.

@@ -42,12 +42,12 @@ pub const Reader = struct {
         return reader.int(u32, va);
     }
 
-    /// A NUL-terminated string of printable ASCII at `va`, or empty for a null pointer.
+    /// A NUL-terminated string of printable ASCII and tabs at `va`, or empty for a null pointer.
     pub fn string(reader: Reader, va: u32) Error![]const u8 {
         if (va == 0) return "";
         const bytes = reader.rest(va) orelse return error.BadString;
         const end = std.mem.indexOfScalar(u8, bytes, 0) orelse return error.BadString;
-        for (bytes[0..end]) |c| if (c < 0x20 or c > 0x7E) return error.BadString;
+        for (bytes[0..end]) |c| if ((c < 0x20 and c != '\t') or c > 0x7E) return error.BadString;
         return bytes[0..end];
     }
 };
@@ -57,6 +57,7 @@ test Reader {
     const region: testing.Region = .{ .va = 0x401000, .bytes = &data };
     region.putWord(0x401000, 0xDEADBEEF);
     region.putString(0x401010, "LANCER");
+    region.putString(0x401018, "\tGoto");
     region.put(0x401020, "bad\x01\x00");
     region.put(0x40103C, "open");
 
@@ -66,6 +67,7 @@ test Reader {
     try std.testing.expectEqual(0xDEADBEEF, try reader.word(0x401000));
     try std.testing.expectEqual(0xBEEF, try reader.int(u16, 0x401000));
     try std.testing.expectEqualStrings("LANCER", try reader.string(0x401010));
+    try std.testing.expectEqualStrings("\tGoto", try reader.string(0x401018));
     try std.testing.expectEqualStrings("", try reader.string(0));
     try std.testing.expectEqualSlices(u8, "LAN", try reader.slice(0x401010, 3));
 
