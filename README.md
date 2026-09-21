@@ -15,7 +15,7 @@ Tools are written in Zig; `make` drives the toolchain, the extraction and the an
 
 > You must own a copy of the game. This repository contains no game code, assets or disc images,
 > and none are ever committed: `game/`, `ghidra/projects/` and `ghidra/export/` are git-ignored.
-> The wireframe above is a line drawing this project's own tools generate from model geometry.
+> Work derived from the game, such as the wireframe above, is fine; the game's own files are not.
 
 ## Getting started
 

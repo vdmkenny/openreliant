@@ -15,14 +15,14 @@ pub const Command = union(enum) {
     /// Lists the chunk stream as it appears in the file.
     chunks: struct { model: []const u8 },
     /// Writes Wavefront OBJ, one object per part.
-    obj: struct { model: []const u8, out: []const u8, lod: u32 = 0 },
+    obj: struct { model: []const u8, out: []const u8, lod: u32 = 0, model_space: bool = false },
 
     pub const usage =
         \\  shp info <model>                parts, meshes, materials and bounds
         \\  shp check <model>               validate indices, bounds and normals
         \\  shp chunks <model>              list the raw chunk stream
-        \\  shp obj <model> <out.obj> [--lod <n>]
-        \\                                  export geometry as Wavefront OBJ
+        \\  shp obj <model> <out.obj> [--lod <n>] [--model-space]
+        \\                                  export geometry as Wavefront OBJ, righted to Y-up
         \\
     ;
 
@@ -35,11 +35,17 @@ pub const Command = union(enum) {
             .check => return if (operands.len == 1) .{ .check = .{ .model = operands[0] } } else error.Usage,
             .chunks => return if (operands.len == 1) .{ .chunks = .{ .model = operands[0] } } else error.Usage,
             .obj => {
-                if (operands.len != 2 and operands.len != 4) return error.Usage;
+                if (operands.len < 2) return error.Usage;
                 var command: Command = .{ .obj = .{ .model = operands[0], .out = operands[1] } };
-                if (operands.len == 4) {
-                    if (!std.mem.eql(u8, operands[2], "--lod")) return error.Usage;
-                    command.obj.lod = std.fmt.parseInt(u32, operands[3], 10) catch return error.Usage;
+                var i: usize = 2;
+                while (i < operands.len) {
+                    if (std.mem.eql(u8, operands[i], "--model-space")) {
+                        command.obj.model_space = true;
+                        i += 1;
+                    } else if (std.mem.eql(u8, operands[i], "--lod") and i + 1 < operands.len) {
+                        command.obj.lod = std.fmt.parseInt(u32, operands[i + 1], 10) catch return error.Usage;
+                        i += 2;
+                    } else return error.Usage;
                 }
                 return command;
             },
@@ -56,7 +62,13 @@ pub const Command = union(enum) {
             .chunks => try chunks(ctx, data),
             .info => try info(ctx, try shp.Model.parse(ctx.arena, data)),
             .check => try check(ctx, try shp.Model.parse(ctx.arena, data)),
-            .obj => |operands| try writeObj(ctx, try shp.Model.parse(ctx.arena, data), operands.out, operands.lod),
+            .obj => |operands| try writeObj(
+                ctx,
+                try shp.Model.parse(ctx.arena, data),
+                operands.out,
+                operands.lod,
+                operands.model_space,
+            ),
         }
     }
 };
@@ -263,14 +275,24 @@ fn check(ctx: Context, model: shp.Model) !void {
 /// merge into larger polygons in the engine, but each record is already a complete triangle of
 /// that polygon, so triangulating them is equivalent and avoids relying on the coplanarity test
 /// the loader applies.
-fn writeObj(ctx: Context, model: shp.Model, out_path: []const u8, lod: u32) !void {
+fn writeObj(ctx: Context, model: shp.Model, out_path: []const u8, lod: u32, model_space: bool) !void {
+    // The model frame is Y-down, Z-forward; OBJ readers assume Y-up. `--model-space` keeps the
+    // coordinates exactly as the file stores them.
+    const place = struct {
+        fn at(v: shp.Vec3, raw: bool) shp.Vec3 {
+            return if (raw) v else v.toYUp();
+        }
+    };
     const file = try Io.Dir.cwd().createFile(ctx.io, out_path, .{});
     defer file.close(ctx.io);
     var buffer: [64 * 1024]u8 = undefined;
     var writer = file.writer(ctx.io, &buffer);
     const out = &writer.interface;
 
-    try out.print("# Starlancer model, lod {d}, {d} parts\n", .{ lod, model.parts.len });
+    try out.print("# Starlancer model, lod {d}, {d} parts, {s}\n", .{
+        lod,                                                                       model.parts.len,
+        if (model_space) "model space (Y down, Z forward)" else "righted to Y up",
+    });
 
     // OBJ numbers positions, texture coordinates and normals in three independent spaces, each
     // 1-based and running across the whole file.
@@ -298,14 +320,16 @@ fn writeObj(ctx: Context, model: shp.Model, out_path: []const u8, lod: u32) !voi
 
         try out.print("\no {s}\n", .{if (entry.part.name().len > 0) entry.part.name() else "part"});
         for (mesh.vertices) |vertex| {
-            try out.print("v {d} {d} {d}\n", .{
-                vertex.position.x + offset.x,
-                vertex.position.y + offset.y,
-                vertex.position.z + offset.z,
-            });
+            const p = place.at(.{
+                .x = vertex.position.x + offset.x,
+                .y = vertex.position.y + offset.y,
+                .z = vertex.position.z + offset.z,
+            }, model_space);
+            try out.print("v {d} {d} {d}\n", .{ p.x, p.y, p.z });
         }
         for (mesh.vertices) |vertex| {
-            try out.print("vn {d} {d} {d}\n", .{ vertex.normal.x, vertex.normal.y, vertex.normal.z });
+            const n = place.at(vertex.normal, model_space);
+            try out.print("vn {d} {d} {d}\n", .{ n.x, n.y, n.z });
         }
         // OBJ texture coordinates run bottom-up, the opposite of the game's.
         for (mesh.faces) |face| {

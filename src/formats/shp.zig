@@ -23,6 +23,17 @@ pub const Vec3 = extern struct {
 
     pub const zero: Vec3 = .{ .x = 0, .y = 0, .z = 0 };
 
+    /// Maps a model coordinate into the Y-up frame Wavefront OBJ and most viewers assume.
+    ///
+    /// The model frame has **Y pointing down and Z pointing forward** (see `docs/formats/shp.md`),
+    /// so righting it is a half turn about the forward axis: X and Y flip, Z is left alone. That
+    /// keeps the nose on `+Z`, where a viewer's default camera is looking, and it does not mirror
+    /// the model, since negating two axes leaves the determinant positive and a ship's port and
+    /// starboard where they were.
+    pub fn toYUp(v: Vec3) Vec3 {
+        return .{ .x = -v.x, .y = -v.y, .z = v.z };
+    }
+
     pub fn min(a: Vec3, b: Vec3) Vec3 {
         return .{ .x = @min(a.x, b.x), .y = @min(a.y, b.y), .z = @min(a.z, b.z) };
     }
@@ -620,6 +631,21 @@ test "truncated streams are rejected" {
 
     var empty: Reader = .init(&.{});
     try std.testing.expectError(error.Truncated, empty.next());
+}
+
+test "righting a model is a half turn, not a mirror" {
+    const v: Vec3 = .{ .x = 1, .y = 2, .z = 3 };
+    const up = v.toYUp();
+    try std.testing.expectEqual(Vec3{ .x = -1, .y = -2, .z = 3 }, up);
+    // Applying it twice returns the original, and the nose stays on +Z.
+    try std.testing.expectEqual(v, up.toYUp());
+
+    // A half turn preserves chirality: the cross product of two axes keeps its handedness, so a
+    // model is reoriented rather than mirrored.
+    const x = (Vec3{ .x = 1, .y = 0, .z = 0 }).toYUp();
+    const y = (Vec3{ .x = 0, .y = 1, .z = 0 }).toYUp();
+    const cross_z = x.x * y.y - x.y * y.x;
+    try std.testing.expectEqual(@as(f32, 1), cross_z);
 }
 
 test "record sizes and field offsets match the format" {

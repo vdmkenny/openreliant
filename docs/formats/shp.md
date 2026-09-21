@@ -178,14 +178,38 @@ part's own frame. Across all 1,771 parts:
 `sltool shp check` classifies each part rather than requiring a match, since all five cases occur
 in shipped, working models. The vertices are authoritative; the stored box is a hint.
 
-## Coordinates and units
+## Coordinate frame
 
-Positions are in model units. A light fighter such as the Predator spans roughly 1,100 units along
-its length, so a unit is on the order of a centimetre. Part positions are relative to the parent,
-so placing a part in model space means summing the chain up to the root.
+The model frame is **X lateral, Y down, Z forward**. Neither axis direction is recorded in the
+file; both are settled by what the parts are named and where they sit, across all 1,771 parts:
 
-Wavefront OBJ numbers texture coordinates from the bottom up, the opposite of this format, so
-`sltool shp obj` emits `1 - v`.
+| Test | Result |
+|---|---|
+| Parts named `Lower`, `bottom`, `under` | 11 of 11 at **positive Y** |
+| Parts named `cockpit` or `canopy` | 35 of 48 at **negative Y** |
+| Parts named `engine`, `exhaust`, `thruster` | 22 of 26 at **negative Z** |
+| Parts named `rear`, `back`, `aft` | 45 of 64 at **negative Z** |
+| Parts named `nose`, `front` | 7 of 9 at **positive Z** |
+| Parts named `cockpit` or `canopy` | 37 of 48 at **positive Z** |
+
+So `+Y` points at the ship's belly and `+Z` out of its nose. A model loaded without accounting for
+this is upside down.
+
+Righting it is a half turn about the forward axis, negating X and Y and leaving Z alone. That
+keeps the nose on `+Z`, where a viewer's default camera looks, and does not mirror the model:
+negating two axes leaves the determinant positive, so port and starboard stay put. Negating Y
+alone would mirror it, and negating Y and Z would right it but leave it facing away from the
+camera.
+
+`sltool shp obj` applies that half turn to positions and normals; `--model-space` writes the
+coordinates exactly as the file stores them. `shp info` and `shp check` always report model space.
+
+Wavefront OBJ also numbers texture coordinates from the bottom up, the opposite of this format, so
+the exporter emits `1 - v`.
+
+Positions are in model units. A light fighter such as the Predator spans roughly 1,100 units nose
+to tail, so a unit is on the order of a centimetre. Part positions are relative to the parent, so
+placing a part in model space means summing the chain up to the root.
 
 ## Unread fields
 
