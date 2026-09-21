@@ -15,6 +15,7 @@ game code or assets are stored in this repository.
 | [`formats/shp.md`](formats/shp.md) | `.SHP` 3D models: chunk stream, parts, levels of detail, geometry. |
 | [`formats/dte.md`](formats/dte.md) | `.DTE` missions: the 27-section image, ships, triggers and conditions. |
 | [`formats/spr.md`](formats/spr.md) | `.SPR` sprites: the WinVFX 2D interface imagery, and where model textures are not. |
+| [`formats/stats.md`](formats/stats.md) | The ship, gun, missile and pilot stat tables, as the engine's loaders read them. |
 
 ## Conventions
 

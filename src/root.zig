@@ -9,6 +9,7 @@ pub const iso9660 = @import("formats/iso9660.zig");
 pub const refpack = @import("formats/refpack.zig");
 pub const shp = @import("formats/shp.zig");
 pub const spr = @import("formats/spr.zig");
+pub const stats = @import("formats/stats.zig");
 
 /// Windows executables: the game binary and the protection wrapped around it.
 pub const pe = @import("formats/pe.zig");

@@ -81,6 +81,11 @@ opcode's size and control flow. With that, `sltool dte script` disassembles all 
 routines across the 44 missions, following branches rather than sweeping linearly, and the missions
 carry their authors' own names for them. See [`docs/formats/dte.md`](docs/formats/dte.md).
 
+`sltool stats` reads the ship, gun, missile and pilot tables. Their fields are named from the
+engine's own loaders and loadout screen rather than from mod diffs, which settles several that
+earlier work left provisional and shows that the missile loader reads only 11 of the 16 missiles.
+See [`docs/formats/stats.md`](docs/formats/stats.md).
+
 Documentation index: [`docs/README.md`](docs/README.md).
 
 ## Layout
