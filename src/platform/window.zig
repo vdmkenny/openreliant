@@ -5,6 +5,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const c = @import("sdl");
 
+const keyboard = @import("keyboard.zig");
 const macos = @import("macos.zig");
 
 pub const Error = error{Sdl};
@@ -18,9 +19,9 @@ fn fail(what: []const u8) Error {
 /// What happened since the last frame.
 pub const Event = union(enum) {
     quit,
-    /// A key went down or up, by SDL's scan code: the key's place on the keyboard, whatever it
-    /// types.
-    key: struct { scancode: u32, down: bool, repeat: bool },
+    /// A key went down or up, by its DirectInput scan code (`keyboard.directInput`): the key's
+    /// place on the keyboard, whatever it types. Keys DirectInput has no code for are left out.
+    key: struct { scan: u8, down: bool },
 };
 
 pub const Window = struct {
@@ -65,11 +66,10 @@ pub const Window = struct {
         while (c.SDL_PollEvent(&event)) {
             switch (event.type) {
                 c.SDL_EVENT_QUIT => return .quit,
-                c.SDL_EVENT_KEY_DOWN, c.SDL_EVENT_KEY_UP => return .{ .key = .{
-                    .scancode = event.key.scancode,
-                    .down = event.key.down,
-                    .repeat = event.key.repeat,
-                } },
+                c.SDL_EVENT_KEY_DOWN, c.SDL_EVENT_KEY_UP => {
+                    const scan = keyboard.directInput(event.key.scancode) orelse continue;
+                    return .{ .key = .{ .scan = scan, .down = event.key.down } };
+                },
                 else => {},
             }
         }

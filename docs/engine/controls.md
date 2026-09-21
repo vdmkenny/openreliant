@@ -168,4 +168,6 @@ the ship. **Unknown:** what sets that byte.
 The bindings and `starlancer.ini` hold DirectInput scan codes, which follow the IBM PC's set 1
 scan codes, with the extended keys at `0x80` and up. A port that reads input some other way maps
 its key codes to them, gives the joystick's axes in the ranges above, and gives the mouse's
-movement since the previous step.
+movement since the previous step. This one maps SDL's scan codes
+([`platform/keyboard.zig`](../../src/platform/keyboard.zig)), and ports `key_pressed`,
+`read_keyboard`'s latches and `control_active` in [`input.zig`](../../src/lancer/input.zig).

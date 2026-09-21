@@ -3,6 +3,7 @@
 
 const std = @import("std");
 
+pub const keyboard = @import("platform/keyboard.zig");
 pub const window = @import("platform/window.zig");
 
 test {

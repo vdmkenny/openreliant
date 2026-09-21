@@ -6,6 +6,7 @@ const std = @import("std");
 
 const math = @import("../surrender/math.zig");
 const srapi = @import("../surrender/surrenderlib/srapi.zig");
+const input = @import("../input.zig");
 const controls = @import("../input/controls.zig");
 const Vector = math.Vector;
 const Matrix = math.Matrix;
@@ -94,6 +95,12 @@ pub const CockpitMode = enum(u2) {
             .chase => .open,
         };
     }
+};
+
+/// The camera keys, in the order `frame_controls` reads them.
+pub const camera_actions = [_]controls.Action{
+    .cockpit_camera,  .left_view_camera, .right_view_camera, .rear_view_camera,
+    .flyby_camera,    .target_camera,    .external_camera,   .missile_camera,
 };
 
 /// The view a camera key picks (`frame_controls`), or null for another action. The cockpit key
@@ -204,6 +211,38 @@ pub const Camera = struct {
             if (camera.cockpit_mode == .chase) camera.chase.distance = Chase.start_distance;
         }
         return view;
+    }
+
+    /// The camera's part of `frame_controls` for a frame `ticks` hundredths of a second long: in
+    /// the target and external views, the arrow keys steer the orbit, with Shift up and down to
+    /// zoom; then each camera key pressed picks its view, the last one in the game's order
+    /// winning, with `player` as the object. The keys are read as the game reads them, in its order,
+    /// since `key_pressed` frees latches. Not yet ported: the joystick's hat.
+    pub fn frameControls(camera: *Camera, keyboard: *input.Keyboard, player: u16, ticks: u32, now: u32) void {
+        if (camera.view == .target or camera.view == .external) {
+            const scan = input.scan;
+            var keys: Orbit.Keys = .{};
+            if (keyboard.pressed(scan.left, .none, false)) {
+                keys.left = true;
+            } else if (keyboard.pressed(scan.right, .none, false)) {
+                keys.right = true;
+            }
+            if (keyboard.pressed(scan.up, .shift, false)) {
+                keys = .{ .left = keys.left, .right = keys.right, .up = true, .shift = true };
+            } else if (keyboard.pressed(scan.down, .shift, false)) {
+                keys = .{ .left = keys.left, .right = keys.right, .down = true, .shift = true };
+            } else if (keyboard.pressed(scan.up, .none, false)) {
+                keys.up = true;
+            } else if (keyboard.pressed(scan.down, .none, false)) {
+                keys.down = true;
+            }
+            camera.orbit.steer(keys, @floatFromInt(ticks));
+        }
+        var chosen: ?View = null;
+        for (camera_actions) |action| {
+            if (input.controlActive(keyboard, controls.binding(action), true, false)) chosen = camera.key(action);
+        }
+        if (chosen) |view| _ = camera.setView(view, player, false, false, now);
     }
 
     /// Places the camera for a frame (`camera_frame`): moves the bars, then puts the camera where
@@ -592,4 +631,29 @@ test flyby {
     try expectVector(.{ 0, 100, 400 }, place.position);
     // Too near: it backs off to a radius.
     try expectVector(.{ 0, 0, 100 }, flyby(.{ 0, 0, 10 }, .{ 0, 0, 0 }, math.identity, 100).position);
+}
+
+test "Camera.frameControls" {
+    var camera: Camera = .{};
+    var keyboard: input.Keyboard = .{};
+    // The external camera's key, 7, picks its view once for the press.
+    keyboard.down[controls.binding(.external_camera).key] = true;
+    camera.frameControls(&keyboard, 0, 1, 100);
+    try std.testing.expectEqual(View.external, camera.view);
+    try std.testing.expectEqual(100, camera.switched);
+    camera.switched = 0;
+    camera.frameControls(&keyboard, 0, 1, 200);
+    try std.testing.expectEqual(0, camera.switched);
+
+    // In it, the left arrow turns the orbit.
+    keyboard.down[input.scan.left] = true;
+    camera.frameControls(&keyboard, 0, 10, 300);
+    try std.testing.expect(camera.orbit.yaw_speed < 0);
+
+    // The cockpit key, pressed in the cockpit view, cycles the cockpit mode.
+    _ = camera.setView(.cockpit, 0, false, false, 0);
+    keyboard = .{};
+    keyboard.down[controls.binding(.cockpit_camera).key] = true;
+    camera.frameControls(&keyboard, 0, 1, 400);
+    try std.testing.expectEqual(CockpitMode.cockpit, camera.cockpit_mode);
 }

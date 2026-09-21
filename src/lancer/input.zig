@@ -109,6 +109,150 @@ pub const ControlMode = enum(u32) {
     _,
 };
 
+/// DirectInput scan codes (`DIK_*`) the input code names: those of the modifiers, and the keys
+/// `frame_controls` steers the orbiting views with.
+pub const scan = struct {
+    pub const escape = 0x01;
+    pub const left_control = 0x1D;
+    pub const left_shift = 0x2A;
+    pub const right_shift = 0x36;
+    pub const left_alt = 0x38;
+    pub const right_control = 0x9D;
+    pub const right_alt = 0xB8;
+    pub const up = 0xC8;
+    pub const left = 0xCB;
+    pub const right = 0xCD;
+    pub const down = 0xD0;
+};
+
+/// The keyboard as the game reads it (`keyboard`, `0x00595C68`): each key down or up, by scan
+/// code; and the latches `key_pressed` keeps so that a press counts once (`key_latched`,
+/// `0x005D54EC`, and one for each modifier).
+pub const Keyboard = struct {
+    down: [256]bool = @splat(false),
+    latched: [256]bool = @splat(false),
+    shift_latched: bool = false,
+    control_latched: bool = false,
+    alt_latched: bool = false,
+
+    /// What `read_keyboard` (`0x004BD490`) does once it has the keys: frees the latch of each key
+    /// that is up, and of each modifier with both its keys up.
+    pub fn read(keyboard: *Keyboard) void {
+        for (&keyboard.latched, keyboard.down) |*latched, down| {
+            if (latched.* and !down) latched.* = false;
+        }
+        if (keyboard.shift_latched and !keyboard.shift()) keyboard.shift_latched = false;
+        if (keyboard.control_latched and !keyboard.control()) keyboard.control_latched = false;
+        if (keyboard.alt_latched and !keyboard.alt()) keyboard.alt_latched = false;
+    }
+
+    fn shift(keyboard: Keyboard) bool {
+        return keyboard.down[scan.left_shift] or keyboard.down[scan.right_shift];
+    }
+
+    fn control(keyboard: Keyboard) bool {
+        return keyboard.down[scan.left_control] or keyboard.down[scan.right_control];
+    }
+
+    fn alt(keyboard: Keyboard) bool {
+        return keyboard.down[scan.left_alt] or keyboard.down[scan.right_alt];
+    }
+
+    /// Whether `key` is down with `modifier` (`key_pressed`, `0x004BD570`). With `once`, only once
+    /// for each press, and with no modifier, only while no modifier key is down; it latches the
+    /// key and the modifier. Without it, with no modifier, only while no modifier is latched; it
+    /// frees the key's latch and the modifier's.
+    pub fn pressed(keyboard: *Keyboard, key: u8, modifier: ControlBinding.Modifier, once: bool) bool {
+        if (!keyboard.down[key]) return false;
+        if (!once) {
+            switch (modifier) {
+                .none => if (keyboard.shift_latched or keyboard.control_latched or keyboard.alt_latched) return false,
+                .shift => if (keyboard.shift()) {
+                    keyboard.shift_latched = false;
+                } else return false,
+                .control => if (keyboard.control()) {
+                    keyboard.control_latched = false;
+                } else return false,
+                .alt => if (keyboard.alt()) {
+                    keyboard.alt_latched = false;
+                } else return false,
+                _ => return false,
+            }
+            keyboard.latched[key] = false;
+            return true;
+        }
+        if (keyboard.latched[key]) return false;
+        switch (modifier) {
+            .none => if (keyboard.shift() or keyboard.control() or keyboard.alt()) return false,
+            .shift => if (keyboard.shift()) {
+                keyboard.shift_latched = true;
+            } else return false,
+            .control => if (keyboard.control()) {
+                keyboard.control_latched = true;
+            } else return false,
+            .alt => if (keyboard.alt()) {
+                keyboard.alt_latched = true;
+            } else return false,
+            _ => return false,
+        }
+        keyboard.latched[key] = true;
+        return true;
+    }
+};
+
+/// Whether an action is active by its binding (`control_active`, `0x00412630`): its key with its
+/// modifier, or with none while neither Shift nor Ctrl is down; with `once`, as `key_pressed` counts
+/// it. While `numbers_taken`, the word at `0x00501EE8` being 3, the keys 1 to 8 count for nothing.
+/// Not yet ported: the joystick's buttons.
+pub fn controlActive(keyboard: *Keyboard, binding: controls.Binding, once: bool, numbers_taken: bool) bool {
+    if (numbers_taken and binding.key > 1 and binding.key < 10) return false;
+    const key = std.math.lossyCast(u8, binding.key);
+    if (once) return keyboard.pressed(key, binding.modifier, true);
+    return switch (binding.modifier) {
+        .none => !keyboard.shift() and !keyboard.control() and keyboard.down[key],
+        .shift => keyboard.down[key] and keyboard.shift(),
+        .control => keyboard.down[key] and keyboard.control(),
+        .alt => keyboard.down[key] and keyboard.alt(),
+        _ => false,
+    };
+}
+
+test Keyboard {
+    var keyboard: Keyboard = .{};
+    keyboard.down[scan.up] = true;
+    // Once for each press: the latch holds until the key is up and the keyboard read again.
+    try std.testing.expect(keyboard.pressed(scan.up, .none, true));
+    try std.testing.expect(!keyboard.pressed(scan.up, .none, true));
+    keyboard.read();
+    try std.testing.expect(!keyboard.pressed(scan.up, .none, true));
+    keyboard.down[scan.up] = false;
+    keyboard.read();
+    keyboard.down[scan.up] = true;
+    try std.testing.expect(keyboard.pressed(scan.up, .none, true));
+
+    // Held, it counts every time; with Shift down it counts only with the modifier.
+    try std.testing.expect(keyboard.pressed(scan.up, .none, false));
+    keyboard.down[scan.right_shift] = true;
+    try std.testing.expect(keyboard.pressed(scan.up, .shift, false));
+    try std.testing.expect(!keyboard.pressed(scan.up, .none, true));
+}
+
+test controlActive {
+    var keyboard: Keyboard = .{};
+    const cockpit = controls.binding(.cockpit_camera);
+    keyboard.down[cockpit.key] = true;
+    try std.testing.expect(controlActive(&keyboard, cockpit, false, false));
+    try std.testing.expect(!controlActive(&keyboard, cockpit, false, true));
+    try std.testing.expect(controlActive(&keyboard, cockpit, true, false));
+    try std.testing.expect(!controlActive(&keyboard, cockpit, true, false));
+    // A binding with Ctrl counts only with it held.
+    const smart = controls.binding(.smart_target);
+    keyboard.down[smart.key] = true;
+    try std.testing.expect(!controlActive(&keyboard, smart, false, false));
+    keyboard.down[scan.left_control] = true;
+    try std.testing.expect(controlActive(&keyboard, smart, false, false));
+}
+
 test {
     std.testing.refAllDecls(@This());
 }

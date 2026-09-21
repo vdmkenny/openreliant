@@ -1,8 +1,9 @@
 //! `starlancer`: the game, on SDL3 in place of Win32 and DirectX. It runs in the game's directory,
 //! or in the one given, and reads `resource.hog` and the texture cache as the game does.
 //!
-//! So far it shows a fighter in space from the chase view, drawn through Surrender's pipeline and
-//! its Direct3D driver onto the software device.
+//! So far it shows a ship in space, drawn through Surrender's pipeline and its Direct3D driver onto
+//! the software device, from the camera's views, which the game's camera keys pick and steer.
+//! Added for the port: F2 and F3 step back and forth through the ship types, and Escape quits.
 
 const std = @import("std");
 const Io = std.Io;
@@ -92,19 +93,9 @@ fn run(io: Io, arena: Allocator, options: Options) !void {
     const sky = try game.nebula.Sky.create(arena, &textures, try tga.decode(arena, try resources.readFile(arena, game.nebula.dome_image_name)));
     try sky.select(&textures, game.nebula.default_nebula, &space.lights);
 
-    // The ship, as `create_object` makes one of its type.
-    const model = try arena.create(shp.Model);
-    model.* = try .parse(arena, try resources.readFile(arena, game.create.models.ship_types[options.ship].model.?));
-    const loaded = try game.srofiles.modelLoad(arena, &textures, model, .{}, false);
-    var models = [1]game.objects.Model{try .create(arena, model, &loaded)};
-    models[0].place(@splat(0), math.identity);
-    const player: camera.Subject = .{
-        .position = @splat(0),
-        .orientation = math.identity,
-        .eye = .{ model.header.eye.x, model.header.eye.y, model.header.eye.z },
-        .radius = radius(models[0], loaded),
-        .motion = .{ .ship_type = @intCast(options.ship) },
-    };
+    var ship = try Ship.load(&resources, &textures, options.ship);
+    defer ship.unload();
+    var keyboard: lancer.input.Keyboard = .{};
 
     var view: camera.Camera = .{};
     var last_view = view.view;
@@ -114,7 +105,7 @@ fn run(io: Io, arena: Allocator, options: Options) !void {
     // which draws the sun by how much of it the first found showing.
     var frames_left: ?usize = null;
     if (options.screenshot != null) {
-        for (0..settling_frames) |_| _ = view.frame(.{ .object = player, .player = player, .ticks = 1 });
+        for (0..settling_frames) |_| _ = view.frame(.{ .object = ship.subject, .player = ship.subject, .ticks = 1 });
         frames_left = 2;
     }
 
@@ -134,13 +125,34 @@ fn run(io: Io, arena: Allocator, options: Options) !void {
     while (true) {
         while (window.poll()) |event| switch (event) {
             .quit => return,
-            .key => |key| if (key.down and key.scancode == escape) return,
+            .key => |key| keyboard.down[key.scan] = key.down,
         };
+        // What `read_keyboard` does once it has the keys. The game reads them each simulation step;
+        // this, with no simulation yet, each frame.
+        keyboard.read();
+        if (keyboard.pressed(lancer.input.scan.escape, .none, true)) return;
+        for ([_]struct { u8, isize }{ .{ f2, -1 }, .{ f3, 1 } }) |step| {
+            if (!keyboard.pressed(step[0], .none, true)) continue;
+            // Types whose files the game lacks are passed over.
+            var candidate = ship.ship_type;
+            while (true) {
+                candidate = nextShipType(candidate, step[1]);
+                if (candidate == ship.ship_type) break;
+                const next = Ship.load(&resources, &textures, candidate) catch |err| {
+                    std.log.warn("ship type {d} left out: {s}", .{ candidate, @errorName(err) });
+                    continue;
+                };
+                ship.unload();
+                ship = next;
+                break;
+            }
+        }
 
         const now = platform.window.ticks();
         const ticks: u32 = if (frames_left != null) 1 else @truncate(now - last_tick);
         last_tick = now;
-        if (view.frame(.{ .object = player, .player = player, .ticks = ticks })) |next| {
+        view.frameControls(&keyboard, 0, ticks, @truncate(now));
+        if (view.frame(.{ .object = ship.subject, .player = ship.subject, .ticks = ticks })) |next| {
             _ = view.setView(next, 0, false, true, @truncate(now));
         }
 
@@ -163,7 +175,7 @@ fn run(io: Io, arena: Allocator, options: Options) !void {
         context.projection = view.projection(size[0], size[1]);
         _ = frame_arena.reset(.retain_capacity);
         try game.main.drawFrame(arena, frame_arena.allocator(), &scene, &context, .{
-            .models = &models,
+            .models = (&ship.object)[0..1],
             .space = space,
             .sky = sky,
             .view = view.view,
@@ -193,8 +205,57 @@ fn save(io: Io, gpa: Allocator, path: []const u8, rgba: []const u8, size: [2]u32
     try writer.interface.flush();
 }
 
-/// SDL's scan code for Escape.
-const escape = 41;
+/// The DirectInput scan codes of F2 and F3, which the original leaves unbound.
+const f2 = 0x3C;
+const f3 = 0x3D;
+
+/// A ship of a type, as `create_object` makes one: its model's meshes and its object's nodes, all
+/// in an arena of its own so that the next can take its place.
+const Ship = struct {
+    arena: std.heap.ArenaAllocator,
+    ship_type: usize,
+    object: game.objects.Model,
+    subject: camera.Subject,
+
+    fn load(resources: *game.bigfile.Hog, textures: *srtexture.Table, ship_type: usize) !Ship {
+        var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+        errdefer arena.deinit();
+        const gpa = arena.allocator();
+        const model = try gpa.create(shp.Model);
+        model.* = try .parse(gpa, try resources.readFile(gpa, game.create.models.ship_types[ship_type].model.?));
+        const loaded = try gpa.create(game.srofiles.Loaded);
+        loaded.* = try game.srofiles.modelLoad(gpa, textures, model, .{}, false);
+        var object: game.objects.Model = try .create(gpa, model, loaded);
+        object.place(@splat(0), math.identity);
+        return .{
+            .arena = arena,
+            .ship_type = ship_type,
+            .object = object,
+            .subject = .{
+                .position = @splat(0),
+                .orientation = math.identity,
+                .eye = .{ model.header.eye.x, model.header.eye.y, model.header.eye.z },
+                .radius = radius(object, loaded.*),
+                .motion = .{ .ship_type = @intCast(ship_type) },
+            },
+        };
+    }
+
+    fn unload(ship: *Ship) void {
+        ship.arena.deinit();
+    }
+};
+
+/// The ship type `step` from `from` that has a model, going round the table.
+fn nextShipType(from: usize, step: isize) usize {
+    const types = game.create.models.ship_types;
+    var at = from;
+    for (types) |_| {
+        at = @intCast(@mod(@as(isize, @intCast(at)) + step, @as(isize, types.len)));
+        if (types[at].model != null) return at;
+    }
+    return from;
+}
 
 /// The farthest a vertex of the model's finest levels lies from its origin: the object's radius.
 fn radius(model: game.objects.Model, loaded: game.srofiles.Loaded) f32 {
@@ -204,6 +265,14 @@ fn radius(model: game.objects.Model, loaded: game.srofiles.Loaded) f32 {
         for (levels.meshes[0].positions) |position| farthest = @max(farthest, math.length(part.origin + position));
     }
     return farthest;
+}
+
+test nextShipType {
+    // The Predator's neighbours: the Nagi after it, and the last type with a model before it.
+    try std.testing.expectEqual(1, nextShipType(0, 1));
+    const last = nextShipType(0, -1);
+    try std.testing.expect(game.create.models.ship_types[last].model != null);
+    try std.testing.expectEqual(0, nextShipType(last, 1));
 }
 
 test Options {
