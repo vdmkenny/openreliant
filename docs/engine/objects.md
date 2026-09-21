@@ -100,7 +100,18 @@ the node's orientation the identity it was allocated with. It hides a part whose
 marks it damaged. `create_object` hangs every part's node from the root (`object_add_part`,
 `0x004760C0`, which takes the object's centre at `0x524` off the position), then
 `object_link_parts` (`0x00476130`) hangs each from its parent part's node, keeping it where it is,
-and moves the object's origin to its parts' centre of mass (`object_recentre`, `0x004769F0`):
+and moves the object's origin to its parts' centre of mass (`object_recentre`, `0x004769F0`).
+
+A part keeps its origin in the model whatever it hangs from, so hanging it somewhere else has to
+work that origin out again in the new frame, which `node_place` (`0x0049A140`) does: the part's
+origin less the origin of its parent's part, or less the object's centre for one hung from the
+root, plus whatever the animation has moved it by, turned about the part's mount point by the
+part's angles and the animation's. `object_link_part` runs it through `node_animate`
+(`0x00499F40`) at time zero, which reads the part's animation track, and copies the place it
+leaves into the node and its frame. With no animation the sums cancel and every part stands where
+it stood, which is what makes the linking invisible.
+
+The centre of mass, then:
 
 - `node_mass_add` (`0x004764A0`) sums over the shown part nodes, a node's children first, the
   density times the part's first moment about the root: its origin there times its volume, plus its

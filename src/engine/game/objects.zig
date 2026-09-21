@@ -43,7 +43,8 @@ pub const Node = extern struct {
     orientation: [9]f32,
     _unknown_44: [0x18]u8,
     /// Where `position` goes next: `object_move` puts the position plus the velocity here, and
-    /// placing an object sets both. `object_link_part` copies it into `position` and the frame.
+    /// placing an object sets both. `object_link_part` copies it into `position` and the frame,
+    /// and `node_place` works it out for a part's node.
     next_position: shp.Vec3,
     /// Likewise for `orientation`: `object_move` puts the orientation times the rotation here.
     next_orientation: [9]f32,
@@ -52,7 +53,17 @@ pub const Node = extern struct {
     part: Pointer(shp.Part),
     /// The object the node belongs to.
     owner: Pointer(GameObject),
-    _unknown_ac: [0x3C]u8,
+    _unknown_ac: [0x0C]u8,
+    /// Which of the part's animation tracks the node runs, and where `node_animate` reads its
+    /// keyframes; past the part's tracks, the node is not animated.
+    animation: i32,
+    _unknown_bc: [8]u8,
+    /// Where the animation has the node turned, added to the part's own angles (`node_animate`).
+    animated_angles: shp.Vec3,
+    /// Where the animation has the node moved, added to its part's origin.
+    animated_offset: shp.Vec3,
+    /// The angles the node is turned by besides the animation's, which the turrets steer.
+    angles: shp.Vec3,
     /// A component's counterpart of `GameObject.armor`, which `ship_damage_value` reads for it.
     armor: f32,
     /// The node it hangs from; null for a root. The root's `owner` is the object's.
@@ -114,12 +125,13 @@ pub fn lightMask(model_lists_components: bool) u32 {
 }
 
 /// A live object's model as the port holds it: its root's place in the world, and a node for each
-/// part of its model hanging from the root (`object_add_part`, `0x004760C0`), each with its part's
-/// scene object. Every part sits at its origin in the model, whatever its parent.
+/// part of its model, each with its part's scene object. A part hangs from the part it names
+/// (`object_link_parts`, `0x00476130`), so a part carries what stands on it; a part naming none
+/// hangs from the root.
 ///
-/// Not yet ported: hanging each part's node from its parent part's (`object_link_parts`,
-/// `0x00476130`), which leaves every part where it is; the moment of inertia `object_bounds` sums;
-/// what `node_add_part` mounts on the attachment points.
+/// Not yet ported: the moment of inertia `object_bounds` sums, which nothing reads yet; the
+/// animation a node's track holds (`node_animate`); what `node_add_part` mounts on the attachment
+/// points besides the lights and the engine glows.
 pub const Model = struct {
     /// The object's `hidden` flag: none of its parts is drawn.
     hidden: bool = false,
@@ -127,6 +139,8 @@ pub const Model = struct {
     position: Vector = @splat(0),
     orientation: math.Matrix = math.identity,
     parts: []Part,
+    /// The parts in the order `place` walks them: each after the one it hangs from.
+    order: []const usize,
     lights: []Light,
     glows: []Glow,
     /// Where the model's origin lies from the object's, less (`GameObject + 0x524`): the centres
@@ -146,7 +160,7 @@ pub const Model = struct {
     pub const Light = struct {
         /// The part that carries it, whose node `node_draw` walks to reach it.
         part: usize,
-        /// Its place in the model, from the root.
+        /// Its place on that part, which is where the model's attachment point stands.
         origin: Vector,
         /// Its sprite's colour, which the attachment's id picks.
         colour: [3]f32,
@@ -171,7 +185,7 @@ pub const Model = struct {
     pub const Glow = struct {
         /// The part that carries it, whose node `node_draw` walks to reach it.
         part: usize,
-        /// Its place in the model, from the root.
+        /// Its place on that part, which is where the model's attachment point stands.
         origin: Vector,
         /// How the attachment stands on the part: the plume burns along its Z axis.
         orientation: math.Matrix,
@@ -200,11 +214,56 @@ pub const Model = struct {
     pub const Part = struct {
         /// The node's `hidden` flag.
         hidden: bool,
-        /// The part's origin in the model, from the root.
+        /// The part its node hangs from (`object_link_part`), or null for one hanging from the
+        /// root. A part names its parent by index, or -1 for none.
+        parent: ?usize,
+        /// Its origin in the frame of the part it hangs from, or in the model's for one hanging
+        /// from the root. A model gives every part its origin in the model whatever its parent, so
+        /// hanging one from another takes the parent's origin off it and leaves it where it stood.
         origin: Vector,
-        /// The node's frame: a scene object showing the part's meshes.
+        /// The node's frame: a scene object showing the part's meshes. `place` fills it in.
         object: srapiext.MeshObject,
     };
+
+    /// The part `index` hangs from, or null where it hangs from the root: the index a part names,
+    /// unless it names none or one no model part answers to.
+    fn parentOf(model: *const shp.Model, index: usize) ?usize {
+        const named = model.parts[index].part.parent;
+        if (named < 0 or named == index) return null;
+        const parent: usize = @intCast(named);
+        return if (parent < model.parts.len) parent else null;
+    }
+
+    /// The parts in an order that puts each after the one it hangs from, so that placing them in
+    /// it needs only one pass: by how far each stands from the root, which a part's parent is
+    /// always nearer than. A part whose parents run in a circle is taken as standing at the root,
+    /// which keeps a broken model from looping here.
+    fn linkOrder(gpa: Allocator, model: *const shp.Model) Allocator.Error![]usize {
+        const depths = try gpa.alloc(usize, model.parts.len);
+        defer gpa.free(depths);
+        for (depths, 0..) |*depth, index| {
+            depth.* = 0;
+            var at = parentOf(model, index);
+            while (at) |parent| : (at = parentOf(model, parent)) {
+                depth.* += 1;
+                if (depth.* > model.parts.len) {
+                    depth.* = 0;
+                    break;
+                }
+            }
+        }
+        const order = try gpa.alloc(usize, model.parts.len);
+        var at: usize = 0;
+        for (0..model.parts.len + 1) |depth| {
+            for (depths, 0..) |part_depth, index| {
+                if (part_depth != depth) continue;
+                order[at] = index;
+                at += 1;
+            }
+        }
+        assert(at == order.len);
+        return order;
+    }
 
     /// A node for each part of `model` (`node_add_part`, `0x00499430`), its object flagged as
     /// `model_load` left the part (`loaded`), reached by the lights `lightMask` lets through, and as
@@ -212,25 +271,35 @@ pub const Model = struct {
     pub fn create(gpa: Allocator, model: *const shp.Model, loaded: *const srofiles.Loaded, effects: Effects) Allocator.Error!Model {
         const parts = try gpa.alloc(Part, model.parts.len);
         errdefer gpa.free(parts);
-        for (parts, model.parts, loaded.parts) |*node, source, part| {
+        for (parts, model.parts, loaded.parts, 0..) |*node, source, part, index| {
             var radius: f32 = 0;
             for (part.meshes) |mesh| radius = @max(radius, mesh.radius);
-            const origin = source.part.position;
+            const parent = parentOf(model, index);
+            const at = source.part.position;
+            const from = if (parent) |p| model.parts[p].part.position else shp.Vec3{ .x = 0, .y = 0, .z = 0 };
             node.* = .{
                 .hidden = source.part.flags.damaged,
-                .origin = .{ origin.x, origin.y, origin.z },
+                .parent = parent,
+                .origin = .{ at.x - from.x, at.y - from.y, at.z - from.z },
                 .object = .{
                     .flags = part.flags,
-                    .position = .{ origin.x, origin.y, origin.z },
+                    .position = .{ at.x, at.y, at.z },
                     .radius = radius,
                     .light_mask = lightMask(model.header.flags.components),
                     .levels = part.levels,
                 },
             };
         }
+        const order = try linkOrder(gpa, model);
+        errdefer gpa.free(order);
         const lights = try createLights(gpa, model, effects.light_sprite);
         errdefer gpa.free(lights);
-        return .{ .parts = parts, .lights = lights, .glows = try createGlows(gpa, model, effects.glows) };
+        return .{
+            .parts = parts,
+            .order = order,
+            .lights = lights,
+            .glows = try createGlows(gpa, model, effects.glows),
+        };
     }
 
     /// One light for each attachment of kind `light` a part carries, at its place in the model.
@@ -244,18 +313,13 @@ pub const Model = struct {
         const lights = try gpa.alloc(Light, count);
         var made: usize = 0;
         for (model.parts, 0..) |part, index| {
-            const origin = part.part.position;
             for (part.attachments) |attachment| {
                 if (attachment.kind != .light) continue;
                 const light = &lights[made];
                 made += 1;
                 light.* = .{
                     .part = index,
-                    .origin = .{
-                        attachment.position.x + origin.x,
-                        attachment.position.y + origin.y,
-                        attachment.position.z + origin.z,
-                    },
+                    .origin = .{ attachment.position.x, attachment.position.y, attachment.position.z },
                     .colour = lightColour(attachment.id),
                     .size = attachment.size[1],
                     .blink = attachment.blink,
@@ -284,7 +348,6 @@ pub const Model = struct {
         const made = try gpa.alloc(Glow, count);
         var at: usize = 0;
         for (model.parts, 0..) |part, index| {
-            const origin = part.part.position;
             for (part.attachments) |attachment| {
                 if (attachment.kind != .engine_glow) continue;
                 const glow = &made[at];
@@ -292,11 +355,7 @@ pub const Model = struct {
                 const size: Vector = attachment.size;
                 glow.* = .{
                     .part = index,
-                    .origin = .{
-                        attachment.position.x + origin.x,
-                        attachment.position.y + origin.y,
-                        attachment.position.z + origin.z,
-                    },
+                    .origin = .{ attachment.position.x, attachment.position.y, attachment.position.z },
                     .orientation = attachment.orientation,
                     .size = size,
                     // Its plume burns the way the attachment's Z axis points, so a plume that
@@ -321,6 +380,7 @@ pub const Model = struct {
 
     pub fn deinit(model: Model, gpa: Allocator) void {
         gpa.free(model.parts);
+        gpa.free(model.order);
         gpa.free(model.lights);
         gpa.free(model.glows);
     }
@@ -333,12 +393,14 @@ pub const Model = struct {
     /// object's radius and bounding box over the vertices of each part's current level, hidden ones
     /// too. `source` is the model the parts come from.
     pub fn recentre(model: *Model, source: *const shp.Model) void {
+        // Each part's origin in the model, which is where it stands with the root at rest.
+        model.place(@splat(0), math.identity);
         var moment: [3]f32 = @splat(0);
         var mass: f32 = 0;
         for (model.parts, source.parts) |part, data| {
             if (part.hidden) continue;
             const p = data.part;
-            const origin: [3]f32 = part.origin;
+            const origin: [3]f32 = part.object.position;
             for (&moment, origin, p.first_moments) |*m, o, first| m.* = (o * p.volume + first) * p.density + m.*;
             mass = p.density * p.volume + mass;
         }
@@ -348,17 +410,19 @@ pub const Model = struct {
         }
         const centre: Vector = moment;
         model.centre += centre;
-        for (model.parts) |*part| part.origin -= centre;
-        // A light and a glow stand on the part that carries them, so they move with the parts.
-        for (model.lights) |*light| light.origin -= centre;
-        for (model.glows) |*glow| glow.origin -= centre;
+        // Only a part standing at the root moves: one hanging from another keeps the origin it has
+        // in its parent, and follows it. What stands on a part likewise moves with the part.
+        for (model.parts) |*part| {
+            if (part.parent == null) part.origin -= centre;
+        }
 
+        model.place(@splat(0), math.identity);
         model.radius = 0;
         model.bounds = .{ @splat(std.math.floatMax(f32)), @splat(-std.math.floatMax(f32)) };
         for (model.parts) |part| {
             if (part.object.levels.len == 0) continue;
             for (part.object.levels[part.object.level].mesh.positions) |position| {
-                const at = position + part.origin;
+                const at = position + part.object.position;
                 model.bounds = .{ @min(model.bounds[0], at), @max(model.bounds[1], at) };
                 model.radius = @max(model.radius, math.length(at));
             }
@@ -366,14 +430,20 @@ pub const Model = struct {
     }
 
     /// Puts the object's root at `position`, turned by `orientation`, and each part's object with
-    /// it: the root's turn applied to the part's origin, and no turn of its own
-    /// (`SR_object_concate_parents`, `0x004C3490`, for each part's frame).
+    /// it: a part standing at the root takes the root's turn on its origin, and one hanging from
+    /// another stands in that part's frame, so a part carries what hangs from it
+    /// (`SR_object_concate_parents`, `0x004C3490`, for each part's frame). A part carries no turn
+    /// of its own until the turrets are ported, so each takes the root's.
     pub fn place(model: *Model, position: Vector, orientation: math.Matrix) void {
         model.position = position;
         model.orientation = orientation;
-        for (model.parts) |*part| {
-            part.object.position = math.transform(orientation, part.origin) + position;
-            part.object.orientation = orientation;
+        for (model.order) |index| {
+            const part = &model.parts[index];
+            const from = if (part.parent) |parent| model.parts[parent].object else null;
+            const at = if (from) |carrier| carrier.position else position;
+            const turn = if (from) |carrier| carrier.orientation else orientation;
+            part.object.position = math.transform(turn, part.origin) + at;
+            part.object.orientation = turn;
         }
     }
 
@@ -392,7 +462,8 @@ pub const Model = struct {
             // A light goes dark with the part that carries it, as a damaged part's does while the
             // part it belongs to is whole.
             if (model.parts[light.part].hidden) continue;
-            const world = math.transform(model.orientation, light.origin) + model.position;
+            const carrier = model.parts[light.part].object;
+            const world = math.transform(carrier.orientation, light.origin) + carrier.position;
             const away = math.length(world - view.camera);
             const shown = blinkBrightness(light.*, view.frame_start) * distanceBrightness(away);
             if (!(shown > 0)) continue;
@@ -407,10 +478,11 @@ pub const Model = struct {
             // A glow goes out with the part that carries it, as a light does.
             if (model.parts[glow.part].hidden) continue;
             const burning = glow.plume(view.throttle, view.random) orelse continue;
-            glow.object.position = math.transform(model.orientation, glow.origin) + model.position;
+            const carrier = model.parts[glow.part].object;
+            glow.object.position = math.transform(carrier.orientation, glow.origin) + carrier.position;
             // The plume stands as its attachment does, drawn to the size it gives it.
             const scale: math.Matrix = .{ glow.size[0], 0, 0, 0, glow.size[1], 0, 0, 0, burning * glow.size[2] };
-            glow.object.orientation = math.product(math.product(model.orientation, glow.orientation), scale);
+            glow.object.orientation = math.product(math.product(carrier.orientation, glow.orientation), scale);
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &glow.object }, layer);
         }
     }
@@ -547,13 +619,14 @@ test Model {
     const levels = [_]srapiext.Level{.{ .mesh = &mesh, .until = std.math.inf(f32) }};
     var parts = [_]Model.Part{.{
         .hidden = false,
+        .parent = null,
         .origin = .{ 0, 0, 100 },
         .object = .{ .flags = .{}, .position = @splat(0), .radius = mesh.radius, .levels = &levels },
     }};
-    // A light standing on that part, at the same place in the model.
+    // A light standing on that part, at its own place on it.
     var lights = [_]Model.Light{.{
         .part = 0,
-        .origin = .{ 0, 0, 100 },
+        .origin = .{ 0, 0, 0 },
         .colour = .{ 1, 0, 0 },
         .size = 10,
         .blink = .{ 0, 0 },
@@ -562,7 +635,7 @@ test Model {
         .sprite = .{.{}},
     }};
     lights[0].set.sprites = lights[0].sprite[0..1];
-    var model: Model = .{ .parts = &parts, .lights = &lights, .glows = &.{} };
+    var model: Model = .{ .parts = &parts, .order = &.{0}, .lights = &lights, .glows = &.{} };
     // A part hangs at its origin, turned with the root.
     model.place(.{ 1000, 0, 0 }, math.rotation(.y, std.math.pi / 2.0));
     try std.testing.expectApproxEqAbs(1100, parts[0].object.position[0], 1e-3);
@@ -582,8 +655,13 @@ test Model {
     model.recentre(&source);
     try std.testing.expectEqual(@as(Vector, .{ 0, 0, 110 }), model.centre);
     try std.testing.expectEqual(@as(Vector, .{ 0, 0, -10 }), parts[0].origin);
-    // A light moves with the parts, so it stays where it stood on the hull.
-    try std.testing.expectEqual(parts[0].origin, lights[0].origin);
+    // A light hangs on the part that carries it, so recentring leaves it where it stood on the
+    // hull: drawn, its sprite stands where the part does.
+    model.place(@splat(0), math.identity);
+    scene.clear();
+    try model.draw(gpa, &scene, .world, .{});
+    try std.testing.expectEqual(parts[0].object.position, lights[0].set.position);
+    model.place(.{ 1000, 0, 0 }, math.rotation(.y, std.math.pi / 2.0));
     try std.testing.expectApproxEqAbs(@sqrt(100.0 * 100.0 * 2.0 + 10.0 * 10.0), model.radius, 1e-3);
 
     // The part and its light are both drawn; hidden, the part takes its light with it.
@@ -704,6 +782,7 @@ test "a model draws the glows its parts carry" {
 
     var parts = [_]Model.Part{.{
         .hidden = false,
+        .parent = null,
         .origin = .{ 0, 0, 0 },
         .object = .{ .flags = .{}, .position = @splat(0), .radius = mesh.radius, .levels = &levels },
     }};
@@ -718,7 +797,7 @@ test "a model draws the glows its parts carry" {
         .object = .{ .flags = .{ .not_culled = true }, .position = @splat(0), .radius = 20, .levels = &.{} },
     }};
     glows[0].object.levels = glows[0].level[0..1];
-    var model: Model = .{ .parts = &parts, .lights = &.{}, .glows = &glows };
+    var model: Model = .{ .parts = &parts, .order = &.{0}, .lights = &.{}, .glows = &glows };
     model.place(.{ 0, 0, 1000 }, math.identity);
 
     var scene: srcore.Scene = .{};
@@ -738,4 +817,66 @@ test "a model draws the glows its parts carry" {
     parts[0].hidden = true;
     try model.draw(gpa, &scene, .world, .{ .throttle = 1 });
     try std.testing.expectEqual(3, scene.layers.get(.world).items.len);
+}
+
+test "a part hangs from the part it names" {
+    const gpa = std.testing.allocator;
+    const srmesh = @import("../surrender/surrenderlib/srmesh.zig");
+    const mesh = try srmesh.testing.square(gpa);
+    defer mesh.deinit(gpa);
+
+    // Three parts: a hull at the model's origin, a turret standing on it, and a barrel on the
+    // turret. The barrel comes first, so the order has to sort them out.
+    var data = [3]shp.PartData{
+        std.mem.zeroes(shp.PartData),
+        std.mem.zeroes(shp.PartData),
+        std.mem.zeroes(shp.PartData),
+    };
+    data[0].part.position = .{ .x = 0, .y = 0, .z = 300 };
+    data[0].part.parent = 1;
+    data[1].part.position = .{ .x = 0, .y = 0, .z = 100 };
+    data[1].part.parent = 2;
+    data[2].part.position = .{ .x = 0, .y = 0, .z = 0 };
+    data[2].part.parent = -1;
+    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &data, .tail_count = 0, .trailing_bytes = 0 };
+
+    var levels = [_]srapiext.Level{.{ .mesh = &mesh, .until = std.math.inf(f32) }};
+    var loaded_parts = [3]srofiles.LoadedPart{
+        .{ .flags = .{}, .levels = &levels, .meshes = &.{} },
+        .{ .flags = .{}, .levels = &levels, .meshes = &.{} },
+        .{ .flags = .{}, .levels = &levels, .meshes = &.{} },
+    };
+    const loaded: srofiles.Loaded = .{ .parts = &loaded_parts };
+    var model: Model = try .create(gpa, &source, &loaded, .{});
+    defer model.deinit(gpa);
+
+    // Each hangs from the part it names, and stands at its origin in that part.
+    try std.testing.expectEqual(@as(?usize, 1), model.parts[0].parent);
+    try std.testing.expectEqual(@as(?usize, 2), model.parts[1].parent);
+    try std.testing.expectEqual(@as(?usize, null), model.parts[2].parent);
+    try std.testing.expectEqual(@as(Vector, .{ 0, 0, 200 }), model.parts[0].origin);
+    try std.testing.expectEqual(@as(Vector, .{ 0, 0, 100 }), model.parts[1].origin);
+    // The hull comes before the turret, and the turret before the barrel.
+    try std.testing.expectEqualSlices(usize, &.{ 2, 1, 0 }, model.order);
+
+    // Placed, each stands where the model puts it, whatever it hangs from.
+    model.place(.{ 1000, 0, 0 }, math.identity);
+    try std.testing.expectEqual(@as(Vector, .{ 1000, 0, 300 }), model.parts[0].object.position);
+    try std.testing.expectEqual(@as(Vector, .{ 1000, 0, 100 }), model.parts[1].object.position);
+
+    // Turned, a part carries what hangs from it: a quarter turn about Y puts them along X.
+    model.place(@splat(0), math.rotation(.y, std.math.pi / 2.0));
+    try std.testing.expectApproxEqAbs(300, model.parts[0].object.position[0], 1e-3);
+    try std.testing.expectApproxEqAbs(100, model.parts[1].object.position[0], 1e-3);
+}
+
+test "a part whose parents run in a circle stands at the root" {
+    const gpa = std.testing.allocator;
+    var data = [2]shp.PartData{ std.mem.zeroes(shp.PartData), std.mem.zeroes(shp.PartData) };
+    data[0].part.parent = 1;
+    data[1].part.parent = 0;
+    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &data, .tail_count = 0, .trailing_bytes = 0 };
+    const order = try Model.linkOrder(gpa, &source);
+    defer gpa.free(order);
+    try std.testing.expectEqualSlices(usize, &.{ 0, 1 }, order);
 }
