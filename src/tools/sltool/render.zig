@@ -12,6 +12,7 @@ const tga = starlancer.tga;
 const render = starlancer.render;
 const math = starlancer.lancer.surrender.math;
 const backdrop = starlancer.lancer.game.backdrop;
+const camera = starlancer.lancer.game.camera;
 const nebula = starlancer.lancer.game.nebula;
 
 const Context = @import("main.zig").Context;
@@ -106,8 +107,8 @@ fn draw(ctx: Context, command: Command) !void {
     var textures: render.texture.Library = try .init(gpa, cache, palette);
     defer textures.deinit();
 
-    // A quarter turn across the width: the game's own field of view is not yet known.
-    const scale = @as(f32, @floatFromInt(command.width)) / 2;
+    // The game's view, unstretched: its pixels are square, so one scale serves both ways.
+    const scale = (camera.Camera{}).projection(command.width, command.height).scale[1];
     var target: render.scene.Scene = .{ .camera = .looking(@splat(0), command.toward, command.width, command.height, scale) };
     defer target.deinit(gpa);
 

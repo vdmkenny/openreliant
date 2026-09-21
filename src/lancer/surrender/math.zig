@@ -59,7 +59,27 @@ pub fn transpose(m: Matrix) Matrix {
     return .{ m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8] };
 }
 
-/// The rotation `mat3_from_angles` (`0x004C2410`) builds from a pitch, a yaw and a roll.
+pub const Axis = enum { x, y, z };
+
+/// A right-handed turn by `angle` radians about `axis`.
+pub fn rotation(axis: Axis, angle: f32) Matrix {
+    const c = @cos(angle);
+    const s = @sin(angle);
+    return switch (axis) {
+        .x => .{ 1, 0, 0, 0, c, -s, 0, s, c },
+        .y => .{ c, 0, s, 0, 1, 0, -s, 0, c },
+        .z => .{ c, -s, 0, s, c, 0, 0, 0, 1 },
+    };
+}
+
+/// `m` turned by `angle` about its own `axis`, `m` times the rotation (`mat3_turn_x`, `0x004C2100`;
+/// `mat3_turn_y`, `0x004C2190`; `mat3_turn_z`, `0x004C2220`).
+pub fn turned(m: Matrix, axis: Axis, angle: f32) Matrix {
+    return product(m, rotation(axis, angle));
+}
+
+/// The rotation `mat3_from_angles` (`0x004C2410`) builds from a pitch, a yaw and a roll: turns about
+/// `X`, then `Y`, then `Z`.
 pub fn fromAngles(pitch: f32, yaw: f32, roll: f32) Matrix {
     const sp = @sin(pitch);
     const cp = @cos(pitch);
@@ -111,6 +131,16 @@ test fromAngles {
     try std.testing.expectEqual(identity, fromAngles(0, 0, 0));
     // A yaw of -90 degrees turns the forward axis to -X.
     try expectVector(.{ -1, 0, 0 }, transform(fromAngles(0, -std.math.pi / 2.0, 0), .{ 0, 0, 1 }));
+}
+
+test turned {
+    // A quarter turn about Y takes forward to +X, about X takes down to forward.
+    try expectVector(.{ 1, 0, 0 }, transform(rotation(.y, std.math.pi / 2.0), .{ 0, 0, 1 }));
+    try expectVector(.{ 0, 0, 1 }, transform(rotation(.x, std.math.pi / 2.0), .{ 0, 1, 0 }));
+    try expectVector(.{ 0, 1, 0 }, transform(rotation(.z, std.math.pi / 2.0), .{ 1, 0, 0 }));
+    // `fromAngles` is the three turns in order.
+    const m = turned(turned(turned(identity, .x, 0.3), .y, -0.7), .z, 0.2);
+    for (fromAngles(0.3, -0.7, 0.2), m) |e, a| try std.testing.expectApproxEqAbs(e, a, 1e-6);
 }
 
 test product {

@@ -3,6 +3,7 @@
 
 const std = @import("std");
 
+pub const srapi = @import("surrenderlib/srapi.zig");
 pub const srapiext = @import("surrenderlib/srapiext.zig");
 pub const srlight = @import("surrenderlib/srlight.zig");
 pub const srmesh = @import("surrenderlib/srmesh.zig");

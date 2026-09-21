@@ -40,5 +40,4 @@ from the mip level nearest to the texels a pixel spans.
 - Every star is a point, as for a still camera: there are no streaks.
 - Left out: the dust, which the game places at random; baked colours from static lights; the
   objects that cover the sun and lessen its visibility.
-- `sltool render` gives the view a quarter turn across its width. **Unknown:** the game's field of
-  view.
+- `sltool render` uses the game's view, [unstretched](../engine/camera.md#projection).

@@ -81,6 +81,7 @@ noted in [§ Unread fields](#unread-fields).
 | Off | Type | Field |
 |---|---|---|
 | `0x00` | u32 | Version: `107`, or `200` in a few models. Not read by the loader. |
+| `0x08` | vec3 | The cockpit views' eye point, in the model's frame ([Camera](../engine/camera.md#cockpit)): `object_add_part` (`0x004760C0`) copies it to the object at `0x628` |
 | `0x14` | u32 | Flags. Bit 0: objects of the model list their [components](../engine/objects.md#components) and get no renderer object of their own. Bit 1 makes the loader build a second mesh set, used for the cloak effect. |
 
 ### Part (tag `0x01`)
@@ -234,9 +235,12 @@ placing a part in model space means summing the chain up to the root.
 
 ## Unread fields
 
-These are present in every record and read by nothing in the engine: the header's `0x04` scalar and
-`0x08` vector, the part's six floats at `0x68` and its `0x80` block, and the face's normal and
-`0x3C` word. The reader preserves them.
+These are present in every record and read by nothing in the engine: the header's `0x04` scalar,
+and the face's normal and `0x3C` word. The reader preserves them.
+
+The part's floats from `0x68` to `0x90` are read by `object_bounds` (`0x00476680`), which moves them
+from the part's origin to the object's and sums them over the parts, as for a moment of inertia
+(**unverified**).
 
 **Unknown:** the interpretation of tree nodes (`0x07`), animation clips (`0x0A`) and trigger
 polygons (`0x0F`). They are parsed and counted, and their records are available, but their fields

@@ -92,7 +92,9 @@ pub const Header = extern struct {
     /// `107` in all but three shipped models, which carry `200`. The loader does not read it.
     version: u32,
     unknown_04: f32,
-    unknown_08: Vec3,
+    /// The cockpit views' eye point, in the model's frame: `object_add_part` (`0x004760C0`) copies
+    /// it to the object.
+    eye: Vec3,
     flags: Flags,
     _reserved: [64]u8,
 
@@ -119,7 +121,9 @@ pub const Part = extern struct {
     position: Vec3,
     bounds_min: Vec3,
     bounds_max: Vec3,
-    /// Scales like sums of squared coordinates. Not read by the loader.
+    /// Scales like sums of squared coordinates. Not read by the loader; `object_bounds`
+    /// (`0x00476680`) sums these and the next three fields over an object's parts, as for a moment
+    /// of inertia. **Unverified.**
     unknown_68: [6]f32,
     unknown_80: [3]f32,
     unknown_8c: f32,

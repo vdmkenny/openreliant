@@ -8,6 +8,7 @@ pub const aidefend = @import("game/aidefend.zig");
 pub const aifight = @import("game/aifight.zig");
 pub const aigeneric = @import("game/aigeneric.zig");
 pub const backdrop = @import("game/backdrop.zig");
+pub const camera = @import("game/camera.zig");
 pub const create = @import("game/create.zig");
 pub const executor = @import("game/executor.zig");
 pub const gameobj = @import("game/gameobj.zig");

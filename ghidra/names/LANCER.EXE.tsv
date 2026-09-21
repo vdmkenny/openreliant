@@ -209,6 +209,10 @@
 004c14f0	function	vec3_copy	void __fastcall (Vec3 *to, Vec3 *from)
 004c1b50	function	mat3_copy	void __fastcall (float *to, float *from)	Copies a 3x3 matrix
 004c1be0	function	mat3_identity	void __fastcall (float *m)
+004c1da0	function	mat3_multiply	void __fastcall (float *m, float *n)	m = m times n
+004c22b0	function	vec3_turn	void __fastcall (Vec3 *v, float *m)	v = m times v
+004c2310	function	vec3_turn_back	void __fastcall (Vec3 *v, float *m)	v = the transpose of m, times v
+004c0db0	function	sr_clamp	float __cdecl (float x, float low, float high)	x, kept between low and high
 004c30a0	function	sr_fabs	float __cdecl (float x)
 004c30c0	function	sr_sqrt	float __cdecl (float x)
 004c30e0	function	sr_sin	float __cdecl (float x)
@@ -243,6 +247,34 @@
 00565076	data	play_time_hours	ushort
 0057e04c	data	paused	ushort	Nonzero while the game is paused, which stops the ticks and the script clock
 00539aa0	data	game_object_count	short	Slots of game_objects in use, which create_object extends when given no slot
+
+# The camera (camera.cpp)
+0045f1b0	function	camera_set_view	int __fastcall (int view, int object, char lock, char force)	Switches the camera to a view of an object: refused while locked unless forced; starts or clears the bars, resets the chase and orbit state, then places the camera
+0045fc90	function	camera_frame	void __fastcall (void)	Places the camera once a frame for the view: moves the bars, then the cockpit, chase, orbit, flyby and cutaway views
+0045ed60	function	camera_chase	void __fastcall (void)	The chase view: behind and above the object by ship type, farther with throttle, swinging against its rates of turn
+0045ed40	function	camera_chase_level	void __fastcall (void)	Zeroes the chase view's swing
+00414060	function	frame_controls	void __fastcall (int slot)	The controls read once a frame, from mission_frame: the camera keys, steering the orbiting views with the arrow keys, and the wingman and other frame keys
+004f72a8	data	camera_view_table	byte[38][4]	For each view: a number, 0, whether the bars slide in, and whether it is from the cockpit
+00539a34	data	camera_view	short
+00539a8c	data	camera_object	short	The object the view shows
+00539a9c	data	cockpit_mode	int	What the cockpit view shows: 0 no cockpit, 1 the cockpit's model, 2 the chase view; the cockpit key cycles it
+005d5a78	data	cockpit_mode_setting	int	The options' cockpit setting: 0 the cockpit's model, 1 the chase view, 2 no cockpit
+00539acc	data	camera_locked	char	Set while a script holds the camera; the camera keys do nothing
+00539a38	data	camera_bars	float	How much of the screen each cinematic bar covers, up to 0.1
+00539a50	data	camera_bar_speed	float
+00539aa4	data	camera_switched	int	frame_start when the view last changed
+004f72a4	data	chase_distance	float	Along the object's forward axis, smoothed; 1500 on switching to the chase view
+00539a80	data	chase_pitch	float
+00539a3c	data	chase_yaw	float
+00539a74	data	chase_roll	float
+0051cf64	data	orbit_yaw	float	Degrees
+0051cf84	data	orbit_pitch	float	Degrees, -89.5 to 89.5
+0051cf80	data	orbit_yaw_speed	float	Degrees a tick, up to 5
+0051cf68	data	orbit_pitch_speed	float	Degrees a tick, up to 5
+0051cf6c	data	orbit_distance	float	Kept between 1.8 and 3.8 radii of the player's ship, or 5.8 of the target's
+00588724	data	hit_shake	float	How much the cockpit view shakes from a hit, falling by 0.02 a tick
+004c3a60	function	sr_set_projection	void __cdecl (float left, float top, float right, float bottom, float across, float down)	The projection: scales of the screen's size less 0.1 times the factors, the middle, and the viewport's edges in view units and pixels
+00476680	function	object_bounds	void __fastcall (GameObject *object, ModelNode *node, int unused)	Widens the object's bounds and radius over a node's mesh and adds its part's inertia, then does the node's children
 
 # Player input
 00588340	data	joystick	JoystickState	The joystick as read_joystick last polled it
