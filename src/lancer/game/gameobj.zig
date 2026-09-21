@@ -164,7 +164,10 @@ pub const GameObject = extern struct {
 
     /// The names of the script commands that set a bit are the developers' own.
     pub const Flags = packed struct(u32) {
-        _unknown_0: bool,
+        /// Not drawn: `camera_set_view` sets it on the object whose cockpit the camera is in, and the
+        /// warp orders while it warps. `mission_frame` hands `node_draw` flag `0x10` for it, which
+        /// adds none of its parts to the scene.
+        hidden: bool,
         /// Its components are listed, as its model's header asks. The collision code treats such
         /// objects apart.
         components: bool,

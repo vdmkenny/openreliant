@@ -39,7 +39,8 @@ interface. The game's own bindings drive the camera ([Controls](../engine/contro
 target, external and missile views, the cockpit key cycles the cockpit mode while in it, and in the
 target and external views the arrow keys orbit and Shift with up or down zooms. Added for the port:
 F2 and F3 step back and forth through the ship types, passing over any whose files the game lacks,
-and Escape quits.
+and Escape quits. The chase view keeps its offsets for the ships the player flies, so a capital ship
+fills it; the external view orbits any ship at a distance by its size.
 
 A Zig built for Intel Macs runs under Rosetta on Apple silicon and builds for Intel by default;
 `make play` asks for Apple silicon, and `build.zig` then hands SDL and the linker the SDK's paths

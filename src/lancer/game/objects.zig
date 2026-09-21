@@ -107,14 +107,23 @@ pub fn lightMask(model_lists_components: bool) u32 {
 /// part of its model hanging from the root (`object_add_part`, `0x004760C0`), each with its part's
 /// scene object. Every part sits at its origin in the model, whatever its parent.
 ///
-/// Not yet ported: hanging each part's node from its parent part's, and moving the object's origin
-/// to its parts' centre of mass (`object_link_parts`, `0x00476130`); what `node_add_part` mounts
-/// on the attachment points.
+/// Not yet ported: hanging each part's node from its parent part's (`object_link_parts`,
+/// `0x00476130`), which leaves every part where it is; the moment of inertia `object_bounds` sums;
+/// what `node_add_part` mounts on the attachment points.
 pub const Model = struct {
+    /// The object's `hidden` flag: none of its parts is drawn.
+    hidden: bool = false,
     /// The root's place (`object_set_position`, `object_set_orientation`).
     position: Vector = @splat(0),
     orientation: math.Matrix = math.identity,
     parts: []Part,
+    /// Where the model's origin lies from the object's, less (`GameObject + 0x524`): the centres
+    /// of mass `recentre` moved the origin to.
+    centre: Vector = @splat(0),
+    /// Its farthest vertex from its origin, and its bounding box (`GameObject.radius`,
+    /// `bounds_min`, `bounds_max`), as `recentre` leaves them.
+    radius: f32 = 0,
+    bounds: [2]Vector = .{ @splat(0), @splat(0) },
 
     pub const Part = struct {
         /// The node's `hidden` flag.
@@ -153,6 +162,43 @@ pub const Model = struct {
         gpa.free(model.parts);
     }
 
+    /// Moves the object's origin to its parts' centre of mass, as `object_link_parts` ends
+    /// (`object_recentre`, `0x004769F0`). `node_mass_add` (`0x004764A0`) sums, over the shown
+    /// parts, the density times the part's first moment about the root, its origin times its
+    /// volume plus its own first moment; over the parts' masses, density times volume, that is the
+    /// centre. `object_bounds` (`0x00476680`) takes it off each part's origin, then finds the
+    /// object's radius and bounding box over the vertices of each part's current level, hidden ones
+    /// too. `source` is the model the parts come from.
+    pub fn recentre(model: *Model, source: *const shp.Model) void {
+        var moment: [3]f32 = @splat(0);
+        var mass: f32 = 0;
+        for (model.parts, source.parts) |part, data| {
+            if (part.hidden) continue;
+            const p = data.part;
+            const origin: [3]f32 = part.origin;
+            for (&moment, origin, p.first_moments) |*m, o, first| m.* = (o * p.volume + first) * p.density + m.*;
+            mass = p.density * p.volume + mass;
+        }
+        if (mass > 0) {
+            const scale = 1 / mass;
+            for (&moment) |*m| m.* = scale * m.*;
+        }
+        const centre: Vector = moment;
+        model.centre += centre;
+        for (model.parts) |*part| part.origin -= centre;
+
+        model.radius = 0;
+        model.bounds = .{ @splat(std.math.floatMax(f32)), @splat(-std.math.floatMax(f32)) };
+        for (model.parts) |part| {
+            if (part.object.levels.len == 0) continue;
+            for (part.object.levels[part.object.level].mesh.positions) |position| {
+                const at = position + part.origin;
+                model.bounds = .{ @min(model.bounds[0], at), @max(model.bounds[1], at) };
+                model.radius = @max(model.radius, math.length(at));
+            }
+        }
+    }
+
     /// Puts the object's root at `position`, turned by `orientation`, and each part's object with
     /// it: the root's turn applied to the part's origin, and no turn of its own
     /// (`SR_object_concate_parents`, `0x004C3490`, for each part's frame).
@@ -166,9 +212,11 @@ pub const Model = struct {
     }
 
     /// Adds each shown part's object to `layer`, the world's or, for a cockpit, the overlay
-    /// (`node_draw`, `0x0049A8C0`, for the model's part nodes). Not yet ported: what else it draws
-    /// (lights, engine glows, the cloak) and its leaving out an object too far away to see.
+    /// (`node_draw`, `0x0049A8C0`, for the model's part nodes), none while the object is hidden.
+    /// Not yet ported: what else it draws (lights, engine glows, the cloak) and its leaving out an
+    /// object too far away to see.
     pub fn draw(model: *Model, gpa: Allocator, scene: *srcore.Scene, layer: srcore.Layer) Allocator.Error!void {
+        if (model.hidden) return;
         for (model.parts) |*part| {
             if (part.hidden) continue;
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &part.object }, layer);
@@ -183,4 +231,43 @@ test lightMask {
 
 test {
     std.testing.refAllDecls(@This());
+}
+
+test Model {
+    const gpa = std.testing.allocator;
+    const srmesh = @import("../surrender/surrenderlib/srmesh.zig");
+    const mesh = try srmesh.testing.square(gpa);
+    defer mesh.deinit(gpa);
+    const levels = [_]srapiext.Level{.{ .mesh = &mesh, .until = std.math.inf(f32) }};
+    var parts = [_]Model.Part{.{
+        .hidden = false,
+        .origin = .{ 0, 0, 100 },
+        .object = .{ .flags = .{}, .position = @splat(0), .radius = mesh.radius, .levels = &levels },
+    }};
+    var model: Model = .{ .parts = &parts };
+    // A part hangs at its origin, turned with the root.
+    model.place(.{ 1000, 0, 0 }, math.rotation(.y, std.math.pi / 2.0));
+    try std.testing.expectApproxEqAbs(1100, parts[0].object.position[0], 1e-3);
+
+    var scene: srcore.Scene = .{};
+    defer scene.deinit(gpa);
+    try model.draw(gpa, &scene, .world);
+    try std.testing.expectEqual(1, scene.layers.get(.world).items.len);
+    // Recentred on its one part's mass, its origin moves to the part's centre: 100 along Z, plus
+    // the part's own first moment over its volume.
+    var data = std.mem.zeroes(shp.PartData);
+    data.part.volume = 2;
+    data.part.density = 3;
+    data.part.first_moments = .{ 0, 0, 20 };
+    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = (&data)[0..1], .tail_count = 0, .trailing_bytes = 0 };
+    model.recentre(&source);
+    try std.testing.expectEqual(@as(Vector, .{ 0, 0, 110 }), model.centre);
+    try std.testing.expectEqual(@as(Vector, .{ 0, 0, -10 }), parts[0].origin);
+    try std.testing.expectApproxEqAbs(@sqrt(100.0 * 100.0 * 2.0 + 10.0 * 10.0), model.radius, 1e-3);
+
+    // Hidden, as from its own cockpit, it adds nothing.
+    scene.clear();
+    model.hidden = true;
+    try model.draw(gpa, &scene, .world);
+    try std.testing.expectEqual(0, scene.layers.get(.world).items.len);
 }

@@ -96,6 +96,11 @@ carries its own levels of detail.
 | `0x44` | vec3 | Origin, in the model's frame whatever the parent |
 | `0x50` | vec3 | Bounding box minimum (see [Bounding boxes](#bounding-boxes)) |
 | `0x5C` | vec3 | Bounding box maximum |
+| `0x68` | f32[3] | Mass properties in the part's frame: the integrals of x², y² and z² over its volume |
+| `0x74` | f32[3] | The integrals of xy, yz and xz |
+| `0x80` | f32[3] | The integrals of x, y and z |
+| `0x8C` | f32 | The volume |
+| `0x90` | f32 | The mass of a unit of volume |
 | `0x94` | i32 | Parent part index, or `-1` for a root |
 | `0x98` | vec3 | A point on the part: the far end of a gun, the base of a mount |
 | `0xA4` | f32[9] | Orientation, row-major 3x3 |
@@ -241,9 +246,11 @@ from its parent part's, keeping it where it is.
 These are present in every record and read by nothing in the engine: the header's `0x04` scalar
 and the face's `0x3C` word. The reader preserves them.
 
-The part's floats from `0x68` to `0x90` are read by `object_bounds` (`0x00476680`), which moves them
-from the part's origin to the object's and sums them over the parts, as for a moment of inertia
-(**unverified**).
+The mass properties at `0x68` to `0x90` place an object's origin at its parts' centre of mass
+(`object_recentre`, `0x004769F0`) and give it a moment of inertia (`object_bounds`, `0x00476680`),
+moved from each part's origin to the object's. **Unverified:** that they are integrals over the
+part's volume; the engine uses them as such
+([Live objects](../engine/objects.md#the-model-hierarchy)).
 
 **Unknown:** the interpretation of tree nodes (`0x07`), animation clips (`0x0A`) and trigger
 polygons (`0x0F`). They are parsed and counted, and their records are available, but their fields

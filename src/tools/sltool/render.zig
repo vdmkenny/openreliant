@@ -137,7 +137,8 @@ fn draw(ctx: Context, command: Command) !void {
         };
         const loaded = try srofiles.modelLoad(gpa, &textures, model, .{}, false);
         var placed: objects.Model = try .create(gpa, model, &loaded);
-        const distance = command.distance orelse radius(placed, loaded) * context.projection.scale[1] / (0.35 * @as(f32, @floatFromInt(command.height)));
+        placed.recentre(model);
+        const distance = command.distance orelse @max(placed.radius, 1) * context.projection.scale[1] / (0.35 * @as(f32, @floatFromInt(command.height)));
         placed.place(math.normalize(command.toward) * @as(math.Vector, @splat(distance)), math.lookAt(math.normalize(command.heading)));
         for (loaded.parts) |part| polygons += part.meshes[0].polygons.len;
         object = placed;
@@ -177,16 +178,6 @@ fn need(resources: *Library, name: []const u8) ![]u8 {
         std.debug.print("no {s} in the resource directory\n", .{name});
         return error.FileNotFound;
     };
-}
-
-/// The farthest a vertex of the model's finest levels lies from its origin.
-fn radius(model: objects.Model, loaded: srofiles.Loaded) f32 {
-    var farthest: f32 = 1;
-    for (model.parts, loaded.parts) |part, levels| {
-        if (levels.meshes.len == 0) continue;
-        for (levels.meshes[0].positions) |position| farthest = @max(farthest, math.length(part.origin + position));
-    }
-    return farthest;
 }
 
 test Command {

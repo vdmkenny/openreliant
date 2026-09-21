@@ -122,13 +122,19 @@ pub const Part = extern struct {
     position: Vec3,
     bounds_min: Vec3,
     bounds_max: Vec3,
-    /// Scales like sums of squared coordinates. Not read by the loader; `object_bounds`
-    /// (`0x00476680`) sums these and the next three fields over an object's parts, as for a moment
-    /// of inertia. **Unverified.**
-    unknown_68: [6]f32,
-    unknown_80: [3]f32,
-    unknown_8c: f32,
-    unknown_90: f32,
+    /// The part's mass properties, in its own frame, which `object_recentre` (`0x004769F0`) and
+    /// `object_bounds` (`0x00476680`) take over into the object's: the integrals over its volume of
+    /// x², y² and z²,
+    second_moments: [3]f32,
+    /// of xy, yz and xz,
+    products: [3]f32,
+    /// and of x, y and z;
+    first_moments: [3]f32,
+    /// the volume itself;
+    volume: f32,
+    /// and the mass of a unit of volume. **Unverified:** that the sums are over the part's volume;
+    /// the engine uses them as such.
+    density: f32,
     /// Index of the parent part, or `-1` for a root.
     parent: i32,
     /// A point on the part, at the far end of guns and the base of mounts.

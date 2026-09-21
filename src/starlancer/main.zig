@@ -155,6 +155,8 @@ fn run(io: Io, arena: Allocator, options: Options) !void {
         if (view.frame(.{ .object = ship.subject, .player = ship.subject, .ticks = ticks })) |next| {
             _ = view.setView(next, 0, false, true, @truncate(now));
         }
+        // From its cockpit, the ship is not drawn, as `camera_set_view` sees to.
+        ship.object.hidden = view.inside(0);
 
         const size = window.size();
         if (drawing == null or drawing.?.device.width != size[0] or drawing.?.device.height != size[1]) {
@@ -226,6 +228,7 @@ const Ship = struct {
         const loaded = try gpa.create(game.srofiles.Loaded);
         loaded.* = try game.srofiles.modelLoad(gpa, textures, model, .{}, false);
         var object: game.objects.Model = try .create(gpa, model, loaded);
+        object.recentre(model);
         object.place(@splat(0), math.identity);
         return .{
             .arena = arena,
@@ -235,7 +238,7 @@ const Ship = struct {
                 .position = @splat(0),
                 .orientation = math.identity,
                 .eye = .{ model.header.eye.x, model.header.eye.y, model.header.eye.z },
-                .radius = radius(object, loaded.*),
+                .radius = object.radius,
                 .motion = .{ .ship_type = @intCast(ship_type) },
             },
         };
@@ -255,16 +258,6 @@ fn nextShipType(from: usize, step: isize) usize {
         if (types[at].model != null) return at;
     }
     return from;
-}
-
-/// The farthest a vertex of the model's finest levels lies from its origin: the object's radius.
-fn radius(model: game.objects.Model, loaded: game.srofiles.Loaded) f32 {
-    var farthest: f32 = 0;
-    for (model.parts, loaded.parts) |part, levels| {
-        if (levels.meshes.len == 0) continue;
-        for (levels.meshes[0].positions) |position| farthest = @max(farthest, math.length(part.origin + position));
-    }
-    return farthest;
 }
 
 test nextShipType {
