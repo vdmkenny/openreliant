@@ -470,7 +470,7 @@ const Ship = struct {
         live.engines_intact = 1;
         live.radius = object.radius;
         live.afterburner_fuel = @intFromFloat(100 * ship_stats[ship_type].afterburner_fuel);
-        live.coil_count = game.gameobj.coil_count_when_created;
+        live.countermeasures = game.gameobj.countermeasures_when_created;
         return .{
             .arena = arena,
             .ship_type = ship_type,
@@ -525,7 +525,7 @@ const Display = struct {
                 .fuel => @divTrunc(display.ship.live.afterburner_fuel, 100),
                 // The tally a mission's start zeroes; the sandbox runs no mission, so it stays 0.
                 .skull => 0,
-                .coil => display.ship.live.coil_count,
+                .coil => display.ship.live.countermeasures,
             };
             readout.draw(
                 &display.art,

@@ -419,6 +419,7 @@
 00409be0	function	fight_aim	void __fastcall (int slot, FightState *state, OrderEntry *entry)	Aims the guns: every pilot tier_c_count ticks at the target, leading it by a quarter of its velocity, then moves the aim each update and fires through 0x4096B0
 00409d10	function	fight_call_for_help		Has a ship the player has hurt badly send its nearest fighting wingman at the player
 00409ec0	function	fight_update_cloak	void __fastcall (int slot, FightState *state)	Uncloaks the ship when its maneuver asked for no cloak, and cloaks it once cloak_at passes when it asked for one
+00462550	function	object_spend_countermeasure	void __fastcall (int slot, int unknown)	Spends one of an object's countermeasures, its word at +0x5EC: with none left it flashes the display's element 3 for the player and does nothing else, otherwise it takes one and carries on. **Unverified:** that they are countermeasures; a keypress spends one with a sound, the ships' own code spends them too, and the game binds a COUNTERMEASURES key
 
 # Textures (srTexture.cpp, srImage.cpp, srTGA.cpp, srColor.cpp)
 004c3830	function	SR_init	void * __fastcall (void)	Clears sr_context and returns it

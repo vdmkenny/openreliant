@@ -99,8 +99,8 @@ stand half of the way across, at offsets of `0x39`, `0x5F` and `0x98`:
 | Offset | Shape | Shows |
 | --- | --- | --- |
 | `0x39` | `0xCD`, a ship with its engines burning | the afterburner fuel, in hundreds |
-| `0x5F` | `0xD0`, a skull and crossbones, drawn 4 left | `skull_count` (`0x00562DF4`), one of a run of tallies at `0x562DEC` to `0x562DF8` that a mission's start zeroes together and that is kept across a run. **Unknown** what it counts; it reads 0 in a fresh mission |
-| `0x98` | `0xCF`, a coil, drawn `0x1A` left | the object's word at `+0x5EC`, 29 when it is created, drawn only while a condition of its own holds. A running game shows 29 there, which is that value untouched. **Unknown** what it counts |
+| `0x5F` | `0xD0`, a skull and crossbones, drawn 4 left | `skull_count` (`0x00562DF4`), one of a run of tallies at `0x562DEC` to `0x562DF8` that a mission's start zeroes together and that is kept across a run. **Unknown** what it counts; it reads 0 in a fresh mission, and the game binds a DISPLAY KILLS key |
+| `0x98` | `0xCF`, a coil, drawn `0x1A` left | the object's countermeasures (`+0x5EC`), 29 when it is created, drawn only while a condition of its own holds. **Unverified:** that they are countermeasures; `object_spend_countermeasure` (`0x00462550`) takes one at a keypress with a sound, the ships' own code takes them too, and the game binds a COUNTERMEASURES key |
 
 The port draws the fuel ([`engine/game/hud.zig`](../../src/engine/game/hud.zig)); the other two wait
 on what they count.
@@ -128,10 +128,18 @@ target boxes, ammunition, and the silhouettes the target display shows.
 The element names `hud_init` copies come from `0x00515D70`, which the decrypted dump holds as
 zeroes, so they are not readable from it.
 
+## Turning it off
+
+No key turns the whole display off: the game binds none, and `hud_draw` has no guard for it.
+Individual panels have their own keys, which is what the element state machine drives: GUNNERY
+WINDOW, MISSILE WINDOW, COMMS WINDOW, POWERBALL WINDOW, OBJECTIVES WINDOW, WING STATUS WINDOW and
+DAMAGE WINDOW, each with a locked form. The nearest thing to turning it off is leaving the view
+ahead from the cockpit, which drops the instruments.
+
 ## What is not known yet
 
-- What the skull readout counts, and what the coil readout counts. Their shapes, their places and
-  the fields they read are known; the fields themselves have no names.
+- What the skull readout counts. Its shape, its place and the tally it reads are known; the tally
+  has no name.
 - What shows six of the seven status lights. Each reads a global or an object field with no name.
 - The names of the display's elements, which `hud_init` copies from `0x00515D70`.
 - What the rest of `hud_draw`'s 946 lines draw: the radar, the target display, the shields and the

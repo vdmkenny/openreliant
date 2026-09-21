@@ -113,9 +113,14 @@ pub const GameObject = extern struct {
     /// In hundredths of a second: `100 * ShipCombat.afterburner_fuel` when created, or zero in one
     /// of the game's modes.
     afterburner_fuel: i32,
-    /// The number the display's coil readout shows, 29 when the object is created
-    /// (`create_object`, `object_alloc`). **Unknown:** what it counts.
-    coil_count: u16,
+    /// Countermeasures left, which the display shows under its coil. 29 when the object is created
+    /// (`create_object`, `object_alloc`), and `object_spend_countermeasure` (`0x00462550`) takes
+    /// one at a time, flashing a display element when there are none.
+    ///
+    /// **Unverified:** that they are countermeasures. It is a consumable the player spends one of
+    /// at a keypress with a sound, that the ships' own code spends too, and the game binds a
+    /// COUNTERMEASURES key; nothing names it outright.
+    countermeasures: u16,
     _unknown_5ee: u16,
     /// Four values, each `6 * ShipCombat.shield_power - 1` when created.
     shields: [4]f32,
@@ -253,7 +258,7 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "components") == 0x248);
         assert(@offsetOf(GameObject, "engines") == 0x5D0);
         assert(@offsetOf(GameObject, "afterburner_fuel") == 0x5E8);
-        assert(@offsetOf(GameObject, "coil_count") == 0x5EC);
+        assert(@offsetOf(GameObject, "countermeasures") == 0x5EC);
         assert(@offsetOf(GameObject, "shields") == 0x5F0);
         assert(@offsetOf(GameObject, "armor") == 0x600);
         assert(@offsetOf(GameObject, "rotation") == 0x56C);
@@ -300,8 +305,8 @@ pub const Motion = enum {
     }
 };
 
-/// What `coil_count` holds when an object is created (`0x00407AAE`, `0x0045A0A4`).
-pub const coil_count_when_created: u16 = 29;
+/// How many countermeasures an object is created with (`0x00407AAE`, `0x0045A0A4`).
+pub const countermeasures_when_created: u16 = 29;
 
 /// The view `object_cruise_speed` leaves a ship its undamaged speed in, whatever its armor.
 const full_speed_view: camera.View = @enumFromInt(13);
