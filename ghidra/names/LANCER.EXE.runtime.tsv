@@ -1,0 +1,468 @@
+# Names for the payload's C runtime, the static multithreaded library of Visual C++ 6.0 (LIBCMT),
+# applied by ghidra/scripts/Annotate.java (make ghidra-annotate). Columns as in LANCER.EXE.tsv.
+# Names are the runtime's own symbols, with the compiler's leading underscore; a few labels and
+# funclets with no symbol of their own have descriptive names. docs/binary/runtime.md describes
+# the runtime and how these were identified.
+
+# Floating-point start-up, conversions, character classes
+004cf23a	function	__fpmath	void __cdecl (void)	Floating-point start-up, through _FPinit: fills _cfltcvt_tab, tests for the Pentium FDIV flaw into _adjust_fdiv, and sets 53-bit precision
+004cf252	function	__cfltcvt_init	void __cdecl (void)
+004cf28c	function	__ftol		Converts ST0 to a 64-bit integer, truncating: the compiler's cast from floating point to integer
+004cf2c0	function	__CIacos		The acos intrinsic: the argument and the result on the x87 stack
+004cf2dd	function	acos_start		The body of __CIacos, the label start in acos.obj
+004cf38b	function	_isalpha	int __cdecl (int c)
+004cf3b9	function	_isupper	int __cdecl (int c)
+004cf3e1	function	_isdigit	int __cdecl (int c)
+004cf409	function	_atof	double __cdecl (char *text)
+004cf460	function	_atol	long __cdecl (char *text)
+004cf4eb	function	_atoi	int __cdecl (char *text)
+004cf4f6	function	_sprintf	int __cdecl (char *buffer, char *format, ...)
+004cf548	function	_srand	void __cdecl (uint seed)	Seeds rand for the calling thread
+004cf555	function	_rand		The seed times 214013 plus 2531011, then bits 16 to 30 of the new seed; the seed is per thread
+004cf577	function	_floor	double __cdecl (double x)
+004cf650	function	__CIpow		The pow intrinsic: x and y on the x87 stack
+004cf672	function	pow_start		The body of __CIpow, the label start in pow.obj: x and y on the stack, the high word of y in EAX
+004cf845	function	__test_whether_TOS_is_int		Whether ST0 is an integer: CL 0 if not, 1 if odd, 2 if even
+004cf86d	function	_toupper	int __cdecl (int c)
+004cf8dc	function	__toupper_lk	int __cdecl (int c)
+004cf9b0	function	__chkstk		The stack probe: touches each page of a frame of EAX bytes, for locals over 4 KB
+004cf9e0	function	_strncmp
+
+# C++ exception handling: dispatch and catch blocks
+004cfa18	function	_JumpToContinuation	void __stdcall (void *target, void *registration)	Unlinks the frame's handler and jumps to the code after a catch block
+004cfa4c	function	_CallMemberFunction0		Calls a member function: this, then the function. _CallMemberFunction1, which BuildCatchObject calls with a third argument, is the same code
+004cfa53	function	_CallMemberFunction2		As _CallMemberFunction0, with two more arguments: a copy constructor of a class with a virtual base
+004cfa5a	function	_UnwindNestedFrames
+004cfaa9	function	___CxxFrameHandler		The handler a C++ function with objects to unwind registers, with its FuncInfo in EAX
+004cfadf	function	_CallCatchBlock2
+004cfb33	function	CatchGuardHandler
+004cfb58	function	_CallSETranslator		Calls the thread's structured exception translator
+004cfc0e	function	TranslatorGuardHandler
+004cfc83	function	_GetRangeOfTrysToCheck
+
+# Structured exception handling
+004cfd00	function	__global_unwind2
+004cfd20	function	_unwind_handler		The handler __local_unwind2 registers while it unwinds
+004cfd42	function	__local_unwind2
+004cfdaa	function	__abnormal_termination
+004cfdcd	function	__NLG_Notify1
+004cfdd6	function	__NLG_Notify		Records a non-local goto's destination in _NLG_Destination, for debuggers
+
+# Files and the heap
+004cfdee	function	_remove	int __cdecl (char *path)
+004cfe30	function	_strchr
+004cfeec	function	_fread	uint __cdecl (void *buffer, uint size, uint count, FILE *stream)
+004cff1b	function	__fread_lk	uint __cdecl (void *buffer, uint size, uint count, FILE *stream)
+004d0003	function	_fwrite	uint __cdecl (void *buffer, uint size, uint count, FILE *stream)
+004d0032	function	__fwrite_lk	uint __cdecl (void *buffer, uint size, uint count, FILE *stream)
+004d013c	function	_fclose	int __cdecl (FILE *stream)
+004d016d	function	__fclose_lk	int __cdecl (FILE *stream)
+004d01c0	function	_strncpy
+004d02be	function	__fsopen	FILE * __cdecl (char *name, char *mode, int share)
+004d02ef	function	_fopen	FILE * __cdecl (char *name, char *mode)
+004d0302	function	_fgetc	int __cdecl (FILE *stream)	Or getc: the two are the same code
+004d0333	function	_free	void __cdecl (void *block)	To the small-block heap if one of its regions holds the block, otherwise HeapFree on _crtheap
+004d037b	function	_malloc
+004d038d	function	__nh_malloc
+004d03b9	function	__heap_alloc	void * __cdecl (uint size)	From the small-block heap up to __sbh_threshold, otherwise HeapAlloc on _crtheap
+004d0407	function	_fseek	int __cdecl (FILE *stream, long offset, int origin)
+004d0433	function	__fseek_lk	int __cdecl (FILE *stream, long offset, int origin)
+
+# Start-up and exit
+004d04c0	function	__cinit	void __cdecl (void)	Calls _FPinit, then the C initializers (__xi_a to __xi_z) and the C++ ones (__xc_a to __xc_z)
+004d04ed	function	_exit	void __cdecl (int status)
+004d04fe	function	__exit
+004d050f	function	_doexit	void __cdecl (int status, int quick, int return_to_caller)	Runs the atexit functions and the pre-terminators unless quick, then the terminators, then ExitProcess
+004d05b4	function	__lockexit	void __cdecl (void)
+004d05bd	function	__unlockexit	void __cdecl (void)
+004d05c6	function	__initterm	void __cdecl (void *begin, void *end)	Calls each non-null function pointer from begin up to end
+004d05e0	function	_vsprintf	int __cdecl (char *buffer, char *format, char *arguments)
+004d0631	function	__onexit	void * __cdecl (void *function)
+004d06af	function	_atexit	int __cdecl (void *function)
+004d06c1	function	___onexitinit	void __cdecl (void)	Initializer: allocates the table of atexit functions
+004d06f0	function	_puts	int __cdecl (char *text)
+004d0768	function	_printf	int __cdecl (char *format, ...)
+004d07a9	function	_ftell	long __cdecl (FILE *stream)
+004d07cb	function	__ftell_lk	long __cdecl (FILE *stream)
+004d092c	function	operator_new
+004d093a	function	_qsort	void __cdecl (void *base, uint count, uint width, void *compare)
+004d0a8e	function	_shortsort		qsort's selection sort, for runs of eight elements or fewer
+004d0adc	function	_swap
+004d0b10	function	__CIasin		The asin intrinsic: the argument and the result on the x87 stack
+004d0b2d	function	asin_start		The body of __CIasin, the label start in asin.obj
+004d0bdb	function	_fprintf	int __cdecl (FILE *stream, char *format, ...)
+004d0c17	function	_rewind	void __cdecl (FILE *stream)
+004d0c7b	function	_time	long __cdecl (long *result)	Keeps the last GetSystemTime minute and its daylight saving state, to call GetTimeZoneInformation once a minute at most
+004d0d60	function	_strstr
+004d0de8	function	__except_handler3		The handler a function with __try blocks registers: walks its scope table
+004d0ea5	function	__seh_longjmp_unwind@4
+
+# Floating-point control, paths, case
+004d0ec0	function	__control87	uint __cdecl (uint value, uint mask)
+004d0ef5	function	__controlfp	uint __cdecl (uint value, uint mask)	_control87 without the denormal exception mask
+004d0f0b	function	__abstract_cw	uint __cdecl (ushort control)	The x87 control word in the portable _MCW_ form
+004d0f9d	function	__hw_cw	ushort __cdecl (uint control)	The portable _MCW_ form as an x87 control word
+004d1026	function	__fullpath	char * __cdecl (char *buffer, char *path, uint size)
+004d10cb	function	_tolower	int __cdecl (int c)
+004d113a	function	__tolower_lk	int __cdecl (int c)
+004d1205	function	operator_delete	void __cdecl (void *block)
+004d1210	function	_WinMainCRTStartup		The entry point: sets up the heap, threads, files, command line, environment and initializers, calls WinMain, and exits with its result
+004d1318	function	__amsg_exit		Writes a run-time error message and exits with 255
+004d133d	function	_fast_error_exit		A start-up failure: the message, then ExitProcess(255)
+004d1361	function	_fflush	int __cdecl (FILE *stream)	Every stream for null
+004d1390	function	__fflush_lk	int __cdecl (FILE *stream)
+004d13be	function	__flush	int __cdecl (FILE *stream)
+004d141a	function	__flushall	int __cdecl (void)
+004d1423	function	_flsall	int __cdecl (int mode)	Flushes every stream (1, counting them) or every output stream (0)
+004d14c7	function	_fputc	int __cdecl (int c, FILE *stream)	Or putc: the two are the same code
+004d1502	function	__makepath	void __cdecl (char *path, char *drive, char *directory, char *name, char *extension)
+004d1593	function	__splitpath	void __cdecl (char *path, char *drive, char *directory, char *name, char *extension)
+004d16da	function	__strlwr	char * __cdecl (char *text)
+004d180e	function	_fsetpos	int __cdecl (FILE *stream, longlong *position)
+004d1826	function	__setdefaultprecision	void __cdecl (void)	Sets the x87 to 53-bit precision
+004d1838	function	__ms_p5_test_fdiv	int __cdecl (void)	Whether the processor has the Pentium FDIV flaw, by a division the flaw gets wrong
+004d1876	function	__ms_p5_mp_test_fdiv	int __cdecl (void)	IsProcessorFeaturePresent(0) where kernel32 has it, otherwise _ms_p5_test_fdiv
+
+# printf's floating-point conversions
+004d189f	function	__forcdecpt	void __cdecl (char *number)
+004d18f9	function	__cropzeros	void __cdecl (char *number)
+004d1947	function	__positive	int __cdecl (double *value)
+004d195f	function	__fassign
+004d199d	function	__cftoe	char * __cdecl (double *value, char *buffer, int digits, int caps)
+004d19fe	function	__cftoe2
+004d1ac0	function	__cftof	char * __cdecl (double *value, char *buffer, int digits)
+004d1b15	function	__cftof2
+004d1bbc	function	__cftog	char * __cdecl (double *value, char *buffer, int digits, int caps)
+004d1c4f	function	__cfltcvt	void __cdecl (double *value, char *buffer, int format, int digits, int caps)
+004d1ca0	function	__shift	void __cdecl (char *text, int distance)
+
+# The math library's support routines
+004d1cd0	function	__trandisp1		Dispatches a one-argument x87 function by the class of ST0, from the table in EDX
+004d1d37	function	__trandisp2		The same for two arguments
+004d1ea0	function	__startTwoArgErrorHandling
+004d1eb7	function	__startOneArgErrorHandling
+004d1f00	function	__twoToTOS		2 to the power of ST0
+004d1f15	function	__load_CW		Loads the default control word, 0x27F, for the computation
+004d1f2c	function	__convertTOStoQNaN
+004d1f45	function	__fload_withFB
+004d1f88	function	__checkTOS_withFB
+004d1f9e	function	__fast_exit		Restores the caller's control word and returns
+004d1fab	function	__math_exit
+004d1fe9	function	__check_range_exit		Checks the result for overflow and underflow; the operation code in EDX, 29 for pow, picks the two-argument error path
+004d208c	function	__isctype	int __cdecl (int c, int mask)	The character class test for multibyte code pages
+004d2101	function	__fltin2		atof's conversion: __strgtold12, then _ld12tod
+004d2180	function	_strlen
+004d2200	function	__allmul		64-bit multiplication
+004d2234	function	__flsbuf	int __cdecl (int c, FILE *stream)
+004d234c	function	__output	int __cdecl (FILE *stream, char *format, char *arguments)	The printf engine
+004d2a8d	function	_write_char
+004d2ac2	function	_write_multi_char
+004d2af3	function	_write_string
+004d2b2b	function	_get_int_arg
+004d2b38	function	_get_int64_arg
+004d2b48	function	_get_short_arg
+
+# Threads
+004d2b56	function	__mtinit	int __cdecl (void)	Creates the locks, allocates the TLS index and the first thread's _tiddata
+004d2baa	function	__initptd	void __cdecl (void *data)	Sets a thread's exception action table and its rand seed, 1
+004d2bbd	function	__getptd	void * __cdecl (void)	The calling thread's _tiddata, allocated on first use: errno at +0x8, the rand seed at +0x14
+004d2c24	function	__handle_qnan1
+004d2c78	function	__except1
+004d2d10	function	__raise_exc
+004d2fc3	function	__handle_exc
+004d31da	function	__umatherr
+004d3262	function	__set_errno		EDOM for a domain error, ERANGE for a singularity or an overflow
+004d328a	function	__get_fname		The name of the math function an operation code stands for
+004d32af	function	__errcode
+004d32dc	function	__frnd		Rounds a double by the current rounding mode
+004d32ee	function	__set_exp
+004d3317	function	__sptype		A double's special class: 1 plus infinity, 2 minus infinity, 3 quiet NaN, 4 signaling NaN, 0 none
+004d3371	function	__decomp
+004d3432	function	__statfp
+004d3440	function	__clrfp
+004d344f	function	__ctrlfp	uint __cdecl (uint value, uint mask)	Sets the x87 control word under a mask, returning the old one
+004d3472	function	__set_statfp
+004d362e	function	__ffexpm1		2 to the power of ST0's fraction, less 1
+004d3671	function	_isintTOS		Whether ST0 is an integer: EAX 0 if not, 1 if odd, 2 if even
+004d36d7	function	__powhlp	int __cdecl (double x, double y, double *result)	pow's special cases: infinite arguments
+004d3807	function	__d_inttype	int __cdecl (double value)	0 for a value that is not an integer, 1 for an odd one, 2 for an even one
+
+# Locks
+004d386c	function	__mtinitlocks	void __cdecl (void)
+004d3895	function	__lock	void __cdecl (int lock)	Enters one of the runtime's critical sections, creating it on first use
+004d38f6	function	__unlock	void __cdecl (int lock)
+004d390b	function	___crtLCMapStringA
+
+# C++ exception handling: frames
+004d3b2f	function	___InternalCxxFrameHandler
+004d3bca	function	FindHandler
+004d3d7d	function	FindHandlerForForeignException
+004d3e27	function	TypeMatch
+004d3e84	function	___FrameUnwindToState
+004d3f22	function	FrameUnwindFilter
+004d3f38	function	CatchIt
+004d3fb3	function	CallCatchBlock
+004d4080	function	CallCatchBlock_finally		The __finally block of CallCatchBlock: restores the thread's current exception, and destroys the exception object unless the catch block rethrew it
+004d40ce	function	ExFilterRethrow
+004d40f8	function	BuildCatchObject
+004d42bc	function	___DestructExceptionObject
+004d4323	function	AdjustPointer
+004d4350	function	__CallSettingFrame@12
+004d439c	function	terminate	void __cdecl (void)	Calls the thread's terminate handler, then abort
+004d43fd	function	_inconsistency	void __cdecl (void)	Calls __pInconsistency, then terminate
+
+# errno and stdio
+004d4453	function	__dosmaperr	void __cdecl (uint error)	Sets errno from a Win32 error code
+004d44c6	function	__errno	int * __cdecl (void)
+004d44cf	function	___doserrno	uint * __cdecl (void)
+004d44d8	function	___initstdio	void __cdecl (void)	Initializer: allocates __piob and points it at _iob
+004d4580	function	___endstdio	void __cdecl (void)	Pre-terminator: flushes every stream, and closes them after exit
+004d4594	function	__lock_file	void __cdecl (FILE *stream)
+004d45c3	function	__lock_file2	void __cdecl (int index, FILE *stream)
+004d45e6	function	__unlock_file	void __cdecl (FILE *stream)
+004d4615	function	__unlock_file2	void __cdecl (int index, FILE *stream)
+004d4638	function	__filbuf	int __cdecl (FILE *stream)
+004d4714	function	__read	int __cdecl (int handle, void *buffer, uint count)
+004d4779	function	__read_lk	int __cdecl (int handle, void *buffer, uint count)
+004d4960	function	_memcpy	void * __cdecl (void *destination, void *source, uint count)	Copies backwards when the ranges overlap, as memmove does
+004d4c95	function	__write	int __cdecl (int handle, void *buffer, uint count)
+004d4cfa	function	__write_lk	int __cdecl (int handle, void *buffer, uint count)
+004d4e85	function	__close	int __cdecl (int handle)
+004d4ee2	function	__close_lk	int __cdecl (int handle)
+004d4f65	function	__freebuf	void __cdecl (FILE *stream)
+004d4f90	function	__openfile	FILE * __cdecl (char *name, char *mode, int share, FILE *stream)
+004d5100	function	__getstream	FILE * __cdecl (void)	A free stream, locked
+
+# The heap
+004d51c8	function	__heap_init	int __cdecl (int multithreaded)	Creates _crtheap, then the small-block heap
+004d5204	function	___sbh_heap_init	int __cdecl (void)
+004d5242	function	___sbh_find_block		The small-block heap header whose region holds a block, or null
+004d526d	function	___sbh_free_block
+004d5598	function	___sbh_alloc_block
+004d58a1	function	___sbh_alloc_new_region
+004d5952	function	___sbh_alloc_new_group
+004d5a4d	function	___sbh_resize_block
+004d5d43	function	__callnewh	int __cdecl (uint size)	Calls the new handler, _pnhHeap
+004d5d5e	function	__lseek	long __cdecl (int handle, long offset, int origin)
+004d5dc3	function	__lseek_lk	long __cdecl (int handle, long offset, int origin)
+004d5e36	function	_realloc	void * __cdecl (void *block, uint size)
+004d5f6e	function	__msize	uint __cdecl (void *block)
+004d5fb3	function	__stbuf	int __cdecl (FILE *stream)	Lends stdout or stderr a buffer for one call
+004d6040	function	__ftbuf	void __cdecl (int lent, FILE *stream)	Flushes and takes back a buffer __stbuf lent
+004d606a	function	__ioinit	void __cdecl (void)	Allocates the file table and takes over the inherited and standard handles
+
+# Time, signals, directories, command line
+004d6226	function	___loctotime_t
+004d62e8	function	_raise	int __cdecl (int signal)
+004d646a	function	_siglookup
+004d64a7	function	__getcwd	char * __cdecl (char *buffer, int size)
+004d64ce	function	__getdcwd_lk
+004d65a3	function	__validdrive
+004d65da	function	__XcptFilter	int __cdecl (uint code, void *pointers)	The start-up code's exception filter: raises the signal an exception maps to
+004d6718	function	_xcptlookup
+004d6752	function	__wincmdln	char * __cdecl (void)	The command line past the program's name, for WinMain
+004d67aa	function	__setenvp	void __cdecl (void)	Builds _environ from the environment block
+004d6863	function	__setargv	void __cdecl (void)	Builds __argc and __argv
+004d68fc	function	_parse_cmdline
+004d6ab0	function	___crtGetEnvironmentStringsA
+004d6be2	function	__FF_MSGBANNER		Writes the run-time error banner, when messages go to stderr
+004d6c1b	function	__NMSG_WRITE	void __cdecl (int message)	Writes a run-time error message: to stderr for a console program, otherwise in a message box
+004d6d6e	function	__commit	int __cdecl (int handle)
+
+# Multibyte code pages
+004d6e01	function	__mbsdec
+004d6e6e	function	__setmbcp	int __cdecl (int codepage)
+004d701b	function	_getSystemCP
+004d7065	function	_CPtoLCID
+004d7098	function	_setSBCS
+004d70c1	function	_setSBUpLow
+004d7246	function	___initmbctable	void __cdecl (void)	Initializer: sets the multibyte tables to the ANSI code page, once
+004d7262	function	__mbsnbcpy
+004d7300	function	_strcpy	char * __cdecl (char *destination, char *source)	Enters strcat's copy loop
+004d7310	function	_strcat	char * __cdecl (char *destination, char *source)
+004d73f0	function	__fseeki64	int __cdecl (FILE *stream, longlong offset, int origin)
+004d741f	function	__fseeki64_lk	int __cdecl (FILE *stream, longlong offset, int origin)
+
+# Floating-point conversions
+004d74b0	function	__ZeroTail
+004d74f9	function	__IncMan
+004d754f	function	__RoundMan
+004d75db	function	__CopyMan
+004d75f6	function	__FillZeroMan
+004d7602	function	__IsZeroMan
+004d761d	function	__ShrMan
+004d76aa	function	__ld12cvt
+004d7816	function	__ld12tod
+004d782c	function	__ld12tof
+004d7842	function	__atodbl
+004d786f	function	__atoflt
+004d789c	function	__fptostr
+004d7913	function	__fltout2
+004d796f	function	___dtold
+004d7a30	function	_memset
+004d7a90	function	_memmove	void * __cdecl (void *destination, void *source, uint count)
+004d7dc5	function	__fptrap		Exits with run-time error R6002, floating point not loaded
+004d7dce	function	__87except
+004d7e9e	function	___crtGetStringTypeA
+004d7fe7	function	___strgtold12
+004d84b8	function	__getbuf	void __cdecl (FILE *stream)
+004d84fc	function	__isatty	int __cdecl (int handle)
+004d8525	function	_wctomb	int __cdecl (char *buffer, ushort c)
+004d857e	function	__wctomb_lk	int __cdecl (char *buffer, ushort c)
+004d85f0	function	__aulldiv
+004d8660	function	__aullrem
+004d86d5	function	_calloc	void * __cdecl (uint count, uint size)
+004d8762	function	__matherr	int __cdecl (void *exception)	The default matherr: returns 0
+004d8770	function	_fdiv_main_routine		The Pentium FDIV workaround's division; the __adj_fdiv routines follow it
+004d94fb	function	__fpclass	int __cdecl (double x)
+004d9590	function	_strcmp
+004d9620	function	_strcspn	uint __cdecl (char *text, char *set)
+004d9660	function	_strpbrk	char * __cdecl (char *text, char *set)
+004d969a	function	__CxxUnhandledExceptionFilter		The process's unhandled exception filter: terminate for a C++ exception, otherwise the filter it replaced
+004d96e0	function	__CxxSetUnhandledExceptionFilter		Initializer: installs __CxxUnhandledExceptionFilter
+004d96f1	function	__CxxRestoreUnhandledExceptionFilter		Terminator: restores the filter it replaced
+004d96fe	function	_ValidateRead	int __cdecl (void *address, uint size)
+004d971a	function	_ValidateWrite	int __cdecl (void *address, uint size)
+004d9736	function	_ValidateExecute	int __cdecl (void *address)
+004d974e	function	_abort	void __cdecl (void)	The abnormal termination message, SIGABRT, then _exit(3)
+004d9765	function	__fcloseall	int __cdecl (void)
+
+# Low-level files
+004d97e6	function	__alloc_osfhnd	int __cdecl (void)
+004d9909	function	__set_osfhnd	int __cdecl (int handle, int win32)
+004d9985	function	__free_osfhnd	int __cdecl (int handle)
+004d9a04	function	__get_osfhandle	int __cdecl (int handle)	The Win32 handle behind a runtime file handle
+004d9a46	function	__lock_fhandle	void __cdecl (int handle)
+004d9aa5	function	__unlock_fhandle	void __cdecl (int handle)
+004d9ac7	function	__open	int __cdecl (char *path, int flags, ...)
+004d9ade	function	__sopen	int __cdecl (char *path, int flags, int share, ...)
+004d9dad	function	___tzset	void __cdecl (void)	Reads the time zone once
+004d9ddb	function	__tzset_lk	void __cdecl (void)	The time zone from the TZ variable, otherwise from GetTimeZoneInformation
+004da062	function	__isindst
+004da083	function	__isindst_lk
+004da22f	function	_cvtdate
+004da36f	function	__ismbblead	int __cdecl (uint c)
+004da380	function	_x_ismbbtype
+004da3b1	function	___crtMessageBoxA	int __cdecl (char *text, char *caption, uint type)	MessageBoxA from user32.dll, loaded on first use, owned by the active window's last popup
+004da43a	function	__lseeki64	longlong __cdecl (int handle, longlong offset, int origin)
+004da4ab	function	__lseeki64_lk	longlong __cdecl (int handle, longlong offset, int origin)
+004da530	function	__ftelli64_lk	longlong __cdecl (FILE *stream)
+
+# Long double arithmetic, integer formatting, strings, environment
+004da6c0	function	___addl
+004da6e1	function	___add_12
+004da73f	function	___shl_12
+004da76d	function	___shr_12
+004da79a	function	___mtold12
+004da861	function	_$I10_OUTPUT
+004daaf4	function	___ld12mul
+004dad14	function	___multtenpow12
+004dad90	function	_xtoa
+004dadec	function	__itoa	char * __cdecl (int value, char *buffer, int radix)	Or _ltoa: the two are the same code
+004dae20	function	__stricmp	int __cdecl (char *a, char *b)
+004daef0	function	__strnicmp	int __cdecl (char *a, char *b, uint count)
+004daff1	function	__chsize_lk
+004db116	function	__getenv_lk	char * __cdecl (char *name)
+004db193	function	__setmode_lk	int __cdecl (int handle, int mode)
+004db1f4	function	__mbsnbicoll
+004db233	function	___wtomb_environ
+004db2a1	function	___crtCompareStringA
+004db51e	function	_strncnt
+004db549	function	___crtsetenv
+004db6d0	function	_findenv
+004db728	function	_copy_environ
+004db78f	function	__mbschr
+004db826	function	__strdup	char * __cdecl (char *text)
+004db860	function	RtlUnwind		Import thunk: jumps through its kernel32 address table slot
+004db866	function	__strupr	char * __cdecl (char *text)
+
+# Data: start-up, exit and the initializer tables
+004e0000	data	___xc_a		The C++ initializers __cinit runs, from here to ___xc_z: the game's static constructors
+004e0010	data	___xc_z
+004e0014	data	___xi_a		The C initializers __cinit runs, from here to ___xi_z
+004e0028	data	___xi_z
+004e002c	data	___xp_a		The pre-terminators _doexit runs, from here to ___xp_z
+004e0034	data	___xp_z
+004e0038	data	___xt_a		The terminators _doexit runs, from here to ___xt_z
+004e0040	data	___xt_z
+00514aa8	data	__FPinit		Points at _fpmath, which __cinit calls when set
+00514ae0	data	__NLG_Destination		0x19930520, then the destination, code and frame of the last non-local goto
+00514b00	data	__aexit_rtn		Points at __exit, how _amsg_exit leaves
+00514b04	data	___app_type	int	2, a GUI program
+006235b4	data	__adjust_fdiv	int	Set when the processor has the Pentium FDIV flaw
+006235bc	data	__osver	uint
+006235c0	data	__winver	uint
+006235c4	data	__winmajor	uint
+006235c8	data	__winminor	uint
+006235cc	data	___argc	int
+006235d0	data	___argv	char **
+006235d8	data	__environ	char **
+006235dc	data	___initenv	char **
+006235e0	data	__wenviron
+006235e8	data	__pgmptr	char *
+006235f0	data	__exitflag	char
+006235f4	data	__C_Exit_Done	int
+006235f8	data	__C_Termination_Done	int	Set before ExitProcess; a later exit terminates the process at once
+00623618	data	__aenvptr	char *	The environment block, from GetEnvironmentStrings
+00623620	data	___error_mode	int
+006236e0	data	__pgmname	char[260]	The program's path, from GetModuleFileName
+00624ccc	data	__acmdln	char *	The command line, from GetCommandLineA
+00624cd0	data	___env_initialized	int
+00624cd8	data	___onexitend
+00624cdc	data	___onexitbegin		The table of atexit functions, run last first
+
+# Data: floating point
+00514b08	data	__cfltcvt_tab	void *[6]	printf's floating-point helpers: _cfltcvt, _cropzeros, _fassign, _forcdecpt, _positive, _cfltcvt
+
+# Data: character classes and locale
+00514b50	data	__pctype	ushort *	Points one entry into _ctype, so that EOF, -1, indexes it
+00514b58	data	__ctype	ushort[257]	Character classes: 1 upper, 2 lower, 4 digit, 8 space, 0x10 punctuation, 0x20 control, 0x40 blank, 0x80 hex digit, 0x100 alphabetic
+00514d5c	data	___mb_cur_max	int
+00514d60	data	___decimal_point		The decimal point printf writes and atof reads
+00623694	data	___lc_handle	uint[6]	Each locale category's LCID, 0 for the C locale
+006236ac	data	___lc_codepage	uint
+00623948	data	___mbcodepage	int
+0062395c	data	___ismbcodepage	int
+00623a60	data	__mbctype	uchar[257]
+00623b64	data	___mblcid	int
+00624cc4	data	___setlc_active	int
+00624cc8	data	___unguarded_readlc_active	int
+00624cd4	data	___mbctype_initialized	int
+
+# Data: threads, locks, errors
+00514d78	data	___tlsindex	uint	The TLS slot holding each thread's _tiddata
+00514efc	data	__locktable		The runtime's critical sections by lock number, each created on first use; the streams of _iob use those from 0x1C
+005150d0	data	__pInconsistency		Points at terminate
+005150d8	data	errtable		Win32 error codes and the errno values _dosmaperr maps them to
+005154f0	data	__XcptActTab		Exception codes and the signals they raise; each thread gets a copy
+00515578	data	rterrs		Run-time error numbers and their messages
+006237e8	data	__adbgmsg
+
+# Data: stdio, files and the heap
+00515240	data	__iob	FILE[20]	The first twenty streams: stdin, stdout and stderr, then those fopen hands out
+005154c4	data	___sbh_threshold	uint	Allocations up to this size come from the small-block heap
+005154c8	data	___badioinfo		The file table entry an invalid handle reads
+006236b8	data	__cflush	int
+006236bc	data	__newmode	int	Whether malloc calls the new handler when it fails
+006236c0	data	__pnhHeap		The new handler
+006236c4	data	_stdbuf	void *[2]	The buffers __stbuf lends stdout and stderr
+0062385c	data	__commode	int
+00623938	data	__fmode	int
+00623b80	data	___pioinfo		The file table: pointers to blocks of 32 entries of 0x24 bytes, the Win32 handle first
+00623c80	data	__nhandle	int
+00623c84	data	___sbh_sizeHeaderList	int
+00623c8c	data	___sbh_pHeaderScan
+00623c90	data	___sbh_pHeaderDefer
+00623c94	data	___sbh_cntHeaderList	int
+00623c98	data	___sbh_pHeaderList		The small-block heap's region headers, 0x14 bytes each
+00623c9c	data	__crtheap	uint	The Win32 heap the runtime allocates from
+00623ca0	data	___piob	FILE **	Every stream: those of _iob, then those allocated past it
+00624cc0	data	__nstream	int
+
+# Data: time
+005158a0	data	__timezone	long
+005158a4	data	__daylight	int
+00515950	data	__lpdays	int[13]	Days before each month in a leap year, less one
+00515984	data	__days	int[13]	Days before each month, less one
+00623600	data	dstflag_cache		time's cached daylight saving state
+00623608	data	gmt_cache		time's cached GetSystemTime result

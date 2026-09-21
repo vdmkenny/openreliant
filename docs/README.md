@@ -9,6 +9,7 @@ no game code or assets.
 | [`toolchain.md`](toolchain.md) | What `make setup` installs, and the Ghidra workflow. |
 | [`binary/executables.md`](binary/executables.md) | The shipped binaries and the middleware they are built on. |
 | [`binary/safedisc.md`](binary/safedisc.md) | SafeDisc 1, and recovering the game executable from it. |
+| [`binary/runtime.md`](binary/runtime.md) | The C runtime linked into the game: Visual C++ 6.0's `LIBCMT`. |
 | [`formats/disc-images.md`](formats/disc-images.md) | Raw CD images and the discs' ISO 9660 filesystem. |
 | [`formats/hog.md`](formats/hog.md) | `.HOG` archives: EA's `BIGF` container. |
 | [`formats/refpack.md`](formats/refpack.md) | RefPack, the compression inside them. |

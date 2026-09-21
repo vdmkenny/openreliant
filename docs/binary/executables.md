@@ -15,7 +15,8 @@ All binaries are 32-bit x86 PE images (`machine = 0x14C`).
 | `LANGUAGE.DLL` | 122,951 | 6.0 | `0x10000000` | Localised strings, as a `.rsrc` string table the game reads by ID. |
 | `ITACLANG.DLL` | 692,282 | - | - | In-flight communication system language resources. |
 
-`LANCER.ICD` is stripped, so Ghidra names its functions `FUN_<address>`.
+`LANCER.ICD` is stripped, so Ghidra names its functions `FUN_<address>`. It is built with Visual
+C++ 6.0 and links the C runtime statically; see [`runtime.md`](runtime.md).
 
 ## Middleware
 

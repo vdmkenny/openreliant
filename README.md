@@ -50,7 +50,8 @@ make ghidra-gui       # open the project
 The shipped `LANCER.EXE` is a SafeDisc 1 loader; the game is the encrypted `LANCER.ICD` beside it.
 `sltool safedisc` decrypts it from the files alone, with no disc access and without running the
 loader, by a 32-bit key search. It also recovers the names of the `kernel32` and `user32` imports
-SafeDisc hides, but not their order, which SafeDisc shuffles, so it does not write them back.
+SafeDisc hides, but not which call uses which: SafeDisc resolves those per call site, not per
+import slot, so it does not write them back.
 
 | Command | Reads | Doc |
 |---|---|---|

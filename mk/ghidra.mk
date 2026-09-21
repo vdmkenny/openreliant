@@ -90,7 +90,8 @@ ghidra-annotate: | $(GHIDRA_PROJECT_DIR)/.imported-game ## Name and type the pay
 	$(HEADLESS) $(GHIDRA_PROJECT)/game -process LANCER.EXE -noanalysis \
 	    -scriptPath $(GHIDRA_SCRIPTS_DIR) \
 	    -postScript Annotate.java $(GHIDRAGEN_DIR)/types.tsv \
-	        $(GHIDRAGEN_DIR)/names.tsv $(GHIDRA_NAMES_DIR)/LANCER.EXE.tsv \
+	        $(GHIDRAGEN_DIR)/names.tsv $(GHIDRA_NAMES_DIR)/LANCER.EXE.runtime.tsv \
+	        $(GHIDRA_NAMES_DIR)/LANCER.EXE.tsv \
 	    -max-cpu $(HEADLESS_MAX_CPU) -log $(GHIDRA_PROJECT_DIR)/annotate.log
 
 .PHONY: ghidra-gui

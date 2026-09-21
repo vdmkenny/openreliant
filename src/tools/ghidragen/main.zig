@@ -51,4 +51,5 @@ pub fn main(init: std.process.Init) !u8 {
 test {
     std.testing.refAllDecls(names);
     std.testing.refAllDecls(types);
+    std.testing.refAllDecls(@import("tables.zig"));
 }

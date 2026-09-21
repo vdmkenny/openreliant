@@ -92,20 +92,24 @@ which writes per program: `segments.tsv`, `imports.tsv`, `exports.tsv`, `strings
 `functions.tsv`, `disassembly.asm` and `decompiled.c`. The output is derived from the game and is
 git-ignored.
 
-`make ghidra-annotate` runs [`Annotate.java`](../ghidra/scripts/Annotate.java) on the payload.
-It first defines the data types that `src/tools/ghidragen` writes from the Zig definitions
-(`ghidragen types`): the engine's run-time structures in [`src/lancer.zig`](../src/lancer.zig)
-and the mission records of [`src/formats/dte.zig`](../src/formats/dte.zig), which the engine uses in
-place. They go in the `/StarLancer` category and replace earlier versions, so a change to a Zig
-definition reaches the project on the next run. It then applies names, comments, data types and
-function signatures from two tables of address, kind, name, type and comment:
-[`ghidra/names/LANCER.EXE.tsv`](../ghidra/names/LANCER.EXE.tsv), kept by hand as functions and
-data are identified, and one `ghidragen names` writes for the code the payload reaches only through
-its tables: each VM opcode handler after its opcode, each command implementation after its command,
-each order routine after its order and each maneuver opcode handler after its opcode, and the
-tables themselves. Auto-analysis never finds that code, so the script disassembles it first. Names are
-user-defined, re-running changes nothing that is already in place, and the tables are the record of
-what is named and typed: re-import a program and one command restores it.
+`make ghidra-annotate` runs [`Annotate.java`](../ghidra/scripts/Annotate.java) on the payload. It
+first defines the data types that `src/tools/ghidragen` writes from the Zig definitions (`ghidragen
+types`): the engine's run-time structures in [`src/lancer.zig`](../src/lancer.zig) and the mission
+records of [`src/formats/dte.zig`](../src/formats/dte.zig), which the engine uses in place. They go
+in the `/StarLancer` category and replace earlier versions, so a change to a Zig definition reaches
+the project on the next run. It then applies names, comments, data types and function signatures
+from tables of address, kind, name, type and comment:
+[`ghidra/names/LANCER.EXE.tsv`](../ghidra/names/LANCER.EXE.tsv), kept by hand as functions and data
+are identified; [`ghidra/names/LANCER.EXE.runtime.tsv`](../ghidra/names/LANCER.EXE.runtime.tsv), the
+C runtime linked into the payload (see [`binary/runtime.md`](binary/runtime.md)); and one `ghidragen
+names` writes for the code the payload reaches only through its tables: each VM opcode handler after
+its opcode, each command implementation after its command, each order routine after its order and
+each maneuver opcode handler after its opcode, and the tables themselves. Auto-analysis never finds
+that code, so the script disassembles it first. Names are user-defined, re-running changes nothing
+that is already in place, and the tables are the record of what is named and typed: re-import a
+program and one command restores it. The hand tables' rows are applied after the generated ones and
+so override them; `zig build test` checks that every row is well formed and that no address is named
+twice among the hand tables.
 
 To read code that auto-analysis missed before naming it, `make ghidra-run
 SCRIPT=DefineFunctions.java ARGS="0x00405010 ..."` defines functions at those addresses under

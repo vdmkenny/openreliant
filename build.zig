@@ -55,6 +55,13 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    // Its tests check the names tables kept by hand, which Ghidra applies with its own rows.
+    for ([_][]const u8{ "LANCER.EXE.tsv", "LANCER.EXE.runtime.tsv" }) |table| {
+        ghidragen.root_module.addAnonymousImport(table, .{
+            .root_source_file = b.path(b.fmt("ghidra/names/{s}", .{table})),
+        });
+    }
+
     const ghidragen_step = b.step("ghidragen", "Build the Ghidra name and type table generator");
     ghidragen_step.dependOn(&b.addInstallArtifact(ghidragen, .{}).step);
 

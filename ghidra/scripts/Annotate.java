@@ -11,12 +11,12 @@
 // A names table has rows of address, kind, name, type and comment, tab-separated; type and comment
 // may be empty. A `function` row names the function at its address, creating it if need be. Its
 // type is either the name of a function type from the schema or a signature in C without the
-// function's name, such as `void __fastcall (VmThread *thread)`; Ghidra adds the `this` of a
-// `__thiscall` itself, so such a signature leaves it out. A `data` row labels its address,
-// and its type, such as `VmThread *` or `ConditionDescriptor[35]`, replaces whatever data was
-// defined there. The comment becomes a function's plate comment or the data's pre comment. Lines
-// starting with '#', blank lines and addresses the program does not contain are skipped, so one
-// table can cover a group holding several programs.
+// function's name, such as `void __fastcall (VmThread *thread)`, with `...` last for a variadic
+// one; Ghidra adds the `this` of a `__thiscall` itself, so such a signature leaves it out. A
+// `data` row labels its address, and its type, such as `VmThread *` or `ConditionDescriptor[35]`,
+// replaces whatever data was defined there. The comment becomes a function's plate comment or the
+// data's pre comment. Lines starting with '#', blank lines and addresses the program does not
+// contain are skipped, so one table can cover a group holding several programs.
 //
 // A type string is a type's name, then `*` and `[n]` decorations read as C reads them. Names are
 // looked up in /StarLancer first, then among Ghidra's built-in types. Names are applied as
@@ -233,7 +233,10 @@ public class Annotate extends GhidraScript {
         return dt;
     }
 
-    /** `<return type> [<convention>] (<type> <name>, ...)`, which gets `name`. */
+    /**
+     * `<return type> [<convention>] (<type> <name>, ...)`, which gets `name`. A last parameter of
+     * `...` makes the function variadic.
+     */
     private FunctionDefinitionDataType parseSignature(String name, String text) throws Exception {
         int open = text.indexOf('(');
         int close = text.lastIndexOf(')');
@@ -250,6 +253,13 @@ public class Annotate extends GhidraScript {
         }
         List<ParameterDefinition> parameters = new ArrayList<>();
         String list = text.substring(open + 1, close).trim();
+        boolean variadic = list.endsWith("...");
+        if (variadic) {
+            list = list.substring(0, list.length() - 3).trim();
+            if (list.endsWith(",")) {
+                list = list.substring(0, list.length() - 1).trim();
+            }
+        }
         if (!list.isEmpty() && !list.equals("void")) {
             for (String parameter : list.split(",")) {
                 parameter = parameter.trim();
@@ -264,6 +274,7 @@ public class Annotate extends GhidraScript {
         FunctionDefinitionDataType definition = new FunctionDefinitionDataType(CATEGORY, name, dtm);
         definition.setReturnType(parseType(head));
         definition.setArguments(parameters.toArray(new ParameterDefinition[0]));
+        definition.setVarArgs(variadic);
         if (convention != null) {
             definition.setCallingConvention(convention);
         }

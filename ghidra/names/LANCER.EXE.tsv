@@ -229,6 +229,7 @@
 00403060	function	object_cruise_speed	float __fastcall (GameObject *object)	max_speed, times the factor at 0x738, engines_intact and, outside one mode, the armor factor at 0x668
 
 # The game loop
+004a8b10	function	WinMain	int __stdcall (uint instance, uint previous, char *command_line, int show)	The game's entry, from _WinMainCRTStartup. A second copy finds the first by its StarlancerRunning mutex and restores the first's window instead
 00494040	function	mission_run	void __fastcall (void)	Runs a mission: resets the clocks, then loops, running a game tick for each timer tick since the last pass
 004827c0	function	tick_timer		Timer callback, 100 times a second: advances game_ticks and the play time, unless paused
 00477850	function	game_tick	void __fastcall (void)	One tick: the simulation step, unless paused
