@@ -86,6 +86,21 @@ Documentation index: [`docs/README.md`](docs/README.md).
 | `docs/` | Reference documentation. |
 | `tools/`, `game/`, `references/` | Git-ignored: toolchain, game files, other projects read for reference. |
 
+## License
+
+Copyright 2026 the OpenReliant contributors.
+
+The code is licensed under the [Mozilla Public License 2.0](LICENSE): it can be used in any
+project, open or not, but changes to its files are shared under the same license. The
+documentation under `docs/` is licensed under
+[Creative Commons Attribution-ShareAlike 4.0](docs/LICENSE).
+
+StarLancer, its code and its assets belong to their owners, and neither license covers them. This
+repository holds none of the game's files, but parts of it reproduce what the game contains, and
+those parts are not ours to license: the tables transcribed from the game executable carry names
+and descriptions the game's developers wrote, and `docs/images/predator-wireframe.svg` is drawn
+from the game's own model.
+
 ## Related projects
 
 Independent reverse engineering of the same game, read for cross-reference. No code from them is
