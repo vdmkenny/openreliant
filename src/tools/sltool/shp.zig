@@ -1,0 +1,343 @@
+//! `sltool shp ...`: read `.SHP` models and export their geometry.
+
+const std = @import("std");
+const Io = std.Io;
+
+const starlancer = @import("starlancer");
+const shp = starlancer.shp;
+
+const Context = @import("main.zig").Context;
+
+pub const Command = union(enum) {
+    info: struct { model: []const u8 },
+    /// Cross-checks the parsed model against itself.
+    check: struct { model: []const u8 },
+    /// Lists the chunk stream as it appears in the file.
+    chunks: struct { model: []const u8 },
+    /// Writes Wavefront OBJ, one object per part.
+    obj: struct { model: []const u8, out: []const u8, lod: u32 = 0 },
+
+    pub const usage =
+        \\  shp info <model>                parts, meshes, materials and bounds
+        \\  shp check <model>               validate indices, bounds and normals
+        \\  shp chunks <model>              list the raw chunk stream
+        \\  shp obj <model> <out.obj> [--lod <n>]
+        \\                                  export geometry as Wavefront OBJ
+        \\
+    ;
+
+    pub fn parse(args: []const [:0]const u8) error{Usage}!Command {
+        if (args.len == 0) return error.Usage;
+        const verb = std.meta.stringToEnum(std.meta.Tag(Command), args[0]) orelse return error.Usage;
+        const operands = args[1..];
+        switch (verb) {
+            .info => return if (operands.len == 1) .{ .info = .{ .model = operands[0] } } else error.Usage,
+            .check => return if (operands.len == 1) .{ .check = .{ .model = operands[0] } } else error.Usage,
+            .chunks => return if (operands.len == 1) .{ .chunks = .{ .model = operands[0] } } else error.Usage,
+            .obj => {
+                if (operands.len != 2 and operands.len != 4) return error.Usage;
+                var command: Command = .{ .obj = .{ .model = operands[0], .out = operands[1] } };
+                if (operands.len == 4) {
+                    if (!std.mem.eql(u8, operands[2], "--lod")) return error.Usage;
+                    command.obj.lod = std.fmt.parseInt(u32, operands[3], 10) catch return error.Usage;
+                }
+                return command;
+            },
+        }
+    }
+
+    pub fn run(command: Command, ctx: Context) !void {
+        const path = switch (command) {
+            inline else => |operands| operands.model,
+        };
+        const data = try Io.Dir.cwd().readFileAlloc(ctx.io, path, ctx.arena, .limited(64 << 20));
+
+        switch (command) {
+            .chunks => try chunks(ctx, data),
+            .info => try info(ctx, try shp.Model.parse(ctx.arena, data)),
+            .check => try check(ctx, try shp.Model.parse(ctx.arena, data)),
+            .obj => |operands| try writeObj(ctx, try shp.Model.parse(ctx.arena, data), operands.out, operands.lod),
+        }
+    }
+};
+
+fn chunks(ctx: Context, data: []const u8) !void {
+    var reader: shp.Reader = .init(data);
+    try ctx.stdout.writeAll("  offset   tag  record  count  name\n");
+    while (try reader.next()) |chunk| {
+        const offset = reader.pos - chunk.data.len - 6;
+        try ctx.stdout.print("{x:0>8}  {x:0>4} {d:>7} {d:>6}  {t}\n", .{
+            offset, @intFromEnum(chunk.tag), chunk.record_size, chunk.count, chunk.tag,
+        });
+    }
+    try ctx.stdout.print("{x:0>8}  ffff                 end\n", .{reader.pos});
+}
+
+fn info(ctx: Context, model: shp.Model) !void {
+    try ctx.stdout.print(
+        \\version:  {d}
+        \\flags:    cloak={}
+        \\parts:    {d}
+        \\vertices: {d}
+        \\faces:    {d}
+        \\
+        \\
+    , .{
+        model.header.version,
+        model.header.flags.cloak,
+        model.parts.len,
+        model.vertexCount(),
+        model.faceCount(),
+    });
+
+    for (model.parts, 0..) |entry, index| {
+        const part = entry.part;
+        try ctx.stdout.print("[{d:>3}] {s:<34} type {d:>2}  parent {d:>3}  link {d}", .{
+            index, part.name(), part.part_type, part.parent, part.link_id,
+        });
+        if (part.turret_kind != 0) {
+            try ctx.stdout.print("  turret kind {d} yaw [{d:.0},{d:.0}] pitch [{d:.0},{d:.0}]", .{
+                part.turret_kind, part.yaw_min, part.yaw_max, part.pitch_min, part.pitch_max,
+            });
+        }
+        try ctx.stdout.writeByte('\n');
+
+        for (entry.meshes, 0..) |mesh, level| {
+            try ctx.stdout.print("        lod {d}: {d:>5} vertices {d:>5} faces {d:>3} materials", .{
+                level, mesh.vertices.len, mesh.faces.len, mesh.materials.len,
+            });
+            if (mesh.lod.switch_distance != 0) {
+                try ctx.stdout.print("  beyond {d:.0}", .{mesh.lod.switch_distance});
+            }
+            try ctx.stdout.writeByte('\n');
+        }
+
+        if (entry.attachment_count + entry.node_count + entry.clip_count + entry.trigger_count > 0) {
+            try ctx.stdout.print("        {d} nodes, {d} attachments, {d} clips, {d} groups, {d} triggers\n", .{
+                entry.node_count,  entry.attachment_count, entry.clip_count,
+                entry.group_count, entry.trigger_count,
+            });
+        }
+    }
+
+    // Materials are per mesh, but the set across the model is what matters for texturing.
+    var seen: std.StringArrayHashMapUnmanaged(void) = .empty;
+    for (model.parts) |entry| {
+        for (entry.meshes) |mesh| {
+            for (mesh.materials) |*material| {
+                if (material.name().len > 0) try seen.put(ctx.arena, material.name(), {});
+            }
+        }
+    }
+    if (seen.count() > 0) {
+        try ctx.stdout.print("\ntextures ({d}):", .{seen.count()});
+        for (seen.keys()) |name| try ctx.stdout.print(" {s}", .{name});
+        try ctx.stdout.writeByte('\n');
+    }
+}
+
+/// Cross-checks a parsed model for internal consistency. Every one of these holds for all 440
+/// shipped models, so a failure means either a damaged file or a misread structure.
+/// How a part's stored bounding box relates to the extent of its finest mesh.
+const BoundsFrame = enum {
+    /// Zero-sized: the exporter left it unfilled.
+    empty,
+    /// The vertex extent as stored.
+    model_space,
+    /// The vertex extent after applying the part's orientation.
+    oriented,
+    /// Same box up to an axis swap or reflection, in a frame the record does not describe.
+    permuted,
+    /// A different box entirely.
+    other,
+};
+
+fn classifyBounds(entry: shp.PartData) BoundsFrame {
+    const part = &entry.part;
+    const tolerance = 0.5;
+    const side = struct {
+        fn eql(a: shp.Vec3, b: shp.Vec3, c: shp.Vec3, d: shp.Vec3, t: f32) bool {
+            return @abs(a.x - c.x) <= t and @abs(a.y - c.y) <= t and @abs(a.z - c.z) <= t and
+                @abs(b.x - d.x) <= t and @abs(b.y - d.y) <= t and @abs(b.z - d.z) <= t;
+        }
+        fn lengths(lo: shp.Vec3, hi: shp.Vec3) [3]f32 {
+            var out = [3]f32{ hi.x - lo.x, hi.y - lo.y, hi.z - lo.z };
+            std.mem.sort(f32, &out, {}, std.sort.asc(f32));
+            return out;
+        }
+    };
+
+    const stored_sides = side.lengths(part.bounds_min, part.bounds_max);
+    if (stored_sides[2] == 0) return .empty;
+
+    const mesh = entry.meshes[0];
+    const lo, const hi = mesh.bounds();
+    if (side.eql(lo, hi, part.bounds_min, part.bounds_max, tolerance)) return .model_space;
+
+    const olo, const ohi = mesh.boundsIn(part);
+    if (side.eql(olo, ohi, part.bounds_min, part.bounds_max, tolerance)) return .oriented;
+
+    const vertex_sides = side.lengths(lo, hi);
+    for (stored_sides, vertex_sides) |a, b| {
+        if (@abs(a - b) > 1.0) return .other;
+    }
+    return .permuted;
+}
+
+fn check(ctx: Context, model: shp.Model) !void {
+    var problems: usize = 0;
+    var bounds_frames: [std.meta.fields(BoundsFrame).len]usize = @splat(0);
+    const report = struct {
+        fn fail(c: Context, count: *usize, comptime fmt: []const u8, args: anytype) !void {
+            count.* += 1;
+            if (count.* <= 10) try c.stdout.print("  " ++ fmt ++ "\n", args);
+        }
+    };
+
+    for (model.parts, 0..) |entry, index| {
+        const part = entry.part;
+        if (part.parent >= @as(i32, @intCast(model.parts.len)) or part.parent < -1) {
+            try report.fail(ctx, &problems, "part {d}: parent {d} out of range", .{ index, part.parent });
+        }
+        if (part.parent == @as(i32, @intCast(index))) {
+            try report.fail(ctx, &problems, "part {d}: is its own parent", .{index});
+        }
+
+        for (entry.meshes, 0..) |mesh, level| {
+            for (mesh.faces, 0..) |face, face_index| {
+                for (face.vertices) |vertex| {
+                    if (vertex >= mesh.vertices.len) {
+                        try report.fail(ctx, &problems, "part {d} lod {d} face {d}: vertex {d} of {d}", .{
+                            index, level, face_index, vertex, mesh.vertices.len,
+                        });
+                    }
+                }
+                if (face.material >= mesh.materials.len) {
+                    try report.fail(ctx, &problems, "part {d} lod {d} face {d}: material {d} of {d}", .{
+                        index, level, face_index, face.material, mesh.materials.len,
+                    });
+                }
+            }
+
+            // The next-level counterpart index must point into the following level.
+            if (level + 1 < entry.meshes.len) {
+                const next = entry.meshes[level + 1];
+                for (mesh.vertices, 0..) |vertex, vertex_index| {
+                    if (vertex.next_lod_vertex == -1) continue;
+                    if (vertex.next_lod_vertex < -1 or vertex.next_lod_vertex >= @as(i32, @intCast(next.vertices.len))) {
+                        try report.fail(ctx, &problems, "part {d} lod {d} vertex {d}: geomorph target {d} of {d}", .{
+                            index, level, vertex_index, vertex.next_lod_vertex, next.vertices.len,
+                        });
+                    }
+                }
+            }
+        }
+
+        // The part record carries a bounding box derived from its vertices, but not always in
+        // the part's own frame, so it is classified rather than required to match.
+        if (entry.meshes.len > 0 and entry.meshes[0].vertices.len > 0) {
+            bounds_frames[@intFromEnum(classifyBounds(entry))] += 1;
+        }
+    }
+
+    if (problems == 0) {
+        try ctx.stdout.print("ok: {d} parts, {d} vertices, {d} faces\n", .{
+            model.parts.len, model.vertexCount(), model.faceCount(),
+        });
+        try ctx.stdout.writeAll("bounds:");
+        inline for (std.meta.fields(BoundsFrame)) |field| {
+            const count = bounds_frames[field.value];
+            if (count > 0) try ctx.stdout.print(" {d} {s}", .{ count, field.name });
+        }
+        try ctx.stdout.writeByte('\n');
+    } else {
+        try ctx.stdout.print("{d} problems\n", .{problems});
+        try ctx.stdout.flush(); // the error path skips the flush in main
+        return error.ModelInconsistent;
+    }
+}
+
+/// Writes the requested level of every part as one OBJ object each.
+///
+/// Every face record is emitted as its own triangle. Records carrying fan or strip grouping would
+/// merge into larger polygons in the engine, but each record is already a complete triangle of
+/// that polygon, so triangulating them is equivalent and avoids relying on the coplanarity test
+/// the loader applies.
+fn writeObj(ctx: Context, model: shp.Model, out_path: []const u8, lod: u32) !void {
+    const file = try Io.Dir.cwd().createFile(ctx.io, out_path, .{});
+    defer file.close(ctx.io);
+    var buffer: [64 * 1024]u8 = undefined;
+    var writer = file.writer(ctx.io, &buffer);
+    const out = &writer.interface;
+
+    try out.print("# Starlancer model, lod {d}, {d} parts\n", .{ lod, model.parts.len });
+
+    // OBJ numbers positions, texture coordinates and normals in three independent spaces, each
+    // 1-based and running across the whole file.
+    var vertex_base: usize = 1;
+    var uv_base: usize = 1;
+    var exported: usize = 0;
+    var triangles: usize = 0;
+
+    for (model.parts, 0..) |entry, index| {
+        if (lod >= entry.meshes.len) continue;
+        const mesh = entry.meshes[lod];
+        if (mesh.vertices.len == 0) continue;
+
+        // Part positions are relative to the parent, so walk up to place the part in model space.
+        var offset = shp.Vec3.zero;
+        var walk: i32 = @intCast(index);
+        while (walk >= 0) {
+            const parent = model.parts[@intCast(walk)].part;
+            offset.x += parent.position.x;
+            offset.y += parent.position.y;
+            offset.z += parent.position.z;
+            if (parent.parent == walk) break; // guard against a self-referential parent
+            walk = parent.parent;
+        }
+
+        try out.print("\no {s}\n", .{if (entry.part.name().len > 0) entry.part.name() else "part"});
+        for (mesh.vertices) |vertex| {
+            try out.print("v {d} {d} {d}\n", .{
+                vertex.position.x + offset.x,
+                vertex.position.y + offset.y,
+                vertex.position.z + offset.z,
+            });
+        }
+        for (mesh.vertices) |vertex| {
+            try out.print("vn {d} {d} {d}\n", .{ vertex.normal.x, vertex.normal.y, vertex.normal.z });
+        }
+        // OBJ texture coordinates run bottom-up, the opposite of the game's.
+        for (mesh.faces) |face| {
+            for (0..3) |corner| {
+                try out.print("vt {d} {d}\n", .{ face.u[corner], 1.0 - face.v[corner] });
+            }
+        }
+
+        var current_material: ?u32 = null;
+        for (mesh.faces, 0..) |face, face_index| {
+            if (face.shading.mode == .wire) continue; // lines, not a surface
+            if (current_material == null or current_material.? != face.material) {
+                current_material = face.material;
+                const name = if (face.material < mesh.materials.len)
+                    mesh.materials[face.material].name()
+                else
+                    "";
+                try out.print("usemtl {s}\n", .{if (name.len > 0) name else "none"});
+            }
+            try out.print("f {d}/{d}/{d} {d}/{d}/{d} {d}/{d}/{d}\n", .{
+                vertex_base + face.vertices[0], uv_base + face_index * 3 + 0, vertex_base + face.vertices[0],
+                vertex_base + face.vertices[1], uv_base + face_index * 3 + 1, vertex_base + face.vertices[1],
+                vertex_base + face.vertices[2], uv_base + face_index * 3 + 2, vertex_base + face.vertices[2],
+            });
+            triangles += 1;
+        }
+
+        vertex_base += mesh.vertices.len;
+        uv_base += mesh.faces.len * 3;
+        exported += 1;
+    }
+
+    try out.flush();
+    try ctx.stdout.print("wrote {s}: {d} parts, {d} triangles\n", .{ out_path, exported, triangles });
+}

@@ -6,6 +6,7 @@
 #                            loader and language DLLs it copies from the disc
 #   game/decrypted/          the payload executable, recovered from the SafeDisc wrapper
 #   game/assets/<archive>/   the contents of each .HOG, decompressed
+#   game/models/             the .SHP models as Wavefront OBJ
 #
 # Extraction is pure Zig (sltool reads raw sectors and ISO 9660 itself) except for LANCER.CAB, an
 # LZX-compressed Microsoft cabinet, which still goes through 7z.
@@ -34,6 +35,26 @@ assets: $(addprefix $(GAME_DIR)/.stamp-hog-,$(notdir $(basename $(HOG_ARCHIVES))
 $(GAME_DIR)/.stamp-hog-%: | $(GAME_DIR)/.stamp-install $(SLTOOL)
 	$(SLTOOL) hog extract $(firstword $(filter %/$*.hog,$(addprefix $(GAME_DIR)/,$(HOG_ARCHIVES)))) $(ASSETS_DIR)/$*
 	touch $@
+
+MODELS_DIR := $(GAME_DIR)/models
+
+.PHONY: models
+models: $(GAME_DIR)/.stamp-models ## Export every .SHP model to game/models as Wavefront OBJ
+
+$(GAME_DIR)/.stamp-models: | $(GAME_DIR)/.stamp-hog-resource $(SLTOOL)
+	mkdir -p $(MODELS_DIR)
+	@count=0; for f in $(ASSETS_DIR)/resource/*.[sS][hH][pP]; do \
+	    name=$$(basename "$$f"); \
+	    $(SLTOOL) shp obj "$$f" "$(MODELS_DIR)/$${name%.*}.obj" > /dev/null; \
+	    count=$$((count + 1)); \
+	done; echo "exported $$count models to $(MODELS_DIR)"
+	touch $@
+
+.PHONY: check-models
+check-models: | $(GAME_DIR)/.stamp-hog-resource $(SLTOOL) ## Validate every .SHP model for internal consistency
+	@bad=0; for f in $(ASSETS_DIR)/resource/*.[sS][hH][pP]; do \
+	    $(SLTOOL) shp check "$$f" > /dev/null || { echo "FAILED: $$f"; bad=$$((bad + 1)); }; \
+	done; echo "$$(ls $(ASSETS_DIR)/resource/*.[sS][hH][pP] | wc -l | tr -d ' ') models checked, $$bad with problems"
 
 $(DISCS_DIR):
 	mkdir -p $@

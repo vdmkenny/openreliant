@@ -5,8 +5,17 @@ working toward a source-level understanding of the engine and a port to modern s
 
 Tools are written in Zig; `make` drives the toolchain, the extraction and the analysis.
 
+<p align="center">
+  <img src="docs/images/predator-wireframe.svg" width="560"
+       alt="Wireframe of the Predator light fighter, exported from its .SHP model">
+</p>
+<p align="center">
+  <sub>The Predator light fighter, read out of <code>USLF_Prd.SHP</code> by <code>sltool shp obj</code>.</sub>
+</p>
+
 > You must own a copy of the game. This repository contains no game code, assets or disc images,
 > and none are ever committed: `game/`, `ghidra/projects/` and `ghidra/export/` are git-ignored.
+> The wireframe above is a line drawing this project's own tools generate from model geometry.
 
 ## Getting started
 
@@ -56,6 +65,10 @@ extracting the discs needs no mounting or conversion. See
 members inside them: `make assets` unpacks `resource.hog` into 967 models, sprites, images,
 missions and stat tables. See [`docs/formats/hog.md`](docs/formats/hog.md) and
 [`docs/formats/refpack.md`](docs/formats/refpack.md).
+
+`sltool shp` reads the `.SHP` models and exports them as Wavefront OBJ: `make models` converts all
+440 ships, stations and weapons, and `make check-models` validates them. See
+[`docs/formats/shp.md`](docs/formats/shp.md).
 
 Documentation index: [`docs/README.md`](docs/README.md).
 

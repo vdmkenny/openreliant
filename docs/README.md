@@ -12,6 +12,7 @@ game code or assets are stored in this repository.
 | [`formats/disc-images.md`](formats/disc-images.md) | Raw CD image layout and the ISO 9660 / Joliet filesystem on the two discs. |
 | [`formats/hog.md`](formats/hog.md) | `.HOG` asset archives: the EA `BIGF` container. |
 | [`formats/refpack.md`](formats/refpack.md) | RefPack, the compression used inside them. |
+| [`formats/shp.md`](formats/shp.md) | `.SHP` 3D models: chunk stream, parts, levels of detail, geometry. |
 
 ## Conventions
 
