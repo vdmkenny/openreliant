@@ -59,6 +59,13 @@ pub fn transpose(m: Matrix) Matrix {
     return .{ m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8] };
 }
 
+/// `x` rounded to the nearest whole number, halves to even, as the x87 rounds by default (`FISTP`).
+pub fn roundEven(x: f32) f32 {
+    const r = @round(x);
+    if (@abs(x - @trunc(x)) == 0.5 and @mod(r, 2) != 0) return r - std.math.sign(x);
+    return r;
+}
+
 pub const Axis = enum { x, y, z };
 
 /// A right-handed turn by `angle` radians about `axis`.
@@ -131,6 +138,14 @@ test fromAngles {
     try std.testing.expectEqual(identity, fromAngles(0, 0, 0));
     // A yaw of -90 degrees turns the forward axis to -X.
     try expectVector(.{ -1, 0, 0 }, transform(fromAngles(0, -std.math.pi / 2.0, 0), .{ 0, 0, 1 }));
+}
+
+test roundEven {
+    try std.testing.expectEqual(2, roundEven(2.5));
+    try std.testing.expectEqual(4, roundEven(3.5));
+    try std.testing.expectEqual(-2, roundEven(-2.5));
+    try std.testing.expectEqual(3, roundEven(2.6));
+    try std.testing.expectEqual(128, roundEven(127.5));
 }
 
 test turned {

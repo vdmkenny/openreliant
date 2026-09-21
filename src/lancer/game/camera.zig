@@ -33,7 +33,8 @@ pub const wide_factors = [2]f32{ 0.35, 0.467 };
 pub const letterbox: f32 = 0.1;
 
 /// The port's factors for a screen of any shape: the game's down, and across whatever keeps pixels
-/// square. A wider screen shows more at the sides instead of stretching; on a 4:3 screen they are
+/// square. **Improvement:** the game uses its factors on every screen, which stretches the picture
+/// on any but a 4:3 one; the port shows more at the sides instead. On a 4:3 screen the factors are
 /// the game's to within a thousandth of a percent.
 pub fn unstretched(width: u32, height: u32, base: [2]f32) [2]f32 {
     const w: f32 = @floatFromInt(width);

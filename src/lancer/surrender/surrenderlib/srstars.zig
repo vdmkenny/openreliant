@@ -5,10 +5,15 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
+const Allocator = std.mem.Allocator;
+
 const lancer = @import("../../../lancer.zig");
 const Pointer = lancer.Pointer;
 const shp = @import("../../../formats/shp.zig");
+const math = @import("../math.zig");
+const srapi = @import("srapi.zig");
 const srapiext = @import("srapiext.zig");
+const Vector = math.Vector;
 
 /// A star field (`stars_create`, `0x004C5240`): its stars' positions and colours, and what
 /// `stars_project` (`0x004C5380`) makes of them each frame.
@@ -100,6 +105,223 @@ pub fn skyBrightness(motion: f32) f32 {
 pub fn dustBrightness(distance_squared: f32, cube_mask: u32, motion: f32) f32 {
     const side: f32 = @floatFromInt(cube_mask);
     return std.math.clamp((0.25 - distance_squared / (side * side)) * 16 / (motion * 100 + 1), 0, 1);
+}
+
+/// A star field as the port holds it (`stars_create`).
+pub const Field = struct {
+    kind: Stars.Kind,
+    flags: srapiext.ObjectFlags = .{ .fresh = true },
+    /// Dust: where the cube's origin is in the world; it wraps round the camera.
+    position: Vector = @splat(0),
+    /// The field's frame: a sky field is turned to face its axis.
+    orientation: math.Matrix = math.identity,
+    /// Untextured, lit and added: each star takes its own colour.
+    surface: srapiext.Surface = .{ .material = .{
+        .two_pass = false,
+        ._unknown_01 = 0,
+        .coordinates = .{ .none, .none },
+        .lit = .{ true, false },
+        .blend = .{ .add, .off },
+        .image = .{ .null, .null },
+    } },
+    stars: []const Star,
+    /// Dust: the cube's side less one; positions wrap by masking with it.
+    cube_mask: u32 = 0,
+    /// Last frame's rotation into the camera's frame, and the dust's offset from the camera.
+    previous_rotation: math.Matrix = math.identity,
+    previous_offset: Vector = @splat(0),
+};
+
+pub const Star = struct {
+    /// Sky: `(x, y, 1)` in the field's frame. Dust: in the cube.
+    position: Vector,
+    /// Red, green and blue.
+    colour: [3]f32,
+};
+
+/// A star this frame: its place in view units now and last frame, and its brightness.
+pub const Visible = struct {
+    index: u32,
+    now: [2]f32,
+    before: [2]f32,
+    brightness: f32,
+};
+
+pub const Drawn = struct {
+    field: *const Field,
+    visible: []const Visible,
+};
+
+/// Projects a star field for the frame (`stars_project`), with last frame's places for streaks.
+/// Null when the field is out of view.
+pub fn project(arena: Allocator, context: *const srapi.Context, field: *Field) Allocator.Error!?*const Drawn {
+    defer field.flags.fresh = false;
+    const rotation = math.product(math.transpose(context.camera.orientation), field.orientation);
+    var visible: std.ArrayList(Visible) = .empty;
+    switch (field.kind) {
+        .sky => {
+            const previous = if (field.flags.fresh) rotation else field.previous_rotation;
+            field.previous_rotation = rotation;
+            const sign: f32 = if (rotation[8] < 0) -1 else 1;
+            if (rotation[8] * sign < field_cosine) return null;
+            for (field.stars, 0..) |star, index| {
+                const p = star.position;
+                const z = row(rotation, 2, p);
+                const now_cosine = z * sign;
+                if (!(now_cosine >= star_cosines[0])) continue;
+                const z_before = row(previous, 2, p);
+                const before_cosine = z_before * sign;
+                if (!(before_cosine >= star_cosines[0] and (now_cosine >= star_cosines[1] or before_cosine >= star_cosines[1]))) continue;
+                const now = [2]f32{ row(rotation, 0, p) / z, row(rotation, 1, p) / z };
+                var before = [2]f32{ row(previous, 0, p) / z_before, row(previous, 1, p) / z_before };
+                const motion = shorten(now, &before, 1);
+                var cut_now = now;
+                if (!streakClip(context.projection.bounds, &cut_now, &before)) continue;
+                try visible.append(arena, .{ .index = @intCast(index), .now = cut_now, .before = before, .brightness = skyBrightness(motion) });
+            }
+        },
+        .dust => {
+            const offset = field.position - context.camera.position;
+            const previous = if (field.flags.fresh) rotation else field.previous_rotation;
+            const previous_offset = if (field.flags.fresh) offset else field.previous_offset;
+            field.previous_rotation = rotation;
+            field.previous_offset = offset;
+            const half: f32 = @floatFromInt(@divTrunc(field.cube_mask, 2));
+            const near = context.projection.near;
+            for (field.stars, 0..) |star, index| {
+                const here = wrapped(offset + star.position, field.cube_mask);
+                const z = row(rotation, 2, here);
+                if (!(near <= z)) continue;
+                const there = wrapped(previous_offset + star.position, field.cube_mask);
+                const z_before = row(previous, 2, there);
+                if (!(near <= z_before)) continue;
+                const jump = @abs(here - there);
+                if (!(jump[0] <= half and jump[1] <= half and jump[2] <= half)) continue;
+                var now3: Vector = .{ row(rotation, 0, here), row(rotation, 1, here), z };
+                var before3: Vector = .{ row(previous, 0, there), row(previous, 1, there), z_before };
+                var now: [2]f32 = undefined;
+                var before: [2]f32 = undefined;
+                if (!dustStreak(context.projection, &now3, &before3, &now, &before)) continue;
+                const motion = shorten(now, &before, 1);
+                try visible.append(arena, .{
+                    .index = @intCast(index),
+                    .now = now,
+                    .before = before,
+                    .brightness = dustBrightness(math.dot(now3, now3), field.cube_mask, motion),
+                });
+            }
+        },
+        _ => return null,
+    }
+    const drawn = try arena.create(Drawn);
+    drawn.* = .{ .field = field, .visible = visible.items };
+    return drawn;
+}
+
+fn row(m: math.Matrix, r: usize, v: Vector) f32 {
+    return m[r * 3] * v[0] + m[r * 3 + 1] * v[1] + m[r * 3 + 2] * v[2];
+}
+
+/// A point of the dust's cube, wrapped to within half the cube of the camera.
+fn wrapped(p: Vector, mask: u32) Vector {
+    const half: i64 = @divTrunc(mask, 2);
+    var out: Vector = undefined;
+    inline for (0..3) |axis| {
+        const whole: i64 = std.math.lossyCast(i64, @round(p[axis]));
+        out[axis] = @floatFromInt((whole & mask) - half);
+    }
+    return out;
+}
+
+/// A star's motion since last frame in view units, `|dx| + |dy|`, with the streak cut back to
+/// `streak_limit` along its line; `stretch` makes the cut shorter still.
+fn shorten(now: [2]f32, before: *[2]f32, stretch: f32) f32 {
+    const motion = @abs(before[1] - now[1]) + @abs(before[0] - now[0]);
+    if (!(motion > streak_limit)) return motion;
+    const scale = streak_limit / (motion * stretch);
+    before[0] = (before[0] - now[0]) * scale + now[0];
+    before[1] = (before[1] - now[1]) * scale + now[1];
+    return streak_limit;
+}
+
+/// Cuts a streak to the view's bounds (`streak_clip`, `0x004CD6A0`), `now` and `before` in view
+/// units. False when it lies wholly outside one.
+fn streakClip(bounds: [4]f32, now: *[2]f32, before: *[2]f32) bool {
+    for (0..2) |axis| {
+        const low = bounds[axis];
+        const high = bounds[axis + 2];
+        if (now[axis] < low) {
+            if (before[axis] < low) return false;
+            cutAt(now, before.*, axis, low);
+        }
+        if (before[axis] < low) cutAt(before, now.*, axis, low);
+        if (high < now[axis]) {
+            if (high < before[axis]) return false;
+            cutAt(now, before.*, axis, high);
+        }
+        if (high < before[axis]) cutAt(before, now.*, axis, high);
+    }
+    return true;
+}
+
+/// Moves `point` along the line to `other` until its `axis` is `value`.
+fn cutAt(point: *[2]f32, other: [2]f32, axis: usize, value: f32) void {
+    const t = (value - point[axis]) / (other[axis] - point[axis]);
+    const other_axis = 1 - axis;
+    point[other_axis] += (other[other_axis] - point[other_axis]) * t;
+    point[axis] = value;
+}
+
+/// Cuts a mote's streak to the near plane, projects both ends, and cuts it to the view
+/// (`dust_streak_project`, `0x004CD340`). False when nothing is left.
+fn dustStreak(projection: srapi.Projection, now3: *Vector, before3: *Vector, now: *[2]f32, before: *[2]f32) bool {
+    const near = projection.near;
+    if (now3[2] < near) {
+        if (before3[2] < near) return false;
+        now3.* += (before3.* - now3.*) * @as(Vector, @splat((near - now3[2]) / (before3[2] - now3[2])));
+    }
+    if (before3[2] < near) {
+        before3.* += (now3.* - before3.*) * @as(Vector, @splat((near - before3[2]) / (now3[2] - before3[2])));
+    }
+    now.* = .{ now3[0] / now3[2], now3[1] / now3[2] };
+    before.* = .{ before3[0] / before3[2], before3[1] / before3[2] };
+    return streakClip(projection.bounds, now, before);
+}
+
+test project {
+    const gpa = std.testing.allocator;
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var context: srapi.Context = .{ .projection = .init(1024, 768, srapi.full_screen, .{ 0.6, 0.8 }) };
+
+    // A field straight ahead: its middle star shows, still; the one far off the axis does not.
+    const stars = [_]Star{
+        .{ .position = .{ 0, 0, 1 }, .colour = .{ 1, 1, 1 } },
+        .{ .position = .{ 0.9, 0, 1 }, .colour = .{ 1, 1, 1 } },
+    };
+    var field: Field = .{ .kind = .sky, .stars = &stars };
+    const drawn = (try project(arena, &context, &field)).?;
+    try std.testing.expectEqual(1, drawn.visible.len);
+    try std.testing.expectEqual([2]f32{ 0, 0 }, drawn.visible[0].now);
+    try std.testing.expectEqual(1, drawn.visible[0].brightness);
+    try std.testing.expect(!field.flags.fresh);
+
+    // The camera turns a little: the star streaks back to where it was, dimmer.
+    context.camera.orientation = math.rotation(.y, 0.01);
+    const turned = (try project(arena, &context, &field)).?;
+    try std.testing.expect(turned.visible[0].now[0] != turned.visible[0].before[0]);
+    try std.testing.expect(turned.visible[0].brightness < 1);
+
+    // A cut to looking back: without the streaks reset nothing shows this frame, as nothing was
+    // in view last frame; with them reset, the field is drawn mirrored.
+    context.camera.orientation = math.rotation(.y, std.math.pi);
+    try std.testing.expectEqual(0, (try project(arena, &context, &field)).?.visible.len);
+    field.flags.fresh = true;
+    try std.testing.expectEqual(1, (try project(arena, &context, &field)).?.visible.len);
+    // Looking across it, not at all.
+    context.camera.orientation = math.rotation(.y, std.math.pi / 2.0);
+    try std.testing.expectEqual(null, try project(arena, &context, &field));
 }
 
 test fieldView {

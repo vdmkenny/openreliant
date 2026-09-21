@@ -252,7 +252,7 @@ fn fill(frame: Frame, camera: scene.Camera, depth: srd3d.Depth, corners: [3]scen
                 break :blk texture.sample(level, uv[0], uv[1]);
             } else null;
 
-            frame.colour[index] = srd3d.blend(pass.blend, srd3d.shade(texel, colour, pass.lit), frame.colour[index]);
+            frame.colour[index] = srd3d.blend(srd3d.factors(pass.blend), srd3d.shade(texel, colour, pass.lit), frame.colour[index]);
             if (depth.writing) frame.depth[index] = z;
         }
     }
@@ -330,7 +330,7 @@ fn drawLine(frame: Frame, camera: scene.Camera, which: srd3d.Layer, line: scene.
         const far = t * w[1] / (w[0] + (w[1] - w[0]) * t);
         var colour: [4]f32 = undefined;
         for (&colour, ends[0].colour, ends[1].colour) |*c, p, q| c.* = p + (q - p) * far;
-        frame.colour[index] = srd3d.blend(line.blend, srd3d.shade(null, colour, line.lit), frame.colour[index]);
+        frame.colour[index] = srd3d.blend(srd3d.factors(line.blend), srd3d.shade(null, colour, line.lit), frame.colour[index]);
         if (depth.writing) frame.depth[index] = z;
     }
 }
@@ -345,7 +345,7 @@ fn drawPoint(frame: Frame, camera: scene.Camera, which: srd3d.Layer, point: scen
     if (depth.testing and z < frame.depth[index]) return;
     // Untextured and lit: the point's own colour.
     const colour = [4]f32{ point.colour[0], point.colour[1], point.colour[2], 1 };
-    frame.colour[index] = srd3d.blend(point.blend, srd3d.shade(null, colour, true), frame.colour[index]);
+    frame.colour[index] = srd3d.blend(srd3d.factors(point.blend), srd3d.shade(null, colour, true), frame.colour[index]);
     if (depth.writing) frame.depth[index] = z;
 }
 

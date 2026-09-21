@@ -11,6 +11,8 @@ pub const Light = struct {
     mask: u32,
     intensity: f32,
     colour: [3]f32,
+    /// Only an ambient light adds it, to the vertices' alpha (`mesh_light`).
+    alpha: f32 = 0,
     kind: Kind,
 
     pub const Kind = union(enum) {

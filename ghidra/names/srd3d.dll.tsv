@@ -8,6 +8,7 @@
 100084a0	function	set_render_state	void __fastcall (int state, int value)	Sets a render state unless it already has the value
 
 # Frame
+100056b0	function	SR_driver_init		Fills the payload's device table with the driver's functions and sets up the blend factors for each mode
 100077a0	function	begin_scene	int __fastcall (void)	Clears to black and to depth 0, begins the scene, and draws a background image when one is set
 10007c10	function	end_scene	int __fastcall (void)	Ends the scene
 10003390	function	flush_blended	void __fastcall (void *list, int layer)	Draws a layer's sorted blended polygons: every first pass, then the second passes
@@ -23,6 +24,22 @@
 10005500	function	stage_table_init	void __fastcall (void)	Fills stage_table
 10001820	function	make_highlights	void __fastcall (void)	Makes the eight highlight textures
 10001620	function	make_highlight	void __fastcall (void *image, int index)	Fills a 64x64 highlight texture
+
+10006bf0	function	draw_sprites	int __fastcall (void *sprites, int layer)	Draws a set of sprites, or, with a blended material, puts each aside keyed by its depth plus its bias
+10006c80	function	draw_stars	int __fastcall (void *stars, int layer)	Draws a star field, or, with a blended material, puts it aside with key 0
+10006ce0	function	draw_blended_polygon	void __cdecl (void *record)	A mesh's polygon from a layer's sorted list: both passes at once, one pass, or clipped
+10007200	function	draw_blended_sprite	void __cdecl (void *record)
+10007420	function	draw_blended_stars	void __cdecl (void *record)
+10006f90	function	draw_polygon	void __cdecl (void *record)	Draws one polygon as a fan, or its lines, and tests its triangles against the sun
+10003100	function	draw_clipped	void __cdecl (void *record)	Clips a polygon triangle by triangle and draws each piece as a fan
+1000beb0	function	clip_triangle	void __fastcall (void *record, int triangle)	Clips a triangle of a polygon in the camera's frame against the planes it crosses, near, left, right, top and bottom in turn, and projects the new vertices
+10001fd0	function	sun_test	int __fastcall (float *a, float *b, float *c)	Lessens the sun's visibility to a triangle's nearest edge, or to 0 when the triangle covers the sun's point
+1000c9d0	function	sprite_cut	void __fastcall (void *sprite, float *u, float *v, float *rect)	A sprite's rectangle cut to the view's bounds, and its texture coordinates cut to match
+10007220	function	draw_sprite	void __fastcall (void *sprite)	Draws a sprite as a strip of two triangles
+10007450	function	draw_star_points	void __fastcall (void *stars)	Draws a field's visible stars: a point, or a line back to last frame's place with the tail at half brightness
+10002d10	function	draw_mesh_sorted	void __fastcall (void *object)	Sorts all of a mesh's visible polygons, farthest first, and draws them at once: every mesh on the overlay layer and objects flagged 0x4
+10009420	function	sr_round	int __cdecl (float x)	x rounded to the nearest whole number
+1000bba0	function	depth_sort	void * __fastcall (void *list)	The payload's depth_sort, for draw_mesh_sorted
 
 # Textures
 10006ab0	function	texture_upload	int __fastcall (void *image, uint flags)	Makes the device texture for an image

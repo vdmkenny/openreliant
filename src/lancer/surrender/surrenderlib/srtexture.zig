@@ -1,0 +1,170 @@
+//! `C:\lancer\surrender\surrenderlib\srTexture.cpp`: the texture table. `texture_find`
+//! (`0x004C9E20`) looks a name up in the texture cache and reads the pixels on first use; the
+//! driver makes its device texture when it first draws with it (`texture_upload`, `0x004C9C90`).
+//! The port keeps each image as 8-bit RGBA mip levels.
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const tcache = @import("../../../formats/tcache.zig");
+const tga = @import("../../../formats/tga.zig");
+
+pub const Level = struct {
+    width: u32,
+    height: u32,
+    /// Red, green, blue and alpha, row by row from the top.
+    rgba: []const u8,
+};
+
+/// An image as the port holds it, the counterpart of `TextureImage`.
+pub const Image = struct {
+    /// The full-size level first.
+    levels: []const Level,
+    /// What the driver made of it, `TextureImage.device_texture`: 0 until it first draws with it.
+    device: usize = 0,
+
+    pub fn width(image: Image) u32 {
+        return image.levels[0].width;
+    }
+
+    pub fn height(image: Image) u32 {
+        return image.levels[0].height;
+    }
+
+    /// The texel at `u`, `v` of `level`, filtered bilinearly and wrapping, as the hardware
+    /// renderers sample: texel centres at half-texel positions.
+    pub fn sample(image: Image, level: usize, u: f32, v: f32) [4]f32 {
+        const l = image.levels[@min(level, image.levels.len - 1)];
+        const x = u * @as(f32, @floatFromInt(l.width)) - 0.5;
+        const y = v * @as(f32, @floatFromInt(l.height)) - 0.5;
+        const x0 = @floor(x);
+        const y0 = @floor(y);
+        const fx = x - x0;
+        const fy = y - y0;
+        const ix = std.math.lossyCast(i64, x0);
+        const iy = std.math.lossyCast(i64, y0);
+        var out: [4]f32 = @splat(0);
+        const weights = [4]f32{ (1 - fx) * (1 - fy), fx * (1 - fy), (1 - fx) * fy, fx * fy };
+        for (weights, 0..) |weight, corner| {
+            const cx = wrap(ix + @as(i64, @intCast(corner & 1)), l.width);
+            const cy = wrap(iy + @as(i64, @intCast(corner >> 1)), l.height);
+            const texel = l.rgba[(cy * l.width + cx) * 4 ..][0..4];
+            for (&out, texel) |*c, t| c.* += @as(f32, @floatFromInt(t)) / 255 * weight;
+        }
+        return out;
+    }
+
+    pub fn deinit(image: Image, gpa: Allocator) void {
+        for (image.levels) |l| gpa.free(l.rgba);
+        gpa.free(image.levels);
+    }
+};
+
+fn wrap(i: i64, size: u32) usize {
+    return @intCast(@mod(i, @as(i64, size)));
+}
+
+/// The images the texture cache holds, by name, each decoded once with the renderer's palette.
+pub const Table = struct {
+    gpa: Allocator,
+    cache: tcache.Cache,
+    palette: tga.Palette,
+    /// By lower-case file name; null for a name the cache lacks.
+    images: std.StringHashMapUnmanaged(?*Image) = .empty,
+
+    pub fn init(gpa: Allocator, cache: tcache.Cache, palette: tga.Palette) Table {
+        return .{ .gpa = gpa, .cache = cache, .palette = palette };
+    }
+
+    pub fn deinit(table: *Table) void {
+        var it = table.images.iterator();
+        while (it.next()) |entry| {
+            table.gpa.free(entry.key_ptr.*);
+            if (entry.value_ptr.*) |image| {
+                image.deinit(table.gpa);
+                table.gpa.destroy(image);
+            }
+        }
+        table.images.deinit(table.gpa);
+    }
+
+    /// The image the engine finds for `name` (`texture_find`), or null when the cache has none.
+    pub fn find(table: *Table, name: []const u8) Allocator.Error!?*Image {
+        return table.lookUp("", name);
+    }
+
+    /// The light map a part flagged `lightmap` binds for the material `name`: the texture named
+    /// `l` and the material's name (`mesh_build`).
+    pub fn findLightMap(table: *Table, name: []const u8) Allocator.Error!?*Image {
+        return table.lookUp("l", name);
+    }
+
+    fn lookUp(table: *Table, prefix: []const u8, name: []const u8) Allocator.Error!?*Image {
+        const key = try std.mem.concat(table.gpa, u8, &.{ prefix, tcache.fileName(name) });
+        for (key) |*c| c.* = std.ascii.toLower(c.*);
+        const entry = table.images.getOrPut(table.gpa, key) catch |err| {
+            table.gpa.free(key);
+            return err;
+        };
+        if (entry.found_existing) {
+            table.gpa.free(key);
+            return entry.value_ptr.*;
+        }
+        entry.value_ptr.* = null;
+        const found = table.cache.find(key) orelse return null;
+        const image = try table.gpa.create(Image);
+        errdefer table.gpa.destroy(image);
+        image.* = try decode(table.gpa, found, &table.palette);
+        entry.value_ptr.* = image;
+        return image;
+    }
+};
+
+fn decode(gpa: Allocator, texture: tcache.Texture, palette: *const tga.Palette) Allocator.Error!Image {
+    var levels: std.ArrayList(Level) = .empty;
+    errdefer {
+        for (levels.items) |l| gpa.free(l.rgba);
+        levels.deinit(gpa);
+    }
+    var n: u32 = 0;
+    while (texture.level(n)) |source| : (n += 1) {
+        const rgba = try source.rgba(gpa, palette);
+        errdefer gpa.free(rgba);
+        try levels.append(gpa, .{ .width = source.width, .height = source.height, .rgba = rgba });
+    }
+    return .{ .levels = try levels.toOwnedSlice(gpa) };
+}
+
+test "images sample bilinearly and wrap" {
+    const rgba = [_]u8{ 0, 0, 0, 255, 255, 255, 255, 255 };
+    const levels = [_]Level{.{ .width = 2, .height = 1, .rgba = &rgba }};
+    const image: Image = .{ .levels = &levels };
+    // Texel centres give the texels; between them, the mean; past the edge it wraps.
+    try std.testing.expectEqual([4]f32{ 0, 0, 0, 1 }, image.sample(0, 0.25, 0.5));
+    try std.testing.expectEqual([4]f32{ 1, 1, 1, 1 }, image.sample(0, 0.75, 0.5));
+    try std.testing.expectEqual([4]f32{ 0.5, 0.5, 0.5, 1 }, image.sample(0, 0.5, 0.5));
+    try std.testing.expectEqual([4]f32{ 0.5, 0.5, 0.5, 1 }, image.sample(0, 1.0, 0.5));
+}
+
+test Table {
+    const gpa = std.testing.allocator;
+    const bytes = try tcache.testing.build(gpa, &.{
+        .{ .name = "Kiev_1", .encoding = .index8, .width = 2, .height = 2 },
+        .{ .name = "lKiev_1", .encoding = .index8, .width = 2, .height = 2 },
+    });
+    defer gpa.free(bytes);
+    const cache: tcache.Cache = try .parse(gpa, bytes);
+    defer cache.deinit(gpa);
+    var palette: tga.Palette = undefined;
+    for (&palette, 0..) |*c, i| c.* = .{ @truncate(i), 0, 0 };
+
+    var table: Table = .init(gpa, cache, palette);
+    defer table.deinit();
+    const kiev = (try table.find("KIEV_1")).?;
+    try std.testing.expectEqual(2, kiev.width());
+    // The same image again, none for a name the cache lacks, and the light map apart.
+    try std.testing.expectEqual(kiev, (try table.find("kiev_1")).?);
+    try std.testing.expectEqual(null, try table.find("missing"));
+    try std.testing.expect((try table.findLightMap("KIEV_1")).? != kiev);
+    try std.testing.expectEqual(null, try table.findLightMap("lKiev_1"));
+}

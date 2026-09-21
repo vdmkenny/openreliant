@@ -1,5 +1,5 @@
-//! `C:\lancer\surrender\surrenderlib\srAPI.cpp`: Surrender's interface to the game. This module has
-//! the camera's projection.
+//! `C:\lancer\surrender\surrenderlib\srAPI.cpp`: Surrender's interface to the game: its state,
+//! `sr` (`0x005E6B50`), and the camera's projection.
 
 const std = @import("std");
 
@@ -19,10 +19,18 @@ pub const Projection = struct {
     bounds: [4]f32,
     /// The viewport's edges in pixels.
     viewport: [4]f32,
+    /// The sides of the view volume, through the eye, their unit normals pointing out: left,
+    /// right, top and bottom.
+    sides: [4]Vector,
+    /// The near plane's distance (`sr + 0x169E`).
+    near: f32 = in_flight_near,
+    /// A vertex's depth is `sqrt(1 / z)` times this (`sr + 0x16A6`). The driver's `begin_scene`
+    /// sets it each frame to `sqrt(near)` times 0.99999, so the near plane is just short of 1.
+    depth_scale: f32 = depthScale(in_flight_near),
 
     pub fn init(width: u32, height: u32, viewport: [4]f32, factors: [2]f32) Projection {
         const size = [2]f32{ @floatFromInt(width), @floatFromInt(height) };
-        var projection: Projection = undefined;
+        var projection: Projection = .{ .scale = undefined, .centre = undefined, .bounds = undefined, .viewport = undefined, .sides = undefined };
         for (0..2) |axis| {
             projection.scale[axis] = (size[axis] - 0.1) * factors[axis];
             projection.centre[axis] = size[axis] * 0.5;
@@ -31,6 +39,12 @@ pub const Projection = struct {
                 projection.viewport[edge] = size[axis] * viewport[edge];
             }
         }
+        projection.sides = .{
+            math.normalize(.{ -1, 0, projection.bounds[0] }),
+            math.normalize(.{ 1, 0, -projection.bounds[2] }),
+            math.normalize(.{ 0, -1, projection.bounds[1] }),
+            math.normalize(.{ 0, 1, -projection.bounds[3] }),
+        };
         return projection;
     }
 
@@ -41,10 +55,124 @@ pub const Projection = struct {
             projection.centre[1] + projection.scale[1] * point[1] / point[2],
         };
     }
+
+    /// A vertex in the camera's frame as the driver takes it (`mesh_project`, `0x004C6D40`):
+    /// on the screen, kept within the viewport, with its depth and its reciprocal depth scaled by
+    /// the near plane.
+    pub fn transform(projection: Projection, point: Vector) Transformed {
+        const w = 1 / point[2];
+        var screen: [2]f32 = .{
+            w * point[0] * projection.scale[0] + projection.centre[0],
+            w * point[1] * projection.scale[1] + projection.centre[1],
+        };
+        projection.clamp(&screen);
+        return .{
+            .x = screen[0],
+            .y = screen[1],
+            .depth = @sqrt(w) * projection.depth_scale,
+            .rhw = projection.near * w,
+        };
+    }
+
+    /// Keeps a point on the screen within the viewport (`0x004C5DC0`).
+    pub fn clamp(projection: Projection, screen: *[2]f32) void {
+        for (screen, 0..) |*c, axis| {
+            if (c.* < projection.viewport[axis]) c.* = projection.viewport[axis];
+            if (projection.viewport[axis + 2] < c.*) c.* = projection.viewport[axis + 2];
+        }
+    }
+
+    /// Which sides of the view volume a point in the camera's frame lies outside (`0x004C6710`):
+    /// in front of the near plane, only the near plane's.
+    pub fn outcode(projection: Projection, point: Vector) Outcode {
+        if (point[2] < projection.near) return .{ .near = true };
+        var code: Outcode = .{};
+        if (point[0] < projection.bounds[0] * point[2]) {
+            code.left = true;
+        } else if (projection.bounds[2] * point[2] < point[0]) {
+            code.right = true;
+        }
+        if (point[1] < projection.bounds[1] * point[2]) {
+            code.top = true;
+        } else if (projection.bounds[3] * point[2] < point[1]) {
+            code.bottom = true;
+        }
+        return code;
+    }
+};
+
+/// The near plane in flight, which `renderer_start` (`0x004ACBE0`) sets.
+pub const in_flight_near: f32 = 100;
+
+pub fn depthScale(near: f32) f32 {
+    return @sqrt(near) * 0.99999;
+}
+
+/// A vertex as the driver draws it: on the screen, with its depth and reciprocal depth.
+pub const Transformed = struct {
+    x: f32,
+    y: f32,
+    depth: f32,
+    rhw: f32,
+};
+
+/// The planes a point lies outside, or a polygon crosses.
+pub const Outcode = packed struct(u8) {
+    left: bool = false,
+    right: bool = false,
+    top: bool = false,
+    bottom: bool = false,
+    near: bool = false,
+    /// The sixth plane objects flagged `0x2` are clipped against too. **Unknown:** which.
+    _unknown_5: bool = false,
+    _unused: u2 = 0,
+
+    pub const all: Outcode = .{ .left = true, .right = true, .top = true, .bottom = true, .near = true, ._unknown_5 = true };
+
+    pub fn any(code: Outcode) bool {
+        return @as(u8, @bitCast(code)) != 0;
+    }
+
+    pub fn both(a: Outcode, b: Outcode) Outcode {
+        return @bitCast(@as(u8, @bitCast(a)) & @as(u8, @bitCast(b)));
+    }
+
+    pub fn either(a: Outcode, b: Outcode) Outcode {
+        return @bitCast(@as(u8, @bitCast(a)) | @as(u8, @bitCast(b)));
+    }
 };
 
 /// The whole screen, as a viewport.
 pub const full_screen = [4]f32{ 0, 0, 1, 1 };
+
+/// Surrender's state, `sr` (`0x005E6B50`), as the port keeps it: the camera and its projection,
+/// the level-of-detail divisor, and the sun's point the driver checks triangles against.
+pub const Context = struct {
+    /// The camera's frame (`sr + 0x30`): its orientation's columns are its right, down and
+    /// forward axes in the world.
+    camera: struct { position: Vector, orientation: math.Matrix } = .{ .position = @splat(0), .orientation = math.identity },
+    projection: Projection,
+    /// Depths are divided by this before choosing a level of detail (`detail_divisor`,
+    /// `0x005E829A`). `mission_frame` moves it with the frame time, within bounds the detail setting
+    /// sets.
+    detail: f32 = 1,
+    /// A hardware renderer (`sr + 0x1AC`).
+    hardware: bool = true,
+    /// The sun's point on the screen (`sr + 0x173E`), and how much of it shows (`sr + 0x1746`):
+    /// the driver lessens it for each triangle of an object flagged `sun_occluder` near the point.
+    sun: [2]f32 = .{ 0, 0 },
+    sun_visibility: f32 = 0,
+
+    /// A point of the world in the camera's frame.
+    pub fn view(context: Context, point: Vector) Vector {
+        return math.transformTransposed(context.camera.orientation, point - context.camera.position);
+    }
+
+    /// A direction in the world, in the camera's frame.
+    pub fn turn(context: Context, direction: Vector) Vector {
+        return math.transformTransposed(context.camera.orientation, direction);
+    }
+};
 
 test Projection {
     // The game's usual view on a 1024 by 768 screen: square pixels, and a view 5/6 of a unit
@@ -62,4 +190,28 @@ test Projection {
     try std.testing.expectEqual(projection.centre, bars.centre);
     try std.testing.expectApproxEqAbs(76.8, bars.viewport[1], 1e-3);
     try std.testing.expectApproxEqAbs(-0.5, bars.bounds[1], 1e-6);
+}
+
+test "vertices as the driver takes them" {
+    const projection: Projection = .init(1024, 768, full_screen, .{ 0.6, 0.8 });
+    // On the near plane the depth is just short of 1, and the reciprocal depth is 1.
+    const near = projection.transform(.{ 0, 0, 100 });
+    try std.testing.expectApproxEqAbs(0.99999, near.depth, 1e-6);
+    try std.testing.expectApproxEqAbs(1, near.rhw, 1e-6);
+    // Four times as far, half the depth.
+    try std.testing.expectApproxEqAbs(0.99999 / 2.0, projection.transform(.{ 0, 0, 400 }).depth, 1e-6);
+    // Off the side, it is kept to the viewport's edge.
+    try std.testing.expectEqual(1024, projection.transform(.{ 5000, 0, 100 }).x);
+}
+
+test Outcode {
+    const projection: Projection = .init(1024, 768, full_screen, .{ 0.6, 0.8 });
+    try std.testing.expectEqual(Outcode{}, projection.outcode(.{ 0, 0, 1000 }));
+    try std.testing.expectEqual(Outcode{ .near = true }, projection.outcode(.{ 5000, 0, 50 }));
+    try std.testing.expectEqual(Outcode{ .left = true, .bottom = true }, projection.outcode(.{ -1000, 700, 1000 }));
+    try std.testing.expect(Outcode.both(.{ .left = true }, .{ .left = true, .top = true }).left);
+    try std.testing.expect(!Outcode.both(.{ .left = true }, .{ .right = true }).any());
+    // The side planes' normals point out: a point off the left is in front of the left plane.
+    try std.testing.expect(math.dot(projection.sides[0], .{ -1000, 0, 1000 }) > 0);
+    try std.testing.expect(math.dot(projection.sides[3], .{ 0, 1000, 1000 }) > 0);
 }

@@ -60,6 +60,15 @@ pub fn partOrigin(model: shp.Model, index: usize) Vector {
     return origin;
 }
 
+fn lit(base: [4]f32, lights: []const srlight.Light, object_mask: u32, position: Vector, vertex_normal: Vector) [4]f32 {
+    var sum: Vector = .{ base[0], base[1], base[2] };
+    for (lights) |l| {
+        if (l.reaches(object_mask)) sum += l.at(position, vertex_normal);
+    }
+    const clamped = @min(sum, @as(Vector, @splat(1)));
+    return .{ clamped[0], clamped[1], clamped[2], @min(base[3], 1) };
+}
+
 fn vector(v: shp.Vec3) Vector {
     return .{ v.x, v.y, v.z };
 }
@@ -106,7 +115,7 @@ pub fn add(
             prepared.* = .{
                 .local = local,
                 .view = camera.view(position),
-                .colour = srmesh.light(object.colour, lights, mask, position, normal),
+                .colour = lit(object.colour, lights, mask, position, normal),
                 .sphere = srmesh.sphereMap(camera.turn(normal)),
             };
         }

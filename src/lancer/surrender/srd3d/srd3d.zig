@@ -1,17 +1,25 @@
 //! `C:\lancer\surrender\srD3D\srD3D.cpp`: Surrender's Direct3D 7 driver, `srd3d.dll`. It draws
-//! what the payload has transformed and lit, so these are its rules for turning a material into
-//! render states.
+//! what the payload's pipelines hand it: it turns materials into render states, draws what is opaque
+//! at once, puts what is blended aside for the payload to sort, and clips. The port's driver draws
+//! on a `device.Device`, the parts of Direct3D 7 it uses.
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
-const Material = @import("../surrenderlib/srapiext.zig").Material;
+const math = @import("../math.zig");
+const srapi = @import("../surrenderlib/srapi.zig");
+const srapiext = @import("../surrenderlib/srapiext.zig");
+const srbmo = @import("../surrenderlib/srbmo.zig");
+const srcore = @import("../surrenderlib/srcore.zig");
+const srmesh = @import("../surrenderlib/srmesh.zig");
+const srstars = @import("../surrenderlib/srstars.zig");
+const srtexture = @import("../surrenderlib/srtexture.zig");
+const device = @import("device.zig");
+const Material = srapiext.Material;
+const Vector = math.Vector;
+const Vertex = device.Vertex;
 
-/// The scene's layers, drawn in order, each with its blended polygons last.
-pub const Layer = enum(u2) {
-    background = 0,
-    world = 1,
-    overlay = 2,
-};
+pub const Layer = srcore.Layer;
 
 pub const Depth = struct {
     testing: bool,
@@ -60,10 +68,10 @@ pub fn shade(texel: ?[4]f32, vertex: [4]f32, lit: bool) [4]f32 {
     return if (texel) |t| @as(@Vector(4, f32), t) * colour else colour;
 }
 
-/// A pass's colour, `source`, blended over `destination` with `mode`'s factors, each channel
-/// clamped to 1.
-pub fn blend(mode: Material.Blend, source: [4]f32, destination: [3]f32) [3]f32 {
-    const f = factors(mode) orelse return .{ source[0], source[1], source[2] };
+/// A pass's colour, `source`, blended over `destination` with the factors, or replacing it without
+/// them, each channel clamped to 1.
+pub fn blend(with: ?Factors, source: [4]f32, destination: [3]f32) [3]f32 {
+    const f = with orelse return .{ source[0], source[1], source[2] };
     const s = factor(f.source, source[3]);
     const d = factor(f.destination, source[3]);
     var out: [3]f32 = undefined;
@@ -127,6 +135,545 @@ pub fn highlight(index: u3) Highlight {
     return texels;
 }
 
+// --- The driver ---------------------------------------------------------------------------------
+
+/// The driver (`SR_driver_init`, `0x100056B0`, fills `sr`'s table with these). The port draws a
+/// material's two passes one after the other, as the driver does on a device that cannot draw both
+/// at once, to the same effect.
+pub const Driver = struct {
+    gpa: Allocator,
+    target: device.Device,
+    /// The eight highlight textures (`make_highlights`, `0x10001820`).
+    highlights: [8]srtexture.Image,
+    context: *srapi.Context = undefined,
+    vertices: std.ArrayList(Vertex) = .empty,
+    indices: std.ArrayList(u16) = .empty,
+
+    pub fn init(gpa: Allocator, target: device.Device) Allocator.Error!Driver {
+        var driver: Driver = .{ .gpa = gpa, .target = target, .highlights = undefined };
+        var made: usize = 0;
+        errdefer for (driver.highlights[0..made]) |h| h.deinit(gpa);
+        for (&driver.highlights, 0..) |*h, index| {
+            const texels = highlight(@intCast(index));
+            const rgba = try gpa.dupe(u8, std.mem.asBytes(&texels));
+            errdefer gpa.free(rgba);
+            const levels = try gpa.alloc(srtexture.Level, 1);
+            levels[0] = .{ .width = highlight_size, .height = highlight_size, .rgba = rgba };
+            h.* = .{ .levels = levels };
+            made += 1;
+        }
+        return driver;
+    }
+
+    pub fn deinit(driver: *Driver) void {
+        for (driver.highlights) |h| h.deinit(driver.gpa);
+        driver.vertices.deinit(driver.gpa);
+        driver.indices.deinit(driver.gpa);
+    }
+
+    /// The driver as `srcore.render` takes it.
+    pub fn interface(driver: *Driver) srcore.Driver {
+        return .{ .ptr = driver, .vtable = &vtable };
+    }
+
+    const vtable: srcore.Driver.VTable = .{
+        .begin = begin,
+        .mesh = drawMesh,
+        .sprites = drawSprites,
+        .stars = drawStars,
+        .flush = flushBlended,
+        .end = end,
+    };
+
+    fn from(ptr: *anyopaque) *Driver {
+        return @ptrCast(@alignCast(ptr));
+    }
+
+    /// `begin_scene` (`0x100077A0`): the depth scale for the frame, then clears.
+    fn begin(ptr: *anyopaque, context: *srapi.Context) void {
+        const driver = from(ptr);
+        driver.context = context;
+        context.projection.depth_scale = srapi.depthScale(context.projection.near);
+        driver.target.begin();
+    }
+
+    fn end(ptr: *anyopaque) void {
+        from(ptr).target.end();
+    }
+
+    /// The render states for a pass (`set_material`, `0x10001B20`, and `set_depth`, `0x100018B0`).
+    fn state(driver: *Driver, surface: *const srapiext.Surface, pass: u1, layer: Layer) device.State {
+        const material = surface.material;
+        return .{
+            .texture = if (material.coordinates[pass] == .none) null else switch (surface.textures[pass]) {
+                .none => null,
+                .highlight => |index| &driver.highlights[index],
+                .image => |image| image,
+            },
+            .depth = depth(layer, material.blend[pass]),
+            .blend = factors(material.blend[pass]),
+        };
+    }
+
+    /// `draw_mesh` (`0x10006AD0`): each surface's visible polygons, opaque ones now, the rest put
+    /// aside keyed by depth. On the overlay layer, or for an object flagged `sorted`, all of them
+    /// sorted and drawn at once.
+    fn drawMesh(ptr: *anyopaque, drawn: *const srmesh.Drawn, layer: Layer, blended: *srcore.Blended) Allocator.Error!void {
+        const driver = from(ptr);
+        if (drawn.object.flags.sorted or layer == .overlay) return driver.drawMeshSorted(drawn, layer, blended.arena);
+        var at: usize = 0;
+        for (drawn.mesh.surfaces, drawn.counts, 0..) |*surface, count, index| {
+            defer at += count;
+            if (count == 0) continue;
+            const visible = drawn.visible[at..][0..count];
+            if (surface.material.blend[0] == .off) {
+                try driver.drawPass(drawn, visible, surface, 0, layer);
+                if (surface.material.two_pass) try driver.drawPass(drawn, visible, surface, 1, layer);
+            } else {
+                for (visible) |v| try blended.add(polygonDeferred(drawn, surface, @intCast(index), v));
+            }
+        }
+    }
+
+    /// `draw_mesh_sorted` (`0x10002D10`).
+    fn drawMeshSorted(driver: *Driver, drawn: *const srmesh.Drawn, layer: Layer, arena: Allocator) Allocator.Error!void {
+        var list: std.ArrayList(srcore.Deferred) = .empty;
+        var at: usize = 0;
+        for (drawn.mesh.surfaces, drawn.counts, 0..) |*surface, count, index| {
+            defer at += count;
+            for (drawn.visible[at..][0..count]) |v| try list.append(arena, polygonDeferred(drawn, surface, @intCast(index), v));
+        }
+        srcore.depthSort(list.items);
+        flushBlended(driver, list.items, layer);
+    }
+
+    /// A polygon put aside (`defer_blended`, `0x10002400`), keyed by its corners' mean depth plus
+    /// its bias.
+    fn polygonDeferred(drawn: *const srmesh.Drawn, surface: *const srapiext.Surface, index: u32, v: srmesh.Visible) srcore.Deferred {
+        const mesh = drawn.mesh;
+        const p = mesh.polygons[v.polygon];
+        var sum: f32 = 0;
+        for (mesh.indices[p.first..][0..p.count]) |i| sum += drawn.view[i][2];
+        const count: f32 = @floatFromInt(p.count);
+        return .{
+            .key = if (sum >= 0) srcore.key(sum / count + mesh.biases[v.polygon]) else 0,
+            .surface = surface,
+            .item = .{ .polygon = .{ .drawn = drawn, .surface = index, .visible = v } },
+        };
+    }
+
+    /// A corner of a polygon as the driver draws it, `position` its place in the mesh's indices.
+    fn corner(drawn: *const srmesh.Drawn, position: usize, material: Material, pass: u1) Vertex {
+        const mesh = drawn.mesh;
+        const vertex = mesh.indices[position];
+        const screen = drawn.screen[vertex];
+        return .{
+            .x = screen.x,
+            .y = screen.y,
+            .z = screen.depth,
+            .rhw = screen.rhw,
+            .diffuse = if (!material.lit[pass]) device.white else if (drawn.colours) |c| device.pack(c[vertex]) else 0,
+            .u = coordinates(drawn, position, material, pass)[0],
+            .v = coordinates(drawn, position, material, pass)[1],
+        };
+    }
+
+    fn coordinates(drawn: *const srmesh.Drawn, position: usize, material: Material, pass: u1) [2]f32 {
+        if (material.coordinates[pass] == .mesh) {
+            if (drawn.mesh.uv[pass]) |uv| return uv[position];
+        } else if (drawn.generated[pass]) |g| {
+            return g[drawn.mesh.indices[position]];
+        }
+        return .{ 0, 0 };
+    }
+
+    /// `draw_pass` (`0x10002920`): a surface's visible polygons for one pass. A polygon runs on into
+    /// the records of its strip or fan after it, while they are visible and unclipped; the lot is
+    /// drawn as one list of triangles. Clipped polygons are drawn on their own as they come.
+    fn drawPass(driver: *Driver, drawn: *const srmesh.Drawn, visible: []const srmesh.Visible, surface: *const srapiext.Surface, pass: u1, layer: Layer) Allocator.Error!void {
+        const gpa = driver.gpa;
+        const mesh = drawn.mesh;
+        const material = surface.material;
+        const st = driver.state(surface, pass, layer);
+        driver.vertices.clearRetainingCapacity();
+        driver.indices.clearRetainingCapacity();
+        var start: usize = 0;
+        var k: usize = 0;
+        while (k < visible.len) {
+            if (visible[k].clip.any()) {
+                try driver.drawClipped(drawn, visible[k], material, pass, st);
+                k += 1;
+                continue;
+            }
+            var q = visible[k].polygon;
+            const kind = mesh.polygons[q].kind;
+            var skip: usize = 0;
+            while (true) {
+                const p = mesh.polygons[q];
+                for (skip..p.count) |c| try driver.vertices.append(gpa, corner(drawn, p.first + c, material, pass));
+                k += 1;
+                if (p.continues == 0) break;
+                q += 1;
+                if (k >= visible.len or visible[k].clip.any() or visible[k].polygon != q) break;
+                skip = 2;
+            }
+            const count = driver.vertices.items.len;
+            switch (kind) {
+                .triangle, .fan => {
+                    var i = start + 2;
+                    while (i < count) : (i += 1) try driver.indices.appendSlice(gpa, &.{ @intCast(start), @intCast(i - 1), @intCast(i) });
+                },
+                .strip_even, .strip_odd => {
+                    var odd = kind == .strip_odd;
+                    var i = start + 2;
+                    while (i < count) : (i += 1) {
+                        const t: [3]u16 = if (odd) .{ @intCast(i - 1), @intCast(i - 2), @intCast(i) } else .{ @intCast(i - 2), @intCast(i - 1), @intCast(i) };
+                        try driver.indices.appendSlice(gpa, &t);
+                        odd = !odd;
+                    }
+                },
+                .lines => {
+                    driver.target.draw(st, .lines, driver.vertices.items, null);
+                    driver.vertices.shrinkRetainingCapacity(start);
+                    continue;
+                },
+                _ => {},
+            }
+            start = driver.vertices.items.len;
+        }
+        if (driver.indices.items.len == 0) return;
+        if (pass == 0 and drawn.object.flags.sun_occluder) {
+            var t: usize = 0;
+            while (t < driver.indices.items.len and driver.context.sun_visibility > 0) : (t += 3) {
+                const i = driver.indices.items[t..][0..3];
+                driver.sunTest(driver.vertices.items[i[0]], driver.vertices.items[i[1]], driver.vertices.items[i[2]]);
+            }
+        }
+        driver.target.draw(st, .triangles, driver.vertices.items, driver.indices.items);
+    }
+
+    /// `flush_blended` (`0x10003390`): every first pass, then the second passes of two-pass
+    /// materials.
+    fn flushBlended(ptr: *anyopaque, list: []const srcore.Deferred, layer: Layer) void {
+        const driver = from(ptr);
+        for (list) |item| driver.drawDeferred(item, 0, layer);
+        for (list) |item| {
+            if (item.surface.material.two_pass) driver.drawDeferred(item, 1, layer);
+        }
+    }
+
+    fn drawDeferred(driver: *Driver, item: srcore.Deferred, pass: u1, layer: Layer) void {
+        const st = driver.state(item.surface, pass, layer);
+        const material = item.surface.material;
+        switch (item.item) {
+            .polygon => |p| {
+                if (p.visible.clip.any()) {
+                    driver.drawClipped(p.drawn, p.visible, material, pass, st) catch {};
+                } else {
+                    driver.drawPolygon(p.drawn, p.visible, material, pass, st) catch {};
+                }
+            },
+            .sprite => |s| driver.drawSprite(s.drawn, s.index, material, pass, st),
+            .stars => |stars| driver.drawStarPoints(stars, material, pass, st),
+        }
+    }
+
+    /// `draw_polygon` (`0x10006F90`): one polygon as a fan, or its lines. **Improvement:** the
+    /// driver tests a blended polygon's triangles against the sun with indices left over from the
+    /// last list it drew; the port tests the polygon's own.
+    fn drawPolygon(driver: *Driver, drawn: *const srmesh.Drawn, v: srmesh.Visible, material: Material, pass: u1, st: device.State) Allocator.Error!void {
+        const p = drawn.mesh.polygons[v.polygon];
+        driver.vertices.clearRetainingCapacity();
+        for (0..p.count) |c| try driver.vertices.append(driver.gpa, corner(drawn, p.first + c, material, pass));
+        const vertices = driver.vertices.items;
+        if (p.kind == .lines) return driver.target.draw(st, .lines, vertices, null);
+        driver.target.draw(st, .fan, vertices, null);
+        if (pass == 0 and drawn.object.flags.sun_occluder) {
+            var i: usize = 2;
+            while (i < vertices.len and driver.context.sun_visibility > 0) : (i += 1) driver.sunTest(vertices[0], vertices[i - 1], vertices[i]);
+        }
+    }
+
+    /// A corner as the clipper carries it: in the camera's frame, with everything interpolated.
+    const ClipCorner = struct {
+        view: Vector,
+        colour: [4]f32,
+        mesh_uv: [2][2]f32,
+        generated: [2][2]f32,
+    };
+
+    /// `draw_clipped` (`0x10003100`): a polygon clipped triangle by triangle, each piece drawn as a
+    /// fan.
+    fn drawClipped(driver: *Driver, drawn: *const srmesh.Drawn, v: srmesh.Visible, material: Material, pass: u1, st: device.State) Allocator.Error!void {
+        const mesh = drawn.mesh;
+        const p = mesh.polygons[v.polygon];
+        const lines = p.kind == .lines;
+        const pieces: usize = if (lines) p.count -| 1 else p.count -| 2;
+        for (0..pieces) |t| {
+            var polygon: [16]ClipCorner = undefined;
+            const positions: []const usize = if (lines) &.{ p.first, p.first + 1 } else &.{ p.first, p.first + t + 1, p.first + t + 2 };
+            for (positions, 0..) |position, i| polygon[i] = clipCorner(drawn, position);
+            const count = clipPolygon(driver.context.projection, v.clip, &polygon, positions.len);
+            if (count < (if (lines) @as(usize, 2) else 3)) continue;
+            driver.vertices.clearRetainingCapacity();
+            for (polygon[0..count]) |c| {
+                const screen = driver.context.projection.transform(c.view);
+                const uv = if (material.coordinates[pass] == .mesh) c.mesh_uv[pass] else c.generated[pass];
+                try driver.vertices.append(driver.gpa, .{
+                    .x = screen.x,
+                    .y = screen.y,
+                    .z = screen.depth,
+                    .rhw = screen.rhw,
+                    .diffuse = if (material.lit[pass]) device.pack(c.colour) else device.white,
+                    .u = uv[0],
+                    .v = uv[1],
+                });
+            }
+            const vertices = driver.vertices.items;
+            if (lines) {
+                driver.target.draw(st, .lines, vertices[0..2], null);
+                continue;
+            }
+            driver.target.draw(st, .fan, vertices, null);
+            if (pass == 0 and drawn.object.flags.sun_occluder) {
+                var i: usize = 2;
+                while (i < vertices.len and driver.context.sun_visibility > 0) : (i += 1) driver.sunTest(vertices[0], vertices[i - 1], vertices[i]);
+            }
+        }
+    }
+
+    fn clipCorner(drawn: *const srmesh.Drawn, position: usize) ClipCorner {
+        const mesh = drawn.mesh;
+        const vertex = mesh.indices[position];
+        var c: ClipCorner = .{
+            .view = drawn.view[vertex],
+            .colour = if (drawn.colours) |colours| colours[vertex] else @splat(0),
+            .mesh_uv = @splat(.{ 0, 0 }),
+            .generated = @splat(.{ 0, 0 }),
+        };
+        for (0..2) |pass| {
+            if (mesh.uv[pass]) |uv| c.mesh_uv[pass] = uv[position];
+            if (drawn.generated[pass]) |g| c.generated[pass] = g[vertex];
+        }
+        return c;
+    }
+
+    /// `clip_triangle` (`0x1000BEB0`): cuts a polygon in the camera's frame by the planes it
+    /// crosses, near, left, right, top and bottom in turn, each corner's attributes carried along.
+    /// Returns how many corners are left.
+    fn clipPolygon(projection: srapi.Projection, planes: srapi.Outcode, polygon: *[16]ClipCorner, count: usize) usize {
+        var n = count;
+        const bounds = projection.bounds;
+        const Plane = enum { near, left, right, top, bottom };
+        for (std.enums.values(Plane)) |plane| {
+            const crossed = switch (plane) {
+                .near => planes.near,
+                .left => planes.left,
+                .right => planes.right,
+                .top => planes.top,
+                .bottom => planes.bottom,
+            };
+            if (!crossed or n == 0) continue;
+            var out: [16]ClipCorner = undefined;
+            var m: usize = 0;
+            for (0..n) |i| {
+                const a = polygon[i];
+                const b = polygon[(i + 1) % n];
+                const da = inside(plane, a.view, bounds, projection.near);
+                const db = inside(plane, b.view, bounds, projection.near);
+                if (da >= 0 and m < out.len) {
+                    out[m] = a;
+                    m += 1;
+                }
+                if ((da >= 0) != (db >= 0) and m < out.len) {
+                    out[m] = mix(a, b, da / (da - db));
+                    m += 1;
+                }
+            }
+            polygon.* = out;
+            n = m;
+        }
+        return n;
+    }
+
+    /// How far inside a plane a point lies: negative outside.
+    fn inside(plane: anytype, p: Vector, bounds: [4]f32, near: f32) f32 {
+        return switch (plane) {
+            .near => p[2] - near,
+            .left => p[0] - bounds[0] * p[2],
+            .right => bounds[2] * p[2] - p[0],
+            .top => p[1] - bounds[1] * p[2],
+            .bottom => bounds[3] * p[2] - p[1],
+        };
+    }
+
+    fn mix(a: ClipCorner, b: ClipCorner, t: f32) ClipCorner {
+        var c = a;
+        c.view = a.view + (b.view - a.view) * @as(Vector, @splat(t));
+        for (&c.colour, a.colour, b.colour) |*x, p, q| x.* = p + (q - p) * t;
+        for (0..2) |pass| {
+            for (0..2) |axis| {
+                c.mesh_uv[pass][axis] = a.mesh_uv[pass][axis] + (b.mesh_uv[pass][axis] - a.mesh_uv[pass][axis]) * t;
+                c.generated[pass][axis] = a.generated[pass][axis] + (b.generated[pass][axis] - a.generated[pass][axis]) * t;
+            }
+        }
+        return c;
+    }
+
+    /// `draw_sprites` (`0x10006BF0`): with a blended material, each sprite put aside keyed by its
+    /// depth plus its bias; else drawn now.
+    fn drawSprites(ptr: *anyopaque, drawn: *const srbmo.Drawn, layer: Layer, blended: *srcore.Blended) Allocator.Error!void {
+        const driver = from(ptr);
+        const surface = &drawn.set.surface;
+        if (surface.material.blend[0] != .off) {
+            for (drawn.sprites, 0..) |p, index| {
+                try blended.add(.{
+                    .key = srcore.key(p.depth + drawn.set.sprites[p.index].bias),
+                    .surface = surface,
+                    .item = .{ .sprite = .{ .drawn = drawn, .index = @intCast(index) } },
+                });
+            }
+            return;
+        }
+        const st = driver.state(surface, 0, layer);
+        for (0..drawn.sprites.len) |index| driver.drawSprite(drawn, @intCast(index), surface.material, 0, st);
+    }
+
+    /// `draw_sprite` (`0x10007220`): a sprite's rectangle, cut to the view, as a strip of two
+    /// triangles at its depth.
+    fn drawSprite(driver: *Driver, drawn: *const srbmo.Drawn, index: u32, material: Material, pass: u1, st: device.State) void {
+        const projection = driver.context.projection;
+        const p = drawn.sprites[index];
+        const sprite = drawn.set.sprites[p.index];
+        const rect, const uv = srbmo.cut(p.rect, sprite.uv, projection.bounds);
+        const left = projection.scale[0] * rect[0] + projection.centre[0];
+        const right = projection.scale[0] * rect[2] + projection.centre[0];
+        const top = projection.scale[1] * rect[1] + projection.centre[1];
+        const bottom = projection.scale[1] * rect[3] + projection.centre[1];
+        const z = @sqrt(p.reciprocal) * projection.depth_scale;
+        var colour = device.white;
+        if (material.lit[0]) colour = device.pack(.{ sprite.colour[0], sprite.colour[1], sprite.colour[2], 0 });
+        if (!material.lit[pass]) colour = device.white;
+        const vertices = [4]Vertex{
+            .{ .x = left, .y = top, .z = z, .rhw = 0.5, .diffuse = colour, .u = uv[0], .v = uv[2] },
+            .{ .x = right, .y = top, .z = z, .rhw = 0.5, .diffuse = colour, .u = uv[1], .v = uv[2] },
+            .{ .x = left, .y = bottom, .z = z, .rhw = 0.5, .diffuse = colour, .u = uv[0], .v = uv[3] },
+            .{ .x = right, .y = bottom, .z = z, .rhw = 0.5, .diffuse = colour, .u = uv[1], .v = uv[3] },
+        };
+        driver.target.draw(st, .strip, &vertices, null);
+    }
+
+    /// `draw_stars` (`0x10006C80`): with a blended material, the whole field put aside with key 0;
+    /// else drawn now.
+    fn drawStars(ptr: *anyopaque, drawn: *const srstars.Drawn, layer: Layer, blended: *srcore.Blended) Allocator.Error!void {
+        const driver = from(ptr);
+        const surface = &drawn.field.surface;
+        if (surface.material.blend[0] != .off) {
+            return blended.add(.{ .key = 0, .surface = surface, .item = .{ .stars = drawn } });
+        }
+        driver.drawStarPoints(drawn, surface.material, 0, driver.state(surface, 0, layer));
+    }
+
+    /// `draw_star_points` (`0x10007450`): each visible star a point, or, moved more than a pixel
+    /// since last frame, a line back to where it was with the tail at half brightness.
+    fn drawStarPoints(driver: *Driver, drawn: *const srstars.Drawn, material: Material, pass: u1, st: device.State) void {
+        const projection = driver.context.projection;
+        for (drawn.visible) |star| {
+            const colour = drawn.field.stars[star.index].colour;
+            var lit: [3]f32 = undefined;
+            for (&lit, colour) |*c, x| c.* = x * star.brightness;
+            const now = [2]f32{ projection.scale[0] * star.now[0] + projection.centre[0], projection.scale[1] * star.now[1] + projection.centre[1] };
+            const before = [2]f32{ projection.scale[0] * star.before[0] + projection.centre[0], projection.scale[1] * star.before[1] + projection.centre[1] };
+            var head: Vertex = .{ .x = now[0], .y = now[1], .z = 0, .rhw = 0, .diffuse = device.pack(.{ lit[0], lit[1], lit[2], 0 }) };
+            if (!material.lit[pass]) head.diffuse = device.white;
+            const dx = now[0] - before[0];
+            const dy = now[1] - before[1];
+            if (dx * dx + dy * dy > 1) {
+                var tail: Vertex = .{ .x = before[0], .y = before[1], .z = 0, .rhw = 0, .diffuse = device.pack(.{ lit[0] * 0.5, lit[1] * 0.5, lit[2] * 0.5, 0 }) };
+                if (!material.lit[pass]) tail.diffuse = device.white;
+                driver.target.draw(st, .lines, &.{ head, tail }, null);
+            } else {
+                driver.target.draw(st, .points, &.{head}, null);
+            }
+        }
+    }
+
+    /// `sun_test` (`0x10001FD0`): lessens the sun's visibility to a triangle's nearest edge, measured
+    /// across plus down, or to 0 when the triangle covers the sun's point. It stops at the first edge
+    /// no nearer than the visibility.
+    fn sunTest(driver: *Driver, a: Vertex, b: Vertex, c: Vertex) void {
+        const sun = driver.context.sun;
+        const visibility = &driver.context.sun_visibility;
+        const v = visibility.*;
+        const xs = [3]f32{ a.x, b.x, c.x };
+        const ys = [3]f32{ a.y, b.y, c.y };
+        const near_x = (xs[0] - v <= sun[0] or xs[1] - v <= sun[0] or xs[2] - v <= sun[0]) and
+            (sun[0] <= v + xs[0] or sun[0] <= v + xs[1] or sun[0] <= v + xs[2]);
+        const near_y = (ys[0] - v <= sun[1] or ys[1] - v <= sun[1] or ys[2] - v <= sun[1]) and
+            (sun[1] <= v + ys[0] or sun[1] <= v + ys[1] or sun[1] <= v + ys[2]);
+        if (!(near_x and near_y)) return;
+        var inner: u32 = 0;
+        for (0..3) |i| {
+            const j = (i + 1) % 3;
+            const ex = xs[j] - xs[i];
+            const ey = ys[j] - ys[i];
+            const fx = sun[0] - xs[i];
+            const fy = sun[1] - ys[i];
+            if (fy * ex - fx * ey < 0) {
+                inner += 1;
+                continue;
+            }
+            const along = fx * ex + fy * ey;
+            if (!(0 < along)) continue;
+            const length = ex * ex + ey * ey;
+            const t = if (along < length) along / length else 1;
+            const distance = @abs(t * ey - fy) + @abs(t * ex - fx);
+            if (visibility.* <= distance) return;
+            visibility.* = distance;
+        }
+        if (inner == 3) visibility.* = 0;
+    }
+};
+
+test "a frame from the scene to the device" {
+    const gpa = std.testing.allocator;
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var screen: @import("software.zig").Software = try .init(gpa, 64, 48);
+    defer screen.deinit(gpa);
+    var driver: Driver = try .init(gpa, screen.interface());
+    defer driver.deinit();
+
+    const mesh = try srmesh.testing.square(gpa);
+    defer mesh.deinit(gpa);
+    const levels = [_]srapiext.Level{.{ .mesh = &mesh, .until = 50000 }};
+    var object: srapiext.MeshObject = .{ .flags = .{ .lit = true }, .position = .{ 0, 0, 1000 }, .radius = mesh.radius, .levels = &levels };
+
+    var scene: srcore.Scene = .{};
+    defer scene.deinit(gpa);
+    try scene.layers.getPtr(.world).append(gpa, .{ .mesh = &object });
+    try scene.lights.append(gpa, .{ .mask = 0x04, .intensity = 1, .colour = .{ 0.25, 0.25, 0.25 }, .kind = .ambient });
+    var context: srapi.Context = .{ .projection = .init(64, 48, srapi.full_screen, .{ 0.6, 0.8 }) };
+
+    try srcore.render(arena, &context, &scene, driver.interface());
+    // The square covers the middle, lit by the ambient light alone.
+    const middle = screen.colour[24 * 64 + 32];
+    for (middle) |c| try std.testing.expectApproxEqAbs(64.0 / 255.0, c, 1e-5);
+    try std.testing.expect(screen.depth[24 * 64 + 32] > 0);
+    // The corners stay black.
+    try std.testing.expectEqual([3]f32{ 0, 0, 0 }, screen.colour[0]);
+
+    // Moved across the near plane, it is clipped, not dropped: the middle is still drawn.
+    object.position = .{ 0, 0, 120 };
+    object.orientation = math.rotation(.y, 1.2);
+    try srcore.render(arena, &context, &scene, driver.interface());
+    var lit: usize = 0;
+    for (screen.colour) |c| lit += @intFromBool(c[0] > 0);
+    try std.testing.expect(lit > 0);
+}
+
 test depth {
     try std.testing.expectEqual(Depth{ .testing = true, .writing = true }, depth(.world, .off));
     try std.testing.expectEqual(Depth{ .testing = true, .writing = false }, depth(.world, .add));
@@ -151,9 +698,9 @@ test shade {
 }
 
 test blend {
-    try std.testing.expectEqual([3]f32{ 0.5, 0.5, 0.5 }, blend(.off, .{ 0.5, 0.5, 0.5, 0 }, .{ 1, 1, 1 }));
-    try std.testing.expectEqual([3]f32{ 0.75, 1, 1 }, blend(.add, .{ 0.5, 0.5, 0.5, 0 }, .{ 0.25, 0.75, 1 }));
-    try std.testing.expectEqual([3]f32{ 0.5, 0.5, 0.5 }, blend(.alpha, .{ 1, 1, 1, 0.5 }, .{ 0, 0, 0 }));
+    try std.testing.expectEqual([3]f32{ 0.5, 0.5, 0.5 }, blend(factors(.off), .{ 0.5, 0.5, 0.5, 0 }, .{ 1, 1, 1 }));
+    try std.testing.expectEqual([3]f32{ 0.75, 1, 1 }, blend(factors(.add), .{ 0.5, 0.5, 0.5, 0 }, .{ 0.25, 0.75, 1 }));
+    try std.testing.expectEqual([3]f32{ 0.5, 0.5, 0.5 }, blend(factors(.alpha), .{ 1, 1, 1, 0.5 }, .{ 0, 0, 0 }));
 }
 
 test highlightTexel {

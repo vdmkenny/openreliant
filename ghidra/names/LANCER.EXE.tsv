@@ -209,6 +209,8 @@
 004c14f0	function	vec3_copy	void __fastcall (Vec3 *to, Vec3 *from)
 004c1b50	function	mat3_copy	void __fastcall (float *to, float *from)	Copies a 3x3 matrix
 004c1be0	function	mat3_identity	void __fastcall (float *m)
+004c1f30	function	mat3_product_transposed	void __fastcall (float *out, float *a, float *b)	out = the transpose of a, times b
+004c26e0	function	mat3_scale_by	void __thiscall (float s)	Scales every element of the matrix in ECX by s
 004c1da0	function	mat3_multiply	void __fastcall (float *m, float *n)	m = m times n
 004c22b0	function	vec3_turn	void __fastcall (Vec3 *v, float *m)	v = m times v
 004c2310	function	vec3_turn_back	void __fastcall (Vec3 *v, float *m)	v = the transpose of m, times v
@@ -246,6 +248,8 @@
 00565074	data	play_time_minutes	ushort
 00565076	data	play_time_hours	ushort
 0057e04c	data	paused	ushort	Nonzero while the game is paused, which stops the ticks and the script clock
+0049d070	function	frame_time_sum	void __fastcall (void)	Converts the frame's seven timed sections from counter ticks to seconds and totals them in frame_time
+0058c4cc	data	frame_time	float	The last frame's timed sections together, in seconds; mission_frame moves detail_divisor by it
 00539aa0	data	game_object_count	short	Slots of game_objects in use, which create_object extends when given no slot
 
 # The camera (camera.cpp)
@@ -430,7 +434,25 @@
 004c7960	function	sr_draw_layers	int __fastcall (void)	Begins the scene; for each layer, runs each object through its pipeline and the device, then sorts and flushes the layer's blended polygons; ends the scene
 004c75c0	function	SR_meshpipe_init	int __fastcall (void *object)	Culls, projects and lights a mesh object's vertices for the frame; non-zero when nothing is left to draw
 004c4db0	function	sprite_set_create	void * __fastcall (int count, uint flags, char *name)	A scene object of type 4 holding sprites that share a material: mesh coordinates, unlit, added, no texture until given one; each spans its whole texture
-004ce4d0	function	sprites_project	int __fastcall (void *sprites)	Projects a sprite set for the frame: each sprite reaches its half width and half height to either side of its centre; non-zero when none shows
+004ce4d0	function	SR_bmopipe_init	int __fastcall (void *sprites)	The pipeline for a set of sprites (srBMO.cpp): each sprite's rectangle in view units, those at least a pixel across and in view listed; non-zero when none is
+004c7d00	function	SR_object_rotate	int __fastcall (void *object)	An object in the camera's frame: its origin, and its orientation times the camera's transposed, scaled
+004c5e20	function	object_view_test	int __fastcall (void *object)	An object's bounding sphere against the view: non-zero when outside it or smaller than a pixel; every clip plane when it crosses a side
+004c5fb0	function	object_level_select	int __fastcall (void *object)	Picks a mesh object's level of detail by depth over the detail divisor, and how far it has moved toward the next; then, when clipping, tests the level's bounding box
+004c6cf0	function	mesh_list_marked	int __fastcall (void *object)	Lists the vertices mesh_cull marked
+004c6710	function	mesh_transform_clipped	int __fastcall (void *object)	Turns the marked vertices into the camera's frame and notes the planes each lies outside
+004c6a60	function	mesh_cull_clipped	int __fastcall (void *object)	Drops the polygons wholly outside a plane and notes the planes the rest cross
+004c6c00	function	mesh_project_clipped	int __fastcall (void *object)	Lists the vertices still marked and projects those inside the view
+004c5dc0	function	screen_clamp	void __fastcall (float *point)	Keeps a projected point within the viewport
+004c3ca0	function	SR_mesh_calc_poly_normals	void __fastcall (void *mesh)	Each polygon's plane: its unit normal and the normal's dot product with its first corner
+004c3f10	function	SR_mesh_find_bounding_box	void __fastcall (void *mesh)	The mesh's bounding box and its farthest vertex from the origin
+004c4090	function	mesh_texel_areas	void __fastcall (void *mesh)	For each polygon of a textured group, twice its area in texture space, in texels
+004c4040	function	triangle_area_xy	float __fastcall (Vec3 *a, Vec3 *b, Vec3 *c)	A triangle's signed area in the XY plane
+004a2fd0	function	fan_merges	bool __fastcall (void *faces, int face)	Whether a fan's records all have normals within a dot product of 0.999 of its first's, so mesh_build merges them into one polygon
+004ce830	function	line_pipe	int __fastcall (void *object)	The pipeline for scene objects of kind 5 (srline.cpp)
+004ce7b0	function	balls_pipe	int __fastcall (void *object)	The pipeline for scene objects of kind 6 (srballs.cpp)
+004cd6a0	function	streak_clip	int __fastcall (float *now, float *before)	Cuts a star's streak to the view's bounds; -1 when it lies wholly outside one
+004cd340	function	dust_streak_project	int __fastcall (float *now_screen, float *now, float *before_screen, float *before)	Cuts a mote's streak to the near plane, projects both ends, and cuts it to the view
+004c3330	function	sr_round	int __cdecl (float x)	x rounded to the nearest whole number
 004c6280	function	mesh_cull	int __fastcall (void *object)	Lists each group's polygons that face the camera, with the face mask applied to polygon flags, and marks their vertices
 004c6d40	function	mesh_project	int __fastcall (void *object)	Turns the marked vertices into the camera's frame and projects them; depth is sqrt(1/z), scaled
 004c7060	function	mesh_light	int __fastcall (void *object)	Vertex colours: the object's colour and ambient lights, baked colours, then point and directional lights, clamped to 1
@@ -439,6 +461,9 @@
 004c7b30	function	depth_sort	void * __fastcall (void *list)	Radix-sorts a layer's blended polygons by depth key, farthest first
 004cde40	function	SR_mesh_pointlight	int __fastcall (void *object, void *light)	Adds a point light to the vertex colours: its colour times intensity, the cosine, and (1 - r/R) squared
 004ce120	function	SR_mesh_dirlight	int __fastcall (void *object, void *light)	Adds a directional light to the vertex colours: its colour times intensity and the normal's dot product with its forward axis
+005e829a	data	detail_divisor	float	Depths are divided by this before choosing a level of detail. mission_frame raises it by 0.05 while frame_time is under 1/40 s and lowers it by 0.5 while over 1/30 s (1/60 and 1/40 at detail 2), within 0.75 to 1.5, 1 to 2 or 1.5 to 3 by the detail setting
+005e82f4	data	frame_vertices	int	The vertices of the mesh objects drawn so far this frame; SR_meshpipe_init leaves out an object that would take it past 19999
+005e82f8	data	frame_polygons	int	The polygons of the mesh objects drawn so far this frame, likewise limited to 19999
 005d5618	data	light_maps	int	Lmaps in the Device section of the settings, default 1: light maps and highlights
 
 # Backdrop (nebula.cpp, srstars.cpp, the environment effects, and a file between srofiles.cpp and timer.cpp)
