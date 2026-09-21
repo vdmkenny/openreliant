@@ -7,9 +7,11 @@ pub const hog = @import("formats/hog.zig");
 pub const iso9660 = @import("formats/iso9660.zig");
 pub const refpack = @import("formats/refpack.zig");
 pub const shp = @import("formats/shp.zig");
+pub const spr = @import("formats/spr.zig");
 
 /// Windows executables: the game binary and the protection wrapped around it.
 pub const pe = @import("formats/pe.zig");
+pub const png = @import("formats/png.zig");
 pub const safedisc = @import("formats/safedisc.zig");
 pub const tea = @import("formats/tea.zig");
 

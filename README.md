@@ -70,6 +70,10 @@ missions and stat tables. See [`docs/formats/hog.md`](docs/formats/hog.md) and
 440 ships, stations and weapons, and `make check-models` validates them. See
 [`docs/formats/shp.md`](docs/formats/shp.md).
 
+`sltool spr` reads the `.SPR` sprite sets, the WinVFX 2D imagery behind the HUD, menus and ship
+schematics, and saves their 3,724 shapes as indexed PNG: `make sprites`. See
+[`docs/formats/spr.md`](docs/formats/spr.md).
+
 Documentation index: [`docs/README.md`](docs/README.md).
 
 ## Layout

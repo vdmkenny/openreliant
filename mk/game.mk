@@ -7,6 +7,7 @@
 #   game/decrypted/          the payload executable, recovered from the SafeDisc wrapper
 #   game/assets/<archive>/   the contents of each .HOG, decompressed
 #   game/models/             the .SHP models as Wavefront OBJ
+#   game/sprites/            the .SPR shapes as PNG
 #
 # Extraction is pure Zig (sltool reads raw sectors and ISO 9660 itself) except for LANCER.CAB, an
 # LZX-compressed Microsoft cabinet, which still goes through 7z.
@@ -48,6 +49,18 @@ $(GAME_DIR)/.stamp-models: | $(GAME_DIR)/.stamp-hog-resource $(SLTOOL)
 	    $(SLTOOL) shp obj "$$f" "$(MODELS_DIR)/$${name%.*}.obj" > /dev/null; \
 	    count=$$((count + 1)); \
 	done; echo "exported $$count models to $(MODELS_DIR)"
+	touch $@
+
+SPRITES_DIR := $(GAME_DIR)/sprites
+
+.PHONY: sprites
+sprites: $(GAME_DIR)/.stamp-sprites ## Export every .SPR shape to game/sprites as PNG
+
+$(GAME_DIR)/.stamp-sprites: | $(GAME_DIR)/.stamp-hog-resource $(SLTOOL)
+	mkdir -p $(SPRITES_DIR)
+	@for f in $(ASSETS_DIR)/resource/*.[sS][pP][rR]; do \
+	    $(SLTOOL) spr extract "$$f" $(SPRITES_DIR) > /dev/null; \
+	done; echo "exported $$(ls $(SPRITES_DIR) | wc -l | tr -d ' ') images to $(SPRITES_DIR)"
 	touch $@
 
 .PHONY: check-models
