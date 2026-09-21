@@ -49,9 +49,10 @@ pub const Record = extern struct {
         /// While it runs, a ship that takes enough damage turns to fight its attacker
         /// (`order_retaliate`).
         retaliate: bool,
-        /// While it runs, the ship lists the objects near it, up to ten of each of two kinds, at
-        /// `GameObject` offsets `0x6B4` and `0x6E0`; `docs/engine/orders.md` says which.
-        list_nearby: bool,
+        /// While it runs, `avoidance_scan` lists the objects the ship could hit, up to ten of each
+        /// of two kinds at `GameObject` offsets `0x6B4` and `0x6E0`, unless the object has
+        /// `no_avoidance`; `docs/engine/orders.md` says which.
+        avoidance: bool,
         _unknown_8: u2,
         /// While it runs, a multiplayer game sends the ship's steering inputs, throttle, rates and
         /// velocity.

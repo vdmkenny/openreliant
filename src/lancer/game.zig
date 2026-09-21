@@ -124,10 +124,7 @@ pub const GameObject = extern struct {
     type: u32,
     /// Its slot in `game_objects`.
     index: u32,
-    /// **Unknown**, mostly. `0x02`: its components are listed. `0x400`: disabled, not processed:
-    /// `DisableObject`, and `DisableObjectAtNextJump` at the next jump. `0x4000`: it has a shield
-    /// generator, a part of subsystem class 6, which destroying the part clears.
-    flags: u32,
+    flags: Flags,
     _unknown_0c: u32,
     combat: Pointer(stats.ShipCombat),
     flight: Pointer(stats.FlightModel),
@@ -236,7 +233,72 @@ pub const GameObject = extern struct {
     invulnerable: u8,
     _unknown_b96: u16,
 
+    /// The names of the script commands that set a bit are the developers' own.
+    pub const Flags = packed struct(u32) {
+        _unknown_0: bool,
+        /// Its components are listed, as its model's header asks. The collision code treats such
+        /// objects apart.
+        components: bool,
+        /// The collision sweep of `objects_update` leaves it out.
+        no_collisions: bool,
+        _unknown_3: u2,
+        /// Set on objects of types above 255, such as the type-1001 stand-in an empty slot holds;
+        /// the per-object loops skip them.
+        stand_in: bool,
+        /// Set as it starts to explode. It takes no more orders.
+        exploding: bool,
+        /// Reverse thrust works only while it is set: `object_orders` clears `reverse_thrust`
+        /// otherwise.
+        can_reverse: bool,
+        /// Set by `object_cloak`, which posts the Cloaked event.
+        cloaked: bool,
+        /// `SetTargetable` for the whole object, which sets it only when the word at `+0x24` of its
+        /// combat stats is nonzero.
+        targetable: bool,
+        /// Not processed: `DisableObject`, and `DisableObjectAtNextJump` at the next jump.
+        disabled: bool,
+        /// Set once its pilot ejects. It takes no more orders, and destroying it now makes it
+        /// explode.
+        ejected: bool,
+        _unknown_12: bool,
+        /// `DisableLights`.
+        lights_disabled: bool,
+        /// It has a shield generator, a part of subsystem class 6, which destroying the part clears.
+        shield_generator: bool,
+        /// `DisableGuns`. `orders_update` skips `0x0047C950` for it.
+        guns_disabled: bool,
+        /// `DisableMissiles`.
+        missiles_disabled: bool,
+        /// `DisableEngines`. `object_orders` holds its throttle at zero and stops both burns.
+        engines_disabled: bool,
+        /// `DisableEject`. The player cannot eject.
+        eject_disabled: bool,
+        /// `DoNotDisturb`: "dont disturb". It does not retaliate either.
+        do_not_disturb: bool,
+        /// `SetShipAvoidance` with "Disable Avoidance code": the avoidance code passes it over.
+        no_avoidance: bool,
+        /// Set during the jump orders: it cannot fire, and the avoidance code passes it over.
+        jumping: bool,
+        /// Set while the Dock and Ripper orders hold it to another object; their ends clear it.
+        attached: bool,
+        _unknown_23: u5,
+        /// **Unknown.** Set by `0x00474B40` as it sends a ship off, the player's into Friendly
+        /// Fire and others into Jump Out, and cleared by Friendly Fire. It takes no orders while
+        /// it is set.
+        _unknown_28: bool,
+        /// `DisableListing`: "stop listing".
+        unlisted: bool,
+        _unknown_30: u2,
+    };
+
     comptime {
+        assert(@bitOffsetOf(Flags, "components") == 1);
+        assert(@bitOffsetOf(Flags, "stand_in") == 5);
+        assert(@bitOffsetOf(Flags, "disabled") == 10);
+        assert(@bitOffsetOf(Flags, "shield_generator") == 14);
+        assert(@bitOffsetOf(Flags, "engines_disabled") == 17);
+        assert(@bitOffsetOf(Flags, "attached") == 22);
+        assert(@bitOffsetOf(Flags, "unlisted") == 29);
         assert(@offsetOf(GameObject, "combat") == 0x10);
         assert(@offsetOf(GameObject, "root") == 0x28);
         assert(@offsetOf(GameObject, "_unknown_12c") == 0x12C);

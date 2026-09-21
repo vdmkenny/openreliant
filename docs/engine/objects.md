@@ -16,7 +16,7 @@ slot, stopping the game with a fatal error past the last slot or for a slot fill
 |---|---|---|
 | `0x000` | 4 | Type: the ship's record in `shipstats.bin`. Types above 255, markers and nav points among them, have no stats |
 | `0x004` | 4 | Slot in `game_objects` |
-| `0x008` | 4 | Flags. `0x02`: its components are listed. `0x400`: disabled, not processed. `0x4000`: it has a shield generator |
+| `0x008` | 4 | [Flags](#flags) |
 | `0x010` | 4 | The type's entry in `ship_combat_stats` |
 | `0x014` | 4 | The type's entry in `ship_flight_stats`, or a missile's in `missile_flight_stats` |
 | `0x018` | 4 | The type's model, as loaded |
@@ -31,13 +31,46 @@ slot, stopping the game with a fatal error past the last slot or for a slot fill
 | `0x5F0` | 16 | Shields: four values, each `6 * shield_power - 1` when created |
 | `0x600` | 16 | Armor: four values, each `6 * armor_class - 1` when created |
 | `0x644` | 4 | Nonzero while hostile: `SetHostile` |
+| `0x680` to `0x697` | | Its [orders](orders.md): the stack and what the current order keeps, the damage it has taken lately and its last attacker |
 | `0x740` | 4 | Its pilot, a record of `pilotstats.bin` (`object_set_pilot`, `0x0049CCE0`) |
 | `0x748` | 4 | The pilot's entry in `pilot_stats` |
+| `0xB8C`, `0xB90` | 8 | Orders from other players waiting for their frame, in a multiplayer game |
 | `0xB94` | 1 | Set once `create_object` has filled the slot |
 | `0xB95` | 1 | Nonzero while invulnerable: `SetInvulnerability` |
 
 A few types take their stats from another type when created, keeping some combat fields of their
 own.
+
+## Flags
+
+The word at `0x008` is a `GameObject.Flags`. Many of its bits are what the script's `Disable`
+commands and their like set; the names in quotes are the developers' labels for their arguments.
+
+| Bit | Name | Meaning |
+|---|---|---|
+| `0x2` | `components` | Its components are listed, as its model's header asks. The collision code treats such objects apart. |
+| `0x4` | `no_collisions` | The collision sweep of `objects_update` leaves it out. |
+| `0x20` | `stand_in` | Set on objects of types above 255, such as the type-1001 stand-in an empty slot holds. The per-object loops skip them. |
+| `0x40` | `exploding` | Set as it starts to explode (`object_destroyed`). It takes no more orders. |
+| `0x80` | `can_reverse` | Reverse thrust works only while it is set. |
+| `0x100` | `cloaked` | Set by `object_cloak` (`0x00463640`), which posts the Cloaked event. |
+| `0x200` | `targetable` | `SetTargetable` for the whole object, which sets it only when the word at `+0x24` of its combat stats is nonzero. |
+| `0x400` | `disabled` | Not processed: `DisableObject`, "Stops entities from being processed", and `DisableObjectAtNextJump` at the next jump. |
+| `0x800` | `ejected` | Set once its pilot ejects. It takes no more orders, and destroying it now makes it explode. |
+| `0x2000` | `lights_disabled` | `DisableLights`. |
+| `0x4000` | `shield_generator` | It has a shield generator, which destroying the part clears. |
+| `0x8000` | `guns_disabled` | `DisableGuns`. `orders_update` skips `0x0047C950` for it. |
+| `0x10000` | `missiles_disabled` | `DisableMissiles`. |
+| `0x20000` | `engines_disabled` | `DisableEngines`. `object_orders` holds its throttle at zero and stops both burns. |
+| `0x40000` | `eject_disabled` | `DisableEject`. The player cannot eject. |
+| `0x80000` | `do_not_disturb` | `DoNotDisturb`, "dont disturb", which the command describes as keeping comms from disturbing it. It does not retaliate either. |
+| `0x100000` | `no_avoidance` | `SetShipAvoidance` with "Disable Avoidance code": the avoidance code passes it over. |
+| `0x200000` | `jumping` | Set during the jump orders. It cannot fire, and the avoidance code passes it over. |
+| `0x400000` | `attached` | Set while the Dock and Ripper orders hold it to another object; their ends clear it. |
+| `0x10000000` | | **Unknown.** Set by `0x00474B40` as it sends a ship off, the player's into Friendly Fire and others into Jump Out, and cleared by Friendly Fire. It takes no orders while it is set. |
+| `0x20000000` | `unlisted` | `DisableListing`, "stop listing". |
+
+**Unknown:** the other bits.
 
 ## The model hierarchy
 
@@ -149,9 +182,10 @@ Commands act on a component through its assembly: the nodes beside it whose part
 link id, such as a turret and its barrels. The assembly can hold a damaged model too, parts whose
 part flag `0x04` is set, which stay hidden (node flag `0x20`) while the component is intact.
 `DisableObject` hides the intact parts and shows the damaged ones, and enabling does the reverse; on
-a whole ship it sets object flag `0x400` instead. `DestroySubObject` destroys the assembly, keeping
+a whole ship it sets the object's `disabled` flag instead. `DestroySubObject` destroys the assembly, keeping
 and showing its damaged parts when its second argument asks for them. Destroying an engine lowers
-the owner's share of engines left, and destroying a shield generator clears its flag `0x4000`.
+the owner's share of engines left, and destroying a shield generator clears its `shield_generator`
+flag.
 
 `ship_damage_value` (`0x00452CB0`), the value ShotAt events carry, is the lowest of the object's
 four armor values, or a component's own.

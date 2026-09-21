@@ -151,8 +151,8 @@ AFTERBURNERS, while held, and AFTERBURNER TOGGLE, which flips `afterburner_toggl
 once for each press, set the ship's `afterburner`. REVERSE THRUST, while held, sets its
 `reverse_thrust`. `object_orders` clears both before each order update, so each lasts until the
 order next runs unless set again. After the update it clears both when the ship has no afterburner
-fuel, both and the throttle while the ship's flags have `0x20000`, and `reverse_thrust` when they
-lack `0x80`.
+fuel, both and the throttle while its engines are disabled (`DisableEngines`), and `reverse_thrust`
+unless the ship has the `can_reverse` flag.
 
 While the player asks for either, a warning sounds when fewer than 20 seconds of fuel are left and another when
 it is out, each at most once every 1000 ticks, ten seconds; `fuel_warning_tick` (`0x5799C0`) holds

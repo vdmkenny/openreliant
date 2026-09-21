@@ -301,4 +301,8 @@
 0040cf80	function	orders_pop_all	void __fastcall (int slot)	Pops every order, running each exit
 0040c520	function	order_retaliate	void __fastcall (int slot)	Pushes Fight at the last attacker, of the other side, once the ship's recent_damage reaches 4.2 times its armor class; only between ships whose combat stats hold 1 at +0x28
 00402660	function	order_queue	void __fastcall (int slot, OrderEntry *entry, int delay, int value)	Queues an order from another player, due delay frames on (0x5883B0); an equal order already queued stays if it is due no sooner, and is replaced otherwise
+00492190	function	avoidance_scan	void __fastcall (int slot)	For an object whose order has the avoidance flag: lists the objects it could hit, those with components by overlapping spheres at +0x6B8 and the others by 0x401980 at +0x6E4, ten of each at most
+00401f30	function	object_destroyed	void __fastcall (int slot, byte detail, bool no_eject)	A ship's end: an AI ship's pilot may eject, leaving the ship to Eject Spin, the player's ejects unless no_eject, and otherwise the ship explodes; detail goes into the order's data
+00463640	function	object_cloak	void __fastcall (int slot)	Cloaks an object: sets its cloaked flag, posts the Cloaked event and sets up the cloak state at +0x63C
+00401830	function	object_set_targetable	void __fastcall (int slot, bool targetable)	Sets or clears the object's targetable flag; it stays clear when the word at +0x24 of the combat stats is zero
 004983a0	function	noop	void (void)	Returns at once; tables use it for a routine with nothing to do
