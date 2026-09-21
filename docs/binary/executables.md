@@ -1,8 +1,8 @@
 # Shipped binaries
 
 Every file listed here comes from the two discs, most of it by way of `LANCER.CAB`.
-`make game` reproduces that layout under `game/install/`, and the payload executable under
-`game/decrypted/`.
+`make game` reproduces that layout under `game/install/`. The analysis reads the game executable,
+with its code readable, from `game/decrypted/LANCER.EXE`, which the repository does not provide.
 
 All binaries are 32-bit x86 PE images (`machine = 0x14C`).
 
@@ -10,7 +10,7 @@ All binaries are 32-bit x86 PE images (`machine = 0x14C`).
 
 | File | Size | Linker | Image base | Notes |
 |---|---|---|---|---|
-| `LANCER.EXE` (loader) | 249,119 | 5.0 | `0x400000` | SafeDisc 1 loader, not the game. See [`safedisc.md`](safedisc.md). |
+| `LANCER.EXE` (loader) | 249,119 | 5.0 | `0x400000` | SafeDisc 1 loader, not the game. |
 | `LANCER.ICD` | 1,151,021 | 6.0 | `0x400000` | The game, encrypted. Entry point `0x004D1210`. |
 | `LANGUAGE.DLL` | 122,951 | 6.0 | `0x10000000` | Localised strings, as a `.rsrc` string table the game reads by ID. |
 | `ITACLANG.DLL` | 692,282 | - | - | In-flight communication system language resources. |
@@ -49,5 +49,4 @@ dynamically; only `DINPUT.dll` is imported statically, for `DirectInputCreateEx`
 ## Protection dependencies
 
 `SECDRV.SYS` is the SafeDisc kernel driver. Windows Vista and later disabled it, and Windows 10
-removed it, so the shipped `LANCER.EXE` cannot start on a current system. The payload executable
-recovered by `sltool safedisc decrypt` does not depend on it.
+removed it, so the shipped `LANCER.EXE` cannot start on a current system.

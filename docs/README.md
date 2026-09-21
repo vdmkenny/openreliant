@@ -8,7 +8,6 @@ of a legally owned copy. The repository holds none of the game's files.
 |---|---|
 | [`toolchain.md`](toolchain.md) | What `make setup` installs, and the Ghidra workflow. |
 | [`binary/executables.md`](binary/executables.md) | The shipped binaries and the middleware they are built on. |
-| [`binary/safedisc.md`](binary/safedisc.md) | SafeDisc 1, and recovering the game executable from it. |
 | [`binary/runtime.md`](binary/runtime.md) | The C runtime linked into the game: Visual C++ 6.0's `LIBCMT`. |
 | [`binary/sources.md`](binary/sources.md) | The game's source files, their link order, and which code each holds. |
 | [`formats/disc-images.md`](formats/disc-images.md) | Raw CD images and the discs' ISO 9660 filesystem. |

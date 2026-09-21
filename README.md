@@ -65,21 +65,22 @@ The analysis starts from your own discs. Put an image of each at `game/discs/dis
 `disc2.bin` (a raw `.bin` of 2352-byte sectors, or an `.iso`; a `.zip` holding one works too), then:
 
 ```bash
-make game             # extract both discs and the installer into game/, and the game executable
-make ghidra-import    # import the executable into Ghidra and analyse it, headless
+make game             # extract both discs and the installer into game/
+make ghidra-import    # import the game executable into Ghidra and analyse it, headless
 make ghidra-annotate  # apply the names and types identified so far
 make ghidra-gui       # open the project
 make play             # build OpenReliant optimized and run it on game/install
 ```
 
-Everything under `game/` stays on your machine: it is git-ignored.
+Ghidra and the table generators read the game executable, with its code readable, from
+`game/decrypted/LANCER.EXE`; the repository does not provide one. Everything under `game/` stays on
+your machine: it is git-ignored.
 
 `sltool` reads the game's formats:
 
 | Command | Reads | Doc |
 |---|---|---|
 | `sltool cd` | Raw CD images and their ISO 9660 filesystem | [disc-images](docs/formats/disc-images.md) |
-| `sltool safedisc` | The protected executable | [safedisc](docs/binary/safedisc.md) |
 | `sltool hog` | `.HOG` archives and their RefPack compression | [hog](docs/formats/hog.md), [refpack](docs/formats/refpack.md) |
 | `sltool shp` | `.SHP` models; exports Wavefront OBJ; lists an object's components | [shp](docs/formats/shp.md) |
 | `sltool spr` | `.SPR` interface sprites; exports indexed PNG | [spr](docs/formats/spr.md) |

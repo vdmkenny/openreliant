@@ -67,8 +67,7 @@ code. Programs are grouped into project folders, one group per make target:
 
 | Group | Programs |
 |---|---|
-| `game` | The decrypted payload executable and `LANGUAGE.DLL`. |
-| `safedisc` | The loader and its support DLLs. |
+| `game` | The game executable, with its code readable, and `LANGUAGE.DLL`. |
 | `surrender` | The renderer DLLs. |
 | `vfx` | WinVFX and the system abstraction layer. |
 

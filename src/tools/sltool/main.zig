@@ -9,7 +9,6 @@ const fat = @import("fat.zig");
 const fnt = @import("fnt.zig");
 const hog = @import("hog.zig");
 const render = @import("render.zig");
-const safedisc = @import("safedisc.zig");
 const shp = @import("shp.zig");
 const spr = @import("spr.zig");
 const stats = @import("stats.zig");
@@ -29,7 +28,6 @@ const Command = union(enum) {
     fnt: fnt.Command,
     hog: hog.Command,
     render: render.Command,
-    safedisc: safedisc.Command,
     shp: shp.Command,
     spr: spr.Command,
     stats: stats.Command,
@@ -41,7 +39,7 @@ const Command = union(enum) {
         \\
         \\commands:
         \\
-    ++ cd.Command.usage ++ dte.Command.usage ++ fat.Command.usage ++ fnt.Command.usage ++ hog.Command.usage ++ render.Command.usage ++ safedisc.Command.usage ++ shp.Command.usage ++ spr.Command.usage ++ stats.Command.usage ++ tcache.Command.usage ++
+    ++ cd.Command.usage ++ dte.Command.usage ++ fat.Command.usage ++ fnt.Command.usage ++ hog.Command.usage ++ render.Command.usage ++ shp.Command.usage ++ spr.Command.usage ++ stats.Command.usage ++ tcache.Command.usage ++
         \\  help                            show this text
         \\
     ;
@@ -56,7 +54,6 @@ const Command = union(enum) {
             .fnt => .{ .fnt = try .parse(args[1..]) },
             .hog => .{ .hog = try .parse(args[1..]) },
             .render => .{ .render = try .parse(args[1..]) },
-            .safedisc => .{ .safedisc = try .parse(args[1..]) },
             .shp => .{ .shp = try .parse(args[1..]) },
             .spr => .{ .spr = try .parse(args[1..]) },
             .stats => .{ .stats = try .parse(args[1..]) },
@@ -73,7 +70,6 @@ const Command = union(enum) {
             .fnt => |group| try group.run(ctx),
             .hog => |group| try group.run(ctx),
             .render => |group| try group.run(ctx),
-            .safedisc => |group| try group.run(ctx),
             .shp => |group| try group.run(ctx),
             .spr => |group| try group.run(ctx),
             .stats => |group| try group.run(ctx),

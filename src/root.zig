@@ -1,5 +1,5 @@
-//! The `openreliant` module: readers for the game's file formats, and the payload's own structures and
-//! tables, shared by every tool in this repository and, eventually, by the engine reimplementation.
+//! The `openreliant` module: readers for the game's file formats, and the reimplementation of the
+//! game's code, shared by the engine and every tool in this repository.
 
 /// Containers the game shipped in, rather than formats the game itself reads.
 pub const cdimage = @import("formats/cdimage.zig");
@@ -17,10 +17,8 @@ pub const stats = @import("formats/stats.zig");
 pub const tcache = @import("formats/tcache.zig");
 pub const tga = @import("formats/tga.zig");
 
-/// Windows executables: the game binary and the protection wrapped around it.
+/// Windows executables: the game binary and its libraries.
 pub const pe = @import("formats/pe.zig");
-pub const safedisc = @import("formats/safedisc.zig");
-pub const tea = @import("formats/tea.zig");
 
 /// Images the tools write.
 pub const png = @import("formats/png.zig");

@@ -61,6 +61,3 @@ Identical functions share one copy: `fgetc` and `getc`, `fputc` and `putc`, `_it
 Ghidra's Function ID "Visual Studio 1998" libraries are Visual C++ 4.2's. Only assembly routines
 unchanged since then match (`_strlen`, `_memset`, `__aulldiv`). The rest is identified by behaviour,
 callees and neighbours: an object's functions are contiguous.
-
-The runtime's `kernel32` call sites are ground truth for the [SafeDisc import
-redirection](safedisc.md#4-call-sites-are-redirected).

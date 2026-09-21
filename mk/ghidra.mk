@@ -23,17 +23,17 @@ OVERWRITE ?=
 IMPORT_FLAGS := $(if $(OVERWRITE),-overwrite)
 
 # Group -> files, relative to game/.
-GHIDRA_GROUPS := game safedisc surrender vfx
+GHIDRA_GROUPS := game surrender vfx
 
-# The game itself: the executable recovered from the SafeDisc wrapper, plus the language resource
-# DLLs it loads. This is the subject of the decompilation.
+# The game itself: its executable with the code readable, which you supply, plus the language
+# resource DLL it loads. This is the subject of the analysis.
 GHIDRA_FILES_game := decrypted/LANCER.EXE install/LANGUAGE.DLL
-# The SafeDisc 1.40 kit: the loader that stands in for the game, and its helpers on disc 1.
-GHIDRA_FILES_safedisc := install/LANCER.EXE cd1/DPLAYERX.DLL cd1/CLCD32.DLL cd1/DRVMGT.DLL cd1/SECDRV.SYS
 # "Surrender", the 3D renderer: DirectDraw and Direct3D 7 back ends, plus its math and allocator.
 GHIDRA_FILES_surrender := install/srddraw.dll install/srd3d.dll install/srfastmath.dll install/srmemory.dll
 # Miles Design's 2D library (WinVFX) and system abstraction layer (SAL).
 GHIDRA_FILES_vfx := install/vfx.dll install/winvfx8.dll install/winvfx16.dll install/w32sal.dll
+
+$(GHIDRA_PROJECT_DIR)/.imported-game: | $(PAYLOAD)
 
 .PHONY: ghidra-import
 ghidra-import: $(addprefix ghidra-import-,$(GHIDRA_GROUPS)) ## Import and auto-analyse every program group (headless)
@@ -127,14 +127,14 @@ VM_CONDITIONS := $(ROOT)/src/lancer/vm/conditions.zig
 
 .PHONY: vm-commands
 vm-commands: ## Re-derive the mission script's command catalogue from the payload executable
-	@test -f $(PAYLOAD) || { echo "missing $(PAYLOAD); run 'make game'" >&2; exit 1; }
+	@test -f $(PAYLOAD) || { echo "missing $(PAYLOAD), the game executable with its code readable" >&2; exit 1; }
 	$(ZIG) build tablegen
 	$(ROOT)/zig-out/bin/tablegen commands $(PAYLOAD) $(VM_COMMANDS)
 	$(ZIG) fmt $(VM_COMMANDS)
 
 .PHONY: vm-conditions
 vm-conditions: ## Re-derive the trigger condition catalogue from the payload executable
-	@test -f $(PAYLOAD) || { echo "missing $(PAYLOAD); run 'make game'" >&2; exit 1; }
+	@test -f $(PAYLOAD) || { echo "missing $(PAYLOAD), the game executable with its code readable" >&2; exit 1; }
 	$(ZIG) build tablegen
 	$(ROOT)/zig-out/bin/tablegen conditions $(PAYLOAD) $(VM_CONDITIONS)
 	$(ZIG) fmt $(VM_CONDITIONS)
@@ -152,7 +152,7 @@ CONTROL_TABLES := $(ROOT)/src/lancer/input/controls.zig
 
 .PHONY: control-tables
 control-tables: ## Re-derive the player's actions and default bindings from the payload executable
-	@test -f $(PAYLOAD) || { echo "missing $(PAYLOAD); run 'make game'" >&2; exit 1; }
+	@test -f $(PAYLOAD) || { echo "missing $(PAYLOAD), the game executable with its code readable" >&2; exit 1; }
 	$(ZIG) build tablegen
 	$(ROOT)/zig-out/bin/tablegen controls $(PAYLOAD) $(CONTROL_TABLES)
 	$(ZIG) fmt $(CONTROL_TABLES)
@@ -161,7 +161,7 @@ ORDER_TABLES := $(ROOT)/src/lancer/game/ai/orders.zig
 
 .PHONY: order-tables
 order-tables: ## Re-derive the order table, what objects are told to do, from the payload executable
-	@test -f $(PAYLOAD) || { echo "missing $(PAYLOAD); run 'make game'" >&2; exit 1; }
+	@test -f $(PAYLOAD) || { echo "missing $(PAYLOAD), the game executable with its code readable" >&2; exit 1; }
 	$(ZIG) build tablegen
 	$(ROOT)/zig-out/bin/tablegen orders $(PAYLOAD) $(ORDER_TABLES)
 	$(ZIG) fmt $(ORDER_TABLES)
@@ -170,7 +170,7 @@ MANEUVER_TABLES := $(ROOT)/src/lancer/game/aidefend/maneuvers.zig
 
 .PHONY: maneuver-tables
 maneuver-tables: ## Re-derive the combat maneuvers, their scripts and handlers from the payload executable
-	@test -f $(PAYLOAD) || { echo "missing $(PAYLOAD); run 'make game'" >&2; exit 1; }
+	@test -f $(PAYLOAD) || { echo "missing $(PAYLOAD), the game executable with its code readable" >&2; exit 1; }
 	$(ZIG) build tablegen
 	$(ROOT)/zig-out/bin/tablegen maneuvers $(PAYLOAD) $(MANEUVER_TABLES)
 	$(ZIG) fmt $(MANEUVER_TABLES)

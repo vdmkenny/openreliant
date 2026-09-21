@@ -4,7 +4,7 @@
 #   game/cd<N>/              the files on each disc
 #   game/install/            what the installer would put on disk: LANCER.CAB unpacked, plus the
 #                            loader and language DLLs it copies from the disc
-#   game/decrypted/          the payload executable, recovered from the SafeDisc wrapper
+#   game/decrypted/          the game executable with its code readable, which you supply
 #   game/assets/<archive>/   the contents of each .HOG, decompressed
 #   game/models/             the .SHP models as Wavefront OBJ
 #   game/sprites/            the .SPR shapes as PNG
@@ -22,7 +22,8 @@ DISCS_DIR     := $(GAME_DIR)/discs
 INSTALL_DIR   := $(GAME_DIR)/install
 DECRYPTED_DIR := $(GAME_DIR)/decrypted
 
-# The payload executable, recovered from the SafeDisc wrapper. See docs/binary/safedisc.md.
+# The game executable with its code readable, which the Ghidra project and tablegen read. The
+# repository provides no means of producing it.
 PAYLOAD := $(DECRYPTED_DIR)/LANCER.EXE
 
 ASSETS_DIR := $(GAME_DIR)/assets
@@ -32,7 +33,7 @@ ASSETS_DIR := $(GAME_DIR)/assets
 HOG_ARCHIVES := install/resource.hog install/pilots/pilots.hog
 
 .PHONY: game
-game: $(GAME_DIR)/.stamp-install $(GAME_DIR)/.stamp-cd2 $(PAYLOAD) ## Unpack your disc images and recover the payload executable
+game: $(GAME_DIR)/.stamp-install $(GAME_DIR)/.stamp-cd2 ## Unpack your disc images
 
 .PHONY: assets
 assets: $(addprefix $(GAME_DIR)/.stamp-hog-,$(notdir $(basename $(HOG_ARCHIVES)))) ## Extract the .HOG archives into game/assets
@@ -160,12 +161,8 @@ $(GAME_DIR)/.stamp-install: $(GAME_DIR)/.stamp-cd1
 	cp $(GAME_DIR)/cd1/GAME/CAB/* $(INSTALL_DIR)/
 	touch $@
 
-# Recovering the key is a 2^32 search, so the result is cached: pass KEY= to skip the search.
-KEY ?=
-
-$(PAYLOAD): $(INSTALL_DIR)/LANCER.ICD | $(SLTOOL)
-	mkdir -p $(DECRYPTED_DIR)
-	$(SLTOOL) safedisc decrypt $< $@ $(if $(KEY),--key $(KEY))
-
-$(INSTALL_DIR)/LANCER.ICD: $(GAME_DIR)/.stamp-install
-	@test -f $@
+$(PAYLOAD):
+	@echo "missing $@" >&2
+	@echo "  The analysis reads the game executable, with its code readable, from here." >&2
+	@echo "  This repository does not provide one." >&2
+	@exit 1
