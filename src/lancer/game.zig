@@ -53,9 +53,7 @@ pub const Frame = extern struct {
 pub const Node = extern struct {
     /// **Unknown.** 1 for the node of a model part.
     kind: u32,
-    /// `0x20`: hidden, as a component's damaged parts are while it is intact. `0x100`: listed among
-    /// the object's components. `0x2000`: the part has flag `0x1000`.
-    flags: u32,
+    flags: Flags,
     /// The node's transform for the renderer, which holds the same place as `position` and
     /// `orientation`.
     frame: Pointer(Frame),
@@ -91,7 +89,34 @@ pub const Node = extern struct {
     _unknown_fc: i32,
     children: Pointer(Pointer(Node)),
 
+    pub const Flags = packed struct(u32) {
+        /// **Unknown.** `object_link_part` clears these four bits.
+        _unknown_0: u4,
+        /// **Unknown.** Set by `0x0049A8C0`. Cycling subtargets passes over a component with it.
+        _unknown_4: bool,
+        /// Hidden, as a component's damaged parts are while it is intact.
+        hidden: bool,
+        /// Set on a component's holder once `component_damage` takes the component's armor below
+        /// zero.
+        destroyed: bool,
+        /// **Unknown.** Set on the nodes that `0x004992D0`, `0x00499540`, `0x00499680` and
+        /// `0x00499730` make.
+        _unknown_7: bool,
+        /// Listed among the object's components.
+        component: bool,
+        /// **Unknown.** `create_object` sets it on the root.
+        _unknown_9: bool,
+        _unknown_10: u3,
+        /// A component the player can pick as a subtarget: set for parts with the `targetable`
+        /// flag, and by `SetTargetable`.
+        targetable: bool,
+        _unknown_14: u18,
+    };
+
     comptime {
+        assert(@bitOffsetOf(Flags, "hidden") == 5);
+        assert(@bitOffsetOf(Flags, "component") == 8);
+        assert(@bitOffsetOf(Flags, "targetable") == 13);
         assert(@offsetOf(Node, "position") == 0x14);
         assert(@offsetOf(Node, "orientation") == 0x20);
         assert(@offsetOf(Node, "part") == 0xA4);

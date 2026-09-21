@@ -114,7 +114,7 @@ Part flags at `0xF0`:
 | `0x20` | Geomorph positions, likewise |
 | `0x40` | Set by the loader when a static light exists in this part's class |
 | `0x80` | On multitexture hardware, bind a second texture named `l<material>` |
-| `0x1000` | Propagated to the spawned sub-object |
+| `0x1000` | A component the player can target: the live object marks the component's node [targetable](../engine/objects.md#the-model-hierarchy) |
 
 ### Attachment point (tag `0x09`)
 

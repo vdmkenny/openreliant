@@ -79,7 +79,7 @@ A node (`objects.cpp`, `node_alloc` at `0x004991D0`) is `0x104` bytes:
 | Offset | Size | Field |
 |---|---|---|
 | `0x00` | 4 | Kind: 1 for a model part's node |
-| `0x04` | 4 | Flags. `0x20`: hidden. `0x100`: listed among the components. `0x2000`: its part has flag `0x1000` |
+| `0x04` | 4 | Flags, a `Node.Flags`: `0x20` hidden; `0x40` a component's holder once `component_damage` (`0x004645C0`) takes the component's armor below zero; `0x100` listed among the components; `0x2000` targetable, for the parts whose part flag `0x1000` says so, and changed by `SetTargetable`. Cycling subtargets (`0x00414F90`) stops only at components that are targetable and have neither `0x10` nor `0x20` |
 | `0x08` | 4 | Its frame, the transform the renderer uses |
 | `0x14` | 12 | Position, relative to the node it hangs from |
 | `0x20` | 36 | Orientation, a 3x3 matrix, relative likewise |

@@ -165,8 +165,9 @@ pub const Part = extern struct {
         /// On multitexture hardware, bind a second texture named `l<material>`.
         lightmap: bool,
         _unknown8: u4,
-        /// Propagated to the spawned sub-object.
-        propagate: bool,
+        /// A component the player can target: `object_collect_components` marks its node
+        /// `targetable`, which cycling subtargets requires and `SetTargetable` changes.
+        targetable: bool,
         _unknown13: u19,
     };
 

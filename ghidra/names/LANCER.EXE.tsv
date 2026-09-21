@@ -303,6 +303,7 @@
 00402660	function	order_queue	void __fastcall (int slot, OrderEntry *entry, int delay, int value)	Queues an order from another player, due delay frames on (0x5883B0); an equal order already queued stays if it is due no sooner, and is replaced otherwise
 00492190	function	avoidance_scan	void __fastcall (int slot)	For an object whose order has the avoidance flag: lists the objects it could hit, those with components by overlapping spheres at +0x6B8 and the others by 0x401980 at +0x6E4, ten of each at most
 00401f30	function	object_destroyed	void __fastcall (int slot, byte detail, bool no_eject)	A ship's end: an AI ship's pilot may eject, leaving the ship to Eject Spin, the player's ejects unless no_eject, and otherwise the ship explodes; detail goes into the order's data
+004645c0	function	component_damage	void __fastcall (GameObject *object, ModelNode *node, float damage, int attacker, int kind)	Damages a component: lowers its node's armor, records the attacker in last_attacker, and marks the component's holder destroyed once the armor is below zero
 00463640	function	object_cloak	void __fastcall (int slot)	Cloaks an object: sets its cloaked flag, posts the Cloaked event and sets up the cloak state at +0x63C
 00401830	function	object_set_targetable	void __fastcall (int slot, bool targetable)	Sets or clears the object's targetable flag; it stays clear when the word at +0x24 of the combat stats is zero
 004983a0	function	noop	void (void)	Returns at once; tables use it for a routine with nothing to do

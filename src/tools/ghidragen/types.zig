@@ -101,6 +101,7 @@ pub const exported = [_]Export{
     .{ "ObjectFlags", lancer.game.GameObject.Flags },
     .{ "ObjectRoutine", lancer.game.Routine },
     .{ "ModelNode", lancer.game.Node },
+    .{ "NodeFlags", lancer.game.Node.Flags },
     .{ "SurrenderFrame", lancer.game.Frame },
     .{ "ObjectComponent", lancer.game.Component },
     .{ "ShipTypeEntry", lancer.game.ShipType },
