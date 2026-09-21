@@ -564,3 +564,4 @@
 0054ea18	data	engine_glow_meshes	void *[8]	The engine glow mesh for each attachment id, which the glow reads at id clamped to 1 to 7; slot 0 is unused
 0054ea38	data	engine_glow_flares	void *[8][2]	The flare textures each glow wears, read at its attachment id clamped to 1 to 7: matflarea1 to matflarea7 for the nozzle quad, matflareb1 to matflareb7 for the blades; slot 0 is unused
 0054ea78	data	engine_glows_built	char	Set once engine_glows_build has made the glow meshes, so that it makes them only once
+00562df4	data	skull_count	int	The number the display's skull readout shows, drawn over the top of the screen. One of a run of tallies at 0x562DEC to 0x562DF8 that the mission's start zeroes together, and which is kept across a mission run. **Unknown:** what it counts; it reads 0 in a fresh mission
