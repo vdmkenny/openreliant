@@ -17,6 +17,8 @@ const srofiles = @import("srofiles.zig");
 const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
 const matmanager = @import("matmanager.zig");
 const create = @import("create.zig");
+const environfx = @import("environfx.zig");
+const libcmt = @import("../libcmt.zig");
 const xtrabits = @import("xtrabits.zig");
 const Vector = math.Vector;
 
@@ -126,6 +128,7 @@ pub const Model = struct {
     orientation: math.Matrix = math.identity,
     parts: []Part,
     lights: []Light,
+    glows: []Glow,
     /// Where the model's origin lies from the object's, less (`GameObject + 0x524`): the centres
     /// of mass `recentre` moved the origin to.
     centre: Vector = @splat(0),
@@ -158,6 +161,42 @@ pub const Model = struct {
         sprite: [1]srapiext.Sprite,
     };
 
+    /// An engine glow a model carries, which `node_draw` draws for node kind 2: an attachment of
+    /// kind `engine_glow`, drawn as the mesh its id names (`node_mount_glow`, `0x00499540`), scaled
+    /// by the attachment's size and stretched along the plume by the throttle.
+    ///
+    /// Not ported: the Ripper's own rule, which draws its thrusters only while it flies forward and
+    /// its back pincers only while it backs up, their plumes burning the other way. It knows them
+    /// by their parts' names, and needs the motion it is not ported to tell apart.
+    pub const Glow = struct {
+        /// The part that carries it, whose node `node_draw` walks to reach it.
+        part: usize,
+        /// Its place in the model, from the root.
+        origin: Vector,
+        /// How the attachment stands on the part: the plume burns along its Z axis.
+        orientation: math.Matrix,
+        /// How far the plume reaches across, up, and along, before the throttle stretches its
+        /// length.
+        size: Vector,
+        /// Burning against the way the throttle pushes: its plume points the way the model faces,
+        /// so it is a retro thruster, lit by reverse thrust alone.
+        retro: bool,
+        /// Burning at its full length whatever the throttle, as the last of the glows does.
+        steady: bool,
+        /// The one mesh it draws, which every glow of its kind shares.
+        level: [1]srapiext.Level,
+        object: srapiext.MeshObject,
+
+        /// How far along its length the plume burns, or null while it burns nothing. Every glow but
+        /// a steady one flickers a little each frame (`node_draw`).
+        pub fn plume(glow: Glow, throttle: f32, random: ?*libcmt.Rand) ?f32 {
+            if (glow.steady) return 1;
+            const lit = if (glow.retro) -throttle else throttle;
+            if (!(lit > 0)) return null;
+            return lit * flicker(random);
+        }
+    };
+
     pub const Part = struct {
         /// The node's `hidden` flag.
         hidden: bool,
@@ -170,7 +209,7 @@ pub const Model = struct {
     /// A node for each part of `model` (`node_add_part`, `0x00499430`), its object flagged as
     /// `model_load` left the part (`loaded`), reached by the lights `lightMask` lets through, and as
     /// far across as its largest level. A part of a component's damaged model is hidden.
-    pub fn create(gpa: Allocator, model: *const shp.Model, loaded: *const srofiles.Loaded, light_sprite: ?*srtexture.Image) Allocator.Error!Model {
+    pub fn create(gpa: Allocator, model: *const shp.Model, loaded: *const srofiles.Loaded, effects: Effects) Allocator.Error!Model {
         const parts = try gpa.alloc(Part, model.parts.len);
         errdefer gpa.free(parts);
         for (parts, model.parts, loaded.parts) |*node, source, part| {
@@ -189,7 +228,9 @@ pub const Model = struct {
                 },
             };
         }
-        return .{ .parts = parts, .lights = try createLights(gpa, model, light_sprite) };
+        const lights = try createLights(gpa, model, effects.light_sprite);
+        errdefer gpa.free(lights);
+        return .{ .parts = parts, .lights = lights, .glows = try createGlows(gpa, model, effects.glows) };
     }
 
     /// One light for each attachment of kind `light` a part carries, at its place in the model.
@@ -230,9 +271,58 @@ pub const Model = struct {
         return lights;
     }
 
+    /// One glow for each attachment of kind `engine_glow` a part carries, at its place in the model
+    /// (`node_mount_glow`). A model carries none while the glows' meshes are not built.
+    fn createGlows(gpa: Allocator, model: *const shp.Model, glows: ?*const environfx.Glows) Allocator.Error![]Glow {
+        const built = glows orelse return gpa.alloc(Glow, 0);
+        var count: usize = 0;
+        for (model.parts) |part| {
+            for (part.attachments) |attachment| {
+                if (attachment.kind == .engine_glow) count += 1;
+            }
+        }
+        const made = try gpa.alloc(Glow, count);
+        var at: usize = 0;
+        for (model.parts, 0..) |part, index| {
+            const origin = part.part.position;
+            for (part.attachments) |attachment| {
+                if (attachment.kind != .engine_glow) continue;
+                const glow = &made[at];
+                at += 1;
+                const size: Vector = attachment.size;
+                glow.* = .{
+                    .part = index,
+                    .origin = .{
+                        attachment.position.x + origin.x,
+                        attachment.position.y + origin.y,
+                        attachment.position.z + origin.z,
+                    },
+                    .orientation = attachment.orientation,
+                    .size = size,
+                    // Its plume burns the way the attachment's Z axis points, so a plume that
+                    // reaches forward pushes the ship back.
+                    .retro = size[2] * attachment.orientation[8] > 0,
+                    .steady = attachment.id == steady_glow,
+                    .level = .{.{ .mesh = built.mesh(attachment.id), .until = std.math.inf(f32) }},
+                    .object = .{
+                        // Neither culled nor given a level of detail by how far off it is.
+                        .flags = .{ .not_culled = true, ._unknown_12 = true },
+                        .position = @splat(0),
+                        .radius = @reduce(.Max, @abs(size)),
+                        .levels = &.{},
+                    },
+                };
+                // The object shows the one mesh its kind shares, which does not change again.
+                glow.object.levels = glow.level[0..1];
+            }
+        }
+        return made;
+    }
+
     pub fn deinit(model: Model, gpa: Allocator) void {
         gpa.free(model.parts);
         gpa.free(model.lights);
+        gpa.free(model.glows);
     }
 
     /// Moves the object's origin to its parts' centre of mass, as `object_link_parts` ends
@@ -259,8 +349,9 @@ pub const Model = struct {
         const centre: Vector = moment;
         model.centre += centre;
         for (model.parts) |*part| part.origin -= centre;
-        // A light stands on the part that carries it, so it moves with the parts.
+        // A light and a glow stand on the part that carries them, so they move with the parts.
         for (model.lights) |*light| light.origin -= centre;
+        for (model.glows) |*glow| glow.origin -= centre;
 
         model.radius = 0;
         model.bounds = .{ @splat(std.math.floatMax(f32)), @splat(-std.math.floatMax(f32)) };
@@ -311,7 +402,24 @@ pub const Model = struct {
             }
             try xtrabits.sceneAdd(gpa, scene, .{ .sprites = &light.set }, layer);
         }
+        for (model.glows) |*glow| {
+            // A glow goes out with the part that carries it, as a light does.
+            if (model.parts[glow.part].hidden) continue;
+            const burning = glow.plume(view.throttle, view.random) orelse continue;
+            glow.object.position = math.transform(model.orientation, glow.origin) + model.position;
+            // The plume stands as its attachment does, drawn to the size it gives it.
+            const scale: math.Matrix = .{ glow.size[0], 0, 0, 0, glow.size[1], 0, 0, 0, burning * glow.size[2] };
+            glow.object.orientation = math.product(math.product(model.orientation, glow.orientation), scale);
+            try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &glow.object }, layer);
+        }
     }
+};
+
+/// What a model draws its attachments with: the sprite every light draws, and the meshes the engine
+/// glows draw. A model carries only the ones it is given.
+pub const Effects = struct {
+    light_sprite: ?*srtexture.Image = null,
+    glows: ?*const environfx.Glows = null,
 };
 
 /// What a model's lights are drawn by: where the camera stands, since a light's size and brightness
@@ -320,7 +428,33 @@ pub const View = struct {
     camera: Vector = @splat(0),
     /// `frame_start`, the mission tick the frame began on.
     frame_start: i32 = 0,
+    /// How hard the object is burning, between -1 and 1, which is how far its engine glows reach.
+    /// `object_draw` is given the throttle of its last update, dimmed by the share of its engines
+    /// still standing.
+    throttle: f32 = 0,
+    /// Where the glows' flicker comes from; without one they burn steady.
+    random: ?*libcmt.Rand = null,
 };
+
+/// The glow that burns at its full length whatever the throttle, the last of the seven
+/// (`node_draw`).
+const steady_glow = environfx.glow_kinds;
+
+/// The least of its length a plume ever flickers down to, and how far above that it reaches.
+const flicker_least: f32 = 0.8;
+const flicker_range: f32 = 0.2;
+
+comptime {
+    assert(flicker_least + flicker_range == 1);
+}
+
+/// What a plume's length is scaled by this frame: somewhere between `flicker_least` and its whole
+/// length, so that a burning engine is never quite still (`node_draw`).
+fn flicker(random: ?*libcmt.Rand) f32 {
+    const source = random orelse return 1;
+    const share = @as(f32, @floatFromInt(source.rand())) * (1.0 / @as(f32, libcmt.Rand.max));
+    return share * flicker_range + flicker_least;
+}
 
 /// The sprite every light draws, whatever its colour: the one attachment kind 4 id 0 names.
 pub fn lightSprite(textures: *srtexture.Table) matmanager.Error!?*srtexture.Image {
@@ -427,7 +561,7 @@ test Model {
         .sprite = .{.{}},
     }};
     lights[0].set.sprites = lights[0].sprite[0..1];
-    var model: Model = .{ .parts = &parts, .lights = &lights };
+    var model: Model = .{ .parts = &parts, .lights = &lights, .glows = &.{} };
     // A part hangs at its origin, turned with the root.
     model.place(.{ 1000, 0, 0 }, math.rotation(.y, std.math.pi / 2.0));
     try std.testing.expectApproxEqAbs(1100, parts[0].object.position[0], 1e-3);
@@ -519,4 +653,88 @@ test distanceSize {
     try std.testing.expectApproxEqAbs(0.5, distanceSize(3000), 1e-6);
     try std.testing.expectEqual(1, distanceSize(6000));
     try std.testing.expectEqual(1, distanceSize(60_000));
+}
+
+test "an engine glow burns with the throttle" {
+    const forward: Model.Glow = .{
+        .part = 0,
+        .origin = @splat(0),
+        .orientation = math.identity,
+        .size = .{ 10, 10, 40 },
+        .retro = false,
+        .steady = false,
+        .level = undefined,
+        .object = undefined,
+    };
+    var retro = forward;
+    retro.retro = true;
+    var steady = forward;
+    steady.steady = true;
+
+    // Without a source of flicker a plume burns at just the throttle it is given.
+    try std.testing.expectEqual(0.5, forward.plume(0.5, null));
+    try std.testing.expectEqual(null, forward.plume(0, null));
+    try std.testing.expectEqual(null, forward.plume(-1, null));
+    // A retro thruster burns the other way round, on reverse thrust alone.
+    try std.testing.expectEqual(null, retro.plume(0.5, null));
+    try std.testing.expectEqual(1, retro.plume(-1, null));
+    // The steady glow burns full whatever the throttle, and never flickers.
+    var random: libcmt.Rand = .{};
+    try std.testing.expectEqual(1, steady.plume(0, &random));
+    try std.testing.expectEqual(1, steady.plume(-1, &random));
+    try std.testing.expectEqual(1, random.seed);
+
+    // A flicker takes a burning plume down by at most a fifth, never past its full length.
+    for (0..100) |_| {
+        const burning = forward.plume(1, &random).?;
+        try std.testing.expect(burning >= flicker_least and burning <= 1);
+    }
+    try std.testing.expect(random.seed != 1);
+}
+
+test "a model draws the glows its parts carry" {
+    const gpa = std.testing.allocator;
+    const srmesh = @import("../surrender/surrenderlib/srmesh.zig");
+    const built: environfx.testing.Built = try .init(gpa);
+    defer built.deinit(gpa);
+    const mesh = try srmesh.testing.square(gpa);
+    defer mesh.deinit(gpa);
+    const levels = [_]srapiext.Level{.{ .mesh = &mesh, .until = std.math.inf(f32) }};
+
+    var parts = [_]Model.Part{.{
+        .hidden = false,
+        .origin = .{ 0, 0, 0 },
+        .object = .{ .flags = .{}, .position = @splat(0), .radius = mesh.radius, .levels = &levels },
+    }};
+    var glows = [_]Model.Glow{.{
+        .part = 0,
+        .origin = .{ 0, 0, -50 },
+        .orientation = math.identity,
+        .size = .{ 5, 5, 20 },
+        .retro = false,
+        .steady = false,
+        .level = .{.{ .mesh = built.glows.mesh(1), .until = std.math.inf(f32) }},
+        .object = .{ .flags = .{ .not_culled = true }, .position = @splat(0), .radius = 20, .levels = &.{} },
+    }};
+    glows[0].object.levels = glows[0].level[0..1];
+    var model: Model = .{ .parts = &parts, .lights = &.{}, .glows = &glows };
+    model.place(.{ 0, 0, 1000 }, math.identity);
+
+    var scene: srcore.Scene = .{};
+    defer scene.deinit(gpa);
+    // Idle, the ship burns nothing: only its part is drawn.
+    try model.draw(gpa, &scene, .world, .{});
+    try std.testing.expectEqual(1, scene.layers.get(.world).items.len);
+
+    // At half throttle the plume stands where its attachment does, half as long as it reaches.
+    try model.draw(gpa, &scene, .world, .{ .throttle = 0.5 });
+    try std.testing.expectEqual(3, scene.layers.get(.world).items.len);
+    try std.testing.expectEqual(@as(Vector, .{ 0, 0, 950 }), glows[0].object.position);
+    try std.testing.expectEqual(5, glows[0].object.orientation[0]);
+    try std.testing.expectEqual(10, glows[0].object.orientation[8]);
+
+    // A glow goes out with the part that carries it.
+    parts[0].hidden = true;
+    try model.draw(gpa, &scene, .world, .{ .throttle = 1 });
+    try std.testing.expectEqual(3, scene.layers.get(.world).items.len);
 }

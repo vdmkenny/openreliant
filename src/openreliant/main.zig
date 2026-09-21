@@ -207,7 +207,9 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     const sky = try game.nebula.Sky.create(arena, &textures, try tga.decode(arena, try resources.readFile(arena, game.nebula.dome_image_name)));
     try sky.select(&textures, game.nebula.default_nebula, &space.lights);
 
-    var ship = try Ship.load(&resources, &textures, ship_stats, options.ship);
+    // The engine glows every ship's thrusters burn, built once and shared by them all.
+    const glows: game.environfx.Glows = try .create(arena, &textures);
+    var ship = try Ship.load(&resources, &textures, ship_stats, &glows, options.ship);
     var player: engine.input.Player = .{};
     defer ship.unload();
     var keyboard: engine.input.Keyboard = .{};
@@ -279,7 +281,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             while (true) {
                 candidate = nextShipType(candidate, step[1]);
                 if (candidate == ship.ship_type) break;
-                const next = Ship.load(&resources, &textures, ship_stats, candidate) catch |err| {
+                const next = Ship.load(&resources, &textures, ship_stats, &glows, candidate) catch |err| {
                     std.log.warn("ship type {d} left out: {s}", .{ candidate, @errorName(err) });
                     continue;
                 };
@@ -325,7 +327,14 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .view = view.view,
             .cockpit_mode = view.cockpit_mode,
             .last_view = last_view,
-            .lights = .{ .camera = view.place.position, .frame_start = clock.frame_start },
+            .attachments = .{
+                .camera = view.place.position,
+                .frame_start = clock.frame_start,
+                // A ship's glows burn by the throttle of its last update, dimmed by the share of
+                // its engines still standing.
+                .throttle = ship.live.last_throttle * ship.live.engines_intact,
+                .random = &rand,
+            },
         }, driver.interface());
         last_view = view.view;
         if (screen.* == .software) try window.present(try screen.software.rgba(frame_arena.allocator()), size[0], size[1]);
@@ -381,7 +390,7 @@ const Ship = struct {
     /// Its type's flight stats, which `stats_load_ships` builds from `shipstats.bin`.
     flight: game.create.FlightModel,
 
-    fn load(resources: *game.bigfile.Hog, textures: *srtexture.Table, ship_stats: []align(1) const stats.Ship, ship_type: usize) !Ship {
+    fn load(resources: *game.bigfile.Hog, textures: *srtexture.Table, ship_stats: []align(1) const stats.Ship, glows: *const game.environfx.Glows, ship_type: usize) !Ship {
         if (ship_type >= ship_stats.len) return error.NoShipStats;
         var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
         errdefer arena.deinit();
@@ -390,7 +399,10 @@ const Ship = struct {
         model.* = try .parse(gpa, try resources.readFile(gpa, game.create.models.ship_types[ship_type].model.?));
         const loaded = try gpa.create(game.srofiles.Loaded);
         loaded.* = try game.srofiles.modelLoad(gpa, textures, model, .{}, false);
-        var object: game.objects.Model = try .create(gpa, model, loaded, try game.objects.lightSprite(textures));
+        var object: game.objects.Model = try .create(gpa, model, loaded, .{
+            .light_sprite = try game.objects.lightSprite(textures),
+            .glows = glows,
+        });
         object.recentre(model);
         object.place(@splat(0), math.identity);
         // What `create_object` sets of a new object: undamaged, at rest, flying itself forward.

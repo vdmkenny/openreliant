@@ -186,8 +186,8 @@ pub const Frame = struct {
     cockpit_mode: camera.CockpitMode,
     /// Last frame's view (`camera_view_last`, `0x00539A64`).
     last_view: camera.View,
-    /// What the models' own lights are drawn by.
-    lights: objects.View = .{},
+    /// What the models' own lights and engine glows are drawn by.
+    attachments: objects.View = .{},
 };
 
 /// Puts the frame's scene together and draws it, in `mission_frame`'s order: the objects, the
@@ -195,7 +195,7 @@ pub const Frame = struct {
 /// then `sr_render`. `arena` holds what the frame needs until it is drawn.
 pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context: *srapi.Context, frame: Frame, driver: srcore.Driver) Allocator.Error!void {
     scene.clear();
-    for (frame.models) |*model| try model.draw(gpa, scene, .world, frame.lights);
+    for (frame.models) |*model| try model.draw(gpa, scene, .world, frame.attachments);
     try frame.space.frame(gpa, scene, context, frame.view, frame.cockpit_mode);
     if (context.hardware) try frame.sky.frame(gpa, scene, context);
     if (frame.view != frame.last_view) frame.space.resetStreaks();

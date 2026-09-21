@@ -11,6 +11,7 @@ pub const backdrop = @import("game/backdrop.zig");
 pub const bigfile = @import("game/bigfile.zig");
 pub const camera = @import("game/camera.zig");
 pub const create = @import("game/create.zig");
+pub const environfx = @import("game/environfx.zig");
 pub const executor = @import("game/executor.zig");
 pub const gameobj = @import("game/gameobj.zig");
 pub const guns = @import("game/guns.zig");

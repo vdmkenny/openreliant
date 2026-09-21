@@ -181,26 +181,49 @@ share a bit; an object whose mask is all ones takes no lights.
 
 ## Engine glows
 
-An attachment of kind 2 becomes a node of kind 2 (`node_mount`, `0x00499A10`), which draws the
-mesh named `Engine Mesh` scaled by the attachment's three sizes: across, up, and along its length.
-`node_draw` stretches that length each frame by how much throttle the ship carries, so a thruster
-grows as it burns, and shakes it by a random amount so that it flickers. An attachment of id 7 is
-not stretched or flickered at all, and a glow that would come to nothing is left out, except on the
-Ripper, whose thrusters and rear pincers `node_draw` names outright and treats apart.
+An attachment of kind 2 becomes a node of kind 2 (`node_mount`, `0x00499A10`), which draws one of
+seven glow meshes scaled by the attachment's three sizes: across, up, and along its length. The
+code lies in `environfx.cpp`, in the stretch the linker gave it between `Create.cpp`'s and
+`erayfx.cpp`'s.
 
 The Predator carries two, at the back of its hull either side of the centre line, each 120 across,
 60 up and 440 long.
 
-The mesh is one of seven, built at start-up (`engine_glows_build`, `0x00469620`) into
-`engine_glow_meshes` and chosen by the attachment's id, clamped to between 1 and 7. Each is four
-quads of sixteen vertices (`engine_glow_mesh_build`, `0x00469400`): one across the nozzle, with
-corners at plus and minus one on X and Y, and three blades 60 degrees apart, each running from the
-nozzle to one unit along Z, so that the plume reads from any side. Their texture coordinates span
-0.04 to 0.99 of one of the `matflareb` flare textures, and each polygon is biased ten nearer so
-that a glow draws in front of the hull it sits on.
+### The meshes
 
-`node_draw` then scales that unit mesh by the attachment's own sizes, and its length by the
-throttle, which is why a thruster grows as it burns.
+`engine_glows_build` (`0x00469620`) makes all seven at start-up, into `engine_glow_meshes`, and
+takes the fourteen flare textures they wear into `engine_glow_flares`. A glow picks its own by its
+attachment's id, clamped to between 1 and 7, so an attachment naming none of them draws the first.
+
+Each mesh is four quads of sixteen vertices (`engine_glow_mesh_build`, `0x00469400`): one across
+the nozzle, with corners at plus and minus one on X and Y, and three blades 60 degrees apart, each
+running from the nozzle to one unit along Z, so that the plume reads from any side. A blade is one
+quad crossing the axis, standing for two, which is why a sixth of a turn between them spreads the
+three evenly. The nozzle wears the kind's `matflarea` texture and the blades its `matflareb` one,
+both added to what stands behind them and unlit. Their texture coordinates span 0.04 to 0.99, a
+little inside the texture's edges, and each polygon is biased ten nearer so that a glow draws in
+front of the hull it sits on. Nothing gives the quads their planes, so none of them is ever culled
+by facing away.
+
+### What a glow burns
+
+`node_draw` scales that unit mesh by the attachment's sizes each frame, the length by how hard the
+ship is burning: `mission_frame` hands `object_draw` the ship's `last_throttle` times
+`engines_intact`, so a plume shortens as its engines are shot away.
+
+A glow of attachment id 7 burns its full length whatever the throttle, and never flickers. The
+rest take the throttle itself, negated where the attachment's Z axis and its length point the same
+way, since such a glow reaches forward and so burns on reverse thrust alone; one that comes to
+nothing is left out. A burning glow is then flickered by `rand` to between 0.8 and 1 of its length,
+so that no plume is quite still.
+
+The Ripper is the exception, and `node_draw` names its parts outright: while it flies forward it
+draws only `Ripper_l_thrust` and `Ripper_r_thrust`, and while it backs up only its four
+`Ripper_Back_pincer` parts, whose plumes burn the other way.
+
+The port builds the meshes and draws the glows in `engine/game/environfx.zig` and
+`engine/game/objects.zig`. Not ported: the Ripper's rule, which needs the motion routines it tells
+its states apart by.
 
 ## Static lights
 

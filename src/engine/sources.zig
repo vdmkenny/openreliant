@@ -53,7 +53,7 @@ pub const files = [_]File{
     .{ .path = "C:\\lancer\\game\\cloak.cpp", .path_string = 0x004F73E4, .code = .{ .start = 0x00462B80, .end = 0x00463773 } },
     .{ .path = "C:\\lancer\\game\\collision.cpp", .path_string = 0x004F7458, .code = .{ .start = 0x004645C0, .end = 0x00464B2C } },
     .{ .path = "C:\\lancer\\game\\Create.cpp", .path_string = 0x004F9DFC, .code = .{ .start = 0x00466C10, .end = 0x004688AD } },
-    .{ .path = "C:\\lancer\\game\\environfx.cpp", .path_string = 0x004FFA5C, .code = null },
+    .{ .path = "C:\\lancer\\game\\environfx.cpp", .path_string = 0x004FFA5C, .code = .{ .start = 0x00469C60, .end = 0x00469D23 } },
     .{ .path = "C:\\lancer\\game\\erayfx.cpp", .path_string = 0x004FFAFC, .code = .{ .start = 0x0046AA70, .end = 0x0046ADE8 } },
     .{ .path = "C:\\lancer\\game\\explode.cpp", .path_string = 0x005002A8, .code = .{ .start = 0x0046BC30, .end = 0x00471D68 } },
     .{ .path = "C:\\lancer\\game\\gameflow.cpp", .path_string = 0x00500AD8, .code = .{ .start = 0x00475650, .end = 0x0047592F } },

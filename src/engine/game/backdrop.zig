@@ -428,14 +428,20 @@ pub const testing = struct {
         cache: @import("../../formats/tcache.zig").Cache,
         table: srtexture.Table,
 
+        /// A table holding the backdrop's own textures.
         pub fn init(gpa: Allocator) !*Textures {
+            return initNames(gpa, &.{ "sunlayer1", "sunlayer2", "sunlayer3", "sunflare1", "sunflare2", "sunflare3", "sunflare4", "neb01", "neb06" });
+        }
+
+        /// A table holding one small texture under each of `names`.
+        pub fn initNames(gpa: Allocator, names: []const []const u8) !*Textures {
             const tcache = @import("../../formats/tcache.zig");
-            const names = [_][]const u8{ "sunlayer1", "sunlayer2", "sunlayer3", "sunflare1", "sunflare2", "sunflare3", "sunflare4", "neb01", "neb06" };
-            var specs: [names.len]tcache.testing.Spec = undefined;
-            for (&specs, names) |*spec, name| spec.* = .{ .name = name, .encoding = .index8, .width = 8, .height = 4 };
+            const specs = try gpa.alloc(tcache.testing.Spec, names.len);
+            defer gpa.free(specs);
+            for (specs, names) |*spec, name| spec.* = .{ .name = name, .encoding = .index8, .width = 8, .height = 4 };
             const textures = try gpa.create(Textures);
             errdefer gpa.destroy(textures);
-            textures.bytes = try tcache.testing.build(gpa, &specs);
+            textures.bytes = try tcache.testing.build(gpa, specs);
             errdefer gpa.free(textures.bytes);
             textures.cache = try .parse(gpa, textures.bytes);
             textures.table = .init(gpa, textures.cache, std.mem.zeroes(tga.Palette));
