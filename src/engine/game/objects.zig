@@ -20,7 +20,9 @@ const Vector = math.Vector;
 /// A node of an object's model hierarchy (`objects.cpp`), allocated at `0x004991D0`: the object's
 /// root, then a node for each part of its model.
 pub const Node = extern struct {
-    /// **Unknown.** 1 for the node of a model part.
+    /// What the node draws (`node_draw`, `0x0049A8C0`, switches on it): 1 a model part, 2 an
+    /// engine glow, which brightens with the throttle, 3 and 5 a light, 3 also setting its colour.
+    /// **Unknown:** 4 and 6.
     kind: u32,
     flags: Flags,
     /// The node's transform for the renderer, which holds the same place as `position` and

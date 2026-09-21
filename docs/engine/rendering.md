@@ -192,6 +192,14 @@ own class, so a component's damaged model is lit separately from its intact one.
 class that holds a light takes baked colours for all of its levels, which is what the part flag
 `has_static_light` marks (`static_lights_bake`, `0x004A4310`).
 
+Drawing a light is another matter, and `node_draw` (`0x0049A8C0`) takes more ids than the baking
+does: 0 blue, 1 green, 2 yellow, 3 red, 4 cyan and 5 white, each with a paler colour for the sprite
+than for the light it casts. A light of id 4 or 5 is therefore drawn in its own colour but bakes
+nothing, since the baking knows only the first four. A light blinks by its two blink values, the
+first how long it stays on and the second how long it stays off, from a start its `blink_phase`
+sets, and fades over 200 ticks at each end; the light it casts is cut once that fade takes it below
+0.9, while its sprite keeps fading.
+
 Each light adds to a vertex what a point light would (`static_light_bake`, `0x004A4130`): its
 colour times its brightness, the cosine between the vertex's normal and the direction to the light,
 and `(1 - r / R)^2`, with `R` the brightness times the range. So a vertex at the light's own reach

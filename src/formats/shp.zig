@@ -220,10 +220,14 @@ pub const Attachment = extern struct {
     /// (`static_lights_bake`).
     id: u32,
     _unknown_38: [0x1C]u8,
-    /// **Unverified:** how the light blinks. `static_lights_bake` bakes a light only while both
-    /// are zero, which is what it takes for a light not to blink.
+    /// How a `light` blinks, in ticks: the first is how long it stays on, the second how long it
+    /// stays off. A light is baked into the meshes only while both are zero, so only a light that
+    /// never blinks is baked (`static_lights_mark`).
     blink: [2]i32,
-    _unknown_5c: [0x18]u8,
+    /// Where in its own blink a `light` starts, so that lights side by side need not blink
+    /// together (`node_draw`).
+    blink_phase: i32,
+    _unknown_60: [0x14]u8,
     /// How far a `light` reaches, times its brightness: the radius within which it lights a vertex.
     light_range: f32,
     /// A `light`'s brightness, which scales both its reach and the colour it adds. An attachment
@@ -244,6 +248,7 @@ pub const Attachment = extern struct {
     comptime {
         assert(@offsetOf(Attachment, "id") == 0x34);
         assert(@offsetOf(Attachment, "blink") == 0x54);
+        assert(@offsetOf(Attachment, "blink_phase") == 0x5C);
         assert(@offsetOf(Attachment, "light_range") == 0x74);
         assert(@offsetOf(Attachment, "light_brightness") == 0x78);
         assert(@sizeOf(Attachment) == 0x7C);
