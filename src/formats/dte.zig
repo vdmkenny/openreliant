@@ -43,7 +43,7 @@ pub const Section = enum(u8) {
     triggers = 5,
     /// The script bytecode. Its count is in **halfwords**, so the section is `count * 2` bytes.
     script = 6,
-    /// Per-ship index into the trigger list.
+    /// Each object's slice of the triggers: see [`ShipTriggers`].
     ship_triggers = 7,
     /// One [`Part`] per named script routine in `script`, which the loader turns into the table
     /// `call_part` indexes.
@@ -198,6 +198,37 @@ pub const Part = extern struct {
     }
 };
 
+/// A block of script, the constants after it, and what runs it.
+///
+/// The script section is a sequence of these. Each is a block, then the block's constant table: a
+/// whole number of 8-byte units, which `push_constant` reads a dword at a time. The table runs to
+/// the start of the next routine.
+pub const Routine = struct {
+    /// Byte offset of the block within the script.
+    start: usize,
+    /// Bytes of block and constants together.
+    extent: usize,
+    owner: Owner,
+
+    pub const Owner = union(enum) {
+        /// The indices of the triggers that run this block. Only triggers some object's slice
+        /// holds are counted, since no other can fire.
+        triggers: []const u16,
+        /// The index of the part this block is.
+        part: u16,
+    };
+
+    /// The constant table: the dwords from the block's end to the routine's.
+    pub fn constants(routine: Routine, script: []const u8) []align(1) const u32 {
+        const block = BlockReader.at(script, routine.start) orelse return &.{};
+        const from = routine.start + block.code.len + BlockReader.header_len;
+        const to = @min(routine.start + routine.extent, script.len);
+        if (from >= to) return &.{};
+        const bytes = script[from..to];
+        return std.mem.bytesAsSlice(u32, bytes[0 .. bytes.len - bytes.len % 4]);
+    }
+};
+
 /// A named value the script reads and writes.
 pub const Global = extern struct {
     name: u16,
@@ -218,33 +249,46 @@ pub const Objective = extern struct {
     }
 };
 
-/// Fires an action when its condition holds for its subject.
+/// Runs a block of script when an event it watches happens to its subject.
+///
+/// A trigger holds no subject. It is reached through the subject ship's entry in `ship_triggers`,
+/// which gives the index of the ship's first trigger and how many follow, so a trigger that no
+/// ship lists can never fire. When an event happens to a ship, the engine fires each of that
+/// ship's triggers that is armed, whose `condition` and `qualifier` are the event's, and whose
+/// operands pass the condition's checks. Firing starts a thread on the block `link` names.
 pub const Trigger = extern struct {
-    /// Ship or flight group the condition watches.
-    subject: u8,
+    condition: Condition,
     repeat: Repeat,
-    /// For most triggers, the block this one runs, as a halfword offset into the script like a
-    /// part's: those blocks fill the script ahead of the first part. `0xFFFF` for none. What the
-    /// rest point at is not yet known.
+    /// The block to run, as a halfword offset into the script, like a part's start. `0xFFFF` for
+    /// none. The blocks fill the script ahead of the first part.
     link: u16,
     _unknown_04: [16]u8,
-    /// Armed to 1 when the mission starts.
-    enabled: u8,
-    condition: Condition,
-    /// Spawns the script thread that runs when the condition holds.
-    action: u8,
+    /// Set for every trigger when the mission starts. Firing clears it, per `repeat`.
+    armed: u8,
+    /// Must equal the qualifier the event is raised with. Ordinary events carry `0xFF`.
+    qualifier: u8,
+    /// Zero runs the new thread at once, inside the event; any other value leaves it to the
+    /// scheduler.
+    deferred: u8,
     /// Byte arrays rather than wider types: these sit at odd offsets, and an `extern struct` would
     /// pad a `u16` here into the wrong place.
     _unknown_17: [2]u8,
+    /// Firings left, for `counted`.
     repeat_counter: u8,
     _unknown_1a: [2]u8,
-    /// Condition arguments, four bytes each.
+    /// Condition arguments, four bytes each, which the condition's handler checks against the
+    /// event's own.
     operands: [5]u32,
 
+    /// The qualifier of an ordinary event.
+    pub const any_qualifier: u8 = 0xFF;
+
     pub const Repeat = enum(u8) {
-        /// Clears `enabled` when it fires.
+        /// Disarms when it fires.
         once = 0,
-        /// Fires up to `repeat_counter` times.
+        /// Never disarms, so it fires every time.
+        always = 1,
+        /// Disarms when `repeat_counter`, counted down on each firing, reaches zero.
         counted = 2,
         _,
 
@@ -253,16 +297,38 @@ pub const Trigger = extern struct {
         }
     };
 
+    /// The block this trigger runs, as a byte offset into the script.
+    pub fn block(trigger: Trigger) ?usize {
+        if (trigger.link == Part.no_block) return null;
+        return @as(usize, trigger.link) * 2;
+    }
+
     comptime {
-        assert(@offsetOf(Trigger, "enabled") == 0x14);
-        assert(@offsetOf(Trigger, "condition") == 0x15);
-        assert(@offsetOf(Trigger, "action") == 0x16);
+        assert(@offsetOf(Trigger, "condition") == 0x00);
+        assert(@offsetOf(Trigger, "link") == 0x02);
+        assert(@offsetOf(Trigger, "armed") == 0x14);
+        assert(@offsetOf(Trigger, "qualifier") == 0x15);
+        assert(@offsetOf(Trigger, "deferred") == 0x16);
+        assert(@offsetOf(Trigger, "repeat_counter") == 0x19);
         assert(@offsetOf(Trigger, "operands") == 0x1C);
         assert(@sizeOf(Trigger) == 0x30);
     }
 };
 
-/// The 33 conditions a mission may script, in the order the engine's own name table lists them.
+/// One ship's slice of the trigger list: section `ship_triggers`, one entry per ship.
+pub const ShipTriggers = extern struct {
+    _unknown_00: u8,
+    count: u8,
+    first: u16,
+    _unknown_04: u32,
+
+    comptime {
+        assert(@sizeOf(ShipTriggers) == 8);
+    }
+};
+
+/// The 35 conditions, in the order of the engine's descriptor table at `0x4F6698`, named after its
+/// `TT_*` constants. The last two are internal and cannot be scripted.
 pub const Condition = enum(u8) {
     shot_at = 0x00,
     destroyed = 0x01,
@@ -297,11 +363,11 @@ pub const Condition = enum(u8) {
     docked = 0x1E,
     undocked = 0x1F,
     being_chased = 0x20,
-    /// No condition. Most trigger slots carry this: see `docs/formats/dte.md`.
-    none = 0xFF,
+    call_reinforcements = 0x21,
+    explosion_ship = 0x22,
     _,
 
-    /// Conditions above this are internal to the engine and cannot be scripted.
+    /// Conditions above this are internal to the engine.
     pub const last_scriptable: Condition = .being_chased;
 
     pub fn format(condition: Condition, writer: *std.Io.Writer) std.Io.Writer.Error!void {
@@ -336,8 +402,8 @@ pub const Opcode = enum(u8) {
     branch_if_zero_alt = 0x24,
     /// Read the value of global `n`.
     read_global = 0x27,
-    /// Wait, or fetch an operand in a compare.
-    wait = 0x28,
+    /// Pushes constant `n` of the running block: the `n`th dword after the block's end.
+    push_constant = 0x28,
     /// Pushes a pointer to the bytes that follow and steps over them. The operand byte is the
     /// length of the whole run, itself included, and what follows is a NUL-terminated file name:
     /// a `.wav` of speech or a `.ut` cutscene. `0x2B` runs the same handler.
@@ -764,6 +830,85 @@ pub const Mission = struct {
         return mission.records(Trigger, .triggers);
     }
 
+    /// Each object's slice of the triggers, indexed by the object ID an event carries.
+    pub fn shipTriggers(mission: Mission) Error![]align(1) const ShipTriggers {
+        return mission.records(ShipTriggers, .ship_triggers);
+    }
+
+    /// For each trigger, the ID of the object whose slice holds it, or null when none does and
+    /// the trigger can never fire. No trigger is in two slices.
+    pub fn triggerObjects(mission: Mission, allocator: Allocator) (Error || Allocator.Error)![]?u16 {
+        const all = try mission.triggers();
+        const objects = try allocator.alloc(?u16, all.len);
+        @memset(objects, null);
+        for (try mission.shipTriggers(), 0..) |slice, object| {
+            const first: usize = slice.first;
+            const end = @min(first + slice.count, all.len);
+            if (first >= end) continue;
+            for (objects[first..end]) |*owner| owner.* = @intCast(object);
+        }
+        return objects;
+    }
+
+    /// The script section as routines in address order: first the blocks that triggers run, then
+    /// the parts. Together, with their constants, they cover the whole section.
+    pub fn routines(mission: Mission, allocator: Allocator) (Error || Allocator.Error)![]Routine {
+        const code = try mission.script();
+        const all_triggers = try mission.triggers();
+        const objects = try mission.triggerObjects(allocator);
+        defer allocator.free(objects);
+
+        var result: std.ArrayList(Routine) = .empty;
+        errdefer result.deinit(allocator);
+
+        var first_part: usize = code.len;
+        for (try mission.parts(), 0..) |part, index| {
+            if (part.isEmpty()) continue;
+            first_part = @min(first_part, part.start());
+            try result.append(allocator, .{
+                .start = part.start(),
+                .extent = part.size(),
+                .owner = .{ .part = @intCast(index) },
+            });
+        }
+
+        // Group the triggers that can fire by the block they run. Blocks shared by several
+        // triggers are common.
+        var by_block: std.AutoArrayHashMapUnmanaged(usize, std.ArrayList(u16)) = .empty;
+        defer {
+            for (by_block.values()) |*list| list.deinit(allocator);
+            by_block.deinit(allocator);
+        }
+        for (all_triggers, objects, 0..) |trigger, object, index| {
+            if (object == null) continue;
+            const start = trigger.block() orelse continue;
+            if (start >= first_part) continue;
+            const slot = try by_block.getOrPut(allocator, start);
+            if (!slot.found_existing) slot.value_ptr.* = .empty;
+            try slot.value_ptr.append(allocator, @intCast(index));
+        }
+        const starts = try allocator.dupe(usize, by_block.keys());
+        defer allocator.free(starts);
+        std.mem.sort(usize, starts, {}, std.sort.asc(usize));
+        for (starts, 0..) |start, i| {
+            // A trigger block's constants run up to the next block.
+            const next = if (i + 1 < starts.len) starts[i + 1] else first_part;
+            const list = by_block.getPtr(start).?;
+            try result.append(allocator, .{
+                .start = start,
+                .extent = next - start,
+                .owner = .{ .triggers = try list.toOwnedSlice(allocator) },
+            });
+        }
+
+        std.mem.sort(Routine, result.items, {}, struct {
+            fn lessThan(_: void, a: Routine, b: Routine) bool {
+                return a.start < b.start;
+            }
+        }.lessThan);
+        return result.toOwnedSlice(allocator);
+    }
+
     pub fn globals(mission: Mission) Error![]align(1) const Global {
         return mission.records(Global, .globals);
     }
@@ -848,13 +993,14 @@ test "rejects a compressed or truncated image" {
 test "condition names cover the scriptable range" {
     try std.testing.expectEqual(@as(u8, 0x20), @intFromEnum(Condition.last_scriptable));
     try std.testing.expectEqual(Condition.proximity_close, @as(Condition, @enumFromInt(5)));
-    // Beyond the scriptable range the enum stays open rather than misnaming an internal type.
-    const internal: Condition = @enumFromInt(0x22);
+    // The two internal conditions are named; past them the enum stays open.
+    try std.testing.expectEqual(Condition.explosion_ship, @as(Condition, @enumFromInt(0x22)));
+    const internal: Condition = @enumFromInt(0x23);
     try std.testing.expect(std.enums.tagName(Condition, internal) == null);
 }
 
 test "decodes a block down to its alignment padding" {
-    // The opening block of mission1: call, command, read a global, wait, compare, branch, call,
+    // The opening block of mission1: call, command, read a global, push a constant, compare, branch, call,
     // jump, call, command, set AI, return, then two bytes that pad the block to a multiple of four.
     const section = [_]u8{
         0x1C, 0x00, 0x22, 0x01, 0x21, 0x17, 0x27, 0x00, 0x28, 0x00, 0x02, 0x24, 0x00, 0x07,
@@ -866,8 +1012,8 @@ test "decodes a block down to its alignment padding" {
     try std.testing.expectEqual(@as(usize, 26), reader.code.len);
 
     const expected = [_]Opcode{
-        .call_part, .command, .read_global, .wait,    .compare_ne, .branch_if_zero_alt,
-        .call_part, .jump,    .call_part,   .command, .ai,         .@"return",
+        .call_part, .command, .read_global, .push_constant, .compare_ne, .branch_if_zero_alt,
+        .call_part, .jump,    .call_part,   .command,       .ai,         .@"return",
     };
     for (expected) |opcode| {
         try std.testing.expectEqual(opcode, reader.next().?.opcode);
@@ -887,13 +1033,13 @@ test "decodes an inline string and steps over it" {
     // The block claims more than the section holds, so it is clamped rather than rejected.
     try std.testing.expect(reader.isShort());
 
-    try std.testing.expectEqual(Opcode.wait, reader.next().?.opcode);
+    try std.testing.expectEqual(Opcode.push_constant, reader.next().?.opcode);
     try std.testing.expectEqual(Opcode.command, reader.next().?.opcode);
 
     const speech = reader.next().?;
     try std.testing.expectEqual(Opcode.speech, speech.opcode);
     try std.testing.expectEqualStrings("new_sim02.wav\x00", speech.flow.inline_data);
-    try std.testing.expectEqual(Opcode.wait, reader.next().?.opcode);
+    try std.testing.expectEqual(Opcode.push_constant, reader.next().?.opcode);
 }
 
 test "the implemented opcode range matches the payload's handler table" {
@@ -915,12 +1061,12 @@ test "an unnamed value formats as a number instead of panicking" {
 
     // `{t}` would panic here; this path is generated per tag at comptime and cannot.
     var unnamed: std.Io.Writer = .fixed(&buffer);
-    try unnamed.print("{f}", .{@as(Condition, @enumFromInt(0x22))});
-    try std.testing.expectEqualStrings("34", unnamed.buffered());
+    try unnamed.print("{f}", .{@as(Condition, @enumFromInt(0x23))});
+    try std.testing.expectEqualStrings("35", unnamed.buffered());
 
     var repeat: std.Io.Writer = .fixed(&buffer);
-    try repeat.print("{f}", .{@as(Trigger.Repeat, @enumFromInt(1))});
-    try std.testing.expectEqualStrings("1", repeat.buffered());
+    try repeat.print("{f}", .{@as(Trigger.Repeat, @enumFromInt(3))});
+    try std.testing.expectEqualStrings("3", repeat.buffered());
 }
 
 test "follows a branch rather than sweeping past a jump" {
@@ -938,10 +1084,10 @@ test "follows a branch rather than sweeping past a jump" {
 
     // Addresses are offsets into the section, so the header shifts them by two.
     const expected = [_]struct { usize, Opcode }{
-        .{ 2, .call_part },  .{ 4, .command },     .{ 6, .read_global },
-        .{ 8, .wait },       .{ 10, .compare_ne }, .{ 11, .branch_if_zero_alt },
-        .{ 14, .call_part }, .{ 16, .jump },       .{ 19, .call_part },
-        .{ 21, .command },   .{ 23, .ai },         .{ 25, .@"return" },
+        .{ 2, .call_part },     .{ 4, .command },     .{ 6, .read_global },
+        .{ 8, .push_constant }, .{ 10, .compare_ne }, .{ 11, .branch_if_zero_alt },
+        .{ 14, .call_part },    .{ 16, .jump },       .{ 19, .call_part },
+        .{ 21, .command },      .{ 23, .ai },         .{ 25, .@"return" },
     };
     try std.testing.expectEqual(expected.len, listing.instructions.len);
     for (expected, listing.instructions) |want, got| {
@@ -988,4 +1134,83 @@ test "a part's offset and length are in halfwords" {
 
     std.mem.writeInt(u16, bytes[0x0A..][0..2], Part.no_block, .little);
     try std.testing.expect(@as(Part, @bitCast(bytes)).isEmpty());
+}
+
+test "maps the script into trigger blocks and parts, with their constants" {
+    var image: [0x300]u8 = @splat(0);
+    const directory: []align(1) DirectoryEntry =
+        @alignCast(std.mem.bytesAsSlice(DirectoryEntry, image[0 .. section_count * 8]));
+    for (directory) |*slot| slot.* = .{
+        .count = 0,
+        ._unused = 0,
+        .relocation_flags = 0,
+        .offset = DirectoryEntry.unused_offset,
+    };
+    const place = struct {
+        fn at(dir: []align(1) DirectoryEntry, section: Section, count: u16, offset: u32) void {
+            dir[@intFromEnum(section)] = .{ .count = count, ._unused = 0, .relocation_flags = 0xF, .offset = offset };
+        }
+    }.at;
+
+    // Two triggers. Only the first is in an object's slice; the second links to junk, which is
+    // harmless because nothing can fire it.
+    const triggers_at = 0x100;
+    place(directory, .triggers, 2, triggers_at);
+    const both: []align(1) Trigger = @alignCast(std.mem.bytesAsSlice(Trigger, image[triggers_at..][0 .. 2 * @sizeOf(Trigger)]));
+    both[0] = std.mem.zeroes(Trigger);
+    both[0].condition = .destroyed;
+    both[0].link = 0;
+    both[0].armed = 1;
+    both[0].qualifier = Trigger.any_qualifier;
+    both[1] = both[0];
+    both[1].condition = .shot_at;
+    both[1].link = 1;
+
+    const slices_at = 0x180;
+    place(directory, .ship_triggers, 1, slices_at);
+    image[slices_at + 1] = 1; // count
+    std.mem.writeInt(u16, image[slices_at + 2 ..][0..2], 0, .little); // first
+
+    // One part, at byte 16, spanning its block and one 8-byte unit of constants.
+    const parts_at = 0x1A0;
+    place(directory, .parts, 1, parts_at);
+    std.mem.writeInt(u16, image[parts_at + 0x0A ..][0..2], 8, .little);
+    std.mem.writeInt(u16, image[parts_at + 0x10 ..][0..2], 6, .little);
+
+    const script_at = 0x200;
+    const script = [_]u8{
+        // The trigger's block: push constant 0, return, padding. Then its constants.
+        0x08, 0x00, 0x28, 0x00, 0x43, 0x00, 0x00, 0x00,
+        0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        // The part's block: return, padding. Then its constants.
+        0x04, 0x00, 0x43, 0x00, 0x2A, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+    };
+    place(directory, .script, script.len / 2, script_at);
+    @memcpy(image[script_at..][0..script.len], &script);
+
+    const mission: Mission = try .parse(&image);
+    const objects = try mission.triggerObjects(std.testing.allocator);
+    defer std.testing.allocator.free(objects);
+    try std.testing.expectEqualSlices(?u16, &.{ 0, null }, objects);
+
+    const map = try mission.routines(std.testing.allocator);
+    defer {
+        for (map) |routine| switch (routine.owner) {
+            .triggers => |indices| std.testing.allocator.free(indices),
+            .part => {},
+        };
+        std.testing.allocator.free(map);
+    }
+    try std.testing.expectEqual(@as(usize, 2), map.len);
+
+    try std.testing.expectEqual(@as(usize, 0), map[0].start);
+    try std.testing.expectEqual(@as(usize, 16), map[0].extent);
+    try std.testing.expectEqualSlices(u16, &.{0}, map[0].owner.triggers);
+    const code = try mission.script();
+    try std.testing.expectEqual(@as(u32, 7), map[0].constants(code)[0]);
+
+    try std.testing.expectEqual(@as(usize, 16), map[1].start);
+    try std.testing.expectEqual(@as(u16, 0), map[1].owner.part);
+    try std.testing.expectEqual(@as(u32, 0x2A), map[1].constants(code)[0]);
 }

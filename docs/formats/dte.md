@@ -7,10 +7,10 @@ arms, and the script they run.
 sltool dte info <mission>        # counts and sizes
 sltool dte sections <mission>    # the 27-entry directory
 sltool dte ships <mission>       # placed ships and nav points
-sltool dte triggers <mission>    # triggers
+sltool dte triggers <mission>    # triggers, with the object whose slice holds each
 sltool dte strings <mission>     # the string pool
 sltool dte parts <mission>       # the script's named routines
-sltool dte script <mission>      # their disassembly
+sltool dte script <mission>      # every trigger block and part, disassembled
 make check-missions              # parse all 44
 ```
 
@@ -45,7 +45,7 @@ bytes for that reason.
 | 4 | objectives | `0x14` | |
 | 5 | triggers | `0x30` | |
 | 6 | script | | Bytecode. **The count is in halfwords** |
-| 7 | ship_triggers | 8 | Per-ship index into the triggers |
+| 7 | ship_triggers | 8 | Each object's slice of the triggers |
 | 8 | parts | `0x1C` | One descriptor per named script routine |
 | 10 | script_flags | 1 | One flag per script byte, marking where the VM may yield |
 | 13 | squads | `0x0C` | |
@@ -86,34 +86,55 @@ hold angles within [-360, 360]. Positions are absolute, on the order of 10^7.
 
 ## Triggers
 
-Stride `0x30`. A trigger watches a condition on a subject and runs a block of script.
+Stride `0x30`. A trigger runs a block of script when an event it watches happens to its subject.
 
 | Offset | Field |
 |---|---|
-| `0x00` | Subject ship or flight group |
+| `0x00` | Condition |
 | `0x01` | Repeat mode |
-| `0x02` | Link: for most triggers, the block it runs (see [Trigger blocks](#trigger-blocks)); `0xFFFF` for none |
-| `0x14` | Armed flag |
-| `0x15` | Condition |
-| `0x16` | Action |
-| `0x19` | Repeat counter |
-| `0x1C` | Operands, four bytes each |
+| `0x02` | Link: the block to run, as a halfword offset into the script; `0xFFFF` for none |
+| `0x14` | Armed, set for every trigger when the mission starts |
+| `0x15` | Qualifier; `0xFF` for ordinary events |
+| `0x16` | Zero runs the block's thread at once, inside the event; otherwise the scheduler does |
+| `0x19` | Firings left, for repeat mode 2 |
+| `0x1C` | Operands, four bytes each, which the condition checks against the event's |
 
-The engine names 33 scriptable conditions, `0x00` to `0x20`; `0xFF` means none. Of the 2,446
-triggers in the shipped missions, 278 carry a condition and 2,168 carry `0xFF`. Every value is in
-range or `0xFF`.
+A trigger holds no subject. Section 7 gives each object, by the ID an event carries, a slice of the
+trigger list: a count at `+1` and the index of the first trigger at `+2`. When an event happens to
+an object, `FUN_0045CEA0` walks its slice and fires each trigger that is armed, has the event's
+condition and qualifier, and whose operands pass. Firing starts a thread at `script + link * 2`.
 
-| Condition | Uses |
+No trigger is in two slices, and 320 of the 2,446 are in none, so they can never fire. Section 7 has
+more entries than section 3 in every mission, so its IDs cover more than the ship records.
+
+Repeat mode `0` disarms the trigger when it fires (1,833 triggers), `1` never disarms it (612), and
+`2` disarms it when the counter at `0x19` runs out (1). For four conditions, ShotAt, Destroyed,
+Cloaked and Decloaked, a handler of the condition's can veto an event; a vetoed event still fires
+the triggers whose repeat mode equals the condition's descriptor byte `+0x0D`, which is 1 for the
+last three.
+
+### Conditions
+
+The engine's descriptor table at `0x4F6698` lists 35 conditions, named in the payload as `TT_*`
+constants; the last two are internal. Each descriptor is `0x1C` bytes: a name pointer, a slot and a
+discriminator byte at `+0x0C` and `+0x0D`, and three handler pointers from `+0x10`, set only for
+ShotAt, Destroyed, Cloaked and Decloaked. The table lies just past the VM's dispatch table.
+
+| Condition | Triggers |
 |---|---|
-| `shot_at` | 207 |
-| `launched` | 14 |
-| `destroyed`, `camera_reached` | 11 each |
-| `ship_reached` | 6 |
-| `proximity_close`, `object_scooped` | 5 each |
-| `proximity_general` | 4 |
-| the remaining ten | 1 or 2 each |
+| `destroyed` | 990 |
+| `shot_at` | 453 |
+| `ship_reached` | 242 |
+| `launched` | 203 |
+| `proximity_general` | 197 |
+| `jumped_in` | 132 |
+| `jumped_through_hoop` | 80 |
+| `player_ready_to_jump` | 35 |
+| `ripper_dropped_object`, `object_scooped` | 20, 19 |
+| the remaining twelve used | 3 to 9 each |
 
-Repeat mode `0` is one-shot (1,833 triggers) and `2` counted (1). **Unknown:** mode `1` (612).
+2,168 triggers carry qualifier `0xFF`, which three of the four call sites that raise events pass. **Unknown:** what the other qualifiers, `0` in 207 triggers and `1` to `7` in the rest,
+select.
 
 ## Script
 
@@ -129,7 +150,8 @@ continue while handler() != 0
 ### Instruction set
 
 **71 opcodes: `0x02` to `0x07` and `0x14` to `0x55`, less `0x50`.** The other entries of the
-86-entry table are null. Past the last entry the data belongs to another structure.
+86-entry table are null. The condition descriptor table follows it, and its handler pointers look
+like further entries.
 
 Five opcodes run the same handler as another and are the same operation: `0x24` and `0x23`, `0x2B`
 and `0x2A`, `0x25` and `0x43`, `0x32` and `0x2E`, `0x55` and `0x47`.
@@ -199,6 +221,8 @@ signals through its return value.
   counts from its own position.
 - **`0x21` command** takes an index into the Executor catalogue, stride `0x74`: implementation
   pointer at `+0`, argument count at `+4`.
+- **`0x28` push_constant** pushes constant `n` of the running block (see [Routines](#routines)).
+- A thread starts with its block end in `[0x5373F0]`, and at most 32 run at once.
 
 ### Parts
 
@@ -236,48 +260,57 @@ A block is a `u16` length, which **counts its own two bytes**, then instructions
 a thread at `block + 2` with its limit at `block + length`. The instructions end with a `return`,
 padded with up to three bytes to a four-byte boundary.
 
-A part is its entry block followed by a **trailer** of zero or more 8-byte records: 1,547 of the
-1,623 parts have one, 8 to 80 bytes long, 29,664 bytes in all. **Unknown:** what the trailer holds.
-Read as little-endian dwords it is mostly small values, such as `1, 100, 0, 3, 50, 2`.
+### Routines
 
-`sltool dte script` follows control flow from each part's entry rather than sweeping, because
-`jump`, `return` and `random_branch` never fall through. **Every part's entry block disassembles
-completely**, except 128 bytes listed under [Open](#open). The block at the very start of
-`mission1`'s script, which its first trigger runs, is an if-else:
+The script section is a sequence of **routines**, each a block followed by its **constant table**:
+dwords that `push_constant n` reads, starting at the block's end. First come the blocks triggers
+run, then the parts:
+
+- A part's extent covers its block and its constants.
+- A trigger block's constants run to the next routine. `mission1`'s first part is at byte 1,740,
+  after 28 trigger blocks starting at bytes 0, 36, 72 and so on.
+
+In every mission this tiles the section exactly: 2,080 trigger blocks, one for each trigger that can
+fire and has a link, and 1,623 parts, 3,703 routines in all. Of the 2,126 triggers that can fire,
+46 have no link. Each constant table is exactly as long as the highest
+index its block pushes, rounded up to 8 bytes; the filler dword that rounding adds is not read.
 
 ```
-   2  22 01       call_part
-   4  21 17       command
-   6  27 00       read_global
-   8  28 00       wait
-  10  02          compare_ne
-  11  24 00 07    branch_if_zero_alt   -> 19 if zero
-  14  22 15       call_part
-  16  42 00 04    jump   -> 21
-  19  22 18       call_part
-  21  21 17       command
-  23  32 01       ai
-  25  43          return
+sltool dte script <mission>    # every routine, with its constants
 ```
 
-### Trigger blocks
+`sltool dte script` follows control flow from each block's entry rather than sweeping, because
+`jump`, `return` and `random_branch` never fall through, and shows the value behind each
+`push_constant`. **Every routine disassembles completely**, except 128 bytes listed under
+[Open](#open). The first block of `mission1`, which its first trigger runs, compares global 0
+against its constant 1 and calls one of two parts:
 
-The parts do not start at byte 0: `mission1`'s first part is at 1,740. The script before the first
-part holds the blocks triggers run, and a trigger's link is a halfword offset to its block. In
-`mission1` the first three triggers link to 0, 18 and 36, the blocks at bytes 0, 36 and 72. Across
-the 44 missions, 2,102 of the 2,377 set links land on a block that disassembles completely.
+```
+0 to 36: trigger 0
+       2  22 01       call_part
+       4  21 17       command
+       6  27 00       read_global
+       8  28 00       push_constant   = 1
+      10  02          compare_ne
+      11  24 00 07    branch_if_zero_alt   -> 19 if zero
+      14  22 15       call_part
+      16  42 00 04    jump   -> 21
+      19  22 18       call_part
+      21  21 17       command
+      23  32 01       ai
+      25  43          return
+  constants: 1 220332040
+```
 
-Short runs lie between the trigger blocks. In `mission1` they are 8 or 16 bytes and begin with a
-small dword such as `01 00 00 00`, like the part trailers.
+The links of the 297 triggers no slice holds are never followed, and 275 of them do not point at a
+block.
 
 ### Open
 
-- The other 275 trigger links, which land on those runs, inside a block, or on bytes that are not a
-  block header. `sltool dte script` does not yet list trigger blocks.
-- What the part trailers and the runs between trigger blocks hold.
 - Four 32-byte regions that nothing reaches, two in one part of `mission15` and one each in
   `mission18` and `mission23`. Each follows a random_branch whose two arms split 50/50 and target
   the bytes after the gap: `51 02 00 43` in three cases, `51 02 00 45` in the fourth.
+- What the qualifier byte selects, and what the object IDs in section 7 index.
 
 ## Prior art
 

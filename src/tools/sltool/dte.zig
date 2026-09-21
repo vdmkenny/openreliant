@@ -129,24 +129,29 @@ fn ships(ctx: Context, mission: dte.Mission) !void {
 }
 
 fn triggers(ctx: Context, mission: dte.Mission) !void {
-    const ship_list = try mission.ships();
-    try ctx.stdout.writeAll("index  subject                         condition                 repeat   action\n");
-    for (try mission.triggers(), 0..) |trigger, i| {
-        const subject = if (trigger.subject < ship_list.len)
-            mission.name(ship_list[trigger.subject].name)
-        else
-            "";
+    const objects = try mission.triggerObjects(ctx.arena);
+    try ctx.stdout.writeAll("index  object  condition                   qualifier  repeat   start  block\n");
+    for (try mission.triggers(), objects, 0..) |trigger, object, i| {
         // A custom formatter does not pad, so render into a buffer to keep the columns straight.
-        var condition: [24]u8 = undefined;
+        var condition: [28]u8 = undefined;
         var repeat: [8]u8 = undefined;
-        try ctx.stdout.print("{d:>5}  {s:<30}  {s:<26}  {s:<7}  {d}\n", .{
+        var qualifier: [4]u8 = undefined;
+        var owner: [6]u8 = undefined;
+        var block: [8]u8 = undefined;
+        try ctx.stdout.print("{d:>5}  {s:>6}  {s:<26}  {s:>9}  {s:<7}  {s:<5}  {s}\n", .{
             i,
-            subject,
+            if (object) |id| std.fmt.bufPrint(&owner, "{d}", .{id}) catch "?" else "-",
             std.fmt.bufPrint(&condition, "{f}", .{trigger.condition}) catch "?",
+            if (trigger.qualifier == dte.Trigger.any_qualifier)
+                "any"
+            else
+                std.fmt.bufPrint(&qualifier, "{d}", .{trigger.qualifier}) catch "?",
             std.fmt.bufPrint(&repeat, "{f}", .{trigger.repeat}) catch "?",
-            trigger.action,
+            if (trigger.deferred == 0) "now" else "later",
+            if (trigger.block()) |at| std.fmt.bufPrint(&block, "{d}", .{at}) catch "?" else "-",
         });
     }
+    try ctx.stdout.writeAll("\nobject - means no object's slice holds the trigger, so it never fires\n");
 }
 
 /// Decodes the first block of the script section.
@@ -183,25 +188,42 @@ fn parts(ctx: Context, mission: dte.Mission) !void {
 
 fn script(ctx: Context, mission: dte.Mission) !void {
     const code = try mission.script();
-    const list = try mission.parts();
-    try ctx.stdout.print("{d} bytes of script in {d} parts\n", .{ code.len, list.len });
+    const all_parts = try mission.parts();
+    const list = try mission.routines(ctx.arena);
+    try ctx.stdout.print("{d} bytes of script in {d} routines\n", .{ code.len, list.len });
 
-    for (list, 0..) |part, index| {
-        if (part.isEmpty()) continue;
-        try ctx.stdout.print("\npart {d} at {d}, {d} bytes", .{ index, part.start(), part.size() });
-        const name = mission.name(part.name);
-        if (name.len != 0) try ctx.stdout.print(": {s}", .{name});
+    for (list) |routine| {
+        try ctx.stdout.print("\n{d} to {d}: ", .{ routine.start, routine.start + routine.extent });
+        switch (routine.owner) {
+            .part => |index| {
+                try ctx.stdout.print("part {d}", .{index});
+                const name = mission.name(all_parts[index].name);
+                if (name.len != 0) try ctx.stdout.print(", {s}", .{name});
+            },
+            .triggers => |indices| {
+                try ctx.stdout.writeAll(if (indices.len == 1) "trigger" else "triggers");
+                for (indices, 0..) |index, i| {
+                    try ctx.stdout.print("{s}{d}", .{ if (i == 0) " " else ", ", index });
+                }
+            },
+        }
         try ctx.stdout.writeByte('\n');
 
-        const listing = try dte.disassemble(ctx.arena, code, part.start()) orelse {
+        const constants = routine.constants(code);
+        const listing = try dte.disassemble(ctx.arena, code, routine.start) orelse {
             try ctx.stdout.writeAll("  no block here\n");
             continue;
         };
-        try printListing(ctx, listing);
+        try printListing(ctx, listing, constants);
+        if (constants.len != 0) {
+            try ctx.stdout.writeAll("  constants:");
+            for (constants) |value| try ctx.stdout.print(" {d}", .{value});
+            try ctx.stdout.writeByte('\n');
+        }
     }
 }
 
-fn printListing(ctx: Context, listing: dte.Disassembly) !void {
+fn printListing(ctx: Context, listing: dte.Disassembly, constants: []align(1) const u32) !void {
     var previous: ?usize = null;
     for (listing.instructions) |instruction| {
         // A hole means the bytes between two reached instructions are not reached themselves.
@@ -223,7 +245,14 @@ fn printListing(ctx: Context, listing: dte.Disassembly) !void {
         try dte.formatTag(dte.Opcode, instruction.opcode, ctx.stdout);
 
         switch (instruction.flow) {
-            .next => {},
+            .next => if (instruction.opcode == .push_constant) {
+                const index = instruction.operands[0];
+                if (index < constants.len) {
+                    try ctx.stdout.print("   = {d}", .{constants[index]});
+                } else {
+                    try ctx.stdout.writeAll("   (past the constants)");
+                }
+            },
             .branch => |branch| try ctx.stdout.print("   -> {d}{s}", .{
                 branch.target, if (branch.conditional) " if zero" else "",
             }),
