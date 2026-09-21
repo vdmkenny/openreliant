@@ -5,6 +5,7 @@
 pub const cdimage = @import("formats/cdimage.zig");
 pub const dte = @import("formats/dte.zig");
 pub const fat = @import("formats/fat.zig");
+pub const fnt = @import("formats/fnt.zig");
 pub const hog = @import("formats/hog.zig");
 pub const iso9660 = @import("formats/iso9660.zig");
 pub const refpack = @import("formats/refpack.zig");

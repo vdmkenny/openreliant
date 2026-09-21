@@ -9,6 +9,7 @@
 #   game/models/             the .SHP models as Wavefront OBJ
 #   game/sprites/            the .SPR shapes as PNG
 #   game/sounds/             the .fat sound banks' sounds as WAV
+#   game/fonts/              the .fnt fonts as glyph atlases
 #
 # Extraction is pure Zig (sltool reads raw sectors and ISO 9660 itself) except for LANCER.CAB, an
 # LZX-compressed Microsoft cabinet, which still goes through 7z.
@@ -74,6 +75,19 @@ $(GAME_DIR)/.stamp-sounds: | $(GAME_DIR)/.stamp-hog-resource $(SLTOOL)
 	@for f in $(ASSETS_DIR)/resource/*.[fF][aA][tT]; do \
 	    $(SLTOOL) fat extract "$$f" $(SOUNDS_DIR) > /dev/null; \
 	done; echo "exported $$(ls $(SOUNDS_DIR) | wc -l | tr -d ' ') sounds to $(SOUNDS_DIR)"
+	touch $@
+
+FONTS_DIR := $(GAME_DIR)/fonts
+
+.PHONY: fonts
+fonts: $(GAME_DIR)/.stamp-fonts ## Render every .fnt font to game/fonts as a PNG glyph atlas
+
+$(GAME_DIR)/.stamp-fonts: | $(GAME_DIR)/.stamp-hog-resource $(SLTOOL)
+	mkdir -p $(FONTS_DIR)
+	@for f in $(ASSETS_DIR)/resource/*.[fF][nN][tT]; do \
+	    name=$$(basename "$$f"); \
+	    $(SLTOOL) fnt render "$$f" $(FONTS_DIR)/$${name%.*}.png > /dev/null; \
+	done; echo "rendered $$(ls $(FONTS_DIR) | wc -l | tr -d ' ') fonts to $(FONTS_DIR)"
 	touch $@
 
 .PHONY: check-missions

@@ -65,7 +65,7 @@ record, rather than trusting the count.
 | `CD2.HOG` | No | Bink video, MP3 music, sprites |
 
 `resource.hog`'s members by extension: `.shp` models, `.spr` sprites, `.tga` images, `.dte`
-missions, `.fat` [sound banks](fat.md), `.fnt` fonts, `.ccb` colour tables, and five `.bin` files:
+missions, `.fat` [sound banks](fat.md), `.fnt` [fonts](fnt.md), `.ccb` colour tables, and five `.bin` files:
 the four stat tables and `profile.bin`.
 
 ## RefPack compression
