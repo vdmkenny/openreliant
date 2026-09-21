@@ -4,7 +4,8 @@
 display and the text. Its code lies between `hog_SND.CPP`'s and `hudmovie.cpp`'s, about 40KB of it;
 only `hud_init` asserts, so the source map places that stretch alone.
 
-Nothing in the port draws it yet.
+The port has where an element stands and how wide a line of its text is
+([`engine/game/hud.zig`](../../src/engine/game/hud.zig)); it draws nothing yet.
 
 ## How it is reached
 
@@ -29,16 +30,24 @@ keeps its layout at any resolution:
     x = round((screen_width  - 0x21) * across) + 0x10 + offset_x
     y = round((screen_height - 0x21) * down)   + 0x10 + offset_y
 
-with the screen's size at `sr + 0x1666` and `sr + 0x166A`. `hud_grid_place` (`0x00482F00`) places
-the item of an index in a grid from half-way across the screen, `0x30` apart across and `0x26`
-down, two to a row.
+with the screen's size at `sr + 0x1666` and `sr + 0x166A`. Half of the way across comes to the
+middle of the screen, the inset and the margin cancelling. `hud_grid_place` (`0x00482F00`) places
+the item of an index in a grid from half-way across, `0x30` apart across and `0x26` down, two to a
+row, its first item `156` to the left.
 
 ## Text
 
-`hud_text` (`0x00480E40`) draws a line through the font routine at `0x00594858`, left where its
-alignment is 0, centred where it is 1 and right where it is 2; an empty string draws nothing. It
-leaves the line's bounding box where the caller asks. `font_text_width` (`0x00480E10`) sums a
-string's glyph widths, two bytes each from the font's `+4`.
+`hud_text` (`0x00480E40`) draws a line through `VFX_string_draw`, left where its alignment is 0,
+centred where it is 1 and right where it is 2; an empty string draws nothing. It leaves the line's
+bounding box where the caller asks. `font_text_width` (`0x00480E10`) sums a string's widths out of
+the cache `font_open` (`0x00480D70`) fills: a record of the font and a width for every code below
+255, each taken from `VFX_character_width`.
+
+`sprites.cpp` looks the drawing routines up out of `vfx.dll` by name into function pointers:
+`VFX_string_draw` at `0x00594858`, `VFX_character_width` and `VFX_shape_draw_mirrored`.
+`VFX_string_draw` draws each code with `VFX_character_draw` and moves along by what it returns, and
+`VFX_character_draw` blits the glyph into a pane, clipped. The display is therefore drawn by the
+processor into a buffer, whichever renderer is running.
 
 ## Art
 

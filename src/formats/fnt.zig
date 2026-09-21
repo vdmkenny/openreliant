@@ -102,6 +102,12 @@ pub const Font = struct {
     }
 };
 
+pub const testing = struct {
+    /// A font of two codes: 0 has no glyph, 1 is two pixels wide and two tall, with a palette
+    /// after it or without.
+    pub const font = testFont;
+};
+
 fn testFont(comptime with_palette: bool) []const u8 {
     // Two codes: 0 has no glyph, 1 is two pixels wide and two tall.
     const table_end = header_size + 2 * 4;
