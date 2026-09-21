@@ -63,6 +63,12 @@ $(GAME_DIR)/.stamp-sprites: | $(GAME_DIR)/.stamp-hog-resource $(SLTOOL)
 	done; echo "exported $$(ls $(SPRITES_DIR) | wc -l | tr -d ' ') images to $(SPRITES_DIR)"
 	touch $@
 
+.PHONY: check-missions
+check-missions: | $(GAME_DIR)/.stamp-hog-resource $(SLTOOL) ## Parse every .DTE mission
+	@bad=0; for f in $(ASSETS_DIR)/resource/*.dte; do \
+	    $(SLTOOL) dte info "$$f" > /dev/null || { echo "FAILED: $$f"; bad=$$((bad + 1)); }; \
+	done; echo "$$(ls $(ASSETS_DIR)/resource/*.dte | wc -l | tr -d ' ') missions checked, $$bad with problems"
+
 .PHONY: check-models
 check-models: | $(GAME_DIR)/.stamp-hog-resource $(SLTOOL) ## Validate every .SHP model for internal consistency
 	@bad=0; for f in $(ASSETS_DIR)/resource/*.[sS][hH][pP]; do \

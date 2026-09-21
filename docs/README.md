@@ -13,6 +13,7 @@ game code or assets are stored in this repository.
 | [`formats/hog.md`](formats/hog.md) | `.HOG` asset archives: the EA `BIGF` container. |
 | [`formats/refpack.md`](formats/refpack.md) | RefPack, the compression used inside them. |
 | [`formats/shp.md`](formats/shp.md) | `.SHP` 3D models: chunk stream, parts, levels of detail, geometry. |
+| [`formats/dte.md`](formats/dte.md) | `.DTE` missions: the 27-section image, ships, triggers and conditions. |
 | [`formats/spr.md`](formats/spr.md) | `.SPR` sprites: the WinVFX 2D interface imagery, and where model textures are not. |
 
 ## Conventions

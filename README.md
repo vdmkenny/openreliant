@@ -74,6 +74,9 @@ missions and stat tables. See [`docs/formats/hog.md`](docs/formats/hog.md) and
 schematics, and saves their 3,724 shapes as indexed PNG: `make sprites`. See
 [`docs/formats/spr.md`](docs/formats/spr.md).
 
+`sltool dte` reads the 44 `.DTE` missions: their ships, triggers, globals and string pools. See
+[`docs/formats/dte.md`](docs/formats/dte.md).
+
 Documentation index: [`docs/README.md`](docs/README.md).
 
 ## Layout
