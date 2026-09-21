@@ -113,7 +113,7 @@ pub const Queued = extern struct {
     _unknown_1a: u16,
     /// **Unknown.** A byte the sender passes to `order_queue`.
     _unknown_1c: u32,
-    /// The frame from which `object_orders` may start it, a count kept at `0x587CC4`.
+    /// The tick, counted by `mission_ticks`, from which `object_orders` may start it.
     due: i32,
 
     comptime {

@@ -9,7 +9,8 @@ each tick of the timer, and objects move on every fourth tick. The names below a
 `tick_timer` (`0x004827C0`) runs 100 times a second, on a periodic multimedia timer that
 `timer_start` (`0x004A70F0`) sets up. Unless the game is paused, which the word `paused`
 (`0x57E04C`) says, it advances `game_ticks` (`0x565064`) and the play time: ticks, seconds,
-minutes and hours at `0x565070` to `0x565076`. The play time rolls a second over after 101 ticks.
+minutes and hours at `0x565070` to `0x565076`. The play time rolls a second over after 101 ticks. `game_tick` also counts the ticks it runs in
+`mission_ticks` (`0x587CC4`), which stops while the game is paused.
 The [script clock](script-vm.md#the-clock-and-timers) runs on a timer of its own, once a second,
 and stops for the pause too.
 
@@ -19,7 +20,10 @@ and stops for the pause too.
 (`0x00477850`) once for each tick of `game_ticks` since the previous pass, then, unless the game is
 paused, the frame's work, `mission_frame` (`0x004924B0`). So the simulation advances at a fixed
 rate whatever the frame rate. The frame's work runs every object's [orders](orders.md), through
-`orders_update`, and flushes the script's events, once a frame.
+`orders_update`, and flushes the script's events, once a frame. It begins with `frame_begin`
+(`0x00491E00`), which sets `frame_duration` (`0x588330`) to the ticks since `frame_start`
+(`0x5883B0`) and `frame_start` to `mission_ticks`; code that runs once a frame measures time with
+these.
 
 `game_tick` runs `simulation_step` (`0x004774D0`) unless the game is paused. `simulation_step`
 does its work on every fourth call, so 25 times a second: each object's own updates, then

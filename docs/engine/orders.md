@@ -121,10 +121,61 @@ ships' combat stats hold 1 at `+0x28`, and not while the ship has `do_not_distur
 
 In a multiplayer game, orders from the other machines wait in a queue of up to 20, `queued_orders`
 (`0xB90`) with `queued_order_count` (`0xB8C`). A `QueuedOrder` is the order's entry, a value the
-sender passes, and the frame it is due. `order_queue` (`0x00402660`) adds one due a given number of
-frames after the count at `0x5883B0`. An equal order already queued stays if it is due no sooner,
-and is replaced otherwise; a full queue is a fatal error.
+sender passes, and the tick it is due. `order_queue` (`0x00402660`) adds one due a given number of
+ticks after `frame_start` (see [the game loop](loop.md#ticks)). An equal order already queued stays
+if it is due no sooner, and is replaced otherwise; a full queue is a fatal error.
 
-`object_orders` takes each queued order that is due by the count at `0x587CC4` and has a priority
-no lower than the current order's, pushes it with its data, and removes it from the queue. It
-removes a due order without pushing it while the object has not been created.
+`object_orders` takes each queued order that is due by `mission_ticks` and has a priority no lower
+than the current order's, pushes it with its data, and removes it from the queue. It removes a due
+order without pushing it while the object has not been created.
+
+## Steering
+
+Most orders that fly a ship steer with `ai_steer` (`0x00401380`), which takes a point to aim at,
+a limit, an ease and flags. It sets the pitch, yaw and roll inputs from the point's direction in
+the ship's frame, through `0x00401710`, or `0x00401690` when the word at `+0x24` of the ship's
+flight stats is nonzero. It takes `(1 - ease) * 6` times each turn rate off its input and
+multiplies the result by 11.46, then holds each input within the limit, at most 1. While frames
+take more than 10 ticks, inputs under 0.39 are halved first.
+
+| Flag | Meaning |
+|---|---|
+| `0x1` | First `avoid_near` (`0x004028F0`) moves the point around the objects with components in the ship's first avoidance list. |
+| `0x2` | First `avoid_ahead` (`0x00402DC0`) moves the point around the objects in the second list, projected along their motion. |
+| `0x4` | Unless avoidance took over, the ship also rolls toward the world's Y axis (`ai_roll_upright`). |
+| `0x8` | Pitch stays at 0.2 or more. |
+
+When avoidance moves the point, `ai_steer` steers with a limit of 1, no ease and without flag
+`0x8`, and returns true. The lists are what [`avoidance_scan`](#the-order-table) builds, and a ship
+with `no_avoidance` avoids nothing.
+
+## The orders
+
+Each order's routines are named after it: `order_fly_init` and `order_fly` for Fly, for example.
+Many take their target's validity from `order_target_valid` (`0x00401870`): a targetable object
+that is not cloaked, exploding, disabled or ejected, nor has object flag `0x10000000`, and, when the
+target is a component, one that is there and neither hidden nor has node flag `0x10`. Random
+choices come from `object_random` (`0x004ADD10`), each object's own generator: a seed at `+0x638`,
+set from C's `rand()` when the object is created, that steps as `seed * 0x343FD + 0x269EC3`, bits
+16 to 30 of it over 32767 giving a number from 0 to 1.
+
+| Order | What it does |
+|---|---|
+| Do Nothing (0) | Zeroes the throttle and the turning inputs. |
+| Launch Missile (2) | One-shot: fires a missile at the target from the first of the ship's mounts that has ammunition and is not of kind 3 (`0x00496290`). |
+| 3, nameless | One-shot: as Launch Missile, from the first mount of kind 3. |
+| Fly (6) | Flies at the speed in its data, or at full throttle for zero. With a target it flies to it and pops within 2000 units; otherwise it keeps the heading it had when it started, steering at a point 20000 units along it. It steers with flags `0x7` and halves the throttle while avoiding. An object without flight stats is moved along that heading instead. |
+| Run Away (7) | Flies away from the target at half throttle, steering with flags `0x3`. Pops when the target's slot holds a stand-in. |
+| Toggle Cloak (16) | One-shot: cloaks or uncloaks the ship if its model's header allows a cloak, and the ships being launched from it do the same. |
+| Slow Rotate (18) | Zero throttle, yaw input 0.1. |
+| Random Spin Slow, Medium, Fast (22 to 24) | On starting, zero throttle and each turning input 0.1 plus a random number times 0.3, 0.5 or 0.9. Its update does nothing. |
+| Match Speed (32) | Sets the throttle to the target's speed over the ship's cruise speed. Pops when the target is no longer valid. |
+| Turns object lights on (35) | Switches on the lights of the parts with the lightmap flag, with a sound, and pops. Ship type 165 instead switches on the first part's four lights one by one, then those of every lightmap part, a step each 100 ticks with a sound at each, and pops after 500 ticks. While the setting at `0x5D5618` is not 1 it pops at once. |
+| Turns object lights off (42) | Switches them off. |
+| Huuuuuuuge explosion (43) | An explosion at the object, through `0x00472AB0` with 50000 and 1500, then it pops. |
+| Immediately set ship to zero velocity and rotation (44) | `object_stop` (`0x00403000`), then it pops. |
+| Fly ship backwards (45) | Throttle -0.5, no turning. |
+| Multiplayer Control (101) | Disables the object once it has object flag `0x10000000`. |
+| Disrupted (114) | On starting, sets object flag `0x8`, sets the ship tumbling with random turn rates, and keeps the tick to end at, the duration in its data after `frame_start`. It pops at that tick, and its `exit` clears the flag. |
+
+**Unknown:** what the other orders do.

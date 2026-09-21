@@ -214,7 +214,11 @@ pub const GameObject = extern struct {
     /// Four values, each `6 * ShipCombat.armor_class - 1` when created. `ship_damage_value` reports
     /// the lowest.
     armor: [4]f32,
-    _unknown_610: [0x30]u8,
+    _unknown_610: [0x28]u8,
+    /// The seed of its own random numbers (`object_random`): C's `rand()` when created.
+    random_seed: u32,
+    /// Its cloak's state, 0x2C bytes that `object_cloak` allocates; null until then.
+    cloak: Pointer(anyopaque),
     /// Moves it each update; `motion_forward` when created.
     motion: Pointer(Routine),
     /// Nonzero while it is hostile: `SetHostile`. When created, a value of its combat stats'
@@ -338,6 +342,7 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "throttle") == 0x5B8);
         assert(@offsetOf(GameObject, "afterburner") == 0x5CC);
         assert(@offsetOf(GameObject, "speed") == 0x5D8);
+        assert(@offsetOf(GameObject, "random_seed") == 0x638);
         assert(@offsetOf(GameObject, "motion") == 0x640);
         assert(@offsetOf(GameObject, "hostile") == 0x644);
         assert(@offsetOf(GameObject, "last_throttle") == 0x650);

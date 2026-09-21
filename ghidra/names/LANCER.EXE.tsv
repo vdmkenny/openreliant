@@ -300,10 +300,29 @@
 0040cf50	function	orders_clear	void __fastcall (int slot)	Drops every order if the current one gives way, running only its exit
 0040cf80	function	orders_pop_all	void __fastcall (int slot)	Pops every order, running each exit
 0040c520	function	order_retaliate	void __fastcall (int slot)	Pushes Fight at the last attacker, of the other side, once the ship's recent_damage reaches 4.2 times its armor class; only between ships whose combat stats hold 1 at +0x28
-00402660	function	order_queue	void __fastcall (int slot, OrderEntry *entry, int delay, int value)	Queues an order from another player, due delay frames on (0x5883B0); an equal order already queued stays if it is due no sooner, and is replaced otherwise
+00402660	function	order_queue	void __fastcall (int slot, OrderEntry *entry, int delay, int value)	Queues an order from another player, due delay ticks after frame_start; an equal order already queued stays if it is due no sooner, and is replaced otherwise
 00492190	function	avoidance_scan	void __fastcall (int slot)	For an object whose order has the avoidance flag: lists the objects it could hit, those with components by overlapping spheres at +0x6B8 and the others by 0x401980 at +0x6E4, ten of each at most
 00401f30	function	object_destroyed	void __fastcall (int slot, byte detail, bool no_eject)	A ship's end: an AI ship's pilot may eject, leaving the ship to Eject Spin, the player's ejects unless no_eject, and otherwise the ship explodes; detail goes into the order's data
 004645c0	function	component_damage	void __fastcall (GameObject *object, ModelNode *node, float damage, int attacker, int kind)	Damages a component: lowers its node's armor, records the attacker in last_attacker, and marks the component's holder destroyed once the armor is below zero
 00463640	function	object_cloak	void __fastcall (int slot)	Cloaks an object: sets its cloaked flag, posts the Cloaked event and sets up the cloak state at +0x63C
 00401830	function	object_set_targetable	void __fastcall (int slot, bool targetable)	Sets or clears the object's targetable flag; it stays clear when the word at +0x24 of the combat stats is zero
+00401380	function	ai_steer	bool __fastcall (int slot, Vec3 *point, float limit, float ease, uint flags)	The AI's steering: turning inputs toward point, less (1 - ease) * 6 times each turn rate, times 11.46, held within limit. Flags 1 and 2 run avoid_near and avoid_ahead first, 4 rolls upright, 8 keeps pitch at 0.2 or more. Returns whether avoidance took over
+004028f0	function	avoid_near	bool __fastcall (int slot, Vec3 *point)	Moves the point a ship steers at around the objects with components in its first avoidance list (+0x6B8); false when there is nothing to avoid or the ship has no_avoidance
+00402dc0	function	avoid_ahead	bool __fastcall (int slot, Vec3 *point)	Moves the point a ship steers at around the objects in its second avoidance list (+0x6E4), projected along their motion; not for ships with components
+00403170	function	ai_roll_upright	void (void)	Rolls the ship toward the world's Y axis, through 0x403090
+00401870	function	order_target_valid	bool __fastcall (OrderEntry *entry, uint allowed)	Whether an order's target, or a record laid out like one, can still be aimed at: a targetable object not cloaked, exploding, disabled or ejected nor with flag 0x10000000, except the flags in allowed, and a component that is there and neither hidden nor 0x10
+004add10	function	object_random	float __fastcall (GameObject *object)	The object's own random number from 0 to 1: its seed steps as seed * 0x343FD + 0x269EC3, and bits 16 to 30 of it over 32767 are the number
+00403000	function	object_stop	void __fastcall (int slot)	Stops an object dead: velocity, speed, throttle, inputs and rates zero, and no rotation
+00463600	function	object_toggle_cloak	void __fastcall (int slot)	Cloaks or uncloaks an object whose model can cloak
+00463560	function	object_set_cloak	void __fastcall (int slot, bool cloaked)	Cloaks or uncloaks an object, and the ships being launched from it
+00463780	function	object_uncloak	void __fastcall (int slot)	Uncloaks an object
+004c10d0	function	vec3_scale	void __fastcall (Vec3 *out, Vec3 *v, float s)	out = v * s
+004c10b0	function	vec3_scale_by	void __thiscall (float s)	Scales the vector in ECX by s
+004c1320	function	vec3_distance_squared	float __cdecl (Vec3 *a, Vec3 *b)	The square of the distance between two points
+004c12a0	function	vec3_length_squared	float __cdecl (Vec3 *v)
+00587cc4	data	mission_ticks	int	Ticks game_tick has run since the mission started, paused ones aside
+005883b0	data	frame_start	int	mission_ticks when the current frame began
+00588330	data	frame_duration	int	Ticks between the previous frame and this one
+00491e00	function	frame_begin	void (void)	Starts a frame: frame_duration becomes the ticks since frame_start, and frame_start becomes mission_ticks
+00491de0	function	frame_reset	void (void)	frame_start becomes mission_ticks, and frame_duration zero
 004983a0	function	noop	void (void)	Returns at once; tables use it for a routine with nothing to do
