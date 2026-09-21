@@ -77,6 +77,7 @@ make ghidra-import           # import and auto-analyse every group, headless
 make ghidra-import-game      # or one group
 make ghidra-export           # dump each program as text under ghidra/export/
 make ghidra-run SCRIPT=Name.java   # run one script from ghidra/scripts, program writable
+make ghidra-names            # name the payload's known functions and data
 make ghidra-gui              # open the project
 ```
 
@@ -91,8 +92,16 @@ which writes per program: `segments.tsv`, `imports.tsv`, `exports.tsv`, `strings
 `functions.tsv`, `disassembly.asm` and `decompiled.c`. The output is derived from the game and is
 git-ignored.
 
-[`DefineVmHandlers.java`](../ghidra/scripts/DefineVmHandlers.java) defines and names the mission
-script VM's opcode handlers, which auto-analysis mostly misses. `make vm-opcodes` then reads the
+[`DefineVmHandlers.java`](../ghidra/scripts/DefineVmHandlers.java) defines the mission script VM's
+opcode handlers, which auto-analysis mostly misses.
+
+`make ghidra-names` applies names and comments from
+[`ghidra/names/LANCER.EXE.tsv`](../ghidra/names/LANCER.EXE.tsv), a table of address, kind, name
+and comment kept by hand as functions and data are identified, and names each opcode handler after
+its opcode from the committed opcode table (`vmgen names`). The script,
+[`ApplyNames.java`](../ghidra/scripts/ApplyNames.java), marks the names user-defined, which the
+other scripts leave alone, and re-running it changes nothing that is already in place. The table is
+the record of what is named: re-import a program and one command restores it. `make vm-opcodes` then reads the
 export back: `src/tools/vmgen` derives the opcode table from the payload's dispatch table and its
 handlers and writes [`src/formats/vm_opcodes.zig`](../src/formats/vm_opcodes.zig). `make
 vm-commands` reads the Executor command catalogue from the binary alone and writes

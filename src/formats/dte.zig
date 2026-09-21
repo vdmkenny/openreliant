@@ -692,6 +692,11 @@ pub fn decodeAt(code: []const u8, pos: usize) ?Instruction {
     return .{ .address = pos, .opcode = opcode, .operands = operands, .flow = flow };
 }
 
+/// The name of opcode `byte`, or null when the VM does not implement it.
+pub fn opcodeName(byte: u8) ?[]const u8 {
+    return std.enums.tagName(Opcode, @enumFromInt(byte));
+}
+
 // Every opcode the handler table implements has a name, and every name is one it implements.
 comptime {
     @setEvalBranchQuota(20_000);

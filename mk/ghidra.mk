@@ -77,6 +77,19 @@ ghidra-run: | $(GHIDRA_PROJECT_DIR)/.imported-$(GROUP) ## Run a Ghidra script: m
 	    -scriptPath $(GHIDRA_SCRIPTS_DIR) -postScript $(SCRIPT) \
 	    -max-cpu $(HEADLESS_MAX_CPU) -log $(GHIDRA_PROJECT_DIR)/script-$(GROUP).log
 
+GHIDRA_NAMES_DIR := $(GHIDRA_DIR)/names
+VM_HANDLER_NAMES := $(ROOT)/zig-out/names/vm_handlers.tsv
+
+.PHONY: ghidra-names
+ghidra-names: | $(GHIDRA_PROJECT_DIR)/.imported-game ## Name the payload's known functions and data, from ghidra/names and the opcode table
+	$(ZIG) build vmgen
+	mkdir -p $(dir $(VM_HANDLER_NAMES))
+	$(ROOT)/zig-out/bin/vmgen names $(VM_HANDLER_NAMES)
+	$(HEADLESS) $(GHIDRA_PROJECT)/game -process -noanalysis \
+	    -scriptPath $(GHIDRA_SCRIPTS_DIR) \
+	    -postScript ApplyNames.java $(GHIDRA_NAMES_DIR)/LANCER.EXE.tsv $(VM_HANDLER_NAMES) \
+	    -max-cpu $(HEADLESS_MAX_CPU) -log $(GHIDRA_PROJECT_DIR)/names.log
+
 .PHONY: ghidra-gui
 ghidra-gui: | $(STAMPS_DIR)/ghidra-natives ## Open the project in the Ghidra GUI; the Ghydra plugin serves HTTP on :8192+ per open program
 	$(WITH_JDK) $(GHIDRA_HOME)/ghidraRun "$(GHIDRA_PROJECT_DIR)/$(GHIDRA_PROJECT).gpr"

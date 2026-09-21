@@ -8,6 +8,7 @@
 // that point the data belongs to another structure, whose values can look like code addresses.
 // That is the same rule src/tools/vmgen applies. A `vm_op_` name on any function that is not the
 // handler for its opcode is cleared, so running this again corrects a project it named wrongly.
+// Functions that already have a name, such as those ApplyNames gives the handlers, are left alone.
 //
 //@category StarLancer
 
@@ -76,12 +77,9 @@ public class DefineVmHandlers extends GhidraScript {
             } else {
                 existing++;
             }
-            // Several opcodes share a handler, so keep the first name and note the rest.
-            if (function.getName().startsWith("vm_op_")) {
-                if (!function.getName().equals(name)) {
-                    function.setComment("also opcode 0x" + String.format("%02x", opcode));
-                }
-            } else {
+            // Name only a function that has no name yet: ApplyNames gives handlers user-defined
+            // names, and those stay.
+            if (function.getSymbol().getSource() == SourceType.DEFAULT) {
                 function.setName(name, SourceType.ANALYSIS);
             }
         }

@@ -1,0 +1,125 @@
+# Names for the payload executable, applied by ghidra/scripts/ApplyNames.java (make ghidra-names).
+# Columns: address, kind (function or data), name, comment. The VM's opcode handlers are named
+# separately, from src/formats/dte.zig, by vmgen names.
+
+# Script VM
+0045c980	function	vm_run	Interpreter loop: fetch an opcode, call its handler, until one returns 0
+0045b8d0	function	vm_thread_start	Starts a thread on a block: IP = block + 2, limit = block + length; at most 32 threads
+0045b960	function	vm_thread_alloc	Returns a free thread context
+0045ba30	function	vm_thread_run	Runs a thread now, until it yields or finishes
+0045d140	function	vm_run_timers	Starts the parts whose timers are due
+0045ce30	function	vm_install_commands	Installs the command catalogues and counts them
+00452a80	function	catalogue_count	Counts 0x74-byte entries up to the first with no implementation
+0045d8b0	function	vm_tag_ship	Appends a ship and a byte to vm_tagged_ships (push_ship_tagged)
+004f6350	data	vm_dispatch_table	Opcode handler table, 86 entries
+004f0f50	data	command_catalogue	Executor commands, 0x74 bytes each: implementation, parameter count, name, parameters, description
+004f3ad0	data	command_catalogue_b	Second command catalogue; empty, its first entry has no implementation
+00537570	data	vm_stack_top	VM stack pointer
+005373f0	data	vm_block_end	Running block's end, where its constants start (push_constant)
+00537408	data	vm_store_target	Slot the last select_ opcode chose, for assign and the compound stores
+00537578	data	vm_thread	Running thread's context
+00537415	data	vm_thread_count	Threads running
+00537584	data	vm_command_flag	Bit 0 of the command's mission flags, inverted, set before each command
+00525f94	data	command_table	Installed command catalogue
+00525f98	data	command_count
+005267d4	data	command_table_b
+00525fae	data	command_count_b
+00538c94	data	part_table	256 runtime parts of 0x74 bytes: block pointer at +0, argument count at +4
+00538c98	data	part_table_b	Runtime parts for script_b
+004f6340	data	vm_tagged_ships	List push_ship_tagged appends to
+
+# Mission loading
+00451d90	function	mission_bind_sections	Binds each of the 27 directory sections to its pointer and count
+00452a20	function	mission_bind_section
+0045cb40	function	mission_alloc_part_tables	Allocates the part tables, 256 entries of 0x74 bytes each
+0045cb80	function	mission_alloc_table	Frees and reallocates a table of count x size bytes
+00452f50	function	mission_build_part_tables	Fills the runtime part tables from sections 8 and 17
+00452fd0	function	mission_fill_part	block = script + start * 2, arguments from the descriptor
+00453020	function	part_in_primary_table	Whether a part descriptor lies in section 8 rather than section 17
+00525f3c	data	mission_operands_a	Section 1
+005294f8	data	mission_globals	Section 2, 0x0C bytes each
+005267bc	data	mission_globals_count
+0052951c	data	mission_ships	Section 3, 0x4C bytes each
+00529504	data	mission_ships_count
+005267cc	data	mission_flight_groups	Section 4, 0x14 bytes each
+005267c8	data	mission_flight_groups_count
+005294e0	data	mission_triggers	Section 5, 0x30 bytes each
+00529506	data	mission_triggers_count
+00525f88	data	mission_script	Section 6, bytecode
+005294f4	data	mission_script_halfwords
+005267c0	data	mission_objects	Section 7, the object table, indexed by object ID
+00525fac	data	mission_objects_count
+005267d0	data	mission_parts	Section 8, 0x1C-byte part descriptors
+00529518	data	mission_parts_count
+005294d8	data	mission_script_flags	Section 10, one flag per script byte
+005294fc	data	mission_squads	Section 12, 0x0C bytes each
+005294f0	data	mission_squads_count
+00529500	data	mission_squad_members	Section 13, 0x0C bytes each
+00529520	data	mission_squad_members_count
+00525fb0	data	mission_sub_objects	Section 16, 0x44 bytes each
+005267c4	data	mission_sub_objects_count
+005294ec	data	mission_parts_b	Section 17
+00529508	data	mission_parts_b_count
+00525fb4	data	mission_script_b	Section 18
+00529510	data	mission_script_b_halfwords
+00525f9c	data	mission_command_flags	Section 24, one u16 per command
+00525f90	data	mission_command_flags_b	Section 25, one u16 per command_b entry
+
+# Triggers and objects
+0045cbc0	function	mission_script_start	Installs conditions and commands, runs the start part, arms every trigger an object's slice holds
+0045cea0	function	trigger_match	Fires the subject's armed triggers whose condition, qualifier and operands match an event
+0045ce70	function	trigger_raise_event	Raises an event on an object, then resets condition_verdict
+00453210	function	condition_raise	Asks the condition's handler for a verdict, then raises the event
+0045d810	function	trigger_check_operand	Checks one trigger operand against the event's
+004531a0	function	trigger_index	Index of a trigger record
+00453070	function	squad_index	Index of a squad record, or 0xFFFF
+00452aa0	function	ship_flight_group	The flight group a ship's byte 0x14 names, or null
+0045cb20	function	ship_in_flight_group	in_flight_group: whether a ship is in a flight group
+00452ac0	function	object_in_squad	in_squad: whether an object is in a squad, following nested squads
+004f6698	data	condition_descriptors	35 conditions, 0x1C bytes each: name, slot, discriminator, three handlers
+0052952c	data	condition_table
+00525f8c	data	condition_count
+00525f84	data	condition_verdict	The condition handler's verdict; 1 unless a handler vetoed the event
+0053757c	data	trigger_current	Trigger the matcher is testing
+00538ca0	data	event_values	Per-object event values the matcher stores and push_event_value reads
+
+# Stat tables
+00466500	function	stats_load_ships	Reads shipstats.bin: 256 records, fields 0x40 to 0x7B
+004788f0	function	stats_load_guns	Reads gunstats.bin to the end of the file into gun_stats
+00494bc0	function	stats_load_missiles	Reads missilestats.bin, at most 11 records
+0049cae0	function	stats_load_pilots	Fills pilot_stats with defaults, then applies pilotstats.bin
+00415430	function	threat_pick_gun_type	Picks the most dangerous gun type near the player, weighted by damage
+004f9e70	data	ship_flight_stats	0x28 bytes per ship: speed, rates, inertias
+004fc670	data	ship_combat_stats	0x30 bytes per ship: shields, armour, afterburner fuel and more
+00500ce4	data	gun_stats	15 entries of 0x2C bytes
+005035e8	data	missile_stats_a	11 entries of 0x28 bytes
+005037a8	data	missile_stats_b	11 entries of 0x28 bytes
+0058a968	data	pilot_stats	194 entries of 0x24 bytes
+
+# Loadout screen
+00441aa0	function	loadout_load	Preloads the loadout screen: stats, models, sounds
+00444f20	function	loadout_draw_stats	Draws the stat rows the layout table describes
+00426600	function	loadout_ship_bars_init	Sets the bar ranges from the listed ships, then computes every ship's bars
+00426700	function	loadout_ship_widen_ranges
+00426790	function	loadout_ship_bars
+0044b680	function	loadout_missile_bars_init
+0044b710	function	loadout_missile_widen_ranges
+0044b770	function	loadout_missile_bars
+004504c0	function	range_widen	Widens a {min, max} pair to include a value
+004504f0	function	range_scale	Places a value within a {min, max} pair on n segments
+004ec020	data	loadout_stat_layout	Eight 8-byte rows: label string ID, display kind
+004e5470	data	loadout_alliance_ships	0x44 bytes per ship; ship index at +0x40
+004e57a0	data	loadout_coalition_ships
+004ec278	data	loadout_ship_stats	Per-ship loadout values, 0x22C bytes apart
+
+# Files, sound, fonts
+004c7f60	function	hog_read_file	Reads a file from the archives, expanding RefPack
+004c5bd0	function	hog_load
+00480d70	function	font_open	Wraps a loaded font and caches the widths of codes below 255
+00481f80	function	sound_play	Plays sound n of a bank, taking over a lower-priority voice if none is free
+004826a0	function	sound_start	Hands Miles the WAVE file at bank + offset
+00565080	data	sound_voices	0x20 bytes per voice: sample handle, priority
+005d6ca0	data	bank_stdsmp	stdsmp.fat
+00524748	data	bank_ldsmp	ldsmp.fat
+0056654c	data	bank_betty	betty.fat
+0058cb10	data	bank_smp3d	smp3d.fat

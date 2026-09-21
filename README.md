@@ -78,6 +78,7 @@ Documentation index: [`docs/README.md`](docs/README.md).
 | `src/tools/vmgen/` | Derives the script VM's opcode and command tables from the game binary. |
 | `mk/`, `scripts/` | Makefile fragments and their helpers. |
 | `ghidra/scripts/` | Ghidra scripts, run headless by `make`. |
+| `ghidra/names/` | Names for the payload's identified functions and data, applied by `make ghidra-names`. |
 | `docs/` | Reference documentation. |
 | `tools/`, `game/`, `references/` | Git-ignored: toolchain, game files, other projects read for reference. |
 
