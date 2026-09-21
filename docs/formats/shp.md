@@ -91,7 +91,7 @@ carries its own levels of detail.
 | Off | Type | Field |
 |---|---|---|
 | `0x00` | char[64] | Name, NUL-terminated: `Crusader Cockpit`, `Rus Big Tur Guns`, `Stalag Door 1 DEST` |
-| `0x40` | u32 | Subsystem class. The engine tests for 1 and 6, and treats 3, 9, 10 and 18 as turrets |
+| `0x40` | u32 | Subsystem class. The engine tests for 1, 5 and 6, and treats 3, 9, 10 and 18 as turrets |
 | `0x44` | vec3 | Origin, relative to the parent |
 | `0x50` | vec3 | Bounding box minimum (see [Bounding boxes](#bounding-boxes)) |
 | `0x5C` | vec3 | Bounding box maximum |
@@ -108,7 +108,7 @@ Part flags at `0xF0`:
 
 | Bit | Meaning |
 |---|---|
-| `0x02` | Read by the turret tests |
+| `0x02` | A component: the live object lists the part among its [components](../engine/objects.md#components) |
 | `0x04` | Splits parts into two classes for static-light baking |
 | `0x10` | Geomorph normals: the mesh builder also copies each vertex's next-level normal |
 | `0x20` | Geomorph positions, likewise |

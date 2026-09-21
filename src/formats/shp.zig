@@ -145,8 +145,9 @@ pub const Part = extern struct {
 
     pub const Flags = packed struct(u32) {
         _unknown0: u1,
-        /// Read by the turret tests.
-        turret_related: bool,
+        /// A component of the object: the game object lists the part among its components, by
+        /// whose index trigger qualifiers and squad members name it.
+        component: bool,
         /// Splits parts into two classes when baking static lights.
         light_class: bool,
         _unknown3: u1,

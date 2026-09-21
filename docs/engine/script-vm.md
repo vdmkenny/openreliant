@@ -135,10 +135,10 @@ A condition with a slot also has its last event kept for each object, in the `0x
 `event_values`: ShotAt's five values, then Destroyed's. `push_event_value` reads them.
 
 `condition_raise` (`0x00453210`) raises a group event on the ship's flight group and on the squads
-that hold the ship; a squad member that names a component counts only for events on that component.
-For ShotAt, Destroyed, Cloaked and Decloaked it first calls the condition's handlers: one before, one
-for each member of the group, and one for a verdict. A vetoed event fires only the triggers with the
-repeat mode the condition exempts.
+that hold the ship; a squad member that names a component counts only for events on that
+component. For ShotAt, Destroyed, Cloaked and Decloaked it first calls the condition's handlers:
+one before, one for each member of the group, and one for a verdict. A vetoed event fires only the
+triggers with the repeat mode the condition exempts.
 
 - **Destroyed:** the verdict holds only once every member, or the member's named component, is
   destroyed. Until then the event fires only the group's triggers with repeat mode 1.
@@ -146,8 +146,8 @@ repeat mode the condition exempts.
 - **Cloaked**, **Decloaked:** the handlers pass every event.
 
 ShotAt's damage values both carry the victim's damage value (`ship_damage_value`, `0x00452CB0`): the
-lowest of four floats of the ship's live object from `+0x600`, or the component's own at `+0xE8`,
-truncated. **Unknown:** what those floats measure. Its weapon value is always -1.
+lowest of the four armor values of the ship's [live object](objects.md), or the component's own,
+truncated. Its weapon value is always -1.
 
 ### Conditions
 

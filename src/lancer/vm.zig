@@ -186,6 +186,22 @@ pub const EventValue = extern struct {
     }
 };
 
+/// The component `push_component` named for a value it pushed. The list at `vm_component_tags`
+/// holds one per such value since the last command, up to a terminating slot of -1.
+pub const ComponentTag = extern struct {
+    /// The stack slot the value is in.
+    slot: Pointer(u32),
+    component: u8,
+    _unknown_05: [3]u8,
+
+    /// Tags the list holds, not counting the terminator.
+    pub const max = 8;
+
+    comptime {
+        assert(@sizeOf(ComponentTag) == 8);
+    }
+};
+
 /// An event waiting in the queue at `event_queue` for `events_flush`, which raises it on the ship
 /// and, for `groups`, on its flight group and the squads that hold it.
 pub const QueuedEvent = extern struct {

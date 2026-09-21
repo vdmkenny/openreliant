@@ -634,10 +634,11 @@ pub const Opcode = enum(u8) {
     push_ship = 0x2C,
     /// `push_ship` with a big-endian 16-bit index.
     push_ship_wide = 0x52,
-    /// Also appends ship `n` and the second operand byte to the list at `0x4F6340`. **Unknown:**
-    /// what reads that list. `0x55` runs the same handler.
-    push_ship_tagged = 0x47,
-    push_ship_tagged_alt = 0x55,
+    /// A pointer to ship record `n`, naming its component `c`, the second operand byte: a command
+    /// that takes the value acts on that component, such as the turret `DestroySubObject`
+    /// destroys or `SetPrimaryTarget` targets. `0x55` runs the same handler.
+    push_component = 0x47,
+    push_component_alt = 0x55,
     /// A pointer to flight group record `n`.
     push_flight_group = 0x2D,
     /// A pointer to squad record `n`.

@@ -13,7 +13,9 @@
 0045d140	function	vm_run_timers	void __fastcall (void)	Counts the timers down once per clock tick, starting the parts of those that fire
 0045ce30	function	vm_install_commands	void __fastcall (void)	Installs the command catalogues and counts them
 00452a80	function	catalogue_count	int __fastcall (VmFunction *catalogue)	Counts entries up to the first with no implementation
-0045d8b0	function	vm_tag_ship		Appends a ship and a byte to vm_tagged_ships (push_ship_tagged)
+0045d8b0	function	vm_tag_component	void __fastcall (byte component, uint *slot)	Tags a stack slot with a component (push_component)
+0045d890	function	vm_tags_clear	void __fastcall (void)	Empties the component tags; runs after every command
+0045d950	function	vm_argument_component	byte __fastcall (uint index)	The component push_component named for the command's argument index, or 0xFF
 0045baa0	function	part_run	void __fastcall (MissionPart *part)	Runs a part's block at once, on a new thread
 004f6350	data	vm_dispatch_table	VmHandler *[86]	Opcode handler table
 004f0f50	data	command_catalogue	VmFunction[96]	Executor commands, then an entry with no implementation
@@ -40,7 +42,8 @@
 00525fae	data	command_count_b	ushort
 00538c94	data	part_table	VmFunction *	Runtime parts, 256 entries
 00538c98	data	part_table_b	VmFunction *	Runtime parts for script_b
-004f6340	data	vm_tagged_ships		List push_ship_tagged appends to
+004f6340	data	vm_component_tags	ComponentTag *	The components push_component named since the last command
+00537420	data	vm_component_tag_list	ComponentTag[9]
 
 # Mission loading
 00451d90	function	mission_bind_sections		Binds each directory section to its pointer and count
@@ -94,10 +97,10 @@
 0045a9e0	function	event_shot_at		Queues ShotAt: attacker, the victim's damage value twice, victim, and -1 for the weapon
 0045aa60	function	event_destroyed		Queues Destroyed for a ship, or for one of its components, marking it destroyed
 00404ee0	function	event_ship_reached		Queues ShipReached for a ship
-0045ac30	function	ship_object		The live object of a mission ship
-0045a970	function	object_ship		The mission ship of a live object, or null
-0045ade0	function	object_component_index		A component's index among a live object's components, or 0xFF
-00452cb0	function	ship_damage_value		The lowest of four floats of a ship's live object from +0x600, or a component's own at +0xE8, truncated
+0045ac30	function	ship_object	GameObject * __fastcall (MissionShip *ship)	The live object of a mission ship
+0045a970	function	object_ship	MissionShip * __fastcall (GameObject *object)	The mission ship of a live object, or null
+0045ade0	function	object_component_index	uint __fastcall (GameObject *object, ModelNode *node)	A component's index among a live object's components, or 0xFF
+00452cb0	function	ship_damage_value	int __fastcall (MissionShip *ship, byte component)	The lowest of the four armor values of a ship's live object, or a component's own, truncated
 00452bb0	function	shot_at_group_begin		Zeroes the damage sums
 00452bd0	function	shot_at_group_add		Adds a member's damage value to the sums
 00452c00	function	shot_at_group_verdict		Replaces the event's damage values with the members' average; never vetoes
@@ -164,3 +167,19 @@
 00524748	data	bank_ldsmp		ldsmp.fat
 0056654c	data	bank_betty		betty.fat
 0058cb10	data	bank_smp3d		smp3d.fat
+
+# Live objects
+00587ce0	data	game_objects	GameObject *[400]	The GO array: every live object, a mission ship's at its index among the ship records
+005883fa	data	player_index	short	Slot of the player's own object in game_objects
+00466c10	function	create_object		Fills a slot of game_objects: type, stats, model, components
+00475dd0	function	object_alloc	GameObject * __fastcall (uint type)	Allocates a live object of a type (gameobj.cpp)
+00475ef0	function	object_free	void __fastcall (GameObject *object)	Frees a live object and what it owns
+004688b0	function	object_reset		Replaces the object in a slot with a fresh one of type 1001
+00468760	function	object_collect_components	void __fastcall (GameObject *object, ModelNode *node)	Lists a node's children marked as components, then theirs, in the object's components
+004991d0	function	node_alloc	ModelNode * __fastcall (uint kind, ModelNode *parent)	Allocates a model node (objects.cpp)
+00499ee0	function	node_holder	ModelNode * __fastcall (ModelNode *node)	The node whose child list holds this one: its parent, or an ancestor further up
+00499f20	function	node_owner	GameObject * __fastcall (ModelNode *node)	The object whose model the node is in: the owner of its tree's root
+00499e30	function	node_destroy	void __fastcall (ModelNode *node)	Destroys a node and the nodes hanging from it
+00499240	function	node_child_slot	int __fastcall (ModelNode *node)	A free index in a node's child list, which it creates and grows up to its capacity
+004531c0	function	ship_index	uint __fastcall (MissionShip *ship)	Index of a ship record, or 0xFFFF
+004c3710	function	sr_assert_failed		Surrender's assertion failure: reports FATAL: SR Assertion Failed and breaks

@@ -14,7 +14,9 @@
 //!
 //! A type is a Ghidra type string: a name, then `*` and `[n]` decorations, as Ghidra's
 //! `DataTypeParser` reads them. A signature is C with no function name, which the script inserts.
-//! A packed struct becomes a structure of bitfields over its backing integer.
+//! A packed struct becomes a structure of bitfields over its backing integer. A run of unknown
+//! bytes, a `_unknown` field of `u8` array type, gets no row: Ghidra leaves it undefined and names
+//! what reads it by offset. A `u8` array whose field name says it is a name becomes `char`.
 
 const std = @import("std");
 const Io = std.Io;
@@ -22,6 +24,7 @@ const Io = std.Io;
 const starlancer = @import("starlancer");
 const dte = starlancer.dte;
 const lancer = starlancer.lancer;
+const shp = starlancer.shp;
 
 const Export = struct { []const u8, type };
 
@@ -61,6 +64,7 @@ pub const exported = [_]Export{
     .{ "EventValue", lancer.vm.EventValue },
     .{ "ObjectEvents", lancer.vm.ObjectEvents },
     .{ "QueuedEvent", lancer.vm.QueuedEvent },
+    .{ "ComponentTag", lancer.vm.ComponentTag },
 
     // Stat tables.
     .{ "FlightModel", lancer.stats.FlightModel },
@@ -71,6 +75,14 @@ pub const exported = [_]Export{
 
     // Sound.
     .{ "SoundVoice", lancer.sound.Voice },
+
+    // Live objects and their models.
+    .{ "GameObject", lancer.game.GameObject },
+    .{ "ModelNode", lancer.game.Node },
+    .{ "ObjectComponent", lancer.game.Component },
+    .{ "ShpPart", shp.Part },
+    .{ "ShpPartFlags", shp.Part.Flags },
+    .{ "Vec3", shp.Vec3 },
 };
 
 comptime {
@@ -128,6 +140,7 @@ fn arrayString(comptime T: type, comptime dimensions: []const u8) []const u8 {
 /// The rows defining `T`: a comptime string, so that a type the schema cannot express, or one that
 /// refers to a type not exported, is a compile error rather than a failure at run time.
 fn Definition(comptime T: type) []const u8 {
+    @setEvalBranchQuota(1_000_000);
     const name = nameOf(T);
     if (lancer.isCode(T)) {
         return "function\t" ++ name ++ "\t" ++ T.c_signature ++ "\n";
@@ -150,8 +163,17 @@ fn Definition(comptime T: type) []const u8 {
 fn structRows(comptime T: type, comptime name: []const u8, comptime info: std.builtin.Type.Struct) []const u8 {
     var rows: []const u8 = std.fmt.comptimePrint("struct\t{s}\t{d}\n", .{ name, @sizeOf(T) });
     for (info.fields) |field| {
+        const bytes: ?usize = switch (@typeInfo(field.type)) {
+            .array => |array| if (array.child == u8) array.len else null,
+            else => null,
+        };
+        if (bytes != null and std.mem.startsWith(u8, field.name, "_unknown")) continue;
+        const field_type = if (bytes != null and std.mem.indexOf(u8, field.name, "name") != null)
+            std.fmt.comptimePrint("char[{d}]", .{bytes.?})
+        else
+            typeString(field.type);
         rows = rows ++ std.fmt.comptimePrint("field\t{s}\t{d}\t{s}\t{s}\n", .{
-            name, @offsetOf(T, field.name), field.name, typeString(field.type),
+            name, @offsetOf(T, field.name), field.name, field_type,
         });
     }
     return rows;
@@ -207,6 +229,13 @@ test typeString {
     try std.testing.expectEqualStrings("VmThread *", comptime typeString(lancer.Pointer(lancer.vm.Thread)));
     try std.testing.expectEqualStrings("byte *[4]", comptime typeString([4]lancer.Pointer(u8)));
     try std.testing.expectEqualStrings("void *", comptime typeString(lancer.Pointer(anyopaque)));
+}
+
+test structRows {
+    const rows = comptime Definition(lancer.game.Node);
+    try std.testing.expect(std.mem.indexOf(u8, rows, "_unknown_14") == null);
+    try std.testing.expect(std.mem.indexOf(u8, rows, "field\tModelNode\t164\tpart\tShpPart *\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, comptime Definition(shp.Part), "\tname_bytes\tchar[64]\n") != null);
 }
 
 test schema {

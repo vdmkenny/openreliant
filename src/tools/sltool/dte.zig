@@ -351,6 +351,15 @@ fn printListing(
 /// Shows the operand of an instruction that takes an index, and the name of what it indexes where
 /// the mission holds one.
 fn printIndex(ctx: Context, mission: dte.Mission, instruction: dte.Instruction) !void {
+    switch (instruction.opcode) {
+        .push_component, .push_component_alt => if (instruction.operands.len == 2) {
+            const index = instruction.operands[0];
+            const all = try mission.ships();
+            const name = if (index < all.len) mission.name(all[index].name) else "";
+            return ctx.stdout.print("   {d}  {s}, component {d}", .{ index, name, instruction.operands[1] });
+        },
+        else => {},
+    }
     if (instruction.operands.len != 1) return;
     const index = instruction.operands[0];
     try ctx.stdout.print("   {d}", .{index});

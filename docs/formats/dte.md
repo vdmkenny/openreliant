@@ -146,7 +146,8 @@ Repeat mode `0` disarms the trigger when it fires, `1` never disarms it, and `2`
 counter at `0x19` runs out.
 
 The qualifier must equal the event's. A ship's components, such as a capital ship's turrets and
-subsystems, are numbered among the components of its live object. A hit on one raises ShotAt with
+subsystems, are numbered among the
+[components of its live object](../engine/objects.md#components). A hit on one raises ShotAt with
 its index and, except for hits of one kind, ShotAt for the ship; destroying one raises Destroyed
 with its index. Every other event carries `0xFF`, the subject itself.
 
@@ -275,7 +276,7 @@ A stack machine. Names follow the handlers; `a` is the second value from the top
 | `0x28`, `0x29` | `push_constant`, `push_constant_wide` | Push constant `n` of the running block |
 | `0x2A` (`0x2B`) | `push_string` | Push a pointer to inline text and step over it |
 | `0x2C`, `0x52` | `push_ship`, `push_ship_wide` | Push a pointer to ship `n` |
-| `0x47` (`0x55`) | `push_ship_tagged` | The same, and record the ship and a second operand at `0x4F6340` |
+| `0x47` (`0x55`) | `push_component` | The same, naming the ship's component given by a second operand |
 | `0x2D`, `0x44`, `0x49`, `0x54` | `push_flight_group`, `push_squad`, `push_sub_object`, `push_section_19` | Push a pointer to record `n` of sections 4, 12, 16 and 19 |
 | `0x32` (`0x2E`) | `push_byte` | Push the operand byte |
 | `0x2F` | `push_percent` | Push `n` percent of the top value |
@@ -292,7 +293,12 @@ A stack machine. Names follow the handlers; `a` is the second value from the top
 | `0x53` | `nop` | |
 
 A compile-time check in [`src/formats/dte.zig`](../../src/formats/dte.zig) keeps the names and the
-derived table in step. **Unknown:** what reads the list `push_ship_tagged` appends to.
+derived table in step.
+
+`push_component` tags the stack slot it fills with the component, in a list at `0x537420` that
+empties after every command. A command whose argument can be a component, such as
+`DestroySubObject`, `ReplaceSubObject`, `SetPrimaryTarget` or `SetPlayerTarget`, looks its
+arguments up there (`vm_argument_component`, `0x0045D950`) to learn which component they name.
 
 ### Control flow
 
