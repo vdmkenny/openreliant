@@ -73,26 +73,26 @@ code. Programs are grouped into project folders, one group per make target:
 | `vfx` | WinVFX and the system abstraction layer. |
 
 ```bash
-make ghidra-run SCRIPT=DefineVmHandlers.java   # run one script, with the program writable
 make ghidra-import           # import and auto-analyse every group, headless
-make ghidra-import-game      # or just one group
-make ghidra-export           # dump each program as greppable text under ghidra/export/
+make ghidra-import-game      # or one group
+make ghidra-export           # dump each program as text under ghidra/export/
+make ghidra-run SCRIPT=Name.java   # run one script from ghidra/scripts, program writable
 make ghidra-gui              # open the project
 ```
 
-Imports are one-shot by construction: every prerequisite is order-only, `-overwrite` is never
-passed, and a stamp records that a group has been imported. Nothing in the Makefile can replace a
-program that has been annotated by hand. To deliberately re-import, run `make ghidra-forget-<group>`
-and delete the folder in the GUI first.
+Imports are one-shot: every prerequisite is order-only, `-overwrite` is never passed, and a stamp
+records that a group was imported, so nothing in the Makefile replaces a program annotated by hand.
+To re-import deliberately, run `make ghidra-forget-<group>` and delete the folder in the GUI first.
 
-The Ghidra project is single-user. Close the GUI before running a headless target, and vice versa.
-
-`make vm-opcodes` reads that export back: `src/tools/vmgen` derives the mission script VM's opcode
-table from the payload's dispatch table and its handlers, and writes
-[`src/formats/vm_opcodes.zig`](../src/formats/vm_opcodes.zig). The table is committed, so building
-the tools never needs the game.
+The project is single-user: close the GUI before running a headless target, and vice versa.
 
 `ghidra-export` runs [`ghidra/scripts/ExportProgram.java`](../ghidra/scripts/ExportProgram.java),
 which writes per program: `segments.tsv`, `imports.tsv`, `exports.tsv`, `strings.tsv`,
-`functions.tsv`, `disassembly.asm` and `decompiled.c`. That output is derived from the game and is
+`functions.tsv`, `disassembly.asm` and `decompiled.c`. The output is derived from the game and is
 git-ignored.
+
+[`DefineVmHandlers.java`](../ghidra/scripts/DefineVmHandlers.java) defines and names the mission
+script VM's opcode handlers, which auto-analysis mostly misses. `make vm-opcodes` then reads the
+export back: `src/tools/vmgen` derives the opcode table from the payload's dispatch table and its
+handlers and writes [`src/formats/vm_opcodes.zig`](../src/formats/vm_opcodes.zig). The table is
+committed, so building the tools never needs the game.

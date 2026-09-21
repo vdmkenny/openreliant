@@ -85,14 +85,12 @@ so a pair of ships shares a national colour scheme.
 drawn with whatever palette the game has loaded, and `sltool spr extract` falls back to greyscale
 for them.
 
-**Unknown:** which palette that is. It is not the first 768 bytes of `palette.ccb`, which are 6-bit
-values and so look like a palette, but render the schematics as noise. The shapes themselves decode
-correctly under it, since the silhouettes come out clean; only the colours are wrong.
+**Unknown:** which palette that is. It is not the first 768 bytes of `palette.ccb`: those are 6-bit
+values, but they colour the schematics as noise while leaving the silhouettes clean.
 
 ## What sprites are not
 
-The `.SHP` models name 248 distinct textures, and where they come from was an open question worth
-settling, since one plausible answer was these sprite sets. They are not:
+The `.SHP` models name 248 distinct textures, and none of them is a sprite set:
 
 - **No model texture name matches any `.spr`.** Not one of the 248, under any prefix.
 - 224 of the 269 sets are named `<ship>SCEM.SPR`. They are small, mostly 103x198 or 55x71, one per
@@ -100,7 +98,7 @@ settling, since one plausible answer was these sprite sets. They are not:
 - The remaining 45 are named for their screens: `BRIEF`, `FRONTEND`, `HUDHARD`, `LOADOUT`,
   `CURSORS`, `NEWSREP`, `KILLS`, `LAUNCH`, `CAPSHIPS`.
 
-Where the model textures do come from is settled only in part:
+Where the model textures resolve:
 
 | | Models |
 |---|---|
@@ -113,9 +111,9 @@ prefixes the loadout screen uses (`gYank_1.TGA`, `rYank_1.tga`). The 221 that do
 capital ships, turrets, stations and debris, and they are not merely untextured: 84% of their faces
 use the textured-and-lit shading mode, so the engine does ask for a texture.
 
-**Unknown:** where those come from. They are absent from `resource.hog`, `CD1.HOG`, `CD2.HOG`,
-`msspeech.hog` and `pilots.hog` under their material names with or without prefix. `.FAT` files are
-not a candidate: they are RIFF/WAVE audio.
+**Unknown:** where those come from. No archive, `resource.hog`, `CD1.HOG`, `CD2.HOG`, `msspeech.hog`
+or `pilots.hog`, holds them under their material names, with or without a prefix. The `.fat` files
+are sound banks, not textures: a `2.00` header, a table of offsets, and RIFF/WAVE files.
 
 ## Prior art
 

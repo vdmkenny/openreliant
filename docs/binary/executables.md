@@ -1,6 +1,6 @@
 # Shipped binaries
 
-Every file listed here comes from a retail install: disc 1 plus the contents of `LANCER.CAB`.
+Every file listed here comes from the two discs, most of it by way of `LANCER.CAB`.
 `make game` reproduces that layout under `game/install/`, and the payload executable under
 `game/decrypted/`.
 
@@ -12,11 +12,11 @@ All binaries are 32-bit x86 PE images (`machine = 0x14C`).
 |---|---|---|---|---|
 | `LANCER.EXE` (loader) | 249,119 | 5.0 | `0x400000` | SafeDisc 1 loader, not the game. See [`safedisc.md`](safedisc.md). |
 | `LANCER.ICD` | 1,151,021 | 6.0 | `0x400000` | The game, encrypted. Entry point `0x004D1210`. |
-| `LANGUAGE.DLL` | 122,951 | 6.0 | `0x10000000` | Localised strings, in `.rsrc`. |
+| `LANGUAGE.DLL` | 122,951 | 6.0 | `0x10000000` | Localised strings, as a `.rsrc` string table the game reads by ID. |
 | `ITACLANG.DLL` | 692,282 | - | - | In-flight communication system language resources. |
 
-Decrypting `LANCER.ICD` yields 2,205 functions and 4,218 strings under Ghidra's auto-analysis. The
-binary is stripped, so Ghidra names functions `FUN_<address>`.
+Decrypted, `LANCER.ICD` yields 2,205 functions and 4,218 strings under Ghidra's auto-analysis. It is
+stripped, so Ghidra names functions `FUN_<address>`.
 
 ## Middleware
 
@@ -36,13 +36,11 @@ dynamically; only `DINPUT.dll` is imported statically, for `DirectInputCreateEx`
 
 ## Data files
 
-Named here for orientation; the formats are not yet documented in this repository.
-
 | Path | Contents |
 |---|---|
-| `CD1.HOG`, `CD2.HOG`, `ms_speech/msspeech.hog`, `pilots/pilots.hog` | Asset archives. All four begin with `BIGF`, the Electronic Arts BIG container signature. |
-| `shipstats.bin`, `gunstats.bin`, `missilestats.bin`, `pilotstats.bin` | Stat tables. |
-| `missions/*.dte` | Mission scripts. Only missions 18 and 25 are installed loose; the rest are in the archives. |
+| `CD1.HOG`, `CD2.HOG`, `resource.hog`, `ms_speech/msspeech.hog`, `pilots/pilots.hog` | Asset archives: see [`hog.md`](../formats/hog.md). |
+| `shipstats.bin`, `gunstats.bin`, `missilestats.bin`, `pilotstats.bin` | Stat tables: see [`stats.md`](../formats/stats.md). |
+| `missions/*.dte` | Missions 18 and 25, installed loose; `resource.hog` holds all 44. See [`dte.md`](../formats/dte.md). |
 | `*.ccb` | Colour lookup tables for Surrender (`palette`, `power`, `softpal`). |
 | `Forces/*.FRC` | Force-feedback effects, one per weapon and event. |
 | `interface/*.bik`, `inter/`, `*.bik` | Bink video: menu transitions, branding, cutscenes. |

@@ -4,7 +4,7 @@ The game's assets live in `.HOG` files, which use Electronic Arts' **`BIGF`** co
 header is followed by a directory, then the members packed back to back with no padding and no
 alignment.
 
-Every integer in the container is **big-endian**, on a game built only for x86.
+Every integer in the container is **big-endian**.
 
 ```bash
 sltool hog info <archive>              # size, member count, how much is compressed
@@ -71,8 +71,8 @@ record, rather than trusting the count.
 | `CD2.HOG` | 174 | 510.6 MiB | 0 | Bink video, MP3 music, sprites |
 
 Member types by extension in `resource.hog`: `.shp` 440 models, `.spr` 269 sprites, `.tga` 146
-images, `.dte` 44 missions, `.fat` 34, `.fnt` 19 fonts, `.bin` 5 stat tables, `.ccb` 5 colour
-tables.
+images, `.dte` 44 missions, `.fat` 34 sound banks, `.fnt` 19 fonts, `.bin` 5 (the four stat
+tables and `profile.bin`), `.ccb` 5 colour tables.
 
 ## RefPack compression
 

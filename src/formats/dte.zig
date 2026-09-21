@@ -149,7 +149,8 @@ pub const Ship = extern struct {
 /// a single byte, so a mission has at most 256 parts. An `offset` of `no_block` leaves the entry
 /// empty.
 ///
-/// Parts tile their script section: each one's `offset + length` is the next one's `offset`.
+/// Parts are contiguous and in address order: each one's `offset + length` is the next one's
+/// `offset`, and the last ends at the end of the script section.
 pub const Part = extern struct {
     /// Byte offset into the string pool. Missions ship with their authors' own names for these,
     /// such as `(F)Arrival at CONVOY`.
@@ -162,8 +163,8 @@ pub const Part = extern struct {
     /// Arguments the part takes. The caller reserves `4 * arguments + 16` bytes of frame for it.
     arguments: u8,
     _unknown_0e: u16,
-    /// Extent of the part, in halfwords. It covers the entry block and anything the part branches
-    /// to, so it is at least the entry block's own length.
+    /// Extent of the part, in halfwords: its entry block, then a trailer of zero or more 8-byte
+    /// records whose meaning is not yet known.
     length: u16,
     _unknown_12: [7]u8,
     /// Read by the loader and passed to the routine that fills the runtime entry.

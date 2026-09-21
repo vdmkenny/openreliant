@@ -1,21 +1,21 @@
 # Documentation
 
 Reference notes on StarLancer (Digital Anvil / Microsoft, 2000; developed by Warthog) and on this
-repository's tooling. Everything here is derived from static analysis of a legally owned copy. No
-game code or assets are stored in this repository.
+repository's tooling, derived from static analysis of a legally owned copy. The repository stores
+no game code or assets.
 
 | Path | Contents |
 |---|---|
-| [`toolchain.md`](toolchain.md) | What `make setup` installs and how the targets fit together. |
-| [`binary/executables.md`](binary/executables.md) | The shipped binaries, the middleware they are built on, and where each lives. |
-| [`binary/safedisc.md`](binary/safedisc.md) | The SafeDisc 1 copy protection and how the payload executable is recovered from it. |
-| [`formats/disc-images.md`](formats/disc-images.md) | Raw CD image layout and the ISO 9660 / Joliet filesystem on the two discs. |
-| [`formats/hog.md`](formats/hog.md) | `.HOG` asset archives: the EA `BIGF` container. |
-| [`formats/refpack.md`](formats/refpack.md) | RefPack, the compression used inside them. |
-| [`formats/shp.md`](formats/shp.md) | `.SHP` 3D models: chunk stream, parts, levels of detail, geometry. |
-| [`formats/dte.md`](formats/dte.md) | `.DTE` missions: the 27-section image, ships, triggers and conditions. |
-| [`formats/spr.md`](formats/spr.md) | `.SPR` sprites: the WinVFX 2D interface imagery, and where model textures are not. |
-| [`formats/stats.md`](formats/stats.md) | The ship, gun, missile and pilot stat tables, as the engine's loaders read them. |
+| [`toolchain.md`](toolchain.md) | What `make setup` installs, and the Ghidra workflow. |
+| [`binary/executables.md`](binary/executables.md) | The shipped binaries and the middleware they are built on. |
+| [`binary/safedisc.md`](binary/safedisc.md) | SafeDisc 1, and recovering the game executable from it. |
+| [`formats/disc-images.md`](formats/disc-images.md) | Raw CD images and the discs' ISO 9660 filesystem. |
+| [`formats/hog.md`](formats/hog.md) | `.HOG` archives: EA's `BIGF` container. |
+| [`formats/refpack.md`](formats/refpack.md) | RefPack, the compression inside them. |
+| [`formats/shp.md`](formats/shp.md) | `.SHP` models: chunks, parts, levels of detail, geometry, coordinate frame. |
+| [`formats/spr.md`](formats/spr.md) | `.SPR` sprites: the WinVFX interface imagery. |
+| [`formats/dte.md`](formats/dte.md) | `.DTE` missions: directory, ships, triggers, and the script VM. |
+| [`formats/stats.md`](formats/stats.md) | Ship, gun, missile and pilot stat tables. |
 
 ## Conventions
 

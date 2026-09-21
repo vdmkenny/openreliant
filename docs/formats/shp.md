@@ -195,11 +195,10 @@ file; both are settled by what the parts are named and where they sit, across al
 So `+Y` points at the ship's belly and `+Z` out of its nose. A model loaded without accounting for
 this is upside down.
 
-Righting it is a half turn about the forward axis, negating X and Y and leaving Z alone. That
-keeps the nose on `+Z`, where a viewer's default camera looks, and does not mirror the model:
-negating two axes leaves the determinant positive, so port and starboard stay put. Negating Y
-alone would mirror it, and negating Y and Z would right it but leave it facing away from the
-camera.
+Righting it is a half turn about the forward axis: negate X and Y, keep Z. That keeps the nose on
+`+Z`, where a viewer's default camera looks, and does not mirror the model, since negating two axes
+keeps the determinant positive. Negating Y alone would mirror it; negating Y and Z would face it away
+from the camera.
 
 `sltool shp obj` applies that half turn to positions and normals; `--model-space` writes the
 coordinates exactly as the file stores them. `shp info` and `shp check` always report model space.
@@ -207,16 +206,15 @@ coordinates exactly as the file stores them. `shp info` and `shp check` always r
 Wavefront OBJ also numbers texture coordinates from the bottom up, the opposite of this format, so
 the exporter emits `1 - v`.
 
-Positions are in model units. A light fighter such as the Predator spans roughly 1,100 units nose
-to tail, so a unit is on the order of a centimetre. Part positions are relative to the parent, so
+Positions are in model units. The Predator light fighter spans about 1,100 units nose to tail, which
+puts a unit near a centimetre (**unverified**: it assumes a fighter about 11 m long). Part positions are relative to the parent, so
 placing a part in model space means summing the chain up to the root.
 
 ## Unread fields
 
-Several fields are present in every record and read by nothing in the engine: the header's
-`0x04` scalar and `0x08` vector, the part's inertia-like six floats at `0x68`, its `0x80` block,
-and the face's normal and `0x3C` word. They are preserved by the reader but carry no known
-meaning.
+These are present in every record and read by nothing in the engine: the header's `0x04` scalar and
+`0x08` vector, the part's six floats at `0x68` and its `0x80` block, and the face's normal and
+`0x3C` word. The reader preserves them.
 
 **Unknown:** the interpretation of tree nodes (`0x07`), attachment points (`0x09`), animation
 clips (`0x0A`) and trigger polygons (`0x0F`). They are parsed and counted, and their records are
