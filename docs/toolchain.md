@@ -94,5 +94,7 @@ git-ignored.
 [`DefineVmHandlers.java`](../ghidra/scripts/DefineVmHandlers.java) defines and names the mission
 script VM's opcode handlers, which auto-analysis mostly misses. `make vm-opcodes` then reads the
 export back: `src/tools/vmgen` derives the opcode table from the payload's dispatch table and its
-handlers and writes [`src/formats/vm_opcodes.zig`](../src/formats/vm_opcodes.zig). The table is
-committed, so building the tools never needs the game.
+handlers and writes [`src/formats/vm_opcodes.zig`](../src/formats/vm_opcodes.zig). `make
+vm-commands` reads the Executor command catalogue from the binary alone and writes
+[`src/formats/vm_commands.zig`](../src/formats/vm_commands.zig). Both tables are committed, so
+building the tools never needs the game.

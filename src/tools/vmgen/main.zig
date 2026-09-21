@@ -1,13 +1,16 @@
-//! vmgen: derives the mission script VM's opcode table from the game binary.
+//! vmgen: derives the mission script VM's tables from the game binary.
 //!
-//! The VM dispatches on a byte through a table of handler addresses. Reading that table gives the
-//! opcode set, and following each handler gives the size and shape of the instruction it decodes.
-//! Both come straight out of the binary, so the table this writes is a transcript of the engine
-//! rather than a reading of the mission files.
+//!     vmgen opcodes <LANCER.EXE> <disassembly.asm> <output.zig>
+//!     vmgen commands <LANCER.EXE> <output.zig>
 //!
-//!     vmgen <LANCER.EXE> <disassembly.asm> <output.zig>
+//! `opcodes`: the VM dispatches on a byte through a table of handler addresses. Reading that table
+//! gives the opcode set, and following each handler gives the size and shape of the instruction it
+//! decodes. `disassembly.asm` is what `make ghidra-export` writes for the payload executable.
 //!
-//! `disassembly.asm` is what `make ghidra-export` writes for the payload executable.
+//! `commands`: the Executor catalogue that `0x21 command` indexes, which needs only the binary.
+//!
+//! Both come straight out of the binary, so the tables written are transcripts of the engine
+//! rather than readings of the mission files.
 
 const std = @import("std");
 const Io = std.Io;
@@ -15,6 +18,7 @@ const Io = std.Io;
 const starlancer = @import("starlancer");
 const pe = starlancer.pe;
 
+const commands = @import("commands.zig");
 const eval = @import("eval.zig");
 const x86 = @import("x86.zig");
 
@@ -31,22 +35,71 @@ const Handler = struct {
     shape: eval.Shape,
 };
 
+const usage =
+    \\usage: vmgen opcodes <LANCER.EXE> <disassembly.asm> <output.zig>
+    \\       vmgen commands <LANCER.EXE> <output.zig>
+    \\
+;
+
+const Mode = union(enum) {
+    opcodes: struct { binary: []const u8, listing: []const u8, output: []const u8 },
+    commands: struct { binary: []const u8, output: []const u8 },
+
+    fn parse(args: []const [:0]const u8) ?Mode {
+        if (args.len == 0) return null;
+        const tag = std.meta.stringToEnum(std.meta.Tag(Mode), args[0]) orelse return null;
+        const rest = args[1..];
+        return switch (tag) {
+            .opcodes => if (rest.len == 3) .{ .opcodes = .{ .binary = rest[0], .listing = rest[1], .output = rest[2] } } else null,
+            .commands => if (rest.len == 2) .{ .commands = .{ .binary = rest[0], .output = rest[1] } } else null,
+        };
+    }
+};
+
 pub fn main(init: std.process.Init) !u8 {
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
-    if (args.len != 4) {
-        std.debug.print("usage: vmgen <LANCER.EXE> <disassembly.asm> <output.zig>\n", .{});
+    const mode = Mode.parse(args[1..]) orelse {
+        std.debug.print("{s}", .{usage});
         return 2;
-    }
+    };
+    return switch (mode) {
+        .opcodes => |paths| opcodes(init, arena, paths.binary, paths.listing, paths.output),
+        .commands => |paths| catalogue(init, arena, paths.binary, paths.output),
+    };
+}
 
+fn catalogue(init: std.process.Init, arena: std.mem.Allocator, binary_path: []const u8, output: []const u8) !u8 {
     const cwd: Io.Dir = .cwd();
-    const binary = try cwd.readFileAlloc(init.io, args[1], arena, .limited(64 << 20));
-    const listing = try cwd.readFileAlloc(init.io, args[2], arena, .limited(256 << 20));
+    const binary = try cwd.readFileAlloc(init.io, binary_path, arena, .limited(64 << 20));
+    const image: pe.Image = try .parse(binary);
+    const all = try commands.read(arena, image, binary);
+
+    var buffer: [16 << 10]u8 = undefined;
+    var out: Io.File.Writer = .init(try cwd.createFile(init.io, output, .{}), init.io, &buffer);
+    defer out.file.close(init.io);
+    try commands.emit(&out.interface, all);
+    try out.interface.flush();
+
+    std.debug.print("{d} commands -> {s}\n", .{ all.len, output });
+    return 0;
+}
+
+fn opcodes(
+    init: std.process.Init,
+    arena: std.mem.Allocator,
+    binary_path: []const u8,
+    listing_path: []const u8,
+    output: []const u8,
+) !u8 {
+    const cwd: Io.Dir = .cwd();
+    const binary = try cwd.readFileAlloc(init.io, binary_path, arena, .limited(64 << 20));
+    const listing = try cwd.readFileAlloc(init.io, listing_path, arena, .limited(256 << 20));
 
     const image: pe.Image = try .parse(binary);
     const base = image.optional_header.image_base;
     const text = image.sectionByName(".text") orelse {
-        std.debug.print("{s}: no .text section\n", .{args[1]});
+        std.debug.print("{s}: no .text section\n", .{binary_path});
         return 1;
     };
     const text_start = base + text.virtual_address;
@@ -84,13 +137,13 @@ pub fn main(init: std.process.Init) !u8 {
     }
 
     var buffer: [16 << 10]u8 = undefined;
-    var out: Io.File.Writer = .init(try cwd.createFile(init.io, args[3], .{}), init.io, &buffer);
+    var out: Io.File.Writer = .init(try cwd.createFile(init.io, output, .{}), init.io, &buffer);
     defer out.file.close(init.io);
     try emit(&out.interface, handlers.items, length);
     try out.interface.flush();
 
     std.debug.print("{d} opcodes over a table of {d} entries -> {s}\n", .{
-        handlers.items.len, length, args[3],
+        handlers.items.len, length, output,
     });
     return 0;
 }
@@ -171,8 +224,16 @@ fn emit(w: *Io.Writer, handlers: []const Handler, length: usize) !void {
     );
 }
 
+test Mode {
+    const both = Mode.parse(&.{ "commands", "LANCER.EXE", "out.zig" }).?;
+    try std.testing.expectEqualStrings("out.zig", both.commands.output);
+    try std.testing.expectEqual(@as(?Mode, null), Mode.parse(&.{ "opcodes", "LANCER.EXE" }));
+    try std.testing.expectEqual(@as(?Mode, null), Mode.parse(&.{"bogus"}));
+}
+
 test {
     std.testing.refAllDecls(@This());
+    _ = commands;
     _ = eval;
     _ = x86;
 }

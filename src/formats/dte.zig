@@ -12,6 +12,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
+pub const vm_commands = @import("vm_commands.zig");
 pub const vm_opcodes = @import("vm_opcodes.zig");
 
 pub const section_count = 27;
@@ -39,12 +40,13 @@ pub const Section = enum(u8) {
     globals = 2,
     /// The flight groups: every ship, station and nav point the mission places.
     ships = 3,
-    objectives = 4,
+    /// Flight groups, stride `0x14`. Each starts with its object ID.
+    flight_groups = 4,
     triggers = 5,
     /// The script bytecode. Its count is in **halfwords**, so the section is `count * 2` bytes.
     script = 6,
-    /// Each object's slice of the triggers: see [`ShipTriggers`].
-    ship_triggers = 7,
+    /// The object table, indexed by object ID: see [`Object`].
+    objects = 7,
     /// One [`Part`] per named script routine in `script`, which the loader turns into the table
     /// `call_part` indexes.
     parts = 8,
@@ -52,8 +54,12 @@ pub const Section = enum(u8) {
     /// One flag per bytecode byte, marking where the VM may yield.
     script_flags = 10,
     targets = 11,
-    conditions = 12,
-    squads = 13,
+    /// Squads, stride `0x0C`. Each starts with its object ID, and lists its members in
+    /// `squad_members`.
+    squads = 12,
+    /// Squad membership records, stride `0x0C`: the member's object ID at `+0` and the owning
+    /// squad's index at `+4`. A squad's records are consecutive.
+    squad_members = 13,
     unknown_14 = 14,
     nav_geometry = 15,
     sub_objects = 16,
@@ -95,13 +101,15 @@ pub const DirectoryEntry = extern struct {
 
 /// One placed object: a ship, a capital ship, a station or a nav point.
 pub const Ship = extern struct {
-    flight_group: u32,
+    /// The ship's object ID: its index into the object table.
+    object_id: u32,
     /// Byte offset into the string pool.
     name: u16,
     _unknown_06: u16,
     /// Mirrored from `position` when the mission loads.
     runtime_position: [3]f32,
-    _unknown_14: u8,
+    /// Index of the ship's flight group, or `no_flight_group`.
+    flight_group: u8,
     /// Side. 255 marks the player's own record.
     iff: u8,
     _unknown_16: u8,
@@ -124,6 +132,9 @@ pub const Ship = extern struct {
     _unknown_3c: [12]u8,
     runtime_roll: i16,
     roll: i16,
+
+    /// The `flight_group` of a ship in none.
+    pub const no_flight_group: u8 = 0xFF;
 
     pub const Flags = packed struct(u8) {
         disabled: bool,
@@ -251,7 +262,7 @@ pub const Objective = extern struct {
 
 /// Runs a block of script when an event it watches happens to its subject.
 ///
-/// A trigger holds no subject. It is reached through the subject ship's entry in `ship_triggers`,
+/// A trigger holds no subject. It is reached through the subject object's entry in `objects`,
 /// which gives the index of the ship's first trigger and how many follow, so a trigger that no
 /// ship lists can never fire. When an event happens to a ship, the engine fires each of that
 /// ship's triggers that is armed, whose `condition` and `qualifier` are the event's, and whose
@@ -315,15 +326,54 @@ pub const Trigger = extern struct {
     }
 };
 
-/// One ship's slice of the trigger list: section `ship_triggers`, one entry per ship.
-pub const ShipTriggers = extern struct {
-    _unknown_00: u8,
+/// One entry of the object table, section `objects`, indexed by object ID.
+///
+/// Ships, flight groups and squads each carry an object ID at their start, and an event names its
+/// subject by one. The entry gives the object's kind and its slice of the trigger list.
+pub const Object = extern struct {
+    kind: Kind,
+    /// Triggers in the object's slice.
     count: u8,
+    /// Index of the first trigger in it.
     first: u16,
     _unknown_04: u32,
 
+    pub const Kind = enum(u8) {
+        ship = 0,
+        flight_group = 1,
+        squad = 2,
+        _,
+
+        pub fn format(kind: Kind, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            return formatTag(Kind, kind, writer);
+        }
+    };
+
     comptime {
-        assert(@sizeOf(ShipTriggers) == 8);
+        assert(@sizeOf(Object) == 8);
+    }
+};
+
+/// A flight group. Only its object ID is identified.
+pub const FlightGroup = extern struct {
+    object_id: u16,
+    _unknown_02: [0x12]u8,
+
+    comptime {
+        assert(@sizeOf(FlightGroup) == 0x14);
+    }
+};
+
+/// A squad. Only its object ID and its first membership record are identified.
+pub const Squad = extern struct {
+    object_id: u16,
+    _unknown_02: [6]u8,
+    /// Index of its first record in `squad_members`, or `0xFFFF` for none.
+    first_member: u16,
+    _unknown_0a: u16,
+
+    comptime {
+        assert(@sizeOf(Squad) == 0x0C);
     }
 };
 
@@ -386,46 +436,123 @@ pub const Condition = enum(u8) {
 /// `0x55`, minus `0x50`. Those 71 are the whole instruction set. Their sizes and shapes are in
 /// [`vm_opcodes`](vm_opcodes.zig), derived from the handlers themselves by `src/tools/vmgen`.
 pub const Opcode = enum(u8) {
-    /// Compare not-equal.
-    compare_ne = 0x02,
-    /// Compare equal.
-    compare_eq = 0x03,
-    /// Squad or condition membership test.
-    membership = 0x14,
-    /// Call Executor command `n` from the catalogue the engine installs at load.
+    // Comparisons pop `b`, then `a`, and push 1 or 0. Values are unsigned.
+    equal = 0x02,
+    not_equal = 0x03,
+    greater = 0x04,
+    greater_equal = 0x05,
+    less = 0x06,
+    less_equal = 0x07,
+    /// Whether ship `a` belongs to flight group `b`.
+    in_flight_group = 0x14,
+    not_in_flight_group = 0x15,
+
+    // Stores pop the value and the target's old value, and write to the target the last `select_`
+    // opcode chose.
+    assign = 0x16,
+    add_assign = 0x17,
+    sub_assign = 0x18,
+    mul_assign = 0x19,
+    div_assign = 0x1A,
+
+    // Arithmetic pops `b`, then `a`, and pushes the result.
+    add = 0x1B,
+    sub = 0x1C,
+    mul = 0x1D,
+    div = 0x1E,
+    logical_and = 0x1F,
+    logical_or = 0x20,
+
+    /// Calls Executor command `n`, [`vm_commands`](vm_commands.zig), with its arguments popped off
+    /// the stack. Its result is kept for `push_result`.
     command = 0x21,
-    /// Calls the script part named by its operand, through a table of parts.
+    /// Calls part `n` through the part table.
     call_part = 0x22,
     /// Pops a value and branches when it is zero, over a big-endian displacement counted from the
-    /// displacement's own position. `0x24` runs the same handler, so the two are one operation.
+    /// displacement's own position. `0x24` runs the same handler.
     branch_if_zero = 0x23,
     branch_if_zero_alt = 0x24,
-    /// Read the value of global `n`.
-    read_global = 0x27,
-    /// Pushes constant `n` of the running block: the `n`th dword after the block's end.
-    push_constant = 0x28,
-    /// Pushes a pointer to the bytes that follow and steps over them. The operand byte is the
-    /// length of the whole run, itself included, and what follows is a NUL-terminated file name:
-    /// a `.wav` of speech or a `.ut` cutscene. `0x2B` runs the same handler.
-    speech = 0x2A,
-    speech_alt = 0x2B,
-    /// Reference a single object.
-    object = 0x2C,
-    /// Reference a flight group.
-    flight_group = 0x2D,
-    /// Set AI behaviour `n` on the current entity.
-    ai = 0x32,
-    /// Push the address of array slot `n`.
-    array_slot = 0x3F,
-    /// Push the address of global `n`, as somewhere to write.
-    write_global = 0x40,
-    /// Jumps by a **big-endian** 16-bit displacement, the one place the format is not
-    /// little-endian.
-    jump = 0x42,
     /// Returns from a part: restores the caller's frame, instruction pointer and block end. When
     /// the call depth is already zero the thread is finished instead. `0x25` is the same handler.
     @"return" = 0x43,
     return_alt = 0x25,
+
+    // Pushes.
+    /// Array slot `n`'s value.
+    push_array = 0x26,
+    /// Global `n`'s value.
+    push_global = 0x27,
+    /// Constant `n` of the running block: the `n`th dword after the block's end.
+    push_constant = 0x28,
+    /// `push_constant` with a big-endian 16-bit index.
+    push_constant_wide = 0x29,
+    /// A pointer to the bytes that follow, which it steps over. The operand byte is the length of
+    /// the run, itself included, and the bytes are a NUL-terminated string: the name of a speech,
+    /// cutscene or movie file, or text. `0x2B` runs the same handler.
+    push_string = 0x2A,
+    push_string_alt = 0x2B,
+    /// A pointer to ship record `n`.
+    push_ship = 0x2C,
+    /// `push_ship` with a big-endian 16-bit index.
+    push_ship_wide = 0x52,
+    /// Also appends ship `n` and the second operand byte to the list at `0x4F6340`. **Unknown:**
+    /// what reads that list. `0x55` runs the same handler.
+    push_ship_tagged = 0x47,
+    push_ship_tagged_alt = 0x55,
+    /// A pointer to flight group record `n`.
+    push_flight_group = 0x2D,
+    /// A pointer to squad record `n`.
+    push_squad = 0x44,
+    /// A pointer to record `n` of `sub_objects`.
+    push_sub_object = 0x49,
+    /// A pointer to record `n` of section 19, which no mission uses.
+    push_section_19 = 0x54,
+    /// The operand byte itself. `0x2E` runs the same handler.
+    push_byte = 0x32,
+    push_byte_alt = 0x2E,
+    /// `n` percent of the value on top of the stack, which stays.
+    push_percent = 0x2F,
+    /// Value `n` of the running thread: a trigger block's thread holds the event's arguments.
+    push_local = 0x30,
+    /// Argument `n` of the running part.
+    push_argument = 0x31,
+    /// `-1`, which the parameters labelled "can be NULL" take for none.
+    push_null = 0x48,
+    /// The result of the last `command`.
+    push_result = 0x4C,
+    /// A value the event matcher stored for an object: three operand bytes name the condition,
+    /// the value and the object.
+    push_event_value = 0x4B,
+
+    // The same operations with a floating-point step. Operands still come off the stack as
+    // unsigned integers; the comparisons give the same results as `0x04` to `0x07`.
+    greater_f = 0x33,
+    greater_equal_f = 0x34,
+    less_f = 0x35,
+    less_equal_f = 0x36,
+    /// Stores to a float target.
+    add_assign_f = 0x37,
+    sub_assign_f = 0x38,
+    mul_assign_f = 0x39,
+    div_assign_f = 0x3A,
+    /// Computed in floating point and truncated.
+    add_f = 0x3B,
+    sub_f = 0x3C,
+    mul_f = 0x3D,
+    div_f = 0x3E,
+
+    // Selecting a store target also pushes its current value.
+    select_array = 0x3F,
+    select_global = 0x40,
+    select_argument = 0x41,
+
+    /// Whether object `a` belongs to squad `b`, following squads within squads.
+    in_squad = 0x45,
+    not_in_squad = 0x46,
+
+    /// Jumps by a **big-endian** 16-bit displacement, the one place the format is not
+    /// little-endian.
+    jump = 0x42,
     /// `call_part` through the second part table, which serves `script_b`.
     call_part_b = 0x4A,
     /// Starts part `n` on a thread of its own and carries on. The part's arguments move from this
@@ -433,9 +560,12 @@ pub const Opcode = enum(u8) {
     spawn_part = 0x4D,
     /// `spawn_part` through the second part table.
     spawn_part_b = 0x4E,
-    /// Branches to one of a table of arms, chosen by a roll against each arm's threshold. A count
-    /// byte, a big-endian default target, then that many four-byte arms.
+    /// `command` through the second command table, which is empty.
+    command_b = 0x4F,
+    /// Branches to one of a table of arms, chosen by a roll below 100 against each arm's
+    /// threshold. A count byte, a big-endian default target, then that many four-byte arms.
     random_branch = 0x51,
+    nop = 0x53,
     _,
 
     /// Opcodes the payload's handler table implements.
@@ -550,6 +680,21 @@ pub fn decodeAt(code: []const u8, pos: usize) ?Instruction {
         },
     };
     return .{ .address = pos, .opcode = opcode, .operands = operands, .flow = flow };
+}
+
+// Every opcode the handler table implements has a name, and every name is one it implements.
+comptime {
+    @setEvalBranchQuota(20_000);
+    for (vm_opcodes.table) |info| {
+        if (std.enums.tagName(Opcode, @enumFromInt(info.opcode)) == null) {
+            @compileError(std.fmt.comptimePrint("opcode 0x{X:0>2} has no name", .{info.opcode}));
+        }
+    }
+    for (std.meta.fields(Opcode)) |field| {
+        if (vm_opcodes.find(field.value) == null) {
+            @compileError("no handler for opcode " ++ field.name);
+        }
+    }
 }
 
 /// What a `transfer` opcode does, by name.
@@ -830,24 +975,32 @@ pub const Mission = struct {
         return mission.records(Trigger, .triggers);
     }
 
-    /// Each object's slice of the triggers, indexed by the object ID an event carries.
-    pub fn shipTriggers(mission: Mission) Error![]align(1) const ShipTriggers {
-        return mission.records(ShipTriggers, .ship_triggers);
+    /// The object table, indexed by object ID.
+    pub fn objects(mission: Mission) Error![]align(1) const Object {
+        return mission.records(Object, .objects);
+    }
+
+    pub fn flightGroups(mission: Mission) Error![]align(1) const FlightGroup {
+        return mission.records(FlightGroup, .flight_groups);
+    }
+
+    pub fn squads(mission: Mission) Error![]align(1) const Squad {
+        return mission.records(Squad, .squads);
     }
 
     /// For each trigger, the ID of the object whose slice holds it, or null when none does and
     /// the trigger can never fire. No trigger is in two slices.
     pub fn triggerObjects(mission: Mission, allocator: Allocator) (Error || Allocator.Error)![]?u16 {
         const all = try mission.triggers();
-        const objects = try allocator.alloc(?u16, all.len);
-        @memset(objects, null);
-        for (try mission.shipTriggers(), 0..) |slice, object| {
-            const first: usize = slice.first;
-            const end = @min(first + slice.count, all.len);
+        const owners = try allocator.alloc(?u16, all.len);
+        @memset(owners, null);
+        for (try mission.objects(), 0..) |object, id| {
+            const first: usize = object.first;
+            const end = @min(first + object.count, all.len);
             if (first >= end) continue;
-            for (objects[first..end]) |*owner| owner.* = @intCast(object);
+            for (owners[first..end]) |*owner| owner.* = @intCast(id);
         }
-        return objects;
+        return owners;
     }
 
     /// The script section as routines in address order: first the blocks that triggers run, then
@@ -855,8 +1008,8 @@ pub const Mission = struct {
     pub fn routines(mission: Mission, allocator: Allocator) (Error || Allocator.Error)![]Routine {
         const code = try mission.script();
         const all_triggers = try mission.triggers();
-        const objects = try mission.triggerObjects(allocator);
-        defer allocator.free(objects);
+        const owners = try mission.triggerObjects(allocator);
+        defer allocator.free(owners);
 
         var result: std.ArrayList(Routine) = .empty;
         errdefer result.deinit(allocator);
@@ -879,8 +1032,8 @@ pub const Mission = struct {
             for (by_block.values()) |*list| list.deinit(allocator);
             by_block.deinit(allocator);
         }
-        for (all_triggers, objects, 0..) |trigger, object, index| {
-            if (object == null) continue;
+        for (all_triggers, owners, 0..) |trigger, owner, index| {
+            if (owner == null) continue;
             const start = trigger.block() orelse continue;
             if (start >= first_part) continue;
             const slot = try by_block.getOrPut(allocator, start);
@@ -967,7 +1120,7 @@ test "directory and records line up" {
     };
     const ship: *align(1) Ship = @ptrCast(image[ships_at..][0..@sizeOf(Ship)]);
     ship.* = std.mem.zeroes(Ship);
-    ship.flight_group = 3;
+    ship.object_id = 3;
     ship.name = 0;
     ship.iff = 255;
     ship.kind = 999;
@@ -1001,7 +1154,7 @@ test "condition names cover the scriptable range" {
 
 test "decodes a block down to its alignment padding" {
     // The opening block of mission1: call, command, read a global, push a constant, compare, branch, call,
-    // jump, call, command, set AI, return, then two bytes that pad the block to a multiple of four.
+    // jump, call, command, push a byte, return, then two bytes that pad the block to a multiple of four.
     const section = [_]u8{
         0x1C, 0x00, 0x22, 0x01, 0x21, 0x17, 0x27, 0x00, 0x28, 0x00, 0x02, 0x24, 0x00, 0x07,
         0x22, 0x15, 0x42, 0x00, 0x04, 0x22, 0x18, 0x21, 0x17, 0x32, 0x01, 0x43, 0x32, 0x01,
@@ -1012,8 +1165,8 @@ test "decodes a block down to its alignment padding" {
     try std.testing.expectEqual(@as(usize, 26), reader.code.len);
 
     const expected = [_]Opcode{
-        .call_part, .command, .read_global, .push_constant, .compare_ne, .branch_if_zero_alt,
-        .call_part, .jump,    .call_part,   .command,       .ai,         .@"return",
+        .call_part, .command, .push_global, .push_constant, .equal,     .branch_if_zero_alt,
+        .call_part, .jump,    .call_part,   .command,       .push_byte, .@"return",
     };
     for (expected) |opcode| {
         try std.testing.expectEqual(opcode, reader.next().?.opcode);
@@ -1037,13 +1190,13 @@ test "decodes an inline string and steps over it" {
     try std.testing.expectEqual(Opcode.command, reader.next().?.opcode);
 
     const speech = reader.next().?;
-    try std.testing.expectEqual(Opcode.speech, speech.opcode);
+    try std.testing.expectEqual(Opcode.push_string, speech.opcode);
     try std.testing.expectEqualStrings("new_sim02.wav\x00", speech.flow.inline_data);
     try std.testing.expectEqual(Opcode.push_constant, reader.next().?.opcode);
 }
 
 test "the implemented opcode range matches the payload's handler table" {
-    try std.testing.expect(Opcode.compare_ne.isImplemented());
+    try std.testing.expect(Opcode.equal.isImplemented());
     try std.testing.expect(Opcode.spawn_part.isImplemented());
     try std.testing.expect(@as(Opcode, @enumFromInt(0x55)).isImplemented());
     // Null entries in the table: no handler, so the opcode does not exist.
@@ -1084,10 +1237,10 @@ test "follows a branch rather than sweeping past a jump" {
 
     // Addresses are offsets into the section, so the header shifts them by two.
     const expected = [_]struct { usize, Opcode }{
-        .{ 2, .call_part },     .{ 4, .command },     .{ 6, .read_global },
-        .{ 8, .push_constant }, .{ 10, .compare_ne }, .{ 11, .branch_if_zero_alt },
-        .{ 14, .call_part },    .{ 16, .jump },       .{ 19, .call_part },
-        .{ 21, .command },      .{ 23, .ai },         .{ 25, .@"return" },
+        .{ 2, .call_part },     .{ 4, .command },    .{ 6, .push_global },
+        .{ 8, .push_constant }, .{ 10, .equal },     .{ 11, .branch_if_zero_alt },
+        .{ 14, .call_part },    .{ 16, .jump },      .{ 19, .call_part },
+        .{ 21, .command },      .{ 23, .push_byte }, .{ 25, .@"return" },
     };
     try std.testing.expectEqual(expected.len, listing.instructions.len);
     for (expected, listing.instructions) |want, got| {
@@ -1167,7 +1320,7 @@ test "maps the script into trigger blocks and parts, with their constants" {
     both[1].link = 1;
 
     const slices_at = 0x180;
-    place(directory, .ship_triggers, 1, slices_at);
+    place(directory, .objects, 1, slices_at);
     image[slices_at + 1] = 1; // count
     std.mem.writeInt(u16, image[slices_at + 2 ..][0..2], 0, .little); // first
 
@@ -1213,4 +1366,9 @@ test "maps the script into trigger blocks and parts, with their constants" {
     try std.testing.expectEqual(@as(usize, 16), map[1].start);
     try std.testing.expectEqual(@as(u16, 0), map[1].owner.part);
     try std.testing.expectEqual(@as(u32, 0x2A), map[1].constants(code)[0]);
+}
+
+test {
+    _ = vm_commands;
+    _ = vm_opcodes;
 }

@@ -63,8 +63,8 @@ does not write them back.
 | `sltool stats` | Ship, gun, missile and pilot stat tables | [stats](docs/formats/stats.md) |
 
 `make assets`, `models` and `sprites` run the extractors over every file; `check-models` and
-`check-missions` validate them. The script VM's opcode table is derived from the game binary by
-`src/tools/vmgen` (`make vm-opcodes`).
+`check-missions` validate them. The script VM's opcode and command tables are derived from the game
+binary by `src/tools/vmgen` (`make vm-opcodes`, `make vm-commands`).
 
 Documentation index: [`docs/README.md`](docs/README.md).
 
@@ -74,7 +74,7 @@ Documentation index: [`docs/README.md`](docs/README.md).
 |---|---|
 | `src/formats/` | The `starlancer` module: readers for the game's formats and containers. |
 | `src/tools/sltool/` | `sltool`, the command line front end. |
-| `src/tools/vmgen/` | Derives the script VM's opcode table from the game binary. |
+| `src/tools/vmgen/` | Derives the script VM's opcode and command tables from the game binary. |
 | `mk/`, `scripts/` | Makefile fragments and their helpers. |
 | `ghidra/scripts/` | Ghidra scripts, run headless by `make`. |
 | `docs/` | Reference documentation. |

@@ -42,13 +42,14 @@ bytes for that reason.
 | 1 | operands_a | 2 | Operand resolution |
 | 2 | globals | `0x0C` | Named values the script reads and writes |
 | 3 | ships | `0x4C` | Placed ships, stations and nav points |
-| 4 | objectives | `0x14` | |
+| 4 | flight_groups | `0x14` | Flight groups |
 | 5 | triggers | `0x30` | |
 | 6 | script | | Bytecode. **The count is in halfwords** |
-| 7 | ship_triggers | 8 | Each object's slice of the triggers |
+| 7 | objects | 8 | The object table, indexed by object ID: see [Objects](#objects) |
 | 8 | parts | `0x1C` | One descriptor per named script routine |
 | 10 | script_flags | 1 | One flag per script byte, marking where the VM may yield |
-| 13 | squads | `0x0C` | |
+| 12 | squads | `0x0C` | Squads |
+| 13 | squad_members | `0x0C` | Squad membership records |
 | 15 | nav_geometry | `0x10` | |
 | 16 | sub_objects | `0x44` | |
 | 17 | parts_b | `0x1C` | Part descriptors for section 18 |
@@ -71,9 +72,10 @@ Stride `0x4C`, one per placed object, nav points included.
 
 | Offset | Type | Field |
 |---|---|---|
-| `0x00` | u32 | Flight group |
+| `0x00` | u32 | Object ID |
 | `0x04` | u16 | Name, as a string pool offset |
 | `0x08` | f32 x3 | Position, copied from `0x1C` when the mission loads |
+| `0x14` | u8 | Flight group, or `0xFF` for none |
 | `0x15` | u8 | Side. 255 marks the player's own record |
 | `0x17` | u8 | Flags; bit 0 disables the record |
 | `0x18` | u16 | Role. Ships stay below `0x100`; nav points and markers use 999 and `0x3E3` to `0x3E8` |
@@ -82,7 +84,29 @@ Stride `0x4C`, one per placed object, nav points included.
 | `0x30` | u32 | Live object handle, `0xFFFFFFFF` until the mission arms |
 
 Each angle sits two bytes after its runtime copy, at `0x2C`, `0x38` and `0x48`. All 8,265 records
-hold angles within [-360, 360]. Positions are absolute, on the order of 10^7.
+hold angles within [-360, 360]. Positions are absolute, on the order of 10^7. `in_flight_group`
+reads the flight group byte; 6,916 ships are in one and 1,349 in none.
+
+## Objects
+
+Ships, flight groups and squads each start with an **object ID**, and events name their subject by
+one. Section 7 is indexed by it:
+
+| Offset | Type | Field |
+|---|---|---|
+| 0 | u8 | Kind: 0 ship, 1 flight group, 2 squad |
+| 1 | u8 | Number of triggers in the object's slice |
+| 2 | u16 | Index of the first |
+| 4 | u32 | **Unknown** |
+
+Across the 44 missions every ship's ID is unique within its mission and lands on a kind-0 entry, and
+the 1,133 kind-1 and 959 kind-2 entries match the 1,133 flight groups and 959 squads. The squad
+membership walk behind `in_squad` reads the kind: a flight group member is tested with
+`in_flight_group`, and a squad member recursively.
+
+A squad's `+0x08` is the index of its first record in section 13, or `0xFFFF`. A membership record
+holds the member's object ID at `+0` and the owning squad's index at `+4`, and a squad's records are
+consecutive. The 5,172 records name 4,580 ships, 416 flight groups and 176 squads.
 
 ## Triggers
 
@@ -99,13 +123,13 @@ Stride `0x30`. A trigger runs a block of script when an event it watches happens
 | `0x19` | Firings left, for repeat mode 2 |
 | `0x1C` | Operands, four bytes each, which the condition checks against the event's |
 
-A trigger holds no subject. Section 7 gives each object, by the ID an event carries, a slice of the
-trigger list: a count at `+1` and the index of the first trigger at `+2`. When an event happens to
-an object, `FUN_0045CEA0` walks its slice and fires each trigger that is armed, has the event's
-condition and qualifier, and whose operands pass. Firing starts a thread at `script + link * 2`.
+A trigger holds no subject: it sits in its subject's slice of the trigger list, in the
+[object table](#objects). When an event happens to an object, `FUN_0045CEA0` walks the slice and
+fires each trigger that is armed, has the event's condition and qualifier, and whose operands pass.
+Firing starts a thread at `script + link * 2`.
 
-No trigger is in two slices, and 320 of the 2,446 are in none, so they can never fire. Section 7 has
-more entries than section 3 in every mission, so its IDs cover more than the ship records.
+No trigger is in two slices. 1,479 hang off ships, 235 off flight groups and 412 off squads; the
+other 320 are in no slice and can never fire.
 
 Repeat mode `0` disarms the trigger when it fires (1,833 triggers), `1` never disarms it (612), and
 `2` disarms it when the counter at `0x19` runs out (1). For four conditions, ShotAt, Destroyed,
@@ -183,9 +207,9 @@ most of them undefined.
 68 opcodes are a fixed size: 38 take no operands, 22 one byte, 7 two bytes, and `0x4B` three. The
 other three carry their own length:
 
-- **`0x2A` speech** (and `0x2B`) takes a length byte that counts itself, pushes a pointer to the
-  bytes after it, and steps over them. They are a NUL-terminated file name, a `.wav` of speech or a
-  `.ut` cutscene: `mission81` opens by cueing `new_sim02.wav`.
+- **`0x2A` push_string** (and `0x2B`) takes a length byte that counts itself, pushes a pointer to
+  the bytes after it, and steps over them. They are a NUL-terminated string, usually the name of a
+  `.wav` of speech or a `.ut` cutscene: `mission81` opens by cueing `new_sim02.wav`.
 - **`0x51` random_branch** takes a count, a big-endian default target, then that many four-byte
   arms of big-endian target, threshold and one unidentified byte: `3 + 4n` bytes. It rolls a number
   below 100 and takes the first arm whose threshold exceeds it, or the default. Its targets count
@@ -206,23 +230,93 @@ The analysis cannot classify these itself: a call's only sequential path is its 
 early-out, and return's path that leaves the pointer alone is the one that ends the thread, which it
 signals through its return value.
 
+### Opcodes
+
+A stack machine. Names follow the handlers; `a` is the second value from the top, `b` the top.
+
+| Opcodes | Names | Effect |
+|---|---|---|
+| `0x02` to `0x07` | `equal`, `not_equal`, `greater`, `greater_equal`, `less`, `less_equal` | Pop `b` and `a`; push the unsigned comparison |
+| `0x33` to `0x36` | `greater_f` ... `less_equal_f` | The same through the FPU, with the same results |
+| `0x1B` to `0x1E` | `add`, `sub`, `mul`, `div` | Pop `b` and `a`; push the result |
+| `0x3B` to `0x3E` | `add_f` ... `div_f` | The same computed in floating point and truncated |
+| `0x1F`, `0x20` | `logical_and`, `logical_or` | |
+| `0x14`, `0x15` | `in_flight_group`, `not_in_flight_group` | Whether ship `a` is in flight group `b` |
+| `0x45`, `0x46` | `in_squad`, `not_in_squad` | Whether object `a` is in squad `b`, following nested squads |
+| `0x3F` to `0x41` | `select_array`, `select_global`, `select_argument` | Make slot `n` the store target; push its value |
+| `0x16` to `0x1A` | `assign`, `add_assign`, `sub_assign`, `mul_assign`, `div_assign` | Pop the value and the target's old value; store into the target |
+| `0x37` to `0x3A` | `add_assign_f` ... `div_assign_f` | The same into a float target |
+| `0x26`, `0x27`, `0x30`, `0x31` | `push_array`, `push_global`, `push_local`, `push_argument` | Push slot `n`'s value. A trigger block's locals hold its event's arguments |
+| `0x28`, `0x29` | `push_constant`, `push_constant_wide` | Push constant `n` of the running block |
+| `0x2A` (`0x2B`) | `push_string` | Push a pointer to inline text and step over it |
+| `0x2C`, `0x52` | `push_ship`, `push_ship_wide` | Push a pointer to ship `n` |
+| `0x47` (`0x55`) | `push_ship_tagged` | The same, and record the ship and a second operand at `0x4F6340` |
+| `0x2D`, `0x44`, `0x49`, `0x54` | `push_flight_group`, `push_squad`, `push_sub_object`, `push_section_19` | Push a pointer to record `n` of sections 4, 12, 16 and 19 |
+| `0x32` (`0x2E`) | `push_byte` | Push the operand byte |
+| `0x2F` | `push_percent` | Push `n` percent of the top value |
+| `0x48` | `push_null` | Push `-1`, for parameters labelled "can be NULL" |
+| `0x4C` | `push_result` | Push the last command's result |
+| `0x4B` | `push_event_value` | Push a value the event matcher stored for an object |
+| `0x21`, `0x4F` | `command`, `command_b` | Call an Executor command, popping its arguments |
+| `0x22`, `0x4A` | `call_part`, `call_part_b` | Call a part |
+| `0x4D`, `0x4E` | `spawn_part`, `spawn_part_b` | Start a part on a new thread and carry on |
+| `0x43` (`0x25`) | `return` | Leave the part, or end the thread |
+| `0x23` (`0x24`) | `branch_if_zero` | Pop a value; branch if zero |
+| `0x42` | `jump` | |
+| `0x51` | `random_branch` | |
+| `0x53` | `nop` | |
+
+A compile-time check in [`src/formats/dte.zig`](../../src/formats/dte.zig) keeps the names and the
+derived table in step. **Unknown:** what reads the list `push_ship_tagged` appends to.
+
 ### Control flow
 
-- **`0x22` call_part** takes a part index into the runtime part table (stride `0x74`: block pointer
-  at `+0`, argument count at `+4`), pushes the argument count, return address, frame base and block
-  end, sets the frame base to `stack - (4n + 16)`, and enters the block.
-- **`0x43` return** (and `0x25`) unwinds that, or ends the thread when the call depth is zero.
-- **`0x4D` spawn_part** moves the part's arguments from this thread's stack to a new thread's, starts
-  the new thread on the part, and carries on.
-- **`0x4A` call_part_b** and **`0x4E` spawn_part_b** do the same through the second part table,
-  which serves section 18.
-- **`0x23` branch_if_zero** (and `0x24`) pops a value and branches if it is zero; **`0x42` jump**
-  always branches. The displacement is **big-endian**, the only big-endian field in the format, and
-  counts from its own position.
-- **`0x21` command** takes an index into the Executor catalogue, stride `0x74`: implementation
-  pointer at `+0`, argument count at `+4`.
-- **`0x28` push_constant** pushes constant `n` of the running block (see [Routines](#routines)).
-- A thread starts with its block end in `[0x5373F0]`, and at most 32 run at once.
+- **`call_part`** takes a part index into the runtime part table (stride `0x74`: block pointer at
+  `+0`, argument count at `+4`), pushes the argument count, return address, frame base and block
+  end, sets the frame base to `stack - (4n + 16)`, and enters the block. **`return`** unwinds that,
+  or ends the thread when the call depth is zero.
+- **`spawn_part`** moves the part's arguments from this thread's stack to a new thread's, starts the
+  new thread on the part, and carries on. At most 32 threads run at once.
+- **`call_part_b`** and **`spawn_part_b`** do the same through the second part table, which serves
+  section 18; **`command_b`** uses a second command table, which is empty.
+- **`branch_if_zero`** and **`jump`** take a **big-endian** displacement, the only big-endian field
+  in the format, counted from its own position.
+
+A thread keeps its block's end in `[0x5373F0]`, which is where `push_constant` reads from.
+
+### Commands
+
+`command n` calls entry `n` of the Executor catalogue at `0x4F0F50`, which the engine installs at
+`FUN_0045CE30` and counts up to the first entry with no implementation: **95 commands**. An entry is
+`0x74` bytes and describes itself in the developers' words:
+
+| Offset | Field |
+|---|---|
+| `0x00` | Implementation |
+| `0x04` | Parameter count |
+| `0x08` | Name, such as `CreateTimer` |
+| `0x0C` | Up to eight parameters of 12 bytes: a kind mask, an unidentified word, a label |
+| `0x6C` | Description, such as `Creates a timer to invoke a function` |
+| `0x70` | **Unknown.** Set on seven commands |
+
+A parameter's kind mask says what it accepts. The bits are named from the labels that carry them:
+
+| Bit | Accepts |
+|---|---|
+| `0x80` | A number: an ID, a count, seconds |
+| `0x100` | A speech or movie file name |
+| `0x200` | Text, or an animation name |
+| `0x400` | A ship |
+| `0x800` | A flight group or patrol route |
+| `0x4000` | A function, meaning a part |
+| `0x80000` | A named constant: a pilot, an AI mode, a text ID |
+| `0x100000` | **Unknown**; set in entity parameters alongside ship and flight group |
+| `0x200000` | A trigger condition |
+| `0x400000` | A camera or flight curve |
+
+`make vm-commands` regenerates [`src/formats/vm_commands.zig`](../../src/formats/vm_commands.zig)
+from the binary alone. Every command call in the 44 missions resolves; the commonest are `SetAI`
+(5,560), `WaitForMovie` (3,596), `Wait` (2,697) and `SetObjective` (2,146).
 
 ### Parts
 
@@ -281,23 +375,23 @@ sltool dte script <mission>    # every routine, with its constants
 
 `sltool dte script` follows control flow from each block's entry rather than sweeping, because
 `jump`, `return` and `random_branch` never fall through, and shows the value behind each
-`push_constant`. **Every routine disassembles completely**, except 128 bytes listed under
-[Open](#open). The first block of `mission1`, which its first trigger runs, compares global 0
-against its constant 1 and calls one of two parts:
+`push_constant`, the name of each command, and the part, ship or global an index names. **Every
+routine disassembles completely**, except 128 bytes listed under [Open](#open). The first block of
+`mission1`, which its first trigger runs, calls one of two parts depending on a global:
 
 ```
 0 to 36: trigger 0
-       2  22 01       call_part
-       4  21 17       command
-       6  27 00       read_global
+       2  22 01       call_part   1  (F)Jumping to CONVOY
+       4  21 17       command   InterruptTriggerCode
+       6  27 00       push_global   0  (GV)convoykilled
        8  28 00       push_constant   = 1
-      10  02          compare_ne
+      10  02          equal
       11  24 00 07    branch_if_zero_alt   -> 19 if zero
-      14  22 15       call_part
+      14  22 15       call_part   21  (F)GO HOME (Total Loss)
       16  42 00 04    jump   -> 21
-      19  22 18       call_part
-      21  21 17       command
-      23  32 01       ai
+      19  22 18       call_part   24  (F)Jumping to Sherman
+      21  21 17       command   InterruptTriggerCode
+      23  32 01       push_byte   1
       25  43          return
   constants: 1 220332040
 ```
@@ -310,13 +404,16 @@ block.
 - Four 32-byte regions that nothing reaches, two in one part of `mission15` and one each in
   `mission18` and `mission23`. Each follows a random_branch whose two arms split 50/50 and target
   the bytes after the gap: `51 02 00 43` in three cases, `51 02 00 45` in the fourth.
-- What the qualifier byte selects, and what the object IDs in section 7 index.
+- What the qualifier byte selects.
 
 ## Prior art
 
 The container, directory, record strides and condition list are from
 [Starlancer-OSS `docs/dte-format.md`](https://github.com/LordBlacksun/Starlancer-OSS/blob/main/docs/dte-format.md)
 and its scripting reference, which build on Captain Foster's Starlancer ME work. Everything above
-was re-checked against the 44 shipped missions. The byte-offset string pool, the condition
-distribution, and everything about the script beyond the dispatch loop are additions, read from the
-payload.
+was re-checked against the 44 shipped missions and the engine's own code. Where the two differ,
+this document follows the code: the trigger's condition is at `0x00` and its subject implicit,
+sections 4, 12 and 13 hold flight groups, squads and squad members, a ship's `0x00` is its object
+ID, `0x02` tests equality and `0x03` inequality, `0x28` pushes a constant, and `0x32` pushes a byte.
+The byte-offset string pool, the object table and everything about the script beyond the dispatch
+loop are additions.
