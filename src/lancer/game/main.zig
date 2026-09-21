@@ -142,14 +142,21 @@ pub const Clock = struct {
         return clock.simulationStep(keyboard);
     }
 
-    /// `mission_run` (`0x00494040`)'s pacing: a game tick for each tick of the timer since the
-    /// last pass, so the simulation advances at a fixed rate whatever the frame rate. Returns how
-    /// many simulation steps ran.
+    /// Runs the next game tick the loop owes, as `mission_run` (`0x00494040`) paces them: one for
+    /// each tick of the timer since the last pass. Returns whether the simulation stepped, so that
+    /// the caller can do the step's own work, or null once the loop has caught up with the timer.
+    pub fn nextTick(clock: *Clock, keyboard: *input.Keyboard) ?bool {
+        if (clock.ran_to == clock.game_ticks) return null;
+        clock.ran_to +%= 1;
+        return clock.gameTick(keyboard);
+    }
+
+    /// Every tick the loop owes, for a caller with no work of its own in the step. Returns how many
+    /// simulation steps ran.
     pub fn runTicks(clock: *Clock, keyboard: *input.Keyboard) u32 {
         var steps: u32 = 0;
-        while (clock.ran_to != clock.game_ticks) {
-            clock.ran_to +%= 1;
-            if (clock.gameTick(keyboard)) steps += 1;
+        while (clock.nextTick(keyboard)) |stepped| {
+            if (stepped) steps += 1;
         }
         return steps;
     }

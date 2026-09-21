@@ -14,6 +14,7 @@ const Allocator = std.mem.Allocator;
 const openreliant = @import("openreliant");
 const platform = @import("platform");
 const shp = openreliant.shp;
+const stats = openreliant.stats;
 const tcache = openreliant.tcache;
 const tga = openreliant.tga;
 const lancer = openreliant.lancer;
@@ -137,7 +138,7 @@ pub fn main(init: std.process.Init) !u8 {
 }
 
 /// The game's files the engine reads before anything else. It has none of its own.
-const game_files = [_][]const u8{ game.bigfile.resource_name, "tcachehw.dat" };
+const game_files = [_][]const u8{ game.bigfile.resource_name, "tcachehw.dat", "shipstats.bin" };
 
 /// The first of the game's files `dir` lacks, or null when it has them all.
 fn missingGameFile(io: Io, dir: Io.Dir) ?[]const u8 {
@@ -177,6 +178,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     const cache: tcache.Cache = try .parse(arena, cache_bytes);
     const palette = try tga.palette(try resources.readFile(arena, "palette.tga"));
     var textures: srtexture.Table = .init(arena, cache, palette);
+    // The flight and combat stats `stats_load_ships` reads.
+    const ship_stats = (try stats.File.parse(.ships, try directory.readFileAlloc(io, "shipstats.bin", arena, .limited(4 << 20)))).ships;
 
     var window: platform.window.Window = try .open("OpenReliant", 1280, 720, options.fullscreen);
     defer window.close();
@@ -200,7 +203,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     const sky = try game.nebula.Sky.create(arena, &textures, try tga.decode(arena, try resources.readFile(arena, game.nebula.dome_image_name)));
     try sky.select(&textures, game.nebula.default_nebula, &space.lights);
 
-    var ship = try Ship.load(&resources, &textures, options.ship);
+    var ship = try Ship.load(&resources, &textures, ship_stats, options.ship);
+    var player: lancer.input.Player = .{};
     defer ship.unload();
     var keyboard: lancer.input.Keyboard = .{};
 
@@ -234,8 +238,34 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         // takes one tick a frame so that the camera settles the same way on every run.
         const now = platform.window.ticks();
         if (frames_left != null) clock.advanceBy(now, 1) else clock.advanceTo(now);
-        _ = clock.runTicks(&keyboard);
+        while (clock.nextTick(&keyboard)) |stepped| {
+            if (!stepped) continue;
+            // What `simulation_step` runs in order: the player's orders, then the objects move.
+            lancer.input.playerControls(&player, &keyboard, &ship.live, view.view);
+            game.gameobj.move(&ship.live, &ship.flight, view.view, .forward);
+            // The object takes up the place the move worked out, so that the next one carries on
+            // from it. The game marks the root instead, with the node flag `object_move` sets and
+            // `object_link_part` clears for a part; which routine takes a root's up is not yet
+            // known.
+            ship.live.root.position = ship.live.root.next_position;
+            ship.live.root.orientation = ship.live.root.next_orientation;
+        }
         clock.frameBegin();
+        // An object's place is its root's next one, which is what the game steers and draws by.
+        const flown = ship.live.root.next_position;
+        ship.object.place(.{ flown.x, flown.y, flown.z }, ship.live.root.next_orientation);
+        ship.subject.position = .{ flown.x, flown.y, flown.z };
+        ship.subject.orientation = ship.live.root.next_orientation;
+        // The chase view sits farther back the more throttle the ship carries and swings against
+        // its rates of turn, so it lags a turn rather than riding rigidly behind the ship.
+        ship.subject.motion = .{
+            .ship_type = @intCast(ship.ship_type),
+            .throttle = ship.live.throttle,
+            .afterburner = ship.live.afterburner,
+            .pitch_rate = ship.live.pitch_rate,
+            .yaw_rate = ship.live.yaw_rate,
+            .roll_rate = ship.live.roll_rate,
+        };
 
         if (keyboard.pressed(lancer.input.scan.escape, .none, true)) return;
         for ([_]struct { u8, isize }{ .{ f2, -1 }, .{ f3, 1 } }) |step| {
@@ -245,7 +275,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             while (true) {
                 candidate = nextShipType(candidate, step[1]);
                 if (candidate == ship.ship_type) break;
-                const next = Ship.load(&resources, &textures, candidate) catch |err| {
+                const next = Ship.load(&resources, &textures, ship_stats, candidate) catch |err| {
                     std.log.warn("ship type {d} left out: {s}", .{ candidate, @errorName(err) });
                     continue;
                 };
@@ -330,8 +360,13 @@ const Ship = struct {
     ship_type: usize,
     object: game.objects.Model,
     subject: camera.Subject,
+    /// The live object the simulation flies, as `create_object` leaves one.
+    live: game.gameobj.GameObject,
+    /// Its type's flight stats, which `stats_load_ships` builds from `shipstats.bin`.
+    flight: game.create.FlightModel,
 
-    fn load(resources: *game.bigfile.Hog, textures: *srtexture.Table, ship_type: usize) !Ship {
+    fn load(resources: *game.bigfile.Hog, textures: *srtexture.Table, ship_stats: []align(1) const stats.Ship, ship_type: usize) !Ship {
+        if (ship_type >= ship_stats.len) return error.NoShipStats;
         var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
         errdefer arena.deinit();
         const gpa = arena.allocator();
@@ -342,9 +377,20 @@ const Ship = struct {
         var object: game.objects.Model = try .create(gpa, model, loaded);
         object.recentre(model);
         object.place(@splat(0), math.identity);
+        // What `create_object` sets of a new object: undamaged, at rest, flying itself forward.
+        var live: game.gameobj.GameObject = std.mem.zeroes(game.gameobj.GameObject);
+        live.root.orientation = math.identity;
+        live.root.next_orientation = math.identity;
+        live.speed_factor = 1;
+        live.armor_speed_factor = 1;
+        live.engines_intact = 1;
+        live.radius = object.radius;
+        live.afterburner_fuel = @intFromFloat(100 * ship_stats[ship_type].afterburner_fuel);
         return .{
             .arena = arena,
             .ship_type = ship_type,
+            .live = live,
+            .flight = game.create.flightModel(ship_stats[ship_type]),
             .object = object,
             .subject = .{
                 .position = @splat(0),
@@ -389,6 +435,8 @@ test missingGameFile {
     try tmp.dir.writeFile(io, .{ .sub_path = game.bigfile.resource_name, .data = "" });
     try std.testing.expectEqualStrings("tcachehw.dat", missingGameFile(io, tmp.dir).?);
     try tmp.dir.writeFile(io, .{ .sub_path = "tcachehw.dat", .data = "" });
+    try std.testing.expectEqualStrings("shipstats.bin", missingGameFile(io, tmp.dir).?);
+    try tmp.dir.writeFile(io, .{ .sub_path = "shipstats.bin", .data = "" });
     try std.testing.expectEqual(null, missingGameFile(io, tmp.dir));
 }
 

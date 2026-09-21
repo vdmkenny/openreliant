@@ -256,3 +256,182 @@ test controlActive {
 test {
     std.testing.refAllDecls(@This());
 }
+
+// --- The player's controls -----------------------------------------------------------------
+
+const gameobj = @import("game/gameobj.zig");
+const camera = @import("game/camera.zig");
+
+/// What the player's controls keep between updates, which the game holds in globals.
+pub const Player = struct {
+    /// `throttle_setting` (`0x0051CF7C`): the throttle the keys set, which the ship's follows
+    /// while the afterburner is off.
+    throttle: f32 = 0,
+    /// `matching_speed` (`0x00579984`), flipped by MATCH SPEED. Matching a target's speed needs a
+    /// target, so nothing reads it yet.
+    matching_speed: bool = false,
+    /// `afterburner_toggled` (`0x0051CEFE`), flipped by AFTERBURNER TOGGLE.
+    afterburner_toggled: bool = false,
+};
+
+/// How far a key steps a steering input each run (`0x004DC4C0`). The flight model clamps the
+/// input, so a held key reaches full deflection on the fourth run.
+const steering_step: f32 = 0.3;
+
+/// How far a key steps the throttle each run (`0x004DC4AC`): fifty runs from none to full.
+const throttle_step: f32 = 0.02;
+
+/// The share of the yaw added to the roll, which banks the ship into its turns (`0x004DC408`).
+const bank_share: f32 = 0.5;
+
+fn active(keyboard: *Keyboard, action: controls.Action, once: bool) bool {
+    return controlActive(keyboard, controls.binding(action), once, false);
+}
+
+/// `player_throttle_keys` (`0x004132C0`): ACCELERATE and DECELERATE step the throttle setting and
+/// the ship's throttle, and ZERO THROTTLE and FULL THROTTLE set both and stop MATCH SPEED. The
+/// ship's throttle then follows the setting, unless its afterburner is burning.
+pub fn playerThrottleKeys(player: *Player, keyboard: *Keyboard, object: *gameobj.GameObject) void {
+    if (active(keyboard, .accelerate, false)) {
+        player.throttle = @min(player.throttle + throttle_step, 1);
+        object.throttle = @min(object.throttle + throttle_step, 1);
+    } else if (active(keyboard, .decelerate, false)) {
+        player.throttle = @max(player.throttle - throttle_step, 0);
+        object.throttle = @max(object.throttle - throttle_step, 0);
+    }
+    if (active(keyboard, .zero_throttle, true)) {
+        player.throttle = 0;
+        object.throttle = 0;
+        player.matching_speed = false;
+    }
+    if (active(keyboard, .full_throttle, true)) {
+        player.throttle = 1;
+        object.throttle = 1;
+        player.matching_speed = false;
+    }
+    if (!object.afterburner) object.throttle = player.throttle;
+}
+
+/// `player_controls` (`0x00413410`): the update of the Player Control order, which sets the ship's
+/// steering inputs, its throttle and its two burns from the controls. It runs once a frame with the
+/// ship's orders and once again in each simulation step, before the objects move.
+///
+/// Ported so far: the keyboard, which `control_mode` picks with 1. Not yet: the joystick and the
+/// mouse, matching a target's speed, and the weapons and the other actions it reads.
+pub fn playerControls(player: *Player, keyboard: *Keyboard, object: *gameobj.GameObject, view: camera.View) void {
+    // The arrow keys orbit the target and external views, so they do not turn the ship in those.
+    if (view == .target or view == .external) {
+        object.yaw_input = 0;
+        object.pitch_input = 0;
+    } else {
+        // Each pair steps its input while one of its keys is held, in the order the game reads
+        // them, and zeroes it while neither is.
+        object.yaw_input = if (active(keyboard, .rotate_clockwise, false))
+            object.yaw_input - steering_step
+        else if (active(keyboard, .rotate_anti_clockwise, false))
+            object.yaw_input + steering_step
+        else
+            0;
+        object.pitch_input = if (active(keyboard, .nose_up, false))
+            object.pitch_input + steering_step
+        else if (active(keyboard, .nose_down, false))
+            object.pitch_input - steering_step
+        else
+            0;
+    }
+    object.roll_input = if (active(keyboard, .roll_ship_clockwise, false))
+        1
+    else if (active(keyboard, .roll_ship_anti_clockwise, false))
+        -1
+    else
+        0;
+
+    playerThrottleKeys(player, keyboard, object);
+    object.roll_input += object.yaw_input * bank_share;
+
+    object.lateral_input = if (active(keyboard, .strafe_left, false))
+        -1
+    else if (active(keyboard, .strafe_right, false))
+        1
+    else
+        0;
+
+    if (active(keyboard, .afterburner_toggle, true)) player.afterburner_toggled = !player.afterburner_toggled;
+    // `object_orders` clears both before each update, so each lasts until the order runs again.
+    object.afterburner = active(keyboard, .afterburners, false) or player.afterburner_toggled;
+    object.reverse_thrust = active(keyboard, .reverse_thrust, false);
+    // What `object_orders` does after the update: neither burns without fuel.
+    if (object.afterburner_fuel == 0) {
+        object.afterburner = false;
+        object.reverse_thrust = false;
+    }
+}
+
+test playerControls {
+    const gameobj_test = gameobj;
+    var object: gameobj_test.GameObject = std.mem.zeroes(gameobj_test.GameObject);
+    var keyboard: Keyboard = .{};
+    var player: Player = .{};
+    const nose_up = controls.binding(.nose_up).key;
+    const accelerate = controls.binding(.accelerate).key;
+
+    // A held key steps its input, and the fourth run has it past full deflection.
+    keyboard.down[nose_up] = true;
+    for (0..4) |_| playerControls(&player, &keyboard, &object, .cockpit);
+    try std.testing.expectApproxEqAbs(1.2, object.pitch_input, 1e-6);
+    // Released, the input falls back to nothing on the next run.
+    keyboard.down[nose_up] = false;
+    playerControls(&player, &keyboard, &object, .cockpit);
+    try std.testing.expectEqual(0, object.pitch_input);
+
+    // The orbiting views take the arrow keys for themselves.
+    keyboard.down[nose_up] = true;
+    playerControls(&player, &keyboard, &object, .external);
+    try std.testing.expectEqual(0, object.pitch_input);
+    keyboard.down[nose_up] = false;
+
+    // Half the yaw banks the ship into its turn.
+    keyboard.down[controls.binding(.rotate_anti_clockwise).key] = true;
+    playerControls(&player, &keyboard, &object, .cockpit);
+    try std.testing.expectApproxEqAbs(0.3, object.yaw_input, 1e-6);
+    try std.testing.expectApproxEqAbs(0.15, object.roll_input, 1e-6);
+    keyboard.down[controls.binding(.rotate_anti_clockwise).key] = false;
+
+    // ACCELERATE steps the throttle, fifty runs from none to full.
+    keyboard.down[accelerate] = true;
+    for (0..50) |_| playerControls(&player, &keyboard, &object, .cockpit);
+    try std.testing.expectApproxEqAbs(1, object.throttle, 1e-5);
+    keyboard.down[accelerate] = false;
+    // FULL THROTTLE and ZERO THROTTLE set it outright, once for each press.
+    keyboard.down[controls.binding(.zero_throttle).key] = true;
+    playerControls(&player, &keyboard, &object, .cockpit);
+    try std.testing.expectEqual(0, object.throttle);
+}
+
+test "the burns last while their keys are held, and stop without fuel" {
+    var object: gameobj.GameObject = std.mem.zeroes(gameobj.GameObject);
+    var keyboard: Keyboard = .{};
+    var player: Player = .{};
+    object.afterburner_fuel = 100;
+
+    keyboard.down[controls.binding(.afterburners).key] = true;
+    playerControls(&player, &keyboard, &object, .cockpit);
+    try std.testing.expect(object.afterburner);
+    keyboard.down[controls.binding(.afterburners).key] = false;
+    playerControls(&player, &keyboard, &object, .cockpit);
+    try std.testing.expect(!object.afterburner);
+
+    // The toggle holds it on until it is pressed again.
+    keyboard.down[controls.binding(.afterburner_toggle).key] = true;
+    playerControls(&player, &keyboard, &object, .cockpit);
+    try std.testing.expect(object.afterburner);
+    keyboard.read();
+    playerControls(&player, &keyboard, &object, .cockpit);
+    try std.testing.expect(object.afterburner);
+
+    // Out of fuel, neither burn runs.
+    object.afterburner_fuel = 0;
+    playerControls(&player, &keyboard, &object, .cockpit);
+    try std.testing.expect(!object.afterburner);
+    try std.testing.expect(!object.reverse_thrust);
+}

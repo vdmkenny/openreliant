@@ -187,6 +187,11 @@ Not yet ported: the guards `object_move` opens with, which hold an object still 
 docks, the flags it sets for a moving or turning object, and the speed readout it keeps for the
 player's HUD.
 
+**Open:** which routine takes a root's next place up. `object_move` marks the root with bit 0 of its
+node flags, and `object_link_part` clears that bit once it has copied a part's next place into its
+own and its frame's, but nothing found so far does the same for a root. The engine takes it up
+itself after each move, so that the next one carries on from where the last left off.
+
 ## Components
 
 The parts whose [`.SHP` flags](../formats/shp.md#part-tag-0x01) have bit `0x02` are the object's

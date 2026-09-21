@@ -171,3 +171,13 @@ its key codes to them, gives the joystick's axes in the ranges above, and gives 
 movement since the previous step. This one maps SDL's scan codes
 ([`platform/keyboard.zig`](../../src/platform/keyboard.zig)), and ports `key_pressed`,
 `read_keyboard`'s latches and `control_active` in [`input.zig`](../../src/lancer/input.zig).
+
+`playerControls` and `playerThrottleKeys` there port the keyboard's half of the two routines above.
+`Player` holds what the game keeps in globals: `throttle_setting`, `matching_speed` and
+`afterburner_toggled`. The engine runs them where `simulation_step` does, once per step, before the
+objects move.
+
+Not yet ported: the joystick and the mouse, matching a target's speed, and the weapons and other
+actions the routine reads. `object_orders` clears the two burns before each order update and, after
+it, when the ship is out of fuel or its engines are disabled; only the fuel check is ported, in
+`playerControls` itself, since nothing runs orders yet.

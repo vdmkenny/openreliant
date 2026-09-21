@@ -59,7 +59,10 @@ pub const Node = extern struct {
     children: Pointer(Pointer(Node)),
 
     pub const Flags = packed struct(u32) {
-        /// **Unknown.** `object_link_part` clears these four bits.
+        /// Bit 0 is set on a node whose next place has yet to be taken up: `object_move` sets it
+        /// on an object's root, and `object_link_part` clears all four after copying a part's next
+        /// place into its own and its frame's. **Unknown:** the other three, and which routine
+        /// takes up a root's next place.
         _unknown_0: u4,
         /// **Unknown.** Set by `node_draw` (`0x0049A8C0`). Cycling subtargets passes over a component
         /// with it.

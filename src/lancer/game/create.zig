@@ -9,9 +9,27 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const lancer = @import("../../lancer.zig");
+const stats = @import("../../formats/stats.zig");
 const Pointer = lancer.Pointer;
 
 pub const models = @import("create/models.zig");
+
+/// The flight stats `stats_load_ships` (`0x00466500`) builds for a ship type: the speed, rates and
+/// inertias as the record holds them, and `speed_per_pitch_rate` worked out once the file is read.
+pub fn flightModel(ship: stats.Ship) FlightModel {
+    return .{
+        .max_speed = ship.max_speed,
+        .roll_rate = ship.roll_rate,
+        .pitch_rate = ship.pitch_rate,
+        .yaw_rate = ship.yaw_rate,
+        .inertia = ship.inertia,
+        .roll_inertia = ship.roll_inertia,
+        .pitch_inertia = ship.pitch_inertia,
+        .yaw_inertia = ship.yaw_inertia,
+        .speed_per_pitch_rate = ship.max_speed / ship.pitch_rate,
+        ._unknown_24 = 0,
+    };
+}
 
 /// How a ship or a missile flies. `ship_flight_stats` holds one per ship, `missile_flight_stats`
 /// one per missile; a missile's has only its speed and rates set.
