@@ -9,7 +9,7 @@ const std = @import("std");
 const Io = std.Io;
 
 const openreliant = @import("openreliant");
-const lancer_maneuvers = openreliant.lancer.game.aidefend;
+const lancer_maneuvers = openreliant.engine.game.aidefend;
 const Record = lancer_maneuvers.Maneuver;
 const Opcode = lancer_maneuvers.Opcode;
 

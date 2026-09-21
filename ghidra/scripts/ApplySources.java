@@ -6,7 +6,7 @@
 //
 //   ApplySources.java <sources.tsv>
 //
-// Each row of <sources.tsv>, which `ghidragen sources` writes from src/lancer/sources.zig, is a
+// Each row of <sources.tsv>, which `ghidragen sources` writes from src/engine/sources.zig, is a
 // start address, an end address (exclusive) and the fragment's path in the tree, its modules and
 // name separated by '/'. The tree is built afresh each run.
 //

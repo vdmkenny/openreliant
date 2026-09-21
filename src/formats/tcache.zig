@@ -9,7 +9,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
-const Pointer = @import("../lancer.zig").Pointer;
+const Pointer = @import("../engine.zig").Pointer;
 const tga = @import("tga.zig");
 
 pub const version = 102;

@@ -186,7 +186,7 @@ constants; the last two are internal. A descriptor gives the kinds of object the
 to, the values its events carry, and the handlers that can veto them: see
 [Conditions](../engine/script-vm.md#conditions). The table lies just past the VM's dispatch table,
 followed by the lists of event values. `make vm-conditions` regenerates
-[`src/lancer/vm/conditions.zig`](../../src/lancer/vm/conditions.zig) from the binary alone.
+[`src/engine/vm/conditions.zig`](../../src/engine/vm/conditions.zig) from the binary alone.
 
 ## Script
 
@@ -213,7 +213,7 @@ past the opcode, and execution resumes wherever the handler leaves that cell. `s
 reads the dispatch table from the binary, parses each handler from Ghidra's exported disassembly,
 and symbolically executes every path through it, tracking that cell. Paths must agree, or it reports
 the handler instead of guessing. Its output is
-[`src/lancer/vm/opcodes.zig`](../../src/lancer/vm/opcodes.zig):
+[`src/engine/vm/opcodes.zig`](../../src/engine/vm/opcodes.zig):
 
 ```bash
 make ghidra-annotate   # define and name the handlers, among the rest
@@ -346,7 +346,7 @@ A parameter's kind mask says what it accepts. The bits are named from the labels
 | `0x400000` | A camera or flight curve |
 
 `make vm-commands` regenerates
-[`src/lancer/game/executor/commands.zig`](../../src/lancer/game/executor/commands.zig) from the
+[`src/engine/game/executor/commands.zig`](../../src/engine/game/executor/commands.zig) from the
 binary alone. Every command call in the 44 missions resolves.
 
 ### Parts

@@ -9,7 +9,7 @@ const std = @import("std");
 const Io = std.Io;
 
 const openreliant = @import("openreliant");
-const Record = openreliant.lancer.game.ai.Record;
+const Record = openreliant.engine.game.ai.Record;
 
 const image = @import("image.zig");
 const testing = @import("testing.zig");

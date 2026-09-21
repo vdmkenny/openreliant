@@ -12,7 +12,7 @@ The payload links Visual C++ 6.0's static multithreaded C runtime, `LIBCMT`.
 function and global of it. Names are the linker's symbols, with the C compiler's leading underscore
 (`_sprintf` is `sprintf`, `__lock` is `_lock`); labels and funclets without a symbol have descriptive
 names (`acos_start`, `CallCatchBlock_finally`). Functions the game calls carry C signatures;
-[`src/lancer/libcmt.zig`](../../src/lancer/libcmt.zig) defines `FILE`.
+[`src/engine/libcmt.zig`](../../src/engine/libcmt.zig) defines `FILE`.
 
 ## Build
 

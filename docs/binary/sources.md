@@ -1,6 +1,6 @@
 # Source files
 
-[`src/lancer/sources.zig`](../../src/lancer/sources.zig) lists the payload's source files in link
+[`src/engine/sources.zig`](../../src/engine/sources.zig) lists the payload's source files in link
 order, each with the code known to be its own. `make source-map` derives it from the payload and its
 Ghidra export. `make ghidra-annotate` builds a Ghidra program tree, Sources, from it; `make
 ghidra-export` writes each function's place in that tree to the `source` column of `functions.tsv`.

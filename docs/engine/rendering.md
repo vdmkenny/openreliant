@@ -4,8 +4,8 @@ How the hardware renderer draws models. Surrender's library in the payload culls
 lights each mesh; its Direct3D 7 driver, `srd3d.dll`, turns materials into render states and draws.
 The software renderer, `srddraw.dll`, is not covered here.
 
-[`src/lancer/game/srofiles.zig`](../../src/lancer/game/srofiles.zig) states the rule from shading to
-material; [`src/lancer/surrender/srd3d/srd3d.zig`](../../src/lancer/surrender/srd3d/srd3d.zig) the
+[`src/engine/game/srofiles.zig`](../../src/engine/game/srofiles.zig) states the rule from shading to
+material; [`src/engine/surrender/srd3d/srd3d.zig`](../../src/engine/surrender/srd3d/srd3d.zig) the
 driver's blend factors, depth rule and highlight textures.
 
 ## Frame
@@ -87,7 +87,7 @@ blend by alpha, and a third, one group textured by coordinates from the normals 
 `multiplayer_mission` marks the multiplayer maps; missions 81 to 85 and 87 set it.
 
 The material is 16 bytes (`Material` in
-[`srapiext.zig`](../../src/lancer/surrender/surrenderlib/srapiext.zig)):
+[`srapiext.zig`](../../src/engine/surrender/surrenderlib/srapiext.zig)):
 
 | Off | Field |
 |---|---|

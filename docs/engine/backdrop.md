@@ -16,8 +16,8 @@ and drawn on the background layer, except the lens flares, which go on the overl
 `backdrop_create` (`0x004A4E70`) and `nebula_create` (`0x00498B30`) build them at start-up;
 `backdrop_frame` (`0x004A5CD0`) and `nebula_frame` (`0x00498E10`) add them to the scene each frame.
 The dome is the one opaque object, so it is drawn first and the rest add over it.
-[`src/lancer/game/backdrop.zig`](../../src/lancer/game/backdrop.zig) and
-[`nebula.zig`](../../src/lancer/game/nebula.zig) port the functions below.
+[`src/engine/game/backdrop.zig`](../../src/engine/game/backdrop.zig) and
+[`nebula.zig`](../../src/engine/game/nebula.zig) port the functions below.
 
 ## Sky dome
 

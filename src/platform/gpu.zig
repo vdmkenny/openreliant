@@ -1,6 +1,6 @@
 //! The GPU device: draws what Surrender's Direct3D driver hands over as Direct3D 7 drew it, with
 //! SDL's GPU interface, on Metal, Vulkan or Direct3D 12. It stands where `IDirect3DDevice7` stood
-//! ([`device.zig`](../lancer/surrender/srd3d/device.zig)); the software device is its reference.
+//! ([`device.zig`](../engine/surrender/srd3d/device.zig)); the software device is its reference.
 //!
 //! The game's textures are small, and its draws are too: the driver draws a strip, a fan or one
 //! blended polygon at a time. So each texture is a layer of an array holding the textures of its
@@ -18,9 +18,9 @@ const Allocator = std.mem.Allocator;
 const c = @import("sdl");
 
 const openreliant = @import("openreliant");
-const device = openreliant.lancer.surrender.srd3d.device;
-const srd3d = openreliant.lancer.surrender.srd3d.srd3d;
-const srtexture = openreliant.lancer.surrender.surrenderlib.srtexture;
+const device = openreliant.engine.surrender.srd3d.device;
+const srd3d = openreliant.engine.surrender.srd3d.srd3d;
+const srtexture = openreliant.engine.surrender.surrenderlib.srtexture;
 
 const log = std.log.scoped(.gpu);
 

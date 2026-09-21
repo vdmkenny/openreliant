@@ -14,7 +14,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
-const models = @import("../lancer/game/create/models.zig");
+const models = @import("../engine/game/create/models.zig");
 
 pub const Vec3 = extern struct {
     x: f32,
@@ -285,7 +285,7 @@ pub const Face = extern struct {
     /// Records still to come in the same polygon or strip, counting down to zero.
     remaining: u32,
 
-    /// Each mode's material is in `lancer/game/srofiles.zig`, and what the renderer does with it
+    /// Each mode's material is in `engine/game/srofiles.zig`, and what the renderer does with it
     /// in `docs/engine/rendering.md`.
     pub const Shading = packed struct(u32) {
         mode: Mode,

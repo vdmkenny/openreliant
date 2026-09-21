@@ -24,7 +24,7 @@ pub const pe = @import("formats/pe.zig");
 pub const png = @import("formats/png.zig");
 
 /// The payload, the game executable: its structures and tables, laid out as its source tree.
-pub const lancer = @import("lancer.zig");
+pub const engine = @import("engine.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());

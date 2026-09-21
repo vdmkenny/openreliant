@@ -6,8 +6,8 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-const lancer = @import("../../lancer.zig");
-const Pointer = lancer.Pointer;
+const engine = @import("../../engine.zig");
+const Pointer = engine.Pointer;
 
 pub const maneuvers = @import("aidefend/maneuvers.zig");
 pub const script = @import("aidefend/script.zig");
@@ -82,7 +82,7 @@ pub const ScriptLine = extern struct {
 /// What an opcode's `start` and `run` are: code for the ship in a slot running an instruction.
 /// True from `start` makes the instruction wait, calling `run` each update until it returns false;
 /// false moves on to the next line at once.
-pub const Handler = lancer.Code("bool __fastcall (int slot, FightState *state, ManeuverInstruction *instruction)");
+pub const Handler = engine.Code("bool __fastcall (int slot, FightState *state, ManeuverInstruction *instruction)");
 
 /// An entry of `maneuver_handlers`, one for each opcode. Null for none.
 pub const Handlers = extern struct {

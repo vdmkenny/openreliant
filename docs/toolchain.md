@@ -93,7 +93,7 @@ git-ignored.
 
 `make ghidra-annotate` runs [`Annotate.java`](../ghidra/scripts/Annotate.java) on the payload. It
 first defines the data types that `src/tools/ghidragen` writes from the Zig definitions (`ghidragen
-types`): the engine's run-time structures in [`src/lancer.zig`](../src/lancer.zig) and the mission
+types`): the engine's run-time structures in [`src/engine.zig`](../src/engine.zig) and the mission
 records of [`src/formats/dte.zig`](../src/formats/dte.zig), which the engine uses in place. They go
 in the `/StarLancer` category and replace earlier versions, so a change to a Zig definition reaches
 the project on the next run. It then applies names, comments, data types and function signatures
@@ -110,7 +110,7 @@ program and one command restores it. The hand tables' rows are applied after the
 so override them; `zig build test` checks that every row is well formed and that no address is named
 twice among the hand tables. Then [`ApplySources.java`](../ghidra/scripts/ApplySources.java) builds
 the Sources program tree from `ghidragen sources`' rows for
-[`src/lancer/sources.zig`](../src/lancer/sources.zig) ([`binary/sources.md`](binary/sources.md)).
+[`src/engine/sources.zig`](../src/engine/sources.zig) ([`binary/sources.md`](binary/sources.md)).
 `functions.tsv` gives each function's place in it. Last, `Annotate.java` runs on `srd3d.dll` with the
 same types and [`ghidra/names/srd3d.dll.tsv`](../ghidra/names/srd3d.dll.tsv).
 
@@ -122,18 +122,18 @@ script runs on every program of the group.
 
 `make vm-opcodes` reads the export back: `src/tools/tablegen` derives the opcode table from the
 payload's dispatch table and its handlers and writes
-[`src/lancer/vm/opcodes.zig`](../src/lancer/vm/opcodes.zig). `make vm-commands` and `make
+[`src/engine/vm/opcodes.zig`](../src/engine/vm/opcodes.zig). `make vm-commands` and `make
 vm-conditions` read the Executor command catalogue and the trigger condition catalogue from the
 binary alone and write
-[`src/lancer/game/executor/commands.zig`](../src/lancer/game/executor/commands.zig) and
-[`src/lancer/vm/conditions.zig`](../src/lancer/vm/conditions.zig). `make model-tables` reads the
+[`src/engine/game/executor/commands.zig`](../src/engine/game/executor/commands.zig) and
+[`src/engine/vm/conditions.zig`](../src/engine/vm/conditions.zig). `make model-tables` reads the
 ship type table from the binary and follows the code that loads the attachment models in the export,
-and writes [`src/lancer/game/create/models.zig`](../src/lancer/game/create/models.zig). `make
+and writes [`src/engine/game/create/models.zig`](../src/engine/game/create/models.zig). `make
 control-tables` reads the player's actions and their default bindings from the binary and writes
-[`src/lancer/input/controls.zig`](../src/lancer/input/controls.zig), `make order-tables` reads the
-order table into [`src/lancer/game/ai/orders.zig`](../src/lancer/game/ai/orders.zig), and `make
+[`src/engine/input/controls.zig`](../src/engine/input/controls.zig), `make order-tables` reads the
+order table into [`src/engine/game/ai/orders.zig`](../src/engine/game/ai/orders.zig), and `make
 maneuver-tables` reads the combat maneuvers and their scripts into
-[`src/lancer/game/aidefend/maneuvers.zig`](../src/lancer/game/aidefend/maneuvers.zig). `make
-source-map` writes [`src/lancer/sources.zig`](../src/lancer/sources.zig), the source file of each
+[`src/engine/game/aidefend/maneuvers.zig`](../src/engine/game/aidefend/maneuvers.zig). `make
+source-map` writes [`src/engine/sources.zig`](../src/engine/sources.zig), the source file of each
 stretch of code, from the binary and the export. The tables are committed, so building the tools
 never needs the game.

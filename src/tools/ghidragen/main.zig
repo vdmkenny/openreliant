@@ -8,10 +8,10 @@
 //! nothing calls directly, and each group of the order table, for `ghidra/scripts/Annotate.java`.
 //! It comes from the committed opcode, command and order tables and `dte.Opcode`.
 //!
-//! `types`: the data types of `src/lancer.zig` and the mission records of `src/formats/dte.zig`, for
+//! `types`: the data types of `src/engine.zig` and the mission records of `src/formats/dte.zig`, for
 //! `ghidra/scripts/Annotate.java`. The schema is built at compile time.
 //!
-//! `sources`: the Sources program tree of `src/lancer/sources.zig`, for
+//! `sources`: the Sources program tree of `src/engine/sources.zig`, for
 //! `ghidra/scripts/ApplySources.java`: each source file's known code, the stretches between files,
 //! and the C runtime.
 

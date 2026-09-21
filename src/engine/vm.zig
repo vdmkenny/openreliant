@@ -12,9 +12,9 @@ const assert = std.debug.assert;
 const dte = @import("../formats/dte.zig");
 const commands = @import("game/executor/commands.zig");
 const Command = @import("game/executor.zig").Command;
-const lancer = @import("../lancer.zig");
-const Code = lancer.Code;
-const Pointer = lancer.Pointer;
+const engine = @import("../engine.zig");
+const Code = engine.Code;
+const Pointer = engine.Pointer;
 
 pub const opcodes = @import("vm/opcodes.zig");
 pub const conditions = @import("vm/conditions.zig");

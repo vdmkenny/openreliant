@@ -2,9 +2,9 @@
 
 The ships, stations, gates, missiles and markers of a running mission. Each is a `0xB98`-byte object
 from `gameobj.cpp`, and each embeds the root of a hierarchy of nodes standing for the parts of its
-model. The layouts are defined in [`gameobj.zig`](../../src/lancer/game/gameobj.zig),
-[`objects.zig`](../../src/lancer/game/objects.zig), [`create.zig`](../../src/lancer/game/create.zig)
-and [`srapiext.zig`](../../src/lancer/surrender/surrenderlib/srapiext.zig), and `make
+model. The layouts are defined in [`gameobj.zig`](../../src/engine/game/gameobj.zig),
+[`objects.zig`](../../src/engine/game/objects.zig), [`create.zig`](../../src/engine/game/create.zig)
+and [`srapiext.zig`](../../src/engine/surrender/surrenderlib/srapiext.zig), and `make
 ghidra-annotate` applies them to the Ghidra project with the names used here.
 
 ## The object array
@@ -176,7 +176,7 @@ So losing engines or armor slows a ship.
 
 ### Porting
 
-[`gameobj.zig`](../../src/lancer/game/gameobj.zig) holds the model: `cruiseSpeed`, `steer`, `fly`
+[`gameobj.zig`](../../src/engine/game/gameobj.zig) holds the model: `cruiseSpeed`, `steer`, `fly`
 and `move`. The port passes the flight stats and the camera view in, where the game reaches them
 through the object's own pointer and a global, because `GameObject` keeps the binary's 32-bit
 pointers for its layout. `Motion` is an `enum` of the two routines the game installs, in place of

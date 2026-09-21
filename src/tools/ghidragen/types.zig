@@ -23,7 +23,7 @@ const Io = std.Io;
 
 const openreliant = @import("openreliant");
 const dte = openreliant.dte;
-const lancer = openreliant.lancer;
+const engine = openreliant.engine;
 const shp = openreliant.shp;
 const tcache = openreliant.tcache;
 
@@ -52,83 +52,83 @@ pub const exported = [_]Export{
     .{ "SquadMember", dte.SquadMember },
 
     // The script VM.
-    .{ "VmHandler", lancer.vm.Handler },
-    .{ "VmCommand", lancer.game.executor.Command },
-    .{ "VmShipCommand", lancer.game.executor.ShipCommand },
-    .{ "VmThread", lancer.vm.Thread },
-    .{ "VmCallRecord", lancer.vm.CallRecord },
-    .{ "VmFunction", lancer.vm.Function },
-    .{ "VmFunctionEntry", lancer.vm.Function.Entry },
-    .{ "VmParam", lancer.vm.Function.Param },
-    .{ "ParamKinds", lancer.game.executor.commands.Kinds },
-    .{ "VmTimer", lancer.vm.Timer },
-    .{ "ConditionDescriptor", lancer.vm.ConditionDescriptor },
-    .{ "EventValue", lancer.vm.EventValue },
-    .{ "ObjectEvents", lancer.vm.ObjectEvents },
-    .{ "QueuedEvent", lancer.vm.QueuedEvent },
-    .{ "ComponentTag", lancer.vm.ComponentTag },
+    .{ "VmHandler", engine.vm.Handler },
+    .{ "VmCommand", engine.game.executor.Command },
+    .{ "VmShipCommand", engine.game.executor.ShipCommand },
+    .{ "VmThread", engine.vm.Thread },
+    .{ "VmCallRecord", engine.vm.CallRecord },
+    .{ "VmFunction", engine.vm.Function },
+    .{ "VmFunctionEntry", engine.vm.Function.Entry },
+    .{ "VmParam", engine.vm.Function.Param },
+    .{ "ParamKinds", engine.game.executor.commands.Kinds },
+    .{ "VmTimer", engine.vm.Timer },
+    .{ "ConditionDescriptor", engine.vm.ConditionDescriptor },
+    .{ "EventValue", engine.vm.EventValue },
+    .{ "ObjectEvents", engine.vm.ObjectEvents },
+    .{ "QueuedEvent", engine.vm.QueuedEvent },
+    .{ "ComponentTag", engine.vm.ComponentTag },
 
     // Stat tables.
-    .{ "FlightModel", lancer.game.create.FlightModel },
-    .{ "ShipCombat", lancer.game.create.ShipCombat },
-    .{ "GunStats", lancer.game.guns.Gun },
-    .{ "MissileStats", lancer.game.missiles.Missile },
-    .{ "PilotStats", lancer.game.pilots.Pilot },
+    .{ "FlightModel", engine.game.create.FlightModel },
+    .{ "ShipCombat", engine.game.create.ShipCombat },
+    .{ "GunStats", engine.game.guns.Gun },
+    .{ "MissileStats", engine.game.missiles.Missile },
+    .{ "PilotStats", engine.game.pilots.Pilot },
 
     // Sound.
-    .{ "SoundVoice", lancer.game.hog_snd.Voice },
+    .{ "SoundVoice", engine.game.hog_snd.Voice },
 
     // Player input.
-    .{ "JoystickState", lancer.input.JoystickState },
-    .{ "JoystickAxes", lancer.input.JoystickAxes },
-    .{ "MouseState", lancer.input.MouseState },
-    .{ "ControlBinding", lancer.input.ControlBinding },
-    .{ "ControlModifier", lancer.input.ControlBinding.Modifier },
-    .{ "ControlAction", lancer.input.controls.Action },
-    .{ "ControlMode", lancer.input.ControlMode },
+    .{ "JoystickState", engine.input.JoystickState },
+    .{ "JoystickAxes", engine.input.JoystickAxes },
+    .{ "MouseState", engine.input.MouseState },
+    .{ "ControlBinding", engine.input.ControlBinding },
+    .{ "ControlModifier", engine.input.ControlBinding.Modifier },
+    .{ "ControlAction", engine.input.controls.Action },
+    .{ "ControlMode", engine.input.ControlMode },
 
     // Orders.
-    .{ "Order", lancer.game.ai.orders.Order },
-    .{ "OrderRecord", lancer.game.ai.Record },
-    .{ "OrderFlags", lancer.game.ai.Record.Flags },
-    .{ "OrderTarget", lancer.game.aigeneric.Target },
-    .{ "OrderTargetKind", lancer.game.aigeneric.Target.Kind },
-    .{ "OrderEntry", lancer.game.aigeneric.Entry },
-    .{ "OrderData", lancer.game.aigeneric.Entry.Data },
-    .{ "QueuedOrder", lancer.game.aigeneric.Queued },
-    .{ "OrderState", lancer.game.aigeneric.State },
+    .{ "Order", engine.game.ai.orders.Order },
+    .{ "OrderRecord", engine.game.ai.Record },
+    .{ "OrderFlags", engine.game.ai.Record.Flags },
+    .{ "OrderTarget", engine.game.aigeneric.Target },
+    .{ "OrderTargetKind", engine.game.aigeneric.Target.Kind },
+    .{ "OrderEntry", engine.game.aigeneric.Entry },
+    .{ "OrderData", engine.game.aigeneric.Entry.Data },
+    .{ "QueuedOrder", engine.game.aigeneric.Queued },
+    .{ "OrderState", engine.game.aigeneric.State },
 
     // Combat maneuvers.
-    .{ "ManeuverOpcode", lancer.game.aidefend.Opcode },
-    .{ "ManeuverMirror", lancer.game.aidefend.Mirror },
-    .{ "ManeuverCondition", lancer.game.aidefend.Condition },
-    .{ "ManeuverRecord", lancer.game.aidefend.Maneuver },
-    .{ "ManeuverScriptLine", lancer.game.aidefend.ScriptLine },
-    .{ "ManeuverHandler", lancer.game.aidefend.Handler },
-    .{ "ManeuverHandlers", lancer.game.aidefend.Handlers },
-    .{ "ManeuverInstruction", lancer.game.aidefend.Instruction },
-    .{ "ManeuverRange", lancer.game.aidefend.Instruction.Range },
-    .{ "ManeuverTicks", lancer.game.aidefend.Instruction.Ticks },
-    .{ "ManeuverFlag", lancer.game.aidefend.Instruction.Flag },
-    .{ "ManeuverJump", lancer.game.aidefend.Instruction.Jump },
-    .{ "ManeuverBranch", lancer.game.aidefend.Instruction.Branch },
-    .{ "FightState", lancer.game.aifight.FightState },
-    .{ "FightData", lancer.game.aifight.FightData },
+    .{ "ManeuverOpcode", engine.game.aidefend.Opcode },
+    .{ "ManeuverMirror", engine.game.aidefend.Mirror },
+    .{ "ManeuverCondition", engine.game.aidefend.Condition },
+    .{ "ManeuverRecord", engine.game.aidefend.Maneuver },
+    .{ "ManeuverScriptLine", engine.game.aidefend.ScriptLine },
+    .{ "ManeuverHandler", engine.game.aidefend.Handler },
+    .{ "ManeuverHandlers", engine.game.aidefend.Handlers },
+    .{ "ManeuverInstruction", engine.game.aidefend.Instruction },
+    .{ "ManeuverRange", engine.game.aidefend.Instruction.Range },
+    .{ "ManeuverTicks", engine.game.aidefend.Instruction.Ticks },
+    .{ "ManeuverFlag", engine.game.aidefend.Instruction.Flag },
+    .{ "ManeuverJump", engine.game.aidefend.Instruction.Jump },
+    .{ "ManeuverBranch", engine.game.aidefend.Instruction.Branch },
+    .{ "FightState", engine.game.aifight.FightState },
+    .{ "FightData", engine.game.aifight.FightData },
 
     // The C runtime.
-    .{ "FILE", lancer.libcmt.File },
-    .{ "FileFlags", lancer.libcmt.File.Flags },
+    .{ "FILE", engine.libcmt.File },
+    .{ "FileFlags", engine.libcmt.File.Flags },
 
     // Live objects and their models.
-    .{ "GameObject", lancer.game.gameobj.GameObject },
-    .{ "ObjectFlags", lancer.game.gameobj.GameObject.Flags },
-    .{ "ObjectRoutine", lancer.game.gameobj.Routine },
-    .{ "ModelNode", lancer.game.objects.Node },
-    .{ "NodeFlags", lancer.game.objects.Node.Flags },
-    .{ "SurrenderFrame", lancer.surrender.surrenderlib.srapiext.Frame },
-    .{ "ObjectComponent", lancer.game.gameobj.Component },
-    .{ "ShipTypeEntry", lancer.game.create.ShipType },
-    .{ "MountedModel", lancer.game.create.MountedModel },
+    .{ "GameObject", engine.game.gameobj.GameObject },
+    .{ "ObjectFlags", engine.game.gameobj.GameObject.Flags },
+    .{ "ObjectRoutine", engine.game.gameobj.Routine },
+    .{ "ModelNode", engine.game.objects.Node },
+    .{ "NodeFlags", engine.game.objects.Node.Flags },
+    .{ "SurrenderFrame", engine.surrender.surrenderlib.srapiext.Frame },
+    .{ "ObjectComponent", engine.game.gameobj.Component },
+    .{ "ShipTypeEntry", engine.game.create.ShipType },
+    .{ "MountedModel", engine.game.create.MountedModel },
     .{ "ShpPart", shp.Part },
     .{ "ShpPartFlags", shp.Part.Flags },
     .{ "ShpAttachment", shp.Attachment },
@@ -144,12 +144,12 @@ pub const exported = [_]Export{
     .{ "PixelChannel", tcache.Channel },
 
     // Meshes.
-    .{ "SurrenderMaterial", lancer.surrender.surrenderlib.srapiext.Material },
-    .{ "MaterialCoordinates", lancer.surrender.surrenderlib.srapiext.Material.Coordinates },
-    .{ "MaterialBlend", lancer.surrender.surrenderlib.srapiext.Material.Blend },
-    .{ "MeshGroup", lancer.surrender.surrenderlib.srapiext.Group },
-    .{ "Stars", lancer.surrender.surrenderlib.srstars.Stars },
-    .{ "StarsKind", lancer.surrender.surrenderlib.srstars.Stars.Kind },
+    .{ "SurrenderMaterial", engine.surrender.surrenderlib.srapiext.Material },
+    .{ "MaterialCoordinates", engine.surrender.surrenderlib.srapiext.Material.Coordinates },
+    .{ "MaterialBlend", engine.surrender.surrenderlib.srapiext.Material.Blend },
+    .{ "MeshGroup", engine.surrender.surrenderlib.srapiext.Group },
+    .{ "Stars", engine.surrender.surrenderlib.srstars.Stars },
+    .{ "StarsKind", engine.surrender.surrenderlib.srstars.Stars.Kind },
 };
 
 comptime {
@@ -172,7 +172,7 @@ fn nameOf(comptime T: type) []const u8 {
 
 /// Ghidra's type string for `T`.
 fn typeString(comptime T: type) []const u8 {
-    if (lancer.isPointer(T)) {
+    if (engine.isPointer(T)) {
         if (T.Target == anyopaque) return "void *";
         return typeString(T.Target) ++ " *";
     }
@@ -209,7 +209,7 @@ fn arrayString(comptime T: type, comptime dimensions: []const u8) []const u8 {
 fn Definition(comptime T: type) []const u8 {
     @setEvalBranchQuota(1_000_000);
     const name = nameOf(T);
-    if (lancer.isCode(T)) {
+    if (engine.isCode(T)) {
         return "function\t" ++ name ++ "\t" ++ T.c_signature ++ "\n";
     }
     return switch (@typeInfo(T)) {
@@ -293,13 +293,13 @@ pub fn write(w: *Io.Writer) Io.Writer.Error!void {
 
 test typeString {
     try std.testing.expectEqualStrings("uint[2][5]", comptime typeString([2][5]u32));
-    try std.testing.expectEqualStrings("VmThread *", comptime typeString(lancer.Pointer(lancer.vm.Thread)));
-    try std.testing.expectEqualStrings("byte *[4]", comptime typeString([4]lancer.Pointer(u8)));
-    try std.testing.expectEqualStrings("void *", comptime typeString(lancer.Pointer(anyopaque)));
+    try std.testing.expectEqualStrings("VmThread *", comptime typeString(engine.Pointer(engine.vm.Thread)));
+    try std.testing.expectEqualStrings("byte *[4]", comptime typeString([4]engine.Pointer(u8)));
+    try std.testing.expectEqualStrings("void *", comptime typeString(engine.Pointer(anyopaque)));
 }
 
 test structRows {
-    const rows = comptime Definition(lancer.game.objects.Node);
+    const rows = comptime Definition(engine.game.objects.Node);
     try std.testing.expect(std.mem.indexOf(u8, rows, "_unknown_14") == null);
     try std.testing.expect(std.mem.indexOf(u8, rows, "field\tModelNode\t164\tpart\tShpPart *\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, comptime Definition(shp.Part), "\tname_bytes\tchar[64]\n") != null);

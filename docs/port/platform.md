@@ -2,7 +2,7 @@
 
 The `openreliant` executable runs the game on SDL3, which stands in for everything the original
 takes from Windows: the Win32 window and message loop, DirectDraw and Direct3D 7, DirectInput. The
-game's own code, under [`src/lancer/`](../../src/lancer), reaches the platform only through
+game's own code, under [`src/engine/`](../../src/engine), reaches the platform only through
 [`src/platform/`](../../src/platform), so the same code builds for macOS, Linux and Windows.
 
 | Module | In place of |
@@ -29,7 +29,7 @@ zig build -Dtarget=aarch64-macos               # Apple silicon, from any Zig
 
 `openreliant [<game-directory>] [<option>...]` runs in the game's installed directory, or the one
 given, and reads `resource.hog` and `tcachehw.dat` from it as the original does
-([`bigfile.zig`](../../src/lancer/game/bigfile.zig)). It has no data of its own: without those
+([`bigfile.zig`](../../src/engine/game/bigfile.zig)). It has no data of its own: without those
 files it says what it needs and exits.
 
 | Option | Does |

@@ -112,7 +112,7 @@ ghydra-status: | $(STAMPS_DIR)/ghydra-cli ## List the Ghidra instances the ghydr
 
 ##@ Derived tables
 
-VM_OPCODES     := $(ROOT)/src/lancer/vm/opcodes.zig
+VM_OPCODES     := $(ROOT)/src/engine/vm/opcodes.zig
 PAYLOAD_DISASSEMBLY := $(GHIDRA_EXPORT_DIR)/game/LANCER.EXE/disassembly.asm
 
 .PHONY: vm-opcodes
@@ -122,8 +122,8 @@ vm-opcodes: ## Re-derive the mission script VM's opcode table from the payload e
 	$(ROOT)/zig-out/bin/tablegen opcodes $(PAYLOAD) $(PAYLOAD_DISASSEMBLY) $(VM_OPCODES)
 	$(ZIG) fmt $(VM_OPCODES)
 
-VM_COMMANDS   := $(ROOT)/src/lancer/game/executor/commands.zig
-VM_CONDITIONS := $(ROOT)/src/lancer/vm/conditions.zig
+VM_COMMANDS   := $(ROOT)/src/engine/game/executor/commands.zig
+VM_CONDITIONS := $(ROOT)/src/engine/vm/conditions.zig
 
 .PHONY: vm-commands
 vm-commands: ## Re-derive the mission script's command catalogue from the payload executable
@@ -139,7 +139,7 @@ vm-conditions: ## Re-derive the trigger condition catalogue from the payload exe
 	$(ROOT)/zig-out/bin/tablegen conditions $(PAYLOAD) $(VM_CONDITIONS)
 	$(ZIG) fmt $(VM_CONDITIONS)
 
-MODEL_TABLES := $(ROOT)/src/lancer/game/create/models.zig
+MODEL_TABLES := $(ROOT)/src/engine/game/create/models.zig
 
 .PHONY: model-tables
 model-tables: ## Re-derive the ship type and attachment model tables from the payload executable
@@ -148,7 +148,7 @@ model-tables: ## Re-derive the ship type and attachment model tables from the pa
 	$(ROOT)/zig-out/bin/tablegen models $(PAYLOAD) $(PAYLOAD_DISASSEMBLY) $(MODEL_TABLES)
 	$(ZIG) fmt $(MODEL_TABLES)
 
-CONTROL_TABLES := $(ROOT)/src/lancer/input/controls.zig
+CONTROL_TABLES := $(ROOT)/src/engine/input/controls.zig
 
 .PHONY: control-tables
 control-tables: ## Re-derive the player's actions and default bindings from the payload executable
@@ -157,7 +157,7 @@ control-tables: ## Re-derive the player's actions and default bindings from the 
 	$(ROOT)/zig-out/bin/tablegen controls $(PAYLOAD) $(CONTROL_TABLES)
 	$(ZIG) fmt $(CONTROL_TABLES)
 
-ORDER_TABLES := $(ROOT)/src/lancer/game/ai/orders.zig
+ORDER_TABLES := $(ROOT)/src/engine/game/ai/orders.zig
 
 .PHONY: order-tables
 order-tables: ## Re-derive the order table, what objects are told to do, from the payload executable
@@ -166,7 +166,7 @@ order-tables: ## Re-derive the order table, what objects are told to do, from th
 	$(ROOT)/zig-out/bin/tablegen orders $(PAYLOAD) $(ORDER_TABLES)
 	$(ZIG) fmt $(ORDER_TABLES)
 
-MANEUVER_TABLES := $(ROOT)/src/lancer/game/aidefend/maneuvers.zig
+MANEUVER_TABLES := $(ROOT)/src/engine/game/aidefend/maneuvers.zig
 
 .PHONY: maneuver-tables
 maneuver-tables: ## Re-derive the combat maneuvers, their scripts and handlers from the payload executable
@@ -175,7 +175,7 @@ maneuver-tables: ## Re-derive the combat maneuvers, their scripts and handlers f
 	$(ROOT)/zig-out/bin/tablegen maneuvers $(PAYLOAD) $(MANEUVER_TABLES)
 	$(ZIG) fmt $(MANEUVER_TABLES)
 
-SOURCE_MAP     := $(ROOT)/src/lancer/sources.zig
+SOURCE_MAP     := $(ROOT)/src/engine/sources.zig
 PAYLOAD_STRINGS := $(GHIDRA_EXPORT_DIR)/game/LANCER.EXE/strings.tsv
 
 .PHONY: source-map

@@ -3,7 +3,7 @@
 How the payload runs mission scripts: threads, the interpreter loop, calls, commands, the clock,
 timers and events. The bytecode, and the triggers and parts that point into it, are described with
 the [mission format](../formats/dte.md#script). The structures below are defined in
-[`src/lancer/vm.zig`](../../src/lancer/vm.zig), and `make ghidra-annotate` applies them to the
+[`src/engine/vm.zig`](../../src/engine/vm.zig), and `make ghidra-annotate` applies them to the
 Ghidra project together with the names used here.
 
 ## Threads
@@ -176,4 +176,4 @@ the same form: the [mission format](../formats/dte.md#operands) gives the encodi
 `trigger_check_operand` (`0x0045D810`) compares a number operand of the proximity conditions as an
 upper bound rather than for equality, but their distance value is not marked as checked, so the
 matcher never compares it. The catalogue is also generated into
-[`src/lancer/vm/conditions.zig`](../../src/lancer/vm/conditions.zig).
+[`src/engine/vm/conditions.zig`](../../src/engine/vm/conditions.zig).

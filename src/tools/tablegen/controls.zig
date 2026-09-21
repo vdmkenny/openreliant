@@ -8,7 +8,7 @@ const std = @import("std");
 const Io = std.Io;
 
 const openreliant = @import("openreliant");
-const ControlBinding = openreliant.lancer.input.ControlBinding;
+const ControlBinding = openreliant.engine.input.ControlBinding;
 const Modifier = ControlBinding.Modifier;
 
 const image = @import("image.zig");

@@ -5,9 +5,9 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-const lancer = @import("../lancer.zig");
-const Pointer = lancer.Pointer;
-const Range = lancer.sources.Range;
+const engine = @import("../engine.zig");
+const Pointer = engine.Pointer;
+const Range = engine.sources.Range;
 
 /// The runtime's code: from `__fpmath`, after the `srmemory.dll` import thunks, to the end of the
 /// last runtime function, before the unwind funclets of the game's own functions.

@@ -8,9 +8,9 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-const lancer = @import("../../lancer.zig");
+const engine = @import("../../engine.zig");
 const stats = @import("../../formats/stats.zig");
-const Pointer = lancer.Pointer;
+const Pointer = engine.Pointer;
 
 pub const models = @import("create/models.zig");
 

@@ -17,13 +17,13 @@ const shp = openreliant.shp;
 const stats = openreliant.stats;
 const tcache = openreliant.tcache;
 const tga = openreliant.tga;
-const lancer = openreliant.lancer;
-const math = lancer.surrender.math;
-const srapi = lancer.surrender.surrenderlib.srapi;
-const srcore = lancer.surrender.surrenderlib.srcore;
-const srtexture = lancer.surrender.surrenderlib.srtexture;
-const srd3d = lancer.surrender.srd3d;
-const game = lancer.game;
+const engine = openreliant.engine;
+const math = engine.surrender.math;
+const srapi = engine.surrender.surrenderlib.srapi;
+const srcore = engine.surrender.surrenderlib.srcore;
+const srtexture = engine.surrender.surrenderlib.srtexture;
+const srd3d = engine.surrender.srd3d;
+const game = engine.game;
 const camera = game.camera;
 
 const usage =
@@ -198,15 +198,15 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     var pacer: platform.window.Pacer = .{};
 
     var context: srapi.Context = .{ .projection = (camera.Camera{}).projection(1280, 720) };
-    var rand: lancer.libcmt.Rand = .{};
+    var rand: engine.libcmt.Rand = .{};
     const space = try game.backdrop.Backdrop.create(arena, &textures, try tga.decode(arena, try resources.readFile(arena, game.backdrop.star_map_name)), &rand, context.projection.near);
     const sky = try game.nebula.Sky.create(arena, &textures, try tga.decode(arena, try resources.readFile(arena, game.nebula.dome_image_name)));
     try sky.select(&textures, game.nebula.default_nebula, &space.lights);
 
     var ship = try Ship.load(&resources, &textures, ship_stats, options.ship);
-    var player: lancer.input.Player = .{};
+    var player: engine.input.Player = .{};
     defer ship.unload();
-    var keyboard: lancer.input.Keyboard = .{};
+    var keyboard: engine.input.Keyboard = .{};
 
     var view: camera.Camera = .{};
     var last_view = view.view;
@@ -241,7 +241,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         while (clock.nextTick(&keyboard)) |stepped| {
             if (!stepped) continue;
             // What `simulation_step` runs in order: the player's orders, then the objects move.
-            lancer.input.playerControls(&player, &keyboard, &ship.live, view.view);
+            engine.input.playerControls(&player, &keyboard, &ship.live, view.view);
             game.gameobj.move(&ship.live, &ship.flight, view.view, .forward);
             // The object takes up the place the move worked out, so that the next one carries on
             // from it. The game marks the root instead, with the node flag `object_move` sets and
@@ -267,7 +267,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .roll_rate = ship.live.roll_rate,
         };
 
-        if (keyboard.pressed(lancer.input.scan.escape, .none, true)) return;
+        if (keyboard.pressed(engine.input.scan.escape, .none, true)) return;
         for ([_]struct { u8, isize }{ .{ f2, -1 }, .{ f3, 1 } }) |step| {
             if (!keyboard.pressed(step[0], .none, true)) continue;
             // Types whose files the game lacks are passed over.

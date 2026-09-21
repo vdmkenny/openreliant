@@ -5,8 +5,8 @@
 
 const std = @import("std");
 
-const lancer = @import("../../lancer.zig");
-const Code = lancer.Code;
+const engine = @import("../../engine.zig");
+const Code = engine.Code;
 
 pub const commands = @import("executor/commands.zig");
 

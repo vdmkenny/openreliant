@@ -3,7 +3,7 @@
 //! `mission_script_start` installs the catalogue with two instructions, one storing its address and
 //! one its length, and this reader takes both from those instructions. Each descriptor names its
 //! condition, the kinds of object the condition applies to and the values its events carry;
-//! `src/lancer/vm.zig` gives the layout.
+//! `src/engine/vm.zig` gives the layout.
 
 const std = @import("std");
 const Io = std.Io;

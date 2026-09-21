@@ -5,8 +5,8 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-const lancer = @import("../../lancer.zig");
-const Pointer = lancer.Pointer;
+const engine = @import("../../engine.zig");
+const Pointer = engine.Pointer;
 const dte = @import("../../formats/dte.zig");
 const aifight = @import("aifight.zig");
 const Order = @import("ai/orders.zig").Order;

@@ -5,7 +5,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const Pointer = @import("../../lancer.zig").Pointer;
+const Pointer = @import("../../engine.zig").Pointer;
 const shp = @import("../../formats/shp.zig");
 const tcache = @import("../../formats/tcache.zig");
 const math = @import("../surrender/math.zig");

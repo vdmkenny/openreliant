@@ -2,7 +2,7 @@
 
 How the payload reads the player's keyboard, joystick and mouse, and turns them into the inputs of
 the [flight model](objects.md#motion). The names below are those `make ghidra-annotate` gives the
-Ghidra project; [`src/lancer/input.zig`](../../src/lancer/input.zig) defines the structures.
+Ghidra project; [`src/engine/input.zig`](../../src/engine/input.zig) defines the structures.
 
 ## Devices
 
@@ -50,7 +50,7 @@ The front-end screens read the keyboard themselves.
 
 `control_bindings` (`0x4E2380`) holds a `ControlBinding` for each action: a scan code, a modifier
 (none, Shift, Ctrl or Alt, either key of the pair), the name the game shows, and a joystick button
-or -1. [`src/lancer/input/controls.zig`](../../src/lancer/input/controls.zig) lists the actions,
+or -1. [`src/engine/input/controls.zig`](../../src/engine/input/controls.zig) lists the actions,
 numbered as the game numbers them, with the bindings the game starts with; `make control-tables`
 transcribes it from the executable.
 
@@ -170,7 +170,7 @@ scan codes, with the extended keys at `0x80` and up. A port that reads input som
 its key codes to them, gives the joystick's axes in the ranges above, and gives the mouse's
 movement since the previous step. This one maps SDL's scan codes
 ([`platform/keyboard.zig`](../../src/platform/keyboard.zig)), and ports `key_pressed`,
-`read_keyboard`'s latches and `control_active` in [`input.zig`](../../src/lancer/input.zig).
+`read_keyboard`'s latches and `control_active` in [`input.zig`](../../src/engine/input.zig).
 
 `playerControls` and `playerThrottleKeys` there port the keyboard's half of the two routines above.
 `Player` holds what the game keeps in globals: `throttle_setting`, `matching_speed` and

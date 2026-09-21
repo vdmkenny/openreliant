@@ -12,9 +12,9 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
-const commands = @import("../lancer/game/executor/commands.zig");
-const conditions = @import("../lancer/vm/conditions.zig");
-const opcodes = @import("../lancer/vm/opcodes.zig");
+const commands = @import("../engine/game/executor/commands.zig");
+const conditions = @import("../engine/vm/conditions.zig");
+const opcodes = @import("../engine/vm/opcodes.zig");
 
 pub const section_count = 27;
 
@@ -502,7 +502,7 @@ pub const SquadMember = extern struct {
 
 /// The 35 conditions, in the order of the engine's descriptor table at `0x4F6698`, named after its
 /// `TT_*` constants. The last two are internal and cannot be scripted. What each applies to and
-/// what its events carry is in [`lancer/vm/conditions.zig`](../lancer/vm/conditions.zig), generated
+/// what its events carry is in [`engine/vm/conditions.zig`](../engine/vm/conditions.zig), generated
 /// from that table.
 pub const Condition = enum(u8) {
     shot_at = 0x00,
@@ -575,7 +575,7 @@ pub const Condition = enum(u8) {
 ///
 /// The handler table holds 86 entries, of which 71 are filled: `0x02` to `0x07` and `0x14` to
 /// `0x55`, minus `0x50`. Those 71 are the whole instruction set. Their sizes and shapes are in
-/// [`lancer/vm/opcodes.zig`](../lancer/vm/opcodes.zig), derived from the handlers themselves by
+/// [`engine/vm/opcodes.zig`](../engine/vm/opcodes.zig), derived from the handlers themselves by
 /// `src/tools/tablegen`.
 pub const Opcode = enum(u8) {
     // Comparisons pop `b`, then `a`, and push 1 or 0. Values are unsigned.
@@ -605,7 +605,7 @@ pub const Opcode = enum(u8) {
     logical_and = 0x1F,
     logical_or = 0x20,
 
-    /// Calls Executor command `n`, [`lancer/game/executor/commands.zig`](../lancer/game/executor/commands.zig),
+    /// Calls Executor command `n`, [`engine/game/executor/commands.zig`](../engine/game/executor/commands.zig),
     /// with its arguments popped off the stack. Its result is kept for `push_result`.
     command = 0x21,
     /// Calls part `n` through the part table.

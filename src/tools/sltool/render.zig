@@ -9,17 +9,17 @@ const png = openreliant.png;
 const shp = openreliant.shp;
 const tcache = openreliant.tcache;
 const tga = openreliant.tga;
-const lancer = openreliant.lancer;
-const math = lancer.surrender.math;
-const srapi = lancer.surrender.surrenderlib.srapi;
-const srcore = lancer.surrender.surrenderlib.srcore;
-const srtexture = lancer.surrender.surrenderlib.srtexture;
-const srd3d = lancer.surrender.srd3d;
-const backdrop = lancer.game.backdrop;
-const camera = lancer.game.camera;
-const nebula = lancer.game.nebula;
-const objects = lancer.game.objects;
-const srofiles = lancer.game.srofiles;
+const engine = openreliant.engine;
+const math = engine.surrender.math;
+const srapi = engine.surrender.surrenderlib.srapi;
+const srcore = engine.surrender.surrenderlib.srcore;
+const srtexture = engine.surrender.surrenderlib.srtexture;
+const srd3d = engine.surrender.srd3d;
+const backdrop = engine.game.backdrop;
+const camera = engine.game.camera;
+const nebula = engine.game.nebula;
+const objects = engine.game.objects;
+const srofiles = engine.game.srofiles;
 
 const Context = @import("main.zig").Context;
 const Library = @import("library.zig").Library;
@@ -119,7 +119,7 @@ fn draw(ctx: Context, command: Command) !void {
         .projection = (camera.Camera{}).projection(command.width, command.height),
     };
 
-    var rand: openreliant.lancer.libcmt.Rand = .{};
+    var rand: openreliant.engine.libcmt.Rand = .{};
     const star_map = try tga.decode(gpa, try need(&resources, backdrop.star_map_name));
     const space = try backdrop.Backdrop.create(gpa, &textures, star_map, &rand, context.projection.near);
     defer space.destroy(gpa);

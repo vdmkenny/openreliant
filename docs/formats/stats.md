@@ -37,9 +37,9 @@ model at `+0x14` whichever it is. The flight model holds the max speed, the roll
 rates, the four inertias, and the max speed divided by the pitch rate, which the ship loader
 computes after reading the file. A missile's has only its speed and rates. The runtime layouts, with
 the source of every field, are in the modules of the files that load them:
-[`create.zig`](../../src/lancer/game/create.zig), [`guns.zig`](../../src/lancer/game/guns.zig),
-[`missiles.zig`](../../src/lancer/game/missiles.zig) and
-[`pilots.zig`](../../src/lancer/game/pilots.zig).
+[`create.zig`](../../src/engine/game/create.zig), [`guns.zig`](../../src/engine/game/guns.zig),
+[`missiles.zig`](../../src/engine/game/missiles.zig) and
+[`pilots.zig`](../../src/engine/game/pilots.zig).
 
 The gun and pilot loaders have no bound: a file with more records than the runtime table writes past
 its end. The missile loader stops after 11, so the last five of the 16 missiles, Blazer, Iron Tooth,

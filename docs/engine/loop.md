@@ -34,7 +34,7 @@ of the ship's stat, lasts that many seconds.
 
 ## Porting
 
-[`game/main.zig`](../../src/lancer/game/main.zig) holds the clocks and the pacing as `Clock`:
+[`game/main.zig`](../../src/engine/game/main.zig) holds the clocks and the pacing as `Clock`:
 `timerTick` for what `tick_timer` does to them, `gameTick`, `simulationStep`, `frameBegin` and
 `frameReset`, and `runTicks` for `mission_run`'s pacing, one game tick for each tick of the timer.
 

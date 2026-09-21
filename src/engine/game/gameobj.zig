@@ -11,16 +11,16 @@ const assert = std.debug.assert;
 const shp = @import("../../formats/shp.zig");
 const math = @import("../surrender/math.zig");
 const camera = @import("camera.zig");
-const lancer = @import("../../lancer.zig");
+const engine = @import("../../engine.zig");
 const aigeneric = @import("aigeneric.zig");
 const Node = @import("objects.zig").Node;
-const Pointer = lancer.Pointer;
+const Pointer = engine.Pointer;
 const create = @import("create.zig");
 
 /// Code that acts for the object in a slot: its `motion`, which moves it for one update, such as
 /// `motion_forward` (`0x004744C0`), which flies it forward by the flight model, and the routines
 /// of its orders.
-pub const Routine = lancer.Code("void __fastcall (int slot)");
+pub const Routine = engine.Code("void __fastcall (int slot)");
 
 /// Slots in `game_objects`. `create_object` stops the game with a fatal error past the last.
 pub const max_objects = 400;

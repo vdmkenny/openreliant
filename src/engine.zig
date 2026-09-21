@@ -1,7 +1,7 @@
 //! The payload, the game executable, as it lies in memory on 32-bit x86. Modules follow its source
 //! tree, `C:\lancer`, where a structure's file is known, and are named for their contents where it
-//! is not. [`lancer/sources.zig`](lancer/sources.zig) places the code in its files;
-//! [`lancer/libcmt.zig`](lancer/libcmt.zig) is the C runtime. `surrender/srd3d` is the Direct3D
+//! is not. [`engine/sources.zig`](engine/sources.zig) places the code in its files;
+//! [`engine/libcmt.zig`](engine/libcmt.zig) is the C runtime. `surrender/srd3d` is the Direct3D
 //! driver, built from the same tree as a DLL of its own.
 //!
 //! The engine uses mission records in place, pointing each section at the file's bytes, so those
@@ -11,12 +11,12 @@
 
 const std = @import("std");
 
-pub const game = @import("lancer/game.zig");
-pub const input = @import("lancer/input.zig");
-pub const libcmt = @import("lancer/libcmt.zig");
-pub const sources = @import("lancer/sources.zig");
-pub const surrender = @import("lancer/surrender.zig");
-pub const vm = @import("lancer/vm.zig");
+pub const game = @import("engine/game.zig");
+pub const input = @import("engine/input.zig");
+pub const libcmt = @import("engine/libcmt.zig");
+pub const sources = @import("engine/sources.zig");
+pub const surrender = @import("engine/surrender.zig");
+pub const vm = @import("engine/vm.zig");
 
 /// The 32-bit address of a `T` in the payload's address space.
 pub fn Pointer(comptime T: type) type {

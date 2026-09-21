@@ -135,7 +135,7 @@ the engine keeps 124 bytes of each.
 | `0x34` | u32 | Id: which model of its kind |
 
 The engine's attachment table, filled when the game starts, gives the models and sprites for each
-kind and id; [`src/lancer/game/create/models.zig`](../../src/lancer/game/create/models.zig)
+kind and id; [`src/engine/game/create/models.zig`](../../src/engine/game/create/models.zig)
 transcribes it (`make model-tables`). Kind 0 holds missiles and their pods, 1 guns and turrets, 4
 flare and light sprites, 5 cargo and fuel pods. **Unknown:** kinds 2, 3 and 6 to 9.
 

@@ -111,7 +111,7 @@ data other than the compiled shaders, and files over 1 MiB.
 | Path | Contents |
 |---|---|
 | `src/openreliant/` | `openreliant`, the engine's executable. |
-| `src/lancer.zig`, `src/lancer/` | The reimplementation, laid out as the original's source tree: `game/`, `surrender/surrenderlib/` and `surrender/srd3d/` mirror `C:\lancer`, a module per original file; `sources.zig` places the code in those files; `libcmt.zig` is the C runtime; `vm.zig` and `input.zig` hold code whose file is unknown. |
+| `src/engine.zig`, `src/engine/` | The reimplementation, laid out as the original's source tree: `game/`, `surrender/surrenderlib/` and `surrender/srd3d/` mirror `C:\lancer`, a module per original file; `sources.zig` places the code in those files; `libcmt.zig` is the C runtime; `vm.zig` and `input.zig` hold code whose file is unknown. |
 | `src/platform.zig`, `src/platform/` | The platform layer: SDL3 in place of Win32 and DirectX, and the GPU renderer's shader. |
 | `src/formats/` | Readers for the game's file formats and the containers it shipped in. |
 | `src/tools/sltool/` | `sltool`, the command line front end to the format readers. |

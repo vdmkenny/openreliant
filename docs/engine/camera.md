@@ -1,8 +1,8 @@
 # Camera
 
 The views the game shows and where each puts the camera: `camera.cpp`, with the projection from
-Surrender's `srAPI.cpp`. [`src/lancer/game/camera.zig`](../../src/lancer/game/camera.zig) and
-[`srapi.zig`](../../src/lancer/surrender/surrenderlib/srapi.zig) state the same rules.
+Surrender's `srAPI.cpp`. [`src/engine/game/camera.zig`](../../src/engine/game/camera.zig) and
+[`srapi.zig`](../../src/engine/surrender/surrenderlib/srapi.zig) state the same rules.
 
 ## Projection
 

@@ -4,11 +4,11 @@ How a ship fights. The [order](orders.md) Fight (105) runs one maneuver after an
 target: "loop the loop", "defend dodge1", "attack pursue" and seven more. Each maneuver is a script
 in a small language of the developers' own, which the payload compiles line by line as it first runs
 each line, and a table picks the next maneuver by where the two ships are.
-[`aidefend.zig`](../../src/lancer/game/aidefend.zig) and
-[`aifight.zig`](../../src/lancer/game/aifight.zig) define the structures,
-[`aidefend/maneuvers.zig`](../../src/lancer/game/aidefend/maneuvers.zig) holds the maneuvers, their
+[`aidefend.zig`](../../src/engine/game/aidefend.zig) and
+[`aifight.zig`](../../src/engine/game/aifight.zig) define the structures,
+[`aidefend/maneuvers.zig`](../../src/engine/game/aidefend/maneuvers.zig) holds the maneuvers, their
 scripts and the handlers of each opcode, which `make maneuver-tables` transcribes from the
-executable, and [`aidefend/script.zig`](../../src/lancer/game/aidefend/script.zig) compiles the
+executable, and [`aidefend/script.zig`](../../src/engine/game/aidefend/script.zig) compiles the
 scripts as the payload does. The build compiles every script, so a script the compiler cannot read
 fails it. The names below are those `make ghidra-annotate` gives the Ghidra project; the source file
 the asserts name is `aidefend.cpp`.

@@ -3,8 +3,8 @@
 What each object is doing: flying in formation, escorting, docking, exploding, or following the
 player's controls. An object keeps a stack of orders, the current one on top, which the AI, the
 mission scripts and the player's controls push and pop, and `object_orders` runs the current one.
-[`ai.zig`](../../src/lancer/game/ai.zig) and [`aigeneric.zig`](../../src/lancer/game/aigeneric.zig)
-define the structures, and [`ai/orders.zig`](../../src/lancer/game/ai/orders.zig) lists the orders
+[`ai.zig`](../../src/engine/game/ai.zig) and [`aigeneric.zig`](../../src/engine/game/aigeneric.zig)
+define the structures, and [`ai/orders.zig`](../../src/engine/game/ai/orders.zig) lists the orders
 with their flags, priorities and routines; `make order-tables` transcribes it from the executable.
 The names below are those `make ghidra-annotate` gives the Ghidra project, which names each order's
 routines `order_` and the order's name, with `_init` and `_exit` for those two.
