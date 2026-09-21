@@ -133,11 +133,45 @@ gameplay.
 **Unknown:** repeat mode `1`, which occurs 612 times. Modes `0` (one-shot, 1,833 uses) and `2`
 (counted, 1 use) are documented; `1` is not.
 
-## Open
+## Script bytecode
 
-The script bytecode itself is not decoded here. Section 6 holds it, section 10 marks where the VM
-may yield, and `mission1` carries 3,776 bytes of it. The opcode table is documented in the
-reference below.
+Section 6 holds one bytecode stream for the whole mission; `mission1` carries 3,776 bytes of it.
+The interpreter is a plain dispatch loop, read from the payload:
+
+```
+handler = table[code[ip]]      // a 256-entry table of function pointers
+ip += 1
+continue while handler() != 0
+```
+
+Section 10 is a flag array indexed by the same instruction pointer, marking the bytes at which the
+VM may suspend and resume on a later frame, which is how a long script runs without blocking the
+frame.
+
+**Opcodes `0x02` to `0x07` and `0x14` to `0x55` exist**, 72 in all. That is read from the handler
+table itself, which the payload stores with exactly those entries filled and every other entry
+null. Of the named ones, `0x21` calls an Executor command, `0x32` sets an AI behaviour, `0x22` and
+`0x4D` mark and branch to script parts, `0x27` and `0x40` read and write a global, `0x2C` and
+`0x2D` reference an object and a flight group, and `0x43` ends a line.
+
+Frequency in `mission1` agrees: after operand bytes, the commonest are `0x21` command (386),
+`0x28` wait (282), `0x2C` object (264) and `0x32` AI (182).
+
+### Open: operand lengths and block addressing
+
+The stream cannot be disassembled linearly, and this project does not pretend otherwise.
+
+A thread starts at a block whose leading `u16` gives its length, and triggers name blocks by action
+index, so blocks are entered by address rather than laid end to end. Walking the section from its
+start reads that leading length as an opcode and desynchronises from there: 40% of the resulting
+instructions land on opcodes the handler table leaves null, which is the signature of a decoder
+that has lost alignment rather than of unusual data.
+
+The first block of `mission1` does decode cleanly, ending exactly on its `0x43` marker, once `0x42`
+is given two operand bytes rather than one. So the lengths are recoverable. Getting them right
+means reading the 72 handlers to see how far each advances the instruction pointer, rather than
+inferring them from patterns in the data, and until that is done `sltool dte script` reports what
+the section contains instead of claiming to decode it.
 
 ## Prior art
 

@@ -244,6 +244,71 @@ pub const Condition = enum(u8) {
     }
 };
 
+/// Script bytecode.
+///
+/// The interpreter is a plain dispatch loop: fetch one byte, index a 256-entry handler table,
+/// advance the instruction pointer by one, call the handler, and repeat until a handler returns
+/// zero. A parallel flag array, section `script_flags`, is indexed by the same instruction pointer
+/// and marks where the VM may suspend across frames.
+///
+/// The handler table is stored in the payload with **`0x02` to `0x07` and `0x14` to `0x55`
+/// filled**; every other entry is null, so only those 72 opcodes exist.
+pub const Opcode = enum(u8) {
+    /// Compare not-equal.
+    compare_ne = 0x02,
+    /// Compare equal.
+    compare_eq = 0x03,
+    /// Squad or condition membership test.
+    membership = 0x14,
+    /// Call Executor command `n` from the catalogue the engine installs at load.
+    command = 0x21,
+    /// Marks the start of script part `n`.
+    part = 0x22,
+    push_immediate_a = 0x23,
+    push_immediate_b = 0x24,
+    /// Read the value of global `n`.
+    read_global = 0x27,
+    /// Wait, or fetch an operand in a compare.
+    wait = 0x28,
+    /// Play speech `n`.
+    speech = 0x2A,
+    /// Reference a single object.
+    object = 0x2C,
+    /// Reference a flight group.
+    flight_group = 0x2D,
+    /// Set AI behaviour `n` on the current entity.
+    ai = 0x32,
+    /// Push the address of array slot `n`.
+    array_slot = 0x3F,
+    /// Push the address of global `n`, as somewhere to write.
+    write_global = 0x40,
+    /// End of a line or block.
+    end = 0x43,
+    /// Branch into part `n`.
+    jump_part = 0x4D,
+    _,
+
+    /// Opcodes the payload's handler table implements.
+    pub fn isImplemented(opcode: Opcode) bool {
+        const value = @intFromEnum(opcode);
+        return (value >= 0x02 and value <= 0x07) or (value >= 0x14 and value <= 0x55);
+    }
+
+    pub fn format(opcode: Opcode, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        return formatTag(Opcode, opcode, writer);
+    }
+};
+
+/// **Open:** operand lengths and how blocks are addressed.
+///
+/// A thread starts at a block whose leading `u16` gives its length, and triggers name blocks by
+/// action index, so blocks are entered by address rather than laid end to end. Walking a section
+/// linearly from its start therefore desynchronises: it reads the leading length as an opcode, and
+/// 40% of what follows lands on opcodes the handler table leaves null.
+///
+/// The first block of `mission1` does decode cleanly to its `end` marker once `0x42` is given two
+/// operand bytes, which suggests the lengths are recoverable, but they are not recorded here until
+/// they come from the handlers rather than from pattern matching.
 pub const Error = error{
     /// Too small to hold a directory.
     NotAMission,
@@ -284,6 +349,14 @@ pub const Mission = struct {
         const bytes = @as(usize, slot.count) * @sizeOf(T);
         if (slot.offset + bytes > mission.image.len) return error.Truncated;
         return @alignCast(std.mem.bytesAsSlice(T, mission.image[slot.offset..][0..bytes]));
+    }
+
+    /// The bytecode of section `script`.
+    pub fn script(mission: Mission) Error![]const u8 {
+        const slot = mission.entry(.script);
+        if (!slot.isUsed() or slot.count == 0) return &.{};
+        if (slot.offset + slot.count > mission.image.len) return error.Truncated;
+        return mission.image[slot.offset..][0..slot.count];
     }
 
     pub fn ships(mission: Mission) Error![]align(1) const Ship {
@@ -381,6 +454,16 @@ test "condition names cover the scriptable range" {
     // Beyond the scriptable range the enum stays open rather than misnaming an internal type.
     const internal: Condition = @enumFromInt(0x22);
     try std.testing.expect(std.enums.tagName(Condition, internal) == null);
+}
+
+test "the implemented opcode range matches the payload's handler table" {
+    try std.testing.expect(Opcode.compare_ne.isImplemented());
+    try std.testing.expect(Opcode.jump_part.isImplemented());
+    try std.testing.expect(@as(Opcode, @enumFromInt(0x55)).isImplemented());
+    // Null entries in the table: no handler, so the opcode does not exist.
+    try std.testing.expect(!@as(Opcode, @enumFromInt(0x00)).isImplemented());
+    try std.testing.expect(!@as(Opcode, @enumFromInt(0x10)).isImplemented());
+    try std.testing.expect(!@as(Opcode, @enumFromInt(0x56)).isImplemented());
 }
 
 test "an unnamed value formats as a number instead of panicking" {

@@ -15,6 +15,8 @@ pub const Command = union(enum) {
     ships: struct { mission: []const u8 },
     triggers: struct { mission: []const u8 },
     strings: struct { mission: []const u8 },
+    /// Disassembles the script bytecode.
+    script: struct { mission: []const u8 },
 
     pub const usage =
         \\  dte info <mission>              summarise a mission
@@ -22,6 +24,7 @@ pub const Command = union(enum) {
         \\  dte ships <mission>             list the placed ships and nav points
         \\  dte triggers <mission>          list the scripted triggers
         \\  dte strings <mission>           dump the string pool
+        \\  dte script <mission>            summarise the script bytecode section
         \\
     ;
 
@@ -34,6 +37,7 @@ pub const Command = union(enum) {
             .ships => .{ .ships = .{ .mission = args[1] } },
             .triggers => .{ .triggers = .{ .mission = args[1] } },
             .strings => .{ .strings = .{ .mission = args[1] } },
+            .script => .{ .script = .{ .mission = args[1] } },
         };
     }
 
@@ -50,6 +54,7 @@ pub const Command = union(enum) {
             .ships => try ships(ctx, mission),
             .triggers => try triggers(ctx, mission),
             .strings => try strings(ctx, mission),
+            .script => try script(ctx, mission),
         }
     }
 };
@@ -136,6 +141,36 @@ fn triggers(ctx: Context, mission: dte.Mission) !void {
             std.fmt.bufPrint(&repeat, "{f}", .{trigger.repeat}) catch "?",
             trigger.action,
         });
+    }
+}
+
+/// Reports what the bytecode section holds without pretending to disassemble it: blocks are
+/// entered by address, so a linear walk desynchronises. See `dte.Opcode`.
+fn script(ctx: Context, mission: dte.Mission) !void {
+    const code = try mission.script();
+    var implemented: usize = 0;
+    var histogram: [256]usize = @splat(0);
+    for (code) |byte| {
+        histogram[byte] += 1;
+        if (@as(dte.Opcode, @enumFromInt(byte)).isImplemented()) implemented += 1;
+    }
+
+    try ctx.stdout.print("bytecode: {d} bytes, {d} in the implemented opcode range\n\n", .{
+        code.len, implemented,
+    });
+    try ctx.stdout.writeAll("most frequent bytes:\n");
+    for (0..12) |_| {
+        var best: usize = 0;
+        for (histogram, 0..) |count, byte| {
+            if (count > histogram[best]) best = byte;
+        }
+        if (histogram[best] == 0) break;
+        const opcode: dte.Opcode = @enumFromInt(best);
+        try ctx.stdout.print("  {x:0>2}  {d:>5}  ", .{ best, histogram[best] });
+        try dte.formatTag(dte.Opcode, opcode, ctx.stdout);
+        if (!opcode.isImplemented()) try ctx.stdout.writeAll("  (no handler: operand or data)");
+        try ctx.stdout.writeByte('\n');
+        histogram[best] = 0;
     }
 }
 
