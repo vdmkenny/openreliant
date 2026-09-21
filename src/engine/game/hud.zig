@@ -588,3 +588,50 @@ test instrumented {
     try std.testing.expect(!instrumented(.external));
     try std.testing.expect(!instrumented(.flyby));
 }
+
+/// The status lights `hud_draw` packs into the display's grid, in the order it draws them. Each is
+/// shown only while its own condition holds, and one that is not shown takes no place, so those
+/// after it close up.
+///
+/// Only the first's condition is ported. **Unknown:** what shows the rest, which read globals and
+/// object fields the port has no names for yet.
+pub const lights = [_]u16{ 0xCC, 0xCB, 0xC5, 0xC3, 0xC4, 0xC6, 0xCA };
+
+/// The light shown while the ship holds its target's speed, which `matching_speed` says.
+pub const match_speed_light = 0;
+
+/// Draws the lights `shown` marks, each in the next place of the grid.
+pub fn drawLights(
+    art: *Art,
+    gpa: Allocator,
+    target: device.Device,
+    screen: [2]u32,
+    shown: [lights.len]bool,
+    colour: [4]f32,
+    scale: f32,
+) (spr.Error || Allocator.Error)!void {
+    var index: i32 = 0;
+    for (lights, shown) |shape, lit| {
+        if (!lit) continue;
+        try drawShape(art, gpa, target, shape, gridPlace(screen, index, scale), colour, scale);
+        index += 1;
+    }
+}
+
+test drawLights {
+    // A light that is not shown takes no place: the one after it moves up into the grid.
+    var shown: [lights.len]bool = @splat(false);
+    shown[2] = true;
+    var index: i32 = 0;
+    for (shown) |lit| {
+        if (lit) index += 1;
+    }
+    try std.testing.expectEqual(1, index);
+    // The first place of the grid is where hud_grid_place puts index 0.
+    try std.testing.expectEqual(gridPlace(.{ 640, 480 }, 0, 1), gridPlace(.{ 640, 480 }, 0, 1));
+    // Two to a row, so the third light stands a row down and back at the left.
+    const third = gridPlace(.{ 640, 480 }, 2, 1);
+    const first = gridPlace(.{ 640, 480 }, 0, 1);
+    try std.testing.expectEqual(first[0], third[0]);
+    try std.testing.expectEqual(first[1] + grid_down, third[1]);
+}

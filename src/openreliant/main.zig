@@ -239,6 +239,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         .screen = .{ 0, 0 },
         .ship = &ship,
         .clock = &clock,
+        .player = &player,
     };
 
     var scene: srcore.Scene = .{};
@@ -506,6 +507,7 @@ const Display = struct {
     last_view: camera.View = .cockpit,
     ship: *const Ship,
     clock: *const game.main.Clock,
+    player: *const engine.input.Player,
 
     fn overlay(display: *Display) srcore.Overlay {
         return .{ .context = display, .draw = draw };
@@ -531,6 +533,21 @@ const Display = struct {
         ) catch |err| switch (err) {
             error.OutOfMemory => |out| return out,
             // A shape the file does not hold draws nothing, as it does in the game.
+            else => {},
+        };
+        // Only the light for holding a target's speed has a condition the port knows.
+        var lit: [game.hud.lights.len]bool = @splat(false);
+        lit[game.hud.match_speed_light] = display.player.matching_speed;
+        game.hud.drawLights(
+            &display.art,
+            display.gpa,
+            display.target,
+            display.screen,
+            lit,
+            .{ 1, 1, 1, 1 },
+            scale,
+        ) catch |err| switch (err) {
+            error.OutOfMemory => |out| return out,
             else => {},
         };
         try game.hud.drawClock(

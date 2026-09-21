@@ -99,6 +99,19 @@ stand half of the way across, at offsets of `0x39`, `0x5F` and `0x98`:
 The port draws the fuel ([`engine/game/hud.zig`](../../src/engine/game/hud.zig)); the other two wait
 on what they count.
 
+## The status lights
+
+Inside the block it draws only for the view ahead, `hud_draw` packs up to seven lights into the
+grid, each shown only while its own condition holds. The index it hands `hud_grid_place` is a
+running count that advances only for a light it draws, so one that is not shown takes no place and
+those after it close up.
+
+In the order it draws them: `0xCC`, two ships with arrows, shown while `matching_speed` holds; then
+`0xCB`, `0xC5`, `0xC3`, `0xC4`, `0xC6` and `0xCA`. **Unknown:** what shows the last six, which read
+globals and object fields with no names yet.
+
+The port draws the first and packs the rest the same way.
+
 ## Art
 
 The hardware renderers take their shapes from `HUDHARD.SPR` and the software renderer from
