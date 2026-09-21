@@ -11,6 +11,7 @@
 #   game/textures/           the hardware texture cache's textures as PNG
 #   game/sounds/             the .fat sound banks' sounds as WAV
 #   game/fonts/              the .fnt fonts as glyph atlases
+#   game/renders/            reference images drawn by sltool render
 #
 # Extraction is pure Zig (sltool reads raw sectors and ISO 9660 itself) except for LANCER.CAB, an
 # LZX-compressed Microsoft cabinet, which still goes through 7z.
@@ -101,6 +102,22 @@ $(GAME_DIR)/.stamp-fonts: | $(GAME_DIR)/.stamp-hog-resource $(SLTOOL)
 	    $(SLTOOL) fnt render "$$f" $(FONTS_DIR)/$${name%.*}.png > /dev/null; \
 	done; echo "rendered $$(ls $(FONTS_DIR) | wc -l | tr -d ' ') fonts to $(FONTS_DIR)"
 	touch $@
+
+RENDERS_DIR := $(GAME_DIR)/renders
+RENDER      := $(SLTOOL) render $(ASSETS_DIR)/resource $(INSTALL_DIR)/tcachehw.dat
+RENDERS     := $(RENDERS_DIR)/predator.png $(RENDERS_DIR)/predator-sun.png
+
+# Drawn again whenever the code changes. See docs/port/renderer.md.
+.PHONY: render
+render: $(RENDERS) ## Draw reference images of the Predator against the backdrop to game/renders
+
+$(RENDERS): $(SLTOOL) | $(GAME_DIR)/.stamp-install $(GAME_DIR)/.stamp-hog-resource
+
+$(RENDERS_DIR)/predator.png:
+	$(RENDER) $@ --model USLF_Prd.SHP
+
+$(RENDERS_DIR)/predator-sun.png:
+	$(RENDER) $@ --model USLF_Prd.SHP --toward 1,-0.3,0.45 --heading -0.3,0.2,1 --flares
 
 .PHONY: check-missions
 check-missions: | $(GAME_DIR)/.stamp-hog-resource $(SLTOOL) ## Parse every .DTE mission

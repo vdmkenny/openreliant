@@ -1,5 +1,5 @@
-//! Finds models by the engine's file names in a directory of extracted game files, ignoring case as
-//! the game's file system does.
+//! Finds files, and models, by the engine's file names in a directory of extracted game files,
+//! ignoring case as the game's file system does.
 
 const std = @import("std");
 const Io = std.Io;
@@ -19,7 +19,10 @@ pub const Library = struct {
 
     /// The directory holding the file at `path`.
     pub fn beside(ctx: Context, path: []const u8) !Library {
-        const dir_path = std.fs.path.dirname(path) orelse ".";
+        return open(ctx, std.fs.path.dirname(path) orelse ".");
+    }
+
+    pub fn open(ctx: Context, dir_path: []const u8) !Library {
         var dir = try Io.Dir.cwd().openDir(ctx.io, dir_path, .{ .iterate = true });
         errdefer dir.close(ctx.io);
 
@@ -37,14 +40,18 @@ pub const Library = struct {
         library.dir.close(library.ctx.io);
     }
 
+    /// The bytes of the file `name`, or null when the directory has no such file.
+    pub fn read(library: *Library, name: []const u8) !?[]u8 {
+        const key = try std.ascii.allocLowerString(library.ctx.arena, name);
+        const on_disk = library.names.get(key) orelse return null;
+        return try library.dir.readFileAlloc(library.ctx.io, on_disk, library.ctx.arena, .limited(64 << 20));
+    }
+
     /// The model the file `name` holds, or null when the directory has no such file.
     pub fn load(library: *Library, name: []const u8) !?shp.Model {
         const key = try std.ascii.allocLowerString(library.ctx.arena, name);
         if (library.models.get(key)) |model| return model;
-        const model: ?shp.Model = if (library.names.get(key)) |on_disk| blk: {
-            const data = try library.dir.readFileAlloc(library.ctx.io, on_disk, library.ctx.arena, .limited(64 << 20));
-            break :blk try shp.Model.parse(library.ctx.arena, data);
-        } else null;
+        const model: ?shp.Model = if (try library.read(name)) |data| try shp.Model.parse(library.ctx.arena, data) else null;
         try library.models.put(library.ctx.arena, key, model);
         return model;
     }
@@ -81,4 +88,6 @@ test Library {
     // The test model does not ask for components.
     try std.testing.expectEqual(0, (try library.components("ship.shp")).?.len);
     try std.testing.expectEqual(null, try library.components("missing.shp"));
+    try std.testing.expectEqualSlices(u8, shp.testing.buildModel(&buffer), (try library.read("SHIP.SHP")).?);
+    try std.testing.expectEqual(null, try library.read("missing.tga"));
 }

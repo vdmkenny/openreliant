@@ -65,9 +65,10 @@ import slot, so it does not write them back.
 | `sltool fnt` | `.fnt` fonts; renders glyph atlases | [fnt](docs/formats/fnt.md) |
 | `sltool dte` | `.DTE` missions, including a disassembler for their script | [dte](docs/formats/dte.md) |
 | `sltool stats` | Ship, gun, missile and pilot stat tables | [stats](docs/formats/stats.md) |
+| `sltool render` | Draws a model against the backdrop by the engine's rules, as PNG | [renderer](docs/port/renderer.md) |
 
 `make assets`, `models`, `sprites`, `textures`, `sounds` and `fonts` run the extractors over every
-file; `check-models` and `check-missions` validate them. The script VM's opcode, command and
+file; `check-models` and `check-missions` validate them; `render` draws reference images. The script VM's opcode, command and
 condition tables, the engine's model tables, the player's control bindings, the order table and the
 combat maneuvers are derived from the game binary by `src/tools/tablegen` (`make vm-opcodes`, `make
 vm-commands`, `make vm-conditions`, `make model-tables`, `make control-tables`, `make order-tables`,
@@ -82,7 +83,8 @@ Documentation index: [`docs/README.md`](docs/README.md).
 | Path | Contents |
 |---|---|
 | `src/formats/` | Readers for the game's file formats and the containers it shipped in. |
-| `src/lancer.zig`, `src/lancer/` | The payload's structures and tables, laid out as its source tree: `game/` and `surrender/surrenderlib/` mirror `C:\lancer`, a module per original file; `sources.zig` places the code in those files; `libcmt.zig` is the C runtime; `vm.zig` and `input.zig` hold code whose file is unknown. |
+| `src/lancer.zig`, `src/lancer/` | The payload's structures and tables, laid out as its source tree: `game/`, `surrender/surrenderlib/` and `surrender/srd3d/` mirror `C:\lancer`, a module per original file; `sources.zig` places the code in those files; `libcmt.zig` is the C runtime; `vm.zig` and `input.zig` hold code whose file is unknown. |
+| `src/render.zig`, `src/render/` | The reference renderer, which draws a scene in software by the engine's rules. |
 | `src/tools/sltool/` | `sltool`, the command line front end. |
 | `src/tools/tablegen/` | Derives the engine's static tables from the game binary: the script VM's, its model tables, the control bindings, the order table, the combat maneuvers and the source map. |
 | `src/tools/ghidragen/` | Writes the names and data types the Ghidra scripts apply. |
