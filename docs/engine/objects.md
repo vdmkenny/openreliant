@@ -70,6 +70,54 @@ name, such as `GOroot object` for an object's root. It holds a parent frame at `
 orientation at `+0x18` and a position at `+0x3C`. A part's frame hangs from its parent part's, and
 the root frame of an object mounted on an attachment point from the part's.
 
+## Motion
+
+`object_move` (`0x00473FF0`) moves an object for one update. It calls the object's motion function,
+the code at `0x640`, then sets the root's next orientation to its orientation times the object's
+rotation (`0x56C`), and its next position to its position plus the object's velocity (`0x590`),
+and records the length of the velocity as the speed (`0x5D8`). The root keeps that next place at
+`+0x5C` and `+0x68`.
+
+`create_object` gives every object `motion_forward` (`0x004744C0`), which runs the flight model,
+`object_fly` (`0x004742E0`), with a thrust of 1; `motion_backward` runs it with -1.
+
+| Offset | Size | Field |
+|---|---|---|
+| `0x56C` | 36 | Rotation: the turn applied each update, a 3x3 matrix |
+| `0x590` | 12 | Velocity, added to the position each update |
+| `0x5B8` | 4 | Throttle |
+| `0x5BC`, `0x5C0`, `0x5C4` | 4 each | Roll, pitch and yaw inputs, between -1 and 1 |
+| `0x5C8` | 4 | Lateral input |
+| `0x5CC` | 1 | Afterburner |
+| `0x5CD` | 1 | **Unknown.** A reverse burn |
+| `0x5D8` | 4 | Speed |
+| `0x5DC`, `0x5E0`, `0x5E4` | 4 each | Roll, pitch and yaw rates |
+| `0x640` | 4 | Motion function |
+| `0x650` | 4 | The last update's throttle |
+
+The flight model works in the ship's own frame, the
+[model frame](../formats/shp.md#coordinate-frame): X lateral, Y down, Z forward. Each quantity
+moves toward a target through an inertia from the ship's [flight stats](../formats/stats.md):
+`new = old * inertia + target * (1 - inertia)`.
+
+1. **Throttle.** It stays between 0 and 1, but is 2 while the afterburner burns and -1 while the
+   byte at `0x5CD` is set. Either burns 4 units of afterburner fuel an update, and fuel stops at
+   zero.
+2. **Turning** (`object_steer`, `0x00474150`). Each input is clamped to between -1 and 1, and each
+   angular rate moves toward the ship's rate for that axis times the input, through that axis's
+   inertia. For callers that ask, the target is divided by `3 - 2 * |throttle|` where that exceeds
+   1, so the ship turns slower at low throttle. The three rates then make the rotation.
+3. **Speed.** The velocity is turned into the ship's frame. Along Z, `v * |v|` moves toward
+   `u * |u| * target * target`, where `u` is the thrust times the throttle and `target` the cruise
+   speed, or `max_speed` while the afterburner or the byte at `0x5CD` is set; the square root, with
+   its sign, is the new forward speed. Along X, the speed moves toward a quarter of the target times
+   the lateral input. Along Y it only decays. All three use the ship's `inertia`, and the velocity
+   is turned back.
+
+The cruise speed (`object_cruise_speed`, `0x00403060`) is `max_speed` times a factor at `0x738`,
+1.0 when created, times the share of engines left, and, outside one mode of the game, a factor at
+`0x668` that falls as the armor does. So losing engines or armor slows a ship.
+
 ## Components
 
 The parts whose [`.SHP` flags](../formats/shp.md#part-tag-0x01) have bit `0x02` are the object's

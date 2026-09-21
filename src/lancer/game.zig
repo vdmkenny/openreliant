@@ -12,6 +12,10 @@ const lancer = @import("../lancer.zig");
 const Pointer = lancer.Pointer;
 const stats = lancer.stats;
 
+/// What an object's `motion` points at: code that moves the object in a slot for one update, such as
+/// `motion_forward` (`0x004744C0`), which flies it forward by the flight model.
+pub const Motion = lancer.Code("void __fastcall (int slot)");
+
 /// Slots in `game_objects`. `create_object` stops the game with a fatal error past the last.
 pub const max_objects = 400;
 
@@ -62,11 +66,11 @@ pub const Node = extern struct {
     /// Row-major 3x3, relative like `position`.
     orientation: [9]f32,
     _unknown_44: [0x18]u8,
-    /// **Unknown.** Set together with `position`, to the same value, when the part's node is made
-    /// or the object is placed.
-    _unknown_5c: shp.Vec3,
-    /// **Unknown.** Likewise for `orientation`.
-    _unknown_68: [9]f32,
+    /// Where `position` goes next: `object_move` puts the position plus the velocity here, and
+    /// placing an object sets both. `object_link_part` copies it into `position` and the frame.
+    next_position: shp.Vec3,
+    /// Likewise for `orientation`: `object_move` puts the orientation times the rotation here.
+    next_orientation: [9]f32,
     _unknown_8c: [0x18]u8,
     /// The model part the node stands for, as loaded.
     part: Pointer(shp.Part),
@@ -143,12 +147,39 @@ pub const GameObject = extern struct {
     /// The parts of its model whose flags mark them as components, in the order `0x00468760`
     /// finds them: each node's marked children, then each child's in turn.
     components: [max_components]Component,
-    _unknown_518: [0xB8]u8,
+    _unknown_518: [0x54]u8,
+    /// The turn applied to its orientation each update, which `object_steer` builds from the
+    /// angular rates.
+    rotation: [9]f32,
+    /// Added to its position each update.
+    velocity: shp.Vec3,
+    _unknown_59c: f32,
+    /// **Unverified:** the corners of its model's bounding box, which `0x004769F0` accumulates.
+    bounds_min: shp.Vec3,
+    bounds_max: shp.Vec3,
+    /// Up to 1 in flight, 2 while `afterburner` is set, and -1 while `_unknown_5cd` is.
+    throttle: f32,
+    /// Steering inputs, each between -1 and 1.
+    roll_input: f32,
+    pitch_input: f32,
+    yaw_input: f32,
+    /// Pushes it sideways: its lateral speed follows a quarter of its cruise speed times this.
+    lateral_input: f32,
+    /// Set while the afterburner burns, 4 units of `afterburner_fuel` an update.
+    afterburner: bool,
+    /// **Unknown.** Sets the throttle to -1 and burns fuel like the afterburner.
+    _unknown_5cd: u8,
+    _unknown_5ce: u16,
     /// Engines in its model: parts of subsystem class 5.
     engines: u32,
     /// The share of its engines left: 1.0 when created, less `1 / engines` for each one destroyed.
     engines_intact: f32,
-    _unknown_5d8: [0x10]u8,
+    /// The length of `velocity`.
+    speed: f32,
+    /// Angular rates, which `object_steer` moves toward the inputs.
+    roll_rate: f32,
+    pitch_rate: f32,
+    yaw_rate: f32,
     /// `100 * ShipCombat.afterburner_fuel` when created, or zero in one of the game's modes.
     afterburner_fuel: i32,
     _unknown_5ec: [4]u8,
@@ -157,11 +188,16 @@ pub const GameObject = extern struct {
     /// Four values, each `6 * ShipCombat.armor_class - 1` when created. `ship_damage_value` reports
     /// the lowest.
     armor: [4]f32,
-    _unknown_610: [0x34]u8,
+    _unknown_610: [0x30]u8,
+    /// Moves it each update; `motion_forward` when created.
+    motion: Pointer(Motion),
     /// Nonzero while it is hostile: `SetHostile`. When created, a value of its combat stats'
     /// (`+0x2A`), or in one of the game's modes one worked out otherwise.
     hostile: i32,
-    _unknown_648: [0xF8]u8,
+    _unknown_648: [8]u8,
+    /// The throttle of the last update.
+    last_throttle: f32,
+    _unknown_654: [0xEC]u8,
     /// Its pilot: the record in `pilotstats.bin`, which `object_set_pilot` gives it.
     pilot: i32,
     /// **Unknown.** A 24-byte record for the pilot, from a table at `0x5048D8`.
@@ -185,7 +221,14 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "afterburner_fuel") == 0x5E8);
         assert(@offsetOf(GameObject, "shields") == 0x5F0);
         assert(@offsetOf(GameObject, "armor") == 0x600);
+        assert(@offsetOf(GameObject, "rotation") == 0x56C);
+        assert(@offsetOf(GameObject, "velocity") == 0x590);
+        assert(@offsetOf(GameObject, "throttle") == 0x5B8);
+        assert(@offsetOf(GameObject, "afterburner") == 0x5CC);
+        assert(@offsetOf(GameObject, "speed") == 0x5D8);
+        assert(@offsetOf(GameObject, "motion") == 0x640);
         assert(@offsetOf(GameObject, "hostile") == 0x644);
+        assert(@offsetOf(GameObject, "last_throttle") == 0x650);
         assert(@offsetOf(GameObject, "pilot") == 0x740);
         assert(@offsetOf(GameObject, "created") == 0xB94);
         assert(@sizeOf(GameObject) == 0xB98);

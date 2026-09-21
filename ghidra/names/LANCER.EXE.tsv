@@ -209,3 +209,21 @@
 004c14f0	function	vec3_copy	void __fastcall (Vec3 *to, Vec3 *from)
 004c1b50	function	mat3_copy	void __fastcall (float *to, float *from)	Copies a 3x3 matrix
 004c1be0	function	mat3_identity	void __fastcall (float *m)
+004c30a0	function	sr_fabs	float __cdecl (float x)
+004c30c0	function	sr_sqrt	float __cdecl (float x)
+004c30e0	function	sr_sin	float __cdecl (float x)
+004c3100	function	sr_cos	float __cdecl (float x)
+004c1270	function	vec3_length	float __cdecl (Vec3 *v)
+004c0ea0	function	vec3_sum	void __fastcall (Vec3 *out, Vec3 *a, Vec3 *b)	out = a + b
+004c2370	function	mat3_transform_transposed	void __fastcall (Vec3 *out, Vec3 *v, float *m)	out = the transpose of m, times v
+004c23c0	function	mat3_transform	void __fastcall (Vec3 *out, Vec3 *v, float *m)	out = m times v
+004c1cb0	function	mat3_product	void __fastcall (float *out, float *a, float *b)	The product of two 3x3 matrices
+004c2410	function	mat3_from_angles	void __thiscall (float pitch, float yaw, float roll)	Builds the rotation matrix in ECX from three angles
+
+# The flight model
+00473ff0	function	object_move	void __fastcall (int slot)	Moves an object for one update: its motion function, then its rotation and velocity
+00474150	function	object_steer	void __fastcall (GameObject *object, bool throttle_turns)	Moves each angular rate toward its input times the ship's rate, through its inertia, and builds the rotation
+004742e0	function	object_fly	void __thiscall (float thrust)	The flight model for the object in the slot in ECX: throttle, steering, then speed through the inertia
+004744c0	function	motion_forward	void __fastcall (int slot)	object_fly with thrust 1
+004744d0	function	motion_backward	void __fastcall (int slot)	object_fly with thrust -1
+00403060	function	object_cruise_speed	float __fastcall (GameObject *object)	max_speed, times the factor at 0x738, engines_intact and, outside one mode, the armor factor at 0x668
