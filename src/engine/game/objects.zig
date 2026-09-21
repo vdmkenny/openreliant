@@ -141,6 +141,8 @@ pub const Model = struct {
     /// Not ported: the light it also casts on what stands near it, which takes a paler colour than
     /// its sprite.
     pub const Light = struct {
+        /// The part that carries it, whose node `node_draw` walks to reach it.
+        part: usize,
         /// Its place in the model, from the root.
         origin: Vector,
         /// Its sprite's colour, which the attachment's id picks.
@@ -200,13 +202,14 @@ pub const Model = struct {
         }
         const lights = try gpa.alloc(Light, count);
         var made: usize = 0;
-        for (model.parts) |part| {
+        for (model.parts, 0..) |part, index| {
             const origin = part.part.position;
             for (part.attachments) |attachment| {
                 if (attachment.kind != .light) continue;
                 const light = &lights[made];
                 made += 1;
                 light.* = .{
+                    .part = index,
                     .origin = .{
                         attachment.position.x + origin.x,
                         attachment.position.y + origin.y,
@@ -256,6 +259,8 @@ pub const Model = struct {
         const centre: Vector = moment;
         model.centre += centre;
         for (model.parts) |*part| part.origin -= centre;
+        // A light stands on the part that carries it, so it moves with the parts.
+        for (model.lights) |*light| light.origin -= centre;
 
         model.radius = 0;
         model.bounds = .{ @splat(std.math.floatMax(f32)), @splat(-std.math.floatMax(f32)) };
@@ -292,6 +297,9 @@ pub const Model = struct {
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &part.object }, layer);
         }
         for (model.lights) |*light| {
+            // A light goes dark with the part that carries it, as a damaged part's does while the
+            // part it belongs to is whole.
+            if (model.parts[light.part].hidden) continue;
             const world = math.transform(model.orientation, light.origin) + model.position;
             const away = math.length(world - view.camera);
             const shown = blinkBrightness(light.*, view.frame_start) * distanceBrightness(away);
@@ -407,7 +415,19 @@ test Model {
         .origin = .{ 0, 0, 100 },
         .object = .{ .flags = .{}, .position = @splat(0), .radius = mesh.radius, .levels = &levels },
     }};
-    var model: Model = .{ .parts = &parts, .lights = &.{} };
+    // A light standing on that part, at the same place in the model.
+    var lights = [_]Model.Light{.{
+        .part = 0,
+        .origin = .{ 0, 0, 100 },
+        .colour = .{ 1, 0, 0 },
+        .size = 10,
+        .blink = .{ 0, 0 },
+        .phase = 0,
+        .set = .{ .sprites = &.{} },
+        .sprite = .{.{}},
+    }};
+    lights[0].set.sprites = lights[0].sprite[0..1];
+    var model: Model = .{ .parts = &parts, .lights = &lights };
     // A part hangs at its origin, turned with the root.
     model.place(.{ 1000, 0, 0 }, math.rotation(.y, std.math.pi / 2.0));
     try std.testing.expectApproxEqAbs(1100, parts[0].object.position[0], 1e-3);
@@ -415,7 +435,8 @@ test Model {
     var scene: srcore.Scene = .{};
     defer scene.deinit(gpa);
     try model.draw(gpa, &scene, .world, .{});
-    try std.testing.expectEqual(1, scene.layers.get(.world).items.len);
+    // Its one part and the light standing on it.
+    try std.testing.expectEqual(2, scene.layers.get(.world).items.len);
     // Recentred on its one part's mass, its origin moves to the part's centre: 100 along Z, plus
     // the part's own first moment over its volume.
     var data = std.mem.zeroes(shp.PartData);
@@ -426,7 +447,19 @@ test Model {
     model.recentre(&source);
     try std.testing.expectEqual(@as(Vector, .{ 0, 0, 110 }), model.centre);
     try std.testing.expectEqual(@as(Vector, .{ 0, 0, -10 }), parts[0].origin);
+    // A light moves with the parts, so it stays where it stood on the hull.
+    try std.testing.expectEqual(parts[0].origin, lights[0].origin);
     try std.testing.expectApproxEqAbs(@sqrt(100.0 * 100.0 * 2.0 + 10.0 * 10.0), model.radius, 1e-3);
+
+    // The part and its light are both drawn; hidden, the part takes its light with it.
+    scene.clear();
+    try model.draw(gpa, &scene, .world, .{});
+    try std.testing.expectEqual(2, scene.layers.get(.world).items.len);
+    scene.clear();
+    parts[0].hidden = true;
+    try model.draw(gpa, &scene, .world, .{});
+    try std.testing.expectEqual(0, scene.layers.get(.world).items.len);
+    parts[0].hidden = false;
 
     // Hidden, as from its own cockpit, it adds nothing.
     scene.clear();
@@ -446,6 +479,7 @@ test lightColour {
 
 test blinkBrightness {
     var light: Model.Light = .{
+        .part = 0,
         .origin = @splat(0),
         .colour = .{ 1, 1, 1 },
         .size = 100,
