@@ -83,8 +83,8 @@ stand half of the way across, at offsets of `0x39`, `0x5F` and `0x98`:
 | Offset | Shape | Shows |
 | --- | --- | --- |
 | `0x39` | `0xCD`, a ship with its engines burning | the afterburner fuel, in hundreds |
-| `0x5F` | `0xD0`, a skull and crossbones, drawn 4 left | the word at `0x00562DF4`, which the front end sets. **Unknown** what it counts |
-| `0x98` | `0xCF`, a coil, drawn `0x1A` left | the object's word at `+0x5EC`, 29 when it is created, drawn only while a condition of its own holds. **Unknown** what it counts |
+| `0x5F` | `0xD0`, a skull and crossbones, drawn 4 left | `skull_count` (`0x00562DF4`), one of a run of tallies at `0x562DEC` to `0x562DF8` that a mission's start zeroes together and that is kept across a run. **Unknown** what it counts; it reads 0 in a fresh mission |
+| `0x98` | `0xCF`, a coil, drawn `0x1A` left | the object's word at `+0x5EC`, 29 when it is created, drawn only while a condition of its own holds. A running game shows 29 there, which is that value untouched. **Unknown** what it counts |
 
 The port draws the fuel ([`engine/game/hud.zig`](../../src/engine/game/hud.zig)); the other two wait
 on what they count.
