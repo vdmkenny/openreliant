@@ -225,6 +225,17 @@ The port builds the meshes and draws the glows in `engine/game/environfx.zig` an
 `engine/game/objects.zig`. Not ported: the Ripper's rule, which needs the motion routines it tells
 its states apart by.
 
+## What is too far off to draw
+
+`node_draw` leaves out an object, and everything hanging from it, once its radius no longer covers
+a pixel: it compares the distance from the camera against the object's radius times the screen's
+scale across (`srapi.Projection.scale`, the screen's width less a tenth of a pixel times the
+projection's factor), times the object's own `visibility`. The radius over the distance, times that
+scale, is how many pixels across the object is drawn, so the test is one pixel of it.
+
+`object_alloc` and `create_object` both leave `visibility` at 1, so nothing in the shipped game
+sees further or less far than its size gives it.
+
 ## Static lights
 
 A model carries its own lights as attachments, and the loader bakes them into vertex colours once

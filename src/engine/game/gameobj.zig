@@ -65,7 +65,10 @@ pub const GameObject = extern struct {
     /// The root of its model hierarchy.
     root: Node,
     /// **Unknown.** 1.0 when created; the collision sweep multiplies `radius` by it.
-    _unknown_12c: f32,
+    /// How far off it stays worth drawing, over the distance its radius alone would give it
+    /// (`node_draw`). `object_alloc` and `create_object` both leave it at 1, so nothing in the
+    /// shipped game sees further or less far than its size says.
+    visibility: f32,
     _unknown_130: [0x22]u8,
     component_count: i16,
     _unknown_154: [0xF4]u8,
@@ -242,7 +245,7 @@ pub const GameObject = extern struct {
         assert(@bitOffsetOf(Flags, "unlisted") == 29);
         assert(@offsetOf(GameObject, "combat") == 0x10);
         assert(@offsetOf(GameObject, "root") == 0x28);
-        assert(@offsetOf(GameObject, "_unknown_12c") == 0x12C);
+        assert(@offsetOf(GameObject, "visibility") == 0x12C);
         assert(@offsetOf(GameObject, "component_count") == 0x152);
         assert(@offsetOf(GameObject, "components") == 0x248);
         assert(@offsetOf(GameObject, "engines") == 0x5D0);

@@ -195,7 +195,11 @@ pub const Frame = struct {
 /// then `sr_render`. `arena` holds what the frame needs until it is drawn.
 pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context: *srapi.Context, frame: Frame, driver: srcore.Driver) Allocator.Error!void {
     scene.clear();
-    for (frame.models) |*model| try model.draw(gpa, scene, .world, frame.attachments);
+    // How far off an object stops being worth drawing follows the frame's own projection, so the
+    // caller does not have to hand it over with the rest.
+    var attachments = frame.attachments;
+    attachments.scale = context.projection.scale[0];
+    for (frame.models) |*model| try model.draw(gpa, scene, .world, attachments);
     try frame.space.frame(gpa, scene, context, frame.view, frame.cockpit_mode);
     if (context.hardware) try frame.sky.frame(gpa, scene, context);
     if (frame.view != frame.last_view) frame.space.resetStreaks();

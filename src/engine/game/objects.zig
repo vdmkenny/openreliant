@@ -150,6 +150,9 @@ pub const Model = struct {
     /// Its farthest vertex from its origin, and its bounding box (`GameObject.radius`,
     /// `bounds_min`, `bounds_max`), as `recentre` leaves them.
     radius: f32 = 0,
+    /// How far off it stays worth drawing, over what its radius alone gives it
+    /// (`GameObject.visibility`). Nothing in the shipped game moves it off 1.
+    visibility: f32 = 1,
     bounds: [2]Vector = .{ @splat(0), @splat(0) },
 
     /// A light a model carries, which `node_draw` draws for node kinds 3 and 5: an attachment of
@@ -512,6 +515,7 @@ pub const Model = struct {
     /// away to see.
     pub fn draw(model: *Model, gpa: Allocator, scene: *srcore.Scene, layer: srcore.Layer, view: View) Allocator.Error!void {
         if (model.hidden) return;
+        if (view.tooFarOff(model.position, model.radius * model.visibility)) return;
         for (model.parts) |*part| {
             if (part.hidden) continue;
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &part.object }, layer);
@@ -598,6 +602,19 @@ pub const View = struct {
     throttle: f32 = 0,
     /// Where the glows' flicker comes from; without one they burn steady.
     random: ?*libcmt.Rand = null,
+    /// Pixels to a view unit across the screen (`srapi.Projection.scale`), which says how far off
+    /// an object stops being worth drawing. Zero draws one however far off it stands.
+    scale: f32 = 0,
+
+    /// Whether an object of `radius` standing at `at` is too far off to be worth drawing
+    /// (`node_draw`): its radius no longer covers a pixel, since the radius over the distance,
+    /// times the screen's scale, is how many pixels across it is drawn.
+    pub fn tooFarOff(view: View, at: Vector, radius: f32) bool {
+        if (!(view.scale > 0)) return false;
+        const reach = view.scale * radius;
+        const away = at - view.camera;
+        return reach * reach < math.dot(away, away);
+    }
 };
 
 /// The glow that burns at its full length whatever the throttle, the last of the seven
@@ -1071,4 +1088,41 @@ test "a gun attachment mounts the model its id names" {
     var at = &deep;
     while (at.mounts.len > 0) : (depth += 1) at = &at.mounts[0].model;
     try std.testing.expectEqual(shp.max_mount_depth, depth);
+}
+
+test "an object too far off to cover a pixel is not drawn" {
+    const gpa = std.testing.allocator;
+    const srmesh = @import("../surrender/surrenderlib/srmesh.zig");
+    const mesh = try srmesh.testing.square(gpa);
+    defer mesh.deinit(gpa);
+    var levels = [_]srapiext.Level{.{ .mesh = &mesh, .until = std.math.inf(f32) }};
+    var parts = [_]Model.Part{.{
+        .hidden = false,
+        .parent = null,
+        .origin = @splat(0),
+        .object = .{ .flags = .{}, .position = @splat(0), .radius = mesh.radius, .levels = &levels },
+    }};
+    var model: Model = .{ .parts = &parts, .order = &.{0}, .lights = &.{}, .glows = &.{}, .mounts = &.{} };
+    model.radius = 100;
+    model.place(.{ 0, 0, 50_000 }, math.identity);
+
+    // A thousand pixels to a view unit: a radius of 100 covers a pixel out to 100,000 units.
+    var scene: srcore.Scene = .{};
+    defer scene.deinit(gpa);
+    try model.draw(gpa, &scene, .world, .{ .scale = 1000 });
+    try std.testing.expectEqual(1, scene.layers.get(.world).items.len);
+    scene.clear();
+    model.place(.{ 0, 0, 150_000 }, math.identity);
+    try model.draw(gpa, &scene, .world, .{ .scale = 1000 });
+    try std.testing.expectEqual(0, scene.layers.get(.world).items.len);
+    // Without a scale nothing is left out, however far off it stands.
+    scene.clear();
+    try model.draw(gpa, &scene, .world, .{});
+    try std.testing.expectEqual(1, scene.layers.get(.world).items.len);
+    // An object that sees less far than its size says goes first.
+    scene.clear();
+    model.place(.{ 0, 0, 50_000 }, math.identity);
+    model.visibility = 0.25;
+    try model.draw(gpa, &scene, .world, .{ .scale = 1000 });
+    try std.testing.expectEqual(0, scene.layers.get(.world).items.len);
 }
