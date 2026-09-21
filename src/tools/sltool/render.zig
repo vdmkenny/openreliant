@@ -136,7 +136,7 @@ fn draw(ctx: Context, command: Command) !void {
             return error.FileNotFound;
         };
         const loaded = try srofiles.modelLoad(gpa, &textures, model, .{}, false);
-        var placed: objects.Model = try .create(gpa, model, &loaded);
+        var placed: objects.Model = try .create(gpa, model, &loaded, try objects.lightSprite(&textures));
         placed.recentre(model);
         const distance = command.distance orelse @max(placed.radius, 1) * context.projection.scale[1] / (0.35 * @as(f32, @floatFromInt(command.height)));
         placed.place(math.normalize(command.toward) * @as(math.Vector, @splat(distance)), math.lookAt(math.normalize(command.heading)));
@@ -157,7 +157,7 @@ fn draw(ctx: Context, command: Command) !void {
         var frame_arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
         defer frame_arena.deinit();
         scene.clear();
-        if (object) |*o| try o.draw(gpa, &scene, .world);
+        if (object) |*o| try o.draw(gpa, &scene, .world, .{ .camera = context.camera.position });
         try space.frame(gpa, &scene, &context, command.view, .open);
         try sky.frame(gpa, &scene, &context);
         try srcore.render(frame_arena.allocator(), &context, &scene, driver.interface());

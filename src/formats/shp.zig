@@ -219,7 +219,11 @@ pub const Attachment = extern struct {
     /// its colour from it instead: 0 blue, 1 green, 2 yellow, 3 red, and nothing beyond
     /// (`static_lights_bake`).
     id: u32,
-    _unknown_38: [0x1C]u8,
+    _unknown_38: [0x14]u8,
+    /// How large a `light` is drawn: the sprite reaches this far either side of its centre at its
+    /// largest, seven times over (`node_draw`).
+    light_size: f32,
+    _unknown_50: u32,
     /// How a `light` blinks, in ticks: the first is how long it stays on, the second how long it
     /// stays off. A light is baked into the meshes only while both are zero, so only a light that
     /// never blinks is baked (`static_lights_mark`).
@@ -247,6 +251,7 @@ pub const Attachment = extern struct {
 
     comptime {
         assert(@offsetOf(Attachment, "id") == 0x34);
+        assert(@offsetOf(Attachment, "light_size") == 0x4C);
         assert(@offsetOf(Attachment, "blink") == 0x54);
         assert(@offsetOf(Attachment, "blink_phase") == 0x5C);
         assert(@offsetOf(Attachment, "light_range") == 0x74);

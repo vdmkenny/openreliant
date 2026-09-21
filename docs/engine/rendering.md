@@ -200,6 +200,12 @@ first how long it stays on and the second how long it stays off, from a start it
 sets, and fades over 200 ticks at each end; the light it casts is cut once that fade takes it below
 0.9, while its sprite keeps fading.
 
+A light is drawn as one sprite, the one attachment kind 4 id 0 names, at its place on the part that
+carries it. Its sprite grows with how far off it is, up to six thousand units, so that it stays
+worth seeing at a distance, and takes half its colour; its brightness is full within a thousand
+units and fades to a tenth by fifteen thousand, staying there beyond. The size the attachment gives
+it is how far it reaches either side of its centre, seven times over.
+
 Each light adds to a vertex what a point light would (`static_light_bake`, `0x004A4130`): its
 colour times its brightness, the cosine between the vertex's normal and the direction to the light,
 and `(1 - r / R)^2`, with `R` the brightness times the range. So a vertex at the light's own reach

@@ -14,6 +14,9 @@ const srcore = @import("../surrender/surrenderlib/srcore.zig");
 const Frame = srapiext.Frame;
 const GameObject = @import("gameobj.zig").GameObject;
 const srofiles = @import("srofiles.zig");
+const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
+const matmanager = @import("matmanager.zig");
+const create = @import("create.zig");
 const xtrabits = @import("xtrabits.zig");
 const Vector = math.Vector;
 
@@ -122,6 +125,7 @@ pub const Model = struct {
     position: Vector = @splat(0),
     orientation: math.Matrix = math.identity,
     parts: []Part,
+    lights: []Light,
     /// Where the model's origin lies from the object's, less (`GameObject + 0x524`): the centres
     /// of mass `recentre` moved the origin to.
     centre: Vector = @splat(0),
@@ -129,6 +133,28 @@ pub const Model = struct {
     /// `bounds_min`, `bounds_max`), as `recentre` leaves them.
     radius: f32 = 0,
     bounds: [2]Vector = .{ @splat(0), @splat(0) },
+
+    /// A light a model carries, which `node_draw` draws for node kinds 3 and 5: an attachment of
+    /// kind `light`, drawn as one sprite coloured by the attachment's id and blinking by its own
+    /// timing. Every light draws the same sprite, the one attachment kind 4 id 0 names.
+    ///
+    /// Not ported: the light it also casts on what stands near it, which takes a paler colour than
+    /// its sprite.
+    pub const Light = struct {
+        /// Its place in the model, from the root.
+        origin: Vector,
+        /// Its sprite's colour, which the attachment's id picks.
+        colour: [3]f32,
+        /// How far its sprite reaches either side of its centre, before the distance it is seen
+        /// from scales it.
+        size: f32,
+        /// Ticks on, then off. A light with neither never blinks.
+        blink: [2]i32,
+        /// Where in its blink it starts, so that lights side by side need not blink together.
+        phase: i32,
+        set: srapiext.SpriteSet,
+        sprite: [1]srapiext.Sprite,
+    };
 
     pub const Part = struct {
         /// The node's `hidden` flag.
@@ -142,8 +168,9 @@ pub const Model = struct {
     /// A node for each part of `model` (`node_add_part`, `0x00499430`), its object flagged as
     /// `model_load` left the part (`loaded`), reached by the lights `lightMask` lets through, and as
     /// far across as its largest level. A part of a component's damaged model is hidden.
-    pub fn create(gpa: Allocator, model: *const shp.Model, loaded: *const srofiles.Loaded) Allocator.Error!Model {
+    pub fn create(gpa: Allocator, model: *const shp.Model, loaded: *const srofiles.Loaded, light_sprite: ?*srtexture.Image) Allocator.Error!Model {
         const parts = try gpa.alloc(Part, model.parts.len);
+        errdefer gpa.free(parts);
         for (parts, model.parts, loaded.parts) |*node, source, part| {
             var radius: f32 = 0;
             for (part.meshes) |mesh| radius = @max(radius, mesh.radius);
@@ -160,11 +187,49 @@ pub const Model = struct {
                 },
             };
         }
-        return .{ .parts = parts };
+        return .{ .parts = parts, .lights = try createLights(gpa, model, light_sprite) };
+    }
+
+    /// One light for each attachment of kind `light` a part carries, at its place in the model.
+    fn createLights(gpa: Allocator, model: *const shp.Model, image: ?*srtexture.Image) Allocator.Error![]Light {
+        var count: usize = 0;
+        for (model.parts) |part| {
+            for (part.attachments) |attachment| {
+                if (attachment.kind == .light) count += 1;
+            }
+        }
+        const lights = try gpa.alloc(Light, count);
+        var made: usize = 0;
+        for (model.parts) |part| {
+            const origin = part.part.position;
+            for (part.attachments) |attachment| {
+                if (attachment.kind != .light) continue;
+                const light = &lights[made];
+                made += 1;
+                light.* = .{
+                    .origin = .{
+                        attachment.position.x + origin.x,
+                        attachment.position.y + origin.y,
+                        attachment.position.z + origin.z,
+                    },
+                    .colour = lightColour(attachment.id),
+                    .size = attachment.light_size,
+                    .blink = attachment.blink,
+                    .phase = attachment.blink_phase,
+                    .sprite = .{.{}},
+                    .set = .{ .flags = .{ ._unknown_6 = 1 }, .sprites = &.{} },
+                };
+                if (image) |texture| light.set.surface = lightSurface(texture);
+                // The set's sprite stands in the light itself, which does not move again.
+                light.set.sprites = light.sprite[0..1];
+            }
+        }
+        return lights;
     }
 
     pub fn deinit(model: Model, gpa: Allocator) void {
         gpa.free(model.parts);
+        gpa.free(model.lights);
     }
 
     /// Moves the object's origin to its parts' centre of mass, as `object_link_parts` ends
@@ -220,14 +285,107 @@ pub const Model = struct {
     /// (`node_draw`, `0x0049A8C0`, for the model's part nodes), none while the object is hidden.
     /// Not yet ported: what else it draws (lights, engine glows, the cloak) and its leaving out an
     /// object too far away to see.
-    pub fn draw(model: *Model, gpa: Allocator, scene: *srcore.Scene, layer: srcore.Layer) Allocator.Error!void {
+    pub fn draw(model: *Model, gpa: Allocator, scene: *srcore.Scene, layer: srcore.Layer, view: View) Allocator.Error!void {
         if (model.hidden) return;
         for (model.parts) |*part| {
             if (part.hidden) continue;
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &part.object }, layer);
         }
+        for (model.lights) |*light| {
+            const world = math.transform(model.orientation, light.origin) + model.position;
+            const away = math.length(world - view.camera);
+            const shown = blinkBrightness(light.*, view.frame_start) * distanceBrightness(away);
+            if (!(shown > 0)) continue;
+            light.set.position = world;
+            light.sprite[0].half_size = @splat(light.size * distanceSize(away) * sprite_scale);
+            for (&light.sprite[0].colour, light.colour) |*channel, c| {
+                channel.* = @min(shown, 1) * c * sprite_share;
+            }
+            try xtrabits.sceneAdd(gpa, scene, .{ .sprites = &light.set }, layer);
+        }
     }
 };
+
+/// What a model's lights are drawn by: where the camera stands, since a light's size and brightness
+/// follow how far off it is, and the frame's tick, which says where each light stands in its blink.
+pub const View = struct {
+    camera: Vector = @splat(0),
+    /// `frame_start`, the mission tick the frame began on.
+    frame_start: i32 = 0,
+};
+
+/// The sprite every light draws, whatever its colour: the one attachment kind 4 id 0 names.
+pub fn lightSprite(textures: *srtexture.Table) matmanager.Error!?*srtexture.Image {
+    const entry = create.models.attachment(.light, 0) orelse return null;
+    const name = entry.sprite orelse return null;
+    return try matmanager.textureRequire(textures, name);
+}
+
+/// The colour of a light of each attachment id (`node_draw`). Past the sixth it takes none.
+fn lightColour(id: u32) [3]f32 {
+    return switch (id) {
+        0 => .{ 0, 0, 1 },
+        1 => .{ 0, 1, 0 },
+        2 => .{ 1, 1, 0 },
+        3 => .{ 1, 0, 0 },
+        4 => .{ 0, 1, 1 },
+        5 => .{ 1, 1, 1 },
+        else => .{ 0, 0, 0 },
+    };
+}
+
+/// A light's sprite, added and lit by its own colour, as the sun's sprites are.
+fn lightSurface(image: *srtexture.Image) srapiext.Surface {
+    return .{
+        .material = .{
+            .two_pass = false,
+            ._unknown_01 = 0,
+            .coordinates = .{ .mesh, .none },
+            .lit = .{ true, false },
+            .blend = .{ .add, .off },
+            .image = .{ .null, .null },
+        },
+        .textures = .{ .{ .image = image }, .none },
+    };
+}
+
+/// How far a light's sprite reaches at its largest, over the size the attachment gives it.
+const sprite_scale: f32 = 7;
+
+/// The share of its colour a light's sprite takes.
+const sprite_share: f32 = 0.5;
+
+/// A light fades over these ticks at each end of its blink.
+const blink_fade: f32 = 200;
+
+/// Where a light stands in its blink at `frame_start`: 1 while it is full on, falling away over
+/// `blink_fade` ticks at each end, and nothing while it is off. A light with no blink is always on.
+fn blinkBrightness(light: Model.Light, frame_start: i32) f32 {
+    const period = light.blink[0] +% light.blink[1];
+    if (period == 0) return 1;
+    const at = @mod((frame_start *% 10) -% light.phase, period);
+    if (light.blink[0] < at) return @as(f32, @floatFromInt(light.blink[0] - at + 200)) / blink_fade;
+    if (period < at) return @as(f32, @floatFromInt(at - period + 200)) / blink_fade;
+    return 1;
+}
+
+/// A light is full at a thousand units off, a tenth of that beyond fifteen thousand, and between
+/// the two it fades from one to the other.
+fn distanceBrightness(away: f32) f32 {
+    const near = 1000;
+    const far = 15000;
+    const faded = 0.1;
+    if (away <= near) return 1;
+    if (away >= far) return faded;
+    return 1 + (faded - 1) * (away - near) / (far - near);
+}
+
+/// A light's sprite grows with how far off it is, up to six thousand units, so that it stays worth
+/// seeing at a distance.
+fn distanceSize(away: f32) f32 {
+    const full = 6000;
+    return if (away >= full) 1 else away / full;
+}
 
 test lightMask {
     try std.testing.expectEqual(0x18, lightMask(true));
@@ -249,14 +407,14 @@ test Model {
         .origin = .{ 0, 0, 100 },
         .object = .{ .flags = .{}, .position = @splat(0), .radius = mesh.radius, .levels = &levels },
     }};
-    var model: Model = .{ .parts = &parts };
+    var model: Model = .{ .parts = &parts, .lights = &.{} };
     // A part hangs at its origin, turned with the root.
     model.place(.{ 1000, 0, 0 }, math.rotation(.y, std.math.pi / 2.0));
     try std.testing.expectApproxEqAbs(1100, parts[0].object.position[0], 1e-3);
 
     var scene: srcore.Scene = .{};
     defer scene.deinit(gpa);
-    try model.draw(gpa, &scene, .world);
+    try model.draw(gpa, &scene, .world, .{});
     try std.testing.expectEqual(1, scene.layers.get(.world).items.len);
     // Recentred on its one part's mass, its origin moves to the part's centre: 100 along Z, plus
     // the part's own first moment over its volume.
@@ -273,6 +431,58 @@ test Model {
     // Hidden, as from its own cockpit, it adds nothing.
     scene.clear();
     model.hidden = true;
-    try model.draw(gpa, &scene, .world);
+    try model.draw(gpa, &scene, .world, .{});
     try std.testing.expectEqual(0, scene.layers.get(.world).items.len);
+}
+
+test lightColour {
+    // The six the drawing knows, and nothing beyond them.
+    try std.testing.expectEqual([3]f32{ 0, 0, 1 }, lightColour(0));
+    try std.testing.expectEqual([3]f32{ 1, 0, 0 }, lightColour(3));
+    try std.testing.expectEqual([3]f32{ 0, 1, 1 }, lightColour(4));
+    try std.testing.expectEqual([3]f32{ 1, 1, 1 }, lightColour(5));
+    try std.testing.expectEqual([3]f32{ 0, 0, 0 }, lightColour(6));
+}
+
+test blinkBrightness {
+    var light: Model.Light = .{
+        .origin = @splat(0),
+        .colour = .{ 1, 1, 1 },
+        .size = 100,
+        .blink = .{ 0, 0 },
+        .phase = 0,
+        .set = .{ .sprites = &.{} },
+        .sprite = .{.{}},
+    };
+    // A light that does not blink is always full on.
+    try std.testing.expectEqual(1, blinkBrightness(light, 0));
+    try std.testing.expectEqual(1, blinkBrightness(light, 12_345));
+
+    // On for 1000 ticks of its clock, then off for 1000; the clock runs ten to the tick.
+    light.blink = .{ 1000, 1000 };
+    try std.testing.expectEqual(1, blinkBrightness(light, 0));
+    try std.testing.expectEqual(1, blinkBrightness(light, 100)); // at 1000, still on
+    // Just past the on time it fades, and by 200 of its clock it is out.
+    try std.testing.expectApproxEqAbs(0.5, blinkBrightness(light, 110), 1e-6);
+    try std.testing.expect(blinkBrightness(light, 120) <= 0);
+    // Its phase shifts where it stands: the same light started later is still on.
+    light.phase = 1000;
+    try std.testing.expectEqual(1, blinkBrightness(light, 110));
+}
+
+test distanceBrightness {
+    // Full within a thousand units, a tenth past fifteen thousand, and between the two it fades.
+    try std.testing.expectEqual(1, distanceBrightness(0));
+    try std.testing.expectEqual(1, distanceBrightness(1000));
+    try std.testing.expectApproxEqAbs(0.55, distanceBrightness(8000), 1e-6);
+    try std.testing.expectApproxEqAbs(0.1, distanceBrightness(15000), 1e-6);
+    try std.testing.expectApproxEqAbs(0.1, distanceBrightness(100_000), 1e-6);
+}
+
+test distanceSize {
+    // A light's sprite grows with distance up to six thousand units, then stays.
+    try std.testing.expectEqual(0, distanceSize(0));
+    try std.testing.expectApproxEqAbs(0.5, distanceSize(3000), 1e-6);
+    try std.testing.expectEqual(1, distanceSize(6000));
+    try std.testing.expectEqual(1, distanceSize(60_000));
 }

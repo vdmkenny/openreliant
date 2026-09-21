@@ -85,8 +85,9 @@ Deliberate differences from the original, each marked **Improvement** where it i
 - The mesh sets `model_load` builds for cloaking.
 - Hanging each part from its parent part's node (`object_link_parts`), which leaves every part
   where it is, and the moment of inertia `object_bounds` sums.
-- What `node_draw` draws besides model parts: lights, engine glows, the cloak; and its leaving out
-  objects too far away to see.
+- What `node_draw` draws besides a model's parts and its lights: engine glows, which brighten with
+  the throttle, and the cloak; and its leaving out objects too far away to see. A light's sprite is
+  drawn, but not the light it also casts on what stands near it.
 - `backdrop_place`, which aims the sun, the lights and the nebula from a mission's markers, and the
   objects `backdrop_frame` turns and makes glow.
 - Scene objects of kinds 5 and 6.

@@ -321,6 +321,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .view = view.view,
             .cockpit_mode = view.cockpit_mode,
             .last_view = last_view,
+            .lights = .{ .camera = view.place.position, .frame_start = clock.frame_start },
         }, driver.interface());
         last_view = view.view;
         if (screen.* == .software) try window.present(try screen.software.rgba(frame_arena.allocator()), size[0], size[1]);
@@ -385,7 +386,7 @@ const Ship = struct {
         model.* = try .parse(gpa, try resources.readFile(gpa, game.create.models.ship_types[ship_type].model.?));
         const loaded = try gpa.create(game.srofiles.Loaded);
         loaded.* = try game.srofiles.modelLoad(gpa, textures, model, .{}, false);
-        var object: game.objects.Model = try .create(gpa, model, loaded);
+        var object: game.objects.Model = try .create(gpa, model, loaded, try game.objects.lightSprite(textures));
         object.recentre(model);
         object.place(@splat(0), math.identity);
         // What `create_object` sets of a new object: undamaged, at rest, flying itself forward.
