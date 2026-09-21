@@ -145,7 +145,7 @@ pub const Ship = extern struct {
 /// One named script routine.
 ///
 /// The loader expands each of these into a 0x74-byte runtime entry, of which only the block
-/// address and the argument count come from here; `call_part` and `jump_part` index that table by
+/// address and the argument count come from here; `call_part` and `spawn_part` index that table by
 /// a single byte, so a mission has at most 256 parts. An `offset` of `no_block` leaves the entry
 /// empty.
 ///
@@ -222,7 +222,9 @@ pub const Trigger = extern struct {
     /// Ship or flight group the condition watches.
     subject: u8,
     repeat: Repeat,
-    /// Linked action or script index; `0xFFFF` for none.
+    /// For most triggers, the block this one runs, as a halfword offset into the script like a
+    /// part's: those blocks fill the script ahead of the first part. `0xFFFF` for none. What the
+    /// rest point at is not yet known.
     link: u16,
     _unknown_04: [16]u8,
     /// Armed to 1 when the mission starts.
@@ -357,8 +359,13 @@ pub const Opcode = enum(u8) {
     /// the call depth is already zero the thread is finished instead. `0x25` is the same handler.
     @"return" = 0x43,
     return_alt = 0x25,
-    /// Branch into part `n`.
-    jump_part = 0x4D,
+    /// `call_part` through the second part table, which serves `script_b`.
+    call_part_b = 0x4A,
+    /// Starts part `n` on a thread of its own and carries on. The part's arguments move from this
+    /// thread's stack to the new one's.
+    spawn_part = 0x4D,
+    /// `spawn_part` through the second part table.
+    spawn_part_b = 0x4E,
     /// Branches to one of a table of arms, chosen by a roll against each arm's threshold. A count
     /// byte, a big-endian default target, then that many four-byte arms.
     random_branch = 0x51,
@@ -377,63 +384,60 @@ pub const Opcode = enum(u8) {
 
 /// What an opcode does to the instruction pointer.
 pub const Instruction = struct {
-    /// Offset from the start of the block's instructions.
+    /// Offset of the opcode within whatever the instruction was decoded from.
     address: usize,
     opcode: Opcode,
-    /// The operand bytes, and for `inline_data` the data they introduce.
+    /// The operand bytes, including any inline data or arm table.
     operands: []const u8,
-    form: vm_opcodes.Form,
+    /// Where execution goes next.
+    flow: Flow,
 
     /// Bytes the whole instruction occupies.
     pub fn size(instruction: Instruction) usize {
         return 1 + instruction.operands.len;
     }
 
-    /// The bytes an `inline_data` instruction carries, after the length byte. Null for every
-    /// other form.
-    pub fn inlineData(instruction: Instruction) ?[]const u8 {
-        if (instruction.form != .inline_data) return null;
-        return instruction.operands[1..];
-    }
-
-    /// Where a `branch` goes, in the same coordinates as `address`.
-    ///
-    /// The displacement is big-endian, the one place the format is not little-endian, and counts
-    /// from its own position rather than from the end of the instruction.
-    pub fn branchTarget(instruction: Instruction) ?usize {
-        if (instruction.form != .branch) return null;
-        const displacement = std.mem.readInt(u16, instruction.operands[0..2], .big);
-        return instruction.address + 1 + displacement;
-    }
-
-    /// The targets of a `random_branch`: its default first, then one per arm. Null for every
-    /// other opcode.
-    ///
-    /// Like a `branch`'s, each target is big-endian and relative, but counted from the opcode
-    /// rather than from the operands: the handler adds it to the instruction pointer and
-    /// subtracts one.
-    pub fn arms(instruction: Instruction) ?ArmIterator {
-        if (instruction.opcode != .random_branch) return null;
-        return .{ .instruction = instruction };
-    }
-
     /// Whether execution can continue at the following instruction.
-    ///
-    /// `return` is the one opcode the derived table gets wrong here. Its handler has a path that
-    /// leaves the instruction pointer where the dispatcher put it, which reads as falling through,
-    /// but that path ends the thread: it is the case where the call depth is already zero, and the
-    /// handler signals it by its return value, which the instruction-pointer analysis does not
-    /// model. Anything after a `return` is reached by a branch or is the block's padding.
     pub fn fallsThrough(instruction: Instruction) bool {
-        if (instruction.opcode == .@"return" or instruction.opcode == .return_alt) return false;
-        const info = vm_opcodes.find(@intFromEnum(instruction.opcode)) orelse return false;
-        return info.falls_through;
+        return switch (instruction.flow) {
+            .next, .inline_data, .call => true,
+            .branch => |branch| branch.conditional,
+            .random, .@"return" => false,
+        };
     }
 };
 
-/// Walks a `random_branch`'s targets.
+/// Where execution goes after an instruction.
+pub const Flow = union(enum) {
+    /// To the next instruction.
+    next,
+    /// To the next instruction, past the inline bytes the instruction carries, a pointer to which
+    /// it has pushed.
+    inline_data: []const u8,
+    /// To `target`, and when `conditional` possibly to the next instruction instead.
+    branch: Branch,
+    /// To one of several targets, chosen by a roll: `random_branch`.
+    random: ArmIterator,
+    /// Into a part, coming back to the next instruction when it returns.
+    call,
+    /// Out of the part, or when nothing called it, out of the thread.
+    @"return",
+
+    pub const Branch = struct {
+        /// In the same coordinates as the instruction's `address`.
+        target: usize,
+        conditional: bool,
+    };
+};
+
+/// Walks a `random_branch`'s targets: its default first, then one per arm.
+///
+/// Like a branch's, each target is big-endian and relative, but counted from the opcode rather
+/// than from the operands: the handler adds it to the instruction pointer and subtracts one.
 pub const ArmIterator = struct {
-    instruction: Instruction,
+    /// Address of the `random_branch` opcode.
+    origin: usize,
+    operands: []const u8,
     index: usize = 0,
 
     /// Bytes an arm occupies: a big-endian target, a threshold, and one byte not yet identified.
@@ -442,17 +446,16 @@ pub const ArmIterator = struct {
     pub const header_size = 3;
 
     pub fn next(iterator: *ArmIterator) ?usize {
-        const operands = iterator.instruction.operands;
         const at: usize = switch (iterator.index) {
             // The default target sits where an arm's target would.
             0 => 1,
             else => header_size + (iterator.index - 1) * arm_size,
         };
-        if (iterator.index > operands[0]) return null;
+        if (iterator.index > iterator.operands[0]) return null;
         iterator.index += 1;
-        if (at + 2 > operands.len) return null;
-        const target = std.mem.readInt(u16, operands[at..][0..2], .big);
-        return iterator.instruction.address + target;
+        if (at + 2 > iterator.operands.len) return null;
+        const target = std.mem.readInt(u16, iterator.operands[at..][0..2], .big);
+        return iterator.origin + target;
     }
 };
 
@@ -460,12 +463,52 @@ pub const ArmIterator = struct {
 pub fn decodeAt(code: []const u8, pos: usize) ?Instruction {
     const length = instructionSize(code, pos) orelse return null;
     const info = vm_opcodes.find(code[pos]) orelse return null;
-    return .{
-        .address = pos,
-        .opcode = @enumFromInt(code[pos]),
-        .operands = code[pos + 1 ..][0 .. length - 1],
-        .form = info.form,
+    const opcode: Opcode = @enumFromInt(code[pos]);
+    const operands = code[pos + 1 ..][0 .. length - 1];
+
+    const flow: Flow = switch (info.form) {
+        .sequential => .next,
+        .inline_data => .{ .inline_data = operands[1..] },
+        // The displacement is big-endian, the one place the format is not little-endian, and
+        // counts from its own position rather than from the end of the instruction.
+        .branch => .{ .branch = .{
+            .target = pos + 1 + std.mem.readInt(u16, operands[0..2], .big),
+            .conditional = info.falls_through,
+        } },
+        // Every transfer in the table is classified, which the check below enforces.
+        .transfer => switch (transferKind(opcode) orelse unreachable) {
+            .call => .call,
+            .@"return" => .@"return",
+            .random => .{ .random = .{ .origin = pos, .operands = operands } },
+        },
     };
+    return .{ .address = pos, .opcode = opcode, .operands = operands, .flow = flow };
+}
+
+/// What a `transfer` opcode does, by name.
+///
+/// The derived table cannot say this. For a call, the only path it sees that leaves the
+/// instruction pointer sequential is the one taken when the part is missing; the return that
+/// brings execution back happens in another handler. For `return`, the path that leaves it alone
+/// is the one that ends the thread, signalled through the handler's return value, which the
+/// analysis does not model.
+const TransferKind = enum { call, @"return", random };
+
+fn transferKind(opcode: Opcode) ?TransferKind {
+    return switch (opcode) {
+        .call_part, .call_part_b => .call,
+        .@"return", .return_alt => .@"return",
+        .random_branch => .random,
+        else => null,
+    };
+}
+
+comptime {
+    for (vm_opcodes.table) |info| {
+        if (info.form == .transfer and transferKind(@enumFromInt(info.opcode)) == null) {
+            @compileError(std.fmt.comptimePrint("transfer opcode 0x{X:0>2} has no kind", .{info.opcode}));
+        }
+    }
 }
 
 /// How many bytes the instruction at `code[pos]` occupies, or null when it cannot be decoded.
@@ -538,10 +581,13 @@ pub fn disassemble(allocator: Allocator, script: []const u8, entry: usize) Alloc
             decoded[pos - first] = true;
             try instructions.append(allocator, instruction);
 
-            if (instruction.branchTarget()) |target| try pending.append(allocator, target);
-            if (instruction.arms()) |found| {
-                var iterator = found;
-                while (iterator.next()) |target| try pending.append(allocator, target);
+            switch (instruction.flow) {
+                .branch => |branch| try pending.append(allocator, branch.target),
+                .random => |arms| {
+                    var iterator = arms;
+                    while (iterator.next()) |target| try pending.append(allocator, target);
+                },
+                .next, .inline_data, .call, .@"return" => {},
             }
             if (!instruction.fallsThrough()) break;
             pos += instruction.size();
@@ -845,14 +891,13 @@ test "decodes an inline string and steps over it" {
 
     const speech = reader.next().?;
     try std.testing.expectEqual(Opcode.speech, speech.opcode);
-    try std.testing.expectEqual(vm_opcodes.Form.inline_data, speech.form);
-    try std.testing.expectEqualStrings("new_sim02.wav", speech.inlineData().?[0..13]);
+    try std.testing.expectEqualStrings("new_sim02.wav\x00", speech.flow.inline_data);
     try std.testing.expectEqual(Opcode.wait, reader.next().?.opcode);
 }
 
 test "the implemented opcode range matches the payload's handler table" {
     try std.testing.expect(Opcode.compare_ne.isImplemented());
-    try std.testing.expect(Opcode.jump_part.isImplemented());
+    try std.testing.expect(Opcode.spawn_part.isImplemented());
     try std.testing.expect(@as(Opcode, @enumFromInt(0x55)).isImplemented());
     // Null entries in the table: no handler, so the opcode does not exist.
     try std.testing.expect(!@as(Opcode, @enumFromInt(0x00)).isImplemented());
@@ -902,27 +947,30 @@ test "follows a branch rather than sweeping past a jump" {
         try std.testing.expectEqual(want[0], got.address);
         try std.testing.expectEqual(want[1], got.opcode);
     }
-    // The branch and the jump agree on where the two arms are.
-    try std.testing.expectEqual(@as(?usize, 19), listing.instructions[5].branchTarget());
-    try std.testing.expectEqual(@as(?usize, 21), listing.instructions[7].branchTarget());
+    // The branch and the jump agree on where the two arms are, and only the jump is unconditional.
+    const branch = listing.instructions[5].flow.branch;
+    try std.testing.expectEqual(@as(usize, 19), branch.target);
+    try std.testing.expect(branch.conditional);
+    const jump = listing.instructions[7].flow.branch;
+    try std.testing.expectEqual(@as(usize, 21), jump.target);
+    try std.testing.expect(!jump.conditional);
+    try std.testing.expect(!listing.instructions[11].fallsThrough());
 }
 
 test "reads a weighted branch's arms" {
     // The one shape whose encoding is read by hand: a count, a default target, then that many
-    // four-byte arms of target and threshold.
-    const operands = [_]u8{ 0x02, 0x00, 0x43, 0x00, 0x2C, 0x32, 0x00, 0x00, 0x39, 0x64, 0x00 };
-    const instruction: Instruction = .{
-        .address = 100,
-        .opcode = .random_branch,
-        .operands = &operands,
-        .form = .transfer,
-    };
-    var iterator = instruction.arms().?;
-    try std.testing.expectEqual(@as(?usize, 100 + 0x43), iterator.next());
-    try std.testing.expectEqual(@as(?usize, 100 + 0x2C), iterator.next());
-    try std.testing.expectEqual(@as(?usize, 100 + 0x39), iterator.next());
-    try std.testing.expectEqual(@as(?usize, null), iterator.next());
+    // four-byte arms of target and threshold. This one is the 50/50 split in mission18.
+    const code = [_]u8{ 0x51, 0x02, 0x00, 0x43, 0x00, 0x2C, 0x32, 0x00, 0x00, 0x39, 0x64, 0x00 };
+    const instruction = decodeAt(&code, 0).?;
+    try std.testing.expectEqual(Opcode.random_branch, instruction.opcode);
+    try std.testing.expectEqual(@as(usize, code.len), instruction.size());
     try std.testing.expect(!instruction.fallsThrough());
+
+    var iterator = instruction.flow.random;
+    try std.testing.expectEqual(@as(?usize, 0x43), iterator.next());
+    try std.testing.expectEqual(@as(?usize, 0x2C), iterator.next());
+    try std.testing.expectEqual(@as(?usize, 0x39), iterator.next());
+    try std.testing.expectEqual(@as(?usize, null), iterator.next());
 }
 
 test "a part's offset and length are in halfwords" {

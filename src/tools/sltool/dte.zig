@@ -222,11 +222,21 @@ fn printListing(ctx: Context, listing: dte.Disassembly) !void {
         try ctx.stdout.print("  {d:>6}  {s:<11} ", .{ instruction.address, bytes[0..@min(at, bytes.len)] });
         try dte.formatTag(dte.Opcode, instruction.opcode, ctx.stdout);
 
-        switch (instruction.form) {
-            .sequential => {},
-            .branch => try ctx.stdout.print("   -> {d}", .{instruction.branchTarget().?}),
-            .inline_data => try printInline(ctx, instruction.inlineData().?),
-            .transfer => try ctx.stdout.writeAll("   (transfer)"),
+        switch (instruction.flow) {
+            .next => {},
+            .branch => |branch| try ctx.stdout.print("   -> {d}{s}", .{
+                branch.target, if (branch.conditional) " if zero" else "",
+            }),
+            .inline_data => |data| try printInline(ctx, data),
+            .random => |arms| {
+                var iterator = arms;
+                var separator: []const u8 = "   -> ";
+                while (iterator.next()) |target| {
+                    try ctx.stdout.print("{s}{d}", .{ separator, target });
+                    separator = " | ";
+                }
+            },
+            .call, .@"return" => {},
         }
         try ctx.stdout.writeByte('\n');
     }

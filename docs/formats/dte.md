@@ -182,12 +182,22 @@ Four shapes come out of it:
 | `inline_data` | `0x2A`, `0x2B` | After the run the operand byte measures |
 | `transfer` | `0x22`, `0x25`, `0x43`, `0x4A`, `0x51` | Not statically known |
 
-The analysis also records whether an opcode can continue at the instruction after its operands.
-Three cannot: `0x42` jump, `0x4A`, and `0x51` random_branch. The bytes after those are reached only
-by a branch, so a linear sweep would decode whatever happens to sit there. `0x43` return is a
-fourth, which the analysis reads as falling through: its early-out path does leave the instruction
-pointer alone, but while ending the thread, which it signals through its return value rather than
-through the instruction pointer.
+The analysis also records whether any path through a handler leaves the instruction pointer just
+past the operands. That settles the sequential and branch opcodes, and `0x42` jump is the one
+branch without such a path. It cannot settle the five transfers, which the decoder classifies by
+name instead, and a compile-time check refuses any transfer in the table that it has not
+classified:
+
+| Transfer | Opcodes | Next |
+|---|---|---|
+| Call | `0x22` call_part, `0x4A` call_part_b | Into a part, then back to the following instruction |
+| Return | `0x43` return, `0x25` | Out of the part, or out of the thread |
+| Random branch | `0x51` | One of its arms |
+
+For a call, the only sequential path the analysis sees is the one taken when the part is missing;
+the return that brings execution back runs in another handler. For `return`, the path that leaves
+the instruction pointer alone is the one that ends the thread, which the handler signals through its
+return value rather than through the instruction pointer.
 
 Operand counts: 41 opcodes take none, 24 take one byte, 5 take two and `0x4B` takes three.
 
@@ -213,6 +223,11 @@ known without tracking any state:
   are reached by address rather than laid end to end.
 - **`0x43` return** (and `0x25`) unwinds all of that. When the call depth is already zero the
   thread is finished instead.
+- **`0x4D` spawn_part** reads a part index, moves the part's arguments off this thread's stack
+  onto a fresh thread's, and starts that thread on the part's block. The spawning thread carries
+  on, which is why the analysis finds it sequential.
+- **`0x4A` call_part_b** and **`0x4E` spawn_part_b** do the same through the second part table,
+  the one serving section 18.
 - **`0x23` branch_if_zero** (and `0x24`) pops a value and branches when it is zero. **`0x42` jump**
   branches unconditionally. Both take a **big-endian** 16-bit displacement, counted from the
   displacement's own position rather than from the end of the instruction. This is the one place in
@@ -225,7 +240,7 @@ carries the command's argument count at `+4` and its implementation pointer at `
 
 Section 8 is not a list of objects: it holds one 28-byte descriptor per **part**, a named script
 routine, and the loader expands it into the 256-entry table of `0x74`-byte records that `call_part`
-and `jump_part` index. Section 17 does the same for section 18, a second bytecode section that is
+and `spawn_part` index. Section 17 does the same for section 18, a second bytecode section that is
 empty in every shipped mission.
 
 | Offset | Size | Field |
@@ -273,30 +288,43 @@ sltool dte parts <mission>     # the named routines
 sltool dte script <mission>    # disassemble them
 ```
 
-**Every part in all 44 missions disassembles completely**, bar 96 bytes noted below. `mission1`
-part 0 opens with an if-else:
+**Every part in all 44 missions disassembles completely**, bar 128 bytes noted below. The block at
+the very start of `mission1`'s script, the one its first trigger runs, is an if-else:
 
 ```
-   2  22 01       call_part   (transfer)
+   2  22 01       call_part
    4  21 17       command
    6  27 00       read_global
    8  28 00       wait
   10  02          compare_ne
-  11  24 00 07    branch_if_zero_alt   -> 19
-  14  22 15       call_part   (transfer)
+  11  24 00 07    branch_if_zero_alt   -> 19 if zero
+  14  22 15       call_part
   16  42 00 04    jump   -> 21
-  19  22 18       call_part   (transfer)
+  19  22 18       call_part
   21  21 17       command
   23  32 01       ai
-  25  43          return   (transfer)
+  25  43          return
 ```
 
 Every branch target lands on an instruction boundary, which is the check that the widths are right.
 
-**Open:** three parts, in `mission15`, `mission18` and `mission23`, each leave 32 bytes that nothing
-reaches. All three follow the same `51 02 00 43` random_branch, whose two arms are 50/50 and target
-bytes past the gap. The three gaps are the only bytes of script in the corpus that are neither
-reached nor alignment padding.
+### Trigger blocks
+
+The parts do not start at the beginning of the section: `mission1`'s first part is at byte 1,740.
+The script before the first part holds the blocks that triggers run. A trigger's `link` is a
+halfword offset to its block, like a part's: `mission1`'s first three triggers link to 0, 18 and 36,
+the blocks at bytes 0, 36 and 72. Of the 2,377 triggers across the 44 missions whose link is set,
+2,102 land on a block that disassembles completely.
+
+**Open:** the other 275 links, and the short runs between trigger blocks. In `mission1` those are 8 or 16
+bytes, start with a small little-endian dword such as `01 00 00 00` or `09 00 00 00`, and are not
+blocks; some links land on them, and others land inside a block. `sltool dte script` lists the
+parts only.
+
+**Open:** four 32-byte regions that nothing reaches, two in one part of `mission15` and one each in
+`mission18` and `mission23`. Each directly follows a two-arm random_branch, `51 02 00 43` in three
+cases and `51 02 00 45` in the fourth, whose arms split 50/50 and target bytes past the gap. They are
+the only bytes of any part that are neither reached nor alignment padding.
 
 ## Prior art
 
