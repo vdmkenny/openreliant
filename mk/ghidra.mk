@@ -65,6 +65,18 @@ ghidra-forget-$(1):
 endef
 $(foreach group,$(GHIDRA_GROUPS),$(eval $(call GHIDRA_GROUP_RULES,$(group))))
 
+# Runs one Ghidra script against a group, with the program writable so the script may annotate it.
+# SCRIPT names a file in ghidra/scripts; GROUP defaults to the game itself.
+SCRIPT ?=
+GROUP  ?= game
+
+.PHONY: ghidra-run
+ghidra-run: | $(GHIDRA_PROJECT_DIR)/.imported-$(GROUP) ## Run a Ghidra script: make ghidra-run SCRIPT=Name.java [GROUP=game]
+	@test -n "$(SCRIPT)" || { echo "set SCRIPT=<file in ghidra/scripts>"; exit 1; }
+	$(HEADLESS) $(GHIDRA_PROJECT)/$(GROUP) -process -noanalysis \
+	    -scriptPath $(GHIDRA_SCRIPTS_DIR) -postScript $(SCRIPT) \
+	    -max-cpu $(HEADLESS_MAX_CPU) -log $(GHIDRA_PROJECT_DIR)/script-$(GROUP).log
+
 .PHONY: ghidra-gui
 ghidra-gui: | $(STAMPS_DIR)/ghidra-natives ## Open the project in the Ghidra GUI; the Ghydra plugin serves HTTP on :8192+ per open program
 	$(WITH_JDK) $(GHIDRA_HOME)/ghidraRun "$(GHIDRA_PROJECT_DIR)/$(GHIDRA_PROJECT).gpr"

@@ -73,6 +73,7 @@ code. Programs are grouped into project folders, one group per make target:
 | `vfx` | WinVFX and the system abstraction layer. |
 
 ```bash
+make ghidra-run SCRIPT=DefineVmHandlers.java   # run one script, with the program writable
 make ghidra-import           # import and auto-analyse every group, headless
 make ghidra-import-game      # or just one group
 make ghidra-export           # dump each program as greppable text under ghidra/export/

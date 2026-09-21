@@ -157,21 +157,56 @@ null. Of the named ones, `0x21` calls an Executor command, `0x32` sets an AI beh
 Frequency in `mission1` agrees: after operand bytes, the commonest are `0x21` command (386),
 `0x28` wait (282), `0x2C` object (264) and `0x32` AI (182).
 
-### Open: operand lengths and block addressing
+### Operand widths
 
-The stream cannot be disassembled linearly, and this project does not pretend otherwise.
+Each opcode's width is read from its own handler rather than inferred from the data. The payload
+stores the handler table, `ghidra/scripts/DefineVmHandlers.java` defines a function at every entry
+so the decompiler can reach them (nothing calls them directly, so auto-analysis leaves them
+undefined), and each handler's first action on the instruction pointer gives its width:
 
-A thread starts at a block whose leading `u16` gives its length, and triggers name blocks by action
-index, so blocks are entered by address rather than laid end to end. Walking the section from its
-start reads that leading length as an opcode and desynchronises from there: 40% of the resulting
-instructions land on opcodes the handler table leaves null, which is the signature of a decoder
-that has lost alignment rather than of unusual data.
+| Class | Opcodes |
+|---|---|
+| No operand | 42 |
+| One operand byte | 22 |
+| Two operand bytes | 1 |
+| Control flow, 0 to 2 operand bytes | 12 |
 
-The first block of `mission1` does decode cleanly, ending exactly on its `0x43` marker, once `0x42`
-is given two operand bytes rather than one. So the lengths are recoverable. Getting them right
-means reading the 72 handlers to see how far each advances the instruction pointer, rather than
-inferring them from patterns in the data, and until that is done `sltool dte script` reports what
-the section contains instead of claiming to decode it.
+Three opcodes carry the structure:
+
+- **`0x22` call_part** reads a one-byte index, looks the part up in a table of stride `0x74`,
+  pushes the return state, jumps to that block and steps over its leading length. It is a
+  subroutine call, which is why blocks are reached by address rather than laid end to end.
+- **`0x42` jump** adds a **big-endian** 16-bit displacement to the instruction pointer. It is the
+  one place in the format that is not little-endian.
+- **`0x43` end** terminates a block.
+
+`0x21` command reads a one-byte index into the Executor catalogue, also stride `0x74`, whose entry
+carries the command's argument count at `+4` and its implementation pointer at `+0`.
+
+### Decoding a block
+
+A block is a `u16` length followed by instructions, ending at `end`. Anything between `end` and the
+length is a trailer this decoder does not interpret, typically 2 to 5 bytes.
+
+```
+sltool dte script <mission>
+```
+
+decodes the block at the start of the section. `mission1` opens with:
+
+```
+call_part 1, command 0x17, read_global 0, wait 0, compare_ne,
+push_immediate_b, call_part 0x15, jump +4, call_part 0x18,
+command 0x17, ai 1, end
+```
+
+**32 of the 44 missions' opening blocks decode to their end marker.** The other 12 stop on an
+opcode whose width is still wrong, so a handful of the 72 widths need a closer read than the first
+pointer assignment gives.
+
+**Open:** the part table that `call_part` indexes. Without it only the block at the start of a
+section can be found; the rest are reached by address. The table is built at load, from
+`DAT_00538c94`, and locating what fills it is the next step.
 
 ## Prior art
 

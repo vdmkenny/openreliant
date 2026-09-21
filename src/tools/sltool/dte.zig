@@ -144,34 +144,39 @@ fn triggers(ctx: Context, mission: dte.Mission) !void {
     }
 }
 
-/// Reports what the bytecode section holds without pretending to disassemble it: blocks are
-/// entered by address, so a linear walk desynchronises. See `dte.Opcode`.
+/// Decodes the first block of the script section.
+///
+/// Blocks are entered by address, so only the one at the start of the section can be found without
+/// the part table; the rest are reached by `call_part`.
 fn script(ctx: Context, mission: dte.Mission) !void {
     const code = try mission.script();
-    var implemented: usize = 0;
-    var histogram: [256]usize = @splat(0);
-    for (code) |byte| {
-        histogram[byte] += 1;
-        if (@as(dte.Opcode, @enumFromInt(byte)).isImplemented()) implemented += 1;
+    if (code.len < 2) return;
+    const length = std.mem.readInt(u16, code[0..2], .little);
+    if (length == 0 or 2 + @as(usize, length) > code.len) {
+        try ctx.stdout.print("section is {d} bytes but its first block claims {d}\n", .{ code.len, length });
+        return;
     }
 
-    try ctx.stdout.print("bytecode: {d} bytes, {d} in the implemented opcode range\n\n", .{
-        code.len, implemented,
-    });
-    try ctx.stdout.writeAll("most frequent bytes:\n");
-    for (0..12) |_| {
-        var best: usize = 0;
-        for (histogram, 0..) |count, byte| {
-            if (count > histogram[best]) best = byte;
+    try ctx.stdout.print("section {d} bytes; first block {d} bytes\n\n", .{ code.len, length });
+    try ctx.stdout.writeAll("offset  bytes       opcode\n");
+
+    var reader: dte.BlockReader = .{ .code = code[2..][0..length] };
+    while (reader.next()) |instruction| {
+        var bytes: [10]u8 = undefined;
+        var at: usize = 0;
+        at += (std.fmt.bufPrint(bytes[at..], "{x:0>2}", .{@intFromEnum(instruction.opcode)}) catch break).len;
+        for (instruction.operands) |b| {
+            at += (std.fmt.bufPrint(bytes[at..], " {x:0>2}", .{b}) catch break).len;
         }
-        if (histogram[best] == 0) break;
-        const opcode: dte.Opcode = @enumFromInt(best);
-        try ctx.stdout.print("  {x:0>2}  {d:>5}  ", .{ best, histogram[best] });
-        try dte.formatTag(dte.Opcode, opcode, ctx.stdout);
-        if (!opcode.isImplemented()) try ctx.stdout.writeAll("  (no handler: operand or data)");
+        try ctx.stdout.print("{d:>6}  {s:<11} ", .{ instruction.address, bytes[0..at] });
+        try dte.formatTag(dte.Opcode, instruction.opcode, ctx.stdout);
+        if (instruction.control) try ctx.stdout.writeAll("   (control flow)");
         try ctx.stdout.writeByte('\n');
-        histogram[best] = 0;
     }
+    const trailer = length - reader.pos;
+    try ctx.stdout.print("\nstopped: {t} after {d} of {d} bytes", .{ reader.stop(), reader.pos, length });
+    if (trailer > 0) try ctx.stdout.print(", {d} byte trailer", .{trailer});
+    try ctx.stdout.writeByte('\n');
 }
 
 fn strings(ctx: Context, mission: dte.Mission) !void {
