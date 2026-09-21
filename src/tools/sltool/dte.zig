@@ -439,3 +439,11 @@ fn strings(ctx: Context, mission: dte.Mission) !void {
         offset += len + 1;
     }
 }
+
+test Command {
+    try std.testing.expectEqualStrings("M01.DTE", (try Command.parse(&.{ "script", "M01.DTE" })).script.mission);
+    try std.testing.expectEqualStrings("M01.DTE", (try Command.parse(&.{ "triggers", "M01.DTE" })).triggers.mission);
+    try std.testing.expectError(error.Usage, Command.parse(&.{"script"}));
+    try std.testing.expectError(error.Usage, Command.parse(&.{ "script", "M01.DTE", "extra" }));
+    try std.testing.expectError(error.Usage, Command.parse(&.{ "disassemble", "M01.DTE" }));
+}

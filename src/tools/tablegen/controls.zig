@@ -12,6 +12,7 @@ const ControlBinding = starlancer.lancer.input.ControlBinding;
 const Modifier = ControlBinding.Modifier;
 
 const image = @import("image.zig");
+const testing = @import("testing.zig");
 
 /// `control_bindings`, which `control_active` (`0x00412630`) indexes by action.
 pub const table: u32 = 0x004E2380;
@@ -223,12 +224,8 @@ test "emit writes Zig that parses" {
     var out: Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
     try emit(&out.writer, &bindings);
-
-    const source = try std.testing.allocator.dupeZ(u8, out.written());
-    defer std.testing.allocator.free(source);
-    var tree = try std.zig.Ast.parse(std.testing.allocator, source, .zig);
-    defer tree.deinit(std.testing.allocator);
-    try std.testing.expectEqual(0, tree.errors.len);
+    const source = out.written();
+    try testing.expectZig(source);
 
     try std.testing.expect(std.mem.indexOf(u8, source, "    reverse_thrust = 1,\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, source, ".modifier = .shift, .button = null },\n") != null);

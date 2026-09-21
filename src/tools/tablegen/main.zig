@@ -32,6 +32,7 @@ const commands = @import("commands.zig");
 const conditions = @import("conditions.zig");
 const controls = @import("controls.zig");
 const eval = @import("eval.zig");
+const image = @import("image.zig");
 const models = @import("models.zig");
 const x86 = @import("x86.zig");
 
@@ -176,16 +177,16 @@ fn opcodes(
     const binary = try cwd.readFileAlloc(init.io, binary_path, arena, .limited(64 << 20));
     const listing = try cwd.readFileAlloc(init.io, listing_path, arena, .limited(256 << 20));
 
-    const image: pe.Image = try .parse(binary);
-    const base = image.optional_header.image_base;
-    const text = image.sectionByName(".text") orelse {
+    const pe_image: pe.Image = try .parse(binary);
+    const base = pe_image.optional_header.image_base;
+    const text = pe_image.sectionByName(".text") orelse {
         std.debug.print("{s}: no .text section\n", .{binary_path});
         return 1;
     };
     const text_start = base + text.virtual_address;
     const text_end = text_start + text.virtual_size;
 
-    const table_offset = image.fileOffset(dispatch_table - base) orelse {
+    const table_offset = pe_image.fileOffset(dispatch_table - base) orelse {
         std.debug.print("dispatch table at {x} is not in the image\n", .{dispatch_table});
         return 1;
     };
@@ -323,6 +324,7 @@ test {
     _ = conditions;
     _ = controls;
     _ = eval;
+    _ = image;
     _ = models;
     _ = x86;
 }

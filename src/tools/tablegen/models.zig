@@ -12,6 +12,7 @@ const starlancer = @import("starlancer");
 const Kind = starlancer.shp.Attachment.Kind;
 
 const image = @import("image.zig");
+const testing = @import("testing.zig");
 const x86 = @import("x86.zig");
 
 /// The ship type table: a record of `ship_type_size` bytes for each of the 256 types, with the
@@ -250,4 +251,120 @@ fn optional(w: *Io.Writer, text: ?[]const u8) !void {
     } else {
         try w.writeAll("null");
     }
+}
+
+/// A synthetic payload holding the ship type table and the file names the loader passes.
+const TestPayload = struct {
+    data: [0x2000]u8 = @splat(0),
+
+    const data_va = ship_types & ~@as(u32, 0xFFF);
+    /// Past the ship type table; `test_loader` names the files at the third and fourth slots.
+    const strings: u32 = 0x004F8C00;
+
+    comptime {
+        std.debug.assert(strings >= ship_types + ship_type_count * ship_type_size);
+    }
+
+    fn region(payload: *TestPayload) testing.Region {
+        return .{ .va = data_va, .bytes = &payload.data };
+    }
+
+    /// Writes `name` at the `index`th string slot and returns its address.
+    fn name(payload: *TestPayload, index: u32, text: []const u8) u32 {
+        const at = strings + index * 0x20;
+        payload.region().putString(at, text);
+        return at;
+    }
+
+    fn tables(payload: *TestPayload, arena: std.mem.Allocator, listing: []const u8) !Tables {
+        const reader = try testing.reader(arena, &.{payload.region()});
+        return read(arena, reader, try x86.parse(arena, listing));
+    }
+};
+
+// The loader for kind 1 (gun), id 3: its entry is the 23rd, at 0x00538E18. As in the payload, the
+// name for the next call goes into ECX between a call and the store of what it returned.
+const test_loader =
+    \\; ==== attachment_loader @ 0045de70 ====
+    \\0045de70  b9408c4f00               MOV ECX,0x4f8c40
+    \\0045de75  e800000000               CALL 0x004a44d0
+    \\0045de7a  b9608c4f00               MOV ECX,0x4f8c60
+    \\0045de7f  a3188e5300               MOV [0x00538e18],EAX
+    \\0045de84  e800000000               CALL 0x00494a30
+    \\0045de89  a3248e5300               MOV [0x00538e24],EAX
+    \\0045de8e  c705208e53000200000000   MOV dword ptr [0x00538e20],0x2
+    \\0045de98  c3                       RET
+    \\
+;
+
+test read {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var payload: TestPayload = .{};
+    const region = payload.region();
+    region.putWord(ship_types, payload.name(0, "SHIP0.SHP"));
+    region.putWord(ship_types + 4, payload.name(1, "ship0.spr"));
+    try std.testing.expectEqual(0x004F8C40, payload.name(2, "GUN.SHP"));
+    try std.testing.expectEqual(0x004F8C60, payload.name(3, "gun.spr"));
+    region.putWord(ship_types + 2 * ship_type_size, payload.name(4, ""));
+
+    const tables = try payload.tables(arena.allocator(), test_loader);
+    try std.testing.expectEqual(ship_type_count, tables.ship_types.len);
+    try std.testing.expectEqualStrings("SHIP0.SHP", tables.ship_types[0].model.?);
+    try std.testing.expectEqualStrings("ship0.spr", tables.ship_types[0].schematic.?);
+    try std.testing.expectEqual(null, tables.ship_types[1].model);
+    try std.testing.expectEqual(null, tables.ship_types[2].model);
+
+    const gun = tables.attachments[@intFromEnum(Kind.gun)][3];
+    try std.testing.expectEqualStrings("GUN.SHP", gun.model.?);
+    try std.testing.expectEqualStrings("gun.spr", gun.sprite.?);
+    try std.testing.expectEqual(2, gun.count);
+    try std.testing.expectEqual(null, gun.second_model);
+    try std.testing.expectEqual(null, tables.attachments[0][0].model);
+    try std.testing.expectEqual(1, tables.attachments[0][0].count);
+}
+
+test "a store follows a load" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var payload: TestPayload = .{};
+    const store_first =
+        \\; ==== attachment_loader @ 0045de70 ====
+        \\0045de70  a3188e5300               MOV [0x00538e18],EAX
+        \\
+    ;
+    try std.testing.expectError(error.UnexpectedStore, payload.tables(arena.allocator(), store_first));
+
+    const sprite_as_model =
+        \\; ==== attachment_loader @ 0045de70 ====
+        \\0045de70  b9608c4f00               MOV ECX,0x4f8c60
+        \\0045de75  e800000000               CALL 0x00494a30
+        \\0045de7a  a3188e5300               MOV [0x00538e18],EAX
+        \\
+    ;
+    _ = payload.name(3, "gun.spr");
+    try std.testing.expectError(error.UnexpectedStore, payload.tables(arena.allocator(), sprite_as_model));
+}
+
+test "read needs the loader" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var payload: TestPayload = .{};
+    const elsewhere =
+        \\; ==== FUN_00401000 @ 00401000 ====
+        \\00401000  c3                       RET
+        \\
+    ;
+    try std.testing.expectError(error.NoLoader, payload.tables(arena.allocator(), elsewhere));
+}
+
+test "emit writes Zig that parses" {
+    var types: [2]ShipType = .{ .{ .model = "SHIP0.SHP", .schematic = null }, .{ .model = null, .schematic = null } };
+    var tables: Tables = .{ .ship_types = &types, .attachments = @splat(@splat(.{})) };
+    tables.attachments[1][3] = .{ .model = "GUN.SHP", .sprite = "gun.spr", .count = 2 };
+    var out: Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try emit(&out.writer, tables);
+    try testing.expectZig(out.written());
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), ".{ .model = \"GUN.SHP\", .sprite = \"gun.spr\", .count = 2 },") != null);
 }

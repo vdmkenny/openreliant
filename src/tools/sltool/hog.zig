@@ -180,3 +180,33 @@ fn disambiguate(gpa: std.mem.Allocator, name: []const u8, index: usize) ![]const
     const dot = std.mem.lastIndexOfScalar(u8, name, '.') orelse name.len;
     return std.fmt.allocPrint(gpa, "{s}~{d}{s}", .{ name[0..dot], index, name[dot..] });
 }
+
+test Command {
+    const parsed = try Command.parse(&.{ "extract", "LANCER.HOG", "out", "--raw" });
+    try std.testing.expect(parsed.extract.raw);
+    try std.testing.expectEqualStrings("out", parsed.extract.out_dir);
+    try std.testing.expect(!(try Command.parse(&.{ "extract", "LANCER.HOG", "out" })).extract.raw);
+    try std.testing.expectEqualStrings("A.HOG", (try Command.parse(&.{ "info", "A.HOG" })).info.archive);
+
+    try std.testing.expectError(error.Usage, Command.parse(&.{ "extract", "LANCER.HOG", "out", "--fast" }));
+    try std.testing.expectError(error.Usage, Command.parse(&.{"ls"}));
+    try std.testing.expectError(error.Usage, Command.parse(&.{}));
+}
+
+test disambiguate {
+    const gpa = std.testing.allocator;
+    const renamed = try disambiguate(gpa, "dest.SHP", 2);
+    defer gpa.free(renamed);
+    try std.testing.expectEqualStrings("dest~2.SHP", renamed);
+
+    const bare = try disambiguate(gpa, "README", 3);
+    defer gpa.free(bare);
+    try std.testing.expectEqualStrings("README~3", bare);
+}
+
+test lowered {
+    const gpa = std.testing.allocator;
+    const name = try lowered(gpa, "Dest.SHP");
+    defer gpa.free(name);
+    try std.testing.expectEqualStrings("dest.shp", name);
+}

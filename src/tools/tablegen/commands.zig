@@ -9,6 +9,7 @@ const std = @import("std");
 const Io = std.Io;
 
 const image = @import("image.zig");
+const testing = @import("testing.zig");
 
 /// Virtual address of the catalogue, which `vm_install_commands` (`0x0045CE30`) installs as the
 /// command table.
@@ -219,4 +220,118 @@ pub fn emit(w: *Io.Writer, commands: []const Command) !void {
         \\}
         \\
     );
+}
+
+/// A synthetic payload: code at `code_va` for the implementations, and the catalogue with its
+/// strings in a second region.
+const TestPayload = struct {
+    code: [0x800]u8 = @splat(0xCC),
+    data: [0x400]u8 = @splat(0),
+
+    const code_va = 0x0045D000;
+    const data_va = catalogue & ~@as(u32, 0xFF);
+    const strings = data_va + 0x200;
+
+    fn text(payload: *TestPayload) testing.Region {
+        return .{ .va = code_va, .bytes = &payload.code };
+    }
+
+    fn table(payload: *TestPayload) testing.Region {
+        return .{ .va = data_va, .bytes = &payload.data };
+    }
+
+    /// `PUSH callback` then `CALL for_each_ship`, at `at`; returns where the next instruction goes.
+    fn callForEachShip(payload: *TestPayload, at: u32, callback: ?u32) u32 {
+        var next = at;
+        if (callback) |address| {
+            payload.text().put(next, &.{0x68});
+            payload.text().putWord(next + 1, address);
+            next += 5;
+        }
+        payload.text().put(next, &.{0xE8});
+        payload.text().putWord(next + 1, for_each_ship -% (next + 5));
+        return next + 5;
+    }
+
+    /// Catalogue entry `index`, with one parameter when `label` is given.
+    fn entry(payload: *TestPayload, index: u32, implementation: u32, name: []const u8, label: ?[]const u8) void {
+        const at = catalogue + index * entry_size;
+        const region = payload.table();
+        const name_at = strings + index * 0x40;
+        region.putWord(at + layout.implementation, implementation);
+        region.putString(name_at, name);
+        region.putWord(at + layout.name, name_at);
+        region.putString(name_at + 0x10, "Does a thing");
+        region.putWord(at + layout.description, name_at + 0x10);
+        if (label) |text_label| {
+            region.putWord(at + layout.params, 1);
+            region.putWord(at + layout.first_param, 0x400);
+            region.putString(name_at + 0x20, text_label);
+            region.putWord(at + layout.first_param + 8, name_at + 0x20);
+        }
+    }
+
+    /// The catalogue as `read` finds it. The image lives in `arena`, as the strings read do.
+    fn commands(payload: *TestPayload, arena: std.mem.Allocator) ![]const Command {
+        return read(arena, try testing.reader(arena, &.{ payload.text(), payload.table() }));
+    }
+};
+
+test read {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var payload: TestPayload = .{};
+    const first = TestPayload.code_va + 0x100;
+    const second = TestPayload.code_va + 0x200;
+    const callback = TestPayload.code_va + 0x300;
+    payload.text().put(payload.callForEachShip(first, callback), &.{0xC3});
+    payload.text().put(second, &.{0xC3});
+    payload.entry(0, first, "KillShip", "Ship to kill");
+    payload.entry(1, second, "Wait", null);
+
+    const read_commands = try payload.commands(arena.allocator());
+    try std.testing.expectEqual(2, read_commands.len);
+    try std.testing.expectEqualStrings("KillShip", read_commands[0].name);
+    try std.testing.expectEqualStrings("Does a thing", read_commands[0].description);
+    try std.testing.expectEqual(1, read_commands[0].params.len);
+    try std.testing.expectEqualStrings("Ship to kill", read_commands[0].params[0].label);
+    try std.testing.expectEqual(0x400, read_commands[0].params[0].kinds);
+    try std.testing.expectEqual(callback, read_commands[0].per_ship.?);
+    try std.testing.expectEqual(0, read_commands[1].params.len);
+    try std.testing.expectEqual(null, read_commands[1].per_ship);
+}
+
+test "a call to for_each_ship needs the callback pushed before it" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var payload: TestPayload = .{};
+    const first = TestPayload.code_va + 0x100;
+    _ = payload.callForEachShip(first, null);
+    payload.entry(0, first, "KillShip", null);
+    try std.testing.expectError(error.NoCallback, payload.commands(arena.allocator()));
+}
+
+test "an implementation hands for_each_ship one callback" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var payload: TestPayload = .{};
+    const first = TestPayload.code_va + 0x100;
+    const next = payload.callForEachShip(first, TestPayload.code_va + 0x300);
+    _ = payload.callForEachShip(next, TestPayload.code_va + 0x340);
+    payload.entry(0, first, "KillShip", null);
+    try std.testing.expectError(error.TwoCallbacks, payload.commands(arena.allocator()));
+}
+
+test "emit writes Zig that parses" {
+    const params = [_]Param{.{ .kinds = 0x400, .extra = 0, .label = "Ship to \"kill\"" }};
+    const listed = [_]Command{
+        .{ .implementation = 0x0045D100, .name = "KillShip", .params = &params, .description = "Kills it", .flag = 0, .per_ship = 0x0045D300 },
+        .{ .implementation = 0x0045D200, .name = "Wait", .params = &.{}, .description = "", .flag = 1 },
+    };
+    var out: Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try emit(&out.writer, &listed);
+    try testing.expectZig(out.written());
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), ".per_ship = 0x0045D300,") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), ".per_ship = null,") != null);
 }

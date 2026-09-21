@@ -335,40 +335,80 @@ pub const ImportIterator = struct {
     }
 };
 
-test "parses a minimal image" {
-    var bytes: [1024]u8 = @splat(0);
-    const dos: *align(1) DosHeader = @ptrCast(bytes[0..@sizeOf(DosHeader)]);
-    dos.magic = dos_magic.*;
-    dos.nt_offset = 0x80;
-    bytes[0x80..][0..4].* = nt_signature.*;
-
-    const file_header: *align(1) FileHeader = @ptrCast(bytes[0x84..][0..@sizeOf(FileHeader)]);
-    file_header.* = .{
-        .machine = .i386,
-        .section_count = 1,
-        .timestamp = 0,
-        .symbol_table_offset = 0,
-        .symbol_count = 0,
-        .optional_header_size = @sizeOf(OptionalHeader32) + 16 * @sizeOf(DataDirectory),
-        .characteristics = @bitCast(@as(u16, 0x010E)),
+/// Builds PE images in memory, for the tests of code that reads them.
+pub const testing = struct {
+    pub const Section = struct {
+        name: []const u8 = ".data",
+        /// Where the section loads, relative to the image base.
+        rva: u32,
+        data: []const u8,
     };
-    const optional: *align(1) OptionalHeader32 = @ptrCast(bytes[0x98..][0..@sizeOf(OptionalHeader32)]);
-    optional.magic = .pe32;
-    optional.image_base = 0x400000;
-    optional.entry_point = 0x1000;
-    optional.directory_count = 16;
 
-    const sections_offset = 0x98 + @sizeOf(OptionalHeader32) + 16 * @sizeOf(DataDirectory);
-    const section: *align(1) SectionHeader = @ptrCast(bytes[sections_offset..][0..@sizeOf(SectionHeader)]);
-    section.* = std.mem.zeroes(SectionHeader);
-    section.name_bytes = ".text\x00\x00\x00".*;
-    section.virtual_address = 0x1000;
-    section.virtual_size = 0x40;
-    section.raw_offset = 0x200;
-    section.raw_size = 0x40;
-    @memcpy(bytes[0x200..][0..5], "hello");
+    const nt_offset = 0x80;
+    const directory_count = 16;
+    const headers_size = 0x400;
+    const file_alignment = 0x200;
 
-    const image: Image = try .parse(&bytes);
+    /// A PE32 image of `sections`, loaded at `image_base`, that `Image.parse` accepts. Each
+    /// section's virtual size is its data's. The caller owns the bytes.
+    pub fn build(allocator: std.mem.Allocator, image_base: u32, sections: []const Section) ![]u8 {
+        const optional_offset = nt_offset + nt_signature.len + @sizeOf(FileHeader);
+        const optional_size = @sizeOf(OptionalHeader32) + directory_count * @sizeOf(DataDirectory);
+        const sections_offset = optional_offset + optional_size;
+        if (sections_offset + sections.len * @sizeOf(SectionHeader) > headers_size) return error.TooManySections;
+
+        var size: usize = headers_size;
+        for (sections) |section| size += std.mem.alignForward(usize, section.data.len, file_alignment);
+        const bytes = try allocator.alloc(u8, size);
+        @memset(bytes, 0);
+
+        const dos: *align(1) DosHeader = @ptrCast(bytes[0..@sizeOf(DosHeader)]);
+        dos.magic = dos_magic.*;
+        dos.nt_offset = nt_offset;
+        bytes[nt_offset..][0..nt_signature.len].* = nt_signature.*;
+
+        const file_header: *align(1) FileHeader = @ptrCast(bytes[nt_offset + nt_signature.len ..][0..@sizeOf(FileHeader)]);
+        file_header.* = .{
+            .machine = .i386,
+            .section_count = @intCast(sections.len),
+            .timestamp = 0,
+            .symbol_table_offset = 0,
+            .symbol_count = 0,
+            .optional_header_size = optional_size,
+            .characteristics = @bitCast(@as(u16, 0x010E)),
+        };
+        const optional: *align(1) OptionalHeader32 = @ptrCast(bytes[optional_offset..][0..@sizeOf(OptionalHeader32)]);
+        optional.magic = .pe32;
+        optional.image_base = image_base;
+        optional.file_alignment = file_alignment;
+        optional.headers_size = headers_size;
+        optional.directory_count = directory_count;
+
+        var raw_offset: u32 = headers_size;
+        for (sections, 0..) |section, index| {
+            const at = sections_offset + index * @sizeOf(SectionHeader);
+            const header: *align(1) SectionHeader = @ptrCast(bytes[at..][0..@sizeOf(SectionHeader)]);
+            header.* = std.mem.zeroes(SectionHeader);
+            const name_len = @min(section.name.len, header.name_bytes.len);
+            @memcpy(header.name_bytes[0..name_len], section.name[0..name_len]);
+            header.virtual_address = section.rva;
+            header.virtual_size = @intCast(section.data.len);
+            header.raw_offset = raw_offset;
+            header.raw_size = @intCast(section.data.len);
+            @memcpy(bytes[raw_offset..][0..section.data.len], section.data);
+            raw_offset += @intCast(std.mem.alignForward(usize, section.data.len, file_alignment));
+        }
+        return bytes;
+    }
+};
+
+test "parses a minimal image" {
+    const bytes = try testing.build(std.testing.allocator, 0x400000, &.{
+        .{ .name = ".text", .rva = 0x1000, .data = "hello" ++ [_]u8{0} ** 0x3B },
+    });
+    defer std.testing.allocator.free(bytes);
+
+    const image: Image = try .parse(bytes);
     try std.testing.expectEqual(Machine.i386, image.file_header.machine);
     try std.testing.expectEqual(@as(u32, 0x400000), image.optional_header.image_base);
     try std.testing.expectEqual(@as(usize, 1), image.sections.len);
@@ -376,9 +416,28 @@ test "parses a minimal image" {
     const text = image.sectionByName(".text").?;
     try std.testing.expectEqualStrings(".text", text.name());
     try std.testing.expectEqualSlices(u8, "hello", (try image.sectionData(text))[0..5]);
-    try std.testing.expectEqual(@as(?u32, 0x205), image.fileOffset(0x1005));
+    try std.testing.expectEqual(@as(?u32, 0x405), image.fileOffset(0x1005));
+    try std.testing.expectEqualStrings("hello", image.stringAt(0x1000).?);
     try std.testing.expectEqual(@as(?*align(1) SectionHeader, null), image.sectionContaining(0x9999));
     try std.testing.expectEqual(@as(?DataDirectory, null), image.directory(.import));
+}
+
+test "maps each section to its own file offset" {
+    const bytes = try testing.build(std.testing.allocator, 0x400000, &.{
+        .{ .name = ".text", .rva = 0x1000, .data = &[_]u8{0xC3} ** 0x10 },
+        .{ .name = ".data", .rva = 0x5000, .data = &[_]u8{0xAA} ** 0x300 },
+    });
+    defer std.testing.allocator.free(bytes);
+
+    const image: Image = try .parse(bytes);
+    try std.testing.expectEqual(@as(usize, 2), image.sections.len);
+    try std.testing.expectEqual(@as(?u32, 0x400), image.fileOffset(0x1000));
+    try std.testing.expectEqual(@as(?u32, 0x600), image.fileOffset(0x5000));
+    try std.testing.expectEqual(@as(?u32, 0x8FF), image.fileOffset(0x52FF));
+    // Past a section's data, and between sections, nothing maps.
+    try std.testing.expectEqual(@as(?u32, null), image.fileOffset(0x5300));
+    try std.testing.expectEqual(@as(?u32, null), image.fileOffset(0x3000));
+    try std.testing.expectEqual(@as(u8, 0xAA), bytes[image.fileOffset(0x5123).?]);
 }
 
 test "rejects non-PE input" {

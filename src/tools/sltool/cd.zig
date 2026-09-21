@@ -98,3 +98,10 @@ fn extract(ctx: Context, volume: *const iso9660.Volume, out_path: []const u8) !v
     };
     try ctx.stdout.print("extracted {d} files ({Bi:.1}) to {s}\n", .{ files, bytes, out_path });
 }
+
+test Command {
+    try std.testing.expectEqualStrings("disc.bin", (try Command.parse(&.{ "info", "disc.bin" })).info.image);
+    try std.testing.expectEqualStrings("disc.bin", (try Command.parse(&.{ "ls", "disc.bin" })).ls.image);
+    try std.testing.expectError(error.Usage, Command.parse(&.{ "ls", "disc.bin", "extra" }));
+    try std.testing.expectError(error.Usage, Command.parse(&.{"mount"}));
+}

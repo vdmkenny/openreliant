@@ -172,3 +172,12 @@ fn extract(ctx: Context, sprite: spr.Sprite, source: []const u8, out_path: []con
         try ctx.stdout.print("{d} had no palette in the file and are greyscale\n", .{without_palette});
     }
 }
+
+test Command {
+    const parsed = try Command.parse(&.{ "extract", "HUD.SPR", "out" });
+    try std.testing.expectEqualStrings("HUD.SPR", parsed.extract.sprite);
+    try std.testing.expectEqualStrings("out", parsed.extract.out_dir);
+    try std.testing.expectEqualStrings("HUD.SPR", (try Command.parse(&.{ "ls", "HUD.SPR" })).ls.sprite);
+    try std.testing.expectError(error.Usage, Command.parse(&.{ "extract", "HUD.SPR" }));
+    try std.testing.expectError(error.Usage, Command.parse(&.{ "show", "HUD.SPR" }));
+}

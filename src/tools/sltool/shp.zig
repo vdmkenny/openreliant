@@ -394,3 +394,20 @@ fn writeObj(ctx: Context, model: shp.Model, out_path: []const u8, lod: u32, mode
     try out.flush();
     try ctx.stdout.print("wrote {s}: {d} parts, {d} triangles\n", .{ out_path, exported, triangles });
 }
+
+test Command {
+    const obj = try Command.parse(&.{ "obj", "SHIP.SHP", "ship.obj", "--lod", "2", "--model-space" });
+    try std.testing.expectEqualStrings("ship.obj", obj.obj.out);
+    try std.testing.expectEqual(2, obj.obj.lod);
+    try std.testing.expect(obj.obj.model_space);
+
+    const plain = try Command.parse(&.{ "obj", "SHIP.SHP", "ship.obj" });
+    try std.testing.expectEqual(0, plain.obj.lod);
+    try std.testing.expect(!plain.obj.model_space);
+    try std.testing.expectEqualStrings("SHIP.SHP", (try Command.parse(&.{ "components", "SHIP.SHP" })).components.model);
+
+    try std.testing.expectError(error.Usage, Command.parse(&.{ "obj", "SHIP.SHP", "ship.obj", "--lod" }));
+    try std.testing.expectError(error.Usage, Command.parse(&.{ "obj", "SHIP.SHP", "ship.obj", "--lod", "two" }));
+    try std.testing.expectError(error.Usage, Command.parse(&.{ "obj", "SHIP.SHP", "ship.obj", "--flat" }));
+    try std.testing.expectError(error.Usage, Command.parse(&.{ "obj", "SHIP.SHP" }));
+}

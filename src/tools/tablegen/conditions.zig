@@ -12,6 +12,7 @@ const starlancer = @import("starlancer");
 const Repeat = starlancer.dte.Trigger.Repeat;
 
 const image = @import("image.zig");
+const testing = @import("testing.zig");
 
 /// Where `mission_script_start` installs the catalogue: `MOV dword ptr [condition_table], imm32`,
 /// then `MOV word ptr [condition_count], imm16`.
@@ -232,4 +233,153 @@ pub fn emit(w: *Io.Writer, catalogue: Catalogue) !void {
         \\}
         \\
     );
+}
+
+/// A synthetic payload: the two instructions that install the catalogue, and the catalogue with its
+/// value lists and strings.
+const TestPayload = struct {
+    code: [0x40]u8 = @splat(0x90),
+    data: [0x400]u8 = @splat(0),
+
+    const code_va = install & ~@as(u32, 0xF);
+    const table_va = 0x004F2000;
+    const lists = table_va + 0x100;
+    const strings = table_va + 0x200;
+
+    fn text(payload: *TestPayload) testing.Region {
+        return .{ .va = code_va, .bytes = &payload.code };
+    }
+
+    fn table(payload: *TestPayload) testing.Region {
+        return .{ .va = table_va, .bytes = &payload.data };
+    }
+
+    fn installCatalogue(payload: *TestPayload, count: u16) void {
+        const region = payload.text();
+        region.put(install, &.{ 0xC7, 0x05 });
+        region.putWord(install + 2, condition_table);
+        region.putWord(install + 6, table_va);
+        region.put(install + 10, &.{ 0x66, 0xC7, 0x05 });
+        region.putWord(install + 13, condition_count);
+        region.putHalf(install + 17, count);
+    }
+
+    /// Descriptor `index`, named `name`, with no values, slot or handlers.
+    fn descriptor(payload: *TestPayload, index: u32, name: []const u8) u32 {
+        const at = table_va + index * descriptor_size;
+        const region = payload.table();
+        const name_at = strings + index * 0x20;
+        region.putString(name_at, name);
+        region.putWord(at + layout.name, name_at);
+        region.put(at + layout.slot, &.{ 0xFF, 0xFF });
+        return at;
+    }
+
+    /// A value list at `list`, ending with an entry whose label is null.
+    fn values(payload: *TestPayload, list: u32, labels: []const []const u8, checked: u8) void {
+        const region = payload.table();
+        for (labels, 0..) |label, i| {
+            const at = list + @as(u32, @intCast(i)) * value_size;
+            const label_at = strings + 0x100 + @as(u32, @intCast(i)) * 0x10;
+            region.putString(label_at, label);
+            region.putWord(at, label_at);
+            region.putWord(at + 4, 0x400);
+            region.put(at + 8, &.{ 0x02, checked });
+        }
+    }
+
+    fn catalogue(payload: *TestPayload, arena: std.mem.Allocator) !Catalogue {
+        return read(arena, try testing.reader(arena, &.{ payload.text(), payload.table() }));
+    }
+};
+
+test read {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var payload: TestPayload = .{};
+    payload.installCatalogue(2);
+    const first = payload.descriptor(0, "ShipDestroyed");
+    const region = payload.table();
+    region.putHalf(first + layout.unknown_04, 0x1234);
+    region.putHalf(first + layout.subjects, 0b011);
+    region.putWord(first + layout.values, TestPayload.lists);
+    payload.values(TestPayload.lists, &.{ "Ship", "Killer" }, 1);
+    region.put(first + layout.slot, &.{ 3, 0xFF });
+    for (0..3) |i| region.putWord(first + layout.handlers + @as(u32, @intCast(i)) * 4, 0x0045E000 + @as(u32, @intCast(i)));
+    _ = payload.descriptor(1, "MissionStart");
+
+    const read_catalogue = try payload.catalogue(arena.allocator());
+    try std.testing.expectEqual(TestPayload.table_va, read_catalogue.address);
+    try std.testing.expectEqual(2, read_catalogue.conditions.len);
+
+    const destroyed = read_catalogue.conditions[0];
+    try std.testing.expectEqualStrings("ShipDestroyed", destroyed.name);
+    try std.testing.expectEqual(0x1234, destroyed.unknown_04);
+    try std.testing.expectEqual(0b011, destroyed.subjects);
+    try std.testing.expectEqual(2, destroyed.values.len);
+    try std.testing.expectEqualStrings("Killer", destroyed.values[1].label);
+    try std.testing.expectEqual(0x400, destroyed.values[1].kinds);
+    try std.testing.expectEqual(2, destroyed.values[1].extra);
+    try std.testing.expect(destroyed.values[1].checked);
+    try std.testing.expectEqual(3, destroyed.slot);
+    try std.testing.expectEqual(0x0045E002, destroyed.handlers.?.verdict);
+
+    const start = read_catalogue.conditions[1];
+    try std.testing.expectEqualStrings("MissionStart", start.name);
+    try std.testing.expectEqual(0, start.values.len);
+    try std.testing.expectEqual(null, start.handlers);
+}
+
+test "read wants the install instructions" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var payload: TestPayload = .{};
+    try std.testing.expectError(error.NotTheInstall, payload.catalogue(arena.allocator()));
+}
+
+test "handlers come in threes" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var payload: TestPayload = .{};
+    payload.installCatalogue(1);
+    const at = payload.descriptor(0, "ShipDestroyed");
+    payload.table().putWord(at + layout.handlers, 0x0045E000);
+    try std.testing.expectError(error.PartialHandlers, payload.catalogue(arena.allocator()));
+}
+
+test "a value is checked or not" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var payload: TestPayload = .{};
+    payload.installCatalogue(1);
+    const at = payload.descriptor(0, "ShipDestroyed");
+    payload.table().putWord(at + layout.values, TestPayload.lists);
+    payload.values(TestPayload.lists, &.{"Ship"}, 2);
+    try std.testing.expectError(error.BadFlag, payload.catalogue(arena.allocator()));
+}
+
+test "an event carries at most five values" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    var payload: TestPayload = .{};
+    payload.installCatalogue(1);
+    const at = payload.descriptor(0, "ShipDestroyed");
+    payload.table().putWord(at + layout.values, TestPayload.lists);
+    payload.values(TestPayload.lists, &.{ "A", "B", "C", "D", "E", "F" }, 0);
+    try std.testing.expectError(error.TooManyValues, payload.catalogue(arena.allocator()));
+}
+
+test "emit writes Zig that parses" {
+    const values_listed = [_]Value{.{ .label = "Ship", .kinds = 0x400, .extra = 2, .checked = true }};
+    const listed = [_]Condition{
+        .{ .name = "ShipDestroyed", .unknown_04 = 0, .subjects = 0b011, .values = &values_listed, .slot = 3, .veto_exempt = 0, .handlers = .{ .begin = 1, .add_member = 2, .verdict = 3 } },
+        .{ .name = "MissionStart", .unknown_04 = 0x10, .subjects = 0, .values = &.{}, .slot = 0xFF, .veto_exempt = 0xFF, .handlers = null },
+        .{ .name = "Odd", .unknown_04 = 0, .subjects = 0, .values = &.{}, .slot = 0xFF, .veto_exempt = 0x7F, .handlers = null },
+    };
+    var out: Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try emit(&out.writer, .{ .address = 0x004F2000, .conditions = &listed });
+    try testing.expectZig(out.written());
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), ".slot = null,") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), ".veto_exempt = @enumFromInt(127),") != null);
 }

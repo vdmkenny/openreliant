@@ -55,3 +55,30 @@ pub const Library = struct {
         return try shp.components(library.ctx.arena, model, name, library);
     }
 };
+
+test Library {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    var buffer: [1024]u8 = undefined;
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "Ship.SHP", .data = shp.testing.buildModel(&buffer) });
+
+    var out: Io.Writer.Allocating = .init(arena);
+    const ctx: Context = .{ .io = std.testing.io, .arena = arena, .stdout = &out.writer };
+    const beside_path = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/MISSION.DTE", .{tmp.sub_path});
+    var library: Library = try .beside(ctx, beside_path);
+    defer library.deinit();
+
+    // Names match whatever their case, as on the game's file system.
+    const model = (try library.load("SHIP.shp")).?;
+    try std.testing.expectEqual(1, model.parts.len);
+    try std.testing.expectEqual(null, try library.load("missing.shp"));
+    // A second load is the model read the first time.
+    try std.testing.expectEqual(model.parts.ptr, (try library.load("ship.SHP")).?.parts.ptr);
+    // The test model does not ask for components.
+    try std.testing.expectEqual(0, (try library.components("ship.shp")).?.len);
+    try std.testing.expectEqual(null, try library.components("missing.shp"));
+}

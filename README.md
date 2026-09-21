@@ -22,6 +22,7 @@ Tools are written in Zig; `make` drives the toolchain, the extraction and the an
 ```bash
 make setup     # JDK, Ghidra with native decompiler, GhydraMCP, into tools/
 make build     # build sltool into zig-out/bin
+make test      # run the unit tests, which build their inputs and need no game files
 make doctor    # report what is in place
 ```
 
@@ -79,7 +80,7 @@ Documentation index: [`docs/README.md`](docs/README.md).
 | `src/formats/` | The `starlancer` module: readers for the game's formats and containers. |
 | `src/lancer.zig`, `src/lancer/` | The game executable's own run-time structures. |
 | `src/tools/sltool/` | `sltool`, the command line front end. |
-| `src/tools/tablegen/` | Derives the engine's static tables from the game binary: the script VM's, and its model tables. |
+| `src/tools/tablegen/` | Derives the engine's static tables from the game binary: the script VM's, its model tables and the control bindings. |
 | `src/tools/ghidragen/` | Writes the names and data types the Ghidra scripts apply. |
 | `mk/`, `scripts/` | Makefile fragments and their helpers. |
 | `ghidra/scripts/` | Ghidra scripts, run headless by `make`. |

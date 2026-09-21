@@ -548,6 +548,12 @@ pub const Model = struct {
 
 // --- tests ------------------------------------------------------------------------------------
 
+/// Builds models in memory, for the tests of code that reads them.
+pub const testing = struct {
+    /// A one-part model written into `buffer`, as `Model.parse` reads it; returns the bytes used.
+    pub const buildModel = buildTestModel;
+};
+
 /// Builds a one-part, one-level model in memory: the smallest stream the parser accepts.
 fn buildTestModel(buffer: []u8) []u8 {
     var pos: usize = 0;
@@ -724,6 +730,7 @@ pub const max_mount_depth = 8;
 /// Empty unless the model's header flags ask for components.
 pub fn components(gpa: Allocator, model: Model, name: []const u8, mounts: anytype) ![]Component {
     var list: std.ArrayList(Component) = .empty;
+    errdefer list.deinit(gpa);
     if (model.header.flags.components) try collect(gpa, &list, model, name, 0, mounts);
     return list.toOwnedSlice(gpa);
 }
@@ -753,4 +760,99 @@ fn collect(
             try collect(gpa, list, sub, file, depth + 1, mounts);
         }
     }
+}
+
+/// A part for the component tests, named `name` and marked as a component or not.
+fn testPart(name: []const u8, component: bool, attachments: []Attachment) PartData {
+    var part = std.mem.zeroes(Part);
+    @memcpy(part.name_bytes[0..name.len], name);
+    part.parent = -1;
+    part.flags.component = component;
+    return .{
+        .part = part,
+        .meshes = &.{},
+        .attachments = attachments,
+        .node_count = 0,
+        .clip_count = 0,
+        .group_count = 0,
+        .trigger_count = 0,
+    };
+}
+
+fn testModel(parts: []PartData, list_components: bool) Model {
+    var header = std.mem.zeroes(Header);
+    header.flags.components = list_components;
+    return .{ .header = header, .parts = parts, .tail_count = 0, .trailing_bytes = 0 };
+}
+
+fn testAttachment(kind: Attachment.Kind, id: u32) Attachment {
+    var attachment = std.mem.zeroes(Attachment);
+    attachment.kind = kind;
+    attachment.id = id;
+    return attachment;
+}
+
+/// Mounts one model under the file name the engine loads for guns of id 0, and nothing else.
+const TestMounts = struct {
+    gun: ?Model,
+
+    const gun_file = models.attachment(.gun, 0).?.model.?;
+
+    pub fn load(mounts: TestMounts, file: []const u8) !?Model {
+        return if (std.mem.eql(u8, file, gun_file)) mounts.gun else null;
+    }
+};
+
+test "components are the marked parts, then those of the mounted models" {
+    const gpa = std.testing.allocator;
+    var barrel = [_]PartData{ testPart("Base", false, &.{}), testPart("Barrel", true, &.{}) };
+    var mounts_on_hull = [_]Attachment{
+        testAttachment(.gun, 0),
+        // Lights mount nothing that lists components.
+        testAttachment(.light, 0),
+    };
+    var hull = [_]PartData{
+        testPart("Hull", false, &mounts_on_hull),
+        testPart("Engine", true, &.{}),
+        testPart("Shield", true, &.{}),
+    };
+    const mounts: TestMounts = .{ .gun = testModel(&barrel, false) };
+
+    const listed = try components(gpa, testModel(&hull, true), "SHIP.SHP", mounts);
+    defer gpa.free(listed);
+    try std.testing.expectEqual(3, listed.len);
+    try std.testing.expectEqualStrings("Engine", listed[0].part.name());
+    try std.testing.expectEqual(1, listed[0].part_index);
+    try std.testing.expectEqualStrings("SHIP.SHP", listed[0].model);
+    try std.testing.expectEqualStrings("Shield", listed[1].part.name());
+    try std.testing.expectEqual(0, listed[1].depth);
+    // A mounted model's parts follow, whatever its own header says.
+    try std.testing.expectEqualStrings("Barrel", listed[2].part.name());
+    try std.testing.expectEqualStrings(TestMounts.gun_file, listed[2].model);
+    try std.testing.expectEqual(1, listed[2].depth);
+}
+
+test "a model whose header does not ask lists no components" {
+    const gpa = std.testing.allocator;
+    var hull = [_]PartData{testPart("Engine", true, &.{})};
+    const listed = try components(gpa, testModel(&hull, false), "SHIP.SHP", TestMounts{ .gun = null });
+    defer gpa.free(listed);
+    try std.testing.expectEqual(0, listed.len);
+}
+
+test "a missing mounted model leaves its components out" {
+    const gpa = std.testing.allocator;
+    var mounts_on_hull = [_]Attachment{testAttachment(.gun, 0)};
+    var hull = [_]PartData{ testPart("Hull", false, &mounts_on_hull), testPart("Engine", true, &.{}) };
+    const listed = try components(gpa, testModel(&hull, true), "SHIP.SHP", TestMounts{ .gun = null });
+    defer gpa.free(listed);
+    try std.testing.expectEqual(1, listed.len);
+}
+
+test "a model that mounts itself stops at the depth limit" {
+    const gpa = std.testing.allocator;
+    var mounts_on_gun = [_]Attachment{testAttachment(.gun, 0)};
+    var gun = [_]PartData{testPart("Barrel", true, &mounts_on_gun)};
+    const model = testModel(&gun, true);
+    try std.testing.expectError(error.MountsTooDeep, components(gpa, model, TestMounts.gun_file, TestMounts{ .gun = model }));
 }
