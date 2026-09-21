@@ -1,54 +1,39 @@
 # The game itself, all of it under game/ (git-ignored; none of it is ours to redistribute).
 #
-#   game/discs/disc<N>.bin   raw disc images: your own dumps, or `make fetch-game`
+#   game/discs/disc<N>.bin   raw images of your own discs, which you supply
 #   game/cd<N>/              the files on each disc
 #   game/install/            what the installer would put on disk: LANCER.CAB unpacked, plus the
 #                            loader and language DLLs it copies from the disc
+#   game/decrypted/          the payload executable, recovered from the SafeDisc wrapper
 #
 # Extraction is pure Zig (sltool reads raw sectors and ISO 9660 itself) except for LANCER.CAB, an
 # LZX-compressed Microsoft cabinet, which still goes through 7z.
 
 ##@ Game files
 
-DISCS_DIR   := $(GAME_DIR)/discs
-INSTALL_DIR := $(GAME_DIR)/install
-
-# Redump-verified images of the US release, as hosted by the Internet Archive.
-ARCHIVE_ORG := https://archive.org/download/StarLancerUSA
-DISC_URL_1  := $(ARCHIVE_ORG)/Microsoft%20StarLancer%20%28USA%29%20%28Disc%201%29.zip
-DISC_URL_2  := $(ARCHIVE_ORG)/Microsoft%20StarLancer%20%28USA%29%20%28Disc%202%29.zip
-DISC_MD5_1  := 9da87ffd24e61c28ad9760055ca19706
-DISC_MD5_2  := f966ba5a086464edf180b644ba73ccc5
-
+DISCS_DIR     := $(GAME_DIR)/discs
+INSTALL_DIR   := $(GAME_DIR)/install
 DECRYPTED_DIR := $(GAME_DIR)/decrypted
+
 # The payload executable, recovered from the SafeDisc wrapper. See docs/binary/safedisc.md.
 PAYLOAD := $(DECRYPTED_DIR)/LANCER.EXE
 
 .PHONY: game
-game: $(GAME_DIR)/.stamp-install $(GAME_DIR)/.stamp-cd2 $(PAYLOAD) ## Unpack the disc images and recover the payload executable
-
-.PHONY: fetch-game
-fetch-game: $(DISCS_DIR)/disc1.zip $(DISCS_DIR)/disc2.zip ## Download both disc images from archive.org (1.3 GB)
+game: $(GAME_DIR)/.stamp-install $(GAME_DIR)/.stamp-cd2 $(PAYLOAD) ## Unpack your disc images and recover the payload executable
 
 $(DISCS_DIR):
 	mkdir -p $@
 
-$(DISCS_DIR)/disc%.zip: | $(DISCS_DIR)
-	$(CURL) --continue-at - --output $@ "$(DISC_URL_$*)"
-	scripts/verify-hash.sh md5 $(DISC_MD5_$*) $@
-
-# No prerequisite on the zip: a disc image you supplied yourself must not trigger a download.
-#
-# Images unpacked from the zips are intermediate: make removes them again once the discs are
-# extracted, which saves 1.4 GB, and recreates them in seconds if ever needed. Images that were
-# already there when make started are yours and are left alone.
+# Supply your own images of your own discs. A zip holding one is unpacked for convenience, and
+# removed again once the disc has been extracted; an image you placed here yourself is left alone.
 .INTERMEDIATE: $(DISCS_DIR)/disc1.bin $(DISCS_DIR)/disc2.bin
 $(DISCS_DIR)/disc%.bin: | $(DISCS_DIR)
 	@test -f $(DISCS_DIR)/disc$*.zip || { \
 	    echo "missing $@"; \
-	    echo "  put your own image of disc $* there (raw .bin or .iso), or run: make fetch-game"; \
+	    echo "  Place your own image of disc $* here: a raw .bin (2352-byte sectors) or an .iso,"; \
+	    echo "  or a .zip containing one, named disc$*.zip."; \
 	    exit 1; }
-	unzip -p $(DISCS_DIR)/disc$*.zip '*.bin' > $@
+	unzip -p $(DISCS_DIR)/disc$*.zip '*.bin' '*.iso' > $@
 
 # sltool is order-only on purpose: rebuilding it must not re-extract the game, which would in
 # turn make every later step look stale.

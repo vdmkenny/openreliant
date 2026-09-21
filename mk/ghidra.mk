@@ -17,6 +17,11 @@ GHIDRA_EXPORT_DIR  := $(GHIDRA_DIR)/export
 HEADLESS := $(WITH_JDK) $(GHIDRA_HOME)/support/analyzeHeadless $(GHIDRA_PROJECT_DIR)
 HEADLESS_MAX_CPU ?= 8
 
+# Re-importing replaces a program in the project, discarding anything done to it by hand. It is
+# therefore opt-in: `make ghidra-import-game OVERWRITE=1`, for when the input file itself changed.
+OVERWRITE ?=
+IMPORT_FLAGS := $(if $(OVERWRITE),-overwrite)
+
 # Group -> files, relative to game/.
 GHIDRA_GROUPS := game safedisc surrender vfx
 
@@ -44,7 +49,7 @@ ghidra-import-$(1): $$(GHIDRA_PROJECT_DIR)/.imported-$(1)
 $$(GHIDRA_PROJECT_DIR)/.imported-$(1): | $$(GAME_DIR)/.stamp-install $$(STAMPS_DIR)/ghidra-natives
 	mkdir -p $$(GHIDRA_PROJECT_DIR)
 	$$(HEADLESS) $$(GHIDRA_PROJECT)/$(1) \
-	    -import $$(addprefix $$(GAME_DIR)/,$$(GHIDRA_FILES_$(1))) \
+	    -import $$(addprefix $$(GAME_DIR)/,$$(GHIDRA_FILES_$(1))) $$(IMPORT_FLAGS) \
 	    -max-cpu $$(HEADLESS_MAX_CPU) -analysisTimeoutPerFile 3600 \
 	    -log $$(GHIDRA_PROJECT_DIR)/import-$(1).log
 	touch $$@

@@ -16,8 +16,9 @@ make build     # build sltool into zig-out/bin
 make doctor    # report what is in place
 ```
 
-Then supply the game. Place your own disc images at `game/discs/disc1.bin` and `disc2.bin` (raw
-`.bin` or `.iso`), or run `make fetch-game`, and unpack them:
+Then supply the game, from your own discs. Put an image of each at `game/discs/disc1.bin` and
+`disc2.bin` (a raw `.bin` of 2352-byte sectors, or an `.iso`; a `.zip` containing one works too),
+and unpack them:
 
 ```bash
 make game      # extract both discs, unpack the installer, decrypt the payload executable
@@ -41,6 +42,11 @@ The shipped `LANCER.EXE` is a SafeDisc 1 loader, not the game; the game is the e
 disc access and without running the loader: the sections are TEA-ECB encrypted under a 128-bit key
 whose four words are equal, which leaves a 32-bit search that takes about 20 seconds. See
 [`docs/binary/safedisc.md`](docs/binary/safedisc.md).
+
+The same wrapper empties the `kernel32` and `user32` import tables. `sltool safedisc imports`
+recovers the 129 API names from the file (XORed thunks, a zeroed first slot, and chain-XOR
+encrypted strings), but SafeDisc also shuffles the thunks, so which slot holds which API is not
+recoverable from the table and is left unresolved rather than guessed.
 
 `sltool cd` reads the raw 2352-byte-sector disc images and their ISO 9660 filesystem directly, so
 extracting the discs needs no mounting or conversion. See
