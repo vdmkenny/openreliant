@@ -46,6 +46,10 @@ GHIDRA_SHA256  ?= 93a5d11a9ad510622acaaf908c556a7b9b764d338e78a7567f3689bf5081fd
 MAVEN_VERSION ?= 3.9.16
 MAVEN_SHA512  ?= 831a8591fe20c8243b1dbe7d71e3244f31d1665b0804b2e825e38cbbe5ce0cafb8338851f90780735568773e0a6cd07bbec107cda0b896b008b861075358b6f6
 
+# Turns the game's shaders from SPIR-V into Metal's language: only `make shaders` needs it.
+SPIRV_CROSS_VERSION ?= vulkan-sdk-1.4.357.0
+SPIRV_CROSS_SHA256  ?= 97c910326afdd44d794ce8561326fa675fd1958b27142f03295403044d639639
+
 # The Ghidra plugin must be built against the exact Ghidra version, so it is built from source.
 GHYDRA_REPO ?= https://github.com/starsong-consulting/GhydraMCP.git
 GHYDRA_REF  ?= v3.0.0-rc.1
@@ -58,6 +62,7 @@ GHIDRA_USER_DIR := $(GHIDRA_USER_BASE)/ghidra_$(GHIDRA_VERSION)_PUBLIC
 MAVEN_HOME      := $(TOOLS_DIR)/apache-maven-$(MAVEN_VERSION)
 GHYDRA_SRC      := $(TOOLS_DIR)/ghydramcp-src
 VENV_DIR        := $(TOOLS_DIR)/venv
+SPIRV_CROSS     := $(TOOLS_DIR)/spirv-cross/spirv-cross
 
 # Prefer a native arm64 Zig over an x86_64 one that happens to be first on PATH.
 ZIG ?= $(firstword $(wildcard /opt/homebrew/bin/zig) zig)

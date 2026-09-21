@@ -63,6 +63,26 @@ $(STAMPS_DIR)/ghidra-natives: $(STAMPS_DIR)/ghidra $(STAMPS_DIR)/jdk
 	fi
 	touch $@
 
+# --- SPIRV-Cross (only needed to regenerate the shaders) ----------------------------------------
+
+SPIRV_CROSS_ARCHIVE := $(DOWNLOADS_DIR)/SPIRV-Cross-$(SPIRV_CROSS_VERSION).tar.gz
+SPIRV_CROSS_URL     := https://github.com/KhronosGroup/SPIRV-Cross/archive/refs/tags/$(SPIRV_CROSS_VERSION).tar.gz
+
+$(SPIRV_CROSS_ARCHIVE): | $(DOWNLOADS_DIR)
+	$(CURL) --output $@ "$(SPIRV_CROSS_URL)"
+	scripts/verify-hash.sh sha256 $(SPIRV_CROSS_SHA256) $@
+
+.PHONY: spirv-cross
+spirv-cross: $(SPIRV_CROSS) ## SPIRV-Cross, which `make shaders` needs, built from source
+
+# Its command-line tool, built from its sources with Zig's C++ compiler.
+$(SPIRV_CROSS): | $(SPIRV_CROSS_ARCHIVE)
+	rm -rf $(TOOLS_DIR)/spirv-cross && mkdir -p $(TOOLS_DIR)/spirv-cross
+	tar -xzf $(SPIRV_CROSS_ARCHIVE) -C $(TOOLS_DIR)/spirv-cross --strip-components 1
+	cd $(TOOLS_DIR)/spirv-cross && $(ZIG) c++ -O2 -std=c++14 -w -o spirv-cross main.cpp spirv_cfg.cpp \
+	    spirv_cross.cpp spirv_cross_parsed_ir.cpp spirv_cross_util.cpp spirv_parser.cpp \
+	    spirv_glsl.cpp spirv_hlsl.cpp spirv_msl.cpp spirv_cpp.cpp spirv_reflect.cpp
+
 # --- Maven (only needed to build the GhydraMCP plugin) ----------------------------------------
 
 MAVEN_ARCHIVE := $(DOWNLOADS_DIR)/apache-maven-$(MAVEN_VERSION)-bin.tar.gz

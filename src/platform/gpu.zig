@@ -1,0 +1,792 @@
+//! The GPU device: draws what Surrender's Direct3D driver hands over as Direct3D 7 drew it, with
+//! SDL's GPU interface, on Metal, Vulkan or Direct3D 12. It stands where `IDirect3DDevice7` stood
+//! ([`device.zig`](../lancer/surrender/srd3d/device.zig)); the software device is its reference.
+//!
+//! The game's textures are small, and its draws are too: the driver draws a strip, a fan or one
+//! blended polygon at a time. So each texture is a layer of an array holding the textures of its
+//! size and levels, each vertex names its layer, and consecutive draws with the same render states
+//! go to the GPU as one. `shaders/device.glsl`, the game's one shader, does what Direct3D 7's
+//! texture stages did.
+//!
+//! **Improvements**, each of which `Settings.original` turns off: the frame is drawn at the
+//! display's own resolution, with several samples a pixel; textures are filtered trilinearly,
+//! sixteen times anisotropic, and magnified with a Catmull-Rom filter, where the original filtered
+//! bilinearly from the nearest level; colour is 32-bit, where the original drew in 16 bits.
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const c = @import("sdl");
+
+const starlancer = @import("starlancer");
+const device = starlancer.lancer.surrender.srd3d.device;
+const srd3d = starlancer.lancer.surrender.srd3d.srd3d;
+const srtexture = starlancer.lancer.surrender.surrenderlib.srtexture;
+
+const log = std.log.scoped(.gpu);
+
+pub const Error = error{ Sdl, OutOfMemory };
+
+fn fail(what: []const u8) error{Sdl} {
+    log.err("{s}: {s}", .{ what, c.SDL_GetError() });
+    return error.Sdl;
+}
+
+/// How the frame is drawn beyond what the original did.
+pub const Settings = struct {
+    /// 16-bit colour, dithered, as the original's 16-bit display modes drew: into a 16-bit colour
+    /// buffer where the GPU draws into one, with a 16-bit depth buffer.
+    sixteen_bit: bool = false,
+    /// Samples a pixel, for anti-aliasing: 1, 2, 4 or 8, cut to what the GPU offers. The original
+    /// took one.
+    samples: u8 = 4,
+    filter: Filter = .crisp,
+    /// Waits for the display to show each frame, as DirectDraw's flip did.
+    vsync: bool = true,
+
+    pub const Filter = enum {
+        /// As the original: bilinear, from the nearest level.
+        original,
+        /// Trilinear, sixteen times anisotropic: steady at a distance and sharp at an angle.
+        trilinear,
+        /// Trilinear, and magnified with a Catmull-Rom filter: as sharp as the textures allow.
+        crisp,
+    };
+
+    /// The original's look: 16-bit colour, one sample a pixel, bilinear filtering.
+    pub const original: Settings = .{ .sixteen_bit = true, .samples = 1, .filter = .original };
+};
+
+/// A vertex as the shader takes it: the driver's, less the specular colour, which Direct3D 7 left
+/// unused with specular lighting off, and with its texture's layer.
+const Vertex = extern struct {
+    position: [4]f32,
+    /// The driver's colour: its bytes blue, green, red and alpha.
+    diffuse: u32,
+    uv: [2]f32,
+    /// -1 for none.
+    layer: i32,
+
+    comptime {
+        std.debug.assert(@sizeOf(Vertex) == 32);
+    }
+};
+
+/// The primitives the shader draws; strips and fans go as lists.
+const Topology = enum { points, lines, triangles };
+
+/// What picks a pipeline: the topology and the render states.
+const PipelineKey = struct {
+    topology: Topology,
+    depth: srd3d.Depth,
+    blend: ?srd3d.Factors,
+};
+
+/// A texture's size and levels: textures alike share arrays.
+const Shape = struct { width: u32, height: u32, levels: u32 };
+
+/// The most layers an array takes: the fewest Vulkan guarantees. More textures of a shape go to a
+/// second array.
+const max_layers = 256;
+
+const Array = struct {
+    shape: Shape,
+    texture: *c.SDL_GPUTexture,
+    capacity: u32,
+    count: u32,
+};
+
+/// Where a texture lies: its array and its layer. The device keeps it in the image's `device`, as
+/// the driver's `texture_upload` keeps the device texture it makes; an image never drawn holds 0.
+const Slot = packed struct(u32) {
+    layer: u16,
+    array: u15,
+    placed: bool = true,
+
+    fn of(image: srtexture.Image) ?Slot {
+        const slot: Slot = @bitCast(@as(u32, @truncate(image.device)));
+        return if (slot.placed) slot else null;
+    }
+};
+
+/// A run of the frame's indices drawn with one pipeline and one array.
+const Run = struct {
+    key: PipelineKey,
+    /// Null while no vertex of the run has a texture.
+    array: ?u15,
+    first: u32,
+    count: u32,
+};
+
+/// A texture placed in its layer this frame, to go up to the GPU before the frame is drawn.
+const Upload = struct { levels: []const srtexture.Level, slot: Slot };
+
+pub const Gpu = struct {
+    gpa: Allocator,
+    handle: *c.SDL_GPUDevice,
+    window: *c.SDL_Window,
+    settings: Settings,
+    samples: c.SDL_GPUSampleCount,
+    colour_format: c.SDL_GPUTextureFormat,
+    depth_format: c.SDL_GPUTextureFormat,
+    vertex_shader: *c.SDL_GPUShader,
+    fragment_shader: *c.SDL_GPUShader,
+    sampler: *c.SDL_GPUSampler,
+    pipelines: std.AutoHashMapUnmanaged(PipelineKey, *c.SDL_GPUGraphicsPipeline) = .empty,
+    arrays: std.ArrayList(Array) = .empty,
+    uploads: std.ArrayList(Upload) = .empty,
+    /// A white texel, bound for runs with no texture.
+    blank: Slot = undefined,
+    vertices: std.ArrayList(Vertex) = .empty,
+    indices: std.ArrayList(u32) = .empty,
+    runs: std.ArrayList(Run) = .empty,
+    buffers: ?Buffers = null,
+    targets: ?Targets = null,
+    /// Set when a draw was lost for want of memory: the frame is not shown.
+    failed: bool = false,
+
+    const Buffers = struct {
+        vertices: *c.SDL_GPUBuffer,
+        indices: *c.SDL_GPUBuffer,
+        /// Both, vertices first and indices from `size` on.
+        transfer: *c.SDL_GPUTransferBuffer,
+        size: u32,
+    };
+
+    const Targets = struct {
+        width: u32,
+        height: u32,
+        /// Drawn into, with several samples a pixel when anti-aliasing.
+        colour: *c.SDL_GPUTexture,
+        /// What the samples resolve to, when there are several.
+        resolved: ?*c.SDL_GPUTexture,
+        depth: *c.SDL_GPUTexture,
+
+        /// What holds the finished frame.
+        fn frame(targets: Targets) *c.SDL_GPUTexture {
+            return targets.resolved orelse targets.colour;
+        }
+    };
+
+    const shaders = struct {
+        const vertex_spirv = @embedFile("shaders/device.vert.spv");
+        const vertex_msl = @embedFile("shaders/device.vert.msl");
+        const fragment_spirv = @embedFile("shaders/device.frag.spv");
+        const fragment_msl = @embedFile("shaders/device.frag.msl");
+    };
+
+    /// One GPU device a run: the textures' slots it keeps in their images are its own.
+    pub fn init(gpa: Allocator, handle: *c.SDL_GPUDevice, window: *c.SDL_Window, settings: Settings) Error!Gpu {
+        const formats = c.SDL_GetGPUShaderFormats(handle);
+        const spirv = formats & c.SDL_GPU_SHADERFORMAT_SPIRV != 0;
+        if (!spirv and formats & c.SDL_GPU_SHADERFORMAT_MSL == 0) {
+            log.err("the GPU takes neither SPIR-V nor Metal's shaders", .{});
+            return error.Sdl;
+        }
+        const vertex_shader = try shader(handle, spirv, c.SDL_GPU_SHADERSTAGE_VERTEX, if (spirv) shaders.vertex_spirv else shaders.vertex_msl, 0);
+        errdefer c.SDL_ReleaseGPUShader(handle, vertex_shader);
+        const fragment_shader = try shader(handle, spirv, c.SDL_GPU_SHADERSTAGE_FRAGMENT, if (spirv) shaders.fragment_spirv else shaders.fragment_msl, 1);
+        errdefer c.SDL_ReleaseGPUShader(handle, fragment_shader);
+
+        const modern = settings.filter != .original;
+        var sampler_info = std.mem.zeroes(c.SDL_GPUSamplerCreateInfo);
+        sampler_info.min_filter = c.SDL_GPU_FILTER_LINEAR;
+        sampler_info.mag_filter = c.SDL_GPU_FILTER_LINEAR;
+        sampler_info.mipmap_mode = if (modern) c.SDL_GPU_SAMPLERMIPMAPMODE_LINEAR else c.SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
+        sampler_info.address_mode_u = c.SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
+        sampler_info.address_mode_v = c.SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
+        sampler_info.address_mode_w = c.SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
+        sampler_info.max_lod = 1000;
+        sampler_info.enable_anisotropy = modern;
+        sampler_info.max_anisotropy = if (modern) 16 else 1;
+        const sampler = c.SDL_CreateGPUSampler(handle, &sampler_info) orelse return fail("SDL_CreateGPUSampler");
+        errdefer c.SDL_ReleaseGPUSampler(handle, sampler);
+
+        // 16-bit colour where the GPU draws into it; elsewhere the shader's dither alone.
+        const sixteen = settings.sixteen_bit and c.SDL_GPUTextureSupportsFormat(
+            handle,
+            c.SDL_GPU_TEXTUREFORMAT_B5G6R5_UNORM,
+            c.SDL_GPU_TEXTURETYPE_2D,
+            c.SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | c.SDL_GPU_TEXTUREUSAGE_SAMPLER,
+        );
+        const colour_format: c.SDL_GPUTextureFormat = if (sixteen) c.SDL_GPU_TEXTUREFORMAT_B5G6R5_UNORM else c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        const depth_format: c.SDL_GPUTextureFormat = if (settings.sixteen_bit)
+            c.SDL_GPU_TEXTUREFORMAT_D16_UNORM
+        else if (c.SDL_GPUTextureSupportsFormat(handle, c.SDL_GPU_TEXTUREFORMAT_D32_FLOAT, c.SDL_GPU_TEXTURETYPE_2D, c.SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET))
+            c.SDL_GPU_TEXTUREFORMAT_D32_FLOAT
+        else
+            c.SDL_GPU_TEXTUREFORMAT_D24_UNORM;
+        var samples: c.SDL_GPUSampleCount = c.SDL_GPU_SAMPLECOUNT_1;
+        for ([_]struct { u8, c.SDL_GPUSampleCount }{ .{ 2, c.SDL_GPU_SAMPLECOUNT_2 }, .{ 4, c.SDL_GPU_SAMPLECOUNT_4 }, .{ 8, c.SDL_GPU_SAMPLECOUNT_8 } }) |option| {
+            if (option[0] <= settings.samples and
+                c.SDL_GPUTextureSupportsSampleCount(handle, colour_format, option[1]) and
+                c.SDL_GPUTextureSupportsSampleCount(handle, depth_format, option[1])) samples = option[1];
+        }
+
+        const present: c.SDL_GPUPresentMode = if (settings.vsync)
+            c.SDL_GPU_PRESENTMODE_VSYNC
+        else if (c.SDL_WindowSupportsGPUPresentMode(handle, window, c.SDL_GPU_PRESENTMODE_IMMEDIATE))
+            c.SDL_GPU_PRESENTMODE_IMMEDIATE
+        else if (c.SDL_WindowSupportsGPUPresentMode(handle, window, c.SDL_GPU_PRESENTMODE_MAILBOX))
+            c.SDL_GPU_PRESENTMODE_MAILBOX
+        else
+            c.SDL_GPU_PRESENTMODE_VSYNC;
+        if (!c.SDL_SetGPUSwapchainParameters(handle, window, c.SDL_GPU_SWAPCHAINCOMPOSITION_SDR, present)) return fail("SDL_SetGPUSwapchainParameters");
+
+        var gpu: Gpu = .{
+            .gpa = gpa,
+            .handle = handle,
+            .window = window,
+            .settings = settings,
+            .samples = samples,
+            .colour_format = colour_format,
+            .depth_format = depth_format,
+            .vertex_shader = vertex_shader,
+            .fragment_shader = fragment_shader,
+            .sampler = sampler,
+        };
+        gpu.blank = try gpu.place(&blank_levels);
+        return gpu;
+    }
+
+    pub fn deinit(gpu: *Gpu) void {
+        _ = c.SDL_WaitForGPUIdle(gpu.handle);
+        var pipelines = gpu.pipelines.valueIterator();
+        while (pipelines.next()) |made| c.SDL_ReleaseGPUGraphicsPipeline(gpu.handle, made.*);
+        gpu.pipelines.deinit(gpu.gpa);
+        for (gpu.arrays.items) |array| c.SDL_ReleaseGPUTexture(gpu.handle, array.texture);
+        gpu.arrays.deinit(gpu.gpa);
+        gpu.uploads.deinit(gpu.gpa);
+        gpu.vertices.deinit(gpu.gpa);
+        gpu.indices.deinit(gpu.gpa);
+        gpu.runs.deinit(gpu.gpa);
+        gpu.releaseBuffers();
+        gpu.releaseTargets();
+        c.SDL_ReleaseGPUSampler(gpu.handle, gpu.sampler);
+        c.SDL_ReleaseGPUShader(gpu.handle, gpu.vertex_shader);
+        c.SDL_ReleaseGPUShader(gpu.handle, gpu.fragment_shader);
+    }
+
+    pub fn interface(gpu: *Gpu) device.Device {
+        return .{ .ptr = gpu, .vtable = &vtable };
+    }
+
+    const vtable: device.Device.VTable = .{ .begin = begin, .end = end, .draw = draw };
+
+    fn from(ptr: *anyopaque) *Gpu {
+        return @ptrCast(@alignCast(ptr));
+    }
+
+    /// The frame's size in pixels: the window's, at the display's own density.
+    pub fn frameSize(gpu: Gpu) [2]u32 {
+        var width: c_int = 0;
+        var height: c_int = 0;
+        _ = c.SDL_GetWindowSizeInPixels(gpu.window, &width, &height);
+        return .{ @intCast(@max(width, 1)), @intCast(@max(height, 1)) };
+    }
+
+    fn begin(ptr: *anyopaque) void {
+        const gpu = from(ptr);
+        gpu.vertices.clearRetainingCapacity();
+        gpu.indices.clearRetainingCapacity();
+        gpu.runs.clearRetainingCapacity();
+        gpu.failed = false;
+    }
+
+    fn draw(ptr: *anyopaque, state: device.State, primitive: device.Primitive, vertices: []const device.Vertex, indices: ?[]const u16) void {
+        const gpu = from(ptr);
+        gpu.record(state, primitive, vertices, indices) catch |err| {
+            if (!gpu.failed) log.err("the frame is not shown: {s}", .{@errorName(err)});
+            gpu.failed = true;
+        };
+    }
+
+    /// Adds a draw to the frame: its vertices, with their texture's layer, and its primitives as a
+    /// list, run on from the last draw where the pipeline and the array allow.
+    fn record(gpu: *Gpu, state: device.State, primitive: device.Primitive, vertices: []const device.Vertex, indices: ?[]const u16) Error!void {
+        const slot: ?Slot = if (state.texture) |image| try gpu.slotOf(image) else null;
+        const base: u32 = @intCast(gpu.vertices.items.len);
+        try gpu.vertices.ensureUnusedCapacity(gpu.gpa, vertices.len);
+        for (vertices) |v| gpu.vertices.appendAssumeCapacity(.{
+            .position = .{ v.x, v.y, v.z, v.rhw },
+            .diffuse = v.diffuse,
+            .uv = .{ v.u, v.v },
+            .layer = if (slot) |s| s.layer else -1,
+        });
+        const first: u32 = @intCast(gpu.indices.items.len);
+        try appendList(gpu.gpa, &gpu.indices, primitive, base, vertices.len, indices);
+        const count: u32 = @as(u32, @intCast(gpu.indices.items.len)) - first;
+        if (count == 0) return;
+        const run: Run = .{
+            .key = .{ .topology = topology(primitive), .depth = state.depth, .blend = state.blend },
+            .array = if (slot) |s| s.array else null,
+            .first = first,
+            .count = count,
+        };
+        if (gpu.runs.items.len > 0 and join(&gpu.runs.items[gpu.runs.items.len - 1], run)) return;
+        try gpu.runs.append(gpu.gpa, run);
+    }
+
+    /// Where an image's texture lies, placing it the first time.
+    fn slotOf(gpu: *Gpu, image: *srtexture.Image) Error!?Slot {
+        if (image.levels.len == 0) return null;
+        if (Slot.of(image.*)) |slot| return slot;
+        const slot = try gpu.place(image.levels);
+        image.device = @as(u32, @bitCast(slot));
+        return slot;
+    }
+
+    /// Gives a texture a layer in an array of its shape with room, or in a new one, to go up to the
+    /// GPU with the frame.
+    fn place(gpu: *Gpu, levels: []const srtexture.Level) Error!Slot {
+        const shape: Shape = .{ .width = levels[0].width, .height = levels[0].height, .levels = @intCast(levels.len) };
+        const index = for (gpu.arrays.items, 0..) |array, i| {
+            if (std.meta.eql(array.shape, shape) and array.count < max_layers) break i;
+        } else made: {
+            const index = std.math.cast(u15, gpu.arrays.items.len) orelse return error.OutOfMemory;
+            try gpu.arrays.ensureUnusedCapacity(gpu.gpa, 1);
+            const capacity = 16;
+            gpu.arrays.appendAssumeCapacity(.{ .shape = shape, .texture = try gpu.arrayTexture(shape, capacity), .capacity = capacity, .count = 0 });
+            break :made index;
+        };
+        try gpu.uploads.ensureUnusedCapacity(gpu.gpa, 1);
+        const array = &gpu.arrays.items[index];
+        const slot: Slot = .{ .array = @intCast(index), .layer = @intCast(array.count) };
+        array.count += 1;
+        gpu.uploads.appendAssumeCapacity(.{ .levels = levels, .slot = slot });
+        return slot;
+    }
+
+    fn arrayTexture(gpu: *Gpu, shape: Shape, layers: u32) error{Sdl}!*c.SDL_GPUTexture {
+        var info = std.mem.zeroes(c.SDL_GPUTextureCreateInfo);
+        info.type = c.SDL_GPU_TEXTURETYPE_2D_ARRAY;
+        info.format = c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        info.usage = c.SDL_GPU_TEXTUREUSAGE_SAMPLER;
+        info.width = shape.width;
+        info.height = shape.height;
+        info.layer_count_or_depth = layers;
+        info.num_levels = shape.levels;
+        return c.SDL_CreateGPUTexture(gpu.handle, &info) orelse fail("SDL_CreateGPUTexture");
+    }
+
+    fn end(ptr: *anyopaque) void {
+        const gpu = from(ptr);
+        gpu.submit() catch |err| log.err("the frame is not shown: {s}", .{@errorName(err)});
+    }
+
+    /// Draws the recorded frame and shows it: the new textures and the frame's vertices go up, the
+    /// runs are drawn in order, and the frame goes to the window.
+    fn submit(gpu: *Gpu) Error!void {
+        if (gpu.failed) return;
+        const size = gpu.frameSize();
+        try gpu.ensureTargets(size);
+        const targets = gpu.targets.?;
+        const commands = c.SDL_AcquireGPUCommandBuffer(gpu.handle) orelse return fail("SDL_AcquireGPUCommandBuffer");
+        gpu.encode(commands, size, targets) catch |err| {
+            _ = c.SDL_CancelGPUCommandBuffer(commands);
+            return err;
+        };
+
+        // The swapchain's texture, once the display has one free: with vsync, what paces the frames.
+        var swapchain: ?*c.SDL_GPUTexture = null;
+        var width: u32 = 0;
+        var height: u32 = 0;
+        if (!c.SDL_WaitAndAcquireGPUSwapchainTexture(commands, gpu.window, &swapchain, &width, &height)) {
+            _ = c.SDL_CancelGPUCommandBuffer(commands);
+            return fail("SDL_WaitAndAcquireGPUSwapchainTexture");
+        }
+        if (swapchain) |texture| {
+            var blit = std.mem.zeroes(c.SDL_GPUBlitInfo);
+            blit.source = .{ .texture = targets.frame(), .w = targets.width, .h = targets.height };
+            blit.destination = .{ .texture = texture, .w = width, .h = height };
+            blit.load_op = c.SDL_GPU_LOADOP_DONT_CARE;
+            blit.filter = c.SDL_GPU_FILTER_LINEAR;
+            c.SDL_BlitGPUTexture(commands, &blit);
+        }
+        if (!c.SDL_SubmitGPUCommandBuffer(commands)) return fail("SDL_SubmitGPUCommandBuffer");
+    }
+
+    /// The frame's copy pass and render pass.
+    fn encode(gpu: *Gpu, commands: *c.SDL_GPUCommandBuffer, size: [2]u32, targets: Targets) Error!void {
+        const copy = c.SDL_BeginGPUCopyPass(commands) orelse return fail("SDL_BeginGPUCopyPass");
+        const copied = gpu.upload(copy);
+        c.SDL_EndGPUCopyPass(copy);
+        try copied;
+
+        // Every pipeline the frame needs, before the pass.
+        for (gpu.runs.items) |run| _ = try gpu.pipeline(run.key);
+
+        var colour = std.mem.zeroes(c.SDL_GPUColorTargetInfo);
+        colour.texture = targets.colour;
+        colour.clear_color = .{ .r = 0, .g = 0, .b = 0, .a = 1 };
+        colour.load_op = c.SDL_GPU_LOADOP_CLEAR;
+        if (targets.resolved) |resolved| {
+            colour.store_op = c.SDL_GPU_STOREOP_RESOLVE;
+            colour.resolve_texture = resolved;
+        } else {
+            colour.store_op = c.SDL_GPU_STOREOP_STORE;
+        }
+        // Depth is reversed, nearer greater, and clears to 0, as the device's `begin` has it.
+        var depth = std.mem.zeroes(c.SDL_GPUDepthStencilTargetInfo);
+        depth.texture = targets.depth;
+        depth.clear_depth = 0;
+        depth.load_op = c.SDL_GPU_LOADOP_CLEAR;
+        depth.store_op = c.SDL_GPU_STOREOP_DONT_CARE;
+        depth.stencil_load_op = c.SDL_GPU_LOADOP_DONT_CARE;
+        depth.stencil_store_op = c.SDL_GPU_STOREOP_DONT_CARE;
+        const pass = c.SDL_BeginGPURenderPass(commands, &colour, 1, &depth) orelse return fail("SDL_BeginGPURenderPass");
+        defer c.SDL_EndGPURenderPass(pass);
+        const target_size = [4]f32{ @floatFromInt(size[0]), @floatFromInt(size[1]), 0, 0 };
+        c.SDL_PushGPUVertexUniformData(commands, 0, &target_size, @sizeOf(@TypeOf(target_size)));
+        const frame_settings = [4]f32{
+            @floatFromInt(@intFromBool(gpu.settings.sixteen_bit)),
+            @floatFromInt(@intFromBool(gpu.settings.filter == .crisp)),
+            0,
+            0,
+        };
+        c.SDL_PushGPUFragmentUniformData(commands, 0, &frame_settings, @sizeOf(@TypeOf(frame_settings)));
+        const buffers = gpu.buffers orelse return;
+        c.SDL_BindGPUVertexBuffers(pass, 0, &c.SDL_GPUBufferBinding{ .buffer = buffers.vertices, .offset = 0 }, 1);
+        c.SDL_BindGPUIndexBuffer(pass, &c.SDL_GPUBufferBinding{ .buffer = buffers.indices, .offset = 0 }, c.SDL_GPU_INDEXELEMENTSIZE_32BIT);
+        for (gpu.runs.items) |run| {
+            c.SDL_BindGPUGraphicsPipeline(pass, gpu.pipelines.get(run.key).?);
+            const array = gpu.arrays.items[run.array orelse gpu.blank.array];
+            c.SDL_BindGPUFragmentSamplers(pass, 0, &c.SDL_GPUTextureSamplerBinding{ .texture = array.texture, .sampler = gpu.sampler }, 1);
+            c.SDL_DrawGPUIndexedPrimitives(pass, run.count, 1, run.first, 0, 0);
+        }
+    }
+
+    /// Sends the frame's new textures and its vertices and indices to the GPU.
+    fn upload(gpu: *Gpu, copy: *c.SDL_GPUCopyPass) Error!void {
+        try gpu.uploadTextures(copy);
+        try gpu.uploadGeometry(copy);
+    }
+
+    /// Puts the textures placed this frame in their layers, every level, first making larger any
+    /// array that has run out of layers.
+    fn uploadTextures(gpu: *Gpu, copy: *c.SDL_GPUCopyPass) Error!void {
+        if (gpu.uploads.items.len == 0) return;
+        defer gpu.uploads.clearRetainingCapacity();
+        for (gpu.arrays.items) |*array| {
+            if (array.count <= array.capacity) continue;
+            const capacity = @min(std.math.ceilPowerOfTwoAssert(u32, array.count), max_layers);
+            const larger = try gpu.arrayTexture(array.shape, capacity);
+            for (0..array.capacity) |layer| {
+                for (0..array.shape.levels) |level| {
+                    c.SDL_CopyGPUTextureToTexture(
+                        copy,
+                        &.{ .texture = array.texture, .mip_level = @intCast(level), .layer = @intCast(layer) },
+                        &.{ .texture = larger, .mip_level = @intCast(level), .layer = @intCast(layer) },
+                        @max(array.shape.width >> @intCast(level), 1),
+                        @max(array.shape.height >> @intCast(level), 1),
+                        1,
+                        false,
+                    );
+                }
+            }
+            c.SDL_ReleaseGPUTexture(gpu.handle, array.texture);
+            array.texture = larger;
+            array.capacity = capacity;
+        }
+        var bytes: usize = 0;
+        for (gpu.uploads.items) |item| {
+            for (item.levels) |level| bytes += level.rgba.len;
+        }
+        const size = std.math.cast(u32, bytes) orelse return error.OutOfMemory;
+        const transfer = c.SDL_CreateGPUTransferBuffer(gpu.handle, &.{ .usage = c.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, .size = size }) orelse return fail("SDL_CreateGPUTransferBuffer");
+        defer c.SDL_ReleaseGPUTransferBuffer(gpu.handle, transfer);
+        const mapped: [*]u8 = @ptrCast(c.SDL_MapGPUTransferBuffer(gpu.handle, transfer, false) orelse return fail("SDL_MapGPUTransferBuffer"));
+        var at: u32 = 0;
+        for (gpu.uploads.items) |item| {
+            const array = gpu.arrays.items[item.slot.array];
+            for (item.levels, 0..) |level, index| {
+                @memcpy(mapped[at..][0..level.rgba.len], level.rgba);
+                c.SDL_UploadToGPUTexture(
+                    copy,
+                    &.{ .transfer_buffer = transfer, .offset = at, .pixels_per_row = level.width, .rows_per_layer = level.height },
+                    &.{ .texture = array.texture, .mip_level = @intCast(index), .layer = item.slot.layer, .w = level.width, .h = level.height, .d = 1 },
+                    false,
+                );
+                at += @intCast(level.rgba.len);
+            }
+        }
+        c.SDL_UnmapGPUTransferBuffer(gpu.handle, transfer);
+    }
+
+    /// Puts the frame's vertices and indices in the GPU's buffers, larger ones when the frame has
+    /// outgrown them.
+    fn uploadGeometry(gpu: *Gpu, copy: *c.SDL_GPUCopyPass) Error!void {
+        const vertex_bytes = std.math.cast(u32, gpu.vertices.items.len * @sizeOf(Vertex)) orelse return error.OutOfMemory;
+        const index_bytes = std.math.cast(u32, gpu.indices.items.len * @sizeOf(u32)) orelse return error.OutOfMemory;
+        if (index_bytes == 0) return;
+        const needed = @max(vertex_bytes, index_bytes);
+        if (gpu.buffers == null or gpu.buffers.?.size < needed) {
+            gpu.releaseBuffers();
+            const size = std.math.ceilPowerOfTwo(u32, @max(needed, 64 * 1024)) catch return error.OutOfMemory;
+            const transfer_size = std.math.mul(u32, size, 2) catch return error.OutOfMemory;
+            const vertices = c.SDL_CreateGPUBuffer(gpu.handle, &.{ .usage = c.SDL_GPU_BUFFERUSAGE_VERTEX, .size = size }) orelse return fail("SDL_CreateGPUBuffer");
+            errdefer c.SDL_ReleaseGPUBuffer(gpu.handle, vertices);
+            const indices = c.SDL_CreateGPUBuffer(gpu.handle, &.{ .usage = c.SDL_GPU_BUFFERUSAGE_INDEX, .size = size }) orelse return fail("SDL_CreateGPUBuffer");
+            errdefer c.SDL_ReleaseGPUBuffer(gpu.handle, indices);
+            const transfer = c.SDL_CreateGPUTransferBuffer(gpu.handle, &.{ .usage = c.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, .size = transfer_size }) orelse return fail("SDL_CreateGPUTransferBuffer");
+            gpu.buffers = .{ .vertices = vertices, .indices = indices, .transfer = transfer, .size = size };
+        }
+        const buffers = gpu.buffers.?;
+        const mapped: [*]u8 = @ptrCast(c.SDL_MapGPUTransferBuffer(gpu.handle, buffers.transfer, true) orelse return fail("SDL_MapGPUTransferBuffer"));
+        @memcpy(mapped[0..vertex_bytes], std.mem.sliceAsBytes(gpu.vertices.items));
+        @memcpy(mapped[buffers.size..][0..index_bytes], std.mem.sliceAsBytes(gpu.indices.items));
+        c.SDL_UnmapGPUTransferBuffer(gpu.handle, buffers.transfer);
+        c.SDL_UploadToGPUBuffer(copy, &.{ .transfer_buffer = buffers.transfer, .offset = 0 }, &.{ .buffer = buffers.vertices, .size = vertex_bytes }, true);
+        c.SDL_UploadToGPUBuffer(copy, &.{ .transfer_buffer = buffers.transfer, .offset = buffers.size }, &.{ .buffer = buffers.indices, .size = index_bytes }, true);
+    }
+
+    fn releaseBuffers(gpu: *Gpu) void {
+        const buffers = gpu.buffers orelse return;
+        c.SDL_ReleaseGPUBuffer(gpu.handle, buffers.vertices);
+        c.SDL_ReleaseGPUBuffer(gpu.handle, buffers.indices);
+        c.SDL_ReleaseGPUTransferBuffer(gpu.handle, buffers.transfer);
+        gpu.buffers = null;
+    }
+
+    /// The frame's colour and depth targets for `size`, made again when it changes.
+    fn ensureTargets(gpu: *Gpu, size: [2]u32) error{Sdl}!void {
+        if (gpu.targets) |targets| {
+            if (targets.width == size[0] and targets.height == size[1]) return;
+            gpu.releaseTargets();
+        }
+        const one = c.SDL_GPU_SAMPLECOUNT_1;
+        const many = gpu.samples != one;
+        const finished = c.SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | c.SDL_GPU_TEXTUREUSAGE_SAMPLER;
+        const colour = try gpu.target(size, gpu.colour_format, if (many) c.SDL_GPU_TEXTUREUSAGE_COLOR_TARGET else finished, gpu.samples);
+        errdefer c.SDL_ReleaseGPUTexture(gpu.handle, colour);
+        const resolved = if (many) try gpu.target(size, gpu.colour_format, finished, one) else null;
+        errdefer if (resolved) |r| c.SDL_ReleaseGPUTexture(gpu.handle, r);
+        const depth = try gpu.target(size, gpu.depth_format, c.SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET, gpu.samples);
+        gpu.targets = .{ .width = size[0], .height = size[1], .colour = colour, .resolved = resolved, .depth = depth };
+    }
+
+    fn target(gpu: *Gpu, size: [2]u32, format: c.SDL_GPUTextureFormat, usage: c.SDL_GPUTextureUsageFlags, samples: c.SDL_GPUSampleCount) error{Sdl}!*c.SDL_GPUTexture {
+        var info = std.mem.zeroes(c.SDL_GPUTextureCreateInfo);
+        info.type = c.SDL_GPU_TEXTURETYPE_2D;
+        info.format = format;
+        info.usage = usage;
+        info.width = size[0];
+        info.height = size[1];
+        info.layer_count_or_depth = 1;
+        info.num_levels = 1;
+        info.sample_count = samples;
+        return c.SDL_CreateGPUTexture(gpu.handle, &info) orelse fail("SDL_CreateGPUTexture");
+    }
+
+    fn releaseTargets(gpu: *Gpu) void {
+        const targets = gpu.targets orelse return;
+        c.SDL_ReleaseGPUTexture(gpu.handle, targets.colour);
+        if (targets.resolved) |r| c.SDL_ReleaseGPUTexture(gpu.handle, r);
+        c.SDL_ReleaseGPUTexture(gpu.handle, targets.depth);
+        gpu.targets = null;
+    }
+
+    /// The pipeline for a topology and render states, made the first time it is needed: depth
+    /// tested greater or equal, as the driver's reversed depth has it, and written as the state
+    /// says; blended by the driver's factors, or not at all.
+    fn pipeline(gpu: *Gpu, key: PipelineKey) Error!*c.SDL_GPUGraphicsPipeline {
+        if (gpu.pipelines.get(key)) |found| return found;
+        try gpu.pipelines.ensureUnusedCapacity(gpu.gpa, 1);
+        const attributes = [_]c.SDL_GPUVertexAttribute{
+            .{ .location = 0, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, .offset = @offsetOf(Vertex, "position") },
+            .{ .location = 1, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4_NORM, .offset = @offsetOf(Vertex, "diffuse") },
+            .{ .location = 2, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = @offsetOf(Vertex, "uv") },
+            .{ .location = 3, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_INT, .offset = @offsetOf(Vertex, "layer") },
+        };
+        const buffer: c.SDL_GPUVertexBufferDescription = .{ .slot = 0, .pitch = @sizeOf(Vertex), .input_rate = c.SDL_GPU_VERTEXINPUTRATE_VERTEX };
+        var colour = std.mem.zeroes(c.SDL_GPUColorTargetDescription);
+        colour.format = gpu.colour_format;
+        // The original's back buffer kept no alpha, and blending reads only the source's: alpha
+        // stays as cleared, opaque.
+        colour.blend_state.enable_color_write_mask = true;
+        colour.blend_state.color_write_mask = c.SDL_GPU_COLORCOMPONENT_R | c.SDL_GPU_COLORCOMPONENT_G | c.SDL_GPU_COLORCOMPONENT_B;
+        if (key.blend) |factors| {
+            colour.blend_state.enable_blend = true;
+            colour.blend_state.src_color_blendfactor = blendFactor(factors.source);
+            colour.blend_state.dst_color_blendfactor = blendFactor(factors.destination);
+            colour.blend_state.color_blend_op = c.SDL_GPU_BLENDOP_ADD;
+            colour.blend_state.src_alpha_blendfactor = blendFactor(factors.source);
+            colour.blend_state.dst_alpha_blendfactor = blendFactor(factors.destination);
+            colour.blend_state.alpha_blend_op = c.SDL_GPU_BLENDOP_ADD;
+        }
+        var info = std.mem.zeroes(c.SDL_GPUGraphicsPipelineCreateInfo);
+        info.vertex_shader = gpu.vertex_shader;
+        info.fragment_shader = gpu.fragment_shader;
+        info.vertex_input_state = .{ .vertex_buffer_descriptions = &buffer, .num_vertex_buffers = 1, .vertex_attributes = &attributes, .num_vertex_attributes = attributes.len };
+        info.primitive_type = switch (key.topology) {
+            .points => c.SDL_GPU_PRIMITIVETYPE_POINTLIST,
+            .lines => c.SDL_GPU_PRIMITIVETYPE_LINELIST,
+            .triangles => c.SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
+        };
+        info.rasterizer_state.fill_mode = c.SDL_GPU_FILLMODE_FILL;
+        info.rasterizer_state.cull_mode = c.SDL_GPU_CULLMODE_NONE;
+        // Direct3D 7 clipped transformed vertices to the screen but not in depth.
+        info.rasterizer_state.enable_depth_clip = false;
+        info.multisample_state.sample_count = gpu.samples;
+        info.depth_stencil_state.enable_depth_test = key.depth.testing;
+        info.depth_stencil_state.enable_depth_write = key.depth.writing;
+        info.depth_stencil_state.compare_op = c.SDL_GPU_COMPAREOP_GREATER_OR_EQUAL;
+        info.target_info = .{ .color_target_descriptions = &colour, .num_color_targets = 1, .depth_stencil_format = gpu.depth_format, .has_depth_stencil_target = true };
+        const made = c.SDL_CreateGPUGraphicsPipeline(gpu.handle, &info) orelse return fail("SDL_CreateGPUGraphicsPipeline");
+        gpu.pipelines.putAssumeCapacity(key, made);
+        return made;
+    }
+
+    /// The last frame drawn, as rows of red, green, blue and alpha from the top: what a screenshot
+    /// saves.
+    pub fn capture(gpu: *Gpu, gpa: Allocator) Error![]u8 {
+        const targets = gpu.targets orelse {
+            log.err("no frame drawn to capture", .{});
+            return error.Sdl;
+        };
+        const size = [2]u32{ targets.width, targets.height };
+        const bytes = std.math.cast(u32, @as(u64, size[0]) * size[1] * 4) orelse return error.OutOfMemory;
+        const rgba = try gpa.alloc(u8, bytes);
+        errdefer gpa.free(rgba);
+        // Through a texture of 8-bit channels, whatever the frame's format.
+        const plain = try gpu.target(size, c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, c.SDL_GPU_TEXTUREUSAGE_COLOR_TARGET, c.SDL_GPU_SAMPLECOUNT_1);
+        defer c.SDL_ReleaseGPUTexture(gpu.handle, plain);
+        const transfer = c.SDL_CreateGPUTransferBuffer(gpu.handle, &.{ .usage = c.SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD, .size = bytes }) orelse return fail("SDL_CreateGPUTransferBuffer");
+        defer c.SDL_ReleaseGPUTransferBuffer(gpu.handle, transfer);
+
+        const commands = c.SDL_AcquireGPUCommandBuffer(gpu.handle) orelse return fail("SDL_AcquireGPUCommandBuffer");
+        var blit = std.mem.zeroes(c.SDL_GPUBlitInfo);
+        blit.source = .{ .texture = targets.frame(), .w = size[0], .h = size[1] };
+        blit.destination = .{ .texture = plain, .w = size[0], .h = size[1] };
+        blit.load_op = c.SDL_GPU_LOADOP_DONT_CARE;
+        blit.filter = c.SDL_GPU_FILTER_NEAREST;
+        c.SDL_BlitGPUTexture(commands, &blit);
+        const copy = c.SDL_BeginGPUCopyPass(commands) orelse {
+            _ = c.SDL_CancelGPUCommandBuffer(commands);
+            return fail("SDL_BeginGPUCopyPass");
+        };
+        c.SDL_DownloadFromGPUTexture(
+            copy,
+            &.{ .texture = plain, .w = size[0], .h = size[1], .d = 1 },
+            &.{ .transfer_buffer = transfer, .offset = 0, .pixels_per_row = size[0], .rows_per_layer = size[1] },
+        );
+        c.SDL_EndGPUCopyPass(copy);
+        const fence = c.SDL_SubmitGPUCommandBufferAndAcquireFence(commands) orelse return fail("SDL_SubmitGPUCommandBufferAndAcquireFence");
+        defer c.SDL_ReleaseGPUFence(gpu.handle, fence);
+        if (!c.SDL_WaitForGPUFences(gpu.handle, true, &fence, 1)) return fail("SDL_WaitForGPUFences");
+        const mapped: [*]const u8 = @ptrCast(c.SDL_MapGPUTransferBuffer(gpu.handle, transfer, false) orelse return fail("SDL_MapGPUTransferBuffer"));
+        @memcpy(rgba, mapped[0..bytes]);
+        c.SDL_UnmapGPUTransferBuffer(gpu.handle, transfer);
+        return rgba;
+    }
+};
+
+fn topology(primitive: device.Primitive) Topology {
+    return switch (primitive) {
+        .points => .points,
+        .lines => .lines,
+        .triangles, .strip, .fan => .triangles,
+    };
+}
+
+/// Appends a draw's primitives to `list` as a list of their topology, its vertices numbered from
+/// `base`: strips and fans as the triangles they make. Direct3D culled nothing, so a strip's
+/// alternating winding is kept as it comes.
+fn appendList(gpa: Allocator, list: *std.ArrayList(u32), primitive: device.Primitive, base: u32, vertex_count: usize, indices: ?[]const u16) Allocator.Error!void {
+    const count = if (indices) |i| i.len else vertex_count;
+    const at = struct {
+        fn index(from: u32, picked: ?[]const u16, n: usize) u32 {
+            return from + if (picked) |p| p[n] else @as(u32, @intCast(n));
+        }
+    };
+    switch (primitive) {
+        .points, .lines, .triangles => {
+            try list.ensureUnusedCapacity(gpa, count);
+            for (0..count) |n| list.appendAssumeCapacity(at.index(base, indices, n));
+        },
+        .strip, .fan => if (count >= 3) {
+            try list.ensureUnusedCapacity(gpa, (count - 2) * 3);
+            for (2..count) |n| {
+                const corners: [3]usize = if (primitive == .strip) .{ n - 2, n - 1, n } else .{ 0, n - 1, n };
+                for (corners) |m| list.appendAssumeCapacity(at.index(base, indices, m));
+            }
+        },
+    }
+}
+
+/// Runs `next` on from `last` when both draw with the same pipeline and array: a run with no
+/// texture joins any.
+fn join(last: *Run, next: Run) bool {
+    if (!std.meta.eql(last.key, next.key)) return false;
+    if (last.array != null and next.array != null and last.array.? != next.array.?) return false;
+    if (last.first + last.count != next.first) return false;
+    last.count += next.count;
+    if (last.array == null) last.array = next.array;
+    return true;
+}
+
+fn blendFactor(factor: srd3d.BlendFactor) c.SDL_GPUBlendFactor {
+    return switch (factor) {
+        .zero => c.SDL_GPU_BLENDFACTOR_ZERO,
+        .one => c.SDL_GPU_BLENDFACTOR_ONE,
+        .source_alpha => c.SDL_GPU_BLENDFACTOR_SRC_ALPHA,
+        .inverse_source_alpha => c.SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+    };
+}
+
+fn shader(handle: *c.SDL_GPUDevice, spirv: bool, stage: c.SDL_GPUShaderStage, code: []const u8, samplers: u32) error{Sdl}!*c.SDL_GPUShader {
+    var info = std.mem.zeroes(c.SDL_GPUShaderCreateInfo);
+    info.code_size = code.len;
+    info.code = code.ptr;
+    info.entrypoint = if (spirv) "main" else "main0";
+    info.format = if (spirv) c.SDL_GPU_SHADERFORMAT_SPIRV else c.SDL_GPU_SHADERFORMAT_MSL;
+    info.stage = stage;
+    info.num_samplers = samplers;
+    info.num_uniform_buffers = 1;
+    return c.SDL_CreateGPUShader(handle, &info) orelse fail("SDL_CreateGPUShader");
+}
+
+/// A white texel, which runs with no texture bind.
+const blank_levels = [1]srtexture.Level{.{ .width = 1, .height = 1, .rgba = &.{ 0xFF, 0xFF, 0xFF, 0xFF } }};
+
+test appendList {
+    const gpa = std.testing.allocator;
+    var list: std.ArrayList(u32) = .empty;
+    defer list.deinit(gpa);
+    // A strip of five and a fan of four as triangles, numbered on from their bases.
+    try appendList(gpa, &list, .strip, 10, 5, null);
+    try std.testing.expectEqualSlices(u32, &.{ 10, 11, 12, 11, 12, 13, 12, 13, 14 }, list.items);
+    list.clearRetainingCapacity();
+    try appendList(gpa, &list, .fan, 0, 4, null);
+    try std.testing.expectEqualSlices(u32, &.{ 0, 1, 2, 0, 2, 3 }, list.items);
+    // Picked by indices, and nothing from a strip too short to make a triangle.
+    list.clearRetainingCapacity();
+    try appendList(gpa, &list, .triangles, 4, 3, &.{ 2, 0, 1 });
+    try appendList(gpa, &list, .strip, 0, 2, null);
+    try std.testing.expectEqualSlices(u32, &.{ 6, 4, 5 }, list.items);
+}
+
+test join {
+    const flat: PipelineKey = .{ .topology = .triangles, .depth = .{ .testing = true, .writing = true }, .blend = null };
+    const added: PipelineKey = .{ .topology = .triangles, .depth = .{ .testing = true, .writing = false }, .blend = srd3d.factors(.add) };
+    var last: Run = .{ .key = flat, .array = null, .first = 0, .count = 3 };
+    // An untextured run takes on the next one's array; the same array joins, another does not.
+    try std.testing.expect(join(&last, .{ .key = flat, .array = 2, .first = 3, .count = 6 }));
+    try std.testing.expectEqual(9, last.count);
+    try std.testing.expectEqual(2, last.array.?);
+    try std.testing.expect(join(&last, .{ .key = flat, .array = null, .first = 9, .count = 3 }));
+    try std.testing.expect(!join(&last, .{ .key = flat, .array = 1, .first = 12, .count = 3 }));
+    // Other render states do not join.
+    try std.testing.expect(!join(&last, .{ .key = added, .array = 2, .first = 12, .count = 3 }));
+    try std.testing.expectEqual(12, last.count);
+}
+
+test Slot {
+    var image: srtexture.Image = .{ .levels = &blank_levels };
+    try std.testing.expectEqual(null, Slot.of(image));
+    const slot: Slot = .{ .array = 3, .layer = 200 };
+    image.device = @as(u32, @bitCast(slot));
+    try std.testing.expectEqual(slot, Slot.of(image).?);
+    // The first layer of the first array is still told from an image never drawn.
+    image.device = @as(u32, @bitCast(Slot{ .array = 0, .layer = 0 }));
+    try std.testing.expect(Slot.of(image) != null);
+}

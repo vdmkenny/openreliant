@@ -22,6 +22,25 @@ play: | $(GAME_DIR)/.stamp-install ## Build the game optimized and run it on the
 	$(ZIG) build -Doptimize=ReleaseFast $(GAME_TARGET)
 	$(ROOT)/zig-out/bin/starlancer $(INSTALL_DIR)
 
+# The game's one shader, for each GPU interface SDL runs on: SPIR-V for Vulkan, and Metal's
+# language from that. The outputs are committed, so building needs neither tool; regenerating needs
+# glslc (from shaderc) on the PATH, and SPIRV-Cross, which this builds.
+SHADER_DIR := $(ROOT)/src/platform/shaders
+SHADERS    := $(foreach stage,vert frag,$(SHADER_DIR)/device.$(stage).spv $(SHADER_DIR)/device.$(stage).msl)
+GLSLC      ?= glslc
+
+.PHONY: shaders
+shaders: $(SHADERS) ## Compile the game's shader for Vulkan and Metal (needs glslc)
+
+$(SHADER_DIR)/device.vert.spv: $(SHADER_DIR)/device.glsl
+	$(GLSLC) -fshader-stage=vertex -DVERTEX -O $< -o $@
+
+$(SHADER_DIR)/device.frag.spv: $(SHADER_DIR)/device.glsl
+	$(GLSLC) -fshader-stage=fragment -DFRAGMENT -O $< -o $@
+
+$(SHADER_DIR)/%.msl: $(SHADER_DIR)/%.spv | $(SPIRV_CROSS)
+	$(SPIRV_CROSS) $< --msl --msl-version 20200 --msl-decoration-binding --output $@
+
 .PHONY: test
 test: ## Run the unit tests
 	$(ZIG) build test --summary all

@@ -1,9 +1,10 @@
 //! `starlancer`: the game, on SDL3 in place of Win32 and DirectX. It runs in the game's directory,
 //! or in the one given, and reads `resource.hog` and the texture cache as the game does.
 //!
-//! So far it shows a ship in space, drawn through Surrender's pipeline and its Direct3D driver onto
-//! the software device, from the camera's views, which the game's camera keys pick and steer.
-//! Added for the port: F2 and F3 step back and forth through the ship types, and Escape quits.
+//! So far it shows a ship in space, drawn through Surrender's pipeline and its Direct3D driver with
+//! the GPU, or onto the software device, from the camera's views, which the game's camera keys pick
+//! and steer. Added for the port: F2 and F3 step back and forth through the ship types, Alt and
+//! Enter switch to the full screen and back, and Escape quits.
 
 const std = @import("std");
 const Io = std.Io;
@@ -24,11 +25,22 @@ const game = lancer.game;
 const camera = game.camera;
 
 const usage =
-    \\usage: starlancer [<game-directory>] [--ship <type>] [--screenshot <file.png>]
+    \\usage: starlancer [<game-directory>] [<option>...]
     \\  <game-directory>          where the game is installed, with resource.hog and tcachehw.dat
     \\  --ship <type>             the ship type to show, by its number in shipstats.bin; 0 is the
     \\                            Predator
     \\  --screenshot <file.png>   draw one frame, with the camera settled, to a PNG, and quit
+    \\  --fullscreen              fill the display; Alt and Enter switch while running
+    \\  --original                the original's look: 16-bit colour, one sample a pixel and
+    \\                            bilinear filtering
+    \\  --16-bit                  16-bit colour, dithered
+    \\  --msaa <1|2|4|8>          samples a pixel; 4 by default
+    \\  --filter <original|trilinear|crisp>
+    \\                            how textures are filtered; crisp by default
+    \\  --no-vsync                draw without waiting for the display
+    \\  --fps <rate>              frames a second at most; without vsync, the display's rate by
+    \\                            default; 0 for no limit
+    \\  --software                draw on the software device, the port's reference
     \\
 ;
 
@@ -36,28 +48,75 @@ const Options = struct {
     directory: []const u8 = ".",
     ship: usize = 0,
     screenshot: ?[]const u8 = null,
+    fullscreen: bool = false,
+    software: bool = false,
+    settings: platform.gpu.Settings = .{},
+    /// Frames a second at most, 0 for no limit; null for the display's rate without vsync.
+    fps: ?f32 = null,
+
+    const Flag = enum { @"--fullscreen", @"--original", @"--16-bit", @"--no-vsync", @"--software" };
+    const Option = enum { @"--ship", @"--screenshot", @"--msaa", @"--filter", @"--fps" };
 
     fn parse(args: []const [:0]const u8) error{Usage}!Options {
         var options: Options = .{};
         var i: usize = 0;
         while (i < args.len) : (i += 1) {
-            if (std.mem.eql(u8, args[i], "--ship")) {
+            const arg = args[i];
+            if (std.meta.stringToEnum(Flag, arg)) |flag| switch (flag) {
+                .@"--fullscreen" => options.fullscreen = true,
+                .@"--original" => options.settings = .original,
+                .@"--16-bit" => options.settings.sixteen_bit = true,
+                .@"--no-vsync" => options.settings.vsync = false,
+                .@"--software" => options.software = true,
+            } else if (std.meta.stringToEnum(Option, arg)) |option| {
                 i += 1;
                 if (i == args.len) return error.Usage;
-                options.ship = std.fmt.parseInt(usize, args[i], 0) catch return error.Usage;
-                if (options.ship >= game.create.models.ship_types.len) return error.Usage;
-                if (game.create.models.ship_types[options.ship].model == null) return error.Usage;
-            } else if (std.mem.eql(u8, args[i], "--screenshot")) {
-                i += 1;
-                if (i == args.len) return error.Usage;
-                options.screenshot = args[i];
-            } else if (std.mem.startsWith(u8, args[i], "-")) {
+                const value = args[i];
+                switch (option) {
+                    .@"--ship" => {
+                        options.ship = std.fmt.parseInt(usize, value, 0) catch return error.Usage;
+                        if (options.ship >= game.create.models.ship_types.len) return error.Usage;
+                        if (game.create.models.ship_types[options.ship].model == null) return error.Usage;
+                    },
+                    .@"--screenshot" => options.screenshot = value,
+                    .@"--msaa" => {
+                        options.settings.samples = std.fmt.parseInt(u8, value, 10) catch return error.Usage;
+                        if (std.mem.indexOfScalar(u8, &.{ 1, 2, 4, 8 }, options.settings.samples) == null) return error.Usage;
+                    },
+                    .@"--filter" => options.settings.filter = std.meta.stringToEnum(platform.gpu.Settings.Filter, value) orelse return error.Usage,
+                    .@"--fps" => {
+                        const fps = std.fmt.parseFloat(f32, value) catch return error.Usage;
+                        if (!(fps >= 0 and fps <= 10_000)) return error.Usage;
+                        options.fps = fps;
+                    },
+                }
+            } else if (std.mem.startsWith(u8, arg, "-")) {
                 return error.Usage;
             } else {
-                options.directory = args[i];
+                options.directory = arg;
             }
         }
         return options;
+    }
+
+    /// The frames a second to hold to, where the display does not already.
+    fn frameRate(options: Options, window: platform.window.Window) ?f32 {
+        if (options.fps) |fps| return if (fps > 0) fps else null;
+        if (options.software or options.settings.vsync) return null;
+        return window.refreshRate();
+    }
+};
+
+/// What the driver draws with: the GPU, or the software device, the port's reference, whose frames
+/// the window shows.
+const Screen = union(enum) {
+    gpu: platform.gpu.Gpu,
+    software: srd3d.software.Software,
+
+    fn interface(screen: *Screen) srd3d.device.Device {
+        return switch (screen.*) {
+            inline else => |*device| device.interface(),
+        };
     }
 };
 
@@ -68,11 +127,11 @@ pub fn main(init: std.process.Init) !u8 {
         std.debug.print("{s}", .{usage});
         return 2;
     };
-    try run(init.io, arena, options);
+    try run(init.io, init.gpa, arena, options);
     return 0;
 }
 
-fn run(io: Io, arena: Allocator, options: Options) !void {
+fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     const directory = try Io.Dir.cwd().openDir(io, options.directory, .{});
     defer directory.close(io);
 
@@ -84,8 +143,21 @@ fn run(io: Io, arena: Allocator, options: Options) !void {
     const palette = try tga.palette(try resources.readFile(arena, "palette.tga"));
     var textures: srtexture.Table = .init(arena, cache, palette);
 
-    var window: platform.window.Window = try .open("StarLancer", 1280, 720);
+    var window: platform.window.Window = try .open("StarLancer", 1280, 720, options.fullscreen);
     defer window.close();
+    // The device the driver draws with, and the driver.
+    const screen = try arena.create(Screen);
+    screen.* = if (options.software)
+        .{ .software = try .init(arena, 1280, 720) }
+    else
+        .{ .gpu = try .init(gpa, window.gpu, window.handle, options.settings) };
+    defer switch (screen.*) {
+        .gpu => |*device| device.deinit(),
+        .software => |*device| device.deinit(arena),
+    };
+    var driver: srd3d.srd3d.Driver = try .init(arena, screen.interface());
+    defer driver.deinit();
+    var pacer: platform.window.Pacer = .{};
 
     var context: srapi.Context = .{ .projection = (camera.Camera{}).projection(1280, 720) };
     var rand: lancer.libcmt.Rand = .{};
@@ -109,13 +181,6 @@ fn run(io: Io, arena: Allocator, options: Options) !void {
         frames_left = 2;
     }
 
-    // The device the driver draws with, and the driver, made again when the window's size changes.
-    const Drawing = struct { device: srd3d.software.Software, driver: srd3d.srd3d.Driver };
-    var drawing: ?*Drawing = null;
-    defer if (drawing) |d| {
-        d.driver.deinit();
-        d.device.deinit(arena);
-    };
     var scene: srcore.Scene = .{};
     defer scene.deinit(arena);
     // What a frame needs until it is drawn, kept from frame to frame.
@@ -158,20 +223,19 @@ fn run(io: Io, arena: Allocator, options: Options) !void {
         // From its cockpit, the ship is not drawn, as `camera_set_view` sees to.
         ship.object.hidden = view.inside(0);
 
-        const size = window.size();
-        if (drawing == null or drawing.?.device.width != size[0] or drawing.?.device.height != size[1]) {
-            if (drawing) |d| {
-                d.driver.deinit();
-                d.device.deinit(arena);
-            } else {
-                drawing = try arena.create(Drawing);
-            }
-            const d = drawing.?;
-            d.device = try .init(arena, size[0], size[1]);
-            d.driver = try .init(arena, d.device.interface());
-        }
-        const device = &drawing.?.device;
-        const driver = &drawing.?.driver;
+        // The GPU draws at the display's own resolution; the software device at the window's size
+        // in points, made again when it changes.
+        const size = switch (screen.*) {
+            .gpu => |*device| device.frameSize(),
+            .software => |*device| resized: {
+                const size = window.size();
+                if (device.width != size[0] or device.height != size[1]) {
+                    device.deinit(arena);
+                    device.* = try .init(arena, size[0], size[1]);
+                }
+                break :resized size;
+            },
+        };
 
         context.camera = .{ .position = view.place.position, .orientation = view.place.orientation };
         context.projection = view.projection(size[0], size[1]);
@@ -185,12 +249,18 @@ fn run(io: Io, arena: Allocator, options: Options) !void {
             .last_view = last_view,
         }, driver.interface());
         last_view = view.view;
-        const rgba = try device.rgba(frame_arena.allocator());
-        try window.present(rgba, size[0], size[1]);
+        if (screen.* == .software) try window.present(try screen.software.rgba(frame_arena.allocator()), size[0], size[1]);
         if (frames_left) |*left| {
             left.* -= 1;
-            if (left.* == 0) return save(io, frame_arena.allocator(), options.screenshot.?, rgba, size);
+            if (left.* == 0) {
+                const rgba = switch (screen.*) {
+                    .gpu => |*device| try device.capture(frame_arena.allocator()),
+                    .software => |*device| try device.rgba(frame_arena.allocator()),
+                };
+                return save(io, frame_arena.allocator(), options.screenshot.?, rgba, size);
+            }
         }
+        if (options.frameRate(window)) |rate| pacer.wait(rate);
     }
 }
 
@@ -277,4 +347,22 @@ test Options {
     try std.testing.expectError(error.Usage, Options.parse(&.{ "--ship", "0x0E" }));
     try std.testing.expectError(error.Usage, Options.parse(&.{"--bogus"}));
     try std.testing.expectEqualStrings("shot.png", (try Options.parse(&.{ "--screenshot", "shot.png" })).screenshot.?);
+
+    // The improvements on by default; the original's look, and single settings after it.
+    const plain = try Options.parse(&.{});
+    try std.testing.expectEqual(platform.gpu.Settings{}, plain.settings);
+    try std.testing.expectEqual(null, plain.fps);
+    const retro = try Options.parse(&.{ "--original", "--msaa", "8", "--no-vsync", "--fps", "0" });
+    try std.testing.expect(retro.settings.sixteen_bit);
+    try std.testing.expectEqual(.original, retro.settings.filter);
+    try std.testing.expectEqual(8, retro.settings.samples);
+    try std.testing.expect(!retro.settings.vsync);
+    try std.testing.expectEqual(0, retro.fps.?);
+    const chosen = try Options.parse(&.{ "--filter", "trilinear", "--16-bit", "--software", "--fullscreen" });
+    try std.testing.expectEqual(.trilinear, chosen.settings.filter);
+    try std.testing.expect(chosen.settings.sixteen_bit and chosen.software and chosen.fullscreen);
+    try std.testing.expectError(error.Usage, Options.parse(&.{ "--msaa", "3" }));
+    try std.testing.expectError(error.Usage, Options.parse(&.{ "--filter", "sharp" }));
+    try std.testing.expectError(error.Usage, Options.parse(&.{ "--fps", "-1" }));
+    try std.testing.expectError(error.Usage, Options.parse(&.{ "--fps", "nan" }));
 }

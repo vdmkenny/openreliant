@@ -1,0 +1,47 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct _37
+{
+    float2 _m0;
+};
+
+struct main0_out
+{
+    float4 m_80 [[user(locn0)]];
+    float2 m_85 [[user(locn1)]];
+    int m_90 [[user(locn2)]];
+    float4 gl_Position [[position]];
+    float gl_PointSize [[point_size]];
+};
+
+struct main0_in
+{
+    float4 m_11 [[attribute(0)]];
+    float4 m_81 [[attribute(1)]];
+    float2 m_87 [[attribute(2)]];
+    int m_92 [[attribute(3)]];
+};
+
+vertex main0_out main0(main0_in in [[stage_in]], constant _37& _39 [[buffer(0)]])
+{
+    main0_out out = {};
+    float _94;
+    if (in.m_11.w > 0.0)
+    {
+        _94 = 1.0 / in.m_11.w;
+    }
+    else
+    {
+        _94 = 1.0;
+    }
+    out.gl_Position = float4(float2((((in.m_11.x + 0.5) / _39._m0.x) * 2.0) - 1.0, 1.0 - (((in.m_11.y + 0.5) / _39._m0.y) * 2.0)) * _94, in.m_11.z * _94, _94);
+    out.gl_PointSize = 1.0;
+    out.m_80 = in.m_81.zyxw;
+    out.m_85 = in.m_87;
+    out.m_90 = in.m_92;
+    return out;
+}
+

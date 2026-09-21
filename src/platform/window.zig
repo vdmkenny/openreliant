@@ -30,13 +30,19 @@ pub const Window = struct {
     /// A frame drawn in memory, and the texture it goes up to on its way to the screen.
     frame: ?struct { width: u32, height: u32, transfer: *c.SDL_GPUTransferBuffer, texture: *c.SDL_GPUTexture } = null,
 
-    pub fn open(title: [*:0]const u8, width: u32, height: u32) Error!Window {
+    /// A window of `width` by `height` points, or filling the display, drawn into at the display's
+    /// own density.
+    pub fn open(title: [*:0]const u8, width: u32, height: u32, fullscreen: bool) Error!Window {
         if (builtin.os.tag == .macos) macos.ignoreSavedState();
         if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return fail("SDL_Init");
         errdefer c.SDL_Quit();
-        const handle = c.SDL_CreateWindow(title, @intCast(width), @intCast(height), c.SDL_WINDOW_RESIZABLE) orelse return fail("SDL_CreateWindow");
+        var flags: c.SDL_WindowFlags = c.SDL_WINDOW_RESIZABLE | c.SDL_WINDOW_HIGH_PIXEL_DENSITY;
+        if (fullscreen) flags |= c.SDL_WINDOW_FULLSCREEN;
+        const handle = c.SDL_CreateWindow(title, @intCast(width), @intCast(height), flags) orelse return fail("SDL_CreateWindow");
         errdefer c.SDL_DestroyWindow(handle);
-        const formats = c.SDL_GPU_SHADERFORMAT_SPIRV | c.SDL_GPU_SHADERFORMAT_MSL | c.SDL_GPU_SHADERFORMAT_DXIL;
+        // The formats the game's shader comes in: Vulkan's everywhere it runs, Metal's on Apple's
+        // systems.
+        const formats = c.SDL_GPU_SHADERFORMAT_SPIRV | c.SDL_GPU_SHADERFORMAT_MSL;
         const gpu = c.SDL_CreateGPUDevice(formats, false, null) orelse return fail("SDL_CreateGPUDevice");
         errdefer c.SDL_DestroyGPUDevice(gpu);
         if (!c.SDL_ClaimWindowForGPUDevice(gpu, handle)) return fail("SDL_ClaimWindowForGPUDevice");
@@ -59,14 +65,18 @@ pub const Window = struct {
         return .{ @intCast(@max(width, 1)), @intCast(@max(height, 1)) };
     }
 
-    /// The next event waiting, or null.
+    /// The next event waiting, or null. Alt and Enter, added for the port, switch between the
+    /// window and the full screen, and do not reach the game.
     pub fn poll(window: *Window) ?Event {
-        _ = window;
         var event: c.SDL_Event = undefined;
         while (c.SDL_PollEvent(&event)) {
             switch (event.type) {
                 c.SDL_EVENT_QUIT => return .quit,
                 c.SDL_EVENT_KEY_DOWN, c.SDL_EVENT_KEY_UP => {
+                    if (event.key.scancode == c.SDL_SCANCODE_RETURN and event.key.mod & c.SDL_KMOD_ALT != 0) {
+                        if (event.key.down and !event.key.repeat) window.toggleFullscreen();
+                        continue;
+                    }
                     const scan = keyboard.directInput(event.key.scancode) orelse continue;
                     return .{ .key = .{ .scan = scan, .down = event.key.down } };
                 },
@@ -142,7 +152,54 @@ pub const Window = struct {
         c.SDL_ReleaseGPUTransferBuffer(window.gpu, frame.transfer);
         window.frame = null;
     }
+
+    fn toggleFullscreen(window: *Window) void {
+        const fullscreen = c.SDL_GetWindowFlags(window.handle) & c.SDL_WINDOW_FULLSCREEN != 0;
+        if (!c.SDL_SetWindowFullscreen(window.handle, !fullscreen)) std.log.scoped(.sdl).warn("SDL_SetWindowFullscreen: {s}", .{c.SDL_GetError()});
+    }
+
+    /// The refresh rate of the display the window is on, in frames a second, or null where SDL
+    /// does not know it.
+    pub fn refreshRate(window: Window) ?f32 {
+        const display = c.SDL_GetDisplayForWindow(window.handle);
+        if (display == 0) return null;
+        const mode = c.SDL_GetCurrentDisplayMode(display);
+        if (mode == null or !(mode.*.refresh_rate > 0)) return null;
+        return mode.*.refresh_rate;
+    }
 };
+
+/// Holds frames to a rate where the display does not: with vsync off, or at a rate asked for.
+pub const Pacer = struct {
+    /// When the next frame may start, in nanoseconds on SDL's clock.
+    next: u64 = 0,
+
+    /// Waits until the next frame may start at `rate` frames a second.
+    pub fn wait(pacer: *Pacer, rate: f32) void {
+        const wanted = pacer.delay(c.SDL_GetTicksNS(), rate);
+        if (wanted > 0) c.SDL_DelayPrecise(wanted);
+    }
+
+    /// How long to wait at `now` for the next frame to start at `rate` frames a second: until a
+    /// period after the last started, or not at all when this frame ran late, the next then
+    /// starting a period from now.
+    fn delay(pacer: *Pacer, now: u64, rate: f32) u64 {
+        const period: u64 = @intFromFloat(std.time.ns_per_s / std.math.clamp(@as(f64, rate), 1, 10_000));
+        const start = @max(pacer.next, now);
+        pacer.next = start + period;
+        return start - now;
+    }
+};
+
+test Pacer {
+    var pacer: Pacer = .{};
+    // At 100 frames a second: the first frame goes at once, and a quick one waits out its period.
+    try std.testing.expectEqual(0, pacer.delay(1_000_000_000, 100));
+    try std.testing.expectEqual(6_000_000, pacer.delay(1_004_000_000, 100));
+    // A late frame goes at once, and the next is timed from it.
+    try std.testing.expectEqual(0, pacer.delay(1_050_000_000, 100));
+    try std.testing.expectEqual(10_000_000, pacer.delay(1_050_000_000, 100));
+}
 
 /// Hundredths of a second since SDL started: the game's ticks (`tick_timer` runs 100 times a
 /// second).
