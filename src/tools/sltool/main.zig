@@ -79,9 +79,20 @@ pub fn main(init: std.process.Init) !u8 {
         std.debug.print("{s}", .{Command.usage});
         return 2;
     };
+    run(command, init, arena, &stdout) catch |err| switch (err) {
+        // The reader went away, as `sltool ... | head` does: stop quietly, not with a trace.
+        error.WriteFailed => {
+            const cause = stdout.err orelse return err;
+            return if (cause == error.BrokenPipe) 0 else err;
+        },
+        else => return err,
+    };
+    return 0;
+}
+
+fn run(command: Command, init: std.process.Init, arena: std.mem.Allocator, stdout: *Io.File.Writer) !void {
     try command.run(.{ .io = init.io, .arena = arena, .stdout = &stdout.interface });
     try stdout.interface.flush();
-    return 0;
 }
 
 test Command {
