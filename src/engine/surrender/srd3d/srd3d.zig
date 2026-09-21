@@ -661,7 +661,7 @@ test "a frame from the scene to the device" {
     try scene.lights.append(gpa, .{ .mask = 0x04, .intensity = 1, .colour = .{ 0.25, 0.25, 0.25 }, .kind = .ambient });
     var context: srapi.Context = .{ .projection = .init(64, 48, srapi.full_screen, .{ 0.6, 0.8 }) };
 
-    try srcore.render(arena, &context, &scene, driver.interface());
+    try srcore.render(arena, &context, &scene, driver.interface(), null);
     // The square covers the middle, lit by the ambient light alone.
     const middle = screen.colour[24 * 64 + 32];
     for (middle) |c| try std.testing.expectApproxEqAbs(64.0 / 255.0, c, 1e-5);
@@ -672,7 +672,7 @@ test "a frame from the scene to the device" {
     // Moved across the near plane, it is clipped, not dropped: the middle is still drawn.
     object.position = .{ 0, 0, 120 };
     object.orientation = math.rotation(.y, 1.2);
-    try srcore.render(arena, &context, &scene, driver.interface());
+    try srcore.render(arena, &context, &scene, driver.interface(), null);
     var lit: usize = 0;
     for (screen.colour) |c| lit += @intFromBool(c[0] > 0);
     try std.testing.expect(lit > 0);
@@ -731,7 +731,7 @@ test "a pass keeps what it gathers while it clips a polygon" {
     defer scene.deinit(gpa);
     try scene.layers.getPtr(.world).append(gpa, .{ .mesh = &object });
     var context: srapi.Context = .{ .projection = .init(64, 48, srapi.full_screen, .{ 0.6, 0.8 }) };
-    try srcore.render(arena, &context, &scene, driver.interface());
+    try srcore.render(arena, &context, &scene, driver.interface(), null);
 
     // Unlit, the triangles draw white, each where it lies; below the middle stays black.
     for ([_][2]usize{ .{ 26, 22 }, .{ 42, 22 }, .{ 32, 14 } }) |at| {

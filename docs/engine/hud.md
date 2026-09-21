@@ -4,8 +4,9 @@
 display and the text. Its code lies between `hog_SND.CPP`'s and `hudmovie.cpp`'s, about 40KB of it;
 only `hud_init` asserts, so the source map places that stretch alone.
 
-The port has where an element stands and how wide a line of its text is
-([`engine/game/hud.zig`](../../src/engine/game/hud.zig)); it draws nothing yet.
+The port draws the first of its readouts
+([`engine/game/hud.zig`](../../src/engine/game/hud.zig)), reaching it as the engine does, through
+the overlay `srcore.render` runs after a frame's layers and before the scene ends.
 
 ## How it is reached
 
@@ -72,6 +73,21 @@ overlay-layer depth and alpha blend.
 It has no fallback yet: `--original` draws the display the same way, and the software device, which
 has no GPU to draw rectangles with, cannot draw it at all. Both want `VFX_character_draw` ported,
 after which `--original` takes it too.
+
+## The readouts
+
+`hud_draw` puts three readouts in a row across the top of the screen, each a shape of the display's
+set with a number centred under it, `0x10` right of the shape's point and `0x1E` below it. All three
+stand half of the way across, at offsets of `0x39`, `0x5F` and `0x98`:
+
+| Offset | Shape | Shows |
+| --- | --- | --- |
+| `0x39` | `0xCD`, a ship with its engines burning | the afterburner fuel, in hundreds |
+| `0x5F` | `0xD0`, a skull and crossbones, drawn 4 left | the word at `0x00562DF4`, which the front end sets. **Unknown** what it counts |
+| `0x98` | `0xCF`, a coil, drawn `0x1A` left | the object's word at `+0x5EC`, 29 when it is created, drawn only while a condition of its own holds. **Unknown** what it counts |
+
+The port draws the fuel ([`engine/game/hud.zig`](../../src/engine/game/hud.zig)); the other two wait
+on what they count.
 
 ## Art
 

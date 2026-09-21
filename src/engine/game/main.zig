@@ -188,6 +188,8 @@ pub const Frame = struct {
     last_view: camera.View,
     /// What the models' own lights and engine glows are drawn by.
     attachments: objects.View = .{},
+    /// What is drawn over the scene once its layers are done, which is the head-up display.
+    overlay: ?srcore.Overlay = null,
 };
 
 /// Puts the frame's scene together and draws it, in `mission_frame`'s order: the objects, the
@@ -203,7 +205,7 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     try frame.space.frame(gpa, scene, context, frame.view, frame.cockpit_mode);
     if (context.hardware) try frame.sky.frame(gpa, scene, context);
     if (frame.view != frame.last_view) frame.space.resetStreaks();
-    try srcore.render(arena, context, scene, driver);
+    try srcore.render(arena, context, scene, driver, frame.overlay);
 }
 
 test "the simulation steps on every fourth tick" {

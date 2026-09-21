@@ -20,6 +20,7 @@ const Allocator = std.mem.Allocator;
 
 const fnt = @import("../../formats/fnt.zig");
 const math = @import("../surrender/math.zig");
+const spr = @import("../../formats/spr.zig");
 const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
 const srd3d = @import("../surrender/srd3d/srd3d.zig");
 const device = @import("../surrender/srd3d/device.zig");
@@ -132,6 +133,97 @@ pub const Align = enum(u32) {
     right = 2,
     _,
 };
+
+/// The sprite set the display's shapes come from: `HUDHARD.SPR` for the hardware renderers and
+/// `HUDSOFT.SPR` for the software one.
+pub const hardware_shapes = "HUDHARD.SPR";
+pub const software_shapes = "HUDSOFT.SPR";
+
+/// The display's shapes, with an image made of each as it is first drawn. A shape takes the
+/// nearest palette at or before it in the file, as the sprites do everywhere.
+pub const Art = struct {
+    set: spr.Sprite,
+    images: []?srtexture.Image,
+
+    pub fn init(gpa: Allocator, set: spr.Sprite) Allocator.Error!Art {
+        const images = try gpa.alloc(?srtexture.Image, set.count());
+        @memset(images, null);
+        return .{ .set = set, .images = images };
+    }
+
+    pub fn deinit(art: *Art, gpa: Allocator) void {
+        for (art.images) |held| if (held) |made| {
+            gpa.free(made.levels[0].rgba);
+            gpa.free(made.levels);
+        };
+        gpa.free(art.images);
+    }
+
+    fn shape(art: Art, index: usize) ?spr.Shape {
+        if (index >= art.set.count()) return null;
+        return switch (art.set.block(index)) {
+            .shape => |found| found,
+            else => null,
+        };
+    }
+
+    /// The image of the shape at `index`, made the first time it is drawn. Index 0 of a shape is
+    /// clear, as it is wherever the sprites are drawn.
+    fn image(art: *Art, gpa: Allocator, index: usize) (spr.Error || Allocator.Error)!?*srtexture.Image {
+        if (index >= art.images.len) return null;
+        if (art.images[index]) |*made| return made;
+        const found = art.shape(index) orelse return null;
+        const palette = art.set.paletteFor(index) orelse return null;
+        var expanded: [spr.palette_size]u8 = undefined;
+        spr.expandPalette(palette, &expanded);
+
+        const indices = try found.decode(gpa);
+        defer gpa.free(indices);
+        const rgba = try gpa.alloc(u8, indices.len * 4);
+        errdefer gpa.free(rgba);
+        for (indices, 0..) |at, pixel| {
+            const entry = expanded[@as(usize, at) * 3 ..][0..3];
+            for (0..3) |channel| rgba[pixel * 4 + channel] = entry[channel];
+            rgba[pixel * 4 + 3] = if (at == 0) 0 else 255;
+        }
+        const levels = try gpa.alloc(srtexture.Level, 1);
+        errdefer gpa.free(levels);
+        levels[0] = .{ .width = found.width(), .height = found.height(), .rgba = rgba };
+        art.images[index] = .{ .levels = levels };
+        return &art.images[index].?;
+    }
+};
+
+/// Draws the shape at `index` with its anchor at `at`, `scale` times its own size. A shape's
+/// bounds are in a frame whose origin is that anchor, so they say where it hangs from the point.
+pub fn drawShape(
+    art: *Art,
+    gpa: Allocator,
+    target: device.Device,
+    index: usize,
+    at: [2]i32,
+    colour: [4]f32,
+    scale: f32,
+) (spr.Error || Allocator.Error)!void {
+    const found = art.shape(index) orelse return;
+    const image = try art.image(gpa, index) orelse return;
+    const left = @as(f32, @floatFromInt(at[0])) + @as(f32, @floatFromInt(found.header.x1)) * scale;
+    const top = @as(f32, @floatFromInt(at[1])) + @as(f32, @floatFromInt(found.header.y1)) * scale;
+    const right = left + @as(f32, @floatFromInt(found.width())) * scale;
+    const bottom = top + @as(f32, @floatFromInt(found.height())) * scale;
+    const tint = device.pack(colour);
+    const corners = [4]device.Vertex{
+        .{ .x = left, .y = top, .z = 1, .rhw = 1, .diffuse = tint, .u = 0, .v = 0 },
+        .{ .x = right, .y = top, .z = 1, .rhw = 1, .diffuse = tint, .u = 1, .v = 0 },
+        .{ .x = right, .y = bottom, .z = 1, .rhw = 1, .diffuse = tint, .u = 1, .v = 1 },
+        .{ .x = left, .y = bottom, .z = 1, .rhw = 1, .diffuse = tint, .u = 0, .v = 1 },
+    };
+    target.draw(.{
+        .texture = image,
+        .depth = srd3d.depth(.overlay, .alpha),
+        .blend = srd3d.factors(.alpha),
+    }, .fan, &corners, null);
+}
 
 /// A glyph as the GPU draws it: the font's palette looked up for each of its bytes, with index 0
 /// left clear. Made the first time the glyph is drawn and kept for the rest of the run.
@@ -258,9 +350,9 @@ test gridPlace {
     try std.testing.expectEqual([2]i32{ first[0], first[1] + grid_down }, gridPlace(.{ 640, 480 }, 2, 1));
     try std.testing.expectEqual([2]i32{ first[0] + grid_across, first[1] + grid_down }, gridPlace(.{ 640, 480 }, 3, 1));
     // Scaled, the grid's own spacing grows with it.
-    const scaled = gridPlace(.{ 640, 480 }, 3, 2);
-    const scaled_first = gridPlace(.{ 640, 480 }, 0, 2);
-    try std.testing.expectEqual([2]i32{ scaled_first[0] + grid_across * 2, scaled_first[1] + grid_down * 2 }, scaled);
+    const larger = gridPlace(.{ 640, 480 }, 3, 2);
+    const larger_first = gridPlace(.{ 640, 480 }, 0, 2);
+    try std.testing.expectEqual([2]i32{ larger_first[0] + grid_across * 2, larger_first[1] + grid_down * 2 }, larger);
 }
 
 test Opened {
@@ -356,4 +448,87 @@ test drawText {
     _ = try drawText(&opened, gpa, recorder.interface(), .{ 0, 0 }, text[0..1], .{ 1, 1, 1, 1 }, .left, 2);
     try std.testing.expectEqual(width * 2, recorder.drawn.items[0][2].x);
     try std.testing.expectEqual(height * 2, recorder.drawn.items[0][2].y);
+}
+
+/// The readouts `hud_draw` puts in a row across the top of the screen, each a shape with a number
+/// centred under it. All three stand half of the way across, at the offsets it hands `hud_place`.
+pub const Readout = enum {
+    /// The afterburner fuel, in hundreds, under a ship with its engines burning.
+    fuel,
+    /// **Unknown** what it counts: the word at `0x00562DF4`, which the front end sets, under a
+    /// skull and crossbones.
+    skull,
+    /// **Unknown** what it counts: the object's own word at `+0x5EC`, 29 when it is created, under
+    /// a coil. `hud_draw` draws it only while a condition of its own holds.
+    coil,
+
+    /// Where a readout stands and what it draws there.
+    pub const Spec = struct {
+        /// The offset `hud_draw` hands `hud_place`, and the fraction of the screen.
+        offset: [2]i32,
+        across: f32,
+        down: f32,
+        /// The shape of the display's set drawn at that point.
+        shape: u16,
+        /// Where the shape hangs from it, which two of the three shift along.
+        shape_offset: [2]i32 = .{ 0, 0 },
+    };
+
+    /// How far right of the point the number is centred, and how far below it.
+    pub const text_offset: [2]i32 = .{ 0x10, 0x1E };
+
+    pub fn spec(readout: Readout) Spec {
+        return switch (readout) {
+            .fuel => .{ .offset = .{ 0x39, 0 }, .across = 0.5, .down = 0, .shape = 0xCD },
+            .skull => .{ .offset = .{ 0x5F, 0 }, .across = 0.5, .down = 0, .shape = 0xD0, .shape_offset = .{ -4, 0 } },
+            .coil => .{ .offset = .{ 0x98, 0 }, .across = 0.5, .down = 0, .shape = 0xCF, .shape_offset = .{ -0x1A, 0 } },
+        };
+    }
+
+    /// Draws the readout for a window of `screen`, showing `value`.
+    pub fn draw(
+        readout: Readout,
+        art: *Art,
+        opened: *Opened,
+        gpa: Allocator,
+        target: device.Device,
+        screen: [2]u32,
+        value: i32,
+        colour: [4]f32,
+        scale: f32,
+    ) (spr.Error || Allocator.Error)!void {
+        const at = readout.spec();
+        const point = place(screen, at.offset, at.across, at.down, scale);
+        try drawShape(art, gpa, target, at.shape, scaled(point, at.shape_offset, scale), colour, scale);
+
+        var buffer: [16]u8 = undefined;
+        const text = std.fmt.bufPrint(&buffer, "{d}", .{value}) catch return;
+        _ = try drawText(opened, gpa, target, scaled(point, text_offset, scale), text, colour, .centre, scale);
+    }
+};
+
+/// `point` moved by an offset the display measures in its own pixels.
+fn scaled(point: [2]i32, offset: [2]i32, scale: f32) [2]i32 {
+    var at: [2]i32 = undefined;
+    for (&at, point, offset) |*out, from, by| {
+        out.* = from + round(@as(f32, @floatFromInt(by)) * scale);
+    }
+    return at;
+}
+
+test Readout {
+    // The three stand in a row across the top, half of the way across and rising to the right.
+    var last: i32 = 0;
+    for ([_]Readout{ .fuel, .skull, .coil }) |readout| {
+        const at = readout.spec();
+        try std.testing.expectEqual(0.5, at.across);
+        try std.testing.expectEqual(0, at.down);
+        try std.testing.expect(at.offset[0] > last);
+        last = at.offset[0];
+        const point = place(.{ 640, 480 }, at.offset, at.across, at.down, 1);
+        try std.testing.expectEqual([2]i32{ 320 + at.offset[0], 16 }, point);
+    }
+    // An offset the display measures in its own pixels grows with it.
+    try std.testing.expectEqual([2]i32{ 100 - 8, 20 }, scaled(.{ 100, 20 }, .{ -4, 0 }, 2));
+    try std.testing.expectEqual([2]i32{ 100 + 0x10, 20 + 0x1E }, scaled(.{ 100, 20 }, Readout.text_offset, 1));
 }

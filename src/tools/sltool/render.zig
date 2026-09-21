@@ -160,7 +160,7 @@ fn draw(ctx: Context, command: Command) !void {
         if (object) |*o| try o.draw(gpa, &scene, .world, .{ .camera = context.camera.position });
         try space.frame(gpa, &scene, &context, command.view, .open);
         try sky.frame(gpa, &scene, &context);
-        try srcore.render(frame_arena.allocator(), &context, &scene, driver.interface());
+        try srcore.render(frame_arena.allocator(), &context, &scene, driver.interface(), null);
     }
 
     if (std.fs.path.dirname(command.out)) |dir| try Io.Dir.cwd().createDirPath(ctx.io, dir);

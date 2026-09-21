@@ -17,6 +17,8 @@ const shp = openreliant.shp;
 const stats = openreliant.stats;
 const tcache = openreliant.tcache;
 const tga = openreliant.tga;
+const fnt = openreliant.fnt;
+const spr = openreliant.spr;
 const engine = openreliant.engine;
 const math = engine.surrender.math;
 const srapi = engine.surrender.surrenderlib.srapi;
@@ -228,6 +230,16 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         frames_left = 2;
     }
 
+    // The head-up display: its shapes, its font, and what draws it over the finished scene.
+    var display: Display = .{
+        .art = try .init(arena, try spr.Sprite.parse(try resources.readFile(arena, game.hud.hardware_shapes))),
+        .font = .open(try fnt.Font.parse(try resources.readFile(arena, hud_font))),
+        .gpa = arena,
+        .target = undefined,
+        .screen = .{ 0, 0 },
+        .ship = &ship,
+    };
+
     var scene: srcore.Scene = .{};
     defer scene.deinit(arena);
     // What a frame needs until it is drawn, kept from frame to frame.
@@ -320,6 +332,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         context.camera = .{ .position = view.place.position, .orientation = view.place.orientation };
         context.projection = view.projection(size[0], size[1]);
         _ = frame_arena.reset(.retain_capacity);
+        display.target = screen.interface();
+        display.screen = size;
         try game.main.drawFrame(arena, frame_arena.allocator(), &scene, &context, .{
             .models = (&ship.object)[0..1],
             .space = space,
@@ -327,6 +341,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .view = view.view,
             .cockpit_mode = view.cockpit_mode,
             .last_view = last_view,
+            .overlay = display.overlay(),
             .attachments = .{
                 .camera = view.place.position,
                 .frame_start = clock.frame_start,
@@ -470,6 +485,47 @@ const Ship = struct {
 
     fn unload(ship: *Ship) void {
         ship.arena.deinit();
+    }
+};
+
+/// The font the display's readouts are drawn with.
+const hud_font = "FONT.FNT";
+
+/// What draws the head-up display over the finished scene. `srcore.render` reaches it where
+/// Surrender reaches `hud_draw`, through the overlay it is handed.
+const Display = struct {
+    art: game.hud.Art,
+    font: game.hud.Opened,
+    gpa: Allocator,
+    /// Filled in each frame, before the scene is drawn.
+    target: srd3d.device.Device,
+    screen: [2]u32,
+    ship: *const Ship,
+
+    fn overlay(display: *Display) srcore.Overlay {
+        return .{ .context = display, .draw = draw };
+    }
+
+    fn draw(context: *anyopaque) Allocator.Error!void {
+        const display: *Display = @ptrCast(@alignCast(context));
+        const scale = game.hud.scaleFor(display.screen);
+        // `hud_draw` shows the fuel in hundreds.
+        const fuel = @divTrunc(display.ship.live.afterburner_fuel, 100);
+        game.hud.Readout.draw(
+            .fuel,
+            &display.art,
+            &display.font,
+            display.gpa,
+            display.target,
+            display.screen,
+            fuel,
+            .{ 1, 1, 1, 1 },
+            scale,
+        ) catch |err| switch (err) {
+            error.OutOfMemory => |out| return out,
+            // A shape the file does not hold draws nothing, as it does in the game.
+            else => {},
+        };
     }
 };
 

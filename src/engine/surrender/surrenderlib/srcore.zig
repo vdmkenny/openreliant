@@ -112,7 +112,15 @@ pub const Blended = struct {
 
 /// Draws a frame (`sr_render`, `sr_draw_layers`). Everything a frame needs is taken from `arena`,
 /// which must last until the driver is done with the frame.
-pub fn render(arena: Allocator, context: *srapi.Context, scene: *Scene, driver: Driver) Allocator.Error!void {
+/// What the engine draws over the finished scene, which Surrender reaches through `sr + 0x88`:
+/// `mission_run` puts `hud_draw` there and the renderer calls it after the layers, before the scene
+/// ends. Nothing calls it outright.
+pub const Overlay = struct {
+    context: *anyopaque,
+    draw: *const fn (context: *anyopaque) Allocator.Error!void,
+};
+
+pub fn render(arena: Allocator, context: *srapi.Context, scene: *Scene, driver: Driver, overlay: ?Overlay) Allocator.Error!void {
     driver.vtable.begin(driver.ptr, context);
     // `mesh_light` walks the lights' list, which runs from the last added.
     const lights = try arena.dupe(srlight.Light, scene.lights.items);
@@ -148,6 +156,7 @@ pub fn render(arena: Allocator, context: *srapi.Context, scene: *Scene, driver: 
         depthSort(blended.list.items);
         driver.vtable.flush(driver.ptr, blended.list.items, layer);
     }
+    if (overlay) |over| try over.draw(over.context);
     driver.vtable.end(driver.ptr);
 }
 
