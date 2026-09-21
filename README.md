@@ -70,8 +70,9 @@ import slot, so it does not write them back.
 model tables, the player's control bindings, the order table and the combat maneuvers are derived
 from the game binary by `src/tools/tablegen` (`make vm-opcodes`, `make vm-commands`, `make
 vm-conditions`, `make model-tables`, `make control-tables`, `make order-tables`, `make
-maneuver-tables`), and `make ghidra-annotate` names and types the Ghidra project from the Zig
-definitions.
+maneuver-tables`), as is the map of which source file each stretch of code was compiled from (`make
+source-map`); `make ghidra-annotate` names and types the Ghidra project from the Zig definitions and
+groups its code by source file.
 
 Documentation index: [`docs/README.md`](docs/README.md).
 

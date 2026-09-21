@@ -115,8 +115,8 @@ pub const exported = [_]Export{
     .{ "FightData", lancer.maneuvers.FightData },
 
     // The C runtime.
-    .{ "FILE", lancer.runtime.File },
-    .{ "FileFlags", lancer.runtime.File.Flags },
+    .{ "FILE", lancer.libcmt.File },
+    .{ "FileFlags", lancer.libcmt.File.Flags },
 
     // Live objects and their models.
     .{ "GameObject", lancer.game.GameObject },

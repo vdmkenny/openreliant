@@ -7,6 +7,11 @@ const assert = std.debug.assert;
 
 const lancer = @import("../lancer.zig");
 const Pointer = lancer.Pointer;
+const Range = lancer.sources.Range;
+
+/// The runtime's code: from `__fpmath`, after the `srmemory.dll` import thunks, to the end of the
+/// last runtime function, before the unwind funclets of the game's own functions.
+pub const code: Range = .{ .start = 0x004CF23A, .end = 0x004DB99A };
 
 /// A stdio stream, the runtime's `FILE`. `fopen` returns one, and `_iob` holds the first twenty,
 /// of which the first three are stdin, stdout and stderr. `sprintf` and its kin write through one

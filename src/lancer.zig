@@ -11,8 +11,9 @@ pub const game = @import("lancer/game.zig");
 pub const input = @import("lancer/input.zig");
 pub const maneuvers = @import("lancer/maneuvers.zig");
 pub const orders = @import("lancer/orders.zig");
-pub const runtime = @import("lancer/runtime.zig");
+pub const libcmt = @import("lancer/libcmt.zig");
 pub const sound = @import("lancer/sound.zig");
+pub const sources = @import("lancer/sources.zig");
 pub const stats = @import("lancer/stats.zig");
 pub const vm = @import("lancer/vm.zig");
 

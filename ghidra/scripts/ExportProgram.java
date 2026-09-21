@@ -23,6 +23,8 @@ import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.Listing;
+import ghidra.program.model.listing.ProgramFragment;
+import ghidra.program.model.listing.ProgramModule;
 import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.Symbol;
@@ -59,6 +61,24 @@ public class ExportProgram extends GhidraScript {
     /** Keeps a value on one TSV line. */
     private static String cell(String value) {
         return value.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r");
+    }
+
+    /**
+     * Where the Sources tree that ApplySources builds puts an address: the path of its fragment,
+     * such as game/Ai.cpp or unplaced/Ai.cpp .. aidefend.cpp, or empty without the tree.
+     */
+    private String source(Address address) {
+        ProgramFragment fragment = currentProgram.getListing().getFragment("Sources", address);
+        if (fragment == null) {
+            return "";
+        }
+        StringBuilder path = new StringBuilder(fragment.getName());
+        ProgramModule[] parents = fragment.getParents();
+        while (parents.length > 0 && parents[0].getParents().length > 0) {
+            path.insert(0, parents[0].getName() + "/");
+            parents = parents[0].getParents();
+        }
+        return path.toString();
     }
 
     private void exportSegments(File file) throws Exception {
@@ -114,12 +134,13 @@ public class ExportProgram extends GhidraScript {
 
     private void exportFunctions(File file) throws Exception {
         try (PrintWriter out = open(file)) {
-            out.println("address\tsize\tcallers\tthunk\tname\tsignature");
+            out.println("address\tsize\tcallers\tthunk\tname\tsignature\tsource");
             for (Function function : currentProgram.getFunctionManager().getFunctions(true)) {
                 monitor.checkCancelled();
-                out.printf("%s\t%d\t%d\t%b\t%s\t%s%n", function.getEntryPoint(), function.getBody().getNumAddresses(),
+                out.printf("%s\t%d\t%d\t%b\t%s\t%s\t%s%n", function.getEntryPoint(), function.getBody().getNumAddresses(),
                     currentProgram.getReferenceManager().getReferenceCountTo(function.getEntryPoint()),
-                    function.isThunk(), function.getName(true), cell(function.getPrototypeString(true, true)));
+                    function.isThunk(), function.getName(true), cell(function.getPrototypeString(true, true)),
+                    cell(source(function.getEntryPoint())));
             }
         }
     }

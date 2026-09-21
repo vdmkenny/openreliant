@@ -82,16 +82,18 @@ GHIDRA_NAMES_DIR := $(GHIDRA_DIR)/names
 GHIDRAGEN_DIR    := $(ROOT)/zig-out/ghidra
 
 .PHONY: ghidra-annotate
-ghidra-annotate: | $(GHIDRA_PROJECT_DIR)/.imported-game ## Name and type the payload's known functions and data, from ghidra/names and the Zig definitions
+ghidra-annotate: | $(GHIDRA_PROJECT_DIR)/.imported-game ## Name and type the payload's known functions and data, and group its code by source file, from ghidra/names and the Zig definitions
 	$(ZIG) build ghidragen
 	mkdir -p $(GHIDRAGEN_DIR)
 	$(ROOT)/zig-out/bin/ghidragen types $(GHIDRAGEN_DIR)/types.tsv
 	$(ROOT)/zig-out/bin/ghidragen names $(GHIDRAGEN_DIR)/names.tsv
+	$(ROOT)/zig-out/bin/ghidragen sources $(GHIDRAGEN_DIR)/sources.tsv
 	$(HEADLESS) $(GHIDRA_PROJECT)/game -process LANCER.EXE -noanalysis \
 	    -scriptPath $(GHIDRA_SCRIPTS_DIR) \
 	    -postScript Annotate.java $(GHIDRAGEN_DIR)/types.tsv \
 	        $(GHIDRAGEN_DIR)/names.tsv $(GHIDRA_NAMES_DIR)/LANCER.EXE.runtime.tsv \
 	        $(GHIDRA_NAMES_DIR)/LANCER.EXE.tsv \
+	    -postScript ApplySources.java $(GHIDRAGEN_DIR)/sources.tsv \
 	    -max-cpu $(HEADLESS_MAX_CPU) -log $(GHIDRA_PROJECT_DIR)/annotate.log
 
 .PHONY: ghidra-gui
@@ -166,3 +168,13 @@ maneuver-tables: ## Re-derive the combat maneuvers, their scripts and handlers f
 	$(ZIG) build tablegen
 	$(ROOT)/zig-out/bin/tablegen maneuvers $(PAYLOAD) $(MANEUVER_TABLES)
 	$(ZIG) fmt $(MANEUVER_TABLES)
+
+SOURCE_MAP     := $(ROOT)/src/lancer/sources.zig
+PAYLOAD_STRINGS := $(GHIDRA_EXPORT_DIR)/game/LANCER.EXE/strings.tsv
+
+.PHONY: source-map
+source-map: ## Re-derive which source file each stretch of the payload's code was compiled from
+	@test -f $(VM_DISASSEMBLY) || { echo "missing $(VM_DISASSEMBLY); run 'make ghidra-export-game'" >&2; exit 1; }
+	$(ZIG) build tablegen
+	$(ROOT)/zig-out/bin/tablegen sources $(PAYLOAD) $(VM_DISASSEMBLY) $(PAYLOAD_STRINGS) $(SOURCE_MAP)
+	$(ZIG) fmt $(SOURCE_MAP)

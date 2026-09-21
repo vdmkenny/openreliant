@@ -7,6 +7,7 @@
 //!     tablegen controls <LANCER.EXE> <output.zig>
 //!     tablegen orders <LANCER.EXE> <output.zig>
 //!     tablegen maneuvers <LANCER.EXE> <output.zig>
+//!     tablegen sources <LANCER.EXE> <disassembly.asm> <strings.tsv> <output.zig>
 //!
 //! `opcodes`: the VM dispatches on a byte through a table of handler addresses. Reading that table
 //! gives the opcode set, and following each handler gives the size and shape of the instruction it
@@ -25,6 +26,9 @@
 //!
 //! `maneuvers`: the combat maneuvers' scripts, their opcodes' routines and Fight's choice lists.
 //!
+//! `sources`: the source files the payload was compiled from, in link order, and the code known to
+//! be each one's, from the paths their assertions hold. `strings.tsv` is the export's too.
+//!
 //! All come straight out of the binary, so the tables written are transcripts of the engine rather
 //! than readings of the mission files.
 
@@ -42,6 +46,7 @@ const image = @import("image.zig");
 const maneuvers = @import("maneuvers.zig");
 const models = @import("models.zig");
 const orders = @import("orders.zig");
+const sources = @import("sources.zig");
 const x86 = @import("x86.zig");
 
 /// Virtual address of the dispatch table, found from the `CALL dword ptr [...]` that the
@@ -65,6 +70,7 @@ const usage =
     \\       tablegen controls <LANCER.EXE> <output.zig>
     \\       tablegen orders <LANCER.EXE> <output.zig>
     \\       tablegen maneuvers <LANCER.EXE> <output.zig>
+    \\       tablegen sources <LANCER.EXE> <disassembly.asm> <strings.tsv> <output.zig>
     \\
 ;
 
@@ -76,6 +82,7 @@ const Mode = union(enum) {
     controls: struct { binary: []const u8, output: []const u8 },
     orders: struct { binary: []const u8, output: []const u8 },
     maneuvers: struct { binary: []const u8, output: []const u8 },
+    sources: struct { binary: []const u8, listing: []const u8, strings: []const u8, output: []const u8 },
 
     fn parse(args: []const [:0]const u8) ?Mode {
         if (args.len == 0) return null;
@@ -89,6 +96,7 @@ const Mode = union(enum) {
             .controls => if (rest.len == 2) .{ .controls = .{ .binary = rest[0], .output = rest[1] } } else null,
             .orders => if (rest.len == 2) .{ .orders = .{ .binary = rest[0], .output = rest[1] } } else null,
             .maneuvers => if (rest.len == 2) .{ .maneuvers = .{ .binary = rest[0], .output = rest[1] } } else null,
+            .sources => if (rest.len == 4) .{ .sources = .{ .binary = rest[0], .listing = rest[1], .strings = rest[2], .output = rest[3] } } else null,
         };
     }
 };
@@ -108,6 +116,7 @@ pub fn main(init: std.process.Init) !u8 {
         .controls => |paths| controlTable(init, arena, paths.binary, paths.output),
         .orders => |paths| orderTable(init, arena, paths.binary, paths.output),
         .maneuvers => |paths| maneuverTable(init, arena, paths.binary, paths.output),
+        .sources => |paths| sourceMap(init, arena, paths),
     };
 }
 
@@ -353,6 +362,28 @@ fn emit(w: *Io.Writer, handlers: []const Handler, length: usize) !void {
     );
 }
 
+fn sourceMap(init: std.process.Init, arena: std.mem.Allocator, paths: @FieldType(Mode, "sources")) !u8 {
+    const cwd: Io.Dir = .cwd();
+    const binary = try cwd.readFileAlloc(init.io, paths.binary, arena, .limited(64 << 20));
+    const listing = try cwd.readFileAlloc(init.io, paths.listing, arena, .limited(256 << 20));
+    const strings = try cwd.readFileAlloc(init.io, paths.strings, arena, .limited(64 << 20));
+    const pe_image: pe.Image = try .parse(binary);
+    const code = try sources.functions(arena, listing);
+    if (code.len == 0) return error.EmptyListing;
+    const files = try sources.read(arena, .init(pe_image, binary), code, try sources.stringAddresses(arena, strings));
+
+    var buffer: [16 << 10]u8 = undefined;
+    var out: Io.File.Writer = .init(try cwd.createFile(init.io, paths.output, .{}), init.io, &buffer);
+    defer out.file.close(init.io);
+    try sources.emit(&out.interface, code[0].address, files);
+    try out.interface.flush();
+
+    var placed: usize = 0;
+    for (files) |file| placed += @intFromBool(file.code != null);
+    std.debug.print("{d} source files, {d} with code placed -> {s}\n", .{ files.len, placed, paths.output });
+    return 0;
+}
+
 test Mode {
     const both = Mode.parse(&.{ "commands", "LANCER.EXE", "out.zig" }).?;
     try std.testing.expectEqualStrings("out.zig", both.commands.output);
@@ -364,6 +395,8 @@ test Mode {
     const controls_mode = Mode.parse(&.{ "controls", "LANCER.EXE", "out.zig" }).?;
     try std.testing.expectEqualStrings("LANCER.EXE", controls_mode.controls.binary);
     try std.testing.expectEqual(@as(?Mode, null), Mode.parse(&.{ "controls", "LANCER.EXE" }));
+    const sources_mode = Mode.parse(&.{ "sources", "LANCER.EXE", "disassembly.asm", "strings.tsv", "out.zig" }).?;
+    try std.testing.expectEqualStrings("strings.tsv", sources_mode.sources.strings);
 }
 
 test {
@@ -376,5 +409,6 @@ test {
     _ = maneuvers;
     _ = models;
     _ = orders;
+    _ = sources;
     _ = x86;
 }

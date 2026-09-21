@@ -109,7 +109,10 @@ that code, so the script disassembles it first. Names are user-defined, re-runni
 that is already in place, and the tables are the record of what is named and typed: re-import a
 program and one command restores it. The hand tables' rows are applied after the generated ones and
 so override them; `zig build test` checks that every row is well formed and that no address is named
-twice among the hand tables.
+twice among the hand tables. Then [`ApplySources.java`](../ghidra/scripts/ApplySources.java) builds
+the Sources program tree from `ghidragen sources`' rows for
+[`src/lancer/sources.zig`](../src/lancer/sources.zig) ([`binary/sources.md`](binary/sources.md)).
+`functions.tsv` gives each function's place in it.
 
 To read code that auto-analysis missed before naming it, `make ghidra-run
 SCRIPT=DefineFunctions.java ARGS="0x00405010 ..."` defines functions at those addresses under
@@ -126,5 +129,7 @@ export, and writes [`src/formats/models.zig`](../src/formats/models.zig). `make 
 reads the player's actions and their default bindings from the binary and writes
 [`src/formats/controls.zig`](../src/formats/controls.zig), `make order-tables` reads the order
 table into [`src/formats/orders.zig`](../src/formats/orders.zig), and `make maneuver-tables` reads
-the combat maneuvers and their scripts into [`src/formats/maneuvers.zig`](../src/formats/maneuvers.zig). The tables are committed, so building
+the combat maneuvers and their scripts into [`src/formats/maneuvers.zig`](../src/formats/maneuvers.zig).
+`make source-map` writes [`src/lancer/sources.zig`](../src/lancer/sources.zig), the source file of
+each stretch of code, from the binary and the export. The tables are committed, so building
 the tools never needs the game.
