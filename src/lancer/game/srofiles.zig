@@ -1,13 +1,20 @@
 //! `C:\lancer\game\srofiles.cpp`: Surrender meshes from `.SHP` models. `mesh_build` (`0x004A3040`)
 //! makes a part's mesh for one level of detail and gives each run of faces with the same shading
-//! and material a material of its own; `look` is its rule.
+//! and material a surface of its own; `look` is its rule.
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 const Pointer = @import("../../lancer.zig").Pointer;
 const shp = @import("../../formats/shp.zig");
 const tcache = @import("../../formats/tcache.zig");
-const Material = @import("../surrender/surrenderlib/srapiext.zig").Material;
+const math = @import("../surrender/math.zig");
+const srapi = @import("../surrender/surrenderlib/srapi.zig");
+const srapiext = @import("../surrender/surrenderlib/srapiext.zig");
+const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
+const matmanager = @import("matmanager.zig");
+const Material = srapiext.Material;
+const Vector = math.Vector;
 
 /// What decides a face's look besides its shading.
 pub const Conditions = struct {
@@ -119,6 +126,329 @@ fn coordinates(texture: Texture) Material.Coordinates {
     };
 }
 
+// --- mesh_build --------------------------------------------------------------------------------
+
+/// The letter `mesh_build` puts before a material's name to find its texture.
+pub const Prefix = enum {
+    /// In flight.
+    none,
+    /// `g`, while the loadout screen loads the ships (`loadout_ship_models`, `0x00524976`).
+    loadout_ships,
+    /// `r`, while it loads the missiles and guns (`loadout_weapon_models`, `0x00524977`).
+    loadout_weapons,
+
+    fn letter(prefix: Prefix) ?u8 {
+        return switch (prefix) {
+            .none => null,
+            .loadout_ships => 'g',
+            .loadout_weapons => 'r',
+        };
+    }
+};
+
+/// What `mesh_build` takes from the game besides the model.
+pub const Settings = struct {
+    /// `Lmaps` in the settings' `Device` section (`light_maps`).
+    light_maps: bool = true,
+    /// A hardware renderer (`sr + 0x1AC`).
+    hardware: bool = true,
+    prefix: Prefix = .none,
+    /// The model's objects get colours of their own to fade and cloak by: the model's header
+    /// flag `cloak`, or a ship type's model in a multiplayer mission (`model_load`).
+    cloak: bool = false,
+};
+
+/// The most surfaces a mesh holds (`mesh_create`, `0x004C4440`).
+pub const max_surfaces = 20;
+
+pub const Error = matmanager.Error || error{
+    /// A level with more runs of faces of one look than a mesh holds surfaces: the game stops
+    /// with `oops`.
+    TooManySurfaces,
+    /// A face naming a vertex its level lacks, which the game does not check.
+    CornerOutOfRange,
+};
+
+/// The textures of a level's material: its own, and its light map.
+const Found = struct {
+    texture: ?*srtexture.Image = null,
+    light_map: ?*srtexture.Image = null,
+};
+
+/// A part's mesh for one level of detail (`mesh_build`), its textures required from `textures`,
+/// or null for a level without faces. Adds to `flags` what the part's object needs: always lit and
+/// hiding the sun, and by the part's flags and faces, baked colours, geomorphing, and coordinates
+/// from the normals for the second pass. At the finest level it renumbers the faces `face_lists`
+/// hold, the part's tree nodes' and face groups', to the polygons the merged fans leave.
+///
+/// A fan's records become one polygon where `fanMerges` says so; a wire face becomes a polygon of
+/// two corners for each edge it draws. `mesh_texel_areas` (`0x004C4090`) then finds each textured
+/// polygon's area in texels, which only the software driver reads; the port leaves it out.
+///
+/// **Improvement:** a vertex without a counterpart in the next level (`-1`, in a few coarser
+/// levels of capital ships and a station) makes the game read whatever lies before that level's
+/// vertices; the port morphs it toward itself.
+pub fn build(
+    gpa: Allocator,
+    textures: *srtexture.Table,
+    part: *const shp.PartData,
+    level: usize,
+    settings: Settings,
+    flags: *srapiext.ObjectFlags,
+    face_lists: []const []u32,
+) Error!?srapiext.Mesh {
+    const source = part.meshes[level];
+    const faces = source.faces;
+    if (faces.len == 0) return null;
+    for (faces) |face| {
+        for (face.vertices) |corner| if (corner >= source.vertices.len) return error.CornerOutOfRange;
+    }
+    const part_flags = part.part.flags;
+    flags.lit = true;
+    flags.sun_occluder = true;
+    if (settings.cloak) flags.baked_object = true;
+    if (part_flags.has_static_light) flags.baked_mesh = true;
+    const coarser: ?shp.Mesh = if (level + 1 < part.meshes.len) part.meshes[level + 1] else null;
+    if (coarser != null) {
+        if (part_flags.geomorph_normals) flags.geomorph_normals = true;
+        if (part_flags.geomorph_positions) flags.geomorph_positions = true;
+    }
+
+    // Polygons and indices, as the faces will make them.
+    var polygon_count: usize = 0;
+    var index_count: usize = 0;
+    var any_face_flags = false;
+    {
+        var f: usize = 0;
+        while (f < faces.len) : (f += 1) {
+            const face = faces[f];
+            const mode = @intFromEnum(face.shading.mode);
+            if ((mode == 7 or mode == 8) and settings.light_maps) flags.normals_second = true;
+            if (face.flags.cap or face.flags.two_sided) any_face_flags = true;
+            if (face.shading.mode == .wire) {
+                for (0..3) |edge| if (edgeDrawn(face, edge)) {
+                    polygon_count += 1;
+                    index_count += 2;
+                };
+            } else if (fanMerges(faces, f)) {
+                index_count += face.remaining + 3;
+                f += face.remaining;
+            } else {
+                index_count += 3;
+            }
+            polygon_count += 1;
+        }
+    }
+
+    const vertex_count = source.vertices.len;
+    const positions = try gpa.alloc(Vector, vertex_count);
+    errdefer gpa.free(positions);
+    const normals = try gpa.alloc(Vector, vertex_count);
+    errdefer gpa.free(normals);
+    const morph_positions: ?[]Vector = if (coarser != null and part_flags.geomorph_positions) try gpa.alloc(Vector, vertex_count) else null;
+    errdefer if (morph_positions) |m| gpa.free(m);
+    const morph_normals: ?[]Vector = if (coarser != null and part_flags.geomorph_normals) try gpa.alloc(Vector, vertex_count) else null;
+    errdefer if (morph_normals) |m| gpa.free(m);
+    const baked: ?[][4]f32 = if (part_flags.has_static_light) try gpa.alloc([4]f32, vertex_count) else null;
+    errdefer if (baked) |b| gpa.free(b);
+    if (baked) |b| @memset(b, @splat(0));
+    const polygons = try gpa.alloc(srapiext.Polygon, polygon_count);
+    errdefer gpa.free(polygons);
+    @memset(polygons, .{ .kind = .triangle, .continues = 0, .first = 0, .count = 0 });
+    const indices = try gpa.alloc(u16, index_count);
+    errdefer gpa.free(indices);
+    const uv = try gpa.alloc([2]f32, index_count);
+    errdefer gpa.free(uv);
+    const planes = try gpa.alloc(srapiext.Plane, polygon_count);
+    errdefer gpa.free(planes);
+    @memset(planes, .{ .normal = @splat(0), .distance = 0 });
+    const face_flags: ?[]shp.Face.Flags = if (any_face_flags) try gpa.alloc(shp.Face.Flags, polygon_count) else null;
+    errdefer if (face_flags) |all| gpa.free(all);
+    if (face_flags) |all| @memset(all, .{});
+    const biases = try gpa.alloc(f32, polygon_count);
+    errdefer gpa.free(biases);
+    @memset(biases, 0);
+    var surfaces: std.ArrayList(srapiext.Surface) = .empty;
+    errdefer surfaces.deinit(gpa);
+    // A light-mapped part's second pass takes the first's coordinates.
+    const light_mapped = part_flags.lightmap and settings.light_maps;
+
+    // The textures of the materials that textured faces use.
+    const found = try gpa.alloc(Found, source.materials.len);
+    defer gpa.free(found);
+    for (source.materials, found, 0..) |*m, *images, i| {
+        images.* = .{};
+        const textured = for (faces) |face| {
+            if (face.material == i and @intFromEnum(face.shading.mode) > 2) break true;
+        } else false;
+        if (!textured) continue;
+        var buffer: [1 + @sizeOf(shp.Material)]u8 = undefined;
+        images.texture = try matmanager.textureRequire(textures, named(&buffer, settings.prefix.letter(), m));
+        if (light_mapped) images.light_map = try matmanager.textureRequire(textures, named(&buffer, 'l', m));
+    }
+
+    for (source.vertices, 0..) |vertex, i| {
+        positions[i] = vector(vertex.position);
+        normals[i] = vector(vertex.normal);
+        const next = coarser orelse continue;
+        const counterpart = if (vertex.next_lod_vertex >= 0 and vertex.next_lod_vertex < next.vertices.len)
+            next.vertices[@intCast(vertex.next_lod_vertex)]
+        else
+            vertex;
+        if (morph_normals) |m| m[i] = vector(counterpart.normal);
+        if (morph_positions) |m| m[i] = vector(counterpart.position);
+    }
+
+    const conditions: Conditions = .{ .light_maps = settings.light_maps, .part_lightmap = part_flags.lightmap, .hardware = settings.hardware };
+    var polygon: usize = 0;
+    var index: usize = 0;
+    var last: ?struct { shading: u8, material: u32 } = null;
+    var f: usize = 0;
+    while (f < faces.len) : (f += 1) {
+        const face = faces[f];
+        const shading: u8 = @truncate(@as(u32, @bitCast(face.shading)));
+        if (last == null or last.?.shading != shading or last.?.material != face.material) {
+            if (surfaces.items.len == max_surfaces) return error.TooManySurfaces;
+            const images = if (face.material < found.len) found[face.material] else Found{};
+            try surfaces.append(gpa, surface(look(face.shading, conditions), images));
+            last = .{ .shading = shading, .material = face.material };
+        }
+        const current = &surfaces.items[surfaces.items.len - 1];
+        const bias = face.sort_bias * @as(f32, 1.0 / 3.0);
+        if (face.shading.mode == .wire) {
+            const plane = srapi.planeThrough(positions[face.vertices[0]], positions[face.vertices[1]], positions[face.vertices[2]]);
+            for (0..3) |edge| {
+                if (!edgeDrawn(face, edge)) continue;
+                const ends = [2]usize{ edge, (edge + 1) % 3 };
+                polygons[polygon] = .{ .kind = .lines, .continues = 0, .first = @truncate(index), .count = 2 };
+                for (ends, 0..) |corner, k| {
+                    indices[index + k] = @truncate(face.vertices[corner]);
+                    uv[index + k] = .{ face.u[corner], face.v[corner] };
+                }
+                planes[polygon] = plane;
+                if (face_flags) |all| all[polygon] = faceFlags(face);
+                biases[polygon] = bias;
+                current.polygons += 1;
+                polygon += 1;
+                index += 2;
+            }
+            continue;
+        }
+        const merged = fanMerges(faces, f);
+        const extra: u32 = if (merged) face.remaining else 0;
+        polygons[polygon] = if (merged)
+            .{ .kind = .triangle, .continues = 0, .first = @truncate(index), .count = @truncate(extra + 3) }
+        else
+            .{ .kind = @enumFromInt(@as(u16, @truncate(@intFromEnum(face.polygon)))), .continues = @truncate(face.remaining), .first = @truncate(index), .count = 3 };
+        for (0..3) |corner| {
+            indices[index + corner] = @truncate(face.vertices[corner]);
+            uv[index + corner] = .{ face.u[corner], face.v[corner] };
+        }
+        // A merged fan's later records each add their last corner.
+        for (faces[f + 1 ..][0..extra], index + 3..) |record, at| {
+            indices[at] = @truncate(record.vertices[2]);
+            uv[at] = .{ record.u[2], record.v[2] };
+        }
+        if (face_flags) |all| all[polygon] = faceFlags(face);
+        biases[polygon] = bias;
+        if (merged and level == 0) renumber(face_lists, @intCast(polygon), extra);
+        current.polygons += 1;
+        polygon += 1;
+        index += 3 + extra;
+        f += extra;
+    }
+
+    var mesh: srapiext.Mesh = .{
+        .positions = positions,
+        .normals = normals,
+        .morph_positions = morph_positions,
+        .morph_normals = morph_normals,
+        .baked = baked,
+        .polygons = polygons,
+        .indices = indices,
+        .uv = .{ uv, if (light_mapped) uv else null },
+        .planes = planes,
+        .face_flags = face_flags,
+        .biases = biases,
+        .surfaces = try surfaces.toOwnedSlice(gpa),
+        .bounds = undefined,
+        .radius = undefined,
+    };
+    srapi.calcPolyNormals(&mesh);
+    srapi.findBoundingBox(&mesh);
+    return mesh;
+}
+
+/// Whether a fan's records become one polygon (`fan_merges`, `0x004A2FD0`): a fan's first record,
+/// whose normal lies within a dot product of 0.999, about 2.6 degrees, of each later record's. A
+/// fan whose records would run past the level's end is not merged.
+pub fn fanMerges(faces: []const shp.Face, f: usize) bool {
+    const face = faces[f];
+    if (face.polygon != .fan) return false;
+    if (f > 0 and faces[f - 1].remaining != 0) return false;
+    if (face.remaining >= faces.len - f) return false;
+    const normal = vector(face.normal);
+    for (faces[f + 1 ..][0..face.remaining]) |record| {
+        if (!(math.dot(normal, vector(record.normal)) >= 0.999)) return false;
+    }
+    return true;
+}
+
+/// Whether a wire face draws its edge from corner `edge` to the next: its edge mask leaves the
+/// edge's bit unset.
+fn edgeDrawn(face: shp.Face, edge: usize) bool {
+    return face.edge_mask & (@as(u32, 1) << @intCast(edge)) == 0;
+}
+
+/// The cap and two-sided flags, all a polygon keeps of its face's.
+fn faceFlags(face: shp.Face) shp.Face.Flags {
+    return .{ .cap = face.flags.cap, .two_sided = face.flags.two_sided };
+}
+
+/// Renumbers faces after a fan's `extra` later records merged into polygon `polygon`: the later
+/// records become the polygon, and the faces after them move down.
+fn renumber(face_lists: []const []u32, polygon: u32, extra: u32) void {
+    for (face_lists) |list| {
+        for (list) |*face| {
+            if (face.* <= polygon) continue;
+            face.* = if (face.* - polygon < extra) polygon else face.* - extra;
+        }
+    }
+}
+
+/// A run's surface: its look, with the textures its material found.
+fn surface(face_look: Look, images: Found) srapiext.Surface {
+    var textures: [2]srapiext.Texture = .{ image(images.texture), .none };
+    if (face_look.second) |second| textures[1] = switch (second.texture) {
+        .none => .none,
+        .material => image(images.texture),
+        .light_map => image(images.light_map),
+        .highlight => |index| .{ .highlight = index },
+    };
+    var record = material(face_look, .{});
+    record.image = .{ .null, .null };
+    return .{ .material = record, .textures = textures };
+}
+
+fn image(found: ?*srtexture.Image) srapiext.Texture {
+    return if (found) |i| .{ .image = i } else .none;
+}
+
+/// A material's name after a letter, if any.
+fn named(buffer: *[1 + @sizeOf(shp.Material)]u8, letter: ?u8, m: *const shp.Material) []const u8 {
+    const name = m.name();
+    const start: usize = if (letter) |l| blk: {
+        buffer[0] = l;
+        break :blk 1;
+    } else 0;
+    @memcpy(buffer[start..][0..name.len], name);
+    return buffer[0 .. start + name.len];
+}
+
+fn vector(v: shp.Vec3) Vector {
+    return .{ v.x, v.y, v.z };
+}
+
 fn testShading(mode: u4, sub_mode: u4) shp.Face.Shading {
     return .{ .mode = @enumFromInt(mode), .sub_mode = sub_mode, ._unused = 0 };
 }
@@ -166,4 +496,208 @@ test material {
     const blended = material(look(testShading(5, 0), .{}), .{ .material = texture });
     try std.testing.expectEqualSlices(u8, &.{ 0, 0, 1, 0, 0, 0, 3, 0 }, std.mem.asBytes(&blended)[0..8]);
     try std.testing.expectEqual(texture, blended.image[0]);
+}
+
+fn testFace(material_index: u32, mode: u4, corners: [3]u32) shp.Face {
+    var face = std.mem.zeroes(shp.Face);
+    face.material = material_index;
+    face.shading = testShading(mode, 0);
+    face.vertices = corners;
+    face.normal = .{ .x = 0, .y = 0, .z = -1 };
+    return face;
+}
+
+fn testVertex(x: f32, y: f32, next: i32) shp.Vertex {
+    return .{ .position = .{ .x = x, .y = y, .z = 0 }, .normal = .{ .x = 0, .y = 0, .z = -1 }, .unknown_18 = 0, .next_lod_vertex = next };
+}
+
+fn testMaterial(name: []const u8) shp.Material {
+    var m = std.mem.zeroes(shp.Material);
+    @memcpy(m.name_bytes[0..name.len], name);
+    return m;
+}
+
+/// A texture table holding `hull` and its light map.
+const TestTextures = struct {
+    bytes: []u8,
+    cache: tcache.Cache,
+    table: srtexture.Table,
+
+    fn init(gpa: Allocator) !*TestTextures {
+        const t = try gpa.create(TestTextures);
+        errdefer gpa.destroy(t);
+        t.bytes = try tcache.testing.build(gpa, &.{
+            .{ .name = "hull", .encoding = .index8, .width = 2, .height = 2 },
+            .{ .name = "lhull", .encoding = .index8, .width = 2, .height = 2 },
+        });
+        t.cache = try .parse(gpa, t.bytes);
+        t.table = .init(gpa, t.cache, std.mem.zeroes(@import("../../formats/tga.zig").Palette));
+        return t;
+    }
+
+    fn deinit(t: *TestTextures, gpa: Allocator) void {
+        t.table.deinit();
+        t.cache.deinit(gpa);
+        gpa.free(t.bytes);
+        gpa.destroy(t);
+    }
+};
+
+fn testPart(meshes: []shp.Mesh, flags: shp.Part.Flags) shp.PartData {
+    var part = std.mem.zeroes(shp.Part);
+    part.flags = flags;
+    return .{ .part = part, .meshes = meshes, .attachments = &.{}, .node_count = 0, .clip_count = 0, .group_count = 0, .trigger_count = 0 };
+}
+
+test "build: surfaces, planes and a wire face's edges" {
+    const gpa = std.testing.allocator;
+    const textures = try TestTextures.init(gpa);
+    defer textures.deinit(gpa);
+
+    var vertices = [_]shp.Vertex{ testVertex(-100, -100, -1), testVertex(100, -100, -1), testVertex(100, 100, -1), testVertex(-100, 100, -1) };
+    var wire = testFace(1, 1, .{ 0, 1, 2 });
+    // The edge from the second corner to the third is left out.
+    wire.edge_mask = 0b010;
+    var faces = [_]shp.Face{ testFace(0, 6, .{ 0, 2, 1 }), testFace(0, 6, .{ 0, 3, 2 }), wire };
+    var materials = [_]shp.Material{ testMaterial("hull"), testMaterial("wire") };
+    var meshes = [_]shp.Mesh{.{ .lod = .{ .switch_distance = 0 }, .vertices = &vertices, .faces = &faces, .materials = &materials }};
+    const part = testPart(&meshes, std.mem.zeroes(shp.Part.Flags));
+
+    var flags: srapiext.ObjectFlags = .{};
+    const mesh = (try build(gpa, &textures.table, &part, 0, .{}, &flags, &.{})).?;
+    defer mesh.deinit(gpa);
+
+    try std.testing.expectEqual(srapiext.ObjectFlags{ .lit = true, .sun_occluder = true }, flags);
+    try std.testing.expectEqual(2, mesh.surfaces.len);
+    try std.testing.expectEqual(2, mesh.surfaces[0].polygons);
+    try std.testing.expectEqual(Material.Coordinates.mesh, mesh.surfaces[0].material.coordinates[0]);
+    try std.testing.expect(mesh.surfaces[0].textures[0] == .image);
+    // The wire face's material is not textured, so nothing is looked up for it.
+    try std.testing.expectEqual(Material.Coordinates.none, mesh.surfaces[1].material.coordinates[0]);
+    try std.testing.expect(mesh.surfaces[1].textures[0] == .none);
+    try std.testing.expectEqual(2, mesh.surfaces[1].polygons);
+
+    // Two edges as lines, and the polygon the wire face counts over them left empty.
+    try std.testing.expectEqual(5, mesh.polygons.len);
+    try std.testing.expectEqual(srapiext.Polygon{ .kind = .lines, .continues = 0, .first = 6, .count = 2 }, mesh.polygons[2]);
+    try std.testing.expectEqualSlices(u16, &.{ 0, 2, 1, 0, 3, 2, 0, 1, 2, 0 }, mesh.indices);
+    try std.testing.expectEqual(0, mesh.polygons[4].count);
+
+    // The triangles face -Z; the lines keep their face's plane, which faces +Z.
+    try std.testing.expectEqual(@as(Vector, .{ 0, 0, -1 }), mesh.planes[0].normal);
+    try std.testing.expectEqual(@as(Vector, .{ 0, 0, 1 }), mesh.planes[3].normal);
+    try std.testing.expectEqual(@as(Vector, .{ -100, -100, 0 }), mesh.bounds[0]);
+    try std.testing.expectApproxEqAbs(141.42136, mesh.radius, 1e-3);
+    try std.testing.expectEqual(null, mesh.uv[1]);
+    try std.testing.expectEqual(null, mesh.face_flags);
+}
+
+test "build: fans merge when flat, and the part's face lists follow" {
+    const gpa = std.testing.allocator;
+    const textures = try TestTextures.init(gpa);
+    defer textures.deinit(gpa);
+
+    var vertices = [_]shp.Vertex{ testVertex(0, 0, -1), testVertex(100, 0, -1), testVertex(100, 100, -1), testVertex(0, 100, -1), testVertex(-50, 50, -1) };
+    var faces = [_]shp.Face{ testFace(0, 0, .{ 0, 1, 2 }), testFace(0, 0, .{ 0, 2, 3 }), testFace(0, 0, .{ 0, 3, 4 }), testFace(0, 0, .{ 0, 1, 4 }) };
+    for (faces[0..3], 0..) |*face, i| {
+        face.polygon = .fan;
+        face.remaining = @intCast(2 - i);
+    }
+    var materials = [_]shp.Material{testMaterial("flat")};
+    var meshes = [_]shp.Mesh{.{ .lod = .{ .switch_distance = 0 }, .vertices = &vertices, .faces = &faces, .materials = &materials }};
+    const part = testPart(&meshes, std.mem.zeroes(shp.Part.Flags));
+
+    var nodes = [_]u32{ 0, 1, 2, 3 };
+    var flags: srapiext.ObjectFlags = .{};
+    const merged = (try build(gpa, &textures.table, &part, 0, .{}, &flags, &.{&nodes})).?;
+    defer merged.deinit(gpa);
+    try std.testing.expectEqual(2, merged.polygons.len);
+    try std.testing.expectEqual(srapiext.Polygon{ .kind = .triangle, .continues = 0, .first = 0, .count = 5 }, merged.polygons[0]);
+    try std.testing.expectEqualSlices(u16, &.{ 0, 1, 2, 3, 4, 0, 1, 4 }, merged.indices[0..8]);
+    try std.testing.expectEqualSlices(u32, &.{ 0, 0, 0, 1 }, &nodes);
+
+    // A record turned by more than the tolerance, here about 5.7 degrees, keeps the fan's records
+    // apart.
+    faces[1].normal = .{ .x = 0, .y = 0.0995037, .z = -0.9950372 };
+    const apart = (try build(gpa, &textures.table, &part, 0, .{}, &flags, &.{})).?;
+    defer apart.deinit(gpa);
+    try std.testing.expectEqual(4, apart.polygons.len);
+    try std.testing.expectEqual(srapiext.Polygon{ .kind = .fan, .continues = 1, .first = 3, .count = 3 }, apart.polygons[1]);
+}
+
+test "build: light maps, baked colours and geomorphing" {
+    const gpa = std.testing.allocator;
+    const textures = try TestTextures.init(gpa);
+    defer textures.deinit(gpa);
+
+    // The third vertex has no counterpart in the coarser level.
+    var fine = [_]shp.Vertex{ testVertex(0, 0, 0), testVertex(100, 0, 1), testVertex(0, 100, -1) };
+    var coarse = [_]shp.Vertex{ testVertex(10, 10, -1), testVertex(90, 10, -1) };
+    var fine_faces = [_]shp.Face{testFace(0, 6, .{ 0, 1, 2 })};
+    var coarse_faces = [_]shp.Face{testFace(0, 6, .{ 0, 1, 1 })};
+    var materials = [_]shp.Material{testMaterial("hull")};
+    var meshes = [_]shp.Mesh{
+        .{ .lod = .{ .switch_distance = 5000 }, .vertices = &fine, .faces = &fine_faces, .materials = &materials },
+        .{ .lod = .{ .switch_distance = 10000 }, .vertices = &coarse, .faces = &coarse_faces, .materials = &materials },
+    };
+    var part_flags = std.mem.zeroes(shp.Part.Flags);
+    part_flags.lightmap = true;
+    part_flags.has_static_light = true;
+    part_flags.geomorph_positions = true;
+    part_flags.geomorph_normals = true;
+    const part = testPart(&meshes, part_flags);
+
+    var flags: srapiext.ObjectFlags = .{};
+    const mesh = (try build(gpa, &textures.table, &part, 0, .{}, &flags, &.{})).?;
+    defer mesh.deinit(gpa);
+    try std.testing.expect(flags.baked_mesh and flags.geomorph_positions and flags.geomorph_normals);
+    try std.testing.expectEqual(3, mesh.baked.?.len);
+    try std.testing.expectEqual(@as(Vector, .{ 10, 10, 0 }), mesh.morph_positions.?[0]);
+    try std.testing.expectEqual(@as(Vector, .{ 0, 100, 0 }), mesh.morph_positions.?[2]);
+    // The light map over the texture, by the same coordinates.
+    const lit = mesh.surfaces[0];
+    try std.testing.expect(lit.material.two_pass);
+    try std.testing.expect(lit.textures[1] == .image and lit.textures[1].image != lit.textures[0].image);
+    try std.testing.expectEqual(mesh.uv[0].?.ptr, mesh.uv[1].?.ptr);
+
+    // The coarsest level has nothing to morph toward.
+    const last = (try build(gpa, &textures.table, &part, 1, .{}, &flags, &.{})).?;
+    defer last.deinit(gpa);
+    try std.testing.expectEqual(null, last.morph_positions);
+
+    // A software renderer draws no light map, though the coordinates are still shared.
+    const software = (try build(gpa, &textures.table, &part, 0, .{ .hardware = false }, &flags, &.{})).?;
+    defer software.deinit(gpa);
+    try std.testing.expect(!software.surfaces[0].material.two_pass);
+}
+
+test "build: faults the game stops on or does not check" {
+    const gpa = std.testing.allocator;
+    const textures = try TestTextures.init(gpa);
+    defer textures.deinit(gpa);
+
+    var vertices = [_]shp.Vertex{ testVertex(0, 0, -1), testVertex(100, 0, -1), testVertex(0, 100, -1) };
+    var faces: [max_surfaces + 1]shp.Face = undefined;
+    for (&faces, 0..) |*face, i| face.* = testFace(@intCast(i % 2), 0, .{ 0, 1, 2 });
+    var materials = [_]shp.Material{ testMaterial("a"), testMaterial("b") };
+    var meshes = [_]shp.Mesh{.{ .lod = .{ .switch_distance = 0 }, .vertices = &vertices, .faces = &faces, .materials = &materials }};
+    const part = testPart(&meshes, std.mem.zeroes(shp.Part.Flags));
+    var flags: srapiext.ObjectFlags = .{};
+    try std.testing.expectError(error.TooManySurfaces, build(gpa, &textures.table, &part, 0, .{}, &flags, &.{}));
+
+    faces[0].vertices[2] = 3;
+    try std.testing.expectError(error.CornerOutOfRange, build(gpa, &textures.table, &part, 0, .{}, &flags, &.{}));
+}
+
+test fanMerges {
+    var faces = [_]shp.Face{ testFace(0, 0, .{ 0, 1, 2 }), testFace(0, 0, .{ 0, 2, 3 }) };
+    faces[0].polygon = .fan;
+    faces[0].remaining = 1;
+    faces[1].polygon = .fan;
+    try std.testing.expect(fanMerges(&faces, 0));
+    // A later record is not a fan's first.
+    try std.testing.expect(!fanMerges(&faces, 1));
+    // Records that would run past the end.
+    faces[0].remaining = 2;
+    try std.testing.expect(!fanMerges(&faces, 0));
 }

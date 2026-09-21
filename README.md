@@ -58,7 +58,7 @@ import slot, so it does not write them back.
 | `sltool cd` | Raw CD images and their ISO 9660 filesystem | [disc-images](docs/formats/disc-images.md) |
 | `sltool safedisc` | The protected executable | [safedisc](docs/binary/safedisc.md) |
 | `sltool hog` | `.HOG` archives and their RefPack compression | [hog](docs/formats/hog.md), [refpack](docs/formats/refpack.md) |
-| `sltool shp` | `.SHP` models; exports Wavefront OBJ; lists an object's components | [shp](docs/formats/shp.md) |
+| `sltool shp` | `.SHP` models; exports Wavefront OBJ; lists an object's components and the meshes the engine builds | [shp](docs/formats/shp.md) |
 | `sltool spr` | `.SPR` interface sprites; exports indexed PNG | [spr](docs/formats/spr.md) |
 | `sltool tcache` | Texture caches, the models' and effects' textures; exports PNG | [tcache](docs/formats/tcache.md) |
 | `sltool fat` | `.fat` sound banks; exports WAV | [fat](docs/formats/fat.md) |

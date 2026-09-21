@@ -1,9 +1,10 @@
 //! `C:\lancer\surrender\surrenderlib\srAPI.cpp`: Surrender's interface to the game: its state,
-//! `sr` (`0x005E6B50`), and the camera's projection.
+//! `sr` (`0x005E6B50`), the camera's projection, and what a mesh works out from its vertices.
 
 const std = @import("std");
 
 const math = @import("../math.zig");
+const srapiext = @import("srapiext.zig");
 const Vector = math.Vector;
 
 /// The projection `sr_set_projection` (`0x004C3A60`) sets from a viewport, its edges as fractions
@@ -173,6 +174,46 @@ pub const Context = struct {
         return math.transformTransposed(context.camera.orientation, direction);
     }
 };
+
+/// The plane through three corners, facing the side `(b - a) x (c - a)` points to: its unit normal
+/// and the normal's dot product with `a`.
+pub fn planeThrough(a: Vector, b: Vector, c: Vector) srapiext.Plane {
+    const normal = math.normalize(math.cross(b - a, c - a));
+    return .{ .normal = normal, .distance = math.dot(normal, a) };
+}
+
+/// Each polygon's plane, from its first three corners (`SR_mesh_calc_poly_normals`,
+/// `0x004C3CA0`), with the last two swapped for an odd strip member. Lines keep theirs.
+pub fn calcPolyNormals(mesh: *srapiext.Mesh) void {
+    for (mesh.polygons, mesh.planes) |polygon, *plane| {
+        if (polygon.count <= 2) continue;
+        const corners = mesh.indices[polygon.first..][0..3];
+        const a = mesh.positions[corners[0]];
+        const b = mesh.positions[corners[1]];
+        const c = mesh.positions[corners[2]];
+        plane.* = if (polygon.kind == .strip_odd) planeThrough(a, c, b) else planeThrough(a, b, c);
+    }
+}
+
+/// The mesh's bounding box, and its farthest vertex's distance from the origin
+/// (`SR_mesh_find_bounding_box`, `0x004C3F10`); all zero without vertices.
+pub fn findBoundingBox(mesh: *srapiext.Mesh) void {
+    if (mesh.positions.len == 0) {
+        mesh.bounds = .{ @splat(0), @splat(0) };
+        mesh.radius = 0;
+        return;
+    }
+    var low = mesh.positions[0];
+    var high = low;
+    var farthest = math.lengthSquared(low);
+    for (mesh.positions[1..]) |position| {
+        low = @min(low, position);
+        high = @max(high, position);
+        farthest = @max(farthest, math.lengthSquared(position));
+    }
+    mesh.bounds = .{ low, high };
+    mesh.radius = @sqrt(farthest);
+}
 
 test Projection {
     // The game's usual view on a 1024 by 768 screen: square pixels, and a view 5/6 of a unit

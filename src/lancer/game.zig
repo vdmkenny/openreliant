@@ -14,6 +14,7 @@ pub const executor = @import("game/executor.zig");
 pub const gameobj = @import("game/gameobj.zig");
 pub const guns = @import("game/guns.zig");
 pub const hog_snd = @import("game/hog_snd.zig");
+pub const matmanager = @import("game/matmanager.zig");
 pub const missiles = @import("game/missiles.zig");
 pub const nebula = @import("game/nebula.zig");
 pub const objects = @import("game/objects.zig");

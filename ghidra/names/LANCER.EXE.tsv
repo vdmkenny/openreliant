@@ -430,6 +430,12 @@
 004c4440	function	mesh_create	void * __fastcall (int polygons, int vertices, int indices, uint flags)	Allocates a mesh, zeroed
 004c4bd0	function	mesh_object_create		A scene object of type 1 showing a mesh; its face mask starts all ones
 004c3c50	function	SR_mesh_set_poly_flags	void __fastcall (void *mesh, byte keep, byte set)	Each polygon's flags become flags & keep | set. No callers
+004a3cb0	function	cloak_mesh_build	void * __fastcall (void *model, void *part, int level)	The mesh the cloak effect draws for a part's level: one surface, textured by coordinates from the normals, lit on hardware, added
+004c3e30	function	SR_mesh_calc_vertex_normals	void __fastcall (void *mesh)	Each vertex normal as the normalized sum of the planes of the polygons using it
+00524976	data	loadout_ship_models	byte	Set while the loadout screen loads the ship models: mesh_build looks up their textures as g and the material's name
+00524977	data	loadout_weapon_models	byte	Set while the loadout screen loads the missile and gun models: mesh_build looks up their textures as r and the material's name
+005959f4	data	model_multiplayer_ship	byte	Set while model_load loads a ship type's model in a multiplayer mission, which then gets the cloak mesh sets
+00582e8c	data	multiplayer_mission	byte	Unverified: set for missions 81 to 85 and 87, which look like the multiplayer maps, and by the Zone launcher's status
 004c78a0	function	sr_render	int __fastcall (void)	Draws a frame with sr_draw_layers, then counts it and its time
 004c7960	function	sr_draw_layers	int __fastcall (void)	Begins the scene; for each layer, runs each object through its pipeline and the device, then sorts and flushes the layer's blended polygons; ends the scene
 004c75c0	function	SR_meshpipe_init	int __fastcall (void *object)	Culls, projects and lights a mesh object's vertices for the frame; non-zero when nothing is left to draw

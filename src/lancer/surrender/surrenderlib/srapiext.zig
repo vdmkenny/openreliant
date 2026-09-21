@@ -205,9 +205,12 @@ pub const Mesh = struct {
     morph_normals: ?[]Vector = null,
     /// Colours baked from static lights, red, green, blue and alpha.
     baked: ?[][4]f32 = null,
+    /// `mesh_build` counts a wire face as one polygon more than it makes; those left over stay
+    /// empty at the end, in no surface, and count only toward the frame's budget.
     polygons: []Polygon,
     indices: []u16,
-    /// Texture coordinates for each index, for the first pass and the second.
+    /// Texture coordinates for each index, for the first pass and the second. A light-mapped
+    /// part's second are its first: the same slice.
     uv: [2]?[][2]f32,
     planes: []Plane,
     /// The faces' cap and two-sided flags, where the mesh has any.
@@ -228,7 +231,8 @@ pub const Mesh = struct {
         if (mesh.baked) |b| gpa.free(b);
         gpa.free(mesh.polygons);
         gpa.free(mesh.indices);
-        for (mesh.uv) |uv| if (uv) |u| gpa.free(u);
+        if (mesh.uv[0]) |u| gpa.free(u);
+        if (mesh.uv[1]) |u| if (mesh.uv[0] == null or u.ptr != mesh.uv[0].?.ptr) gpa.free(u);
         gpa.free(mesh.planes);
         if (mesh.face_flags) |f| gpa.free(f);
         gpa.free(mesh.biases);

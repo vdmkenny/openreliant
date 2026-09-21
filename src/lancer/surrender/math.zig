@@ -9,22 +9,34 @@ pub const Matrix = [9]f32;
 
 pub const identity: Matrix = .{ 1, 0, 0, 0, 1, 0, 0, 0, 1 };
 
+// The helpers add in the order the engine's do, which with the FPU rounding to single precision, as
+// it does once Direct3D is running, gives the same results.
+
+/// `vec3_dot` (`0x004C11C0`).
 pub fn dot(a: Vector, b: Vector) f32 {
-    return @reduce(.Add, a * b);
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 
 pub fn cross(a: Vector, b: Vector) Vector {
     return .{ a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0] };
 }
 
-pub fn length(v: Vector) f32 {
-    return @sqrt(dot(v, v));
+/// `vec3_length_squared` (`0x004C12A0`).
+pub fn lengthSquared(v: Vector) f32 {
+    return v[0] * v[0] + v[2] * v[2] + v[1] * v[1];
 }
 
-/// `v` scaled to a length of 1; the zero vector stays zero.
+/// `vec3_length` (`0x004C1270`).
+pub fn length(v: Vector) f32 {
+    return @sqrt(lengthSquared(v));
+}
+
+/// `v` scaled to a length of 1 (`vec3_normalize`, `0x004C1370`). The zero vector becomes a tiny
+/// one pointing forward.
 pub fn normalize(v: Vector) Vector {
     const l = length(v);
-    return if (l == 0) v else v / @as(Vector, @splat(l));
+    if (l == 0) return .{ 0, 0, 7.523164e-37 };
+    return v * @as(Vector, @splat(1 / l));
 }
 
 /// `m` times `v`.
@@ -132,6 +144,11 @@ test lookAt {
         try std.testing.expectApproxEqAbs(0, m[3], 1e-6);
         try expectVector(.{ 0, 0, 1 }, transformTransposed(m, normalize(d)));
     }
+}
+
+test normalize {
+    try std.testing.expectEqual(@as(Vector, .{ 0.6, 0, 0.8 }), normalize(.{ 3, 0, 4 }));
+    try std.testing.expectEqual(@as(Vector, .{ 0, 0, 7.523164e-37 }), normalize(.{ 0, 0, 0 }));
 }
 
 test fromAngles {

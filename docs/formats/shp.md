@@ -8,6 +8,7 @@ sltool shp info <model>                 # parts, levels, materials, turret limit
 sltool shp chunks <model>               # the raw chunk stream
 sltool shp check <model>                # validate indices, parents and bounds
 sltool shp obj <model> <out.obj> [--lod n]
+sltool shp meshes <model> <tcachehw.dat> <palette.tga>   # the meshes the engine builds
 make models                             # export every model to game/models
 make check-models                       # validate every model
 ```
@@ -113,7 +114,7 @@ Part flags at `0xF0`:
 | `0x04` | A part of a component's damaged model: hidden while the component is intact, shown when it is disabled, or destroyed with its damaged model kept. Static lights are baked separately for the two classes |
 | `0x10` | Geomorph normals: the mesh builder also copies each vertex's next-level normal |
 | `0x20` | Geomorph positions, likewise |
-| `0x40` | Set by the loader when a static light exists in this part's class |
+| `0x40` | Set by the loader when a static light exists in this part's class; the part's meshes then hold [baked colours](../engine/rendering.md#meshes) |
 | `0x80` | With `Lmaps` set, bind a second texture, `l<material>`, which a hardware renderer adds over the part's lit faces ([Rendering](../engine/rendering.md#shading-modes)) |
 | `0x1000` | A component the player can target: the live object marks the component's node [targetable](../engine/objects.md#the-model-hierarchy) |
 
@@ -163,7 +164,7 @@ Every record is one triangle.
 | `0x0C` | u32[3] | Vertex indices, into this level's vertex list |
 | `0x18` | f32[3] | Texture coordinate u, per corner |
 | `0x24` | f32[3] | Texture coordinate v, per corner |
-| `0x30` | vec3 | Face normal. Not read by the loader |
+| `0x30` | vec3 | Face normal. The loader compares a fan's records' normals to [merge](../engine/rendering.md#meshes) them |
 | `0x40` | f32 | Sort bias: a third of it is added to the depth by which blended faces are sorted |
 | `0x44` | u32 | Edge mask for wire shading: edge *k* is drawn unless bit *k* is set |
 | `0x48` | u32 | Polygon encoding: `0` plain triangle, `1` member of a fan, `2` or `3` member of a strip |
@@ -174,10 +175,11 @@ Shading modes: `0` untextured, `1` wire, `2` untextured and added, `3` unlit, `4
 lines rather than a filled triangle. The sub-mode picks mode 7's highlight and means nothing to the
 rest. [Rendering](../engine/rendering.md#shading-modes) gives what each draws.
 
-Records marked as fan or strip members would be merged by the loader into one larger polygon, but
-each record is already a complete triangle of that polygon, so treating every record as its own
-triangle renders the same surface. 72-byte records stop before the polygon fields and are always
-plain triangles.
+The loader merges a fan's records into one polygon when each later record's normal lies within a
+dot product of 0.999, about 2.6 degrees, of the first's; the Direct3D driver draws the records of a
+strip, or of a fan left unmerged, together ([Rendering](../engine/rendering.md#meshes)). Each record
+is already a complete triangle of its polygon, so treating every record as its own triangle renders
+the same surface. 72-byte records stop before the polygon fields and are always plain triangles.
 
 A face's front is the side `(v1 - v0) x (v2 - v0)` points to. A `3` record lists its last two
 corners the other way round: its front is the side of `(v2 - v0) x (v1 - v0)`.
@@ -235,8 +237,8 @@ placing a part in model space means summing the chain up to the root.
 
 ## Unread fields
 
-These are present in every record and read by nothing in the engine: the header's `0x04` scalar,
-and the face's normal and `0x3C` word. The reader preserves them.
+These are present in every record and read by nothing in the engine: the header's `0x04` scalar
+and the face's `0x3C` word. The reader preserves them.
 
 The part's floats from `0x68` to `0x90` are read by `object_bounds` (`0x00476680`), which moves them
 from the part's origin to the object's and sums them over the parts, as for a moment of inertia

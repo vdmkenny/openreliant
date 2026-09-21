@@ -266,7 +266,8 @@ pub const Face = extern struct {
     /// Texture coordinates, per corner.
     u: [3]f32,
     v: [3]f32,
-    /// Unit length in almost every record. Not read by the loader.
+    /// Unit length in almost every record. The loader compares a fan's records' normals to merge
+    /// them.
     normal: Vec3,
     unknown_15: u32,
     /// A third of it is added to the depth by which blended faces are sorted.
@@ -322,8 +323,8 @@ pub const Face = extern struct {
     /// How a record joins to its neighbours to form a larger polygon.
     pub const Polygon = enum(u32) {
         triangle = 0,
-        /// Part of a triangle fan, which the loader merges into one N-gon when the corners are
-        /// coplanar to within about 2.6 degrees.
+        /// Part of a triangle fan, which the loader merges into one polygon when each later
+        /// record's normal lies within about 2.6 degrees of the first's.
         fan = 1,
         strip_even = 2,
         /// Lists its last two corners the other way round: its front is the side

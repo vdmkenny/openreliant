@@ -31,7 +31,7 @@ view; the test passes on greater or equal, and the buffer clears to 0. The drive
 | Object type | Pipeline |
 |---|---|
 | 1, a mesh | `SR_meshpipe_init` (`0x004C75C0`) |
-| 4, a set of sprites | `sprites_project` (`0x004CE4D0`) |
+| 4, a set of sprites | `SR_bmopipe_init` (`0x004CE4D0`) |
 | 7, a star field | `stars_project` (`0x004C5380`) |
 
 **Unknown:** types 5 and 6 (`0x004CE830`, `0x004CE7B0`).
@@ -44,9 +44,49 @@ fog.
 
 ## Meshes
 
-`mesh_build` (`0x004A3040`) makes a part's mesh for each level of detail. A run of consecutive faces
-with the same mode, sub-mode and material is a group, with a material of its own; a mesh holds up
-to 20 groups. The material is 16 bytes (`Material` in
+`mesh_build` (`0x004A3040`) makes a part's mesh for each level of detail as `model_load`
+(`0x004A44D0`) loads the model:
+
+- A run of consecutive faces with the same mode, sub-mode and material is a group, with a material
+  of its own. A mesh holds up to 20 groups; a level with more stops the game.
+- A fan's records become one polygon when `fan_merges` (`0x004A2FD0`) finds each later record's
+  normal within a dot product of 0.999 of the first's: the first record's corners, then each later
+  record's last. Other records stay polygons of three corners, keeping their fan or strip encoding
+  and the count of records still to come, by which the driver draws them together.
+- A mode-1 face becomes a polygon of two corners, a line, for each edge its edge mask leaves unset,
+  each with the face's plane. It counts one polygon more than it makes; the spare polygons stay
+  empty, in no group, and count only toward the frame's limit.
+- Every other polygon's plane is that of its first three corners (`SR_mesh_calc_poly_normals`,
+  `0x004C3CA0`). A polygon keeps its face's `0x01` and `0x02` flags and a third of its sort bias.
+- Texture coordinates are per corner. On a part flagged `0x80`, with `Lmaps` on, the second pass
+  takes the first's.
+- Each material that a face of mode 3 or above uses has its texture looked up by name
+  (`texture_require`, `0x00494A30`): after `g` while the loadout screen loads the ships, after `r`
+  while it loads the missiles and guns, and as it is in flight. The light map is `l` and the name.
+  A name the cache lacks stops the game.
+- The bounding box, and the radius, the farthest vertex's distance from the origin, come from the
+  vertices (`SR_mesh_find_bounding_box`, `0x004C3F10`). `mesh_texel_areas` (`0x004C4090`) finds
+  each textured polygon's area in texels, which only the software driver reads.
+
+At the finest level, the faces the part's tree nodes and face groups list are renumbered to the
+polygons that merging leaves.
+
+The part's object gathers flags from the meshes of its levels:
+
+| Flag | When |
+|---|---|
+| `0x100` lit, `0x8000` hides the sun | Always |
+| `0x400` coordinates from the normals for the second pass | A face of mode 7 or 8, with `Lmaps` on |
+| `0x10000` geomorph positions, `0x20000` geomorph normals | Part flags `0x20` and `0x10`: every level but the last also holds each vertex's counterpart in the next |
+| `0x40000` baked colours | Part flag `0x40`: the mesh holds a colour for each vertex |
+| `0x80000` colours of its own | The model's header flag `0x02`, or a ship type's model while `multiplayer_mission` (`0x00582E8C`) is set |
+
+For those last models `model_load` also builds a second set of meshes, whose groups' first passes
+blend by alpha, and a third, one group textured by coordinates from the normals and added
+(`cloak_mesh_build`, `0x004A3CB0`), for the cloak effect. **Unverified:** that
+`multiplayer_mission` marks the multiplayer maps; missions 81 to 85 and 87 set it.
+
+The material is 16 bytes (`Material` in
 [`srapiext.zig`](../../src/lancer/surrender/surrenderlib/srapiext.zig)):
 
 | Off | Field |
