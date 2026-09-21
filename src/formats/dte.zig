@@ -41,11 +41,13 @@ pub const Section = enum(u8) {
     ships = 3,
     objectives = 4,
     triggers = 5,
-    /// Where the script bytecode starts; the VM's instruction pointer is an offset into it.
+    /// The script bytecode. Its count is in **halfwords**, so the section is `count * 2` bytes.
     script = 6,
     /// Per-ship index into the trigger list.
     ship_triggers = 7,
-    objects = 8,
+    /// One [`Part`] per named script routine in `script`, which the loader turns into the table
+    /// `call_part` indexes.
+    parts = 8,
     unknown_9 = 9,
     /// One flag per bytecode byte, marking where the VM may yield.
     script_flags = 10,
@@ -55,8 +57,11 @@ pub const Section = enum(u8) {
     unknown_14 = 14,
     nav_geometry = 15,
     sub_objects = 16,
-    unused_17 = 17,
-    unused_18 = 18,
+    /// Part descriptors for `script_b`, in the same form as `parts`.
+    parts_b = 17,
+    /// A second bytecode section, counted in halfwords like `script`. Empty in every shipped
+    /// mission.
+    script_b = 18,
     unused_19 = 19,
     unused_20 = 20,
     transient_21 = 21,
@@ -134,6 +139,61 @@ pub const Ship = extern struct {
         assert(@offsetOf(Ship, "pitch") == 0x3A);
         assert(@offsetOf(Ship, "roll") == 0x4A);
         assert(@sizeOf(Ship) == 0x4C);
+    }
+};
+
+/// One named script routine.
+///
+/// The loader expands each of these into a 0x74-byte runtime entry, of which only the block
+/// address and the argument count come from here; `call_part` and `jump_part` index that table by
+/// a single byte, so a mission has at most 256 parts. An `offset` of `no_block` leaves the entry
+/// empty.
+///
+/// Parts tile their script section: each one's `offset + length` is the next one's `offset`.
+pub const Part = extern struct {
+    /// Byte offset into the string pool. Missions ship with their authors' own names for these,
+    /// such as `(F)Arrival at CONVOY`.
+    name: u16,
+    _unknown_02: u16,
+    _unknown_04: [6]u8,
+    /// Start of the part, in **halfwords** from the start of the script section.
+    offset: u16,
+    _unknown_0c: u8,
+    /// Arguments the part takes. The caller reserves `4 * arguments + 16` bytes of frame for it.
+    arguments: u8,
+    _unknown_0e: u16,
+    /// Extent of the part, in halfwords. It covers the entry block and anything the part branches
+    /// to, so it is at least the entry block's own length.
+    length: u16,
+    _unknown_12: [7]u8,
+    /// Read by the loader and passed to the routine that fills the runtime entry.
+    kind: u8,
+    _unknown_1a: u16,
+
+    /// An `offset` meaning the part has no block.
+    pub const no_block: u16 = 0xFFFF;
+
+    pub fn isEmpty(part: Part) bool {
+        return part.offset == no_block;
+    }
+
+    /// Byte offset of the part's entry block within the script section.
+    pub fn start(part: Part) usize {
+        return @as(usize, part.offset) * 2;
+    }
+
+    /// Bytes the part spans.
+    pub fn size(part: Part) usize {
+        return @as(usize, part.length) * 2;
+    }
+
+    comptime {
+        assert(@offsetOf(Part, "name") == 0x00);
+        assert(@offsetOf(Part, "offset") == 0x0A);
+        assert(@offsetOf(Part, "arguments") == 0x0D);
+        assert(@offsetOf(Part, "length") == 0x10);
+        assert(@offsetOf(Part, "kind") == 0x19);
+        assert(@sizeOf(Part) == 0x1C);
     }
 };
 
@@ -335,7 +395,78 @@ pub const Instruction = struct {
         if (instruction.form != .inline_data) return null;
         return instruction.operands[1..];
     }
+
+    /// Where a `branch` goes, in the same coordinates as `address`.
+    ///
+    /// The displacement is big-endian, the one place the format is not little-endian, and counts
+    /// from its own position rather than from the end of the instruction.
+    pub fn branchTarget(instruction: Instruction) ?usize {
+        if (instruction.form != .branch) return null;
+        const displacement = std.mem.readInt(u16, instruction.operands[0..2], .big);
+        return instruction.address + 1 + displacement;
+    }
+
+    /// The targets of a `random_branch`: its default first, then one per arm. Null for every
+    /// other opcode.
+    ///
+    /// Like a `branch`'s, each target is big-endian and relative, but counted from the opcode
+    /// rather than from the operands: the handler adds it to the instruction pointer and
+    /// subtracts one.
+    pub fn arms(instruction: Instruction) ?ArmIterator {
+        if (instruction.opcode != .random_branch) return null;
+        return .{ .instruction = instruction };
+    }
+
+    /// Whether execution can continue at the following instruction.
+    ///
+    /// `return` is the one opcode the derived table gets wrong here. Its handler has a path that
+    /// leaves the instruction pointer where the dispatcher put it, which reads as falling through,
+    /// but that path ends the thread: it is the case where the call depth is already zero, and the
+    /// handler signals it by its return value, which the instruction-pointer analysis does not
+    /// model. Anything after a `return` is reached by a branch or is the block's padding.
+    pub fn fallsThrough(instruction: Instruction) bool {
+        if (instruction.opcode == .@"return" or instruction.opcode == .return_alt) return false;
+        const info = vm_opcodes.find(@intFromEnum(instruction.opcode)) orelse return false;
+        return info.falls_through;
+    }
 };
+
+/// Walks a `random_branch`'s targets.
+pub const ArmIterator = struct {
+    instruction: Instruction,
+    index: usize = 0,
+
+    /// Bytes an arm occupies: a big-endian target, a threshold, and one byte not yet identified.
+    pub const arm_size = 4;
+    /// Operand bytes before the first arm: the arm count and the default target.
+    pub const header_size = 3;
+
+    pub fn next(iterator: *ArmIterator) ?usize {
+        const operands = iterator.instruction.operands;
+        const at: usize = switch (iterator.index) {
+            // The default target sits where an arm's target would.
+            0 => 1,
+            else => header_size + (iterator.index - 1) * arm_size,
+        };
+        if (iterator.index > operands[0]) return null;
+        iterator.index += 1;
+        if (at + 2 > operands.len) return null;
+        const target = std.mem.readInt(u16, operands[at..][0..2], .big);
+        return iterator.instruction.address + target;
+    }
+};
+
+/// Decodes the instruction at `pos` in `code`, whose addresses it reports as offsets into `code`.
+pub fn decodeAt(code: []const u8, pos: usize) ?Instruction {
+    const length = instructionSize(code, pos) orelse return null;
+    const info = vm_opcodes.find(code[pos]) orelse return null;
+    return .{
+        .address = pos,
+        .opcode = @enumFromInt(code[pos]),
+        .operands = code[pos + 1 ..][0 .. length - 1],
+        .form = info.form,
+    };
+}
 
 /// How many bytes the instruction at `code[pos]` occupies, or null when it cannot be decoded.
 ///
@@ -347,7 +478,8 @@ pub const Instruction = struct {
 ///   The handler is the only one whose encoding this module reads rather than `vmgen` deriving
 ///   it, because its length depends on a byte the instruction-pointer analysis cannot follow.
 /// - `branch` and `transfer` are fixed sizes; only where execution resumes differs.
-fn instructionSize(code: []const u8, pos: usize) ?usize {
+pub fn instructionSize(code: []const u8, pos: usize) ?usize {
+    if (pos >= code.len) return null;
     const info = vm_opcodes.find(code[pos]) orelse return null;
     const operands = code[pos + 1 ..];
     const length: usize = switch (info.form) {
@@ -363,6 +495,78 @@ fn instructionSize(code: []const u8, pos: usize) ?usize {
     };
     if (pos + 1 + length > code.len) return null;
     return 1 + length;
+}
+
+/// A part's instructions, in address order, reached by following control flow from its entry.
+///
+/// A linear sweep is not enough: three opcodes never fall through, so the bytes after them are
+/// reached only by a branch, and sweeping past one decodes whatever happens to sit there.
+pub const Disassembly = struct {
+    instructions: []const Instruction,
+    /// Bytes of the block that nothing reaches. Trailing alignment padding is not counted.
+    unreached: usize,
+    /// Set when an instruction could not be decoded, which means a reachable byte is not an
+    /// opcode this module knows.
+    incomplete: bool,
+};
+
+/// Disassembles the block at `entry` in `script`, following every branch it can see.
+///
+/// Addresses are offsets into `script`. Returns null when there is no block at `entry`.
+pub fn disassemble(allocator: Allocator, script: []const u8, entry: usize) Allocator.Error!?Disassembly {
+    const block = BlockReader.at(script, entry) orelse return null;
+    const first = entry + BlockReader.header_len;
+    const limit = first + block.code.len;
+
+    const decoded = try allocator.alloc(bool, block.code.len);
+    defer allocator.free(decoded);
+    @memset(decoded, false);
+
+    var instructions: std.ArrayList(Instruction) = .empty;
+    var pending: std.ArrayList(usize) = .empty;
+    defer pending.deinit(allocator);
+    try pending.append(allocator, first);
+
+    var incomplete = false;
+    while (pending.pop()) |start| {
+        var pos = start;
+        while (pos >= first and pos < limit and !decoded[pos - first]) {
+            const instruction = decodeAt(script[0..limit], pos) orelse {
+                incomplete = true;
+                break;
+            };
+            decoded[pos - first] = true;
+            try instructions.append(allocator, instruction);
+
+            if (instruction.branchTarget()) |target| try pending.append(allocator, target);
+            if (instruction.arms()) |found| {
+                var iterator = found;
+                while (iterator.next()) |target| try pending.append(allocator, target);
+            }
+            if (!instruction.fallsThrough()) break;
+            pos += instruction.size();
+        }
+    }
+
+    std.mem.sort(Instruction, instructions.items, {}, struct {
+        fn lessThan(_: void, a: Instruction, b: Instruction) bool {
+            return a.address < b.address;
+        }
+    }.lessThan);
+
+    var covered: usize = 0;
+    for (instructions.items) |instruction| covered += instruction.size();
+
+    // Up to three bytes at the end of the block are alignment padding rather than a hole, but
+    // only when everything before them was reached.
+    var unreached = (limit - first) - covered;
+    if (unreached < BlockReader.alignment) unreached = 0;
+
+    return .{
+        .instructions = try instructions.toOwnedSlice(allocator),
+        .unreached = unreached,
+        .incomplete = incomplete,
+    };
 }
 
 /// Decodes one block of bytecode.
@@ -435,19 +639,10 @@ pub const BlockReader = struct {
         const left = reader.rest();
         if (left.len == 0 or reader.padding().len != 0) return null;
 
-        const opcode = left[0];
-        const info = vm_opcodes.find(opcode) orelse return null;
-        const length = instructionSize(reader.code, reader.pos) orelse return null;
-
-        const address = reader.pos;
-        reader.pos += length;
-        if (opcode == @intFromEnum(Opcode.@"return")) reader.returned = true;
-        return .{
-            .address = address,
-            .opcode = @enumFromInt(opcode),
-            .operands = left[1..length],
-            .form = info.form,
-        };
+        const instruction = decodeAt(reader.code, reader.pos) orelse return null;
+        reader.pos += instruction.size();
+        if (instruction.opcode == .@"return") reader.returned = true;
+        return instruction;
     }
 
     pub fn stop(reader: BlockReader) Stop {
@@ -500,11 +695,18 @@ pub const Mission = struct {
     }
 
     /// The bytecode of section `script`.
+    /// The script bytecode. The directory counts this section in halfwords.
     pub fn script(mission: Mission) Error![]const u8 {
         const slot = mission.entry(.script);
         if (!slot.isUsed() or slot.count == 0) return &.{};
-        if (slot.offset + slot.count > mission.image.len) return error.Truncated;
-        return mission.image[slot.offset..][0..slot.count];
+        const bytes = @as(usize, slot.count) * 2;
+        if (slot.offset + bytes > mission.image.len) return error.Truncated;
+        return mission.image[slot.offset..][0..bytes];
+    }
+
+    /// The script's named routines, in the order the loader installs them.
+    pub fn parts(mission: Mission) Error![]align(1) const Part {
+        return mission.records(Part, .parts);
     }
 
     pub fn ships(mission: Mission) Error![]align(1) const Ship {
@@ -673,4 +875,68 @@ test "an unnamed value formats as a number instead of panicking" {
     var repeat: std.Io.Writer = .fixed(&buffer);
     try repeat.print("{f}", .{@as(Trigger.Repeat, @enumFromInt(1))});
     try std.testing.expectEqualStrings("1", repeat.buffered());
+}
+
+test "follows a branch rather than sweeping past a jump" {
+    // The opening block of mission1, as a section with its length prefix. The `jump` at 14 never
+    // falls through, so 17 is reached only by the `branch_if_zero_alt` at 9.
+    const section = [_]u8{
+        0x1C, 0x00, 0x22, 0x01, 0x21, 0x17, 0x27, 0x00, 0x28, 0x00, 0x02, 0x24, 0x00, 0x07,
+        0x22, 0x15, 0x42, 0x00, 0x04, 0x22, 0x18, 0x21, 0x17, 0x32, 0x01, 0x43, 0x32, 0x01,
+    };
+    const listing = (try disassemble(std.testing.allocator, &section, 0)).?;
+    defer std.testing.allocator.free(listing.instructions);
+
+    try std.testing.expect(!listing.incomplete);
+    try std.testing.expectEqual(@as(usize, 0), listing.unreached);
+
+    // Addresses are offsets into the section, so the header shifts them by two.
+    const expected = [_]struct { usize, Opcode }{
+        .{ 2, .call_part },  .{ 4, .command },     .{ 6, .read_global },
+        .{ 8, .wait },       .{ 10, .compare_ne }, .{ 11, .branch_if_zero_alt },
+        .{ 14, .call_part }, .{ 16, .jump },       .{ 19, .call_part },
+        .{ 21, .command },   .{ 23, .ai },         .{ 25, .@"return" },
+    };
+    try std.testing.expectEqual(expected.len, listing.instructions.len);
+    for (expected, listing.instructions) |want, got| {
+        try std.testing.expectEqual(want[0], got.address);
+        try std.testing.expectEqual(want[1], got.opcode);
+    }
+    // The branch and the jump agree on where the two arms are.
+    try std.testing.expectEqual(@as(?usize, 19), listing.instructions[5].branchTarget());
+    try std.testing.expectEqual(@as(?usize, 21), listing.instructions[7].branchTarget());
+}
+
+test "reads a weighted branch's arms" {
+    // The one shape whose encoding is read by hand: a count, a default target, then that many
+    // four-byte arms of target and threshold.
+    const operands = [_]u8{ 0x02, 0x00, 0x43, 0x00, 0x2C, 0x32, 0x00, 0x00, 0x39, 0x64, 0x00 };
+    const instruction: Instruction = .{
+        .address = 100,
+        .opcode = .random_branch,
+        .operands = &operands,
+        .form = .transfer,
+    };
+    var iterator = instruction.arms().?;
+    try std.testing.expectEqual(@as(?usize, 100 + 0x43), iterator.next());
+    try std.testing.expectEqual(@as(?usize, 100 + 0x2C), iterator.next());
+    try std.testing.expectEqual(@as(?usize, 100 + 0x39), iterator.next());
+    try std.testing.expectEqual(@as(?usize, null), iterator.next());
+    try std.testing.expect(!instruction.fallsThrough());
+}
+
+test "a part's offset and length are in halfwords" {
+    var bytes: [@sizeOf(Part)]u8 = @splat(0);
+    std.mem.writeInt(u16, bytes[0x0A..][0..2], 870, .little);
+    std.mem.writeInt(u16, bytes[0x10..][0..2], 96, .little);
+    bytes[0x0D] = 2;
+
+    const part: Part = @bitCast(bytes);
+    try std.testing.expectEqual(@as(usize, 1740), part.start());
+    try std.testing.expectEqual(@as(usize, 192), part.size());
+    try std.testing.expectEqual(@as(u8, 2), part.arguments);
+    try std.testing.expect(!part.isEmpty());
+
+    std.mem.writeInt(u16, bytes[0x0A..][0..2], Part.no_block, .little);
+    try std.testing.expect(@as(Part, @bitCast(bytes)).isEmpty());
 }

@@ -15,6 +15,8 @@ pub const Command = union(enum) {
     ships: struct { mission: []const u8 },
     triggers: struct { mission: []const u8 },
     strings: struct { mission: []const u8 },
+    /// Lists the script's named routines.
+    parts: struct { mission: []const u8 },
     /// Disassembles the script bytecode.
     script: struct { mission: []const u8 },
 
@@ -24,7 +26,8 @@ pub const Command = union(enum) {
         \\  dte ships <mission>             list the placed ships and nav points
         \\  dte triggers <mission>          list the scripted triggers
         \\  dte strings <mission>           dump the string pool
-        \\  dte script <mission>            summarise the script bytecode section
+        \\  dte parts <mission>             list the script's named routines
+        \\  dte script <mission>            disassemble the script bytecode
         \\
     ;
 
@@ -37,6 +40,7 @@ pub const Command = union(enum) {
             .ships => .{ .ships = .{ .mission = args[1] } },
             .triggers => .{ .triggers = .{ .mission = args[1] } },
             .strings => .{ .strings = .{ .mission = args[1] } },
+            .parts => .{ .parts = .{ .mission = args[1] } },
             .script => .{ .script = .{ .mission = args[1] } },
         };
     }
@@ -54,6 +58,7 @@ pub const Command = union(enum) {
             .ships => try ships(ctx, mission),
             .triggers => try triggers(ctx, mission),
             .strings => try strings(ctx, mission),
+            .parts => try parts(ctx, mission),
             .script => try script(ctx, mission),
         }
     }
@@ -148,25 +153,65 @@ fn triggers(ctx: Context, mission: dte.Mission) !void {
 ///
 /// Blocks are entered by address, so only the one at the start of the section can be found without
 /// the part table; the rest are reached by `call_part`.
+fn parts(ctx: Context, mission: dte.Mission) !void {
+    const code = try mission.script();
+    const list = try mission.parts();
+    try ctx.stdout.print("{d} parts over {d} bytes of script\n\n", .{ list.len, code.len });
+    try ctx.stdout.writeAll("  #  offset  bytes  args  block  name\n");
+
+    var decoded: usize = 0;
+    var filled: usize = 0;
+    for (list, 0..) |part, index| {
+        try ctx.stdout.print("{d:>3}  ", .{index});
+        if (part.isEmpty()) {
+            try ctx.stdout.print("{s:>6}  {s:>5}  {s:>4}  {s:>5}  ", .{ "-", "-", "-", "-" });
+        } else {
+            filled += 1;
+            const listing = try dte.disassemble(ctx.arena, code, part.start());
+            const block: usize = if (dte.BlockReader.at(code, part.start())) |r| r.declared else 0;
+            if (listing) |found| {
+                if (!found.incomplete and found.unreached == 0) decoded += 1;
+            }
+            try ctx.stdout.print("{d:>6}  {d:>5}  {d:>4}  {d:>5}  ", .{
+                part.start(), part.size(), part.arguments, block,
+            });
+        }
+        try ctx.stdout.print("{s}\n", .{mission.name(part.name)});
+    }
+    try ctx.stdout.print("\n{d} of {d} entry blocks decode cleanly\n", .{ decoded, filled });
+}
+
 fn script(ctx: Context, mission: dte.Mission) !void {
     const code = try mission.script();
-    var reader = dte.BlockReader.at(code, 0) orelse {
-        try ctx.stdout.print("section is {d} bytes with no block at its start\n", .{code.len});
-        return;
-    };
-    const instructions = reader.code.len;
+    const list = try mission.parts();
+    try ctx.stdout.print("{d} bytes of script in {d} parts\n", .{ code.len, list.len });
 
-    try ctx.stdout.print("section {d} bytes; first block {d} instruction bytes", .{
-        code.len, instructions,
-    });
-    if (reader.isShort()) try ctx.stdout.print(
-        " of the {d} it declares, the rest past the end of the section",
-        .{reader.declared - dte.BlockReader.header_len},
-    );
-    try ctx.stdout.writeAll("\n\n");
-    try ctx.stdout.writeAll("offset  bytes       opcode\n");
+    for (list, 0..) |part, index| {
+        if (part.isEmpty()) continue;
+        try ctx.stdout.print("\npart {d} at {d}, {d} bytes", .{ index, part.start(), part.size() });
+        const name = mission.name(part.name);
+        if (name.len != 0) try ctx.stdout.print(": {s}", .{name});
+        try ctx.stdout.writeByte('\n');
 
-    while (reader.next()) |instruction| {
+        const listing = try dte.disassemble(ctx.arena, code, part.start()) orelse {
+            try ctx.stdout.writeAll("  no block here\n");
+            continue;
+        };
+        try printListing(ctx, listing);
+    }
+}
+
+fn printListing(ctx: Context, listing: dte.Disassembly) !void {
+    var previous: ?usize = null;
+    for (listing.instructions) |instruction| {
+        // A hole means the bytes between two reached instructions are not reached themselves.
+        if (previous) |end| {
+            if (instruction.address > end) {
+                try ctx.stdout.print("  {d:>6}  ... {d} bytes not reached\n", .{ end, instruction.address - end });
+            }
+        }
+        previous = instruction.address + instruction.size();
+
         // Long inline runs are shown as their text, so only the head needs a hex column.
         var bytes: [11]u8 = undefined;
         var at: usize = 0;
@@ -174,28 +219,18 @@ fn script(ctx: Context, mission: dte.Mission) !void {
         for (instruction.operands) |b| {
             at += (std.fmt.bufPrint(bytes[at..], " {x:0>2}", .{b}) catch break).len;
         }
-        try ctx.stdout.print("{d:>6}  {s:<11} ", .{ instruction.address, bytes[0..@min(at, bytes.len)] });
+        try ctx.stdout.print("  {d:>6}  {s:<11} ", .{ instruction.address, bytes[0..@min(at, bytes.len)] });
         try dte.formatTag(dte.Opcode, instruction.opcode, ctx.stdout);
+
         switch (instruction.form) {
             .sequential => {},
-            .branch => try ctx.stdout.print("   -> {d}", .{branchTarget(instruction)}),
+            .branch => try ctx.stdout.print("   -> {d}", .{instruction.branchTarget().?}),
             .inline_data => try printInline(ctx, instruction.inlineData().?),
             .transfer => try ctx.stdout.writeAll("   (transfer)"),
         }
         try ctx.stdout.writeByte('\n');
     }
-    try ctx.stdout.print("\nstopped: {t} after {d} of {d} bytes", .{ reader.stop(), reader.pos, instructions });
-    if (reader.padding().len != 0) try ctx.stdout.print(", {d} bytes of padding", .{reader.padding().len}) else if (instructions > reader.pos) try ctx.stdout.print(", {d} bytes undecoded", .{instructions - reader.pos});
-    try ctx.stdout.writeByte('\n');
-}
-
-/// Where a branch goes, as an offset into the block's instructions.
-///
-/// The displacement is big-endian, the one place the format is not little-endian, and counts from
-/// its own position rather than from the end of the instruction.
-fn branchTarget(instruction: dte.Instruction) usize {
-    const displacement = std.mem.readInt(u16, instruction.operands[0..2], .big);
-    return instruction.address + 1 + displacement;
+    if (listing.incomplete) try ctx.stdout.writeAll("  a reached byte is not an opcode\n");
 }
 
 /// Renders an inline run as text when it is one, and as hex otherwise.

@@ -182,6 +182,13 @@ Four shapes come out of it:
 | `inline_data` | `0x2A`, `0x2B` | After the run the operand byte measures |
 | `transfer` | `0x22`, `0x25`, `0x43`, `0x4A`, `0x51` | Not statically known |
 
+The analysis also records whether an opcode can continue at the instruction after its operands.
+Three cannot: `0x42` jump, `0x4A`, and `0x51` random_branch. The bytes after those are reached only
+by a branch, so a linear sweep would decode whatever happens to sit there. `0x43` return is a
+fourth, which the analysis reads as falling through: its early-out path does leave the instruction
+pointer alone, but while ending the thread, which it signals through its return value rather than
+through the instruction pointer.
+
 Operand counts: 41 opcodes take none, 24 take one byte, 5 take two and `0x4B` takes three.
 
 The three that are not a fixed size each carry their own length, so an instruction's size is always
@@ -214,48 +221,82 @@ known without tracking any state:
 `0x21` command reads a one-byte index into the Executor catalogue, also stride `0x74`, whose entry
 carries the command's argument count at `+4` and its implementation pointer at `+0`.
 
+### Parts
+
+Section 8 is not a list of objects: it holds one 28-byte descriptor per **part**, a named script
+routine, and the loader expands it into the 256-entry table of `0x74`-byte records that `call_part`
+and `jump_part` index. Section 17 does the same for section 18, a second bytecode section that is
+empty in every shipped mission.
+
+| Offset | Size | Field |
+|---|---|---|
+| `0x00` | 2 | Name, as a byte offset into the string pool |
+| `0x0A` | 2 | Start of the part, in halfwords; `0xFFFF` for a part with no block |
+| `0x0D` | 1 | Arguments, which reserve `4n + 16` bytes of the callee's frame |
+| `0x10` | 2 | Extent of the part, in halfwords |
+| `0x19` | 1 | Read by the loader and passed on to the routine that fills the runtime record |
+
+The loader computes `record.block = script + offset * 2` and `record.arguments = arguments`, which
+is where the halfword unit is fixed. **Section 6's count is in halfwords too**, so the script is
+`count * 2` bytes; the parts tile it, each one's `offset + length` being the next one's `offset`.
+
+Missions ship with their authors' own names for these. `mission1` has 32:
+
+```
+  #  offset  bytes  args  block  name
+  0    1740    192     0    168  (F)launchfunction
+  1    1932    160     0    144  (F)Jumping to CONVOY
+  2    2092    252     0    220  (F)Arrival at CONVOY
+  3    2344    280     0    256  (F)Nav 2 Comms and CAM
+  ...
+ 31    7524     28     0     20  <F>Objective window
+```
+
+Nearly every part takes no arguments: across the 44 missions, 1,625 take none, four take two and
+one takes one.
+
 ### Blocks
 
 A block is a `u16` length followed by instructions. **The length counts its own two bytes**: the
 engine starts a thread with its instruction pointer at `block + 2` and its limit at
 `block + length`, both of which `call_part` and the thread creator compute the same way.
 
-The instructions end with a `return`, after which up to three bytes pad the block out to a
-four-byte boundary. Decoding runs to the block's limit rather than stopping at the first `return`,
-which may be an early exit from a branch.
+A part's extent covers its entry block and anything that block branches to, so it is at least the
+entry block's own length. The instructions end with a `return`, after which up to three bytes pad
+the block out to a four-byte boundary.
+
+Disassembly follows control flow from the entry rather than sweeping linearly, because of the three
+opcodes that never fall through:
 
 ```
-sltool dte script <mission>
+sltool dte parts <mission>     # the named routines
+sltool dte script <mission>    # disassemble them
 ```
 
-decodes the block at the start of the section. **All 44 missions' opening blocks decode end to
-end.** `mission1` opens with an if-else:
+**Every part in all 44 missions disassembles completely**, bar 96 bytes noted below. `mission1`
+part 0 opens with an if-else:
 
 ```
-offset  bytes       opcode
-     0  22 01       call_part   (transfer)
-     2  21 17       command
-     4  27 00       read_global
-     6  28 00       wait
-     8  02          compare_ne
-     9  24 00 07    branch_if_zero_alt   -> 17
-    12  22 15       call_part   (transfer)
-    14  42 00 04    jump   -> 19
-    17  22 18       call_part   (transfer)
-    19  21 17       command
-    21  32 01       ai
-    23  43          return   (transfer)
+   2  22 01       call_part   (transfer)
+   4  21 17       command
+   6  27 00       read_global
+   8  28 00       wait
+  10  02          compare_ne
+  11  24 00 07    branch_if_zero_alt   -> 19
+  14  22 15       call_part   (transfer)
+  16  42 00 04    jump   -> 21
+  19  22 18       call_part   (transfer)
+  21  21 17       command
+  23  32 01       ai
+  25  43          return   (transfer)
 ```
 
 Every branch target lands on an instruction boundary, which is the check that the widths are right.
 
-Five missions, the `new_sim` training sessions, declare a block longer than their script section
-holds: `mission81` claims 86 bytes of a section of 82. The reader clamps to the section and reports
-the claim rather than refusing the block.
-
-**Open:** the part table that `call_part` indexes. Its stride and field layout are known from the
-handler, but it is built at load from `DAT_00538c94` and what fills it is not yet located. Without
-it only the block at the start of a section can be found; the rest are reached by address.
+**Open:** three parts, in `mission15`, `mission18` and `mission23`, each leave 32 bytes that nothing
+reaches. All three follow the same `51 02 00 43` random_branch, whose two arms are 50/50 and target
+bytes past the gap. The three gaps are the only bytes of script in the corpus that are neither
+reached nor alignment padding.
 
 ## Prior art
 

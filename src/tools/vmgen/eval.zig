@@ -92,6 +92,10 @@ pub const Shape = struct {
     /// only the length byte.
     operands: u8,
     form: Form,
+    /// Whether any path through the handler leaves the instruction pointer just past the operands.
+    /// Where none does, the bytes after the instruction are reached only by a branch, so a linear
+    /// sweep would decode whatever happens to sit there.
+    falls_through: bool,
 };
 
 pub const Error = error{
@@ -317,10 +321,14 @@ pub fn analyze(arena: std.mem.Allocator, handler: x86.Function) !Shape {
     var operands: i64 = 0;
     var relative: ?Fetch = null;
     var transfers = false;
+    var falls_through = false;
     for (explorer.outcomes.items) |outcome| {
         var advance = outcome.consumed;
         switch (outcome.ip_cell_value) {
-            .ip => |k| advance = @max(advance, k),
+            .ip => |k| {
+                advance = @max(advance, k);
+                falls_through = true;
+            },
             .target => |fetch| relative = fetch,
             else => transfers = true,
         }
@@ -333,15 +341,17 @@ pub fn analyze(arena: std.mem.Allocator, handler: x86.Function) !Shape {
         const width = fetch.width + @as(u8, @intCast(fetch.offset));
         return switch (fetch.width) {
             // One byte: the handlers that do this push a pointer to the byte after it first, so
-            // the byte is a length covering inline data rather than a branch displacement.
-            1 => .{ .operands = width, .form = .inline_data },
-            2 => .{ .operands = width, .form = .branch },
+            // the byte is a length covering inline data rather than a branch displacement, and
+            // execution resumes just past it.
+            1 => .{ .operands = width, .form = .inline_data, .falls_through = true },
+            2 => .{ .operands = width, .form = .branch, .falls_through = falls_through },
             else => error.UnsupportedDisplacement,
         };
     }
     return .{
         .operands = std.math.cast(u8, operands) orelse return error.InconsistentOperandCount,
         .form = if (transfers) .transfer else .sequential,
+        .falls_through = falls_through,
     };
 }
 
@@ -364,7 +374,7 @@ test "one operand byte" {
         \\0045c32f  8901     MOV dword ptr [ECX],EAX
         \\0045c335  c20400   RET 0x4
         \\
-    , .{ .operands = 1, .form = .sequential });
+    , .{ .operands = 1, .form = .sequential, .falls_through = true });
 }
 
 test "three operand bytes" {
@@ -380,7 +390,7 @@ test "three operand bytes" {
         \\0045c62c  8901     MOV dword ptr [ECX],EAX
         \\0045c64c  c20400   RET 0x4
         \\
-    , .{ .operands = 3, .form = .sequential });
+    , .{ .operands = 3, .form = .sequential, .falls_through = true });
 }
 
 test "big-endian relative branch" {
@@ -395,7 +405,7 @@ test "big-endian relative branch" {
         \\0045c2bf  8911     MOV dword ptr [ECX],EDX
         \\0045c2c1  c20400   RET 0x4
         \\
-    , .{ .operands = 2, .form = .branch });
+    , .{ .operands = 2, .form = .branch, .falls_through = false });
 }
 
 test "conditional branch agrees with its fall-through" {
@@ -415,7 +425,7 @@ test "conditional branch agrees with its fall-through" {
         \\0045c28e  8911     MOV dword ptr [ECX],EDX
         \\0045c2a1  c20400   RET 0x4
         \\
-    , .{ .operands = 2, .form = .branch });
+    , .{ .operands = 2, .form = .branch, .falls_through = true });
 }
 
 test "inline data" {
@@ -431,7 +441,7 @@ test "inline data" {
         \\0045c3d4  8911     MOV dword ptr [ECX],EDX
         \\0045c3d6  c20400   RET 0x4
         \\
-    , .{ .operands = 1, .form = .inline_data });
+    , .{ .operands = 1, .form = .inline_data, .falls_through = true });
 }
 
 test "no operands" {
@@ -441,5 +451,5 @@ test "no operands" {
         \\0045c510  8b442404 MOV EAX,dword ptr [ESP + 0x4]
         \\0045c514  c20400   RET 0x4
         \\
-    , .{ .operands = 0, .form = .sequential });
+    , .{ .operands = 0, .form = .sequential, .falls_through = true });
 }

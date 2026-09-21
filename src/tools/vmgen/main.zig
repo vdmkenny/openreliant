@@ -123,6 +123,10 @@ fn emit(w: *Io.Writer, handlers: []const Handler, length: usize) !void {
         \\    /// counts only the length byte.
         \\    operands: u8,
         \\    form: Form,
+        \\    /// Whether execution can continue at the instruction after the operands. Where it
+        \\    /// cannot, the bytes that follow are reached only by a branch, so a linear sweep
+        \\    /// would decode whatever happens to sit there.
+        \\    falls_through: bool,
         \\    /// Address of the handler in the payload executable.
         \\    handler: u32,
         \\}};
@@ -133,9 +137,13 @@ fn emit(w: *Io.Writer, handlers: []const Handler, length: usize) !void {
     , .{ .table = dispatch_table, .length = length });
 
     for (handlers) |handler| {
-        try w.print("    .{{ .opcode = 0x{X:0>2}, .operands = {d}, .form = .{t}, .handler = 0x{X:0>8} }},\n", .{
-            handler.opcode, handler.shape.operands, handler.shape.form, handler.address,
-        });
+        try w.print(
+            "    .{{ .opcode = 0x{X:0>2}, .operands = {d}, .form = .{t}, .falls_through = {}, .handler = 0x{X:0>8} }},\n",
+            .{
+                handler.opcode,              handler.shape.operands, handler.shape.form,
+                handler.shape.falls_through, handler.address,
+            },
+        );
     }
 
     try w.writeAll(

@@ -74,11 +74,12 @@ missions and stat tables. See [`docs/formats/hog.md`](docs/formats/hog.md) and
 schematics, and saves their 3,724 shapes as indexed PNG: `make sprites`. See
 [`docs/formats/spr.md`](docs/formats/spr.md).
 
-`sltool dte` reads the 44 `.DTE` missions: their ships, triggers, globals, string pools and script
-bytecode. The mission scripting VM's instruction set is derived from the game binary rather than
-guessed: `src/tools/vmgen` reads the dispatch table and symbolically executes each handler to
-recover every opcode's size and control flow, which decodes all 44 missions' opening blocks end to
-end. See [`docs/formats/dte.md`](docs/formats/dte.md).
+`sltool dte` reads the 44 `.DTE` missions: their ships, triggers, globals, string pools and script.
+The scripting VM's instruction set is derived from the game binary rather than guessed:
+`src/tools/vmgen` reads the dispatch table and symbolically executes each handler to recover every
+opcode's size and control flow. With that, `sltool dte script` disassembles all 1,623 script
+routines across the 44 missions, following branches rather than sweeping linearly, and the missions
+carry their authors' own names for them. See [`docs/formats/dte.md`](docs/formats/dte.md).
 
 Documentation index: [`docs/README.md`](docs/README.md).
 
