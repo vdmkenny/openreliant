@@ -10,7 +10,9 @@
 //! pane a pixel at a time. The port draws a glyph as a textured rectangle instead, so the display
 //! costs the processor nothing and scales without blurring. What it draws is the same: a glyph's
 //! bytes index the font's own palette, as they do for `VFX_character_draw`, and index 0 is left
-//! clear. The state is the engine's own, an overlay-layer depth and its alpha blend.
+//! clear. The state is the engine's own, an overlay-layer depth and its alpha blend. It has no
+//! fallback yet: `--original` draws the same way, and the software device cannot draw the text at
+//! all until `VFX_character_draw` is ported.
 
 const std = @import("std");
 const assert = std.debug.assert;

@@ -69,6 +69,10 @@ so the display costs the processor nothing and scales without blurring. What it 
 the font's palette looked up for each byte, index 0 left clear, over the scene with the engine's own
 overlay-layer depth and alpha blend.
 
+It has no fallback yet: `--original` draws the display the same way, and the software device, which
+has no GPU to draw rectangles with, cannot draw it at all. Both want `VFX_character_draw` ported,
+after which `--original` takes it too.
+
 ## Art
 
 The hardware renderers take their shapes from `HUDHARD.SPR` and the software renderer from
