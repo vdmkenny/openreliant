@@ -145,6 +145,8 @@ and records the length of the velocity as the speed (`0x5D8`). The root keeps th
 | `0x5DC`, `0x5E0`, `0x5E4` | 4 each | Roll, pitch and yaw rates |
 | `0x640` | 4 | Motion function |
 | `0x650` | 4 | The last update's throttle |
+| `0x668` | 4 | `armor_speed_factor`: scales the cruise speed as the armor falls |
+| `0x738` | 4 | `speed_factor`: scales the cruise speed; 1.0 when created |
 
 For the player's ship, the [controls](controls.md) set the inputs, the throttle and the two burns;
 for the others, the routines of their [orders](orders.md).
@@ -167,9 +169,23 @@ moves toward a target through an inertia from the ship's [flight stats](../forma
    input. Along Y it only decays. All three use the ship's `inertia`, and the velocity is turned
    back.
 
-The cruise speed (`object_cruise_speed`, `0x00403060`) is `max_speed` times a factor at `0x738`,
-1.0 when created, times the share of engines left, and, outside one mode of the game, a factor at
-`0x668` that falls as the armor does. So losing engines or armor slows a ship.
+The cruise speed (`object_cruise_speed`, `0x00403060`) is `max_speed` times `speed_factor`
+(`0x738`), 1.0 when created, times the share of engines left, and, unless the camera is in view 13
+or the object is invulnerable, times `armor_speed_factor` (`0x668`), which falls as the armor does.
+So losing engines or armor slows a ship.
+
+### Porting
+
+[`gameobj.zig`](../../src/lancer/game/gameobj.zig) holds the model: `cruiseSpeed`, `steer`, `fly`
+and `move`. The port passes the flight stats and the camera view in, where the game reaches them
+through the object's own pointer and a global, because `GameObject` keeps the binary's 32-bit
+pointers for its layout. `Motion` is an `enum` of the two routines the game installs, in place of
+the function pointer at `0x640`, and the rule each quantity settles by is one `settle` helper
+rather than the six copies the binary holds.
+
+Not yet ported: the guards `object_move` opens with, which hold an object still while it jumps or
+docks, the flags it sets for a moving or turning object, and the speed readout it keeps for the
+player's HUD.
 
 ## Components
 

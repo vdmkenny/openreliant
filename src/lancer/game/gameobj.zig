@@ -9,6 +9,8 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const shp = @import("../../formats/shp.zig");
+const math = @import("../surrender/math.zig");
+const camera = @import("camera.zig");
 const lancer = @import("../../lancer.zig");
 const aigeneric = @import("aigeneric.zig");
 const Node = @import("objects.zig").Node;
@@ -127,7 +129,11 @@ pub const GameObject = extern struct {
     _unknown_648: [8]u8,
     /// The throttle of the last update.
     last_throttle: f32,
-    _unknown_654: [0x2C]u8,
+    _unknown_654: [0x14]u8,
+    /// Scales the cruise speed as its armor falls, which `object_cruise_speed` applies unless the
+    /// camera is in view 13 or the object is invulnerable.
+    armor_speed_factor: f32,
+    _unknown_66c: [0x14]u8,
     /// Orders on its stack.
     order_count: i16,
     _unknown_682: u16,
@@ -144,7 +150,10 @@ pub const GameObject = extern struct {
     recent_damage: f32,
     /// The slot of the object that last damaged it, or -1.
     last_attacker: i32,
-    _unknown_698: [0xA8]u8,
+    _unknown_698: [0xA0]u8,
+    /// Scales the cruise speed; 1.0 when created.
+    speed_factor: f32,
+    _unknown_73c: u32,
     /// Its pilot: the record in `pilotstats.bin`, which `object_set_pilot` gives it.
     pilot: i32,
     /// **Unknown.** A 24-byte record for the pilot, from a table at `0x5048D8`.
@@ -249,6 +258,8 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "motion") == 0x640);
         assert(@offsetOf(GameObject, "hostile") == 0x644);
         assert(@offsetOf(GameObject, "last_throttle") == 0x650);
+        assert(@offsetOf(GameObject, "armor_speed_factor") == 0x668);
+        assert(@offsetOf(GameObject, "speed_factor") == 0x738);
         assert(@offsetOf(GameObject, "order_count") == 0x680);
         assert(@offsetOf(GameObject, "orders") == 0x684);
         assert(@offsetOf(GameObject, "order_state") == 0x68C);
@@ -262,4 +273,275 @@ pub const GameObject = extern struct {
 
 test {
     std.testing.refAllDecls(@This());
+}
+
+// --- Motion ------------------------------------------------------------------------------------
+
+/// The routine `GameObject.motion` points at, which moves it for one update. `create_object` gives
+/// every object `motion_forward`.
+pub const Motion = enum {
+    /// `motion_forward` (`0x004744C0`): the flight model with a thrust of 1.
+    forward,
+    /// `motion_backward` (`0x004744D0`): the flight model with a thrust of -1.
+    backward,
+
+    pub fn thrust(motion: Motion) f32 {
+        return switch (motion) {
+            .forward => 1,
+            .backward => -1,
+        };
+    }
+};
+
+/// The view `object_cruise_speed` leaves a ship its undamaged speed in, whatever its armor.
+const full_speed_view: camera.View = @enumFromInt(13);
+
+/// The share of the cruise speed the lateral input pushes a ship sideways at (`object_fly`).
+const lateral_share: f32 = 0.25;
+
+/// What each update of the afterburner or of reverse thrust burns of `afterburner_fuel`.
+const burn_fuel: i32 = 4;
+
+/// The rule every quantity of the flight model moves by: it gives up `inertia` of the way it was
+/// going and takes the rest from where it is headed, once per update.
+fn settle(current: f32, target: f32, inertia: f32) f32 {
+    return current * inertia + (1 - inertia) * target;
+}
+
+/// `x` squared, keeping its sign, which is the measure the model works in along the nose.
+fn signedSquare(x: f32) f32 {
+    return @abs(x) * x;
+}
+
+/// The inverse of `signedSquare`.
+fn signedRoot(x: f32) f32 {
+    return if (x >= 0) @sqrt(x) else -@sqrt(-x);
+}
+
+fn vector(v: shp.Vec3) math.Vector {
+    return .{ v.x, v.y, v.z };
+}
+
+fn vec3(v: math.Vector) shp.Vec3 {
+    return .{ .x = v[0], .y = v[1], .z = v[2] };
+}
+
+/// `object_cruise_speed` (`0x00403060`): `max_speed` scaled by `speed_factor`, by the share of its
+/// engines left, and, unless the camera is in view 13 or the object is invulnerable, by
+/// `armor_speed_factor` as well. So losing engines or armor slows a ship.
+///
+/// The port takes the flight stats and the view rather than reaching them through the object and a
+/// global, since `GameObject` holds the binary's own 32-bit pointers.
+pub fn cruiseSpeed(object: *const GameObject, flight: *const create.FlightModel, view: camera.View) f32 {
+    var speed = flight.max_speed * object.speed_factor * object.engines_intact;
+    if (view != full_speed_view and object.invulnerable == 0) speed *= object.armor_speed_factor;
+    return speed;
+}
+
+/// `object_steer` (`0x00474150`): each input is clamped to between -1 and 1, and each angular rate
+/// settles toward the ship's rate for that axis times the input. Where `throttle_turns`, that
+/// target is divided by `3 - 2 * |throttle|` while that exceeds 1, so a ship turns more slowly the
+/// less throttle it carries. The three rates then make the rotation.
+pub fn steer(object: *GameObject, flight: *const create.FlightModel, throttle_turns: bool) void {
+    const slowed = 3 - 2 * @abs(object.throttle);
+    const divisor: f32 = if (throttle_turns and slowed >= 1) slowed else 1;
+    const axes = [_]struct { rate: *f32, input: *f32, full: f32, inertia: f32 }{
+        .{ .rate = &object.pitch_rate, .input = &object.pitch_input, .full = flight.pitch_rate, .inertia = flight.pitch_inertia },
+        .{ .rate = &object.yaw_rate, .input = &object.yaw_input, .full = flight.yaw_rate, .inertia = flight.yaw_inertia },
+        .{ .rate = &object.roll_rate, .input = &object.roll_input, .full = flight.roll_rate, .inertia = flight.roll_inertia },
+    };
+    for (axes) |axis| {
+        axis.input.* = std.math.clamp(axis.input.*, -1, 1);
+        axis.rate.* = settle(axis.rate.*, axis.full * axis.input.* / divisor, axis.inertia);
+    }
+    object.rotation = math.fromAngles(object.pitch_rate, object.yaw_rate, object.roll_rate);
+}
+
+/// `object_fly` (`0x004742E0`): the flight model, run for one update by the motion routine. The
+/// throttle settles first, then the steering, then the speed, the last in the ship's own frame.
+///
+/// Along the nose the model settles in speed times its own size, so that thrust tells evenly at
+/// every speed: the speed is squared keeping its sign, settles toward the thrust times the
+/// throttle squared the same way times the target speed squared, and is rooted again. Sideways it
+/// settles toward a quarter of the target times the lateral input, and along the ship's own down
+/// axis it only decays.
+pub fn fly(object: *GameObject, flight: *const create.FlightModel, view: camera.View, thrust: f32) void {
+    if (object.afterburner) {
+        object.throttle = 2;
+        object.afterburner_fuel -= burn_fuel;
+    } else if (object.reverse_thrust) {
+        object.throttle = -1;
+        object.afterburner_fuel -= burn_fuel;
+    } else {
+        object.throttle = std.math.clamp(object.throttle, 0, 1);
+    }
+    object.afterburner_fuel = @max(object.afterburner_fuel, 0);
+
+    steer(object, flight, true);
+
+    // The frame the last update left behind: `object_move` sets it once the motion has run.
+    const frame = object.root.next_orientation;
+    const inertia = flight.inertia;
+    const target = if (object.afterburner or object.reverse_thrust)
+        flight.max_speed
+    else
+        cruiseSpeed(object, flight, view);
+
+    var speed = math.transformTransposed(frame, vector(object.velocity));
+    const push = thrust * object.throttle;
+    speed = .{
+        settle(speed[0], object.lateral_input * target * lateral_share, inertia),
+        settle(speed[1], 0, inertia),
+        signedRoot(settle(signedSquare(speed[2]), signedSquare(push) * target * target, inertia)),
+    };
+    object.velocity = vec3(math.transform(frame, speed));
+    object.last_throttle = object.throttle;
+}
+
+/// `object_move` (`0x00473FF0`): one update of an object. Its motion routine runs first, then its
+/// next orientation becomes its orientation turned by `rotation`, its next position its position
+/// plus its velocity, and its speed the length of that velocity.
+///
+/// Not ported: the guards that hold an object still while it jumps or docks, the flags it sets for
+/// a moving or turning object, and the speed readout it keeps for the player's HUD.
+pub fn move(object: *GameObject, flight: *const create.FlightModel, view: camera.View, motion: ?Motion) void {
+    if (motion) |routine| fly(object, flight, view, routine.thrust());
+    object.root.next_orientation = math.product(object.root.orientation, object.rotation);
+    object.root.next_position = vec3(vector(object.root.position) + vector(object.velocity));
+    object.speed = math.length(vector(object.velocity));
+}
+
+/// A light fighter's flight stats, near the Predator's, for the tests below.
+const testing_flight: create.FlightModel = .{
+    .max_speed = 320,
+    .roll_rate = 3,
+    .pitch_rate = 2,
+    .yaw_rate = 1.5,
+    .inertia = 0.9,
+    .roll_inertia = 0.8,
+    .pitch_inertia = 0.8,
+    .yaw_inertia = 0.8,
+    .speed_per_pitch_rate = 160,
+    ._unknown_24 = 0,
+};
+
+/// An object as `create_object` leaves one: undamaged, at rest, facing along its own nose.
+fn testingObject() GameObject {
+    var object: GameObject = std.mem.zeroes(GameObject);
+    object.root.orientation = math.identity;
+    object.root.next_orientation = math.identity;
+    object.speed_factor = 1;
+    object.armor_speed_factor = 1;
+    object.engines_intact = 1;
+    return object;
+}
+
+test cruiseSpeed {
+    var object = testingObject();
+    try std.testing.expectEqual(320, cruiseSpeed(&object, &testing_flight, .chase));
+    // Losing half its engines and a fifth of its armor slows it.
+    object.engines_intact = 0.5;
+    object.armor_speed_factor = 0.8;
+    try std.testing.expectEqual(128, cruiseSpeed(&object, &testing_flight, .chase));
+    // The armor tells in every view but 13, and not at all while it is invulnerable.
+    try std.testing.expectEqual(160, cruiseSpeed(&object, &testing_flight, @enumFromInt(13)));
+    object.invulnerable = 1;
+    try std.testing.expectEqual(160, cruiseSpeed(&object, &testing_flight, .chase));
+}
+
+test steer {
+    var object = testingObject();
+    object.throttle = 1;
+    // An input past the ends is clamped, and the rate settles toward the ship's own rate.
+    object.pitch_input = 5;
+    steer(&object, &testing_flight, true);
+    try std.testing.expectEqual(1, object.pitch_input);
+    try std.testing.expectApproxEqAbs(0.4, object.pitch_rate, 1e-6);
+    for (0..200) |_| steer(&object, &testing_flight, true);
+    try std.testing.expectApproxEqAbs(testing_flight.pitch_rate, object.pitch_rate, 1e-4);
+
+    // At rest the same input turns it a third as fast, the divisor being 3 - 2 * |throttle|.
+    var idle = testingObject();
+    idle.pitch_input = 1;
+    for (0..200) |_| steer(&idle, &testing_flight, true);
+    try std.testing.expectApproxEqAbs(testing_flight.pitch_rate / 3, idle.pitch_rate, 1e-4);
+    // A caller that does not ask for it gets no such division.
+    var full = testingObject();
+    full.pitch_input = 1;
+    for (0..200) |_| steer(&full, &testing_flight, false);
+    try std.testing.expectApproxEqAbs(testing_flight.pitch_rate, full.pitch_rate, 1e-4);
+}
+
+test "the throttle settles between 0 and 1, and the burns take it past both ends" {
+    var object = testingObject();
+    object.throttle = 5;
+    fly(&object, &testing_flight, .chase, 1);
+    try std.testing.expectEqual(1, object.throttle);
+    try std.testing.expectEqual(1, object.last_throttle);
+    object.throttle = -3;
+    fly(&object, &testing_flight, .chase, 1);
+    try std.testing.expectEqual(0, object.throttle);
+
+    // The afterburner runs it to 2 and burns fuel; reverse thrust to -1, and burns it as well.
+    object.afterburner = true;
+    object.afterburner_fuel = 10;
+    fly(&object, &testing_flight, .chase, 1);
+    try std.testing.expectEqual(2, object.throttle);
+    try std.testing.expectEqual(6, object.afterburner_fuel);
+    object.afterburner = false;
+    object.reverse_thrust = true;
+    fly(&object, &testing_flight, .chase, 1);
+    try std.testing.expectEqual(-1, object.throttle);
+    try std.testing.expectEqual(2, object.afterburner_fuel);
+    // The fuel stops at zero however long it burns.
+    for (0..4) |_| fly(&object, &testing_flight, .chase, 1);
+    try std.testing.expectEqual(0, object.afterburner_fuel);
+}
+
+test "a ship settles at its cruise speed along its nose" {
+    var object = testingObject();
+    object.throttle = 1;
+    for (0..400) |_| move(&object, &testing_flight, .chase, .forward);
+    // The model frame has Z forward, so all of the speed is along the nose.
+    try std.testing.expectApproxEqAbs(320, object.speed, 0.5);
+    try std.testing.expectApproxEqAbs(320, object.velocity.z, 0.5);
+    try std.testing.expectApproxEqAbs(0, object.velocity.x, 1e-3);
+    try std.testing.expectApproxEqAbs(0, object.velocity.y, 1e-3);
+    // It never runs past the speed it is settling toward.
+    try std.testing.expect(object.speed <= 320);
+
+    // Half its engines gone, it settles at half the speed.
+    object.engines_intact = 0.5;
+    for (0..400) |_| move(&object, &testing_flight, .chase, .forward);
+    try std.testing.expectApproxEqAbs(160, object.speed, 0.5);
+
+    // Backward, the same ship ends up going the other way at the same speed.
+    var reversed = testingObject();
+    reversed.throttle = 1;
+    for (0..400) |_| move(&reversed, &testing_flight, .chase, .backward);
+    try std.testing.expectApproxEqAbs(-320, reversed.velocity.z, 0.5);
+}
+
+test "the lateral input pushes a ship a quarter as fast sideways" {
+    var object = testingObject();
+    object.lateral_input = 1;
+    for (0..400) |_| move(&object, &testing_flight, .chase, .forward);
+    try std.testing.expectApproxEqAbs(320 * lateral_share, object.velocity.x, 0.5);
+}
+
+test move {
+    var object = testingObject();
+    object.root.position = .{ .x = 1, .y = 2, .z = 3 };
+    object.velocity = .{ .x = 10, .y = 0, .z = 20 };
+    // `create_object` leaves the rotation zeroed, and the steering builds one before the first
+    // move uses it; a turn of nothing stands in for that here.
+    object.rotation = math.identity;
+    // With no motion routine, it carries on at the velocity it has.
+    move(&object, &testing_flight, .chase, null);
+    try std.testing.expectEqual(11, object.root.next_position.x);
+    try std.testing.expectEqual(2, object.root.next_position.y);
+    try std.testing.expectEqual(23, object.root.next_position.z);
+    try std.testing.expectApproxEqAbs(@sqrt(500.0), object.speed, 1e-4);
+    // Its next orientation is its orientation turned by the rotation the steering built.
+    try std.testing.expectEqual(math.identity, object.root.next_orientation);
 }
