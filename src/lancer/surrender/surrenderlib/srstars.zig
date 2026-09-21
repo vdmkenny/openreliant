@@ -68,9 +68,23 @@ pub const Stars = extern struct {
 /// opposite part of the sky.
 pub const field_cosine: f32 = 0.6;
 
+pub const FieldView = enum { hidden, ahead, mirrored };
+
+/// How a sky field is drawn, for the cosine of its axis with the view axis.
+pub fn fieldView(cosine: f32) FieldView {
+    if (@abs(cosine) < field_cosine) return .hidden;
+    return if (cosine > 0) .ahead else .mirrored;
+}
+
 /// A sky star is drawn only while its direction is within the first cosine of the view axis this
 /// frame and last, and within the second in at least one of them.
 pub const star_cosines = [2]f64{ 0.6, 0.7 };
+
+/// Whether a sky star is drawn, for the cosines of its direction with the view axis this frame and
+/// last.
+pub fn starShown(now: f32, last: f32) bool {
+    return @min(now, last) >= star_cosines[0] and @max(now, last) >= star_cosines[1];
+}
 
 /// Longest streak, in view units: a star's screen position over its depth, before scaling to the
 /// viewport. A longer one is cut back along its line.
@@ -86,6 +100,22 @@ pub fn skyBrightness(motion: f32) f32 {
 pub fn dustBrightness(distance_squared: f32, cube_mask: u32, motion: f32) f32 {
     const side: f32 = @floatFromInt(cube_mask);
     return std.math.clamp((0.25 - distance_squared / (side * side)) * 16 / (motion * 100 + 1), 0, 1);
+}
+
+test fieldView {
+    try std.testing.expectEqual(FieldView.ahead, fieldView(0.9));
+    try std.testing.expectEqual(FieldView.mirrored, fieldView(-0.9));
+    try std.testing.expectEqual(FieldView.hidden, fieldView(0.3));
+    try std.testing.expectEqual(FieldView.hidden, fieldView(-0.5));
+}
+
+test starShown {
+    // A still camera: both frames alike, so within the second cosine.
+    try std.testing.expect(starShown(0.75, 0.75));
+    try std.testing.expect(!starShown(0.65, 0.65));
+    // Moving: within the first both times and the second once.
+    try std.testing.expect(starShown(0.65, 0.8));
+    try std.testing.expect(!starShown(0.5, 0.9));
 }
 
 test skyBrightness {

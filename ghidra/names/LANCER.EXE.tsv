@@ -397,6 +397,8 @@
 004c78a0	function	sr_render	int __fastcall (void)	Draws a frame with sr_draw_layers, then counts it and its time
 004c7960	function	sr_draw_layers	int __fastcall (void)	Begins the scene; for each layer, runs each object through its pipeline and the device, then sorts and flushes the layer's blended polygons; ends the scene
 004c75c0	function	SR_meshpipe_init	int __fastcall (void *object)	Culls, projects and lights a mesh object's vertices for the frame; non-zero when nothing is left to draw
+004c4db0	function	sprite_set_create	void * __fastcall (int count, uint flags, char *name)	A scene object of type 4 holding sprites that share a material: mesh coordinates, unlit, added, no texture until given one; each spans its whole texture
+004ce4d0	function	sprites_project	int __fastcall (void *sprites)	Projects a sprite set for the frame: each sprite reaches its half width and half height to either side of its centre; non-zero when none shows
 004c6280	function	mesh_cull	int __fastcall (void *object)	Lists each group's polygons that face the camera, with the face mask applied to polygon flags, and marks their vertices
 004c6d40	function	mesh_project	int __fastcall (void *object)	Turns the marked vertices into the camera's frame and projects them; depth is sqrt(1/z), scaled
 004c7060	function	mesh_light	int __fastcall (void *object)	Vertex colours: the object's colour and ambient lights, baked colours, then point and directional lights, clamped to 1

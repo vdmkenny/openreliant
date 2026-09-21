@@ -95,9 +95,11 @@ A node (`objects.cpp`, `node_alloc` at `0x004991D0`) is `0x104` bytes:
 
 `node_owner` (`0x00499F20`) finds a node's object by climbing to its root.
 
-A part's node holds the part's origin in its parent part. An object's root holds the object's place
-in the world: `object_set_position` (`0x0049B600`) and `object_set_orientation` (`0x0049B650`) set
-it, together with the root's frame and further copies at `0x768` and `0x798`, and
+A part's node holds the part's origin in its parent part, and no turn: `node_add_part`
+(`0x00499430`) copies the part's position and leaves the node's orientation the identity it was
+allocated with. It hides a part whose part flag `0x04` marks it damaged. An object's root holds the
+object's place in the world: `object_set_position` (`0x0049B600`) and `object_set_orientation`
+(`0x0049B650`) set it, together with the root's frame and further copies at `0x768` and `0x798`, and
 `mission_ships_sync` (`0x0045A5F0`) copies it into the mission ship's runtime position.
 
 A frame is Surrender's `0xB4`-byte transform, which `frame_create` (`0x004C51C0`) allocates with a

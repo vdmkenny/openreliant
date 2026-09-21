@@ -28,6 +28,14 @@ driver's blend factors, depth rule and highlight textures.
 Depth is reversed: a vertex's depth is `sqrt(1 / z)`, scaled, with `z` its distance along the
 view; the test passes on greater or equal, and the buffer clears to 0. The driver culls nothing.
 
+| Object type | Pipeline |
+|---|---|
+| 1, a mesh | `SR_meshpipe_init` (`0x004C75C0`) |
+| 4, a set of sprites | `sprites_project` (`0x004CE4D0`) |
+| 7, a star field | `stars_project` (`0x004C5380`) |
+
+**Unknown:** types 5 and 6 (`0x004CE830`, `0x004CE7B0`).
+
 ## Meshes
 
 `mesh_build` (`0x004A3040`) makes a part's mesh for each level of detail. A run of consecutive faces
@@ -124,6 +132,12 @@ vertex's colour is the sum, each channel then clamped to 1, of:
 
 Point and directional lights add no alpha. A light reaches an object unless their light masks
 share a bit; an object whose mask is all ones takes no lights.
+
+## Sprites
+
+A set of sprites (`sprite_set_create`, `0x004C4DB0`) shares one material. Each sprite has a centre,
+a half width and a half height, a colour, and texture coordinates 0 to 1 across and down; its
+pipeline draws it facing the camera, reaching its half size to either side of its centre.
 
 ## Coordinates from the normals
 

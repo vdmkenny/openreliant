@@ -28,7 +28,9 @@ A band of 15 by 8 vertices around the camera (`nebula_dome`, `0x00498810`). For 
   22 degrees short of either pole;
 - colour: the pixel of `starref12.tga` at `(255u, 255v)`, rounded down, top row first, over 256.
 
-No light reaches it. `backdrop_place` turns it with the sun marker. The software renderer builds a
+Each quad of the grid is two triangles, split along the diagonal from its lower left corner to its
+upper right. The dome's object has flag `0x800`, so none is culled. No light reaches it: each vertex
+keeps its colour. `backdrop_place` turns it with the sun marker. The software renderer builds a
 different dome.
 
 ## Nebula
@@ -36,7 +38,9 @@ different dome.
 A patch of 11 by 11 vertices on a sphere of radius 5000 (`sky_patch_create`, `0x00498EA0`), 90
 degrees across each way, or 72 for nebula 5, with the texture across it once. Across the columns a
 vertex turns evenly from -45 to 45 degrees about `X`, down the rows about `Y`; `u = c / 10`,
-`v = r / 10`. Its orientation is the nebula marker's, or a yaw of -90 degrees without one.
+`v = r / 10`. Each quad is two triangles, split along the diagonal from column `c`, row `r` to
+column `c + 1`, row `r + 1`, and none is culled. Its orientation is the nebula marker's, or a yaw of
+-90 degrees without one, which faces it toward `-X`.
 
 A script picks the nebula with `SetEnvironmentFXNebula` (0 to 6), which takes effect at the next jump
 or on `UpdateEnvironmentFXState` (`nebula_select`, `0x00498D00`). Each nebula also colours the fill
@@ -93,17 +97,29 @@ motes fade out by 4096 away. They streak like stars.
 ## Sun and lens flares
 
 The sun's direction comes from the sun marker's orientation, or is `(1, -0.5, 0.2)`, normalized,
-without one. Its three sprites, `sunlayer1` to `sunlayer3`, are drawn there at their textures' sizes
-in pixels on a screen 768 pixels tall, times 0.5, 2 and 2: `sunlayer1` always, `sunlayer3` while the
-sun's visibility is above 0.5, and `sunlayer2` while the flares' brightness is above 0.
+without one. The sun and the flares are sprites (see [Rendering](rendering.md#sprites)), textured,
+coloured grey and added. `backdrop_frame` sizes each to reach its texture's width and height times
+`z / 768` from its centre, with `z` its depth, then scales the sun's: on screen a sprite reaches its
+texture's size times the view's scale over 768, in pixels, whatever the distance.
 
-The six flares are drawn on the line through the sun and the middle of the view, at a multiple of
-the sun's offset from the middle: `sunflare2` at 0.5, `sunflare1` at 0.33, `sunflare3` at 0.2,
-`sunflare2` at -0.2, `sunflare3` at -0.6 and `sunflare4` at -0.5. Their brightness is
-`(0.5 + 0.05v) * (1 - min(1, s))`, with `s` the sun's offset from the middle in view units and `v`
-its visibility: 10 at most, less near the edges of the screen, and less again for each triangle of
-an object flagged `0x8000` that covers the sun's point on screen. **Unknown:** which views show the
-flares (`0x00539A34`, `0x00539A9C`).
+| Sprite | Size | Drawn | Grey |
+|---|---|---|---|
+| `sunlayer1` | 0.5 | Always | 1 |
+| `sunlayer3` | 2 | While the sun's visibility is above 0.5 | `0.15f + 0.1` below `f = 0.8`, `0.3f` from there |
+| `sunlayer2` | 2 | While `f` is above 0; hardware renderers only | `min(2f, 1)` |
+
+`f` is the flares' brightness, `(0.5 + 0.05v) * (1 - min(1, s))`, with `s` the sun's offset from the
+middle of the view in view units, position over depth, and `v` its visibility. The greys are set
+only while `f` is above 0. The sun's visibility is its distance in pixels from the nearest edge of
+the screen, at most 10 and 0 off it, less again for each triangle of an object flagged `0x8000`
+that covers the sun's point on screen. It is worked out after the sprites are placed, so a frame
+uses the last frame's.
+
+The six flares are drawn on the overlay layer on the line through the sun and the middle of the
+view, at a multiple of the sun's offset from the middle: `sunflare2` at 0.5, `sunflare1` at 0.33,
+`sunflare3` at 0.2, `sunflare2` at -0.2, `sunflare3` at -0.6 and `sunflare4` at -0.5, each at size 1
+and grey `f`, while `f` is above 0. **Unknown:** which views show them (`0x00539A34`,
+`0x00539A9C`).
 
 ## Lights
 

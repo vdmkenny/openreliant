@@ -5,9 +5,10 @@
 const std = @import("std");
 
 const tga = @import("../../formats/tga.zig");
+const math = @import("../surrender/math.zig");
 
 /// A nebula a script can pick with `SetEnvironmentFXNebula`: a texture, and the colour it gives the
-/// fill light (`nebula_fill_colours`, `0x00504000`).
+/// fill lights (`nebula_fill_colours`, `0x00504000`; `backdrop.lightsWith`).
 pub const Nebula = struct {
     texture: []const u8,
     fill: [3]f32,
@@ -38,6 +39,22 @@ pub const dome_radius: f32 = 5000;
 /// Half the band's height, against a horizontal radius of 1: it stops about 22 degrees short of
 /// either pole.
 pub const dome_half_height: f32 = 2.5;
+
+/// The dome's triangles, by vertex, `column + dome_columns * row`: each quad of the grid split along
+/// the diagonal from its lower left corner to its upper right. The dome's object has flag `0x800`, so
+/// none is culled.
+pub const dome_faces = faces: {
+    var list: [(dome_columns - 1) * (dome_rows - 1) * 2][3]u8 = undefined;
+    for (0..dome_rows - 1) |row| {
+        for (0..dome_columns - 1) |column| {
+            const quad = row * (dome_columns - 1) + column;
+            const v = column + dome_columns * row;
+            list[2 * quad] = .{ v, v + dome_columns, v + 1 };
+            list[2 * quad + 1] = .{ v + dome_columns, v + 1, v + dome_columns + 1 };
+        }
+    }
+    break :faces list;
+};
 
 pub const DomeVertex = struct {
     position: [3]f32,
@@ -75,9 +92,30 @@ pub const patch_divisions = 10;
 pub const patch_radius: f32 = 5000;
 pub const patch_half_angles = [2]f32{ std.math.pi / 4.0, std.math.pi / 5.0 };
 
+/// The patches' orientation until a nebula marker sets it: a yaw of -90 degrees, which faces them
+/// toward `-X`.
+pub const patch_orientation = math.fromAngles(0, -std.math.pi / 2.0, 0);
+
 pub fn patchHalfAngle(nebula: usize) f32 {
     return patch_half_angles[@intFromBool(nebula == 5)];
 }
+
+/// The patch's triangles, by vertex, `column + (patch_divisions + 1) * row`: each quad split along
+/// the diagonal from its first corner to its last. The patch's object has flag `0x800`, so none is
+/// culled.
+pub const patch_faces = faces: {
+    const side = patch_divisions + 1;
+    var list: [patch_divisions * patch_divisions * 2][3]u8 = undefined;
+    for (0..patch_divisions) |row| {
+        for (0..patch_divisions) |column| {
+            const quad = row * patch_divisions + column;
+            const v = column + side * row;
+            list[2 * quad] = .{ v, v + side + 1, v + 1 };
+            list[2 * quad + 1] = .{ v, v + side, v + side + 1 };
+        }
+    }
+    break :faces list;
+};
 
 pub const PatchVertex = struct {
     position: [3]f32,
@@ -133,6 +171,20 @@ test domeVertex {
 
     const wrong: tga.Image = .{ .width = 1, .height = 1, .rgb = rgb[0..3] };
     try std.testing.expectError(error.WrongSize, domeVertex(wrong, 0, 0));
+}
+
+test dome_faces {
+    try std.testing.expectEqual(196, dome_faces.len);
+    try std.testing.expectEqual([3]u8{ 0, 15, 1 }, dome_faces[0]);
+    try std.testing.expectEqual([3]u8{ 15, 1, 16 }, dome_faces[1]);
+    try std.testing.expectEqual([3]u8{ 118, 104, 119 }, dome_faces[dome_faces.len - 1]);
+}
+
+test patch_faces {
+    try std.testing.expectEqual(200, patch_faces.len);
+    try std.testing.expectEqual([3]u8{ 0, 12, 1 }, patch_faces[0]);
+    try std.testing.expectEqual([3]u8{ 0, 11, 12 }, patch_faces[1]);
+    try std.testing.expectEqual([3]u8{ 108, 119, 120 }, patch_faces[patch_faces.len - 1]);
 }
 
 test patchVertex {

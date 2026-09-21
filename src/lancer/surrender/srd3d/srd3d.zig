@@ -19,10 +19,10 @@ pub const Depth = struct {
 };
 
 /// How a pass uses the depth buffer (`0x100018B0`). Depth is stored reversed: nearer is greater.
-pub fn depth(layer: Layer, blend: Material.Blend) Depth {
+pub fn depth(layer: Layer, mode: Material.Blend) Depth {
     return switch (layer) {
         .background, .overlay => .{ .testing = false, .writing = false },
-        .world => .{ .testing = true, .writing = blend == .off },
+        .world => .{ .testing = true, .writing = mode == .off },
     };
 }
 
@@ -41,14 +41,42 @@ pub const Factors = struct {
 
 /// The factors a blend mode sets (`SR_driver_init`, `0x100056B0`), or null where blending is off.
 /// Values past `add_alpha` index beyond the driver's tables.
-pub fn factors(blend: Material.Blend) ?Factors {
-    return switch (blend) {
+pub fn factors(mode: Material.Blend) ?Factors {
+    return switch (mode) {
         .off => null,
         .add => .{ .source = .one, .destination = .one },
         .premultiplied => .{ .source = .one, .destination = .inverse_source_alpha },
         .alpha => .{ .source = .source_alpha, .destination = .inverse_source_alpha },
         .add_alpha => .{ .source = .source_alpha, .destination = .one },
         _ => null,
+    };
+}
+
+/// A pass's colour and alpha before blending (`set_material`, `0x10001B20`): the texel times the
+/// vertex colour, or the vertex colour alone without a texture. An unlit pass's vertex colour is
+/// white.
+pub fn shade(texel: ?[4]f32, vertex: [4]f32, lit: bool) [4]f32 {
+    const colour: @Vector(4, f32) = if (lit) vertex else @splat(1);
+    return if (texel) |t| @as(@Vector(4, f32), t) * colour else colour;
+}
+
+/// A pass's colour, `source`, blended over `destination` with `mode`'s factors, each channel
+/// clamped to 1.
+pub fn blend(mode: Material.Blend, source: [4]f32, destination: [3]f32) [3]f32 {
+    const f = factors(mode) orelse return .{ source[0], source[1], source[2] };
+    const s = factor(f.source, source[3]);
+    const d = factor(f.destination, source[3]);
+    var out: [3]f32 = undefined;
+    for (&out, 0..) |*c, i| c.* = @min(source[i] * s + destination[i] * d, 1);
+    return out;
+}
+
+fn factor(f: BlendFactor, source_alpha: f32) f32 {
+    return switch (f) {
+        .zero => 0,
+        .one => 1,
+        .source_alpha => source_alpha,
+        .inverse_source_alpha => 1 - source_alpha,
     };
 }
 
@@ -114,6 +142,18 @@ test factors {
         factors(.alpha).?,
     );
     try std.testing.expectEqual(null, factors(@enumFromInt(9)));
+}
+
+test shade {
+    try std.testing.expectEqual([4]f32{ 0.25, 0.5, 0.5, 1 }, shade(.{ 0.5, 1, 1, 1 }, .{ 0.5, 0.5, 0.5, 1 }, true));
+    try std.testing.expectEqual([4]f32{ 0.5, 1, 1, 1 }, shade(.{ 0.5, 1, 1, 1 }, .{ 0.5, 0.5, 0.5, 1 }, false));
+    try std.testing.expectEqual([4]f32{ 0.5, 0.5, 0.5, 1 }, shade(null, .{ 0.5, 0.5, 0.5, 1 }, true));
+}
+
+test blend {
+    try std.testing.expectEqual([3]f32{ 0.5, 0.5, 0.5 }, blend(.off, .{ 0.5, 0.5, 0.5, 0 }, .{ 1, 1, 1 }));
+    try std.testing.expectEqual([3]f32{ 0.75, 1, 1 }, blend(.add, .{ 0.5, 0.5, 0.5, 0 }, .{ 0.25, 0.75, 1 }));
+    try std.testing.expectEqual([3]f32{ 0.5, 0.5, 0.5 }, blend(.alpha, .{ 1, 1, 1, 0.5 }, .{ 0, 0, 0 }));
 }
 
 test highlightTexel {
