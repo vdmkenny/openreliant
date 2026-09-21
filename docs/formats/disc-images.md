@@ -40,7 +40,7 @@ names where a disc has them.
 
 | Path | Size | Contents |
 |---|---|---|
-| `LANCER.CAB` | 226,746,308 | Installer cabinet: 166 files, the game as installed. |
+| `LANCER.CAB` | 226,746,308 | Installer cabinet: the game as installed. |
 | `GAME/CD1.HOG` | 406,051,549 | Asset archive. |
 | `GAME/CAB/LANCER.EXE` | 249,119 | SafeDisc loader. |
 | `GAME/CAB/LANCER.ICD` | 1,151,021 | The game, encrypted. |

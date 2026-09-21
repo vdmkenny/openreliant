@@ -115,7 +115,7 @@ pub const Ship = extern struct {
     _unknown_16: u8,
     flags: Flags,
     /// Role. Ordinary ships stay below `0x100`; nav points and markers use 999 and the `0x3E3` to
-    /// `0x3E8` range, so reading this as a byte truncates about two records in five.
+    /// `0x3E8` range, so reading this as a byte truncates many of them.
     kind: u16,
     _unknown_1a: u16,
     /// As authored. The loader copies it into `runtime_position`.

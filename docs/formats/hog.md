@@ -39,40 +39,34 @@ Names form a flat namespace with no directories and no path separators, and are 
 - **Case is inconsistent.** `interpal.TGA` and `interpal.tga` are different members of
   `resource.hog`.
 - **Names may contain spaces**, for example `Boridin gun dest.SHP`.
-- **Names are not unique.** `resource.hog` has 967 members under 954 distinct names; 13 names
-  appear twice, and the two members are usually different sizes, so they are different assets
-  rather than redundant copies. `sltool hog extract` gives the later member a `~2` suffix before
+- **Names are not unique.** Some names in `resource.hog` appear twice, and the two members are
+  usually different sizes, so they are different assets rather than redundant copies. `sltool hog extract` gives the later member a `~2` suffix before
   its extension so nothing is lost, including where two names differ only by case and would
   collide on a case-insensitive filesystem.
 
 ### Trailing filler
 
-Two of the five shipped archives count one more entry in their header than their directory holds:
-
-| Archive | Header count | Real entries |
-|---|---|---|
-| `msspeech.hog` | 4369 | 4368 |
-| `pilots.hog` | 258 | 257 |
+Two of the five shipped archives, `msspeech.hog` and `pilots.hog`, count one more entry in their
+header than their directory holds.
 
 The extra record is `0xCD` filler, the pattern MSVC writes over uninitialized memory, and it sits
-past the end of the real directory. The members themselves are unaffected: in all five archives
-they form one contiguous run from the header's data offset to the last byte of the file, with no
-gaps. A reader should validate each entry and stop at the first one that is not a plausible
+past the end of the real directory. The members themselves are unaffected: in every archive they
+form one contiguous run from the header's data offset to the last byte of the file, with no gaps. A reader should validate each entry and stop at the first one that is not a plausible
 record, rather than trusting the count.
 
 ## The shipped archives
 
-| Archive | Members | Size | Compressed | Contents |
-|---|---|---|---|---|
-| `resource.hog` | 967 | 54.7 MiB | 950 (98%) | Models, sprites, images, missions, stat tables. 144.9 MiB uncompressed. |
-| `pilots.hog` | 257 | 43.9 MiB | 0 | `.fm8` pilot files |
-| `msspeech.hog` | 4368 | 53.7 MiB | 0 | Speech, one member per line, no extensions |
-| `CD1.HOG` | 225 | 387.2 MiB | 18 | Bink video, MP3 music, sprites |
-| `CD2.HOG` | 174 | 510.6 MiB | 0 | Bink video, MP3 music, sprites |
+| Archive | Compressed | Contents |
+|---|---|---|
+| `resource.hog` | Almost every member | Models, sprites, images, missions, stat tables, sound banks, fonts |
+| `pilots.hog` | No | `.fm8` pilot files |
+| `msspeech.hog` | No | Speech, one member per line, no extensions |
+| `CD1.HOG` | A few members | Bink video, MP3 music, sprites |
+| `CD2.HOG` | No | Bink video, MP3 music, sprites |
 
-Member types by extension in `resource.hog`: `.shp` 440 models, `.spr` 269 sprites, `.tga` 146
-images, `.dte` 44 missions, `.fat` 34 [sound banks](fat.md), `.fnt` 19 fonts, `.bin` 5 (the four stat
-tables and `profile.bin`), `.ccb` 5 colour tables.
+`resource.hog`'s members by extension: `.shp` models, `.spr` sprites, `.tga` images, `.dte`
+missions, `.fat` [sound banks](fat.md), `.fnt` fonts, `.ccb` colour tables, and five `.bin` files:
+the four stat tables and `profile.bin`.
 
 ## RefPack compression
 

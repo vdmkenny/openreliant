@@ -183,7 +183,7 @@ pub const Gun = extern struct {
     _unknown_44: f32,
     /// Two damage values. The first is also what the engine weights nearby guns by when it picks
     /// the most dangerous gun type around the player. They are not a minimum and a maximum: the
-    /// first is the larger in seven of the fifteen shipped guns.
+    /// first is the larger in several shipped guns.
     damage: [2]f32,
     /// Shots per unit time. The loader stores `100 / fire_rate`, truncated, which is the interval
     /// between shots.

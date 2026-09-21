@@ -9,8 +9,6 @@
 //! records, and the loader copies `min(record_size, @sizeOf(struct))` bytes and leaves the rest of
 //! the destination alone. `records` reproduces that, zero-filling instead, so a field added by a
 //! later exporter reads as zero in a file written by an older one.
-//!
-//! In the shipped archive: 440 models, 1771 parts, 6067 mesh levels, 205k vertices and 316k faces.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;

@@ -58,5 +58,4 @@ The decompressor is `src/formats/refpack.zig`. It validates as it goes: a comman
 the end of the input, a match reaching before the start of the output, or a total that disagrees
 with the header's decompressed size are all rejected rather than producing truncated output.
 
-All 950 compressed members of `resource.hog` decompress to exactly the size their headers declare,
-producing 144.9 MiB from 54.7 MiB.
+Every compressed member of `resource.hog` decompresses to exactly the size its header declares.

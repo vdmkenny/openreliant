@@ -34,7 +34,7 @@ pub const Header = extern struct {
 
 pub const DirectoryEntry = extern struct {
     offset: u32,
-    /// Zero in all 3,947 entries of all 269 shipped files, so its purpose is **unknown**.
+    /// Zero in every entry of every shipped file, so its purpose is **unknown**.
     reserved: u32,
 
     comptime {

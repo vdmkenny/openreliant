@@ -74,8 +74,7 @@ The loader copies `0x40` to `0x5C` into one runtime array in the order speed, `0
 pair them. It also derives `0x40 / 0x50` per ship.
 
 The loadout screen places each ship on a bar between the minimum and maximum of that stat across the
-ships it lists: the 12 Alliance fighters the player can fly, and in a second list nine Coalition
-fighters.
+ships it lists: the Alliance fighters the player can fly, and in a second list Coalition fighters.
 
 ## Guns
 
@@ -90,8 +89,7 @@ fighters.
 
 The loader stores `100 / fire_rate`, the interval between shots.
 
-The two damage values are **not a minimum and a maximum**: the first is the larger in seven of the
-fifteen guns and equal in seven. `FUN_00415430` uses the first alone: it counts each gun type among
+The two damage values are **not a minimum and a maximum**: in several guns the first is the larger. `FUN_00415430` uses the first alone: it counts each gun type among
 nearby ships, weights each count by that damage, and records the most dangerous type other than the
 two capital-ship guns.
 

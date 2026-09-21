@@ -33,8 +33,7 @@ The image opens with **27 entries of 8 bytes**:
 | 4 | u32 | Offset of the section, or `0xFFFF` when unused |
 
 Capacity is fixed: a section's offset is the same in every mission built from the same template, and
-the count says how much of the reserved room is filled. 36 of the 44 missions are exactly 850,919
-bytes for that reason.
+the count says how much of the reserved room is filled, so most missions are exactly the same size.
 
 | # | Section | Stride | Contents |
 |---|---|---|---|
@@ -62,9 +61,8 @@ the count of section 6: one entry per script byte.
 ## String pool
 
 A run of NUL-terminated names, **referenced by byte offset into the pool, not by index**, which is
-why a `u16` suffices: the pool reserves 65,535 bytes, and `mission1` fills 17,207 of them with 9,088
-strings. Byte offsets resolve all 8,265 ship names across the 44 missions, for example
-`Player_Ship`, `(A1)Naginata`, `(WL)Viper's Coyote`, `Convoy Nav Point`.
+why a `u16` suffices: the pool reserves 65,535 bytes. Byte offsets resolve every ship name in all 44
+missions, for example `Player_Ship`, `(A1)Naginata`, `(WL)Viper's Coyote`, `Convoy Nav Point`.
 
 ## Ships
 
@@ -83,9 +81,9 @@ Stride `0x4C`, one per placed object, nav points included.
 | `0x2E`, `0x3A`, `0x4A` | i16 | Yaw, pitch, roll, in whole degrees |
 | `0x30` | u32 | Live object handle, `0xFFFFFFFF` until the mission arms |
 
-Each angle sits two bytes after its runtime copy, at `0x2C`, `0x38` and `0x48`. All 8,265 records
-hold angles within [-360, 360]. Positions are absolute, on the order of 10^7. `in_flight_group`
-reads the flight group byte; 6,916 ships are in one and 1,349 in none.
+Each angle sits two bytes after its runtime copy, at `0x2C`, `0x38` and `0x48`. Every record holds
+angles within [-360, 360]. Positions are absolute, on the order of 10^7. `in_flight_group` reads
+the flight group byte.
 
 ## Objects
 
@@ -99,14 +97,14 @@ one. Section 7 is indexed by it:
 | 2 | u16 | Index of the first |
 | 4 | u32 | **Unknown** |
 
-Across the 44 missions every ship's ID is unique within its mission and lands on a kind-0 entry, and
-the 1,133 kind-1 and 959 kind-2 entries match the 1,133 flight groups and 959 squads. The squad
+In all 44 missions every ship's ID is unique within its mission and lands on a kind-0 entry, and the
+kind-1 and kind-2 entries correspond one for one to the flight groups and squads. The squad
 membership walk behind `in_squad` reads the kind: a flight group member is tested with
 `in_flight_group`, and a squad member recursively.
 
 A squad's `+0x08` is the index of its first record in section 13, or `0xFFFF`. A membership record
 holds the member's object ID at `+0` and the owning squad's index at `+4`, and a squad's records are
-consecutive. The 5,172 records name 4,580 ships, 416 flight groups and 176 squads.
+consecutive. Members may be ships, flight groups or other squads.
 
 ## Triggers
 
@@ -128,14 +126,15 @@ A trigger holds no subject: it sits in its subject's slice of the trigger list, 
 fires each trigger that is armed, has the event's condition and qualifier, and whose operands pass.
 Firing starts a thread at `script + link * 2`.
 
-No trigger is in two slices. 1,479 hang off ships, 235 off flight groups and 412 off squads; the
-other 320 are in no slice and can never fire.
+No trigger is in two slices, and a trigger in no slice can never fire.
 
-Repeat mode `0` disarms the trigger when it fires (1,833 triggers), `1` never disarms it (612), and
-`2` disarms it when the counter at `0x19` runs out (1). For four conditions, ShotAt, Destroyed,
-Cloaked and Decloaked, a handler of the condition's can veto an event; a vetoed event still fires
-the triggers whose repeat mode equals the condition's descriptor byte `+0x0D`, which is 1 for the
-last three.
+Repeat mode `0` disarms the trigger when it fires, `1` never disarms it, and `2` disarms it when the
+counter at `0x19` runs out. For four conditions, ShotAt, Destroyed, Cloaked and Decloaked, a handler
+of the condition's can veto an event; a vetoed event still fires the triggers whose repeat mode
+equals the condition's descriptor byte `+0x0D`, which is 1 for the last three.
+
+Most triggers carry qualifier `0xFF`, which three of the four call sites that raise events pass.
+**Unknown:** what the other qualifiers, `0` to `7`, select.
 
 ### Conditions
 
@@ -144,26 +143,9 @@ constants; the last two are internal. Each descriptor is `0x1C` bytes: a name po
 discriminator byte at `+0x0C` and `+0x0D`, and three handler pointers from `+0x10`, set only for
 ShotAt, Destroyed, Cloaked and Decloaked. The table lies just past the VM's dispatch table.
 
-| Condition | Triggers |
-|---|---|
-| `destroyed` | 990 |
-| `shot_at` | 453 |
-| `ship_reached` | 242 |
-| `launched` | 203 |
-| `proximity_general` | 197 |
-| `jumped_in` | 132 |
-| `jumped_through_hoop` | 80 |
-| `player_ready_to_jump` | 35 |
-| `ripper_dropped_object`, `object_scooped` | 20, 19 |
-| the remaining twelve used | 3 to 9 each |
-
-2,168 triggers carry qualifier `0xFF`, which three of the four call sites that raise events pass. **Unknown:** what the other qualifiers, `0` in 207 triggers and `1` to `7` in the rest,
-select.
-
 ## Script
 
-Section 6 is the mission's bytecode: `count * 2` bytes, 7,552 in `mission1`. The interpreter is a
-dispatch loop:
+Section 6 is the mission's bytecode: `count * 2` bytes. The interpreter is a dispatch loop:
 
 ```
 handler = table[code[ip]]      // 86 entries at 0x004F6350
@@ -199,13 +181,12 @@ most of them undefined.
 
 | Form | Opcodes | Next instruction |
 |---|---|---|
-| `sequential` | 61 | After the operands |
+| `sequential` | the rest | After the operands |
 | `branch` | `0x23`, `0x24`, `0x42` | The operands are a displacement |
 | `inline_data` | `0x2A`, `0x2B` | After the run the operand byte measures |
 | `transfer` | `0x22`, `0x25`, `0x43`, `0x4A`, `0x51` | Not known statically |
 
-68 opcodes are a fixed size: 38 take no operands, 22 one byte, 7 two bytes, and `0x4B` three. The
-other three carry their own length:
+The rest are a fixed size, with up to three operand bytes. Three carry their own length:
 
 - **`0x2A` push_string** (and `0x2B`) takes a length byte that counts itself, pushes a pointer to
   the bytes after it, and steps over them. They are a NUL-terminated string, usually the name of a
@@ -315,8 +296,7 @@ A parameter's kind mask says what it accepts. The bits are named from the labels
 | `0x400000` | A camera or flight curve |
 
 `make vm-commands` regenerates [`src/formats/vm_commands.zig`](../../src/formats/vm_commands.zig)
-from the binary alone. Every command call in the 44 missions resolves; the commonest are `SetAI`
-(5,560), `WaitForMovie` (3,596), `Wait` (2,697) and `SetObjective` (2,146).
+from the binary alone. Every command call in the 44 missions resolves.
 
 ### Parts
 
@@ -335,7 +315,7 @@ The loader sets `block = script + start * 2`, which fixes the halfword unit. In 
 parts are in address order and contiguous, each one's `start + extent` being the next one's `start`,
 and the last ends at the end of section 6.
 
-Missions carry their authors' names for them. `mission1` has 32:
+Missions carry their authors' names for them, as in `mission1`:
 
 ```
   #  offset  bytes  args  block  name
@@ -346,7 +326,7 @@ Missions carry their authors' names for them. `mission1` has 32:
  31    7524     28     0     20  <F>Objective window
 ```
 
-Across the 44 missions, 1,625 parts take no arguments, four take two and one takes one.
+Nearly every part takes no arguments.
 
 ### Blocks
 
@@ -361,13 +341,13 @@ dwords that `push_constant n` reads, starting at the block's end. First come the
 run, then the parts:
 
 - A part's extent covers its block and its constants.
-- A trigger block's constants run to the next routine. `mission1`'s first part is at byte 1,740,
-  after 28 trigger blocks starting at bytes 0, 36, 72 and so on.
+- A trigger block's constants run to the next routine. In `mission1` the trigger blocks start at
+  bytes 0, 36, 72 and so on, and the first part follows the last of them.
 
-In every mission this tiles the section exactly: 2,080 trigger blocks, one for each trigger that can
-fire and has a link, and 1,623 parts, 3,703 routines in all. Of the 2,126 triggers that can fire,
-46 have no link. Each constant table is exactly as long as the highest
-index its block pushes, rounded up to 8 bytes; the filler dword that rounding adds is not read.
+In every mission this tiles the section exactly, with one trigger block for each trigger that can
+fire and has a link; a trigger that can fire may also have no link and run nothing. Each constant
+table is exactly as long as the highest index its block pushes, rounded up to 8 bytes; the filler
+dword that rounding adds is not read.
 
 ```
 sltool dte script <mission>    # every routine, with its constants
@@ -376,7 +356,7 @@ sltool dte script <mission>    # every routine, with its constants
 `sltool dte script` follows control flow from each block's entry rather than sweeping, because
 `jump`, `return` and `random_branch` never fall through, and shows the value behind each
 `push_constant`, the name of each command, and the part, ship or global an index names. **Every
-routine disassembles completely**, except 128 bytes listed under [Open](#open). The first block of
+routine disassembles completely**, except the regions listed under [Open](#open). The first block of
 `mission1`, which its first trigger runs, calls one of two parts depending on a global:
 
 ```
@@ -396,7 +376,7 @@ routine disassembles completely**, except 128 bytes listed under [Open](#open). 
   constants: 1 220332040
 ```
 
-The links of the 297 triggers no slice holds are never followed, and 275 of them do not point at a
+The links of the triggers no slice holds are never followed, and most of them do not point at a
 block.
 
 ### Open

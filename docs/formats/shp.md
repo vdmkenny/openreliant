@@ -1,15 +1,15 @@
 # `.SHP` models
 
 Every ship, station, weapon, asteroid and piece of debris in the game is a `.SHP` file in
-`resource.hog`. There are 440 of them, holding 1,771 parts, 202,272 vertices and 351,855 faces.
+`resource.hog`.
 
 ```bash
 sltool shp info <model>                 # parts, levels, materials, turret limits
 sltool shp chunks <model>               # the raw chunk stream
 sltool shp check <model>                # validate indices, parents and bounds
 sltool shp obj <model> <out.obj> [--lod n]
-make models                             # export all 440 to game/models
-make check-models                       # validate all 440
+make models                             # export every model to game/models
+make check-models                       # validate every model
 ```
 
 ## Chunk stream
@@ -38,24 +38,24 @@ order the loader asks for them, because a miss never rewinds.
 
 ### Tags
 
-| Tag | Record | Sizes seen *(chunks)* | Belongs to |
+| Tag | Record | Record sizes seen | Belongs to |
 |---|---|---|---|
-| `0x00` | header | 88 *(386)*, 24 *(25)*, 20 *(29)* | model |
-| `0x01` | part | 312 *(277)*, 264 *(128)*, 288 *(29)*, 260 *(1)*, 244 *(5)* | model |
+| `0x00` | header | 88, 24, 20 | model |
+| `0x01` | part | 312, 288, 264, 260, 244 | model |
 | `0x02` | level of detail | 4 | part |
-| `0x03` | face | 80 *(5885)*, 72 *(182)* | level |
-| `0x04` | vertex | 32 *(6061)*, 28 *(6)* | level |
+| `0x03` | face | 80, 72 | level |
+| `0x04` | vertex | 32, 28 | level |
 | `0x06` | material | 64 | level |
-| `0x07` | tree node | 72 *(1413)*, 64 *(358)* | part |
+| `0x07` | tree node | 72, 64 | part |
 | `0x08` | node face list | 4 | node |
-| `0x09` | attachment point | 168 *(1428)*, 124 *(333)*, 136 *(5)*, 100 *(5)* | part |
-| `0x0A` | animation clip | 24 *(1591)*, 8 *(180)* | part |
+| `0x09` | attachment point | 168, 136, 124, 100 | part |
+| `0x0A` | animation clip | 24, 8 | part |
 | `0x0B` | keyframe | 28 | clip |
 | `0x0C` | clip event | 12 | clip |
 | `0x0D` | face group | 4 | part |
 | `0x0E` | group entry | 20 | group |
 | `0x0F` | trigger polygon | 16 | part |
-| `0x10` | tail | 76 *(260)*, 12 *(7)* | model |
+| `0x10` | tail | 76, 12 | model |
 
 ### Order
 
@@ -69,7 +69,7 @@ header, parts, then for each part:
 tail
 ```
 
-All 440 models follow this order and end with the terminator at the last byte of the file.
+Every model follows this order and ends with the terminator at the last byte of the file.
 
 ## Records
 
@@ -80,7 +80,7 @@ noted in [§ Unread fields](#unread-fields).
 
 | Off | Type | Field |
 |---|---|---|
-| `0x00` | u32 | Version. `107`, except three models carrying `200`. Not read by the loader. |
+| `0x00` | u32 | Version: `107`, or `200` in a few models. Not read by the loader. |
 | `0x14` | u32 | Flags. Bit 1 makes the loader build a second mesh set, used for the cloak effect. |
 
 ### Part (tag `0x01`)
@@ -165,32 +165,26 @@ the image registry with a context-dependent prefix: `g` while the loadout screen
 ## Bounding boxes
 
 The box stored in each part is derived from its finest level's vertices, but not always in the
-part's own frame. Across all 1,771 parts:
+part's own frame. In the shipped models it is one of:
 
-| Relationship to the level-0 vertex extent | Parts |
-|---|---|
-| Equal as stored | 1,477 |
-| Equal after applying the part's orientation matrix | 237 |
-| Same box up to an axis swap or reflection the record does not describe | 31 |
-| Zero-sized: never filled in | 16 |
-| A different box | 10 |
+- the level-0 vertex extent as stored, in most parts;
+- that extent after applying the part's orientation matrix;
+- the same box up to an axis swap or reflection the record does not describe;
+- zero-sized, never filled in;
+- a different box.
 
-`sltool shp check` classifies each part rather than requiring a match, since all five cases occur
-in shipped, working models. The vertices are authoritative; the stored box is a hint.
+`sltool shp check` classifies each part rather than requiring a match, since all five occur in
+shipped, working models. The vertices are authoritative; the stored box is a hint.
 
 ## Coordinate frame
 
 The model frame is **X lateral, Y down, Z forward**. Neither axis direction is recorded in the
-file; both are settled by what the parts are named and where they sit, across all 1,771 parts:
+file; both are settled by what the parts are named and where they sit:
 
-| Test | Result |
-|---|---|
-| Parts named `Lower`, `bottom`, `under` | 11 of 11 at **positive Y** |
-| Parts named `cockpit` or `canopy` | 35 of 48 at **negative Y** |
-| Parts named `engine`, `exhaust`, `thruster` | 22 of 26 at **negative Z** |
-| Parts named `rear`, `back`, `aft` | 45 of 64 at **negative Z** |
-| Parts named `nose`, `front` | 7 of 9 at **positive Z** |
-| Parts named `cockpit` or `canopy` | 37 of 48 at **positive Z** |
+- every part named `Lower`, `bottom` or `under` is at **positive Y**;
+- most parts named `cockpit` or `canopy` are at **negative Y** and **positive Z**;
+- most parts named `engine`, `exhaust`, `thruster`, `rear`, `back` or `aft` are at **negative Z**;
+- most parts named `nose` or `front` are at **positive Z**.
 
 So `+Y` points at the ship's belly and `+Z` out of its nose. A model loaded without accounting for
 this is upside down.
