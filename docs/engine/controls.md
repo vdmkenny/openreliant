@@ -199,7 +199,8 @@ the ship. **Unknown:** what sets that byte.
 The player shares the ship's power between its shields, guns and engines by moving a point on a
 disc of radius 64, the power ball (`GameObject.power_setting`, `+0x728`). Each system has an
 anchor on the ball, a third of a turn from the next: the shields at (0, 1), the guns at
-(0.866, -0.5) and the engines at (-0.866, -0.5). `power_distribute` (`0x00412560`) works out each
+(0.866, -0.5) and the engines at (-0.866, -0.5), the game's 0.866 standing for √3/2, which the port
+uses itself. `power_distribute` (`0x00412560`) works out each
 system's share: `power_reach` (`0x004124E0`) measures the distance from the point to the edge of
 the disc going away from the system's anchor, which is 128 at the anchor, 64 in the middle and 0
 opposite, and a share is that distance over the three together. A share `s` gives a factor of
