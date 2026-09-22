@@ -65,14 +65,49 @@ reads 25 times a second as `read_keyboard` and `read_joystick` do rather than on
 step's work on the objects save the guns' step
 ([#38](https://github.com/vdmkenny/openreliant/issues/38)), and each frame's orders and framing
 (`main.missionFrame`), which is what a mission and the sandbox both run.
-Not yet: the mouse, the missiles and bullets the step moves after `objects_update`, the collisions
-([#40](https://github.com/vdmkenny/openreliant/issues/40)), the countdown `game_tick` steps once a
-second, and the sound streaming that shares `tick_timer`.
+Not yet: the mouse, the missiles and bullets the step moves after `objects_update`, the countdown
+`game_tick` steps once a second, and the sound streaming that shares `tick_timer`.
 
 ## Collisions
 
-After moving the objects, `objects_update` lists each one's extent along X, its next position
-plus its collision radius (`0x59C`) times the factor at `0x12C`, sorts the list, and hands each
-pair whose extents overlap to `objects_collide` (`0x00466170`), up to ten passes. Two objects whose
-spheres overlap are pushed apart along the line between them. **Unknown:** the rest of what
-`objects_collide` does, which depends on a class in the objects' combat stats (`+0x28`).
+After moving the objects, `objects_update` lists each one that collides: its slot, its collision
+radius (`0x59C`) times `visibility` (`0x12C`), and how far its sphere reaches along X. It sorts the
+list by that reach, the farthest first, and walks each object against those after it while their
+spheres still reach back to it, which is every object that can be near it. A pair where either
+names the other in `passes_through` (`0x618`) is left alone, as is one whose spheres do not
+overlap; the rest go to `objects_collide` (`0x00466170`). A pass that moves anything is followed by
+another, up to ten; on the tenth the game puts "collision" on the screen.
+
+`objects_collide` decides by the two objects' classes (`ShipCombat.class`, `+0x28`) and by whether
+they list components:
+
+| The pair | What happens |
+|---|---|
+| Two of one type, where either is a torpedo | Nothing |
+| A torpedo that is already going off | Nothing |
+| Either lists components, but not both, and neither is the limpet pod (`0xBC`) | The ship is tested against the other's parts, up to nine times over (`0x00465C50`) |
+| Both list components | Nothing |
+| Two torpedoes, two pieces of debris, or two satellites (`0x71`) | Nothing |
+| Either is a mine, against a fighter | The mine goes off |
+| A torpedo against anything else | It goes off |
+| Anything else | The impact's damage, then both move again and are set apart |
+
+Before that, the two shove each other (`0x00464E80`). The point their spheres touch at moves with
+each of them between this step and the next, so a turning ship strikes with its wingtip's speed;
+the impulse comes from how fast the two points close, over each object's mass and its
+`angular_response`, doubled so the bounce keeps the speed they met at, and both take it through
+`object_knock`, equal and opposite. The move that follows applies those knocks. An object held to
+another, and the Ripper with something in its grip, take no shove.
+
+Two spheres meet on the line between their centres, so a shove between them has no lever and neither
+ship is set spinning. A hull's own faces do give one ([#143](https://github.com/vdmkenny/openreliant/issues/143)).
+
+The pair is then set apart along that line: each is placed at 1.1 times its own radius from the
+point midway between the two, so the step that follows does not find them overlapping again.
+
+Ported so far: the sweep, the pairs it passes over, the shove and setting two objects apart
+([`collision.zig`](../../src/engine/game/collision.zig)). Not yet: the damage an impact does
+([#42](https://github.com/vdmkenny/openreliant/issues/42)), the torpedo's and the mine's explosions
+([#41](https://github.com/vdmkenny/openreliant/issues/41)), and the test against a capital ship's
+parts ([#143](https://github.com/vdmkenny/openreliant/issues/143)), so a ship still flies through
+one.
