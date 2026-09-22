@@ -651,7 +651,7 @@ address	kind	name	type	comment
 004c2610	function	mat3_from_axes	void __fastcall (float *m, Vec3 *z, Vec3 *x)	Builds m from a Z axis and an X axis: Z normalized, Y = normalize(Z × X), X = Y × Z
 004c2690	function	mat3_orthonormalize	void __fastcall (float *m)	Makes the axes of m unit length and perpendicular again, keeping the direction of its Z axis
 004c2740	function	mat3_angles	void __fastcall (Vec3 *out, float *m)	The angles about X, Y and Z that make up m, from sr_atan2
-004c2070	function	mat3_determinant	float __fastcall (float *m)
+004c2070	function	mat3_determinant	float __fastcall (float *m)	
 004ad9f0	function	mat3_inverse	void __fastcall (float *out, float *m)	out = the inverse of m
 004c3000	function	sr_tables_init	void __cdecl (void)	Fills atan_table and ease_table, once
 004c3140	function	sr_atan	float __cdecl (float x)	The angle whose tangent is x, from atan_table
