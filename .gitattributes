@@ -1,0 +1,3 @@
+# Text files are checked out with LF line endings on every system, Windows included: the tests
+# embed the names tables and read them line by line.
+* text=auto eol=lf
