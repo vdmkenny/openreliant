@@ -54,10 +54,20 @@ keeps from a finer count, so that what moves moves on every frame rather than ev
 any display rate. `--no-smooth-motion` and `--original` move it on with the ticks, as the original
 does.
 
-Ported so far: the clocks, the pacing, and the keyboard, which the simulation step reads 25 times a
-second as `read_keyboard` does rather than once a frame. Not yet: the joystick and the mouse the
-step also reads, each object's own updates and `objects_update`, the countdown `game_tick` steps
-once a second, and the sound streaming that shares `tick_timer`.
+The simulation step walks the objects ([The object array](objects.md#the-object-array)): each has
+its orientation orthonormalized in its turn, then its node update, its shields' recharge and its
+guns' step, and then the player's controls fly the player's ship, while its top order is Player
+Control, and `objects_update` moves every object. Each frame, `mission_frame` frames each object
+between its last two steps before the camera's frame, and draws them after it.
+
+Ported so far: the clocks, the pacing, the keyboard and the joystick, which the simulation step
+reads 25 times a second as `read_keyboard` and `read_joystick` do rather than once a frame, and the
+step's work on the objects save the guns' step
+([#38](https://github.com/vdmkenny/openreliant/issues/38)). The port has no orders yet
+([#32](https://github.com/vdmkenny/openreliant/issues/32)), so the player's controls always run.
+Not yet: the mouse, the missiles and bullets the step moves after `objects_update`, the collisions
+([#40](https://github.com/vdmkenny/openreliant/issues/40)), the countdown `game_tick` steps once a
+second, and the sound streaming that shares `tick_timer`.
 
 ## Collisions
 

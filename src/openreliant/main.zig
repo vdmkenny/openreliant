@@ -3,10 +3,12 @@
 //! `resource.hog` and the texture cache from it as the game does. `openreliant install` installs
 //! the game's files from its discs; see `install.zig`.
 //!
-//! So far it shows a ship in space, drawn through Surrender's pipeline and its Direct3D driver with
-//! the GPU, or onto the software device, from the camera's views, which the game's camera keys pick
-//! and steer. Added for the port: F2 and F3 step back and forth through the ship types, Alt and
-//! Enter switch to the full screen and back, and Escape quits.
+//! So far it runs a sandbox of its own: the player's ship in space, the Reliant standing still
+//! ahead of it, and a wing of Coalition fighters flying at it, drawn through Surrender's pipeline
+//! and its Direct3D driver with the GPU, or onto the software device, from the camera's views,
+//! which the game's camera keys pick and steer. Added for the port: F2 and F3 start the sandbox
+//! again in the previous or next ship type, F4 brings another wing, Alt and Enter switch to the
+//! full screen and back, and Escape quits.
 
 const std = @import("std");
 const Io = std.Io;
@@ -273,9 +275,22 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     // The display's shapes, whose global palette the ships' schematics are drawn with too.
     const shapes = try spr.Sprite.parse(try resources.readFile(arena, game.hud.hardware_shapes));
     const global_palette = game.hud.globalPalette(shapes);
-    var ship = try Ship.load(&resources, &textures, ship_stats, &glows, global_palette, options.ship, &rand);
+    // The ship types' stats as `stats_load_ships` leaves them, and the objects as a mission's start
+    // does, every slot standing in; then the sandbox's own ships.
+    const tables = try arena.create(game.create.Stats);
+    tables.* = .initial;
+    tables.load(ship_stats);
+    var sandbox: Sandbox = try .init(gpa, tables, &rand, .{
+        .gpa = gpa,
+        .resources = &resources,
+        .textures = &textures,
+        .glows = &glows,
+        .light_sprites = try .load(&textures),
+        .global_palette = global_palette,
+    });
+    defer sandbox.deinit();
+    try sandbox.start(@intCast(options.ship));
     var player: engine.input.Player = .{};
-    defer ship.unload();
     var devices: engine.input.Devices = .{};
     // The game's settings file, which `load_key_config` reads the input settings from. If it's
     // missing, every setting keeps its default.
@@ -297,12 +312,13 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     // The mission's clocks, which `mission_run` zeroes before it loops.
     var clock: game.main.Clock = .{};
     clock.start(platform.window.ticks());
-    _ = view.setView(startingView(ship, view.cockpit_mode), 0, false, false, 0);
+    _ = view.setView(startingView(sandbox.player(), view.cockpit_mode), sandbox.objects.player, false, false, 0);
     // A screenshot waits for the chase view to settle, a tick a frame, and for the second frame,
     // which draws the sun by how much of it the first found showing.
     var frames_left: ?usize = null;
     if (options.screenshot != null) {
-        for (0..settling_frames) |_| _ = view.frame(.{ .object = ship.subject, .player = ship.subject, .ticks = 1 });
+        const subject = playerSubject(sandbox.player());
+        for (0..settling_frames) |_| _ = view.frame(.{ .object = subject, .player = subject, .ticks = 1 });
         frames_left = 2;
     }
 
@@ -315,7 +331,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         .gpa = arena,
         .target = undefined,
         .screen = .{ 0, 0 },
-        .ship = &ship,
+        .sandbox = &sandbox,
         .clock = &clock,
         .player = &player,
         .view = &view,
@@ -323,7 +339,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         .strings = &strings,
     };
     // What the mission's start fits the player's ship with, once `hud_init` has set the display up.
-    game.main.fitDevices(&display.state, @intCast(ship.ship_type), ship.can_cloak);
+    game.main.fitDevices(&display.state, sandbox.player_type, sandbox.canCloak());
 
     var scene: srcore.Scene = .{};
     defer scene.deinit(arena);
@@ -338,90 +354,71 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .controllers => connectController(arena, &devices, &controller, settings_file),
         };
         // The timer's ticks since the last pass, then a game tick for each, as `mission_run` paces
-        // them: the simulation steps on every fourth, reading the keyboard as it goes. A screenshot
-        // takes one tick a frame so that the camera settles the same way on every run.
+        // them: the simulation steps on every fourth, reading the keyboard as it goes, and runs the
+        // objects' updates. A screenshot takes one tick a frame so that the camera settles the same
+        // way on every run.
         const now = platform.window.nanoseconds();
         if (frames_left != null) clock.advanceBy(now / platform.window.tick_nanoseconds, 1) else clock.advanceToFine(now, platform.window.tick_nanoseconds);
         // While the communications window is open the keys 1 to 8 are its menu's.
         devices.keyboard.numbers_taken = display.state.windows.status.get(.comms).phase == .open;
-        while (clock.nextTick(&devices)) |stepped| {
-            if (!stepped) continue;
-            // What `simulation_step` runs in order: the orientation of the object whose turn it is
-            // is orthonormalized, each object's node update commits the place the previous step
-            // worked out and its shields recharge, then the player's orders, then the objects
-            // move. The sandbox has one object.
-            if (game.gameobj.nextTurn(&clock, 1) == ship.live.index) game.gameobj.orthonormalizeTurn(&ship.live.root);
-            game.gameobj.updateTree(&ship.live.root, &ship.object, null);
-            game.gameobj.rechargeShields(&ship.live, &ship.combat, player.shield_reserves);
-            engine.input.playerControls(&player, &devices, &ship.live, &ship.combat, view.view, clock.frame_duration);
-            game.motion.move(&ship.live, &ship.flight, view.view, .forward, &view.hit_shake);
-        }
+        const world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .view = view.view, .shake = &view.hit_shake };
+        while (clock.nextTick(&devices, world)) |_| {}
         clock.frameBegin();
         // Each frame, before anything is drawn, `mission_frame` has every object's frames drawn
         // between its last two places, as far into the step as the clock is, and the camera
-        // follows the root's.
-        const fraction = game.objects.stepFraction(&clock, options.smooth_motion);
-        if (ship.live.root.framePlace(fraction)) |drawn| ship.drawn = drawn;
-        ship.object.frame(fraction);
-        ship.object.place(ship.drawn.position, ship.drawn.orientation);
-        ship.subject.position = ship.drawn.position;
-        ship.subject.orientation = ship.drawn.orientation;
-        // The chase view sits farther back the more throttle the ship carries and swings against
-        // its rates of turn, so it lags a turn rather than riding rigidly behind the ship.
-        ship.subject.motion = .{
-            .ship_type = @intCast(ship.ship_type),
-            .throttle = ship.live.throttle,
-            .afterburner = ship.live.afterburner,
-            .pitch_rate = ship.live.pitch_rate,
-            .yaw_rate = ship.live.yaw_rate,
-            .roll_rate = ship.live.roll_rate,
-        };
+        // follows the player's.
+        game.main.frameObjects(sandbox.objects, game.objects.stepFraction(&clock, options.smooth_motion));
 
+        const ticks: u32 = @intCast(@max(clock.frame_duration, 0));
+        const at: u32 = @intCast(@max(clock.mission_ticks, 0));
         if (devices.keyboard.pressed(engine.input.scan.escape, .none, true)) return;
         for ([_]struct { u8, isize }{ .{ f2, -1 }, .{ f3, 1 } }) |step| {
             if (!devices.keyboard.pressed(step[0], .none, true)) continue;
-            // Types whose files the game lacks are passed over.
-            var candidate = ship.ship_type;
+            const was = sandbox.player_type;
+            var candidate: usize = was;
             while (true) {
                 candidate = nextShipType(candidate, step[1]);
-                if (candidate == ship.ship_type) break;
-                const next = Ship.load(&resources, &textures, ship_stats, &glows, global_palette, candidate, &rand) catch |err| {
+                // Types whose files the game lacks are passed over; with none to go to, the
+                // sandbox starts again as it was.
+                const next: u8 = @intCast(candidate);
+                sandbox.start(next) catch |err| {
+                    if (next == was) return err;
                     std.log.warn("ship type {d} left out: {s}", .{ candidate, @errorName(err) });
                     continue;
                 };
-                ship.unload();
-                ship = next;
-                game.main.fitDevices(&display.state, @intCast(ship.ship_type), ship.can_cloak);
-                // A ship of another size wants another view to be seen in.
-                _ = view.setView(startingView(ship, view.cockpit_mode), 0, false, true, @intCast(@max(clock.mission_ticks, 0)));
                 break;
             }
+            game.main.fitDevices(&display.state, sandbox.player_type, sandbox.canCloak());
+            // A ship of another size wants another view to be seen in.
+            _ = view.setView(startingView(sandbox.player(), view.cockpit_mode), sandbox.objects.player, false, true, at);
         }
+        if (devices.keyboard.pressed(f4, .none, true)) sandbox.bringWing();
 
         // `frame_controls` and the camera run once a frame, over the ticks the frame spans.
-        const ticks: u32 = @intCast(@max(clock.frame_duration, 0));
-        const at: u32 = @intCast(@max(clock.mission_ticks, 0));
-        view.frameControls(&devices, 0, ticks, at);
+        view.frameControls(&devices, sandbox.objects.player, ticks, at);
+        const slot = sandbox.player();
         // After the camera's keys, `frame_controls` reads the targeting keys, then its own.
         game.hud.targetKeys(&display.state, &devices, false);
-        engine.input.frameKeys(&display.state, &player, &devices, &ship.live, view.view, display.clock.game_ticks, false);
+        engine.input.frameKeys(&display.state, &player, &devices, &slot.object, view.view, display.clock.game_ticks, false);
         // What moves the cockpit's model: the ship's rates of turn over its full ones, and its
         // speed over its cruise speed.
-        const cockpit_input: ?camera.Cockpit.Input = if (ship.cockpit) |*cockpit| input: {
-            const live = &ship.live;
+        const cockpit_input: ?camera.Cockpit.Input = if (sandbox.cockpit) |*cockpit| input: {
+            const live = &slot.object;
+            const flight = slot.flight.?;
             const rates: [3]f32 = .{
-                live.pitch_rate / ship.flight.pitch_rate,
-                live.yaw_rate / ship.flight.yaw_rate,
-                live.roll_rate / ship.flight.roll_rate,
+                live.pitch_rate / flight.pitch_rate,
+                live.yaw_rate / flight.yaw_rate,
+                live.roll_rate / flight.roll_rate,
             };
-            const speed = live.speed / game.ai.cruiseSpeed(live, &ship.flight, view.view);
+            const speed = live.speed / game.ai.cruiseSpeed(live, flight, view.view);
             break :input game.main.cockpitInput(&cockpit.model, cockpit.source, rates, speed);
         } else null;
-        if (view.frame(.{ .object = ship.subject, .player = ship.subject, .ticks = ticks, .cockpit = cockpit_input, .random = &rand })) |next| {
-            _ = view.setView(next, 0, false, true, at);
+        const subject = playerSubject(slot);
+        if (view.frame(.{ .object = subject, .player = subject, .ticks = ticks, .cockpit = cockpit_input, .random = &rand })) |next| {
+            _ = view.setView(next, sandbox.objects.player, false, true, at);
         }
         // From its cockpit, the ship is not drawn, as `camera_set_view` sees to.
-        ship.object.hidden = view.inside(0);
+        slot.object.flags.hidden = view.inside(sandbox.objects.player);
 
         // The GPU draws at the display's own resolution; the software device at the window's size
         // in points, made again when it changes.
@@ -440,7 +437,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         context.camera = .{ .position = view.place.position, .orientation = view.place.orientation };
         context.projection = view.projection(size[0], size[1]);
         // The cockpit's model hangs from the camera, and the radar's backing stands on the radar.
-        if (ship.cockpit) |*cockpit| if (view.cockpit_place) |placed| game.main.placeCockpit(&cockpit.model, view.place, placed);
+        if (sandbox.cockpit) |*cockpit| if (view.cockpit_place) |placed| game.main.placeCockpit(&cockpit.model, view.place, placed);
         backing.place(context.projection, view.place, game.hud.scaleFor(size));
         _ = frame_arena.reset(.retain_capacity);
         display.target = screen.interface();
@@ -448,23 +445,19 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         display.last_view = last_view;
         display.cockpit_mode = view.cockpit_mode;
         try game.main.drawFrame(arena, frame_arena.allocator(), &scene, &context, .{
-            .models = (&ship.object)[0..1],
+            .objects = sandbox.objects,
             .space = space,
             .sky = sky,
             .view = view.view,
             .cockpit_mode = view.cockpit_mode,
             .last_view = last_view,
             .overlay = display.overlay(),
-            .cockpit = if (ship.cockpit) |*cockpit| &cockpit.model else null,
+            .cockpit = if (sandbox.cockpit) |*cockpit| &cockpit.model else null,
             .backing = backing,
             .kills_shown = devices.active(.display_kills, false),
             .attachments = .{
                 .camera = view.place.position,
                 .frame_start = clock.frame_start,
-                .blink_offset = ship.live.blink_offset,
-                // A ship's glows burn by the throttle of its last update, dimmed by the share of
-                // its engines still standing.
-                .throttle = ship.live.last_throttle * ship.live.engines_intact,
                 .random = &rand,
             },
         }, driver.interface());
@@ -484,15 +477,38 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     }
 }
 
+/// What the camera follows of the player's ship: where its root's frame has it drawn, its model's
+/// eye point and its size, and for the chase view its type, its throttle and its rates of turn.
+fn playerSubject(slot: *const game.create.Slot) camera.Subject {
+    const live = &slot.object;
+    const eye = if (slot.type) |loaded| loaded.model.header.eye else std.mem.zeroes(shp.Vec3);
+    return .{
+        .position = slot.drawn.position,
+        .orientation = slot.drawn.orientation,
+        .eye = .{ eye.x, eye.y, eye.z },
+        .radius = live.radius,
+        // The chase view sits farther back the more throttle the ship carries and swings against
+        // its rates of turn, so it lags a turn rather than riding rigidly behind the ship.
+        .motion = .{
+            .ship_type = @intCast(live.type),
+            .throttle = live.throttle,
+            .afterburner = live.afterburner,
+            .pitch_rate = live.pitch_rate,
+            .yaw_rate = live.yaw_rate,
+            .roll_rate = live.roll_rate,
+        },
+    };
+}
+
 /// The view a ship is shown in at first: view 0, as a mission's launch ends in, in `mode`. The
 /// chase mode sits a fixed distance behind, which the camera keeps per ship type, so a ship whose
 /// own radius is larger than that distance would not fit in it: the sandbox flies ships the game
 /// never gives the player. Those are shown in the external view, which orbits at a distance
 /// worked out from the ship's own size.
-fn startingView(ship: Ship, mode: camera.CockpitMode) camera.View {
+fn startingView(slot: *const game.create.Slot, mode: camera.CockpitMode) camera.View {
     if (mode != .chase) return .cockpit;
-    const behind = camera.Chase.offset(@intCast(ship.ship_type)).distance;
-    return if (ship.object.radius > behind) .external else .cockpit;
+    const behind = camera.Chase.offset(slot.object.type).distance;
+    return if (slot.object.radius > behind) .external else .cockpit;
 }
 
 /// Frames the chase view takes to settle, at a tick a frame.
@@ -508,12 +524,11 @@ fn save(io: Io, gpa: Allocator, path: []const u8, rgba: []const u8, size: [2]u32
     try writer.interface.flush();
 }
 
-/// The DirectInput scan codes of F2 and F3, which the original leaves unbound.
+/// The DirectInput scan codes of F2, F3 and F4, which the original leaves unbound.
 const f2 = 0x3C;
 const f3 = 0x3D;
+const f4 = 0x3E;
 
-/// A ship of a type, as `create_object` makes one: its model's meshes and its object's nodes, all
-/// in an arena of its own so that the next can take its place.
 /// The models an attachment point holds, read from the game's files as they are asked for and kept
 /// for the ship that mounts them: a ship of three of the same turret reads that turret once. It
 /// lives in the ship's own arena, so unloading the ship lets the lot go.
@@ -549,131 +564,216 @@ const Library = struct {
     }
 };
 
-const Ship = struct {
-    arena: std.heap.ArenaAllocator,
-    ship_type: usize,
-    object: game.objects.Model,
-    subject: camera.Subject,
-    /// Where the object's root frame has it drawn (`Node.framePlace`), which stays put between the
-    /// steps that move it.
-    drawn: game.objects.Model.Local = .{},
-    /// The live object the simulation flies, as `create_object` leaves one.
-    live: game.gameobj.GameObject,
-    /// Its type's flight stats, which `stats_load_ships` builds from `shipstats.bin`.
-    flight: game.create.FlightModel,
-    /// Its type's combat stats, which `stats_load_ships` builds from `shipstats.bin` too.
-    combat: game.create.ShipCombat,
-    /// Whether its model can cloak.
-    can_cloak: bool,
-    /// Its type's schematic, which the display's ship status indicator draws, where the game has
-    /// one.
-    schematic: ?game.hud.Art,
+/// The sandbox's mission: the objects, the ship types' tables and the models they loaded, and the
+/// cockpit the mission's start loads for the player's ship. Its ships are the player's, at the
+/// origin facing along Z, the Reliant standing still ahead of it, and a wing of Coalition fighters
+/// flying at it.
+const Sandbox = struct {
+    gpa: Allocator,
+    objects: *game.create.Objects,
+    tables: *game.create.Stats,
+    types: *TypeCache,
+    random: *engine.libcmt.Rand,
+    player_type: u8 = 0,
     /// The cockpit's frame model, for a ship the player can fly, which the view ahead from the
-    /// cockpit draws over the world; null for the rest.
-    cockpit: ?Cockpit,
+    /// cockpit draws over the world; null for the rest. It lives in an arena of its own, so that
+    /// another ship's can take its place.
+    cockpit: ?Cockpit = null,
+    cockpit_arena: std.heap.ArenaAllocator,
 
     const Cockpit = struct {
         source: *shp.Model,
         model: game.objects.Model,
     };
 
-    fn load(
-        resources: *game.bigfile.Hog,
-        textures: *srtexture.Table,
-        ship_stats: []align(1) const stats.Ship,
-        glows: *const game.environfx.Glows,
-        global_palette: ?*const [spr.palette_size]u8,
-        ship_type: usize,
-        random: *engine.libcmt.Rand,
-    ) !Ship {
-        if (ship_type >= ship_stats.len) return error.NoShipStats;
-        var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
-        errdefer arena.deinit();
-        const gpa = arena.allocator();
-        const model = try gpa.create(shp.Model);
-        model.* = try .parse(gpa, try resources.readFile(gpa, game.create.models.ship_types[ship_type].model.?));
-        const loaded = try gpa.create(game.srofiles.Loaded);
-        loaded.* = try game.srofiles.modelLoad(gpa, textures, model, .{}, false);
-        const library = try gpa.create(Library);
-        library.* = .{ .gpa = gpa, .resources = resources, .textures = textures };
-        var object: game.objects.Model = try .create(gpa, model, loaded, .{
-            .light_sprites = try .load(textures),
-            .glows = glows,
-            .mounts = library.mounts(),
-        });
-        game.gameobj.recentre(&object, model);
-        object.place(@splat(0), math.identity);
-        // `create_object` then starts each part's `startup` track.
-        game.create.startUp(&object);
-        // What `create_object` sets of a new object: undamaged, at rest, flying itself forward.
-        var live: game.gameobj.GameObject = std.mem.zeroes(game.gameobj.GameObject);
-        live.blink_offset = game.gameobj.blinkOffset(random);
-        live.root.orientation = math.identity;
-        live.root.next_orientation = math.identity;
-        live.speed_factor = 1;
-        live.armor_speed_factor = 1;
-        live.engines_intact = 1;
-        live.radius = object.radius;
-        const combat = game.create.shipCombat(ship_stats[ship_type]);
-        live.afterburner_fuel = combat.afterburner_fuel * 100;
-        live.countermeasures = game.gameobj.countermeasures_when_created;
-        // The power shared evenly, with the point at (1, 1) on the power ball, and the shields
-        // working fully.
-        live.power_setting = .{ .x = 1, .y = 1, .z = 1 };
-        live.gun_factor = 1;
-        live.shield_factor = 1;
-        live.shield_condition = 1;
-        live._unknown_754 = -1;
-        // Each quadrant's shields and armour, six times the type's figure, less one. The sandbox
-        // fits no guns, so the gun mode stays at nothing: `create_object` sets it by the groups of
-        // guns the ship's loadout gives it.
-        live.shields = @splat(@floatFromInt(6 * combat.shield_power - 1));
-        live.armor = @splat(@floatFromInt(6 * combat.armor_class - 1));
-        // Its guns full.
-        live.gun_charge = ship_stats[ship_type].gun_energy;
-        const schematic: ?game.hud.Art = if (game.create.models.ship_types[ship_type].schematic) |name| found: {
-            const bytes = resources.readFile(gpa, name) catch |err| {
-                std.log.warn("the schematic {s} is left out: {s}", .{ name, @errorName(err) });
-                break :found null;
-            };
-            break :found try .init(gpa, try spr.Sprite.parse(bytes), global_palette);
-        } else null;
-        // The cockpit the mission's start loads for a ship the player can fly.
-        const cockpit: ?Cockpit = if (game.main.playerShip(@intCast(ship_type))) |player| found: {
-            const source = try gpa.create(shp.Model);
-            source.* = shp.Model.parse(gpa, resources.readFile(gpa, player.cockpit) catch |err| {
-                std.log.warn("the cockpit {s} is left out: {s}", .{ player.cockpit, @errorName(err) });
-                break :found null;
-            }) catch |err| {
-                std.log.warn("the cockpit {s} is left out: {s}", .{ player.cockpit, @errorName(err) });
-                break :found null;
-            };
-            const built = try gpa.create(game.srofiles.Loaded);
-            built.* = try game.srofiles.modelLoad(gpa, textures, source, .{}, false);
-            break :found .{ .source = source, .model = try game.main.createCockpit(gpa, source, built) };
-        } else null;
+    /// The Reliant, which stands still where the sandbox starts it: ahead of the player and
+    /// turned across its way, beyond the wing.
+    const reliant_type = 0x0C;
+    const reliant_at: math.Vector = .{ 6000, -9000, 48000 };
+    const reliant_turn: f32 = 1.1;
+    /// A wing: four Sabres, `wing_ahead` in front of the player and `wing_spacing` apart, near
+    /// enough that their models are drawn: a fighter's last level of detail reaches 25000.
+    const wing_type = 0x2B;
+    const wing_size = 4;
+    const wing_ahead: f32 = 20000;
+    const wing_spacing: f32 = 3000;
+
+    fn init(gpa: Allocator, tables: *game.create.Stats, random: *engine.libcmt.Rand, types: TypeCache) !Sandbox {
+        const cache = try gpa.create(TypeCache);
+        errdefer gpa.destroy(cache);
+        cache.* = types;
         return .{
-            .arena = arena,
-            .ship_type = ship_type,
-            .live = live,
-            .cockpit = cockpit,
-            .flight = game.create.flightModel(ship_stats[ship_type]),
-            .combat = combat,
-            .can_cloak = model.header.flags.cloak,
-            .schematic = schematic,
-            .object = object,
-            .subject = .{
-                .position = @splat(0),
-                .orientation = math.identity,
-                .eye = .{ model.header.eye.x, model.header.eye.y, model.header.eye.z },
-                .radius = object.radius,
-                .motion = .{ .ship_type = @intCast(ship_type) },
-            },
+            .gpa = gpa,
+            .objects = try .create(gpa, random),
+            .tables = tables,
+            .types = cache,
+            .random = random,
+            .cockpit_arena = .init(std.heap.page_allocator),
         };
     }
 
-    fn unload(ship: *Ship) void {
-        ship.arena.deinit();
+    fn deinit(sandbox: *Sandbox) void {
+        sandbox.objects.destroy();
+        sandbox.types.deinit();
+        sandbox.gpa.destroy(sandbox.types);
+        sandbox.cockpit_arena.deinit();
+    }
+
+    fn player(sandbox: *Sandbox) *game.create.Slot {
+        return &sandbox.objects.slots[sandbox.objects.player];
+    }
+
+    /// Whether the player's ship can cloak: its model's flag.
+    fn canCloak(sandbox: *Sandbox) bool {
+        const loaded = sandbox.player().type orelse return false;
+        return loaded.model.header.flags.cloak;
+    }
+
+    /// Starts the mission again, as the game's does: every slot a stand-in, then the player in a
+    /// ship of `ship_type`, the Reliant and a wing. The types no object uses any more are let go.
+    /// Fails where the game has no model for the player's type.
+    fn start(sandbox: *Sandbox, ship_type: u8) !void {
+        sandbox.objects.reset(sandbox.random);
+        const index = try sandbox.create(ship_type, @splat(0));
+        if (sandbox.objects.slots[index].model == null) return error.NoModel;
+        if (sandbox.create(reliant_type, reliant_at)) |reliant| {
+            const slot = &sandbox.objects.slots[reliant];
+            game.objects.setOrientation(&slot.object, &slot.drawn, math.rotation(.y, reliant_turn));
+        } else |err| std.log.warn("the Reliant is left out: {s}", .{@errorName(err)});
+        sandbox.bringWing();
+        sandbox.types.sweep(&sandbox.objects.types);
+        if (sandbox.player_type != ship_type or sandbox.cockpit == null) try sandbox.loadCockpit(ship_type);
+        sandbox.player_type = ship_type;
+    }
+
+    fn create(sandbox: *Sandbox, ship_type: u32, at: math.Vector) game.create.Error!u16 {
+        return game.create.createObject(sandbox.objects, sandbox.tables, sandbox.types.interface(), null, ship_type, at, sandbox.random);
+    }
+
+    /// A wing of fighters `wing_ahead` in front of the player, side by side and facing it. The
+    /// orders that would fly them aren't ported yet (#32), so each is set going at its full
+    /// throttle, which carries it straight at where the player was. A wing past the last slot is
+    /// left out.
+    fn bringWing(sandbox: *Sandbox) void {
+        const root = sandbox.player().object.root;
+        const from = game.gameobj.vector(root.next_position);
+        const facing = math.product(root.next_orientation, math.rotation(.y, std.math.pi));
+        for (0..wing_size) |place| {
+            const across = (@as(f32, @floatFromInt(place)) - @as(f32, wing_size - 1) / 2) * wing_spacing;
+            const at = from + math.transform(root.next_orientation, .{ across, 0, wing_ahead });
+            const index = sandbox.create(wing_type, at) catch |err| {
+                std.log.warn("the wing is left out: {s}", .{@errorName(err)});
+                return;
+            };
+            const slot = &sandbox.objects.slots[index];
+            game.objects.setOrientation(&slot.object, &slot.drawn, facing);
+            slot.object.throttle = 1;
+        }
+    }
+
+    /// The cockpit the mission's start loads for a ship the player can fly.
+    fn loadCockpit(sandbox: *Sandbox, ship_type: u8) !void {
+        sandbox.cockpit = null;
+        _ = sandbox.cockpit_arena.reset(.free_all);
+        const player_ship = game.main.playerShip(ship_type) orelse return;
+        const gpa = sandbox.cockpit_arena.allocator();
+        const source = try gpa.create(shp.Model);
+        const bytes = sandbox.types.resources.readFile(gpa, player_ship.cockpit) catch |err| {
+            std.log.warn("the cockpit {s} is left out: {s}", .{ player_ship.cockpit, @errorName(err) });
+            return;
+        };
+        source.* = shp.Model.parse(gpa, bytes) catch |err| {
+            std.log.warn("the cockpit {s} is left out: {s}", .{ player_ship.cockpit, @errorName(err) });
+            return;
+        };
+        const built = try gpa.create(game.srofiles.Loaded);
+        built.* = try game.srofiles.modelLoad(gpa, sandbox.types.textures, source, .{}, false);
+        sandbox.cockpit = .{ .source = source, .model = try game.main.createCockpit(gpa, source, built) };
+    }
+};
+
+/// The ship types' models, read from the game's files as `create_object` asks for them, each with
+/// what it mounts and its schematic, in an arena of its own that is let go once no object is of
+/// the type.
+const TypeCache = struct {
+    gpa: Allocator,
+    resources: *game.bigfile.Hog,
+    textures: *srtexture.Table,
+    glows: *const game.environfx.Glows,
+    light_sprites: game.objects.LightSprites,
+    global_palette: ?*const [spr.palette_size]u8,
+    loaded: [game.create.ship_type_count]?*Cached = @splat(null),
+    /// Types whose files the game lacks, looked for once.
+    missing: std.StaticBitSet(game.create.ship_type_count) = .initEmpty(),
+
+    const Cached = struct {
+        arena: std.heap.ArenaAllocator,
+        type: game.create.Type,
+        library: Library,
+        /// The schematic the display's ship status indicator draws, where the game has one.
+        schematic: ?game.hud.Art,
+    };
+
+    fn interface(cache: *TypeCache) game.create.Types {
+        return .{ .context = cache, .load = load };
+    }
+
+    fn load(context: *anyopaque, ship_type: u8) ?*const game.create.Type {
+        const cache: *TypeCache = @ptrCast(@alignCast(context));
+        if (cache.loaded[ship_type]) |cached| return &cached.type;
+        if (cache.missing.isSet(ship_type)) return null;
+        const cached = cache.build(ship_type) catch |err| {
+            std.log.warn("ship type {d} has no model: {s}", .{ ship_type, @errorName(err) });
+            cache.missing.set(ship_type);
+            return null;
+        };
+        cache.loaded[ship_type] = cached;
+        return &cached.type;
+    }
+
+    fn build(cache: *TypeCache, ship_type: u8) !*Cached {
+        const name = game.create.models.ship_types[ship_type].model orelse return error.NoModel;
+        const cached = try cache.gpa.create(Cached);
+        errdefer cache.gpa.destroy(cached);
+        cached.arena = .init(std.heap.page_allocator);
+        errdefer cached.arena.deinit();
+        const gpa = cached.arena.allocator();
+        const model = try gpa.create(shp.Model);
+        model.* = try .parse(gpa, try cache.resources.readFile(gpa, name));
+        const loaded = try gpa.create(game.srofiles.Loaded);
+        loaded.* = try game.srofiles.modelLoad(gpa, cache.textures, model, .{}, false);
+        cached.library = .{ .gpa = gpa, .resources = cache.resources, .textures = cache.textures };
+        cached.schematic = if (game.create.models.ship_types[ship_type].schematic) |file| found: {
+            const bytes = cache.resources.readFile(gpa, file) catch |err| {
+                std.log.warn("the schematic {s} is left out: {s}", .{ file, @errorName(err) });
+                break :found null;
+            };
+            break :found try .init(gpa, try spr.Sprite.parse(bytes), cache.global_palette);
+        } else null;
+        cached.type = .{ .model = model, .loaded = loaded, .effects = .{
+            .light_sprites = cache.light_sprites,
+            .glows = cache.glows,
+            .mounts = cached.library.mounts(),
+        } };
+        return cached;
+    }
+
+    /// Lets go of each type no object is of any more.
+    fn sweep(cache: *TypeCache, uses: *const [game.create.ship_type_count]game.create.TypeUse) void {
+        for (&cache.loaded, uses) |*held, use| {
+            const cached = held.* orelse continue;
+            if (use.objects > 0) continue;
+            cached.arena.deinit();
+            cache.gpa.destroy(cached);
+            held.* = null;
+        }
+    }
+
+    fn deinit(cache: *TypeCache) void {
+        for (cache.loaded) |held| if (held) |cached| {
+            cached.arena.deinit();
+            cache.gpa.destroy(cached);
+        };
     }
 };
 
@@ -695,7 +795,8 @@ const Display = struct {
     last_view: camera.View = .cockpit,
     /// What the cockpit view shows, which leaves the reticle out of the chase view.
     cockpit_mode: camera.CockpitMode = .cockpit,
-    ship: *Ship,
+    /// The sandbox, whose player's ship the display shows.
+    sandbox: *Sandbox,
     clock: *const game.main.Clock,
     player: *const engine.input.Player,
     /// The camera, whose shake shakes the power ball too.
@@ -725,7 +826,7 @@ const Display = struct {
     /// What `hud_draw` draws, in its order.
     fn drawShapes(display: *Display) (spr.Error || Allocator.Error)!void {
         const frame_duration = display.clock.frame_duration;
-        const live = &display.ship.live;
+        const live = &display.sandbox.player().object;
         const white: [4]f32 = .{ 1, 1, 1, 1 };
         const scale = game.hud.scaleFor(display.screen);
         const state = &display.state;
@@ -758,7 +859,10 @@ const Display = struct {
     /// What `hud_draw` draws only in the view ahead from the cockpit.
     fn drawInstruments(display: *Display, white: [4]f32, scale: f32) (spr.Error || Allocator.Error)!void {
         const frame_duration = display.clock.frame_duration;
-        const live = &display.ship.live;
+        const slot = display.sandbox.player();
+        const live = &slot.object;
+        const flight = slot.flight orelse return;
+        const combat = slot.combat orelse return;
         const state = &display.state;
         for ([_]game.hud.Readout{ .fuel, .skull, .coil }) |readout| {
             if (!state.shows(readout, frame_duration)) continue;
@@ -770,16 +874,16 @@ const Display = struct {
             };
             try readout.draw(&display.art, &display.font, display.gpa, display.target, display.screen, value, white, scale);
         }
-        if (display.ship.schematic) |*schematic| {
-            try game.hud.ShipStatus.drawSchematic(schematic, display.ship.arena.allocator(), display.target, display.screen, white, scale);
-        }
-        try game.hud.ShipStatus.draw(&display.art, display.gpa, display.target, display.screen, live.shields, display.ship.combat.shield_power, display.player.shield_reserves, white, scale);
+        if (display.sandbox.types.loaded[display.sandbox.player_type]) |cached| if (cached.schematic) |*schematic| {
+            try game.hud.ShipStatus.drawSchematic(schematic, cached.arena.allocator(), display.target, display.screen, white, scale);
+        };
+        try game.hud.ShipStatus.draw(&display.art, display.gpa, display.target, display.screen, live.shields, combat.shield_power, display.player.shield_reserves, white, scale);
         try game.hud.drawCluster(&display.art, &display.font, display.gpa, display.target, display.screen, .{
             .throttle = live.throttle,
             .speed = live.speed,
-            .max_speed = display.ship.flight.max_speed,
+            .max_speed = flight.max_speed,
             .charge = live.gun_charge,
-            .full_charge = display.ship.combat.gun_energy,
+            .full_charge = combat.gun_energy,
         }, white, scale);
         try game.hud.drawRadar(&display.art, display.gpa, display.target, display.screen, state.radar_rings, white, scale);
         game.hud.stepRadarZoom(state, display.clock.game_ticks);

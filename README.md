@@ -24,10 +24,11 @@ support or condone piracy.
 
 ## Status
 
-OpenReliant is in early development. Right now you can fly any ship from the game around an empty
-area of space, with the game's starfield, nebula and sun, with the keyboard, a joystick or a
-gamepad. The flight model, throttle, afterburner and camera views (keys 1 to 8) are ported,
-including the cockpit view with the ship's cockpit model. Press F2 and F3 to switch ships.
+OpenReliant is in early development. Right now you can fly any ship from the game, with the
+keyboard, a joystick or a gamepad, in a sandbox with the game's starfield, nebula and sun: the
+Reliant stands by, and a wing of Coalition fighters flies at you. The flight model, throttle,
+afterburner and camera views (keys 1 to 8) are ported, including the cockpit view with the ship's
+cockpit model. Press F2 and F3 to switch ships, and F4 for another wing.
 
 Parts of the HUD work: the targeting cluster, radar, status lights, readouts, and the ECM, spectral
 shield and blind fire toggles. The HUD panels (gunnery, damage, power and so on) open and close

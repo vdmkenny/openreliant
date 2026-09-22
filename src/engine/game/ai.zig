@@ -64,6 +64,29 @@ test {
     std.testing.refAllDecls(@This());
 }
 
+/// `object_set_targetable` (`0x00401830`): sets or clears the object's `targetable` flag, which
+/// stays clear for an object with no stats or of a type that can't be targeted
+/// (`ShipCombat.Targeting`). **Unverified:** it lies before this file's known code.
+pub fn setTargetable(object: *gameobj.GameObject, combat: ?*const create.ShipCombat, targetable: bool) void {
+    const allowed = if (combat) |stats| stats.targeting.targetable else false;
+    object.flags.targetable = targetable and allowed;
+}
+
+test setTargetable {
+    var object = gameobj.testing.object();
+    var combat = std.mem.zeroes(create.ShipCombat);
+    setTargetable(&object, &combat, true);
+    try std.testing.expect(!object.flags.targetable);
+    combat.targeting.targetable = true;
+    setTargetable(&object, &combat, true);
+    try std.testing.expect(object.flags.targetable);
+    setTargetable(&object, &combat, false);
+    try std.testing.expect(!object.flags.targetable);
+    object.flags.targetable = true;
+    setTargetable(&object, null, true);
+    try std.testing.expect(!object.flags.targetable);
+}
+
 /// The view `object_cruise_speed` leaves a ship its undamaged speed in, whatever its armor.
 const full_speed_view: camera.View = @enumFromInt(13);
 

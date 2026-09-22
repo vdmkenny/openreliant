@@ -192,6 +192,37 @@ pub const Node = extern struct {
     }
 };
 
+/// `object_set_position` (`0x0049B600`): places the object's root at `at`: its frame, which the
+/// port keeps as `frame` (`frameTree`), where it is and where it goes next, so that it doesn't
+/// move from where it was. The game also sets the two places a multiplayer game draws another
+/// player's ship between (`+0x768`, `+0x798`), which the port doesn't keep (#55).
+/// **Unverified:** it and the functions after it lie after this file's known code, before
+/// `particles.cpp`'s.
+pub fn setPosition(object: *GameObject, frame: *Model.Local, at: Vector) void {
+    const position = gameobj.vec3(at);
+    frame.position = at;
+    object.root.next_position = position;
+    object.root.position = position;
+}
+
+/// `object_set_orientation` (`0x0049B650`): turns the object's root to `orientation`, as
+/// `setPosition` places it.
+pub fn setOrientation(object: *GameObject, frame: *Model.Local, orientation: math.Matrix) void {
+    frame.orientation = orientation;
+    object.root.next_orientation = orientation;
+    object.root.orientation = orientation;
+}
+
+/// `node_tree_frames` (`0x0049A880`) for an object, once a frame before it is drawn and before the
+/// camera's frame: its root's frame (`Node.framePlace`), which `drawn` keeps, then each of its
+/// part nodes' (`Model.frame`), and the model placed where the root's frame has it.
+pub fn frameTree(root: *Node, model: ?*Model, drawn: *Model.Local, fraction: f32) void {
+    if (root.framePlace(fraction)) |place| drawn.* = place;
+    const parts = model orelse return;
+    parts.frame(fraction);
+    parts.place(drawn.position, drawn.orientation);
+}
+
 /// The light mask `node_add_part` gives a part's Surrender object: a light reaches the object unless
 /// their masks share a bit (`docs/engine/rendering.md`).
 pub fn lightMask(model_lists_components: bool) u32 {
@@ -207,8 +238,6 @@ pub fn lightMask(model_lists_components: bool) u32 {
 /// animation a node's track holds (`node_animate`); what `node_add_part` mounts on the attachment
 /// points besides the lights and the engine glows.
 pub const Model = struct {
-    /// The object's `hidden` flag: none of its parts is drawn.
-    hidden: bool = false,
     /// The root's place (`object_set_position`, `object_set_orientation`).
     position: Vector = @splat(0),
     orientation: math.Matrix = math.identity,
@@ -221,6 +250,8 @@ pub const Model = struct {
     /// Where the model's origin lies from the object's, less (`GameObject + 0x524`): the centres
     /// of mass `recentre` moved the origin to.
     centre: Vector = @splat(0),
+    /// The sum of its shown parts' masses (`GameObject.mass`), as `recentre` leaves it.
+    mass: f32 = 0,
     /// Its farthest vertex from its origin, and its bounding box (`GameObject.radius`,
     /// `bounds_min`, `bounds_max`), as `recentre` leaves them.
     radius: f32 = 0,
@@ -496,7 +527,9 @@ pub const Model = struct {
 
     /// A node for each part of `model` (`node_add_part`, `0x00499430`), its object flagged as
     /// `model_load` left the part (`loaded`), reached by the lights `lightMask` lets through, and as
-    /// far across as its largest level. A part of a component's damaged model is hidden.
+    /// far across as its largest level. A part of a component's damaged model is hidden. The parts
+    /// hang from nothing yet: `gameobj.linkParts` hangs them, once whatever the model plays from
+    /// the start is playing (`create_object`).
     pub fn create(gpa: Allocator, model: *const shp.Model, loaded: *const srofiles.Loaded, effects: Effects) Allocator.Error!Model {
         return build(gpa, model, loaded, effects, 0);
     }
@@ -535,7 +568,6 @@ pub const Model = struct {
         const order = try linkOrder(gpa, model);
         errdefer gpa.free(order);
         var built: Model = .{ .parts = parts, .order = order, .lights = &.{}, .glows = &.{}, .mounts = &.{} };
-        for (order) |index| gameobj.linkPart(&built, index);
         const lights = try createLights(gpa, model, effects.light_sprites);
         errdefer gpa.free(lights);
         const glows = try createGlows(gpa, model, effects.glows);
@@ -825,8 +857,9 @@ pub const Model = struct {
                     .orientation = attachment.orientation,
                     .model = try build(gpa, mounted.model, mounted.loaded, effects, depth + 1),
                 });
-                // A mounted model stands on its own centre of mass, as an object of its own does.
-                gameobj.recentre(&made.items[made.items.len - 1].model, mounted.model);
+                // A mounted model's parts hang as an object's own do, and it stands on its own
+                // centre of mass.
+                gameobj.linkParts(&made.items[made.items.len - 1].model, mounted.model);
             }
         }
         return made.toOwnedSlice(gpa);
@@ -860,18 +893,19 @@ pub const Model = struct {
     }
 
     /// Adds each shown part's object to `layer`, the world's or, for a cockpit, the overlay
-    /// (`node_draw`, `0x0049A8C0`, for the model's part nodes), none while the object is hidden,
-    /// then the lights and the engine glows its shown parts carry.
-    /// Not yet ported: the cloak, the nodes of kinds 4 and 6, and its leaving out an object too far
-    /// away to see.
+    /// (`node_draw`, `0x0049A8C0`, for the model's part nodes), then the lights, unless the view
+    /// leaves them out, and the engine glows its shown parts carry. Nothing, for an object too far
+    /// off to see.
+    ///
+    /// Not yet ported: the cloak, and the nodes of kinds 4 and 6.
     pub fn draw(model: *Model, gpa: Allocator, scene: *srcore.Scene, layer: srcore.Layer, view: View) Allocator.Error!void {
-        if (model.hidden) return;
         if (view.tooFarOff(model.position, model.radius * model.visibility)) return;
         for (model.parts) |*part| {
             if (part.hidden) continue;
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &part.object }, layer);
         }
         for (model.lights) |*light| {
+            if (!view.lights) break;
             // A light goes dark with the part that carries it, as a damaged part's does while the
             // part it belongs to is whole.
             if (model.parts[light.part].hidden) continue;
@@ -952,6 +986,9 @@ pub const View = struct {
     /// The object's own offset into its lights' blinks (`GameObject.blink_offset`), which the
     /// lights of what it mounts share.
     blink_offset: i16 = 0,
+    /// Whether its lights are drawn: `DisableLights` puts them out, for which `mission_frame` hands
+    /// `node_draw` flag 8, which leaves out the nodes of kind 4 attachments.
+    lights: bool = true,
     /// How hard the object is burning, between -1 and 1, which is how far its engine glows reach.
     /// `object_draw` is given the throttle of its last update, dimmed by the share of its engines
     /// still standing.
@@ -1104,12 +1141,24 @@ const faded_at: f32 = 15000;
 const faded: f32 = 0.1;
 const grown_at: f32 = 6000;
 
+/// Hangs each part of `model` from its parent as `gameobj.linkParts` does, leaving its origin
+/// where it is.
+fn testingLink(model: *Model) void {
+    for (0..model.parts.len) |index| gameobj.linkPart(model, index);
+}
+
 /// A part record for the tests: nothing in it but an orientation, which every model's part has.
 fn testingPart() shp.PartData {
     var data = std.mem.zeroes(shp.PartData);
     data.part.orientation = math.identity;
     return data;
 }
+
+/// Fixtures for the tests here and in the modules that build models.
+pub const testing = struct {
+    /// A part with no mesh, no mass and no tracks, standing unturned at the model's origin.
+    pub const part = testingPart;
+};
 
 test "Node.commitNext" {
     var node: Node = std.mem.zeroes(Node);
@@ -1209,11 +1258,10 @@ test Model {
     try std.testing.expectEqual(0, scene.layers.get(.world).items.len);
     parts[0].hidden = false;
 
-    // Hidden, as from its own cockpit, it adds nothing.
+    // With its lights out, the part alone.
     scene.clear();
-    model.hidden = true;
-    try model.draw(gpa, &scene, .world, .{});
-    try std.testing.expectEqual(0, scene.layers.get(.world).items.len);
+    try model.draw(gpa, &scene, .world, .{ .lights = false });
+    try std.testing.expectEqual(1, scene.layers.get(.world).items.len);
 }
 
 test lightColour {
@@ -1335,6 +1383,7 @@ test "a model's lights: their sprites, and the light a blinking one casts" {
     var lamp: srtexture.Image = .{ .levels = &.{} };
     var built: Model = try .create(gpa, &model, &loaded, .{ .light_sprites = .{ .flare = &flare, .lamp = &lamp } });
     defer built.deinit(gpa);
+    testingLink(&built);
 
     // Sprites for the two with a width, sorting nearer by their width; the lamp drawn with its
     // own image, the flare with the set's.
@@ -1491,6 +1540,7 @@ test "a part hangs from the part it names" {
     const loaded: srofiles.Loaded = .{ .parts = &loaded_parts };
     var model: Model = try .create(gpa, &source, &loaded, .{});
     defer model.deinit(gpa);
+    testingLink(&model);
 
     // Each hangs from the part it names, and stands at its origin in that part.
     try std.testing.expectEqual(@as(?usize, 1), model.parts[0].parent);
@@ -1578,6 +1628,7 @@ test "a gun attachment mounts the model its id names" {
         .mounts = .{ .context = &answer, .load = Answer.load },
     });
     defer built.deinit(gpa);
+    testingLink(&built);
 
     // Only the gun is mounted; the missile attachment mounts nothing and is not even looked for.
     try std.testing.expectEqual(1, built.mounts.len);
@@ -1618,6 +1669,7 @@ test "a gun attachment mounts the model its id names" {
         .mounts = .{ .context = &circle, .load = Circle.load },
     });
     defer deep.deinit(gpa);
+    testingLink(&deep);
     var depth: usize = 0;
     var at = &deep;
     while (at.mounts.len > 0) : (depth += 1) at = &at.mounts[0].model;
@@ -1713,6 +1765,7 @@ test "Model.animate" {
     animated.init(&mesh, &tracks);
     var model: Model = try .create(gpa, &animated.source, &animated.loaded, .{});
     defer model.deinit(gpa);
+    testingLink(&model);
 
     const a = &model.parts[1].animation;
     // Before the first keyframe it moves from no pose at time zero; between two, in a straight
@@ -1746,6 +1799,7 @@ test "Model.placeFor" {
     animated.data[1].part.mount_point = .{ .x = 10, .y = 0, .z = 0 };
     var model: Model = try .create(gpa, &animated.source, &animated.loaded, .{});
     defer model.deinit(gpa);
+    testingLink(&model);
 
     // With no pose it stands at its origin in its parent, unturned.
     const rest = model.placeFor(1, .{});
@@ -1774,6 +1828,7 @@ test "a part's first track poses it where it is linked" {
     animated.init(&mesh, &tracks);
     var model: Model = try .create(gpa, &animated.source, &animated.loaded, .{});
     defer model.deinit(gpa);
+    testingLink(&model);
     // It stands drawn back from the start, with nothing pending, and plays nothing.
     try std.testing.expectEqual(@as(Vector, .{ 0, 0, 40 }), model.parts[1].origin);
     try std.testing.expect(!model.parts[1].animation.pending and !model.parts[1].animation.animating);
@@ -1794,6 +1849,7 @@ test "Model.play" {
     animated.init(&mesh, &tracks);
     var model: Model = try .create(gpa, &animated.source, &animated.loaded, .{});
     defer model.deinit(gpa);
+    testingLink(&model);
     const a = &model.parts[1].animation;
 
     // `create_object` plays the `startup` track, whatever its case, as it says, at 4 a step, and
@@ -1847,6 +1903,7 @@ test "a track plays once, round and round, and back and forth" {
     animated.init(&mesh, &tracks);
     var model: Model = try .create(gpa, &animated.source, &animated.loaded, .{});
     defer model.deinit(gpa);
+    testingLink(&model);
     const a = &model.parts[1].animation;
     var root = std.mem.zeroes(Node);
     var fired: Fired = .{};
@@ -1913,6 +1970,7 @@ test "Model.frame" {
     animated.init(&mesh, &tracks);
     var model: Model = try .create(gpa, &animated.source, &animated.loaded, .{});
     defer model.deinit(gpa);
+    testingLink(&model);
     var root = std.mem.zeroes(Node);
     const part = &model.parts[1];
     const linked = part.origin;
@@ -1963,12 +2021,10 @@ test "Node.framePlace" {
 
 test stepFraction {
     var clock: Clock = .{};
-    var devices: @import("../input.zig").Devices = .{};
     clock.start(0);
     // A frame two ticks into a step, and three quarters of the way through the next tick.
     clock.advanceToFine(275, 100);
-    _ = clock.runTicks(&devices);
-    try std.testing.expectEqual(2, clock.simulation_counter);
+    clock.simulation_counter = 2;
     try std.testing.expectEqual(0.5, stepFraction(&clock, false));
     try std.testing.expectEqual(0.6875, stepFraction(&clock, true));
     // Paused, nothing moves, so the time past the tick doesn't count.

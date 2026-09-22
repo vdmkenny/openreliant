@@ -1,9 +1,12 @@
 //! `C:\lancer\game\pilots.cpp`: pilots. `stats_load_pilots` (`0x0049CAE0`) fills `pilot_stats` from
-//! `pilotstats.bin`, [`formats/stats.zig`](../../formats/stats.zig). **Unverified:** the loader
-//! lies between `particles.cpp`'s code and this file's.
+//! `pilotstats.bin`, [`formats/stats.zig`](../../formats/stats.zig), and `object_set_pilot`
+//! (`0x0049CCE0`) gives an object its pilot. **Unverified:** the two lie between `particles.cpp`'s
+//! code and this file's.
 
 const std = @import("std");
 const assert = std.debug.assert;
+
+const GameObject = @import("gameobj.zig").GameObject;
 
 /// One pilot of `pilot_stats`. The loader fills every slot with defaults, then applies the
 /// records: each tier field sets a group of these, in `formats/stats.zig`'s preset tables.
@@ -30,4 +33,11 @@ pub const Pilot = extern struct {
 
 test {
     std.testing.refAllDecls(@This());
+}
+
+/// `object_set_pilot` (`0x0049CCE0`): gives the object pilot `pilot`, a record of `pilot_stats`.
+/// The game points the object at the record and at the pilot's entry of a table at `0x005048D8`
+/// as well (`GameObject.pilot_stats`, `pilot_record`); the port looks the pilot up by number.
+pub fn setPilot(object: *GameObject, pilot: i32) void {
+    object.pilot = pilot;
 }

@@ -9,10 +9,25 @@ ghidra-annotate` applies them to the Ghidra project with the names used here.
 
 ## The object array
 
-`game_objects` (`0x587CE0`) holds 400 object pointers, which the engine calls the GO array. A
-mission ship's object is in the slot of its index among the mission's ship records, and
-`player_index` (`0x5883FA`) is the slot of the player's own. `create_object` (`0x00466C10`) fills a
-slot, stopping the game with a fatal error past the last slot or for a slot filled already.
+`game_objects` (`0x587CE0`) holds 400 object pointers, which the engine calls the GO array. No
+slot is ever empty. As a mission starts, `objects_reset` (`0x00466630`) gives every slot a
+stand-in of type 1001, flagged `stand_in` and not created, sets `game_object_count` (`0x539AA0`) to
+0, and forgets every ship type's objects and model. `create_object` (`0x00466C10`) fills a slot:
+the one it is given, such as a mission ship's index among the mission's ship records, or for -1 the
+next, which counts `game_object_count` up. It stops the game with a fatal error past the last slot
+or for a slot filled already. `object_reset` (`0x004688B0`) pops a slot's orders and puts a new
+stand-in in it, flagged `0x3C`.
+
+`player_slots` (`0x58832C`) counts the slots from the first that belong to players, one in a
+single-player game, and `player_index` (`0x5883FA`) is the player's own, the first in a
+single-player game.
+
+Every loop over the objects walks the slots from the first up to `game_object_count`, then the
+cutaway slot (`0x57E04E`), which the mission's start sets to 399, the last, reading the count afresh
+at every slot. The loops pass over objects by their flags: the simulation's updates and
+`objects_update` skip `stand_in` and `disabled` ones, and `mission_frame`'s framing and drawing
+`jumping` ones as well. **Improvement:** with every slot handed out, the cutaway slot comes round
+again and again, and the game's loops never end; the port walks it once.
 
 | Offset | Size | Field |
 |---|---|---|
@@ -33,8 +48,11 @@ slot, stopping the game with a fatal error past the last slot or for a slot fill
 | `0x5F0` | 16 | Shields: four values, each `6 * shield_power - 1` when created |
 | `0x600` | 16 | Armor: four values, each `6 * armor_class - 1` when created |
 | `0x634` | 2 | Where its lights stand in their [blinks](rendering.md#static-lights), in ticks added to the mission's clock: `rand()` over its largest value, times 100 and truncated, when allocated (`object_alloc`, `0x00475DD0`) |
-| `0x644` | 4 | Nonzero while hostile: `SetHostile` |
+| `0x618` | 8 | The slots of two objects it passes through: the collision sweep tests no pair where either names the other. -1 when created |
+| `0x644` | 4 | Its side: 0 friendly, 1 hostile, 2 neutral. Its type's when created; `SetHostile` makes it hostile or friendly |
 | `0x664` | 4 | The shields' condition, how well they [recharge](#shields) as the armor wears: 1.0 when created |
+| `0x668` | 4 | The cruise speed's condition, which `object_cruise_speed` scales the speed by: 1.0 when created |
+| `0x66C` | 4 | The guns' condition: 1.0 when created. The guns recharge by it, and below 0.9 each shot goes off only as often as it plus a tenth (`guns_step`, `0x004770E0`) |
 | `0x680` to `0x697` | | Its [orders](orders.md): the stack and what the current order keeps, the damage it has taken lately and its last attacker |
 | `0x728` | 12 | The [power distribution](controls.md#the-power-distribution)'s point on the power ball: (1, 1, 1) when created |
 | `0x734` | 4 | The guns' share of the power as a factor on how fast they recharge: 1.0 when created |
@@ -46,8 +64,68 @@ slot, stopping the game with a fatal error past the last slot or for a slot fill
 | `0xB94` | 1 | Set once `create_object` has filled the slot |
 | `0xB95` | 1 | Nonzero while invulnerable: `SetInvulnerability` |
 
-A few types take their stats from another type when created, keeping some combat fields of their
-own.
+## Creating an object
+
+`create_object(slot, type, tier, x, y, z)` fills the slot's object and returns the slot. It clears
+the flags and sets the object up at rest at the place given, facing along the world's Z axis, with
+no orders and no attacker, `motion_forward` as its motion, its armor whole and its own seed drawn
+from `rand()`. A type above 255 stops there, as a stand-in for a marker or a nav point: flagged
+`0x3C`, with a radius of 4000 and no shields or armor.
+
+A few types are another ship under a number of their own: the Krasnaya (`0x35`, `0xDB` and `0xDC`,
+for `0x78`), the Kiev (`0x36`, `0x40`, `0xDD` and `0xDE`, for `0xC2`), the Mitchell (`0xA0`, for
+`0x13`), the Zakov (`0xA1`, `0xA2` and `0xE2`, for `0xB0`), the Kestrel (`0xDA`, for `0x0F`) and the
+Mammoth (`0xE3` to `0xEF`, for `0x21`). Such a type takes the other's flight model and combat stats
+into its own entries, keeping its gun groups and its name, and its object takes the other's number
+once it is made.
+
+The object points at its type's stats and takes the type's side from them. The type's model is
+loaded with its first object (`ship_type_load`, `0x00466740`), with the type's schematic as its
+data. Each part of the model gets a node that plays its `startup` track from the start at 4 a step;
+a part of class 6 gives the object `shield_generator`, one of class 5 counts as an engine, and an
+attachment of kind 6 sets flag `0x2000000`. The parts are then linked, each posed as its track has
+it at the start, and the object's origin moves to their centre of mass (`object_link_parts`). A
+piece of debris takes a tenth of its mass, and a mine a radius of 2000.
+
+Then come the pilot, record 66 of `pilotstats.bin` for the Coalition's types and 0 for the rest;
+each quadrant's shields and armor full, `6 * shield_power - 1` and `6 * armor_class - 1`, and the
+conditions that armor gives ([Shields](#shields)); for a model that lists no components the
+shield's effect and, in every slot past the players', the `ecm` flag, and for one that does, the
+`components` and `attached` flags; the afterburner's fuel, `100 * afterburner_fuel`, and 29
+countermeasures; the power shared evenly; the guns charged to `gun_energy`, their groups and the
+gun mode; the loadout; and `targetable`, where the type allows it. Capital ships, planets, gates,
+asteroids and a few other types get more set up for their kind.
+
+The words of each `ship_combat_stats` entry from `+0x1C` on come from the executable rather than
+from `shipstats.bin`: the gun groups, which the gun code fills in at run time (`gun_groups_build`,
+`0x004667F0`), then whether the type can be targeted, the string that names it, its class and its
+side. `make combat-tables` transcribes them into
+[`create/combat.zig`](../../src/engine/game/create/combat.zig).
+
+| Class | What it is |
+|---|---|
+| 1 | Fighters: the player's ships, their twins, and the Coalition's fighters |
+| 2 | Capital ships and their wrecks, and other large bodies such as asteroids |
+| 3 | Bombers, transports, tugs, escape pods and some stations |
+| 4 | Gates, containers, satellites, beacons, pods, rock chunks and the like |
+| 5 | Torpedoes |
+| 6 | Debris |
+| 7 | The proximity mine |
+| 8 | Planets |
+
+A type's side is 0 for the Alliance's, which start friendly, 1 for the Coalition's, which start
+hostile, and 2 for the rest, which are neutral. Two objects on different sides are enemies.
+
+[`create.zig`](../../src/engine/game/create.zig) ports `create_object` as `createObject`, and
+`Objects` is the port's GO array: each slot the object's record, and what the port keeps beside it
+where the record holds the original's pointers. Not ported yet: the tier, which chooses the guns;
+the guns and their groups, the loadout and its pods
+([#131](https://github.com/vdmkenny/openreliant/issues/131),
+[#38](https://github.com/vdmkenny/openreliant/issues/38),
+[#39](https://github.com/vdmkenny/openreliant/issues/39)); the components
+([#40](https://github.com/vdmkenny/openreliant/issues/40)); the shield's effect
+([#133](https://github.com/vdmkenny/openreliant/issues/133)); the special types; the ship a player
+chose for the mission; and the multiplayer cases.
 
 ## Flags
 
@@ -370,15 +448,14 @@ with the player's and writes the global. `Motion` is an `enum` of the two routin
 `create_object` installs, in place of the function pointer at `0x640`, and the rule each quantity
 settles by is one `settle` helper rather than the six copies the binary holds.
 
-`gameobj.updateTree` ports `node_tree_update`, and the driver runs it where `simulation_step`
-does, at the start of each step, after `gameobj.orthonormalizeTurn` on the object whose turn it is
-(`gameobj.nextTurn`).
+`gameobj.updateTree` ports `node_tree_update`, which `gameobj.simulationStep` runs for every live
+object at the start of each step, after `gameobj.orthonormalizeTurn` on the object whose turn it is
+(`gameobj.nextTurn`). `create.objectsUpdate` then moves them.
 
 Not yet ported: the orders' motion functions
-([#30](https://github.com/vdmkenny/openreliant/issues/30)), the inertia tensor that
+([#30](https://github.com/vdmkenny/openreliant/issues/30)), and the inertia tensor that
 `object_recentre` inverts into `0x548` ([#87](https://github.com/vdmkenny/openreliant/issues/87)),
-so knocks don't turn objects in the port yet, and the parts' animation in `node_tree_update`
-([#119](https://github.com/vdmkenny/openreliant/issues/119)).
+so knocks don't turn objects in the port yet.
 
 ## Shields
 
@@ -394,13 +471,17 @@ is 8. One whose `0xB95` is 5 has its shields emptied instead. In a multiplayer g
 shields don't recharge while `0x5D76F0` is 4 and `0x5DB538` names the player. **Unknown:** what
 those values mean.
 
-`0x00492370` works out the shields' condition from the armor: a quarter of each quadrant's armor
-over its full armor, added up. It works out the guns' condition (`0x66C`) and the engines'
-(`0x668`, `armor_speed_factor`) from the armor too.
+`object_armor_conditions` (`0x00492370`) works out three conditions from each quadrant's armor over
+its full armor, `6 * armor_class - 1`, the fore quadrant being the third and the aft the fourth:
+the shields' (`0x664`), a quarter of each quadrant's; the guns' (`0x66C`), half the fore one's and
+a quarter of each side's; and the cruise speed's (`0x668`), a quarter plus three quarters of the
+aft one's. `create_object` runs it once the armor is full. For the player's ship it also sounds a
+warning, at most every 500 ticks, while a quadrant has lost its shield and half its armor.
 
-[`gameobj.zig`](../../src/engine/game/gameobj.zig) ports the recharge as `rechargeShields`, and the
-driver runs it where `simulation_step` does. Not ported: the multiplayer case, and `0x00492370`,
-since nothing damages the armor yet.
+[`gameobj.zig`](../../src/engine/game/gameobj.zig) ports the recharge as `rechargeShields`, which
+`simulationStep` runs, and [`main.zig`](../../src/engine/game/main.zig) the conditions as
+`armorConditions`. Not ported: the multiplayer case, and the warning
+([#49](https://github.com/vdmkenny/openreliant/issues/49)).
 
 ## Components
 

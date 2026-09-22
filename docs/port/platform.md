@@ -51,16 +51,19 @@ files it says what it needs and exits.
 | `--fps <rate>` | Frames a second at most; 0 for no limit |
 | `--software` | Draws on the software device, the port's reference, at the window's size in points |
 
-It shows the ship against the backdrop, drawn through the ported pipeline and driver with the GPU
-([Renderer](renderer.md)). The game's own bindings drive the camera
-([Controls](../engine/controls.md), [Camera](../engine/camera.md)): the keys 1 to 8 pick the
-cockpit, left, right, rear, flyby, target, external and missile views, the cockpit key cycles the
-cockpit mode while in it, and in the target and external views the arrow keys orbit and Shift with
-up or down zooms. Added for the port: F2 and F3 step back and forth through the ship types, passing
-over any whose files the game lacks, Alt and Enter switch between the window and the full screen,
-and Escape quits. A ship is shown in the chase view, or, where its own radius is larger than the distance that view
-sits behind it, in the external view, which orbits at a distance worked out from its size, so that
-a capital ship or a station is seen whole.
+It runs a sandbox of its own, drawn through the ported pipeline and driver with the GPU
+([Renderer](renderer.md)): the player's ship at the origin, facing along Z, the Reliant standing
+still ahead of it, and a wing of four Sabres between the two. The orders that would fly the Sabres
+aren't ported yet, so each is set going at its full throttle, which carries it straight at where
+the player was. The game's own bindings drive the camera ([Controls](../engine/controls.md),
+[Camera](../engine/camera.md)): the keys 1 to 8 pick the cockpit, left, right, rear, flyby,
+target, external and missile views, the cockpit key cycles the cockpit mode while in it, and in the
+target and external views the arrow keys orbit and Shift with up or down zooms. Added for the port:
+F2 and F3 start the sandbox again in the previous or next ship type, passing over any whose files
+the game lacks, F4 brings another wing in front of the player, Alt and Enter switch between the
+window and the full screen, and Escape quits. A ship is shown in the chase view, or, where its own
+radius is larger than the distance that view sits behind it, in the external view, which orbits at
+a distance worked out from its size, so that a capital ship or a station is seen whole.
 
 A Zig built for Intel Macs runs under Rosetta on Apple silicon and builds for Intel by default;
 `make play` asks for Apple silicon, and `build.zig` then hands SDL and the linker the SDK's paths

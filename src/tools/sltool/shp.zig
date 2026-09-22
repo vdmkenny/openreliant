@@ -93,7 +93,7 @@ fn listComponents(ctx: Context, path: []const u8) !void {
     try ctx.stdout.writeAll("index  part  class  link  model                 name\n");
     for (list, 0..) |component, index| {
         try ctx.stdout.print("{d:>5}  {d:>4}  {d:>5}  {d:>4}  {s:<20}  {s}\n", .{
-            index,                  component.part_index, component.part.part_type,
+            index,                  component.part_index, @intFromEnum(component.part.class),
             component.part.link_id, component.model,      component.part.name(),
         });
     }
@@ -134,7 +134,7 @@ fn info(ctx: Context, model: shp.Model) !void {
     for (model.parts, 0..) |entry, index| {
         const part = entry.part;
         try ctx.stdout.print("[{d:>3}] {s:<34} type {d:>2}  parent {d:>3}  link {d}", .{
-            index, part.name(), part.part_type, part.parent, part.link_id,
+            index, part.name(), @intFromEnum(part.class), part.parent, part.link_id,
         });
         if (part.turret_kind != 0) {
             try ctx.stdout.print("  turret kind {d} yaw [{d:.0},{d:.0}] pitch [{d:.0},{d:.0}]", .{

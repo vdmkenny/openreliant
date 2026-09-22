@@ -1,9 +1,10 @@
 //! `C:\lancer\game\gameobj.cpp`: the game's live objects, the ships, stations, gates, missiles and
-//! markers of a running mission.
+//! markers of a running mission. `object_alloc` (`0x00475DD0`) allocates one.
 //!
 //! `create_object` (`0x00466C10`) fills a slot of `game_objects`, which it calls the GO array: 400
 //! pointers to objects, a mission ship's slot being its index among the mission's ship records.
-//! Each object embeds the root of a hierarchy of nodes, one for each part of its model.
+//! [`create.Objects`](create.zig) is the port's. Each object embeds the root of a hierarchy of
+//! nodes, one for each part of its model.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -30,6 +31,19 @@ pub const Routine = engine.Code("void __fastcall (int slot)");
 
 /// Slots in `game_objects`. `create_object` stops the game with a fatal error past the last.
 pub const max_objects = 400;
+
+/// Whose side something is on: an object's (`GameObject.side`, four bytes) and a ship type's
+/// (`create.ShipCombat.side`, two). The Alliance's types start friendly and the Coalition's hostile;
+/// `SetHostile` makes an object one or the other. Two objects on different sides are enemies.
+pub fn Side(comptime Tag: type) type {
+    return enum(Tag) {
+        /// On the player's side.
+        friendly = 0,
+        hostile = 1,
+        neutral = 2,
+        _,
+    };
+}
 
 /// Components an object can list.
 pub const max_components = 60;
@@ -89,13 +103,25 @@ pub const GameObject = extern struct {
     /// (`node_draw`). `object_alloc` and `create_object` both leave it at 1, so nothing in the
     /// shipped game sees further or less far than its size says.
     visibility: f32,
-    _unknown_130: [0x10]u8,
+    /// Its guns: `gun_count` records of 0x60 bytes at `guns`, which `create_object` walks to set up
+    /// the gun groups (#131).
+    gun_count: i16,
+    _unknown_132: u16,
+    guns: Pointer(anyopaque),
+    _unknown_138: u32,
+    /// `ShipCombat._unknown_18` when created. **Unverified:** rounds for the guns that use them:
+    /// the guns' step takes one for each shot of a gun whose type's first word is 1
+    /// (`0x004770E0`).
+    _unknown_13c: i32,
     /// The guns' charge: `ShipCombat.gun_energy` when created, which the guns recharge to
     /// (`0x00477114`). The display's right arc shows it against that.
     gun_charge: f32,
     /// How its guns fire, which the gun keys set.
     gun_mode: GunMode,
-    _unknown_146: [0xC]u8,
+    _unknown_146: u16,
+    _unknown_148: u32,
+    _unknown_14c: u32,
+    _unknown_150: i16,
     component_count: i16,
     _unknown_154: [0xF4]u8,
     /// The parts of its model whose flags mark them as components, in the order `0x00468760`
@@ -167,7 +193,18 @@ pub const GameObject = extern struct {
     /// Four values, each `6 * ShipCombat.armor_class - 1` when created. `ship_damage_value` reports
     /// the lowest.
     armor: [4]f32,
-    _unknown_610: [0x24]u8,
+    _unknown_610: u32,
+    /// **Unknown.** Code in `explode.cpp` that `create_object` gives capital ships, planets and a
+    /// few other types, which `node_draw` runs as one of the object's components is destroyed.
+    _unknown_614: Pointer(Routine),
+    /// The slots of two objects it passes through: the collision sweep of `objects_update` tests
+    /// no pair where either names the other. -1 when created.
+    passes_through: [2]i32,
+    /// **Unknown.** -1 when created.
+    _unknown_620: i32,
+    _unknown_624: u8,
+    _unknown_625: [3]u8,
+    _unknown_628: shp.Vec3,
     /// Where its lights stand in their blinks, in ticks added to the mission's clock
     /// (`node_draw`): from 0 to 100 at random when allocated (`blinkOffset`), so that ships of one
     /// type don't blink together.
@@ -179,9 +216,9 @@ pub const GameObject = extern struct {
     cloak: Pointer(anyopaque),
     /// Moves it each update; `motion_forward` when created.
     motion: Pointer(Routine),
-    /// Nonzero while it is hostile: `SetHostile`. When created, a value of its combat stats'
-    /// (`+0x2A`), or in one of the game's modes one worked out otherwise.
-    hostile: i32,
+    /// Its side: its type's (`ShipCombat.side`) when created, save for other players' ships in a
+    /// multiplayer game, and hostile or friendly once `SetHostile` says.
+    side: Side(i32),
     _unknown_648: u32,
     /// Nonzero while a missile homes on it, which lights the display's missile warning.
     /// `mission_frame` zeroes it on every object each frame, and `missiles_update` (`0x004960F0`)
@@ -190,22 +227,31 @@ pub const GameObject = extern struct {
     missile_homing: i32,
     /// The throttle of the last update.
     last_throttle: f32,
-    _unknown_654: [0x10]u8,
+    _unknown_654: [8]u8,
+    _unknown_65c: u32,
+    _unknown_660: u8,
+    _unknown_661: [3]u8,
     /// How well its shields recharge as its armour wears: a quarter of each quadrant's armour over
-    /// its full armour, added up (`0x00492370`). 1 when created. The damage display's shield bar
-    /// shows it.
+    /// its full armour, added up (`armorConditions`). 1 when created. The damage display's shield
+    /// bar shows it.
     shield_condition: f32,
     /// Scales the cruise speed as its armor falls, which `object_cruise_speed` applies unless the
-    /// camera is in view 13 or the object is invulnerable.
+    /// camera is in view 13 or the object is invulnerable: a quarter, and three quarters of the
+    /// aft quadrant's armour over its full armour (`armorConditions`). 1 when created.
     armor_speed_factor: f32,
-    _unknown_66c: u32,
+    /// How well its guns work as its armour wears: half the fore quadrant's armour over its full
+    /// armour, and a quarter of each side's (`armorConditions`). 1 when created. The guns
+    /// recharge by it, and below 0.9 each shot goes off only as often as it plus a tenth
+    /// (`0x004770E0`).
+    gun_condition: f32,
     /// The gun type its spectral shields are tuned to, which turning them on sets
     /// (`player_spectral_shields_set`): the one most dangerous near it.
     spectral_gun_type: i32,
     /// Nonzero while blind fire aims the guns at the target: `hud_draw` sets it each frame it
     /// draws the reticle.
     blind_fire_aim: i32,
-    _unknown_678: [8]u8,
+    _unknown_678: i32,
+    _unknown_67c: u32,
     /// Orders on its stack.
     order_count: i16,
     _unknown_682: u16,
@@ -222,7 +268,18 @@ pub const GameObject = extern struct {
     recent_damage: f32,
     /// The slot of the object that last damaged it, or -1.
     last_attacker: i32,
-    _unknown_698: [0x90]u8,
+    _unknown_698: [0x10]u8,
+    _unknown_6a8: u32,
+    /// **Unknown.** -1 when created.
+    _unknown_6ac: i32,
+    _unknown_6b0: u32,
+    _unknown_6b4: [0x58]u8,
+    /// **Unknown.** A number from 0 to 99 the object draws from its own seed when created.
+    _unknown_70c: i32,
+    _unknown_710: [4]u32,
+    /// **Unknown.** Both -1 when created.
+    _unknown_720: i32,
+    _unknown_724: i32,
     /// Where the power distribution stands on the power ball (`input.power`): a point within a disc
     /// of radius 64, in `x` and `y`. `z` is 1 when created, and moving the point sets it to 0.
     /// `create_object` puts the point at (1, 1).
@@ -241,11 +298,17 @@ pub const GameObject = extern struct {
     /// **Unknown.** A 24-byte record for the pilot, from a table at `0x5048D8`.
     pilot_record: Pointer(anyopaque),
     pilot_stats: Pointer(@import("pilots.zig").Pilot),
-    _unknown_74c: [8]u8,
+    /// **Unknown.** 0xFFFF when created.
+    _unknown_74c: u16,
+    _unknown_74e: u16,
+    _unknown_750: u32,
     /// **Unknown.** -1 when created. Its shields don't recharge while it is 8
     /// (`rechargeShields`), and the player's controls turn round while it is 9.
     _unknown_754: i32,
-    _unknown_758: [0x434]u8,
+    _unknown_758: [0xC]u8,
+    /// **Unknown.** -1 when allocated.
+    _unknown_764: i32,
+    _unknown_768: [0x424]u8,
     /// Orders from other players waiting for their frame, in a multiplayer game.
     queued_order_count: i32,
     /// Its queue of `aigeneric.max_queued` entries, allocated when the first order arrives.
@@ -262,69 +325,79 @@ pub const GameObject = extern struct {
         /// Not drawn: `camera_set_view` sets it on the object whose cockpit the camera is in, and the
         /// warp orders while it warps. `mission_frame` hands `node_draw` flag `0x10` for it, which
         /// adds none of its parts to the scene.
-        hidden: bool,
+        hidden: bool = false,
         /// Its components are listed, as its model's header asks. The collision code treats such
         /// objects apart.
-        components: bool,
+        components: bool = false,
         /// The collision sweep of `objects_update` leaves it out.
-        no_collisions: bool,
+        no_collisions: bool = false,
         /// `object_move` runs no motion routine for it, so it drifts at its velocity; knocks still
         /// move it. Set while the object is disrupted (`order_disrupted_init`) and once it is
         /// wrecked, and together with `frozen` during gate jumps and warps and by `object_reset`.
-        unpowered: bool,
+        unpowered: bool = false,
         /// `object_move` isn't run for it (`objects_update`), and returns straight away if it is.
-        frozen: bool,
+        frozen: bool = false,
         /// Set on objects of types above 255, such as the type-1001 stand-in an empty slot holds;
         /// the per-object loops skip them.
-        stand_in: bool,
+        stand_in: bool = false,
         /// Set as it starts to explode. It takes no more orders.
-        exploding: bool,
+        exploding: bool = false,
         /// Reverse thrust works only while it is set: `object_orders` clears `reverse_thrust`
         /// otherwise.
-        can_reverse: bool,
+        can_reverse: bool = false,
         /// Set by `object_cloak`, which posts the Cloaked event.
-        cloaked: bool,
+        cloaked: bool = false,
         /// `SetTargetable` for the whole object, which sets it only when the word at `+0x24` of its
         /// combat stats is nonzero.
-        targetable: bool,
+        targetable: bool = false,
         /// Not processed: `DisableObject`, and `DisableObjectAtNextJump` at the next jump.
-        disabled: bool,
+        disabled: bool = false,
         /// Set once its pilot ejects. It takes no more orders, and destroying it now makes it
         /// explode.
-        ejected: bool,
-        _unknown_12: bool,
+        ejected: bool = false,
+        _unknown_12: bool = false,
         /// `DisableLights`.
-        lights_disabled: bool,
+        lights_disabled: bool = false,
         /// It has a shield generator, a part of subsystem class 6, which destroying the part clears.
-        shield_generator: bool,
+        shield_generator: bool = false,
         /// `DisableGuns`. `orders_update` skips `0x0047C950` for it.
-        guns_disabled: bool,
+        guns_disabled: bool = false,
         /// `DisableMissiles`.
-        missiles_disabled: bool,
+        missiles_disabled: bool = false,
         /// `DisableEngines`. `object_orders` holds its throttle at zero and stops both burns.
-        engines_disabled: bool,
+        engines_disabled: bool = false,
         /// `DisableEject`. The player cannot eject.
-        eject_disabled: bool,
+        eject_disabled: bool = false,
         /// `DoNotDisturb`: "dont disturb". It does not retaliate either.
-        do_not_disturb: bool,
+        do_not_disturb: bool = false,
         /// `SetShipAvoidance` with "Disable Avoidance code": the avoidance code passes it over.
-        no_avoidance: bool,
+        no_avoidance: bool = false,
         /// Set during the jump orders: it cannot fire, and the avoidance code passes it over.
-        jumping: bool,
+        jumping: bool = false,
         /// Set while the Dock and Ripper orders hold it to another object; their ends clear it.
-        attached: bool,
-        _unknown_23: u3,
+        attached: bool = false,
+        _unknown_23: bool = false,
+        /// **Unknown.** `mission_frame` lets the object's smoke (`+0x65C`) go while it is set.
+        _unknown_24: bool = false,
+        /// **Unknown.** Set by `create_object` on an object whose model has an attachment of
+        /// kind 6.
+        _unknown_25: bool = false,
         /// Its ECM is on: `player_ecm_set` (`0x00415370`).
-        ecm: bool,
+        ecm: bool = false,
         /// Its spectral shields are on: `player_spectral_shields_set` (`0x00415430`).
-        spectral_shields: bool,
+        spectral_shields: bool = false,
         /// **Unknown.** Set by `0x00474B40` as it sends a ship off, the player's into Friendly
         /// Fire and others into Jump Out, and cleared by Friendly Fire. It takes no orders while
         /// it is set.
-        _unknown_28: bool,
+        _unknown_28: bool = false,
         /// `DisableListing`: "stop listing".
-        unlisted: bool,
-        _unknown_30: u2,
+        unlisted: bool = false,
+        _unknown_30: u2 = 0,
+
+        /// What a slot holds until `create_object` fills it (`objects_reset`, `object_reset`), and
+        /// what an object of a type above 255 is given: it takes no part in collisions, never
+        /// moves, and the loops over the objects pass it over.
+        pub const standing_in: Flags = .{ .no_collisions = true, .unpowered = true, .frozen = true, .stand_in = true };
     };
 
     comptime {
@@ -366,7 +439,25 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "blink_offset") == 0x634);
         assert(@offsetOf(GameObject, "random_seed") == 0x638);
         assert(@offsetOf(GameObject, "motion") == 0x640);
-        assert(@offsetOf(GameObject, "hostile") == 0x644);
+        assert(@offsetOf(GameObject, "side") == 0x644);
+        assert(@offsetOf(GameObject, "gun_count") == 0x130);
+        assert(@offsetOf(GameObject, "guns") == 0x134);
+        assert(@offsetOf(GameObject, "_unknown_13c") == 0x13C);
+        assert(@offsetOf(GameObject, "_unknown_14c") == 0x14C);
+        assert(@offsetOf(GameObject, "_unknown_614") == 0x614);
+        assert(@offsetOf(GameObject, "passes_through") == 0x618);
+        assert(@offsetOf(GameObject, "_unknown_624") == 0x624);
+        assert(@offsetOf(GameObject, "_unknown_628") == 0x628);
+        assert(@offsetOf(GameObject, "_unknown_65c") == 0x65C);
+        assert(@offsetOf(GameObject, "gun_condition") == 0x66C);
+        assert(@offsetOf(GameObject, "_unknown_678") == 0x678);
+        assert(@offsetOf(GameObject, "_unknown_6ac") == 0x6AC);
+        assert(@offsetOf(GameObject, "_unknown_70c") == 0x70C);
+        assert(@offsetOf(GameObject, "_unknown_720") == 0x720);
+        assert(@offsetOf(GameObject, "_unknown_74c") == 0x74C);
+        assert(@offsetOf(GameObject, "_unknown_764") == 0x764);
+        assert(@bitOffsetOf(Flags, "frozen") == 4);
+        assert(@as(u32, @bitCast(Flags.standing_in)) == 0x3C);
         assert(@offsetOf(GameObject, "missile_homing") == 0x64C);
         assert(@offsetOf(GameObject, "spectral_gun_type") == 0x670);
         assert(@offsetOf(GameObject, "blind_fire_aim") == 0x674);
@@ -412,7 +503,7 @@ pub const GunMode = packed struct(u16) {
     _unknown_6: u10,
 
     /// What `create_object` starts a ship on, by how many groups of guns it has.
-    pub fn created(groups: u16) GunMode {
+    pub fn created(groups: i16) GunMode {
         return .{ .group = 0, ._unknown_3 = false, .all = groups != 1, .synchronised = true, ._unknown_6 = 0 };
     }
 };
@@ -534,25 +625,93 @@ pub fn blinkOffset(random: *libcmt.Rand) i16 {
     return @intFromFloat(share * 100);
 }
 
+/// The type a slot's stand-in has until `create_object` fills the slot: above every ship type,
+/// so it has no stats.
+pub const stand_in_type = 1001;
+
+/// `object_alloc` (`0x00475DD0`): a new object of `object_type`. `SR_MEM_allocate` clears what
+/// it hands out, so everything the allocation doesn't set starts at zero: the object is at rest,
+/// turned by nothing each update, and has no motion, orders or renderer's object. Its root is
+/// flagged as a component, and it draws its `blink_offset` from `random`.
+pub fn objectAlloc(object_type: u32, random: *libcmt.Rand) GameObject {
+    var object = std.mem.zeroes(GameObject);
+    object.type = object_type;
+    object.rotation = math.identity;
+    object._unknown_754 = -1;
+    object._unknown_764 = -1;
+    object.root.flags.component = true;
+    object._unknown_b96 = 0xFFFF;
+    object.blink_offset = blinkOffset(random);
+    object.visibility = 1;
+    return object;
+}
+
+test objectAlloc {
+    var random: libcmt.Rand = .{};
+    const object = objectAlloc(stand_in_type, &random);
+    try std.testing.expectEqual(stand_in_type, object.type);
+    try std.testing.expectEqual(math.identity, object.rotation);
+    try std.testing.expect(object.root.flags.component);
+    try std.testing.expectEqual(1, object.visibility);
+    // The runtime's first number from its first seed gives the first object no offset.
+    try std.testing.expectEqual(0, object.blink_offset);
+    try std.testing.expect(!object.created);
+}
+
 // --- The simulation's step ---------------------------------------------------------------
 
 /// The game ticks a simulation step takes: it steps on every fourth.
 pub const ticks_per_step = 4;
 
+/// What a simulation step works on besides the clock and the devices, which the game keeps in
+/// globals: the live objects, the player's controls, and the camera's view and shake. The cruise
+/// speed reads the view (`object_cruise_speed`), and the player's speed raises the shake
+/// (`object_move`).
+pub const World = struct {
+    objects: *create.Objects,
+    player: *input.Player,
+    view: camera.View,
+    shake: *f32,
+    /// Whoever sets off the effects of the events the objects' tracks pass.
+    events: ?Events = null,
+};
+
 /// `simulation_step` (`0x004774D0`): the work of every fourth tick, so 25 times a second, which
 /// is why the [flight model](../../../docs/engine/objects.md#motion) moves at that rate.
 /// **Unverified:** it and `game_tick` lie after this file's known code, before `guns.cpp`'s. It
-/// reads the input devices, then runs each object's own updates and moves them all with
-/// `objects_update`. Returns whether it did that work.
+/// reads the input devices and moves `simulation_turn` on (`nextTurn`). Then each live object in
+/// the loops' order (`create.Objects.walk`), stand-ins and disabled ones passed over, has its own
+/// updates: the one whose turn it is is orthonormalized (`orthonormalizeTurn`), then comes its
+/// node update (`updateTree`), its shields' recharge (`rechargeShields`) and its guns' step. Then
+/// the player's controls fly the player's ship, and `objects_update` moves them all
+/// (`create.objectsUpdate`). Returns whether it did that work.
 ///
-/// Ported so far: the pacing, and the keyboard and the joystick, which `read_keyboard` and
-/// `read_joystick` read here rather than once a frame. Not yet: the mouse, and the object
-/// updates, which the caller stands in for until they are ported.
-pub fn simulationStep(clock: *Clock, devices: *input.Devices) bool {
+/// Not ported yet: the mouse; the guns' step (`0x004770E0`, #38); what runs after
+/// `objects_update`, the missiles and the bullets (`0x00495720`, `0x0047A4E0`). The game runs the
+/// player's controls while the player's top order is Player Control; the port has no orders yet
+/// (#32), so it always does.
+pub fn simulationStep(clock: *Clock, devices: *input.Devices, world: World) bool {
     clock.simulation_counter += 1;
     if (clock.simulation_counter < ticks_per_step) return false;
     devices.read();
     clock.simulation_counter = 0;
+    const all = world.objects;
+    const turn = nextTurn(clock, all.count);
+    var slots = all.walk();
+    while (slots.next()) |index| {
+        const slot = &all.slots[index];
+        const object = &slot.object;
+        if (object.flags.stand_in or object.flags.disabled) continue;
+        if (index == turn) orthonormalizeTurn(&object.root);
+        updateTree(&object.root, if (slot.model) |*model| model else null, world.events);
+        const combat = slot.combat orelse continue;
+        rechargeShields(object, combat, if (index == all.player) world.player.shield_reserves else null);
+    }
+    const player = &all.slots[all.player];
+    if (player.combat) |combat| {
+        input.playerControls(world.player, devices, &player.object, combat, world.view, clock.frame_duration);
+    }
+    create.objectsUpdate(all, world.view, world.shake);
     return true;
 }
 
@@ -570,13 +729,13 @@ pub fn nextTurn(clock: *Clock, objects_live: u32) u32 {
 ///
 /// Not ported: the countdown at `0x0052A474` that it steps once a second, and the timed
 /// sections it brackets the tick with outside a network game.
-pub fn gameTick(clock: *Clock, devices: *input.Devices) bool {
+pub fn gameTick(clock: *Clock, devices: *input.Devices, world: World) bool {
     if (clock.paused) {
         clock.paused_ticks +%= 1;
         return false;
     }
     clock.mission_ticks +%= 1;
-    return simulationStep(clock, devices);
+    return simulationStep(clock, devices, world);
 }
 
 /// What `simulation_step` does for the object whose turn it is (`Clock.nextTurn`), before its node
@@ -590,10 +749,19 @@ pub fn orthonormalizeTurn(root: *objects.Node) void {
 
 // --- The node tree -------------------------------------------------------------------------
 
-/// `object_link_part` (`0x00476180`) once the part hangs from its parent: poses it as its first
-/// track has it at the start (`node_animate` at time zero), and takes the place that gives it,
-/// but not the pose, as its node's place and its frame's. Its next place stays in the node,
-/// no longer pending.
+/// `object_link_parts` (`0x00476130`): links each part to the part it names, or to the root
+/// (`linkPart`), then moves the object's origin to its parts' centre of mass (`recentre`).
+/// `source` is the model the parts come from.
+pub fn linkParts(model: *objects.Model, source: *const shp.Model) void {
+    for (0..model.parts.len) |index| linkPart(model, index);
+    recentre(model, source);
+}
+
+/// `object_link_part` (`0x00476180`) once the part hangs from its parent: poses it as its track
+/// has it at the start (`node_animate` at time zero), which is its first unless one was started,
+/// and takes the place that gives it, but not the pose, as its node's place and its frame's. Its
+/// next place stays in the node, and the four flags the steps and the frames keep of it are
+/// cleared: pending, committed, unframed and posed.
 pub fn linkPart(model: *objects.Model, index: usize) void {
     const part = &model.parts[index];
     model.animate(index, 0);
@@ -602,6 +770,9 @@ pub fn linkPart(model: *objects.Model, index: usize) void {
     part.origin = a.next.place.position;
     part.turn = a.next.place.orientation;
     a.pending = false;
+    a.committed = false;
+    a.unframed = false;
+    a.posed = false;
 }
 
 /// Moves the object's origin to its parts' centre of mass, as `object_link_parts` ends
@@ -623,6 +794,7 @@ pub fn recentre(model: *objects.Model, source: *const shp.Model) void {
         for (&moment, origin, p.first_moments) |*m, o, first| m.* = (o * p.volume + first) * p.density + m.*;
         mass = p.density * p.volume + mass;
     }
+    model.mass = mass;
     if (mass > 0) {
         const scale = 1 / mass;
         for (&moment) |*m| m.* = scale * m.*;
@@ -913,6 +1085,42 @@ test rechargeShields {
     object.invulnerable = 5;
     rechargeShields(&object, &combat, null);
     try std.testing.expectEqual([4]f32{ 0, 0, 0, 0 }, object.shields);
+}
+
+test "a step updates and moves every live object" {
+    const gpa = std.testing.allocator;
+    var random: libcmt.Rand = .{};
+    const all = try create.Objects.create(gpa, &random);
+    defer all.destroy();
+    var tables = create.testing.tables();
+    const player = try create.createObject(all, &tables, create.testing.no_models, null, 0, @splat(0), &random);
+    const other = try create.createObject(all, &tables, create.testing.no_models, null, 0x2B, .{ 0, 0, 1000 }, &random);
+    const off = try create.createObject(all, &tables, create.testing.no_models, null, 0x2B, .{ 0, 0, 2000 }, &random);
+    all.slots[other].object.throttle = 1;
+    all.slots[off].object.throttle = 1;
+    all.slots[off].object.flags.disabled = true;
+    // Its shields down, the player's recharge.
+    all.slots[player].object.shields = @splat(0);
+    var controls: input.Player = .{};
+    var devices: input.Devices = .{};
+    var shake: f32 = 0;
+    var clock: Clock = .{};
+    const world: World = .{ .objects = all, .player = &controls, .view = .chase, .shake = &shake };
+    var steps: usize = 0;
+    for (0..ticks_per_step * 10) |_| {
+        if (gameTick(&clock, &devices, world)) steps += 1;
+    }
+    try std.testing.expectEqual(10, steps);
+    // The other ship has flown on along its nose, its committed place a step behind.
+    const flown = all.slots[other].object.root;
+    try std.testing.expect(flown.next_position.z > 1000);
+    try std.testing.expect(flown.position.z > 1000 and flown.position.z < flown.next_position.z);
+    // The disabled one is passed over: never moved, nothing committed.
+    try std.testing.expectEqual(2000, all.slots[off].object.root.next_position.z);
+    try std.testing.expect(!all.slots[off].object.root.flags.next_pending);
+    // No key held, the player's throttle stays at nothing, and it stays where it was.
+    try std.testing.expectEqual(0, all.slots[player].object.root.next_position.z);
+    try std.testing.expect(all.slots[player].object.shields[0] > 0);
 }
 
 test "each object's turn comes round in rotation" {
