@@ -350,10 +350,7 @@ fn installPath(arena: Allocator, name: []const u8) error{ UnsafeName, OutOfMemor
 fn mountedDiscs(io: Io, arena: Allocator) ![]const []const u8 {
     switch (builtin.os.tag) {
         .windows => return cdDrives(arena),
-        .linux => {
-            const table = Io.Dir.cwd().readFileAlloc(io, "/proc/self/mounts", arena, .limited(1 << 20)) catch return &.{};
-            return discMounts(arena, table);
-        },
+        .linux => return discMounts(arena, mountTable(io, arena) catch return &.{}),
         .macos => {
             var dir = Io.Dir.cwd().openDir(io, "/Volumes", .{ .iterate = true }) catch return &.{};
             defer dir.close(io);
@@ -405,6 +402,16 @@ fn cdDrives(arena: Allocator) ![]const []const u8 {
         try drives.append(arena, try std.fmt.allocPrint(arena, "{c}:\\", .{letter}));
     }
     return drives.items;
+}
+
+/// Linux's table of mounts, `/proc/self/mounts`. It's read as a stream: like every file in `/proc`,
+/// it gives its size as 0, which a reader that goes by the size takes as empty.
+fn mountTable(io: Io, arena: Allocator) ![]const u8 {
+    const file = try Io.Dir.cwd().openFile(io, "/proc/self/mounts", .{});
+    defer file.close(io);
+    var buffer: [4096]u8 = undefined;
+    var reader = file.readerStreaming(io, &buffer);
+    return reader.interface.allocRemaining(arena, .limited(1 << 20));
 }
 
 /// The mount points of the disc file systems, ISO 9660 and UDF, in a table of mounts as Linux
@@ -960,6 +967,15 @@ test discMounts {
     try std.testing.expectEqualStrings("/media/player/SL_CD1", points[0]);
     try std.testing.expectEqualStrings("/mnt/star lancer\\disc", points[1]);
     try std.testing.expectEqual(0, (try discMounts(arena, "")).len);
+}
+
+test mountTable {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    // Every system has something mounted at its root.
+    const table = try mountTable(std.testing.io, arena_state.allocator());
+    try std.testing.expect(std.mem.indexOf(u8, table, " / ") != null);
 }
 
 test mountedDiscs {
