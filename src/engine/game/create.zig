@@ -25,6 +25,7 @@ const camera = @import("camera.zig");
 const aigeneric = @import("aigeneric.zig");
 const collision = @import("collision.zig");
 const gameobj = @import("gameobj.zig");
+const guns = @import("guns.zig");
 const input = @import("../input.zig");
 const GameObject = gameobj.GameObject;
 const main = @import("main.zig");
@@ -312,9 +313,19 @@ pub const Slot = struct {
     /// What the current order keeps between its updates (`GameObject.order_state`), allocated with
     /// the stack.
     state: aigeneric.State = .{ .bytes = @splat(0) },
+    /// Its guns, one for each muzzle of its model (`GameObject.guns`), made in the objects'
+    /// allocator.
+    guns: []guns.Fitted = &.{},
     /// The parts of its model that count as components, `GameObject.component_count` of them, the
     /// models mounted on it among them (`GameObject.components`, which holds their nodes).
     components: [gameobj.max_components]?*objects.Model.Part = @splat(null),
+
+    /// Lets go of what the slot holds for its object: its model and its guns.
+    pub fn release(slot: *Slot, gpa: Allocator) void {
+        if (slot.model) |model| model.deinit(gpa);
+        gpa.free(slot.guns);
+        slot.guns = &.{};
+    }
 };
 
 /// `game_objects` (`0x00587CE0`), the GO array: 400 slots, none ever empty. As a mission starts
@@ -348,7 +359,7 @@ pub const Objects = struct {
     }
 
     pub fn destroy(all: *Objects) void {
-        for (&all.slots) |*slot| if (slot.model) |model| model.deinit(all.gpa);
+        for (&all.slots) |*slot| slot.release(all.gpa);
         all.gpa.destroy(all);
     }
 
@@ -360,7 +371,7 @@ pub const Objects = struct {
     /// Not ported: the planets' atmospheres, whose texture it loads and whose table it empties.
     pub fn reset(all: *Objects, random: *libcmt.Rand) void {
         for (&all.slots) |*slot| {
-            if (slot.model) |model| model.deinit(all.gpa);
+            slot.release(all.gpa);
             var object = gameobj.objectAlloc(gameobj.stand_in_type, random);
             object.flags.stand_in = true;
             slot.* = .{ .object = object };
@@ -377,7 +388,7 @@ pub const Objects = struct {
     /// ([#30](https://github.com/vdmkenny/openreliant/issues/30)).
     pub fn resetSlot(all: *Objects, index: u16, random: *libcmt.Rand) void {
         const slot = &all.slots[index];
-        if (slot.model) |model| model.deinit(all.gpa);
+        slot.release(all.gpa);
         var object = gameobj.objectAlloc(gameobj.stand_in_type, random);
         object.flags = .standing_in;
         slot.* = .{ .object = object };
@@ -536,6 +547,8 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
         }
         gameobj.linkParts(&model, loaded.model);
         slot.model = model;
+        slot.guns = try guns.fit(all.gpa, &slot.model.?);
+        object.gun_count = @intCast(slot.guns.len);
         // `object_recentre` puts what it works out in the record.
         object.mass = model.mass;
         object.centre = gameobj.vec3(model.centre);

@@ -275,7 +275,11 @@ pub const Attachment = extern struct {
     /// Where in its own blink a `light` starts, so that lights side by side need not blink
     /// together (`node_draw`).
     blink_phase: i32,
-    _unknown_60: [0x14]u8,
+    _unknown_60: [4]u8,
+    /// The gun type a `gun_muzzle` fires, into `gun_stats`: the Sabre's muzzles hold 1 to 3 and an
+    /// allied turret's 12.
+    gun_type: u32,
+    _unknown_68: [0xC]u8,
     /// How far a `light` reaches, times its brightness: the radius within which it lights a vertex.
     light_range: f32,
     /// A `light`'s brightness, which scales both its reach and the colour it adds. An attachment
@@ -283,14 +287,16 @@ pub const Attachment = extern struct {
     light_brightness: f32,
 
     /// Named after the models the engine loads for each kind, or what `node_mount` (`0x00499A10`)
-    /// makes of them. **Unknown:** kinds 3 and 6 to 9; kind 3 becomes a node of kind 4, whose
-    /// drawing is not yet understood.
+    /// makes of them. **Unknown:** kinds 6 to 9.
     pub const Kind = enum(u32) {
         missile = 0,
         /// Mounted as an object of its own, whose components follow the model's.
         gun = 1,
         /// An engine's glow, which `node_draw` scales along its length by the throttle.
         engine_glow = 2,
+        /// Where a gun fires from: the object takes one gun for each of these, of the type at
+        /// `gun_type` (`object_collect_guns`), and `node_draw` puts its muzzle flash here.
+        gun_muzzle = 3,
         light = 4,
         /// Mounted as an object of its own, like a gun.
         pod = 5,
