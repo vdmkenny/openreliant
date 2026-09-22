@@ -100,6 +100,7 @@ pub const exported = [_]Export{
     .{ "OrderData", engine.game.aigeneric.Entry.Data },
     .{ "QueuedOrder", engine.game.aigeneric.Queued },
     .{ "OrderState", engine.game.aigeneric.State },
+    .{ "FlyState", engine.game.aiorders.FlyState },
 
     // Combat maneuvers.
     .{ "ManeuverOpcode", engine.game.aidefend.Opcode },

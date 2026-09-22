@@ -686,10 +686,11 @@ pub const World = struct {
 /// the player's controls fly the player's ship, and `objects_update` moves them all
 /// (`create.objectsUpdate`). Returns whether it did that work.
 ///
+/// The player's own order runs here as well as once a frame, while its top order is Player
+/// Control, so the controls are read on every step.
+///
 /// Not ported yet: the mouse; the guns' step (`0x004770E0`, #38); what runs after
-/// `objects_update`, the missiles and the bullets (`0x00495720`, `0x0047A4E0`). The game runs the
-/// player's controls while the player's top order is Player Control; the port has no orders yet
-/// (#32), so it always does.
+/// `objects_update`, the missiles and the bullets (`0x00495720`, `0x0047A4E0`).
 pub fn simulationStep(clock: *Clock, devices: *input.Devices, world: World) bool {
     clock.simulation_counter += 1;
     if (clock.simulation_counter < ticks_per_step) return false;
@@ -707,9 +708,11 @@ pub fn simulationStep(clock: *Clock, devices: *input.Devices, world: World) bool
         const combat = slot.combat orelse continue;
         rechargeShields(object, combat, if (index == all.player) world.player.shield_reserves else null);
     }
+    // The player's own order runs again here, before the objects move, so the controls tell on
+    // every step rather than once a frame.
     const player = &all.slots[all.player];
-    if (player.combat) |combat| {
-        input.playerControls(world.player, devices, &player.object, combat, world.view, clock.frame_duration);
+    if (player.object.order_count > 0 and player.orders[0].order == .player_control) {
+        aigeneric.objectOrders(.{ .world = world, .clock = clock, .devices = devices }, all.player);
     }
     create.objectsUpdate(all, world.view, world.shake);
     return true;

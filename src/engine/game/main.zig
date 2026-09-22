@@ -21,6 +21,7 @@ const srcore = @import("../surrender/surrenderlib/srcore.zig");
 const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
 const backdrop = @import("backdrop.zig");
 const camera = @import("camera.zig");
+const aigeneric = @import("aigeneric.zig");
 const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
 const hog_snd = @import("hog_snd.zig");
@@ -170,6 +171,18 @@ pub const Frame = struct {
     /// Whether DISPLAY KILLS is held, which leaves the backing out.
     kills_shown: bool = false,
 };
+
+/// `mission_frame` (`0x004924B0`), as far as the objects go: every object's orders, which fly the
+/// ships and read the player's controls, and then the frames they are drawn at. A mission and the
+/// sandbox alike run this once a frame, before the camera's own frame and anything drawn.
+///
+/// Not ported: the rest of the frame's work, which is the mission's events, its scripts and the
+/// missiles ([#30](https://github.com/vdmkenny/openreliant/issues/30),
+/// [#39](https://github.com/vdmkenny/openreliant/issues/39)).
+pub fn missionFrame(orders: aigeneric.Context, fraction: f32) void {
+    aigeneric.ordersUpdate(orders);
+    frameObjects(orders.world.objects, fraction);
+}
 
 /// `mission_frame`'s pass over the objects before the camera's frame: each live object, save
 /// stand-ins and disabled and jumping ones, has `missile_homing` cleared and is framed `fraction`
@@ -616,7 +629,29 @@ const TestWorld = struct {
     fn get(world: *TestWorld) gameobj.World {
         return .{ .objects = world.objects, .player = &world.player, .view = .cockpit, .shake = &world.shake };
     }
+
+    /// What the orders of its objects run against.
+    fn orders(world: *TestWorld, clock: *const Clock) aigeneric.Context {
+        return .{ .world = world.get(), .clock = clock };
+    }
 };
+
+test missionFrame {
+    var clock: Clock = .{};
+    var world: TestWorld = undefined;
+    try world.init();
+    defer world.deinit();
+    var tables = create.testing.tables();
+    // The player's slot, then a ship that turns on the spot under an order of its own.
+    for (0..2) |_| _ = try create.createObject(world.objects, &tables, create.testing.no_models, null, 0, @splat(0), &world.random);
+    const orders = world.orders(&clock);
+    try std.testing.expect(try aigeneric.push(orders, 1, .slow_rotate, .{ .kind = .ship, .index = -1, .component = -1 }));
+
+    missionFrame(orders, 0);
+    // The frame ran the ship's order, and framed every object where it is drawn.
+    try std.testing.expect(world.objects.slots[1].object.yaw_input > 0);
+    try std.testing.expect(!world.objects.slots[1].object.root.flags.unframed);
+}
 
 test "the simulation steps on every fourth tick" {
     var clock: Clock = .{};
