@@ -781,22 +781,27 @@ pub const ArmIterator = struct {
     operands: []const u8,
     index: usize = 0,
 
-    /// Bytes an arm occupies: a big-endian target, a threshold, and one byte not yet identified.
-    pub const arm_size = 4;
-    /// Operand bytes before the first arm: the arm count and the default target.
-    pub const header_size = 3;
+    /// The operands before the arms: the arm count and the default target.
+    pub const Header = extern struct {
+        count: u8,
+        default: layout.Big(u16),
+    };
+
+    /// An arm: a big-endian target, a threshold, and one byte not yet identified.
+    pub const Arm = extern struct {
+        target: layout.Big(u16),
+        threshold: u8,
+        _unknown_3: u8,
+    };
 
     pub fn next(iterator: *ArmIterator) ?usize {
-        const at: usize = switch (iterator.index) {
-            // The default target sits where an arm's target would.
-            0 => 1,
-            else => header_size + (iterator.index - 1) * arm_size,
-        };
-        if (iterator.index > iterator.operands[0]) return null;
-        iterator.index += 1;
-        if (at + 2 > iterator.operands.len) return null;
-        const target = std.mem.readInt(u16, iterator.operands[at..][0..2], .big);
-        return iterator.origin + target;
+        const header = layout.view(Header, iterator.operands) catch return null;
+        if (iterator.index > header.count) return null;
+        defer iterator.index += 1;
+        // The default target first, then each arm's.
+        if (iterator.index == 0) return iterator.origin + header.default.get();
+        const arms = layout.array(Arm, iterator.operands[@sizeOf(Header)..], header.count) catch return null;
+        return iterator.origin + arms[iterator.index - 1].target.get();
     }
 };
 
@@ -813,7 +818,7 @@ pub fn decodeAt(code: []const u8, pos: usize) ?Instruction {
         // The displacement is big-endian, the one place the format is not little-endian, and
         // counts from its own position rather than from the end of the instruction.
         .branch => .{ .branch = .{
-            .target = pos + 1 + std.mem.readInt(u16, operands[0..2], .big),
+            .target = pos + 1 + (layout.view(layout.Big(u16), operands) catch return null).get(),
             .conditional = info.falls_through,
         } },
         // Every transfer in the table is classified, which the check below enforces.
