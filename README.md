@@ -34,8 +34,8 @@ Parts of the HUD work: the targeting cluster, radar, status lights, readouts, an
 shield and blind fire toggles. The HUD panels (gunnery, damage, power and so on) open and close
 with their keys but don't show anything yet.
 
-There are no other ships, weapons, missions or sound yet. See the [milestones](../../milestones)
-for what's planned.
+Ships pass straight through each other, since collisions aren't ported, and there are no weapons,
+missions or sound yet. See the [milestones](../../milestones) for what's planned.
 
 ## Installing and playing
 
