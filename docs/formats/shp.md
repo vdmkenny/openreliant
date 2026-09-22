@@ -217,6 +217,30 @@ the same surface. 72-byte records stop before the polygon fields and are always 
 A face's front is the side `(v1 - v0) x (v2 - v0)` points to. A `3` record lists its last two
 corners the other way round: its front is the side of `(v2 - v0) x (v1 - v0)`.
 
+### Tree node (tag `0x07`)
+
+A part's collision tree, the root first. The engine descends it to find which part of a ship another
+object has hit (`0x0049BD30`), in place of the sphere test the two objects' own radii give.
+
+| Off | Type | Field |
+|---|---|---|
+| `0x00` | u32 | **Unknown.** Zero in every shipped model but one, which holds 100 |
+| `0x04` | f32[9] | The box's axes in the part's frame, row-major |
+| `0x28` | vec3 | Half the box's size along each of its own axes |
+| `0x34` | vec3 | The box's centre in the part's frame |
+| `0x40` | i32[2] | The two nodes it splits into, or `-1` |
+
+Each node is followed later in the file by a node face list (tag `0x08`, one u32 a record) holding
+the faces inside its box, as indices into the part's first level. A node with faces is a leaf and
+its children are not read; the loader decides by the list, not by the `-1`s, and two models have a
+leaf whose child fields hold something else.
+
+One model's records are 64 bytes and stop before the children. Its single node is a leaf, so
+nothing reads them.
+
+148 of the 421 models carry a tree, 6582 nodes in all: capital ships, stations and gates, which are
+also the models whose objects list components. Fighters carry none and collide as spheres.
+
 ### Material (tag `0x06`)
 
 A single NUL-terminated 64-byte texture name without its extension. The engine looks it up in the
@@ -281,9 +305,9 @@ moved from each part's origin to the object's. **Unverified:** that they are int
 part's volume; the engine uses them as such
 ([Live objects](../engine/objects.md#the-model-hierarchy)).
 
-**Unknown:** the interpretation of tree nodes (`0x07`) and trigger
-polygons (`0x0F`). They are parsed and counted, and their records are available, but their fields
-are not decoded here.
+**Unknown:** the interpretation of trigger polygons (`0x0F`). They are parsed and counted, and their
+records are available, but their fields are not decoded here. One model carries two of them; the
+engine tests the player's ship against them before it descends the collision tree.
 
 ## Prior art
 

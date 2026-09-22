@@ -712,18 +712,72 @@ pub const testing = struct {
         source: shp.Model,
         loaded: srofiles.Loaded,
         type: Type,
+        /// A collision tree of one leaf over the part's two faces, which `withHull` hands the
+        /// part, and the file's own record of those faces, which the tree's leaf names.
+        nodes: [1]shp.TreeNode,
+        faces: [2]u32,
+        node_faces: [1][]u32,
+        vertices: [4]shp.Vertex,
+        triangles: [2]shp.Face,
+        level: [1]shp.Mesh,
 
+        /// Fills in every field, so a field added here has to be filled in too.
         pub fn init(model: *Model, gpa: Allocator) !void {
             const srmesh = @import("../surrender/surrenderlib/srmesh.zig");
-            model.mesh = try srmesh.testing.square(gpa);
+            model.* = .{
+                .mesh = try srmesh.testing.square(gpa),
+                .levels = undefined,
+                .loaded_parts = undefined,
+                .data = .{objects.testing.part()},
+                .source = undefined,
+                .loaded = undefined,
+                .type = undefined,
+                .nodes = .{.{
+                    ._unknown_00 = 0,
+                    .orientation = math.identity,
+                    .half_size = .{ .x = 100, .y = 100, .z = 10 },
+                    .centre = .{ .x = 0, .y = 0, .z = 0 },
+                    .children = .{ -1, -1 },
+                }},
+                .faces = .{ 0, 1 },
+                .node_faces = undefined,
+                .vertices = undefined,
+                .triangles = undefined,
+                .level = undefined,
+            };
+            // The square the test mesh draws, as the file holds it: two triangles facing -Z.
+            const square = [_]shp.Vec3{
+                .{ .x = -100, .y = -100, .z = 0 },
+                .{ .x = 100, .y = -100, .z = 0 },
+                .{ .x = 100, .y = 100, .z = 0 },
+                .{ .x = -100, .y = 100, .z = 0 },
+            };
+            for (&model.vertices, square) |*vertex, at| {
+                vertex.* = std.mem.zeroes(shp.Vertex);
+                vertex.position = at;
+            }
+            for (&model.triangles, [_][3]u32{ .{ 0, 2, 1 }, .{ 0, 3, 2 } }) |*face, corners| {
+                face.* = std.mem.zeroes(shp.Face);
+                face.vertices = corners;
+                face.normal = .{ .x = 0, .y = 0, .z = -1 };
+            }
+            model.level = .{.{ .lod = std.mem.zeroes(shp.Lod), .vertices = &model.vertices, .faces = &model.triangles, .materials = &.{} }};
+            model.data[0].meshes = &model.level;
+            // What points at the rest of the fixture, once it stands where it will stay.
             model.levels = .{.{ .mesh = &model.mesh, .until = std.math.inf(f32) }};
             model.loaded_parts = .{.{ .flags = .{}, .levels = &model.levels, .meshes = &.{} }};
-            model.data = .{objects.testing.part()};
+            model.node_faces = .{&model.faces};
             model.data[0].part.volume = 2;
             model.data[0].part.density = 3;
             model.source = .{ .header = std.mem.zeroes(shp.Header), .parts = &model.data, .tail_count = 0, .trailing_bytes = 0 };
             model.loaded = .{ .parts = &model.loaded_parts };
             model.type = .{ .model = &model.source, .loaded = &model.loaded };
+        }
+
+        /// Gives the part its collision tree, which a hull's objects are tested against.
+        pub fn withHull(model: *Model) void {
+            model.data[0].nodes = &model.nodes;
+            model.data[0].node_faces = &model.node_faces;
         }
 
         pub fn deinit(model: *Model, gpa: Allocator) void {

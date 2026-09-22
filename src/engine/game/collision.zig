@@ -11,6 +11,7 @@ const math = @import("../surrender/math.zig");
 const Vector = math.Vector;
 const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
+const main = @import("main.zig");
 const motion = @import("motion.zig");
 const objects = @import("objects.zig");
 
@@ -67,7 +68,7 @@ pub fn collide(world: gameobj.World, first: u16, second: u16, pass: u8) bool {
     }
 
     const lists_components = all.slots[near].object.flags.components or all.slots[far].object.flags.components;
-    if (lists_components) return parts(world, near, far);
+    if (lists_components) return parts(world, near, far, pass);
 
     // Two torpedoes and two pieces of debris pass through each other, as do two of `satellite_type`.
     if (classes[0] == classes[1] and (classes[0] == .torpedo or classes[0] == .debris)) return false;
@@ -95,33 +96,39 @@ const bounce: f32 = -2;
 /// sweep has already made (`0x004DC56C`), so a pair that keeps meeting is parted harder each time.
 const resting_speed: f32 = 5;
 
-/// `0x00464E80`: the shove two objects give each other where they meet. The point their spheres
-/// touch at moves with each of them, so a ship that is turning strikes harder with its wingtip; the
-/// impulse is worked out from how fast the two points close, each object's mass and how readily it
-/// turns (`GameObject.angular_response`), and is handed to both through `knock`, equal and
-/// opposite. An object held to another, and the Ripper with something in its grip, take none.
-///
-/// The knocks are applied by the move that follows, which is why a colliding pair moves again.
+/// `0x00464E80`: the shove two objects give each other where their spheres touch. The contact
+/// point lies on the line between their centres, so neither is turned by it.
 fn shove(world: gameobj.World, first: u16, second: u16, pass: u8) void {
+    const all = world.objects;
+    const here = gameobj.vector(all.slots[first].object.root.position);
+    const there = gameobj.vector(all.slots[second].object.root.position);
+    const apart = here - there;
+    if (math.lengthSquared(apart) == 0) return;
+    const toward = math.normalize(apart);
+    const contact = there + toward * @as(Vector, @splat(all.slots[second].object.radius));
+    const impulse = shoveAt(world, first, second, -toward, .{
+        math.transformTransposed(all.slots[first].object.root.orientation, contact - here),
+        math.transformTransposed(all.slots[second].object.root.orientation, contact - there),
+    }, pass) orelse return;
+    impact(world, first, second, impulse, contact);
+}
+
+/// `0x00464E80` itself: the impulse where two objects meet. `normal` points from the first to the
+/// second, and `levers` gives the contact point in each object's own frame. The impulse follows
+/// how fast those points close between this step and the next, each object's mass and its
+/// `angular_response`, and both take it through `knock`, equal and opposite. An object held to
+/// another, and the Ripper carrying something, take none.
+///
+/// The move that follows applies the knocks, which is why a colliding pair moves again.
+fn shoveAt(world: gameobj.World, first: u16, second: u16, normal: Vector, levers: [2]Vector, pass: u8) ?Vector {
     const all = world.objects;
     const near = &all.slots[first].object;
     const far = &all.slots[second].object;
-    const here = gameobj.vector(near.root.position);
-    const there = gameobj.vector(far.root.position);
-    const apart = here - there;
-    if (math.lengthSquared(apart) == 0) return;
-    // The point their spheres touch at, and where it lies in each object's own frame.
-    const normal = -math.normalize(apart);
-    const contact = there + math.normalize(apart) * @as(Vector, @splat(far.radius));
-    const levers: [2]Vector = .{
-        math.transformTransposed(near.root.orientation, contact - here),
-        math.transformTransposed(far.root.orientation, contact - there),
-    };
 
-    // Where that point stands now and where the step is taking it, for each object.
+    // Where each contact point stands now and where the step is taking it.
     const now: [2]Vector = .{
-        math.transform(near.root.orientation, levers[0]) + here,
-        math.transform(far.root.orientation, levers[1]) + there,
+        math.transform(near.root.orientation, levers[0]) + gameobj.vector(near.root.position),
+        math.transform(far.root.orientation, levers[1]) + gameobj.vector(far.root.position),
     };
     const next: [2]Vector = .{
         math.transform(near.root.next_orientation, levers[0]) + gameobj.vector(near.root.next_position),
@@ -129,7 +136,6 @@ fn shove(world: gameobj.World, first: u16, second: u16, pass: u8) void {
     };
     var closing = (next[0] - now[0]) - (next[1] - now[1]);
     if (math.lengthSquared(closing) == 0 and far.flags.components) {
-        // Two points that keep pace are parted by what is left of the first object's reach.
         closing = normal * @as(Vector, @splat(near.radius - math.distance(now[0], next[0])));
     }
     const speed = math.length(closing);
@@ -148,13 +154,16 @@ fn shove(world: gameobj.World, first: u16, second: u16, pass: u8) void {
         );
         give += 1 / object.mass + math.dot(math.cross(turn, lever), normal);
     }
-    if (give <= 0) return;
+    // A tensor or a mass the arithmetic cannot hold would throw the pair across the sky.
+    if (!(give > 0) or !std.math.isFinite(give)) return null;
     var force = normal * @as(Vector, @splat(math.dot(closing, normal) * bounce / give));
     if (@reduce(.And, force == @as(Vector, @splat(0)))) force = normal;
+    if (!@reduce(.And, @abs(force) < @as(Vector, @splat(std.math.floatMax(f32))))) return null;
     for ([_]u16{ first, second }, now, 0..) |index, at, which| {
         if (!shoved(all, index)) continue;
         gameobj.knock(&all.slots[index].object, if (which == 0) force else -force, at);
     }
+    return force;
 }
 
 /// Whether the object takes a shove at all: one held to another does not, nor does the Ripper while
@@ -197,17 +206,171 @@ fn push(world: gameobj.World, first: u16, second: u16, pass: u8) bool {
     return true;
 }
 
-/// `0x00465C50`: a ship that meets an object listing components is tested against its parts rather
-/// than its sphere, up to nine times over as the two are moved apart. Two objects that both list
-/// components pass through each other, as does anything meeting `limpet_pod_type`.
+/// What the collision damage counts as (`0x00463EE0`'s last argument). **Unknown:** what 0, 1 and
+/// 5 stand for, beyond counting toward `recent_damage`, which 2 does not.
+pub const Kind = enum(u8) {
+    collision = 2,
+    _,
+};
+
+/// The quadrants an object's shields and armour are kept in, as `object_armor_conditions` reads
+/// them.
+pub const Quadrant = enum(u2) {
+    left = 0,
+    right = 1,
+    fore = 2,
+    aft = 3,
+};
+
+/// `0x00463CA0`: the quadrant a hit falls in, from where it lies in the object's frame as a share
+/// of the object's bounds: whichever of along and across is the larger share decides.
+pub fn quadrant(object: *const gameobj.GameObject, at: Vector) Quadrant {
+    const across = at[0] / (object.bounds_max.x - object.bounds_min.x);
+    const along = at[2] / (object.bounds_max.z - object.bounds_min.z);
+    if (@abs(across) <= @abs(along)) return if (along <= 0) .aft else .fore;
+    return if (across > 0) .right else .left;
+}
+
+/// How much of a collision's impulse becomes damage (`0x004DC3F8` and `0x004DC408`), over the
+/// lighter of the two masses.
+const damage_share: f32 = 0.2 * 0.5;
+
+/// What the damage is scaled by while either object is held to another (`0x004DC4AC`).
+const attached_damage: f32 = 0.02;
+
+/// What a player's ship does to a friendly one (`0x004DC3D4`).
+const friendly_damage: f32 = 0.25;
+
+/// `0x00465CA0`: the damage two objects do each other as they meet. It follows the impulse the
+/// shove handed them, over the lighter of the two masses, and lands on the quadrant each was struck
+/// in: the shields take it first, and what passes through wears the armour.
+fn impact(world: gameobj.World, first: u16, second: u16, impulse: Vector, contact: Vector) void {
+    const all = world.objects;
+    const near = &all.slots[first].object;
+    const far = &all.slots[second].object;
+    var value = math.length(impulse) * damage_share / @min(near.mass, far.mass);
+    if (near.flags.attached or far.flags.attached) value *= attached_damage;
+
+    for ([_]u16{ first, second }, [_]u16{ second, first }) |index, other| {
+        const object = &all.slots[index].object;
+        const struck = quadrant(object, math.transformTransposed(object.root.orientation, contact - gameobj.vector(object.root.position)));
+        var share = value;
+        // A player's ship is gentler with its own side.
+        if (other == all.player and object.side == .friendly and index >= all.players) share *= friendly_damage;
+        damage(world, index, struck, share, 1, other, .collision);
+    }
+}
+
+/// `0x00463EE0`: damage to an object, which its shields take first. What passes through wears the
+/// armour instead, times `factor`, which every caller here gives as 1. A shield that is already
+/// down adds its own deficit to what passes through. Damage of kinds 0, 1 and 5 counts toward what the object has
+/// taken lately, which is what sends a ship after its attacker.
 ///
-/// The test itself (`0x00465380`) walks the parts' collision hulls, which the port does not read
-/// yet ([#143](https://github.com/vdmkenny/openreliant/issues/143)), so nothing comes of the pair.
-fn parts(world: gameobj.World, first: u16, second: u16) bool {
+/// Not ported: the scaling the difficulty setting gives a hit (`0x00463D70`), the head-up display's
+/// answer to one, the score a player's hit is worth, and what multiplayer makes of it.
+pub fn damage(world: gameobj.World, index: u16, struck: Quadrant, value: f32, factor: f32, attacker: u16, kind: Kind) void {
+    const all = world.objects;
+    const slot = &all.slots[index];
+    const object = &slot.object;
+    if (object.flags.jumping) return;
+    if (slot.combat) |combat| if (combat.class == .debris) return;
+
+    const shield = &object.shields[@intFromEnum(struck)];
+    const through = @max(value - shield.*, 0);
+    if (counted(kind)) object.recent_damage += value;
+    if (shield.* >= 0) shield.* -= value;
+    if (shield.* < 0) armorDamage(world, index, struck, through * factor, attacker, kind);
+    object.last_attacker = attacker;
+}
+
+/// `0x004641F0`: damage to an object's armour, once its shields are down. The armour's conditions
+/// follow it (`object_armor_conditions`), and armour below zero destroys the object.
+///
+/// Not ported: the destruction itself (`object_destroyed`,
+/// [#41](https://github.com/vdmkenny/openreliant/issues/41)), the damage a component takes in place
+/// of the hull ([#40](https://github.com/vdmkenny/openreliant/issues/40)), and what an invulnerable
+/// object shrugs off.
+pub fn armorDamage(world: gameobj.World, index: u16, struck: Quadrant, value: f32, attacker: u16, kind: Kind) void {
+    const all = world.objects;
+    const slot = &all.slots[index];
+    const object = &slot.object;
+    if (object.flags.jumping or object.flags.exploding) return;
+    if (slot.combat) |combat| if (combat.class == .debris) return;
+    if (counted(kind)) object.recent_damage += value;
+    if (object.invulnerable != 0) return;
+
+    object.armor[@intFromEnum(struck)] -= value;
+    if (slot.combat) |combat| main.armorConditions(object, combat);
+    object.last_attacker = attacker;
+}
+
+/// Whether the damage counts toward what an object has taken lately, which `order_retaliate` reads.
+fn counted(kind: Kind) bool {
+    return switch (@intFromEnum(kind)) {
+        0, 1, 5 => true,
+        else => false,
+    };
+}
+
+/// `0x00465C50`: a ship that meets an object listing components is tested against that object's
+/// parts, not its sphere. The two are moved apart and tested again, up to nine times. Two objects
+/// that both list components pass through each other, as does anything meeting `limpet_pod_type`.
+fn parts(world: gameobj.World, first: u16, second: u16, pass: u8) bool {
     const all = world.objects;
     if (all.slots[first].object.flags.components and all.slots[second].object.flags.components) return false;
     if (all.slots[first].object.type == limpet_pod_type or all.slots[second].object.type == limpet_pod_type) return false;
-    return false;
+    const hull = if (all.slots[first].object.flags.components) first else second;
+    const ship = if (hull == first) second else first;
+
+    var tries: u8 = 0;
+    while (tries < hull_passes) : (tries += 1) {
+        if (!hullHit(world, ship, hull, pass)) break;
+        for ([_]u16{ ship, hull }) |index| {
+            const slot = &all.slots[index];
+            const flight = slot.flight orelse continue;
+            motion.move(&slot.object, flight, world.view, slot.motion, if (index == all.player) world.shake else null);
+        }
+    }
+    return tries > 0 and tries < hull_passes;
+}
+
+/// How many times a pair is tested against a hull before the sweep gives up on it.
+const hull_passes = 9;
+
+/// `0x00465380`, as far as the shove goes: the nearest face of the hull to the ship's sphere. The
+/// ship is shoved at its own centre and the hull at the face, so the hull turns about the hit and
+/// the ship does not.
+///
+/// Not ported: the damage the hit does, and what it destroys
+/// ([#42](https://github.com/vdmkenny/openreliant/issues/42)). The game also tests the player's
+/// ship against each part's trigger polygons first, which one shipped model carries.
+fn hullHit(world: gameobj.World, ship: u16, hull: u16, pass: u8) bool {
+    const all = world.objects;
+    const model = if (all.slots[hull].model) |*live| live else return false;
+    const source = if (all.slots[hull].type) |kind| kind.model else return false;
+    const object = &all.slots[hull].object;
+
+    // The hull stands where this step is taking it, as the ship's sphere does.
+    model.place(gameobj.vector(object.root.next_position), object.root.next_orientation);
+    const at = gameobj.vector(all.slots[ship].object.root.next_position);
+    const found = objects.hitSphere(model, source, at, all.slots[ship].object.radius) orelse return false;
+
+    const part = model.parts[found.part].object;
+    const contact = math.transform(part.orientation, found.point) + part.position;
+    const normal = math.transform(part.orientation, found.normal);
+    // The ship takes the shove at its own centre, the hull at the face it was hit on. The game
+    // works the hull's lever out in the part's frame; the port uses the object's, which differs
+    // only for a part its model animates.
+    const lever = math.transformTransposed(object.root.orientation, contact - gameobj.vector(object.root.position));
+    const impulse = shoveAt(world, ship, hull, -normal, .{ @splat(0), lever }, pass) orelse return true;
+
+    // The ship takes the damage on the quadrant it was struck in. What the hull's own part takes
+    // waits on the components (#40).
+    const hit = &all.slots[ship].object;
+    const value = math.length(impulse) * damage_share / hit.mass;
+    const struck = quadrant(hit, math.transformTransposed(hit.root.orientation, contact - gameobj.vector(hit.root.position)));
+    damage(world, ship, struck, value, 1, hull, .collision);
+    return true;
 }
 
 const testing = struct {
@@ -295,6 +458,116 @@ test "a collision shoves both ships" {
     all.slots[near].object.velocity = .{ .x = 100, .y = 0, .z = 0 };
     try std.testing.expect(collide(world, near, far, 0));
     try std.testing.expectEqual(0, all.slots[far].object.velocity.x);
+}
+
+test "a ship that meets a hull is shoved off the face it hit" {
+    const libcmt = @import("../libcmt.zig");
+    const input = @import("../input.zig");
+    const gpa = std.testing.allocator;
+    var random: libcmt.Rand = .{};
+    const all = try create.Objects.create(gpa, &random);
+    defer all.destroy();
+    var model: create.testing.Model = undefined;
+    try model.init(gpa);
+    defer model.deinit(gpa);
+    model.withHull();
+    var tables = create.testing.tables();
+    var player: input.Player = .{};
+    var shake: f32 = 0;
+    const world = testing.world(all, &player, &shake);
+
+    // A hull of one square part, and a ship flying into its face.
+    // The inverse inertia of a body of this mass, about 6 / (mass * size squared), which is what
+    // `recentre` works out from a model's parts.
+    const hull_turn: math.Matrix = @splat(0);
+    const hull = try create.createObject(all, &tables, model.types(), null, 0, @splat(0), &random);
+    all.slots[hull].object.flags.components = true;
+    all.slots[hull].object.mass = 100000;
+    all.slots[hull].object.angular_response = hull_turn;
+    all.slots[hull].object.angular_response[0] = 6e-9;
+    all.slots[hull].object.angular_response[4] = 6e-9;
+    all.slots[hull].object.angular_response[8] = 6e-9;
+    all.slots[hull].motion = null;
+    // The ship meets the face off to one side, so the hit has a lever on the hull.
+    const ship = try create.createObject(all, &tables, create.testing.no_models, null, 0, .{ 60, 0, -60 }, &random);
+    all.slots[ship].object.radius = 100;
+    all.slots[ship].object.mass = 1000;
+    all.slots[ship].object.angular_response = .{ 6e-7, 0, 0, 0, 6e-7, 0, 0, 0, 6e-7 };
+    all.slots[ship].motion = null;
+    all.slots[ship].object.velocity = .{ .x = 0, .y = 0, .z = 40 };
+    all.slots[ship].object.root.next_position = .{ .x = 60, .y = 0, .z = -20 };
+
+    try std.testing.expect(collide(world, ship, hull, 0));
+    // It is thrown back off the face, which faces along -Z, and the hull is pushed the other way.
+    try std.testing.expect(all.slots[ship].object.velocity.z < 40);
+    try std.testing.expect(all.slots[hull].object.velocity.z > 0);
+    // The hull turns about the hit, which the ship does not: it is shoved at its own centre.
+    try std.testing.expect(all.slots[hull].object.yaw_rate != 0 or all.slots[hull].object.pitch_rate != 0);
+    try std.testing.expectEqual(0, all.slots[ship].object.yaw_rate);
+
+    // A ship nowhere near the hull meets nothing.
+    objects.setPosition(&all.slots[ship].object, &all.slots[ship].drawn, .{ 0, 0, -5000 });
+    all.slots[ship].object.velocity = .{ .x = 0, .y = 0, .z = 0 };
+    try std.testing.expect(!collide(world, ship, hull, 0));
+
+    // Two hulls pass through each other.
+    all.slots[ship].object.flags.components = true;
+    try std.testing.expect(!collide(world, ship, hull, 0));
+}
+
+test damage {
+    const libcmt = @import("../libcmt.zig");
+    const input = @import("../input.zig");
+    var random: libcmt.Rand = .{};
+    const all = try create.Objects.create(std.testing.allocator, &random);
+    defer all.destroy();
+    var tables = create.testing.tables();
+    var player: input.Player = .{};
+    var shake: f32 = 0;
+    const world = testing.world(all, &player, &shake);
+    const index = try testing.ship(all, &tables, &random, @splat(0), 1000);
+    const object = &all.slots[index].object;
+    object.shields = .{ 10, 10, 10, 10 };
+    object.armor = .{ 20, 20, 20, 20 };
+
+    // The shield takes it first.
+    damage(world, index, .fore, 4, 1, 1, .collision);
+    try std.testing.expectEqual(6, object.shields[2]);
+    try std.testing.expectEqual(20, object.armor[2]);
+    try std.testing.expectEqual(1, object.last_attacker);
+
+    // Past the shield, the rest wears the armour, and the armour's conditions follow.
+    damage(world, index, .fore, 10, 1, 1, .collision);
+    try std.testing.expect(object.shields[2] < 0);
+    try std.testing.expectEqual(16, object.armor[2]);
+    try std.testing.expect(object.gun_condition < 1);
+
+    // A collision is not what sends a ship after its attacker; a shot is. What passes a shield
+    // that is already down carries the shield's deficit with it, so the armour takes both.
+    try std.testing.expectEqual(0, object.recent_damage);
+    damage(world, index, .fore, 1, 1, 1, @enumFromInt(0));
+    try std.testing.expectEqual(6, object.recent_damage);
+
+    // Debris takes none, and neither does a ship that is jumping.
+    const left = object.armor[2];
+    tables.combat[0].class = .debris;
+    damage(world, index, .fore, 100, 1, 1, .collision);
+    try std.testing.expectEqual(left, object.armor[2]);
+    tables.combat[0].class = .fighter;
+    object.flags.jumping = true;
+    damage(world, index, .fore, 100, 1, 1, .collision);
+    try std.testing.expectEqual(left, object.armor[2]);
+}
+
+test quadrant {
+    var object = gameobj.testing.object();
+    object.bounds_min = .{ .x = -100, .y = -50, .z = -400 };
+    object.bounds_max = .{ .x = 100, .y = 50, .z = 400 };
+    // Along the ship counts for more than across it, so the nose and tail win the middle ground.
+    try std.testing.expectEqual(.fore, quadrant(&object, .{ 0, 0, 300 }));
+    try std.testing.expectEqual(.aft, quadrant(&object, .{ 0, 0, -300 }));
+    try std.testing.expectEqual(.right, quadrant(&object, .{ 90, 0, 10 }));
+    try std.testing.expectEqual(.left, quadrant(&object, .{ -90, 0, 10 }));
 }
 
 test "what never collides" {

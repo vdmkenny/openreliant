@@ -153,9 +153,9 @@ fn info(ctx: Context, model: shp.Model) !void {
             try ctx.stdout.writeByte('\n');
         }
 
-        if (entry.attachments.len + entry.node_count + entry.tracks.len + entry.trigger_count > 0) {
+        if (entry.attachments.len + entry.nodes.len + entry.tracks.len + entry.trigger_count > 0) {
             try ctx.stdout.print("        {d} nodes, {d} attachments, {d} clips, {d} groups, {d} triggers\n", .{
-                entry.node_count,  entry.attachments.len, entry.tracks.len,
+                entry.nodes.len,   entry.attachments.len, entry.tracks.len,
                 entry.group_count, entry.trigger_count,
             });
         }
@@ -311,6 +311,31 @@ fn check(ctx: Context, model: shp.Model) !void {
                             index, level, vertex_index, vertex.next_lod_vertex, next.vertices.len,
                         });
                     }
+                }
+            }
+        }
+
+        // The collision tree: every box turned by a rotation, every child a node of this part, and
+        // every face one of the first level's.
+        for (entry.nodes, entry.node_faces, 0..) |node, faces, node_index| {
+            for (0..3) |row| {
+                const axis: [3]f32 = node.orientation[row * 3 ..][0..3].*;
+                const length = @sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]);
+                if (@abs(length - 1) > 1e-3) {
+                    try report.fail(ctx, &problems, "part {d} node {d}: axis {d} is {d:.4} long", .{ index, node_index, row, length });
+                }
+            }
+            if (faces.len == 0) {
+                for (node.children) |child| {
+                    if (child < 0 or child >= @as(i32, @intCast(entry.nodes.len))) {
+                        try report.fail(ctx, &problems, "part {d} node {d}: child {d} of {d}", .{ index, node_index, child, entry.nodes.len });
+                    }
+                }
+            }
+            const in_level = if (entry.meshes.len > 0) entry.meshes[0].faces.len else 0;
+            for (faces) |face| {
+                if (face >= in_level) {
+                    try report.fail(ctx, &problems, "part {d} node {d}: face {d} of {d}", .{ index, node_index, face, in_level });
                 }
             }
         }

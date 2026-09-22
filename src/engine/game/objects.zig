@@ -213,6 +213,150 @@ pub fn setOrientation(object: *GameObject, frame: *Model.Local, orientation: mat
     object.root.orientation = orientation;
 }
 
+/// What a sphere meets on a model.
+pub const Hit = struct {
+    part: usize,
+    face: usize,
+    /// The nearest point of the face, and the face's normal, both in the part's frame.
+    point: Vector,
+    normal: Vector,
+    /// How far the sphere's centre stands from that point.
+    distance: f32,
+};
+
+/// How many boxes of a part's tree wait to be tested at once. The trees the game ships are far
+/// shallower than this; a node past it is passed over rather than tested.
+const hit_stack = 100;
+
+/// `object_hit_test` (`0x0049BEF0`) with `node_hit_test` (`0x0049BD30`): the nearest face of the
+/// model to a sphere, or null where it meets none. Each part's collision tree is descended to the
+/// leaves, and the faces of a leaf the sphere reaches are tested. A part with no tree is passed
+/// over, as is a hidden one. `place` must have run for the frame the sphere is given in.
+pub fn hitSphere(model: *const Model, source: *const shp.Model, at: Vector, radius: f32) ?Hit {
+    var best = radius * radius;
+    var hit: ?Hit = null;
+    for (model.parts, source.parts, 0..) |part, data, index| {
+        if (part.hidden or data.nodes.len == 0 or data.meshes.len == 0) continue;
+        const level = data.meshes[0];
+        // The sphere in the part's frame, which the tree's boxes and the faces are given in.
+        const local = math.transformTransposed(part.object.orientation, at - part.object.position);
+
+        var stack: [hit_stack]u32 = undefined;
+        var top: usize = 1;
+        stack[0] = 0;
+        // A well formed tree holds each node once, so a file that names one twice cannot keep the
+        // descent going.
+        var left = data.nodes.len;
+        while (top > 0 and left > 0) {
+            left -= 1;
+            top -= 1;
+            const at_node = stack[top];
+            if (at_node >= data.nodes.len) continue;
+            const node = data.nodes[at_node];
+            const inside = math.transformTransposed(node.orientation, local - gameobj.vector(node.centre));
+            const half = gameobj.vector(node.half_size);
+            if (@abs(inside[0]) > half[0] + radius) continue;
+            if (@abs(inside[1]) > half[1] + radius) continue;
+            if (@abs(inside[2]) > half[2] + radius) continue;
+
+            const faces = data.node_faces[at_node];
+            if (faces.len == 0) {
+                for (node.children) |child| {
+                    if (child < 0 or top >= stack.len) continue;
+                    stack[top] = @intCast(child);
+                    top += 1;
+                }
+                continue;
+            }
+            for (faces) |face| {
+                if (face >= level.faces.len) continue;
+                const record = level.faces[face];
+                const triangle: [3]Vector = .{
+                    corner(level, record.vertices[0]) orelse continue,
+                    corner(level, record.vertices[1]) orelse continue,
+                    corner(level, record.vertices[2]) orelse continue,
+                };
+                const normal = gameobj.vector(record.normal);
+                // Only a sphere in front of the face, and near enough, is worth the triangle.
+                const ahead = math.dot(local - triangle[0], normal);
+                if (ahead < 0 or ahead * ahead > best) continue;
+                const point = closestOnTriangle(local, triangle);
+                const away = math.lengthSquared(local - point);
+                if (away >= best) continue;
+                best = away;
+                hit = .{ .part = index, .face = face, .point = point, .normal = normal, .distance = @sqrt(away) };
+            }
+        }
+    }
+    return hit;
+}
+
+/// A face's corner, or null where the file names a vertex the level does not hold.
+fn corner(level: shp.Mesh, vertex: u32) ?Vector {
+    if (vertex >= level.vertices.len) return null;
+    return gameobj.vector(level.vertices[vertex].position);
+}
+
+/// The point of a triangle nearest `from`.
+///
+/// **Improvement:** the game reaches the same point through a general routine for the nearest point
+/// of a simplex (`0x00478360`), which also serves points, lines and tetrahedra.
+fn closestOnTriangle(from: Vector, triangle: [3]Vector) Vector {
+    const ab = triangle[1] - triangle[0];
+    const ac = triangle[2] - triangle[0];
+    const ap = from - triangle[0];
+    const d1 = math.dot(ab, ap);
+    const d2 = math.dot(ac, ap);
+    if (d1 <= 0 and d2 <= 0) return triangle[0];
+
+    const bp = from - triangle[1];
+    const d3 = math.dot(ab, bp);
+    const d4 = math.dot(ac, bp);
+    if (d3 >= 0 and d4 <= d3) return triangle[1];
+
+    const vc = d1 * d4 - d3 * d2;
+    if (vc <= 0 and d1 >= 0 and d3 <= 0) return triangle[0] + ab * @as(Vector, @splat(d1 / (d1 - d3)));
+
+    const cp = from - triangle[2];
+    const d5 = math.dot(ab, cp);
+    const d6 = math.dot(ac, cp);
+    if (d6 >= 0 and d5 <= d6) return triangle[2];
+
+    const vb = d5 * d2 - d1 * d6;
+    if (vb <= 0 and d2 >= 0 and d6 <= 0) return triangle[0] + ac * @as(Vector, @splat(d2 / (d2 - d6)));
+
+    const va = d3 * d6 - d5 * d4;
+    if (va <= 0 and (d4 - d3) >= 0 and (d5 - d6) >= 0) {
+        const along = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        return triangle[1] + (triangle[2] - triangle[1]) * @as(Vector, @splat(along));
+    }
+
+    const denominator = 1 / (va + vb + vc);
+    return triangle[0] + ab * @as(Vector, @splat(vb * denominator)) + ac * @as(Vector, @splat(vc * denominator));
+}
+
+test hitSphere {
+    const gpa = std.testing.allocator;
+    var model: create.testing.Model = undefined;
+    try model.init(gpa);
+    defer model.deinit(gpa);
+    model.withHull();
+
+    var live = try Model.create(gpa, &model.source, &model.loaded, .{});
+    defer live.deinit(gpa);
+    live.place(@splat(0), math.identity);
+
+    // The part is a square in the XY plane facing -Z; a sphere in front of it meets it.
+    const hit = hitSphere(&live, &model.source, .{ 0, 0, -60 }, 100) orelse return error.TestExpectedHit;
+    try std.testing.expectEqual(0, hit.part);
+    try std.testing.expectApproxEqAbs(60, hit.distance, 1e-3);
+    try std.testing.expectEqual(math.Vector{ 0, 0, -1 }, hit.normal);
+
+    // Behind the face, and too far off to the side, it meets nothing.
+    try std.testing.expectEqual(null, hitSphere(&live, &model.source, .{ 0, 0, 60 }, 100));
+    try std.testing.expectEqual(null, hitSphere(&live, &model.source, .{ 900, 0, -60 }, 100));
+}
+
 /// `node_tree_frames` (`0x0049A880`) for an object, once a frame before it is drawn and before the
 /// camera's frame: its root's frame (`Node.framePlace`), which `drawn` keeps, then each of its
 /// part nodes' (`Model.frame`), and the model placed where the root's frame has it.
