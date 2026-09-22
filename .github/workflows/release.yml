@@ -59,7 +59,9 @@ jobs:
         run: |
           name="openreliant-$VERSION-${{ matrix.name }}"
           mkdir -p "$name" dist
-          cp README.md LICENSE CHANGELOG.md "$name"/
+          for file in README.md LICENSE CHANGELOG.md; do
+            if [ -f "$file" ]; then cp "$file" "$name"/; fi
+          done
           case "${{ matrix.target }}" in
             *windows*)
               cp zig-out/bin/openreliant.exe "$name"/
