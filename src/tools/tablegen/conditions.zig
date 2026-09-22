@@ -10,6 +10,9 @@ const Io = std.Io;
 
 const openreliant = @import("openreliant");
 const Repeat = openreliant.dte.Trigger.Repeat;
+const vm = openreliant.engine.vm;
+const Descriptor = vm.ConditionDescriptor;
+const EventValue = vm.EventValue;
 
 const image = @import("image.zig");
 const testing = @import("testing.zig");
@@ -20,21 +23,25 @@ pub const install: u32 = 0x0045CBC4;
 const condition_table: u32 = 0x0052952C;
 const condition_count: u32 = 0x00525F8C;
 
-pub const descriptor_size = 0x1C;
-pub const value_size = 0x0C;
-
 /// The values an event can carry: the five locals of a thread, and a trigger's five operands.
 pub const max_values = 5;
 
-/// Offsets within a descriptor.
-const layout = struct {
-    const name = 0x00;
-    const unknown_04 = 0x04;
-    const subjects = 0x06;
-    const values = 0x08;
-    const slot = 0x0C;
-    const veto_exempt = 0x0D;
-    const handlers = 0x10;
+/// `MOV dword ptr [address], value`, which installs the catalogue's address.
+const StoreDword = extern struct {
+    opcode: [2]u8,
+    address: u32 align(1),
+    value: u32 align(1),
+
+    const encoding: [2]u8 = .{ 0xC7, 0x05 };
+};
+
+/// `MOV word ptr [address], value`, which installs its length.
+const StoreWord = extern struct {
+    opcode: [3]u8,
+    address: u32 align(1),
+    value: u16 align(1),
+
+    const encoding: [3]u8 = .{ 0x66, 0xC7, 0x05 };
 };
 
 pub const Value = struct {
@@ -68,56 +75,52 @@ pub const Catalogue = struct {
 pub const Error = image.Error || error{ NotTheInstall, TooManyValues, PartialHandlers, BadFlag };
 
 pub fn read(arena: std.mem.Allocator, reader: image.Reader) (Error || std.mem.Allocator.Error)!Catalogue {
-    const store = try reader.slice(install, 10);
-    if (!std.mem.eql(u8, store[0..2], &.{ 0xC7, 0x05 }) or
-        std.mem.readInt(u32, store[2..6], .little) != condition_table)
-    {
+    const table_store = try reader.record(StoreDword, install);
+    if (!std.mem.eql(u8, &table_store.opcode, &StoreDword.encoding) or table_store.address != condition_table) {
         return error.NotTheInstall;
     }
-    const address = std.mem.readInt(u32, store[6..10], .little);
-    const count_store = try reader.slice(install + 10, 9);
-    if (!std.mem.eql(u8, count_store[0..3], &.{ 0x66, 0xC7, 0x05 }) or
-        std.mem.readInt(u32, count_store[3..7], .little) != condition_count)
-    {
+    const count_store = try reader.record(StoreWord, install + @sizeOf(StoreDword));
+    if (!std.mem.eql(u8, &count_store.opcode, &StoreWord.encoding) or count_store.address != condition_count) {
         return error.NotTheInstall;
     }
-    const count = std.mem.readInt(u16, count_store[7..9], .little);
+    const address = table_store.value;
 
-    const conditions = try arena.alloc(Condition, count);
-    for (conditions, 0..) |*condition, index| {
-        const at = address + @as(u32, @intCast(index)) * descriptor_size;
+    const descriptors = try reader.records(Descriptor, address, count_store.value);
+    const conditions = try arena.alloc(Condition, descriptors.len);
+    for (conditions, descriptors) |*condition, descriptor| {
         var values: std.ArrayList(Value) = .empty;
-        var list = try reader.word(at + layout.values);
-        while (list != 0) : (list += value_size) {
-            const label = try reader.word(list);
-            if (label == 0) break;
+        var list = @intFromEnum(descriptor.values);
+        while (list != 0) : (list += @sizeOf(EventValue)) {
+            // The list ends at a null label. `checked` is a `bool`, so its byte is looked at before
+            // the record is read.
+            if (try reader.word(list + @offsetOf(EventValue, "label")) == 0) break;
             if (values.items.len == max_values) return error.TooManyValues;
-            const checked = try reader.int(u8, list + 9);
-            if (checked > 1) return error.BadFlag;
+            if (try reader.int(u8, list + @offsetOf(EventValue, "checked")) > 1) return error.BadFlag;
+            const value = try reader.record(EventValue, list);
             try values.append(arena, .{
-                .label = try reader.string(label),
-                .kinds = try reader.word(list + 4),
-                .extra = try reader.int(u8, list + 8),
-                .checked = checked == 1,
+                .label = try reader.string(@intFromEnum(value.label)),
+                .kinds = @bitCast(value.kinds),
+                .extra = value._unknown_08,
+                .checked = value.checked,
             });
         }
 
         const handlers: Handlers = .{
-            .begin = try reader.word(at + layout.handlers),
-            .add_member = try reader.word(at + layout.handlers + 4),
-            .verdict = try reader.word(at + layout.handlers + 8),
+            .begin = @intFromEnum(descriptor.begin),
+            .add_member = @intFromEnum(descriptor.add_member),
+            .verdict = @intFromEnum(descriptor.verdict),
         };
         const any = handlers.begin != 0 or handlers.add_member != 0 or handlers.verdict != 0;
         const all = handlers.begin != 0 and handlers.add_member != 0 and handlers.verdict != 0;
         if (any and !all) return error.PartialHandlers;
 
         condition.* = .{
-            .name = try reader.string(try reader.word(at + layout.name)),
-            .unknown_04 = try reader.int(u16, at + layout.unknown_04),
-            .subjects = try reader.int(u16, at + layout.subjects),
+            .name = try reader.string(@intFromEnum(descriptor.name)),
+            .unknown_04 = descriptor._unknown_04,
+            .subjects = @bitCast(descriptor.subjects),
             .values = try values.toOwnedSlice(arena),
-            .slot = try reader.int(u8, at + layout.slot),
-            .veto_exempt = try reader.int(u8, at + layout.veto_exempt),
+            .slot = descriptor.slot,
+            .veto_exempt = @intFromEnum(descriptor.veto_exempt),
             .handlers = if (all) handlers else null,
         };
     }
@@ -256,37 +259,50 @@ const TestPayload = struct {
 
     fn installCatalogue(payload: *TestPayload, count: u16) void {
         const region = payload.text();
-        region.put(install, &.{ 0xC7, 0x05 });
-        region.putWord(install + 2, condition_table);
-        region.putWord(install + 6, table_va);
-        region.put(install + 10, &.{ 0x66, 0xC7, 0x05 });
-        region.putWord(install + 13, condition_count);
-        region.putHalf(install + 17, count);
+        region.putRecord(install, StoreDword{ .opcode = StoreDword.encoding, .address = condition_table, .value = table_va });
+        region.putRecord(install + @sizeOf(StoreDword), StoreWord{ .opcode = StoreWord.encoding, .address = condition_count, .value = count });
     }
 
-    /// Descriptor `index`, named `name`, with no values, slot or handlers.
-    fn descriptor(payload: *TestPayload, index: u32, name: []const u8) u32 {
-        const at = table_va + index * descriptor_size;
-        const region = payload.table();
+    /// Descriptor `index`, named `name`, with no values, slot or handlers, changed by `change`.
+    fn descriptor(payload: *TestPayload, index: u32, name: []const u8, change: anytype) void {
         const name_at = strings + index * 0x20;
-        region.putString(name_at, name);
-        region.putWord(at + layout.name, name_at);
-        region.put(at + layout.slot, &.{ 0xFF, 0xFF });
-        return at;
+        payload.table().putString(name_at, name);
+        var record = std.mem.zeroes(Descriptor);
+        record.name = @enumFromInt(name_at);
+        record.slot = 0xFF;
+        record.veto_exempt = @enumFromInt(0xFF);
+        change.apply(&record);
+        payload.table().putRecord(table_va + index * @sizeOf(Descriptor), record);
     }
 
-    /// A value list at `list`, ending with an entry whose label is null.
+    /// A value list at `list`, ending with an entry whose label is null, each value checked or not
+    /// by the byte `checked`.
     fn values(payload: *TestPayload, list: u32, labels: []const []const u8, checked: u8) void {
         const region = payload.table();
         for (labels, 0..) |label, i| {
-            const at = list + @as(u32, @intCast(i)) * value_size;
+            const at = list + @as(u32, @intCast(i)) * @sizeOf(EventValue);
             const label_at = strings + 0x100 + @as(u32, @intCast(i)) * 0x10;
             region.putString(label_at, label);
-            region.putWord(at, label_at);
-            region.putWord(at + 4, 0x400);
-            region.put(at + 8, &.{ 0x02, checked });
+            var value = std.mem.zeroes(EventValue);
+            value.label = @enumFromInt(label_at);
+            value.kinds = @bitCast(@as(u32, 0x400));
+            value._unknown_08 = 0x02;
+            region.putRecord(at, value);
+            region.put(at + @offsetOf(EventValue, "checked"), &.{checked});
         }
     }
+
+    /// Leaves a descriptor as `descriptor` makes it.
+    const unchanged = struct {
+        fn apply(_: *Descriptor) void {}
+    };
+
+    /// Points a descriptor's values at the value list.
+    const listed = struct {
+        fn apply(record: *Descriptor) void {
+            record.values = @enumFromInt(lists);
+        }
+    };
 
     fn catalogue(payload: *TestPayload, arena: std.mem.Allocator) !Catalogue {
         return read(arena, try testing.reader(arena, &.{ payload.text(), payload.table() }));
@@ -298,15 +314,19 @@ test read {
     defer arena.deinit();
     var payload: TestPayload = .{};
     payload.installCatalogue(2);
-    const first = payload.descriptor(0, "ShipDestroyed");
-    const region = payload.table();
-    region.putHalf(first + layout.unknown_04, 0x1234);
-    region.putHalf(first + layout.subjects, 0b011);
-    region.putWord(first + layout.values, TestPayload.lists);
+    payload.descriptor(0, "ShipDestroyed", struct {
+        fn apply(record: *Descriptor) void {
+            record._unknown_04 = 0x1234;
+            record.subjects = @bitCast(@as(u16, 0b011));
+            record.values = @enumFromInt(TestPayload.lists);
+            record.slot = 3;
+            record.begin = @enumFromInt(0x0045E000);
+            record.add_member = @enumFromInt(0x0045E001);
+            record.verdict = @enumFromInt(0x0045E002);
+        }
+    });
     payload.values(TestPayload.lists, &.{ "Ship", "Killer" }, 1);
-    region.put(first + layout.slot, &.{ 3, 0xFF });
-    for (0..3) |i| region.putWord(first + layout.handlers + @as(u32, @intCast(i)) * 4, 0x0045E000 + @as(u32, @intCast(i)));
-    _ = payload.descriptor(1, "MissionStart");
+    payload.descriptor(1, "MissionStart", TestPayload.unchanged);
 
     const read_catalogue = try payload.catalogue(arena.allocator());
     try std.testing.expectEqual(TestPayload.table_va, read_catalogue.address);
@@ -342,8 +362,11 @@ test "handlers come in threes" {
     defer arena.deinit();
     var payload: TestPayload = .{};
     payload.installCatalogue(1);
-    const at = payload.descriptor(0, "ShipDestroyed");
-    payload.table().putWord(at + layout.handlers, 0x0045E000);
+    payload.descriptor(0, "ShipDestroyed", struct {
+        fn apply(record: *Descriptor) void {
+            record.begin = @enumFromInt(0x0045E000);
+        }
+    });
     try std.testing.expectError(error.PartialHandlers, payload.catalogue(arena.allocator()));
 }
 
@@ -352,8 +375,7 @@ test "a value is checked or not" {
     defer arena.deinit();
     var payload: TestPayload = .{};
     payload.installCatalogue(1);
-    const at = payload.descriptor(0, "ShipDestroyed");
-    payload.table().putWord(at + layout.values, TestPayload.lists);
+    payload.descriptor(0, "ShipDestroyed", TestPayload.listed);
     payload.values(TestPayload.lists, &.{"Ship"}, 2);
     try std.testing.expectError(error.BadFlag, payload.catalogue(arena.allocator()));
 }
@@ -363,8 +385,7 @@ test "an event carries at most five values" {
     defer arena.deinit();
     var payload: TestPayload = .{};
     payload.installCatalogue(1);
-    const at = payload.descriptor(0, "ShipDestroyed");
-    payload.table().putWord(at + layout.values, TestPayload.lists);
+    payload.descriptor(0, "ShipDestroyed", TestPayload.listed);
     payload.values(TestPayload.lists, &.{ "A", "B", "C", "D", "E", "F" }, 0);
     try std.testing.expectError(error.TooManyValues, payload.catalogue(arena.allocator()));
 }

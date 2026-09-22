@@ -8,6 +8,8 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
+const layout = @import("layout.zig");
+
 pub const magic = "2.00";
 
 pub const Error = error{
@@ -29,19 +31,26 @@ pub const Entry = extern struct {
     }
 };
 
-pub const header_size = 8;
+/// The bank's header, which its table of entries follows.
+pub const Header = extern struct {
+    magic: [4]u8,
+    count: u32,
+
+    comptime {
+        assert(@sizeOf(Header) == 8);
+    }
+};
+
+pub const header_size = @sizeOf(Header);
 
 pub const Bank = struct {
     bytes: []const u8,
     entries: []align(1) const Entry,
 
     pub fn parse(bytes: []const u8) Error!Bank {
-        if (bytes.len < header_size or !std.mem.eql(u8, bytes[0..4], magic)) return error.NotABank;
-        const count = std.mem.readInt(u32, bytes[4..8], .little);
-        const table_end = header_size + @as(usize, count) * @sizeOf(Entry);
-        if (table_end > bytes.len) return error.Truncated;
-
-        const entries = std.mem.bytesAsSlice(Entry, bytes[header_size..table_end]);
+        const header = layout.view(Header, bytes) catch return error.NotABank;
+        if (!std.mem.eql(u8, &header.magic, magic)) return error.NotABank;
+        const entries = layout.array(Entry, bytes[header_size..], header.count) catch return error.Truncated;
         for (entries) |entry| {
             if (@as(usize, entry.offset) + entry.size > bytes.len) return error.BadEntry;
         }
@@ -83,6 +92,34 @@ pub const Wave = struct {
     /// The chunks this module reads.
     const Chunk = enum { fmt, fact, data };
 
+    /// The file's header: `RIFF`, the length of what follows, and the form, `WAVE`.
+    pub const Riff = extern struct {
+        id: [4]u8,
+        size: u32,
+        form: [4]u8,
+    };
+
+    /// What starts each chunk: its id and its length, which leaves out the padding to an even
+    /// length.
+    pub const ChunkHeader = extern struct {
+        id: [4]u8,
+        size: u32,
+    };
+
+    /// The `fmt ` chunk's fields, as far as every format has them.
+    pub const FormatChunk = extern struct {
+        format: Format,
+        channels: u16,
+        rate: u32,
+        byte_rate: u32,
+        block_align: u16,
+        bits: u16,
+
+        comptime {
+            assert(@sizeOf(FormatChunk) == 16);
+        }
+    };
+
     fn chunkOf(id: *const [4]u8) ?Chunk {
         const ids = std.StaticStringMap(Chunk).initComptime(.{
             .{ "fmt ", .fmt },
@@ -93,9 +130,8 @@ pub const Wave = struct {
     }
 
     pub fn parse(bytes: []const u8) error{NotAWave}!Wave {
-        if (bytes.len < 12 or !std.mem.eql(u8, bytes[0..4], "RIFF") or !std.mem.eql(u8, bytes[8..12], "WAVE")) {
-            return error.NotAWave;
-        }
+        const riff = layout.view(Riff, bytes) catch return error.NotAWave;
+        if (!std.mem.eql(u8, &riff.id, "RIFF") or !std.mem.eql(u8, &riff.form, "WAVE")) return error.NotAWave;
         var wave: Wave = .{
             .format = @enumFromInt(0),
             .channels = 0,
@@ -107,32 +143,30 @@ pub const Wave = struct {
         };
         var seen_format = false;
 
-        var pos: usize = 12;
-        while (pos + 8 <= bytes.len) {
-            const id = bytes[pos..][0..4];
-            const len = std.mem.readInt(u32, bytes[pos + 4 ..][0..4], .little);
-            const start = pos + 8;
-            if (start + len > bytes.len) return error.NotAWave;
-            const body = bytes[start..][0..len];
+        var rest = bytes[@sizeOf(Riff)..];
+        while (layout.view(ChunkHeader, rest)) |chunk| {
+            const after = rest[@sizeOf(ChunkHeader)..];
+            if (chunk.size > after.len) return error.NotAWave;
+            const body = after[0..chunk.size];
             // Chunks are padded to an even length.
-            pos = start + len + (len & 1);
+            rest = after[@min(after.len, chunk.size + (chunk.size & 1))..];
 
-            switch (chunkOf(id) orelse continue) {
+            switch (chunkOf(&chunk.id) orelse continue) {
                 .fmt => {
-                    if (body.len < 16) return error.NotAWave;
-                    wave.format = @enumFromInt(std.mem.readInt(u16, body[0..2], .little));
-                    wave.channels = std.mem.readInt(u16, body[2..4], .little);
-                    wave.rate = std.mem.readInt(u32, body[4..8], .little);
-                    wave.block_align = std.mem.readInt(u16, body[12..14], .little);
-                    wave.bits = std.mem.readInt(u16, body[14..16], .little);
+                    const fmt = layout.view(FormatChunk, body) catch return error.NotAWave;
+                    wave.format = fmt.format;
+                    wave.channels = fmt.channels;
+                    wave.rate = fmt.rate;
+                    wave.block_align = fmt.block_align;
+                    wave.bits = fmt.bits;
                     seen_format = true;
                 },
-                .fact => if (body.len >= 4) {
-                    wave.frames = std.mem.readInt(u32, body[0..4], .little);
-                },
+                .fact => if (layout.view(u32, body)) |frames| {
+                    wave.frames = frames.*;
+                } else |_| {},
                 .data => wave.data = body,
             }
-        }
+        } else |_| {}
         if (!seen_format) return error.NotAWave;
         if (wave.frames == null and wave.format == .pcm and wave.block_align != 0) {
             wave.frames = @intCast(wave.data.len / wave.block_align);
@@ -148,22 +182,21 @@ pub const Wave = struct {
     }
 };
 
-fn testWave(comptime format: u16, comptime extra: []const u8, comptime data: []const u8) []const u8 {
-    const fmt = std.mem.toBytes(std.mem.nativeToLittle(u16, format)) ++ // format
-        std.mem.toBytes(std.mem.nativeToLittle(u16, 1)) ++ // channels
-        std.mem.toBytes(std.mem.nativeToLittle(u32, 22050)) ++ // rate
-        std.mem.toBytes(std.mem.nativeToLittle(u32, 44100)) ++ // bytes per second
-        std.mem.toBytes(std.mem.nativeToLittle(u16, 2)) ++ // block align
-        std.mem.toBytes(std.mem.nativeToLittle(u16, 16)); // bits
-    const body = "WAVE" ++ "fmt " ++ std.mem.toBytes(std.mem.nativeToLittle(u32, fmt.len)) ++ fmt ++
-        extra ++ "data" ++ std.mem.toBytes(std.mem.nativeToLittle(u32, data.len)) ++ data;
-    return "RIFF" ++ std.mem.toBytes(std.mem.nativeToLittle(u32, body.len)) ++ body;
+/// A chunk of `body`, with its header.
+fn testChunk(comptime id: *const [4]u8, comptime body: []const u8) []const u8 {
+    return std.mem.toBytes(Wave.ChunkHeader{ .id = id.*, .size = body.len }) ++ body;
+}
+
+fn testWave(comptime format: Wave.Format, comptime extra: []const u8, comptime data: []const u8) []const u8 {
+    const fmt: Wave.FormatChunk = .{ .format = format, .channels = 1, .rate = 22050, .byte_rate = 44100, .block_align = 2, .bits = 16 };
+    const body = "WAVE" ++ testChunk("fmt ", &std.mem.toBytes(fmt)) ++ extra ++ testChunk("data", data);
+    return "RIFF" ++ std.mem.toBytes(@as(u32, body.len)) ++ body;
 }
 
 test Bank {
-    const wave = comptime testWave(1, "", "\x00\x00\x01\x00");
+    const wave = comptime testWave(.pcm, "", "\x00\x00\x01\x00");
     const entry: Entry = .{ .offset = header_size + @sizeOf(Entry), .size = wave.len, .priority = 50 };
-    const file = magic ++ std.mem.toBytes(std.mem.nativeToLittle(u32, 1)) ++ std.mem.toBytes(entry) ++ wave;
+    const file = std.mem.toBytes(Header{ .magic = magic.*, .count = 1 }) ++ std.mem.toBytes(entry) ++ wave;
 
     const bank = try Bank.parse(file);
     try std.testing.expectEqual(@as(usize, 1), bank.entries.len);
@@ -176,13 +209,12 @@ test Bank {
 }
 
 test Wave {
-    const pcm = try Wave.parse(comptime testWave(1, "", "\x00\x00\x01\x00\x02\x00\x03\x00"));
+    const pcm = try Wave.parse(comptime testWave(.pcm, "", "\x00\x00\x01\x00\x02\x00\x03\x00"));
     try std.testing.expectEqual(Wave.Format.pcm, pcm.format);
     try std.testing.expectEqual(@as(?u32, 4), pcm.frames);
 
-    const fact = comptime "fact" ++ std.mem.toBytes(std.mem.nativeToLittle(u32, 4)) ++
-        std.mem.toBytes(std.mem.nativeToLittle(u32, 22050));
-    const adpcm = try Wave.parse(comptime testWave(0x11, fact, "\x00\x00"));
+    const fact = comptime testChunk("fact", &std.mem.toBytes(@as(u32, 22050)));
+    const adpcm = try Wave.parse(comptime testWave(.ima_adpcm, fact, "\x00\x00"));
     try std.testing.expectEqual(Wave.Format.ima_adpcm, adpcm.format);
     try std.testing.expectApproxEqAbs(@as(f64, 1.0), adpcm.seconds().?, 1e-9);
 

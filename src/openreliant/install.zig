@@ -706,6 +706,54 @@ fn copy(io: Io, arena: Allocator, entry: Entry, target: Io.Dir, name: []const u8
 
 const TestFile = struct { path: []const u8, data: []const u8 };
 
+/// The records of a Microsoft cabinet, as far as the tests write one.
+const Cabinet = struct {
+    const Header = extern struct {
+        signature: [4]u8 = "MSCF".*,
+        _reserved_04: u32 = 0,
+        /// The whole cabinet's size.
+        size: u32,
+        _reserved_0c: u32 = 0,
+        /// Where the first file record lies.
+        files_offset: u32,
+        _reserved_14: u32 = 0,
+        version: [2]u8 = .{ 3, 1 },
+        folders: u16,
+        files: u16,
+        flags: u16 = 0,
+        set: u16 = 0,
+        number: u16 = 0,
+
+        comptime {
+            std.debug.assert(@sizeOf(Header) == 36);
+        }
+    };
+
+    const Folder = extern struct {
+        /// Where its first data block lies.
+        data_offset: u32,
+        blocks: u16,
+        compression: u16 = 0,
+    };
+
+    /// A file's record, which its name follows, up to a NUL.
+    const File = extern struct {
+        size: u32,
+        /// Where it starts in its folder's data, uncompressed.
+        folder_offset: u32,
+        folder: u16 = 0,
+        date: u16 = 0x5421,
+        time: u16 = 0,
+        attributes: u16 = 0x20,
+    };
+
+    const Data = extern struct {
+        checksum: u32 = 0,
+        size: u16,
+        uncompressed_size: u16,
+    };
+};
+
 /// A cabinet of `files`, stored in one folder without compression or checksums, for the tests.
 fn testCabinet(gpa: Allocator, files: []const TestFile) ![]u8 {
     var out: std.ArrayList(u8) = .empty;
@@ -713,46 +761,29 @@ fn testCabinet(gpa: Allocator, files: []const TestFile) ![]u8 {
     var table_size: usize = 0;
     var data_size: usize = 0;
     for (files) |file| {
-        table_size += 16 + file.path.len + 1;
+        table_size += @sizeOf(Cabinet.File) + file.path.len + 1;
         data_size += file.data.len;
     }
-    const header_size = 36;
-    const folder_size = 8;
-    const data_offset = header_size + folder_size + table_size;
-    const little = std.builtin.Endian.little;
+    const files_offset = @sizeOf(Cabinet.Header) + @sizeOf(Cabinet.Folder);
+    const data_offset = files_offset + table_size;
 
-    var header: [header_size]u8 = @splat(0);
-    header[0..4].* = "MSCF".*;
-    std.mem.writeInt(u32, header[8..12], @intCast(data_offset + 8 + data_size), little);
-    std.mem.writeInt(u32, header[16..20], header_size + folder_size, little);
-    header[24] = 3;
-    header[25] = 1;
-    std.mem.writeInt(u16, header[26..28], 1, little);
-    std.mem.writeInt(u16, header[28..30], @intCast(files.len), little);
-    try out.appendSlice(gpa, &header);
-
-    var folder: [folder_size]u8 = @splat(0);
-    std.mem.writeInt(u32, folder[0..4], @intCast(data_offset), little);
-    std.mem.writeInt(u16, folder[4..6], 1, little);
-    try out.appendSlice(gpa, &folder);
+    try out.appendSlice(gpa, std.mem.asBytes(&Cabinet.Header{
+        .size = @intCast(data_offset + @sizeOf(Cabinet.Data) + data_size),
+        .files_offset = files_offset,
+        .folders = 1,
+        .files = @intCast(files.len),
+    }));
+    try out.appendSlice(gpa, std.mem.asBytes(&Cabinet.Folder{ .data_offset = @intCast(data_offset), .blocks = 1 }));
 
     var at: u32 = 0;
     for (files) |file| {
-        var entry: [16]u8 = @splat(0);
-        std.mem.writeInt(u32, entry[0..4], @intCast(file.data.len), little);
-        std.mem.writeInt(u32, entry[4..8], at, little);
-        std.mem.writeInt(u16, entry[10..12], 0x5421, little);
-        std.mem.writeInt(u16, entry[14..16], 0x20, little);
-        try out.appendSlice(gpa, &entry);
+        try out.appendSlice(gpa, std.mem.asBytes(&Cabinet.File{ .size = @intCast(file.data.len), .folder_offset = at }));
         try out.appendSlice(gpa, file.path);
         try out.append(gpa, 0);
         at += @intCast(file.data.len);
     }
 
-    var block: [8]u8 = @splat(0);
-    std.mem.writeInt(u16, block[4..6], @intCast(data_size), little);
-    std.mem.writeInt(u16, block[6..8], @intCast(data_size), little);
-    try out.appendSlice(gpa, &block);
+    try out.appendSlice(gpa, std.mem.asBytes(&Cabinet.Data{ .size = @intCast(data_size), .uncompressed_size = @intCast(data_size) }));
     for (files) |file| try out.appendSlice(gpa, file.data);
     return out.toOwnedSlice(gpa);
 }

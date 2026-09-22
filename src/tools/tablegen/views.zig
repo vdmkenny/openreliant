@@ -14,7 +14,14 @@ const testing = @import("testing.zig");
 /// The view table, which `camera_set_view` (`0x0045F1B0`) reads the flags of and `hud_draw`
 /// (`0x004843B0`) the names.
 pub const table: u32 = 0x004F72A8;
-const record_size = 4;
+
+/// A view's record as the payload lays it out. The flags are bytes, 0 or 1, rather than `bool`s,
+/// since the scan reads past the table's end.
+const Stored = extern struct {
+    name: u16,
+    bars: u8,
+    cockpit: u8,
+};
 
 /// Views a table this size could hold, as a bound on the scan.
 const max_views = 256;
@@ -30,9 +37,8 @@ pub const Error = image.Error || error{Empty};
 pub fn read(arena: std.mem.Allocator, reader: image.Reader) (Error || std.mem.Allocator.Error)![]const Record {
     var records: std.ArrayList(Record) = .empty;
     for (0..max_views) |index| {
-        const at = table + @as(u32, @intCast(index)) * record_size;
-        const bytes = reader.slice(at, record_size) catch break;
-        const record = parse(bytes[0..record_size]) orelse break;
+        const stored = reader.record(Stored, table + @as(u32, @intCast(index)) * @sizeOf(Stored)) catch break;
+        const record = parse(stored) orelse break;
         try records.append(arena, record);
     }
     if (records.items.len == 0) return error.Empty;
@@ -40,13 +46,9 @@ pub fn read(arena: std.mem.Allocator, reader: image.Reader) (Error || std.mem.Al
 }
 
 /// The view one record holds, or null when a flag is neither 0 nor 1, which ends the table.
-fn parse(bytes: *const [record_size]u8) ?Record {
-    if (bytes[2] > 1 or bytes[3] > 1) return null;
-    return .{
-        .name = std.mem.readInt(u16, bytes[0..2], .little),
-        .bars = bytes[2] == 1,
-        .cockpit = bytes[3] == 1,
-    };
+fn parse(stored: Stored) ?Record {
+    if (stored.bars > 1 or stored.cockpit > 1) return null;
+    return .{ .name = stored.name, .bars = stored.bars == 1, .cockpit = stored.cockpit == 1 };
 }
 
 /// Writes `views.zig`.
@@ -84,12 +86,12 @@ pub fn emit(w: *Io.Writer, records: []const Record) Io.Writer.Error!void {
 }
 
 test parse {
-    const view = parse(&.{ 0xAA, 0x00, 0x00, 0x01 }).?;
+    const view = parse(.{ .name = 0xAA, .bars = 0, .cockpit = 1 }).?;
     try std.testing.expectEqual(170, view.name);
     try std.testing.expect(!view.bars and view.cockpit);
-    try std.testing.expect(parse(&.{ 0xB5, 0x00, 0x01, 0x00 }).?.bars);
+    try std.testing.expect(parse(.{ .name = 0xB5, .bars = 1, .cockpit = 0 }).?.bars);
     // Text past the table has flag bytes above 1.
-    try std.testing.expectEqual(null, parse(&.{ 'S', 'R', '_', 'S' }));
+    try std.testing.expectEqual(null, parse(@bitCast(@as([4]u8, "SR_S".*))));
 }
 
 test read {
@@ -102,9 +104,9 @@ test read {
     defer allocator.free(bytes);
     @memset(bytes, 0);
     const region: testing.Region = .{ .va = table, .bytes = bytes };
-    region.put(table, &.{ 0xAA, 0x00, 0x00, 0x01 });
-    region.put(table + 4, &.{ 0xB5, 0x00, 0x01, 0x00 });
-    region.putString(table + 8, "SR_STR(\"Invalid Camera type %d\", camera_type)");
+    region.putRecord(table, Stored{ .name = 0xAA, .bars = 0, .cockpit = 1 });
+    region.putRecord(table + @sizeOf(Stored), Stored{ .name = 0xB5, .bars = 1, .cockpit = 0 });
+    region.putString(table + 2 * @sizeOf(Stored), "SR_STR(\"Invalid Camera type %d\", camera_type)");
 
     const payload = try testing.reader(allocator, &.{region});
     defer testing.freeReader(allocator, payload);

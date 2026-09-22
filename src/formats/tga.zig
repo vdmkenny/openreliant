@@ -7,9 +7,12 @@
 //! the star map and the sky dome's colours.
 
 const std = @import("std");
+const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
-pub const header_size = 18;
+const layout = @import("layout.zig");
+
+pub const header_size = @sizeOf(Header);
 
 /// Colours in a palette.
 pub const palette_length = 256;
@@ -35,41 +38,32 @@ pub const Descriptor = packed struct(u8) {
     _reserved: u2,
 };
 
-pub const Header = struct {
+/// The file's header, whose 16-bit fields lie on odd offsets.
+pub const Header = extern struct {
     id_length: u8,
     /// `1` when a colour map follows the image ID.
     color_map_type: u8,
     image_type: ImageType,
-    color_map_first: u16,
-    color_map_length: u16,
+    color_map_first: u16 align(1),
+    color_map_length: u16 align(1),
     color_map_entry_bits: u8,
-    x_origin: u16,
-    y_origin: u16,
-    width: u16,
-    height: u16,
+    x_origin: u16 align(1),
+    y_origin: u16 align(1),
+    width: u16 align(1),
+    height: u16 align(1),
     pixel_bits: u8,
     descriptor: Descriptor,
-
-    pub fn parse(bytes: *const [header_size]u8) Header {
-        return .{
-            .id_length = bytes[0],
-            .color_map_type = bytes[1],
-            .image_type = @enumFromInt(bytes[2]),
-            .color_map_first = std.mem.readInt(u16, bytes[3..5], .little),
-            .color_map_length = std.mem.readInt(u16, bytes[5..7], .little),
-            .color_map_entry_bits = bytes[7],
-            .x_origin = std.mem.readInt(u16, bytes[8..10], .little),
-            .y_origin = std.mem.readInt(u16, bytes[10..12], .little),
-            .width = std.mem.readInt(u16, bytes[12..14], .little),
-            .height = std.mem.readInt(u16, bytes[14..16], .little),
-            .pixel_bits = bytes[16],
-            .descriptor = @bitCast(bytes[17]),
-        };
-    }
 
     /// Where the colour map starts: after the header and the image ID.
     pub fn colorMapOffset(header: Header) usize {
         return header_size + @as(usize, header.id_length);
+    }
+
+    comptime {
+        assert(@offsetOf(Header, "color_map_first") == 3);
+        assert(@offsetOf(Header, "x_origin") == 8);
+        assert(@offsetOf(Header, "pixel_bits") == 16);
+        assert(@sizeOf(Header) == 18);
     }
 };
 
@@ -78,8 +72,7 @@ pub const Error = error{ Truncated, NotColorMapped, UnsupportedColorMap, Unsuppo
 /// The palette of a colour-mapped image, as `SR_TGA_get_palette` reads it: the first 256 entries of
 /// its colour map, stored blue, green, red.
 pub fn palette(bytes: []const u8) Error!Palette {
-    if (bytes.len < header_size) return error.Truncated;
-    const header: Header = .parse(bytes[0..header_size]);
+    const header = (try layout.view(Header, bytes)).*;
     switch (header.image_type) {
         .color_mapped, .rle_color_mapped => {},
         else => return error.NotColorMapped,
@@ -89,12 +82,10 @@ pub fn palette(bytes: []const u8) Error!Palette {
         header.color_map_length < palette_length) return error.UnsupportedColorMap;
 
     const start = header.colorMapOffset();
-    if (bytes.len < start + palette_length * 3) return error.Truncated;
+    if (bytes.len < start) return error.Truncated;
+    const entries = try layout.array([3]u8, bytes[start..], palette_length);
     var result: Palette = undefined;
-    for (&result, 0..) |*colour, i| {
-        const entry = bytes[start + i * 3 ..][0..3];
-        colour.* = .{ entry[2], entry[1], entry[0] };
-    }
+    for (&result, entries) |*colour, entry| colour.* = .{ entry[2], entry[1], entry[0] };
     return result;
 }
 
@@ -116,8 +107,7 @@ pub const Image = struct {
 /// The pixels of a true-colour image of 24 or 32 bits, uncompressed or run-length encoded, or of an
 /// 8-bit colour-mapped one. Alpha is dropped.
 pub fn decode(gpa: Allocator, bytes: []const u8) (Error || Allocator.Error)!Image {
-    if (bytes.len < header_size) return error.Truncated;
-    const header: Header = .parse(bytes[0..header_size]);
+    const header = (try layout.view(Header, bytes)).*;
     const encoded = switch (header.image_type) {
         .color_mapped, .true_color => false,
         .rle_color_mapped, .rle_true_color => true,
@@ -168,15 +158,21 @@ pub fn decode(gpa: Allocator, bytes: []const u8) (Error || Allocator.Error)!Imag
 
 /// A colour-mapped image with a 256-entry map in which entry `i` is `(i, i + 1, i + 2)`, and a
 /// 1x1 image.
-fn testImage(buffer: []u8, id: []const u8) []u8 {
-    const header = [header_size]u8{
-        @intCast(id.len), 1, 1, // ID length, colour map type, image type
-        0, 0, 0, 1, 24, // colour map: first 0, length 256, 24 bits
-        0, 0, 0, 0, // origin
-        1, 0, 1, 0, // 1x1
-        8, 0x20, // 8 bits per pixel, top to bottom
+fn testImage(buffer: []u8, id: []const u8) layout.Error![]u8 {
+    (try layout.viewMut(Header, buffer)).* = .{
+        .id_length = @intCast(id.len),
+        .color_map_type = 1,
+        .image_type = .color_mapped,
+        .color_map_first = 0,
+        .color_map_length = palette_length,
+        .color_map_entry_bits = 24,
+        .x_origin = 0,
+        .y_origin = 0,
+        .width = 1,
+        .height = 1,
+        .pixel_bits = 8,
+        .descriptor = .{ .alpha_bits = 0, .right_to_left = false, .top_to_bottom = true, ._reserved = 0 },
     };
-    @memcpy(buffer[0..header_size], &header);
     @memcpy(buffer[header_size..][0..id.len], id);
     const map = buffer[header_size + id.len ..][0 .. palette_length * 3];
     for (0..palette_length) |i| {
@@ -191,8 +187,8 @@ fn testImage(buffer: []u8, id: []const u8) []u8 {
 
 test Header {
     var buffer: [1024]u8 = undefined;
-    const image = testImage(&buffer, "id");
-    const header: Header = .parse(image[0..header_size]);
+    const image = try testImage(&buffer, "id");
+    const header = (try layout.view(Header, image)).*;
     try std.testing.expectEqual(ImageType.color_mapped, header.image_type);
     try std.testing.expectEqual(256, header.color_map_length);
     try std.testing.expectEqual(1, header.width);
@@ -203,7 +199,7 @@ test Header {
 
 test palette {
     var buffer: [1024]u8 = undefined;
-    const image = testImage(&buffer, "palette");
+    const image = try testImage(&buffer, "palette");
     const colours = try palette(image);
     try std.testing.expectEqual([3]u8{ 0, 1, 2 }, colours[0]);
     try std.testing.expectEqual([3]u8{ 255, 0, 1 }, colours[255]);
@@ -242,7 +238,7 @@ test decode {
 
     try std.testing.expectError(error.Truncated, decode(gpa, rle[0 .. rle.len - 1]));
     var mapped: [1024]u8 = undefined;
-    const indexed = try decode(gpa, testImage(&mapped, ""));
+    const indexed = try decode(gpa, try testImage(&mapped, ""));
     defer indexed.deinit(gpa);
     try std.testing.expectEqual([3]u8{ 0, 1, 2 }, indexed.pixel(0, 0));
 }

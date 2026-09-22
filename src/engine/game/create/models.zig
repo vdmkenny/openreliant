@@ -589,7 +589,7 @@ pub const attachments = [9][ids_per_kind]Attachment{
         .{ .model = "gun_base.shp" },
         .{ .model = "small gun_base.shp" },
     },
-    // Kind 2: unknown
+    // Kind 2: engine_glow
     .{
         .{},
         .{},

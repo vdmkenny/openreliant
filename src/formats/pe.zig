@@ -5,6 +5,8 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
+const layout = @import("layout.zig");
+
 pub const dos_magic = "MZ";
 pub const nt_signature = "PE\x00\x00";
 
@@ -339,10 +341,9 @@ pub const Image = struct {
         const block = image.resource(.string, (id >> 4) + 1) orelse return null;
         var at: usize = 0;
         for (0..strings_per_block) |index| {
-            if (at + 2 > block.len) return null;
-            const length = std.mem.readInt(u16, block[at..][0..2], .little);
-            at += 2;
-            const size = @as(usize, length) * 2;
+            const length = (layout.view(u16, block[at..]) catch return null).*;
+            at += @sizeOf(u16);
+            const size = @as(usize, length) * @sizeOf(u16);
             if (at + size > block.len) return null;
             if (index == id & (strings_per_block - 1)) {
                 return std.mem.bytesAsSlice(u16, block[at..][0..size]);
@@ -570,45 +571,42 @@ pub const testing = struct {
             for (0..strings_per_block) |index| {
                 const at = block * strings_per_block + index;
                 const text = if (at < strings.len) strings[at] orelse "" else "";
-                try appendInt(allocator, &data, u16, @intCast(text.len));
-                for (text) |c| try appendInt(allocator, &data, u16, c);
+                try appendRecord(allocator, &data, @as(u16, @intCast(text.len)));
+                for (text) |c| try appendRecord(allocator, &data, @as(u16, c));
             }
         }
         offsets[blocks] = @intCast(data.items.len);
 
-        try appendDirectory(allocator, &out, 1);
-        try appendInt(allocator, &out, u32, @intFromEnum(ResourceType.string));
-        try appendInt(allocator, &out, u32, ResourceEntry.high | root_size);
-        try appendDirectory(allocator, &out, blocks);
+        try appendRecord(allocator, &out, directory(1));
+        try appendRecord(allocator, &out, ResourceEntry{ .name = @intFromEnum(ResourceType.string), .offset = ResourceEntry.high | root_size });
+        try appendRecord(allocator, &out, directory(blocks));
         for (0..blocks) |block| {
-            try appendInt(allocator, &out, u32, @intCast(block + 1));
-            try appendInt(allocator, &out, u32, ResourceEntry.high | @as(u32, @intCast(root_size + kinds_size + block * (directory_size + entry_size))));
+            const below: u32 = @intCast(root_size + kinds_size + block * (directory_size + entry_size));
+            try appendRecord(allocator, &out, ResourceEntry{ .name = @intCast(block + 1), .offset = ResourceEntry.high | below });
         }
         for (0..blocks) |block| {
-            try appendDirectory(allocator, &out, 1);
-            try appendInt(allocator, &out, u32, 0x409);
-            try appendInt(allocator, &out, u32, @intCast(data_entries + block * @sizeOf(ResourceData)));
+            try appendRecord(allocator, &out, directory(1));
+            try appendRecord(allocator, &out, ResourceEntry{ .name = 0x409, .offset = @intCast(data_entries + block * @sizeOf(ResourceData)) });
         }
         for (0..blocks) |block| {
-            try appendInt(allocator, &out, u32, rva + @as(u32, @intCast(block_data)) + offsets[block]);
-            try appendInt(allocator, &out, u32, offsets[block + 1] - offsets[block]);
-            try appendInt(allocator, &out, u32, 0);
-            try appendInt(allocator, &out, u32, 0);
+            try appendRecord(allocator, &out, ResourceData{
+                .rva = rva + @as(u32, @intCast(block_data)) + offsets[block],
+                .size = offsets[block + 1] - offsets[block],
+                .code_page = 0,
+                ._reserved = 0,
+            });
         }
         try out.appendSlice(allocator, data.items);
         return out.toOwnedSlice(allocator);
     }
 
-    fn appendDirectory(allocator: std.mem.Allocator, out: *std.ArrayList(u8), ids: usize) !void {
-        try out.appendNTimes(allocator, 0, 12);
-        try appendInt(allocator, out, u16, 0);
-        try appendInt(allocator, out, u16, @intCast(ids));
+    /// A resource directory of `ids` entries, all by id.
+    fn directory(ids: usize) ResourceDirectory {
+        return .{ .characteristics = 0, .timestamp = 0, .major_version = 0, .minor_version = 0, .named_count = 0, .id_count = @intCast(ids) };
     }
 
-    fn appendInt(allocator: std.mem.Allocator, out: *std.ArrayList(u8), comptime T: type, value: T) !void {
-        var bytes: [@sizeOf(T)]u8 = undefined;
-        std.mem.writeInt(T, &bytes, value, .little);
-        try out.appendSlice(allocator, &bytes);
+    fn appendRecord(allocator: std.mem.Allocator, out: *std.ArrayList(u8), record: anytype) !void {
+        try out.appendSlice(allocator, std.mem.asBytes(&record));
     }
 };
 

@@ -3,6 +3,7 @@
 const std = @import("std");
 
 const openreliant = @import("openreliant");
+const layout = openreliant.layout;
 const pe = openreliant.pe;
 
 const testing = @import("testing.zig");
@@ -42,6 +43,22 @@ pub const Reader = struct {
         return reader.int(u32, va);
     }
 
+    /// The record of type `T` at `va`: an `extern struct` laid out as the payload lays it.
+    pub fn record(reader: Reader, comptime T: type, va: u32) Error!T {
+        return (try reader.view(T, va)).*;
+    }
+
+    /// `record`, in place, for a record whose fields are kept by reference, such as its name.
+    pub fn view(reader: Reader, comptime T: type, va: u32) Error!*align(1) const T {
+        return layout.view(T, try reader.slice(va, @sizeOf(T))) catch error.OutOfImage;
+    }
+
+    /// `count` records of type `T` from `va`.
+    pub fn records(reader: Reader, comptime T: type, va: u32, count: usize) Error![]align(1) const T {
+        const size = std.math.mul(usize, count, @sizeOf(T)) catch return error.OutOfImage;
+        return layout.array(T, try reader.slice(va, size), count) catch return error.OutOfImage;
+    }
+
     /// A NUL-terminated string of printable ASCII and tabs at `va`, or empty for a null pointer.
     pub fn string(reader: Reader, va: u32) Error![]const u8 {
         if (va == 0) return "";
@@ -70,6 +87,9 @@ test Reader {
     try std.testing.expectEqualStrings("\tGoto", try reader.string(0x401018));
     try std.testing.expectEqualStrings("", try reader.string(0));
     try std.testing.expectEqualSlices(u8, "LAN", try reader.slice(0x401010, 3));
+    const Pair = extern struct { low: u16, high: u16 };
+    try std.testing.expectEqual(Pair{ .low = 0xBEEF, .high = 0xDEAD }, try reader.record(Pair, 0x401000));
+    try std.testing.expectEqual(0x434E, (try reader.records(u16, 0x401010, 2))[1]);
 
     // Below the image, past the section, a control character, and a string that never ends.
     try std.testing.expectError(error.OutOfImage, reader.word(0x3FFFFC));

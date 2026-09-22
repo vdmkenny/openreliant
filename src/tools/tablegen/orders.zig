@@ -46,8 +46,7 @@ pub const Table = struct {
 pub const Error = image.Error || error{BadGroups};
 
 pub fn read(arena: std.mem.Allocator, reader: image.Reader) (Error || std.mem.Allocator.Error)!Table {
-    var starts: [group_count]u32 = undefined;
-    for (&starts, 0..) |*start, index| start.* = try reader.word(order_groups + @as(u32, @intCast(index)) * 4);
+    const starts = try reader.records(u32, order_groups, group_count);
 
     const groups = try arena.alloc(Group, group_count);
     var orders: std.ArrayList(Order) = .empty;
@@ -58,16 +57,15 @@ pub fn read(arena: std.mem.Allocator, reader: image.Reader) (Error || std.mem.Al
         if (len > group_span) return error.BadGroups;
         group.* = .{ .first = @intCast(index * group_span), .address = start, .len = @intCast(len) };
 
-        for (0..len) |i| {
-            const at = start + @as(u32, @intCast(i)) * record_size;
+        for (try reader.records(Record, start, len), 0..) |record, i| {
             try orders.append(arena, .{
                 .number = @intCast(index * group_span + i),
-                .name = try reader.string(try reader.word(at + @offsetOf(Record, "name"))),
-                .init = try reader.word(at + @offsetOf(Record, "init")),
-                .update = try reader.word(at + @offsetOf(Record, "update")),
-                .exit = try reader.word(at + @offsetOf(Record, "exit")),
-                .flags = try reader.word(at + @offsetOf(Record, "flags")),
-                .priority = @bitCast(try reader.word(at + @offsetOf(Record, "priority"))),
+                .name = try reader.string(@intFromEnum(record.name)),
+                .init = @intFromEnum(record.init),
+                .update = @intFromEnum(record.update),
+                .exit = @intFromEnum(record.exit),
+                .flags = @bitCast(record.flags),
+                .priority = record.priority,
             });
         }
     }
@@ -229,17 +227,21 @@ const TestPayload = struct {
             order_groups - (group_count - 1) * record_size,
             order_groups - record_size,
         };
-        for (group_starts, 0..) |start, index| r.putWord(order_groups + @as(u32, @intCast(index)) * 4, start);
+        r.putRecord(order_groups, group_starts);
         for (first_group, 0..) |name, i| {
             const at = group_starts[0] + @as(u32, @intCast(i)) * record_size;
             const name_at = strings + @as(u32, @intCast(i)) * 0x20;
             r.putString(name_at, name);
-            r.putWord(at + @offsetOf(Record, "name"), name_at);
-            r.putWord(at + @offsetOf(Record, "update"), 0x00401000 + @as(u32, @intCast(i)) * 0x10);
-            r.putWord(at + @offsetOf(Record, "flags"), 0x40);
+            var record = std.mem.zeroes(Record);
+            record.name = @enumFromInt(name_at);
+            record.update = @enumFromInt(0x00401000 + @as(u32, @intCast(i)) * 0x10);
+            record.flags.retaliate = true;
+            r.putRecord(at, record);
         }
-        r.putWord(group_starts[1] + @offsetOf(Record, "priority"), 0x62);
-        r.putWord(group_starts[1] + @offsetOf(Record, "init"), 0x00402000);
+        var later = std.mem.zeroes(Record);
+        later.init = @enumFromInt(0x00402000);
+        later.priority = 0x62;
+        r.putRecord(group_starts[1], later);
     }
 
     fn table(payload: *TestPayload, arena: std.mem.Allocator) !Table {

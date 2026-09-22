@@ -10,15 +10,15 @@ const Io = std.Io;
 
 const openreliant = @import("openreliant");
 const Kind = openreliant.shp.Attachment.Kind;
+const ShipTypeEntry = openreliant.engine.game.create.ShipType;
 
 const image = @import("image.zig");
 const testing = @import("testing.zig");
 const x86 = @import("x86.zig");
 
-/// The ship type table: a record of `ship_type_size` bytes for each of the 256 types, with the
-/// model file's name at `+0` and the comms sprite's at `+4`.
+/// The ship type table: a `create.ShipType` for each of the 256 types, which names the model file
+/// and the comms sprite.
 pub const ship_types: u32 = 0x004F7490;
-pub const ship_type_size = 0x14;
 pub const ship_type_count = 256;
 
 /// The function that fills `attachment_table`.
@@ -64,11 +64,10 @@ pub fn read(
     functions: []const x86.Function,
 ) (Error || std.mem.Allocator.Error)!Tables {
     const types = try arena.alloc(ShipType, ship_type_count);
-    for (types, 0..) |*ship_type, index| {
-        const at = ship_types + @as(u32, @intCast(index)) * ship_type_size;
+    for (types, try reader.records(ShipTypeEntry, ship_types, ship_type_count)) |*ship_type, entry| {
         ship_type.* = .{
-            .model = try optionalString(reader, try reader.word(at)),
-            .schematic = try optionalString(reader, try reader.word(at + 4)),
+            .model = try optionalString(reader, @intFromEnum(entry.model_name)),
+            .schematic = try optionalString(reader, @intFromEnum(entry.schematic_name)),
         };
     }
 
@@ -262,7 +261,7 @@ const TestPayload = struct {
     const strings: u32 = 0x004F8C00;
 
     comptime {
-        std.debug.assert(strings >= ship_types + ship_type_count * ship_type_size);
+        std.debug.assert(strings >= ship_types + ship_type_count * @sizeOf(ShipTypeEntry));
     }
 
     fn region(payload: *TestPayload) testing.Region {
@@ -302,11 +301,15 @@ test read {
     defer arena.deinit();
     var payload: TestPayload = .{};
     const region = payload.region();
-    region.putWord(ship_types, payload.name(0, "SHIP0.SHP"));
-    region.putWord(ship_types + 4, payload.name(1, "ship0.spr"));
+    var first = std.mem.zeroes(ShipTypeEntry);
+    first.model_name = @enumFromInt(payload.name(0, "SHIP0.SHP"));
+    first.schematic_name = @enumFromInt(payload.name(1, "ship0.spr"));
+    region.putRecord(ship_types, first);
     try std.testing.expectEqual(0x004F8C40, payload.name(2, "GUN.SHP"));
     try std.testing.expectEqual(0x004F8C60, payload.name(3, "gun.spr"));
-    region.putWord(ship_types + 2 * ship_type_size, payload.name(4, ""));
+    var third = std.mem.zeroes(ShipTypeEntry);
+    third.model_name = @enumFromInt(payload.name(4, ""));
+    region.putRecord(ship_types + 2 * @sizeOf(ShipTypeEntry), third);
 
     const tables = try payload.tables(arena.allocator(), test_loader);
     try std.testing.expectEqual(ship_type_count, tables.ship_types.len);

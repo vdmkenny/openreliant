@@ -41,6 +41,12 @@ stated otherwise. The shipped binaries carry no symbols. Function and data names
 `make ghidra-annotate` gives the Ghidra project; names of the form `FUN_<address>` are Ghidra's
 placeholders.
 
+Fixed layouts, in the game's files and in its executable's data, are `extern struct`s in the
+code, their fields the layout's own: enums for codes, packed structs for flag words, arrays for
+runs, with `comptime` asserts on the offsets. The readers view the bytes as those structs in place
+([`formats/layout.zig`](../src/formats/layout.zig)), which needs a little-endian host; the few
+big-endian fields, the hog archive's and the mission script's jumps, are `layout.Big`.
+
 Claims are marked where they are not directly verified:
 
 - **Unknown:** not yet determined.

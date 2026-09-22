@@ -292,7 +292,8 @@ fn opcodes(
     const text_start = base + text.virtual_address;
     const text_end = text_start + text.virtual_size;
 
-    const table_offset = pe_image.fileOffset(dispatch_table - base) orelse {
+    const reader: image.Reader = .init(pe_image, binary);
+    const entries = reader.records(u32, dispatch_table, max_opcodes) catch {
         std.debug.print("dispatch table at {x} is not in the image\n", .{dispatch_table});
         return 1;
     };
@@ -306,8 +307,7 @@ fn opcodes(
     // like addresses.
     var handlers: std.ArrayList(Handler) = .empty;
     var length: usize = 0;
-    for (0..max_opcodes) |opcode| {
-        const entry = std.mem.readInt(u32, binary[table_offset + opcode * 4 ..][0..4], .little);
+    for (entries, 0..) |entry, opcode| {
         if (entry == 0) continue;
         if (entry < text_start or entry >= text_end) break;
         length = opcode + 1;
