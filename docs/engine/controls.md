@@ -149,9 +149,17 @@ values are scaled by 0.001, so the stick's travel spans -1 to 1.
 In each mode, half the yaw input is added to the roll input, so the ship banks into turns, and
 `joystick_invert` sets the sign of pitch. STRAFE LEFT and STRAFE RIGHT set the lateral input to -1
 and 1. While the word at `0x754` of the player's object is 9, all four inputs are reversed.
-**Unknown:** what that value means, and what the flags at `0x51CEF8`, `0x51CEFC` and `0x51CF04`
-are: while any is set, the stick position goes to other routines (`0x00412D40`, `0x00413180`,
-`0x00413200`) instead of the inputs.
+**Unknown:** what that value means.
+
+While SHIELD BALANCING or POWERBALL WINDOW is held, or the flag at `0x51CF04` is set, the stick
+doesn't steer: the four inputs are zeroed, the throttle isn't read, and the stick's position goes
+to [the shield balance](#the-shield-balance) or [the power distribution](#the-power-distribution)
+instead, in that order of priority. The joystick's X and Y are the stick; with the keyboard,
+ROTATE CLOCKWISE and ROTATE ANTI-CLOCKWISE count as -1 and 1 across and NOSE UP and NOSE DOWN as
+-1 and 1 down; the mouse gives its movement times 64 over 800. `0x51CF04`'s routine
+(`0x00413200`) turns two angles at `0x51CF30` and `0x51CF00` by the stick, and `frame_controls`
+clears the flag on every frame OBJECTIVES WINDOW isn't pressed. **Unknown:** what sets the flag,
+and what the angles turn.
 
 ## Throttle
 
@@ -186,6 +194,48 @@ COUNTERMEASURES, all but FIRE LASERS once for each press. While the byte at `0x5
 reads none of them, nor MATCH SPEED, AFTERBURNER TOGGLE, the throttle keys or the keys that turn
 the ship. **Unknown:** what sets that byte.
 
+## The power distribution
+
+The player shares the ship's power between its shields, guns and engines by moving a point on a
+disc of radius 64, the power ball (`GameObject.power_setting`, `+0x728`). Each system has an
+anchor on the ball, a third of a turn from the next: the shields at (0, 1), the guns at
+(0.866, -0.5) and the engines at (-0.866, -0.5). `power_distribute` (`0x00412560`) works out each
+system's share: `power_reach` (`0x004124E0`) measures the distance from the point to the edge of
+the disc going away from the system's anchor, which is 128 at the anchor, 64 in the middle and 0
+opposite, and a share is that distance over the three together. A share `s` gives a factor of
+`(1.75 - 0.75 * s) * s + 0.5`: 1 for an even third, 1.5 for all of the power and 0.5 for none.
+
+| Offset | Factor | What it scales |
+|---|---|---|
+| `0x734` | Guns | How fast the guns recharge (`0x004770E0`) |
+| `0x738` | Engines | The cruise speed ([Motion](objects.md#motion)) |
+| `0x73C` | Shields | How fast the shields recharge ([Shields](objects.md#shields)) |
+
+`create_object` puts the point at (1, 1) and the three factors at 1.
+
+- FULL POWER TO GUNNERY, FULL POWER TO ENGINES, FULL POWER TO SHIELDS and EQUALIZE POWER, while
+  held and the radio's window is shut, put the point at (54.17, -30.32), (-55.79, -27.94),
+  (0.699, 61.98) and (1, 1), work out the factors and open the power window. EQUALIZE POWER's
+  point is a little off the middle, toward the shields, so its factors aren't all 1.
+- While POWERBALL WINDOW is held (`powerball_held`, `0x51CEF8`), `power_move` (`0x00413180`)
+  moves the point against the stick by the frame's ticks times its deflection each time
+  `player_controls` runs, brings it back to the edge of the disc if it leaves it, and works out
+  the factors again.
+
+The display shows the point and the shares in its [power window](hud.md#the-power-distribution).
+
+## The shield balance
+
+While SHIELD BALANCING is held (`0x51CEFC`), `shield_balance` (`0x00412D40`) shifts shields fore or
+aft by the stick's Y. Each time `player_controls` runs with Y past half-way, a quarter of the
+ship's shield power moves: from the fore shield to the aft one while Y is above 0.5, and back
+while it is below -0.5, as long as the shield it comes from has any left. The quarter comes out
+of that side's reserve first (`0x51CF78` for the fore shield, `0x51CF34` for the aft one), then
+out of the shield. The shield it goes to holds at most five times the shield power, and what goes
+beyond that is added to its reserve, which holds as much again. A reserve keeps the other side's
+shield from [recharging](objects.md#shields) to full. The ship status display shows each reserve as a
+second arc outside the fore or aft shield's ([Head-up display](hud.md#the-elements)).
+
 ## Porting
 
 The bindings and `starlancer.ini` hold DirectInput scan codes, which follow the IBM PC's set 1
@@ -202,8 +252,16 @@ gamepads ([Platform](../port/platform.md#joysticks-and-gamepads)). `Devices` hol
 keeps in globals: the device states, the bindings and the settings.
 
 `playerControls` and `playerThrottleKeys` port the joystick and keyboard parts of the two
-routines above. `Player` holds `throttle_setting`, `matching_speed` and `afterburner_toggled`. The
-engine runs them where `simulation_step` does, once per step, before the objects move.
+routines above. `Player` holds `throttle_setting`, `matching_speed`, `afterburner_toggled`, the
+two held flags and the shield reserves. The engine runs them where `simulation_step` does, once
+per step, before the objects move. The game also runs `player_controls` once a frame from
+`orders_update`, which isn't ported yet ([#32](https://github.com/vdmkenny/openreliant/issues/32)),
+so for now the keyboard steers, the stick moves the power and SHIELD BALANCING shifts the shields
+more slowly than in the game.
+
+[`input/power.zig`](../../src/engine/input/power.zig) ports the power distribution and the shield
+balance: `reach`, `shares`, `distribute`, `choose` for the power keys, `move` and
+`balanceShields`.
 `Camera.frameControls` ports the hat. `load_key_config` is ported in
 [`game/interface.zig`](../../src/engine/game/interface.zig), with the fixes above;
 [`profile.zig`](../../src/engine/profile.zig) reads the file as `GetPrivateProfileIntA` and

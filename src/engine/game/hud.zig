@@ -4,10 +4,11 @@
 //!
 //! Ported so far: where an element stands, its text, the readouts, the clock, the status lights
 //! with the devices' charges, the jump prompt, the eject marker, the scanner, the ship status
-//! indicator's shields, the targeting cluster, the radar's rings and ranges, and the windows,
-//! their frames and how they open and close ([`hud/windows.zig`](hud/windows.zig)). Not yet: the
-//! rest of `hud_draw`, whose other elements [`hud.md`](../../../docs/engine/hud.md) lists, and
-//! what the windows show.
+//! indicator's shields, the targeting cluster, the radar's rings and ranges, the windows, their
+//! frames and how they open and close ([`hud/windows.zig`](hud/windows.zig)), and what window 7,
+//! the power distribution, shows ([`hud/power.zig`](hud/power.zig)). Not yet: the rest of
+//! `hud_draw`, whose other elements [`hud.md`](../../../docs/engine/hud.md) lists, and what the
+//! other windows show.
 //!
 //! **Improvement.** The game draws the display with the processor, whichever renderer is running:
 //! `hud_text` hands its line to `VFX_string_draw`, out of `vfx.dll`, which blits each glyph into a
@@ -34,6 +35,12 @@ const srd3d = @import("../surrender/srd3d/srd3d.zig");
 const device = @import("../surrender/srd3d/device.zig");
 
 pub const windows = @import("hud/windows.zig");
+pub const power = @import("hud/power.zig");
+
+test {
+    _ = windows;
+    _ = power;
+}
 
 /// What `hud_place` takes off the screen's size before working a place out, and what it adds back
 /// afterwards. An element therefore keeps its place at any resolution.
@@ -286,10 +293,20 @@ pub fn drawShapeWith(
 ) (spr.Error || Allocator.Error)!void {
     const found = art.shape(index) orelse return;
     const image = try art.image(gpa, index) orelse return;
-    const left = @as(f32, @floatFromInt(at[0])) + @as(f32, @floatFromInt(found.header.x1)) * scale;
-    const top = @as(f32, @floatFromInt(at[1])) + @as(f32, @floatFromInt(found.header.y1)) * scale;
-    const right = left + @as(f32, @floatFromInt(found.width())) * scale;
-    const bottom = top + @as(f32, @floatFromInt(found.height())) * scale;
+    const corner: [2]f32 = .{
+        @as(f32, @floatFromInt(at[0])) + @as(f32, @floatFromInt(found.header.x1)) * scale,
+        @as(f32, @floatFromInt(at[1])) + @as(f32, @floatFromInt(found.header.y1)) * scale,
+    };
+    drawImage(target, image, corner, colour, scale, how);
+}
+
+/// Draws `image` with its top left corner at `corner` on the screen, `scale` times its own size,
+/// mirrored or clipped as `how` says.
+pub fn drawImage(target: device.Device, image: *srtexture.Image, corner: [2]f32, colour: [4]f32, scale: f32, how: Draw) void {
+    const left = corner[0];
+    const top = corner[1];
+    const right = left + @as(f32, @floatFromInt(image.width())) * scale;
+    const bottom = top + @as(f32, @floatFromInt(image.height())) * scale;
     var x: [2]f32 = .{ left, right };
     var y: [2]f32 = .{ top, bottom };
     var u: [2]f32 = if (how.mirror.across) .{ 1, 0 } else .{ 0, 1 };
@@ -298,7 +315,7 @@ pub fn drawShapeWith(
         const kept_x: [2]f32 = .{ @max(left, clip.left), @min(right, clip.right) };
         const kept_y: [2]f32 = .{ @max(top, clip.top), @min(bottom, clip.bottom) };
         if (kept_x[0] >= kept_x[1] or kept_y[0] >= kept_y[1]) return;
-        // Each texture coordinate follows its edge in, in the shape's own proportion.
+        // Each texture coordinate follows its edge in, in the image's own proportion.
         const across = u;
         const down = v;
         for (0..2) |edge| {
@@ -1013,8 +1030,6 @@ pub const State = struct {
     radar_zoom: ?Radar.Zoom = null,
     /// The display's windows (`0x00501D30`).
     windows: windows.Windows = .{},
-    /// Whether POWERBALL WINDOW is held (`0x0051CEF8`), or the power window was held open with it.
-    power_held: bool = false,
 
     /// `hud_draw`'s work on the devices' charges for a frame, which it does in every view: a
     /// device that runs dry is turned off.
@@ -1410,6 +1425,14 @@ pub const ShipStatus = struct {
         .{ .offset = .{ -0x22, 0x19 }, .base = 0xA8 },
     };
 
+    /// The arcs for what SHIELD BALANCING has shifted beyond the fore and aft shields
+    /// (`gameobj.ShieldReserves`), outside the top arc and the foot arc. `hud_ship_status` draws
+    /// them for the player's own ship only, each by its reserve as `level` works it out.
+    pub const reserve_arcs = struct {
+        pub const fore: Arc = .{ .offset = .{ -0x1A, -0x24 }, .base = 0xB2 };
+        pub const aft: Arc = .{ .offset = .{ -0x26, 0x1D }, .base = 0xB7 };
+    };
+
     /// How much of an arc is drawn: the quadrant's shield over the ship's shield power, cut down to
     /// a whole number as the runtime's `__ftol` does, less one. An arc of 0 or less is not drawn.
     /// A ship with no shield power has no arcs; the game divides by it regardless.
@@ -1433,7 +1456,8 @@ pub const ShipStatus = struct {
         try drawShape(schematic, gpa, target, 0, scaled(point, schematic_offset, scale), colour, scale);
     }
 
-    /// Draws the shields of a ship of `shields` and `shield_power` round its schematic.
+    /// Draws the shields of a ship of `shields` and `shield_power` round its schematic, and for the
+    /// player's ship the shields shifted fore and aft beyond them, `reserves`.
     pub fn draw(
         art: *Art,
         gpa: Allocator,
@@ -1441,17 +1465,23 @@ pub const ShipStatus = struct {
         screen: [2]u32,
         shields: [4]f32,
         shield_power: i32,
+        reserves: ?gameobj.ShieldReserves,
         colour: [4]f32,
         scale: f32,
     ) (spr.Error || Allocator.Error)!void {
         const point = place(screen, offset, across, down, scale);
-        for (arcs, shields) |arc, shield| {
-            const drawn = level(shield, shield_power);
-            if (drawn <= 0) continue;
-            const shape = @as(i32, arc.base) - drawn;
-            if (shape < 0) continue;
-            try drawShape(art, gpa, target, @intCast(shape), scaled(point, arc.offset, scale), colour, scale);
-        }
+        for (arcs, shields) |arc, shield| try drawArc(art, gpa, target, arc, level(shield, shield_power), point, colour, scale);
+        const shifted = reserves orelse return;
+        try drawArc(art, gpa, target, reserve_arcs.fore, level(shifted.fore, shield_power), point, colour, scale);
+        try drawArc(art, gpa, target, reserve_arcs.aft, level(shifted.aft, shield_power), point, colour, scale);
+    }
+
+    /// An arc drawn `drawn` shapes from its base, if any of it is.
+    fn drawArc(art: *Art, gpa: Allocator, target: device.Device, arc: Arc, drawn: i32, point: [2]i32, colour: [4]f32, scale: f32) (spr.Error || Allocator.Error)!void {
+        if (drawn <= 0) return;
+        const shape = @as(i32, arc.base) - drawn;
+        if (shape < 0) return;
+        try drawShape(art, gpa, target, @intCast(shape), scaled(point, arc.offset, scale), colour, scale);
     }
 };
 
@@ -1477,6 +1507,12 @@ test ShipStatus {
     }
     std.mem.sort(u16, &shapes, {}, std.sort.asc(u16));
     for (shapes, 0..) |shape, i| try std.testing.expectEqual(0x99 + i, shape);
+
+    // The shifted shields' arcs follow on from those: a full reserve, five times the shield
+    // power, draws four of the five, 0xAE to 0xB1 fore and 0xB3 to 0xB6 aft.
+    try std.testing.expectEqual(4, ShipStatus.level(5 * 3, 3));
+    try std.testing.expectEqual(0xAE, ShipStatus.reserve_arcs.fore.base - 4);
+    try std.testing.expectEqual(0xB3, ShipStatus.reserve_arcs.aft.base - 4);
 }
 
 // --- The targeting cluster -------------------------------------------------------------------

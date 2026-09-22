@@ -22,6 +22,10 @@ pub const Image = struct {
     levels: []const Level,
     /// What the driver made of it, `TextureImage.device_texture`: 0 until it first draws with it.
     device: usize = 0,
+    /// Set by whoever changes its pixels after the driver has made a texture of them, such as the
+    /// display's power ball, which is drawn afresh every frame. The driver sends the pixels up
+    /// again and clears it.
+    changed: bool = false,
 
     pub fn width(image: Image) u32 {
         return image.levels[0].width;

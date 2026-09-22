@@ -27,12 +27,12 @@ been found. An element whose code is not found yet is marked so.
 | Target display | foot, right | | the target's image with its shields and armour in a ring, its name, its type, its range and its speed; a larger form for a big target, with its current subtarget and a bar for each | [Windows](#the-windows) 3 and 8. Window 3, the small form, draws `hud_ship_status` in its second mode for the target, its range and its speed; window 8 the target's own picture, its name, its subtarget, its range and its speed. Their frames are ported; what they show is not |
 | Subtarget | on the target's model | S, SHIFT+S | the parts of the subtarget picked out in red | `hud_subtarget` (`0x0048CC30`), which walks the target's assembly by `link_id` |
 | Radar | foot, middle | V | three rings with the ship at their middle and a wedge for its view ahead; each object a dot, red for hostile, green for friendly, blue for one calling on the radio, on a line up or down from the rings by its height. V narrows and widens its range, the middle ring filling the display at the narrowest | `hud_radar` (`0x00488BD0`), [The radar](#the-radar). The rings and V's ranges are ported; the dots are not |
-| Ship status | foot, left of middle | always shown | the ship's image in two rings of segments, forward, aft and the two sides: shields outside, armour inside. A shield dims as it wears; an armour segment goes as it is lost. Shifting power fore or aft doubles the shields there | `hud_ship_status` (`0x00489350`). The schematic and the shields are ported; the armour is not yet found |
+| Ship status | foot, left of middle | always shown | the ship's image in two rings of segments, forward, aft and the two sides: shields outside, armour inside. A shield dims as it wears; an armour segment goes as it is lost. Shifting power fore or aft doubles the shields there | `hud_ship_status` (`0x00489350`). For the player's own ship, what [SHIELD BALANCING](controls.md#the-shield-balance) shifted beyond the fore and aft shields shows as a second arc outside each: shapes `0xB2` less the level at `(-0x1A, -0x24)` from the point for the fore reserve, and `0xB7` less the level at `(-0x26, 0x1D)` for the aft one, the level worked out as for a shield. The schematic, the shields and the shifted shields are ported; the armour, which follows at `0x00489957`, is not ([#103](https://github.com/vdmkenny/openreliant/issues/103)) |
 | Missile display | top, middle | M | the missile's name, the ship's missiles in a ring, how many of the chosen one are left, and the one armed at six o'clock. Comma and full stop turn the ring | [Window](#the-windows) 2: the ring from the table at `0x00501CC8`, ten entries of five halfwords. The frame is ported; what it shows is not |
 | Mission objectives | right | B | the mission's goals, the current one first; B pages through them | [Window](#the-windows) 10: the mission's objectives from the table at `0x00504120`, ten a mission. The frame is ported; what it shows is not |
 | Gunnery display | foot, left | G | the gun's name, the ship as a wire frame with the gun lit, the rounds left for a gun that fires them, and whether the guns fire together or in turn. G picks the next gun, F fires them all, CTRL and G switches the two ways of firing them all | [Window](#the-windows) 1: the ship's wire frame is the shape `0x005883C0` names. The frame is ported; what it shows is not |
 | Damage display | top, right | D | a segmented bar each for the weapons, the engines and the shields, shortening with damage | [Window](#the-windows) 4: the bars read the player's `+0x66C`, `+0x668` and `+0x664`. The frame is ported; what it shows is not |
-| Power distribution | left | P | the guns, the shields and the engines round a ball, each with its share of the power, a third each at first. P held with the stick moves power toward one; U, I and O give all of it to the guns, the engines or the shields, and `[` shares it out again | [Window](#the-windows) 7: the ball, shaded by the table `hud_init` works out from `powerball.tga`, and the three shares, from the player's `+0x728` and `+0x72C`. The frame is ported; what it shows is not |
+| Power distribution | left | P | the guns, the shields and the engines round a ball, each with its share of the power, a third each at first. P held with the stick moves power toward one; U, I and O give all of it to the guns, the engines or the shields, and `[` shares it out again | [Window](#the-windows) 7, [The power distribution](#the-power-distribution) |
 | Communications | top, left | C | the units in range, numbered, which the number keys call. Landing, rearming and a nanny ship are asked of the base ship | [Window](#the-windows) 11, which draws the radio's menu with `0x00453A70`. The frame is ported; what it shows is not |
 | Wing status | right | X | the wing's fighters in a grid, the player's wing first, each with a bar for its damage | [Window](#the-windows) 13. The frame is ported; what it shows is not |
 | Readouts | top, right of middle | | the seconds of afterburner fuel, a tally under a skull, and the countermeasures left | [The readouts](#the-readouts) |
@@ -49,9 +49,8 @@ Surrender calls it while it renders, so no call reaches it in the listing and Gh
 it without being told; `make ghidra-run SCRIPT=DefineFunctions.java ARGS="0x004843b0"` does that.
 `hud_init` (`0x00483150`) sets the display up once, from the device reset at `0x004AD0A0` rather
 than per frame: it copies the element names into the table at `0x0057BC5C`, a hundred bytes each,
-allocates the file's work buffer, takes `oldpalette.tga` and `powerball.tga`, and works out the 62
-by 62 table of shading the power ball is drawn from: the power distribution display, which the
-game binds as POWERBALL WINDOW.
+allocates the file's work buffer, takes `oldpalette.tga` and `powerball.tga`, and works out the
+tables the [power ball](#the-power-distribution) is drawn from.
 
 `mission_frame` itself calls only three of the file's routines: the windows' `hud_window_open`
 (`0x0048B510`) and `hud_window_close` (`0x0048B590`); the subtarget (`0x0048CC30`), which walks the
@@ -452,6 +451,59 @@ number, `OpenInstrument` and `CloseInstrument` (`0x0045D9D0`, `0x0045DA30`): a w
 held, window 11 starts the radio's menu too, and window 10 closes window 13 first; one it closes is
 let go of. The display beeps with `hud_beep` 1 as a window opens, 2 as it closes, and 0 for most of
 the keys.
+
+## The power distribution
+
+Window 7 shows how the ship's power is shared between its shields, guns and engines (see
+[Controls](controls.md#the-power-distribution)). `hud_window_draw` draws it in the view ahead,
+with everything placed from the window's place `(x, y)`, in this order:
+
+1. The title, string `0xA7`, at `(x + 2, y - 77)`.
+2. The power ball, a circle of radius 31 around `(x + 68, y - 1)`.
+3. The shares as whole percentages, `%d%%`: the shields' at `(x + 86, y - 43)`, the guns' at
+   `(x + 18, y + 30)` and the engines' at `(x + 86, y + 30)`. Each is its share times 100, rounded;
+   when they come to 101, the first of them that is 34 becomes 33.
+4. An arc round the ball for each system, a shape for the empty arc and one for the full arc drawn
+   over it through a pane cut to the share. The guns' arc on the left fills upward, the
+   engines' on the right fills downward, and the shields' across the top empties from the left.
+
+   | System | Empty | Full | At | Pane |
+   |---|---|---|---|---|
+   | Guns | `0x84` | `0x81` | `(x + 34, y - 13)` | `x + 33` to `x + 64`, `y - 14 + round(48 - 48 * share)` to `y + 34` |
+   | Engines | `0x85` | `0x82` | `(x + 70, y - 13)` | `x + 69` to `x + 100`, `y - 14` to `y - 14 + round(48 * share)` |
+   | Shields | `0x83` | `0x80` | `(x + 41, y - 32)` | `x + 40 + round(54 - 54 * share)` to `x + 94`, `y - 33` to `y - 17` |
+
+5. The icons for the three systems: shape `0xBE` at `(x + 53, y - 67)`, `0xBD` at `(x + 103, y + 1)`
+   and `0xC1` at `(x + 2, y + 4)`.
+
+The ball is a sphere textured with `powerball.tga`, a white triangle in the middle of a black
+square, and lit from in front, above and to the left. The texture scrolls with the power point, so
+the triangle points toward wherever the power is. `hud_init` works out four tables for it:
+
+- `power_ball_texture` (`0x569984`): the texture, a byte a pixel, each the top 5 bits of its grey.
+- `power_ball_sphere` (`0x579E2C`): for each pixel of a 62 by 62 square, where it shows the
+  texture. The pixel stands on a sphere of radius √2 seen from the front, `x` and `y` from -1 to
+  1; the texture is 138 texels to the half turn, `asin(x / z)` across and `asin(y / z)` down,
+  from its middle. A pixel outside the circle is divided by its distance squared.
+- `power_ball_shade` (`0x567F90`): how much light each pixel gets, 0 to 63. The pixel at `x`, `y`
+  stands for the point `(x + 0.3, y + 0.3)` on a sphere of radius 1, so the brightest spot is up
+  and to the left of the middle, and gets 64 times the cosine of the angle between the sphere's
+  surface there and a light at 8 in front.
+- `power_ball_colours16` (`0x566F90`) and `power_ball_colours8` (`0x568E94`): 32 colours for each
+  of the 64 levels of light. With `t` the level over 63 and `b` the lesser of `t² + 0.25` and 1, a
+  texture level `l` gives red `184 * l / 31 * b + h`, green `67 * l / 31 * b + h` and blue `h`,
+  each kept to whole numbers from 0 to 255 (`hud_channel`, `0x00482DE0`). The highlight `h` is
+  `255 * (t² + 0.25 - 1)` where that is above zero; below it, `h` keeps what the shade table left
+  in its place, 0.39, which only moves where the channels round to.
+
+Each frame, `hud_window_draw` writes the ball into the display a pixel at a time: for each row, the
+pixel's colour is picked by its light and by the texture at its `power_ball_sphere` offset plus
+`trunc(x / 2) - 256 * trunc(-y / 2)`, with `(x, y)` the power point. In the display's 16-bit
+colour, while `hit_shake` is above zero, each row moves right by a random share of
+`10 * hit_shake` pixels, rounded, a number of `rand` a row, so the ball shakes with the camera.
+
+**Improvement:** the port writes the ball's pixels into an image each frame, in the same way, and
+draws the image with the rest of the display, so it scales with it.
 
 ## Turning it off
 

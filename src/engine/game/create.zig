@@ -31,6 +31,22 @@ pub fn flightModel(ship: stats.Ship) FlightModel {
     };
 }
 
+/// A ship's combat stats as `stats_load_ships` (`0x00466500`) keeps them: its figures cut down to
+/// whole numbers where the record keeps them so, as the runtime's `__ftol` does, and a
+/// `shield_recharge` of zero replaced by `stats.Ship.default_shield_recharge`.
+pub fn shipCombat(ship: stats.Ship) ShipCombat {
+    return .{
+        .shield_power = std.math.lossyCast(i32, ship.shield_power),
+        .armor_class = std.math.lossyCast(i32, ship.armor_class),
+        .afterburner_fuel = std.math.lossyCast(i32, ship.afterburner_fuel),
+        .shield_recharge = if (ship.shield_recharge == 0) stats.Ship.default_shield_recharge else ship.shield_recharge,
+        .gun_energy = ship.gun_energy,
+        ._unknown_14 = ship._unknown_74,
+        ._unknown_18 = std.math.lossyCast(i32, ship._unknown_78),
+        ._unknown_1c = @splat(0),
+    };
+}
+
 /// How a ship or a missile flies. `ship_flight_stats` holds one per ship, `missile_flight_stats`
 /// one per missile; a missile's has only its speed and rates set.
 pub const FlightModel = extern struct {

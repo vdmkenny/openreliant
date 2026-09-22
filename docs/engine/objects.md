@@ -33,9 +33,14 @@ slot, stopping the game with a fatal error past the last slot or for a slot fill
 | `0x5F0` | 16 | Shields: four values, each `6 * shield_power - 1` when created |
 | `0x600` | 16 | Armor: four values, each `6 * armor_class - 1` when created |
 | `0x644` | 4 | Nonzero while hostile: `SetHostile` |
+| `0x664` | 4 | The shields' condition, how well they [recharge](#shields) as the armor wears: 1.0 when created |
 | `0x680` to `0x697` | | Its [orders](orders.md): the stack and what the current order keeps, the damage it has taken lately and its last attacker |
+| `0x728` | 12 | The [power distribution](controls.md#the-power-distribution)'s point on the power ball: (1, 1, 1) when created |
+| `0x734` | 4 | The guns' share of the power as a factor on how fast they recharge: 1.0 when created |
+| `0x73C` | 4 | The shields' share of the power as a factor on how fast they [recharge](#shields): 1.0 when created |
 | `0x740` | 4 | Its pilot, a record of `pilotstats.bin` (`object_set_pilot`, `0x0049CCE0`) |
 | `0x748` | 4 | The pilot's entry in `pilot_stats` |
+| `0x754` | 4 | **Unknown.** -1 when created. Its shields don't recharge while it is 8, and the player's controls turn round while it is 9 |
 | `0xB8C`, `0xB90` | 8 | Orders from other players waiting for their frame, in a multiplayer game |
 | `0xB94` | 1 | Set once `create_object` has filled the slot |
 | `0xB95` | 1 | Nonzero while invulnerable: `SetInvulnerability` |
@@ -215,7 +220,7 @@ select the others (see [The orders' motion functions](#the-orders-motion-functio
 | `0x640` | 4 | Motion function |
 | `0x650` | 4 | The last update's throttle |
 | `0x668` | 4 | `armor_speed_factor`: scales the cruise speed as the armor falls |
-| `0x738` | 4 | `speed_factor`: scales the cruise speed; 1.0 when created |
+| `0x738` | 4 | `speed_factor`: scales the cruise speed. The engines' share of the power ([Controls](controls.md#the-power-distribution)); 1.0 when created |
 
 For the player's ship, the [controls](controls.md) set the inputs, the throttle and the two burns;
 for the others, the routines of their [orders](orders.md).
@@ -305,6 +310,28 @@ Not yet ported: the orders' motion functions
 `object_recentre` inverts into `0x548` ([#87](https://github.com/vdmkenny/openreliant/issues/87)),
 so knocks don't turn objects in the port yet, and the parts' animation in `node_tree_update`
 ([#119](https://github.com/vdmkenny/openreliant/issues/119)).
+
+## Shields
+
+Each simulation step, `simulation_step` runs `object_recharge_shields` (`0x00476FC0`) for every
+object, after its node update. Each of the four shields gains its full charge,
+`6 * shield_power - 1`, times the shields' power factor (`0x73C`) and their condition (`0x664`),
+over the type's `shield_recharge` seconds of steps, and stops at the full charge. For the player's
+ship, the full charge of the fore shield, the third, is lower by however far the aft shield and its
+[reserve](controls.md#the-shield-balance) together go beyond it, and the aft shield's likewise.
+
+An object whose components are listed recharges no shields here, and neither does one whose `0x754`
+is 8. One whose `0xB95` is 5 has its shields emptied instead. In a multiplayer game, the player's
+shields don't recharge while `0x5D76F0` is 4 and `0x5DB538` names the player. **Unknown:** what
+those values mean.
+
+`0x00492370` works out the shields' condition from the armor: a quarter of each quadrant's armor
+over its full armor, added up. It works out the guns' condition (`0x66C`) and the engines'
+(`0x668`, `armor_speed_factor`) from the armor too.
+
+[`gameobj.zig`](../../src/engine/game/gameobj.zig) ports the recharge as `rechargeShields`, and the
+driver runs it where `simulation_step` does. Not ported: the multiplayer case, and `0x00492370`,
+since nothing damages the armor yet.
 
 ## Components
 

@@ -228,7 +228,8 @@ pub const Windows = struct {
     }
 
     /// `hud_draw`'s loop over the windows, which it runs in every view: each moves on, and in the
-    /// view ahead from the cockpit is drawn over the display.
+    /// view ahead from the cockpit is drawn over the display, with what it shows where the port
+    /// draws that.
     pub fn frame(
         windows: *Windows,
         art: *hud.Art,
@@ -237,13 +238,14 @@ pub const Windows = struct {
         screen: [2]u32,
         last_view: camera.View,
         frame_duration: i32,
+        contents: Contents,
         colour: [4]f32,
         scale: f32,
     ) (spr.Error || Allocator.Error)!void {
         for (std.enums.values(Window)) |window| {
             const shown = windows.step(window, frame_duration) orelse continue;
             if (!hud.instrumented(last_view)) continue;
-            try draw(art, gpa, target, screen, window, shown, colour, scale);
+            try draw(art, gpa, target, screen, window, shown, contents, colour, scale);
         }
     }
 };
@@ -278,8 +280,14 @@ pub fn bufferClip(window: Window, at: [2]i32, size: f32) hud.Clip {
     return .{ .left = from[0], .top = from[1], .right = to[0], .bottom = to[1] };
 }
 
-/// `hud_window_draw` (`0x00486830`) for the frame: in the view ahead, each piece of the window's
-/// frame, from where its place stands.
+/// What the windows show, for those the port draws the contents of.
+pub const Contents = struct {
+    /// Window 7's.
+    power: ?hud.power.Shown = null,
+};
+
+/// `hud_window_draw` (`0x00486830`): in the view ahead, each piece of the window's frame, from
+/// where its place stands, then what the window shows.
 fn draw(
     art: *hud.Art,
     gpa: Allocator,
@@ -287,6 +295,7 @@ fn draw(
     screen: [2]u32,
     window: Window,
     shown: Shown,
+    contents: Contents,
     colour: [4]f32,
     scale: f32,
 ) (spr.Error || Allocator.Error)!void {
@@ -299,6 +308,10 @@ fn draw(
             at[1] + round(@as(f32, @floatFromInt(piece.offset[1])) * size),
         };
         try hud.drawShapeWith(art, gpa, target, piece.shape, from, colour, size, .{ .mirror = piece.mirror, .clip = clip });
+    }
+    switch (window) {
+        .power => if (contents.power) |power| try hud.power.draw(power, art, gpa, target, at, size, clip, colour),
+        else => {},
     }
 }
 
