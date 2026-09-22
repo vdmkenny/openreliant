@@ -107,14 +107,13 @@ improvement over the scene alone. The device is told where the scene ends
 (`device.Device.overlay`), and the GPU one draws what follows into the composed frame with
 pipelines of a single sample. The software device adds nothing of its own and ignores the mark.
 
-**Improvement:** the port draws a glyph as a textured rectangle on the GPU rather than blitting it,
-so the display costs the processor nothing and scales without blurring. What it draws is the same:
-the font's palette looked up for each byte, index 0 left clear, over the scene with the engine's own
-overlay-layer depth and alpha blend.
-
-It has no fallback yet: `--original` draws the display the same way, and the software device, which
-has no GPU to draw rectangles with, cannot draw it at all. Both want `VFX_character_draw` ported,
-after which `--original` takes it too.
+**Improvement:** the port draws a glyph as a textured rectangle through the device rather than
+blitting it (`VFX_character_draw`), so on the GPU the display costs the processor nothing and
+scales without blurring. What it draws is the same: the font's palette looked up for each byte,
+index 0 left clear, over the scene with the engine's own overlay-layer depth and alpha blend. The
+software device draws the rectangles too, and `--original` draws the display the same way, since
+the port draws the display larger on a larger window (`scaleFor`), where the game blitted it at its
+own size.
 
 ## Which views have it
 
