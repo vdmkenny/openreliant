@@ -64,9 +64,13 @@ from `xcrun`.
 
 ## Builds and releases
 
-Every push and pull request builds the executables and runs the tests on Linux, macOS and Windows
+Changes go to `main` through pull requests. Each pull request, and each push to `main`, builds the
+executables and runs the tests on Linux, macOS and Windows
 ([`tests.yml`](../../.github/workflows/tests.yml)), next to the check that no game files are
-committed ([`check-files.yml`](../../.github/workflows/check-files.yml)).
+committed ([`check-files.yml`](../../.github/workflows/check-files.yml)). `main` is protected: a
+pull request needs those four checks to pass before it can be merged. Pull requests are squash
+merged, so the pull request's title becomes the commit on `main` and has to follow Conventional
+Commits too. A pull request that finishes an issue says `Closes #N` in its description.
 
 Releases come from [release-please](https://github.com/googleapis/release-please)
 ([`release.yml`](../../.github/workflows/release.yml),
@@ -101,6 +105,8 @@ them until the quarantine flag is removed with `xattr -d com.apple.quarantine op
 
 release-please opens its pull request with the workflow's own token, which needs "Allow GitHub
 Actions to create and approve pull requests" turned on in the repository's Actions settings.
+GitHub doesn't run workflows for pull requests opened with that token, so the release pull
+request never gets its checks, and an admin merges it past the branch protection.
 
 ## Frames
 
