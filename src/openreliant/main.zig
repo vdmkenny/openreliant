@@ -34,6 +34,8 @@ const usage =
     \\                            tcachehw.dat; the current directory by default
     \\  --ship <type>             the ship type to show, by its number in shipstats.bin; 0 is the
     \\                            Predator
+    \\  --view <0|1|2>            the view a mission starts in, as the game's ini keeps it: 0 the
+    \\                            cockpit, the default; 1 the chase view; 2 no cockpit
     \\  --screenshot <file.png>   draw one frame, with the camera settled, to a PNG, and quit
     \\  --fullscreen              fill the display; Alt and Enter switch while running
     \\  --original                the original's look: 16-bit colour, one sample a pixel and
@@ -54,6 +56,8 @@ const usage =
 const Options = struct {
     directory: []const u8 = ".",
     ship: usize = 0,
+    /// The options' cockpit setting, the ini's `[Device] View`.
+    cockpit: camera.CockpitSetting = .cockpit,
     screenshot: ?[]const u8 = null,
     fullscreen: bool = false,
     software: bool = false,
@@ -62,7 +66,7 @@ const Options = struct {
     fps: ?f32 = null,
 
     const Flag = enum { @"--fullscreen", @"--original", @"--16-bit", @"--no-vsync", @"--no-bloom", @"--no-dither", @"--software" };
-    const Option = enum { @"--ship", @"--screenshot", @"--msaa", @"--filter", @"--fps" };
+    const Option = enum { @"--ship", @"--view", @"--screenshot", @"--msaa", @"--filter", @"--fps" };
 
     fn parse(args: []const [:0]const u8) error{Usage}!Options {
         var options: Options = .{};
@@ -86,6 +90,11 @@ const Options = struct {
                         options.ship = std.fmt.parseInt(usize, value, 0) catch return error.Usage;
                         if (options.ship >= game.create.models.ship_types.len) return error.Usage;
                         if (game.create.models.ship_types[options.ship].model == null) return error.Usage;
+                    },
+                    .@"--view" => {
+                        const setting = std.fmt.parseInt(u32, value, 10) catch return error.Usage;
+                        if (setting > 2) return error.Usage;
+                        options.cockpit = @enumFromInt(setting);
                     },
                     .@"--screenshot" => options.screenshot = value,
                     .@"--msaa" => {
@@ -144,7 +153,7 @@ pub fn main(init: std.process.Init) !u8 {
 }
 
 /// The game's files the engine reads before anything else. It has none of its own.
-const game_files = [_][]const u8{ game.bigfile.resource_name, "tcachehw.dat", "shipstats.bin" };
+const game_files = [_][]const u8{ game.bigfile.resource_name, "tcachehw.dat", "shipstats.bin", game.language.file_name };
 
 /// The first of the game's files `dir` lacks, or null when it has them all.
 fn missingGameFile(io: Io, dir: Io.Dir) ?[]const u8 {
@@ -186,6 +195,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     var textures: srtexture.Table = .init(arena, cache, palette);
     // The flight and combat stats `stats_load_ships` reads.
     const ship_stats = (try stats.File.parse(.ships, try directory.readFileAlloc(io, "shipstats.bin", arena, .limited(4 << 20)))).ships;
+    // The strings `language_init` reads out of `language.dll` at start-up.
+    const strings: game.language.Language = try .load(arena, try .parse(try directory.readFileAlloc(io, game.language.file_name, arena, .limited(16 << 20))));
 
     var window: platform.window.Window = try .open("OpenReliant", 1280, 720, options.fullscreen);
     defer window.close();
@@ -219,12 +230,13 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     defer ship.unload();
     var keyboard: engine.input.Keyboard = .{};
 
-    var view: camera.Camera = .{};
+    // The camera as a mission's launch leaves it: in the cockpit mode the options pick.
+    var view: camera.Camera = .{ .cockpit_mode = options.cockpit.mode() };
     var last_view = view.view;
     // The mission's clocks, which `mission_run` zeroes before it loops.
     var clock: game.main.Clock = .{};
     clock.start(platform.window.ticks());
-    _ = view.setView(startingView(ship), 0, false, false, 0);
+    _ = view.setView(startingView(ship, view.cockpit_mode), 0, false, false, 0);
     // A screenshot waits for the chase view to settle, a tick a frame, and for the second frame,
     // which draws the sun by how much of it the first found showing.
     var frames_left: ?usize = null;
@@ -243,6 +255,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         .ship = &ship,
         .clock = &clock,
         .player = &player,
+        .strings = &strings,
     };
     // What the mission's start fits the player's ship with, once `hud_init` has set the display up.
     game.main.fitDevices(&display.state, @intCast(ship.ship_type), ship.can_cloak);
@@ -308,7 +321,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
                 ship = next;
                 game.main.fitDevices(&display.state, @intCast(ship.ship_type), ship.can_cloak);
                 // A ship of another size wants another view to be seen in.
-                _ = view.setView(startingView(ship), 0, false, true, @intCast(@max(clock.mission_ticks, 0)));
+                _ = view.setView(startingView(ship, view.cockpit_mode), 0, false, true, @intCast(@max(clock.mission_ticks, 0)));
                 break;
             }
         }
@@ -379,13 +392,15 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     }
 }
 
-/// The view a ship is shown in at first: the chase view sits a fixed distance behind, which the
-/// camera keeps per ship type, so a ship whose own radius is larger than that distance would not
-/// fit in it. Those are shown in the external view, which orbits at a distance worked out from the
-/// ship's own size.
-fn startingView(ship: Ship) camera.View {
+/// The view a ship is shown in at first: view 0, as a mission's launch ends in, in `mode`. The
+/// chase mode sits a fixed distance behind, which the camera keeps per ship type, so a ship whose
+/// own radius is larger than that distance would not fit in it: the sandbox flies ships the game
+/// never gives the player. Those are shown in the external view, which orbits at a distance
+/// worked out from the ship's own size.
+fn startingView(ship: Ship, mode: camera.CockpitMode) camera.View {
+    if (mode != .chase) return .cockpit;
     const behind = camera.Chase.offset(@intCast(ship.ship_type)).distance;
-    return if (ship.object.radius > behind) .external else .chase;
+    return if (ship.object.radius > behind) .external else .cockpit;
 }
 
 /// Frames the chase view takes to settle, at a tick a frame.
@@ -553,6 +568,8 @@ const Display = struct {
     state: game.hud.State = .{},
     /// What the mission has ready for JUMP DRIVE. The sandbox runs no mission, so nothing is.
     ready: game.hud.Readiness = .{},
+    /// The game's strings, which the views without the instruments are named by.
+    strings: *const game.language.Language,
 
     fn overlay(display: *Display) srcore.Overlay {
         return .{ .context = display, .draw = draw };
@@ -572,19 +589,22 @@ const Display = struct {
         const frame_duration = display.clock.frame_duration;
         const live = &display.ship.live;
         const white: [4]f32 = .{ 1, 1, 1, 1 };
-        // The devices' charges run in every view.
-        display.state.runCharges(live, frame_duration, false);
-        // `hud_draw` leaves the instruments out of every view but the one ahead from the cockpit.
-        if (!game.hud.instrumented(display.last_view)) return;
         const scale = game.hud.scaleFor(display.screen);
         const state = &display.state;
-
-        try state.drawJumpPrompt(&display.ready, &display.art, display.gpa, display.target, display.screen, frame_duration, white, scale);
-        // The sandbox runs no mission, so nothing is scanned for.
-        try state.drawEjectMarker(&display.art, display.gpa, display.target, display.screen, frame_duration, white, scale);
-        try state.drawScanner(false, display.clock.game_ticks, &display.art, display.gpa, display.target, display.screen, white, scale);
-        const lit = state.lit(live, display.player.matching_speed, false, frame_duration);
-        try state.drawLights(&display.art, display.gpa, display.target, display.screen, lit, frame_duration, white, scale);
+        const instrumented = game.hud.instrumented(display.last_view);
+        // The devices' charges run in every view.
+        state.runCharges(live, frame_duration, false);
+        if (instrumented) {
+            try state.drawJumpPrompt(&display.ready, &display.art, display.gpa, display.target, display.screen, frame_duration, white, scale);
+            // The sandbox runs no mission, so nothing is scanned for.
+            try state.drawEjectMarker(&display.art, display.gpa, display.target, display.screen, frame_duration, white, scale);
+            try state.drawScanner(false, display.clock.game_ticks, &display.art, display.gpa, display.target, display.screen, white, scale);
+            const lit = state.lit(live, display.player.matching_speed, false, frame_duration);
+            try state.drawLights(&display.art, display.gpa, display.target, display.screen, lit, frame_duration, white, scale);
+        }
+        // The other views are named instead.
+        try game.hud.drawViewName(&display.font, display.gpa, display.target, display.screen, display.last_view, display.strings.*, white, scale);
+        if (!instrumented) return;
 
         for ([_]game.hud.Readout{ .fuel, .skull, .coil }) |readout| {
             if (!state.shows(readout, frame_duration)) continue;
@@ -643,6 +663,8 @@ test missingGameFile {
     try tmp.dir.writeFile(io, .{ .sub_path = "tcachehw.dat", .data = "" });
     try std.testing.expectEqualStrings("shipstats.bin", missingGameFile(io, tmp.dir).?);
     try tmp.dir.writeFile(io, .{ .sub_path = "shipstats.bin", .data = "" });
+    try std.testing.expectEqualStrings(game.language.file_name, missingGameFile(io, tmp.dir).?);
+    try tmp.dir.writeFile(io, .{ .sub_path = game.language.file_name, .data = "" });
     try std.testing.expectEqual(null, missingGameFile(io, tmp.dir));
 }
 
@@ -651,6 +673,9 @@ test Options {
     const given = try Options.parse(&.{ "game/install", "--ship", "3" });
     try std.testing.expectEqualStrings("game/install", given.directory);
     try std.testing.expectEqual(3, given.ship);
+    try std.testing.expectEqual(camera.CockpitSetting.cockpit, given.cockpit);
+    try std.testing.expectEqual(camera.CockpitSetting.chase, (try Options.parse(&.{ "--view", "1" })).cockpit);
+    try std.testing.expectError(error.Usage, Options.parse(&.{ "--view", "3" }));
     try std.testing.expectError(error.Usage, Options.parse(&.{"--ship"}));
     try std.testing.expectError(error.Usage, Options.parse(&.{ "--ship", "0x0E" }));
     try std.testing.expectError(error.Usage, Options.parse(&.{"--bogus"}));

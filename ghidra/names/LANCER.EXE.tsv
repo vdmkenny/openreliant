@@ -283,7 +283,7 @@
 0045ed60	function	camera_chase	void __fastcall (void)	The chase view: behind and above the object by ship type, farther with throttle, swinging against its rates of turn
 0045ed40	function	camera_chase_level	void __fastcall (void)	Zeroes the chase view's swing
 00414060	function	frame_controls	void __fastcall (int slot)	The controls read once a frame, from mission_frame: the camera keys, steering the orbiting views with the arrow keys, and the wingman and other frame keys
-004f72a8	data	camera_view_table	byte[38][4]	For each view: a number, 0, whether the bars slide in, and whether it is from the cockpit
+004f72a8	data	camera_view_table	byte[44][4]	For each view: the language string that names it (a halfword), whether the bars slide in, and whether it is from the cockpit. It ends where the text of camera_set_view's assertion on an invalid camera type begins
 00539a64	data	camera_view_last	int	Last frame's camera_view: mission_frame resets the star streaks when they differ
 00539a34	data	camera_view	short
 00539a8c	data	camera_object	short	The object the view shows
@@ -622,3 +622,11 @@
 00594538	data	vfx_shape_origin	void *	VFX_shape_origin, looked up out of the VFX library
 00594540	data	vfx_shape_resolution	void *	VFX_shape_resolution, looked up out of the VFX library
 00595070	data	vfx_pane_wipe	void *	VFX_pane_wipe, looked up out of the VFX library
+00490dc0	function	language_init	void (void)	Loads language.dll and reads its string table with LoadStringA, from id 1 up to the first id with no string or an empty one, into language_strings; then reads the module's version language into 0x00563A14
+00491030	function	language_string	char * __fastcall (int id)	The string of an id out of language_strings; stops the game with the fatal error "id out of range" for an id past them
+0041b240	function	launch_run	void __fastcall (int slot)	Runs a launch a step at a time on its order state's timer. For the player it picks one of three cutaways (views 0x20 to 0x22) and starts the launch's typed text; at the last step it sets cockpit_mode from cockpit_mode_setting (0 the cockpit, 1 the chase view, any other none) and, from a launch cutaway, switches to view 0; then pops the order, makes the ship targetable and posts the Launched event
+00491e20	function	game_pause	void __fastcall (bool pause, bool quiet)	Pauses or resumes the mission. Pausing hands sr + 0x88 another overlay (0x004906F0) in place of hud_draw; resuming puts hud_draw back and, if cockpit_mode_setting changed meanwhile, switches to view 0
+0057dbbc	data	language_strings	char **	The strings language_init reads, by id less one
+0057dbc0	data	language_count	int	How many strings language_init read
+0057dbc8	data	language_module	void *	language.dll, as LoadLibraryA loads it
+0051d5f0	data	options_cockpit_setting	int	The options screen's cockpit setting, which it copies to cockpit_mode_setting and writes to the ini as [Device] View

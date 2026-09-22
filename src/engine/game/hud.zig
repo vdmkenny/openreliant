@@ -26,6 +26,7 @@ const spr = @import("../../formats/spr.zig");
 const camera = @import("camera.zig");
 const gameobj = @import("gameobj.zig");
 const input = @import("../input.zig");
+const language = @import("language.zig");
 const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
 const srd3d = @import("../surrender/srd3d/srd3d.zig");
 const device = @import("../surrender/srd3d/device.zig");
@@ -560,11 +561,42 @@ test Readout {
     try std.testing.expectEqual([2]i32{ 100 + 0x10, 20 + 0x1E }, scaled(.{ 100, 20 }, Readout.text_offset, 1));
 }
 
-/// Whether the display's instruments are drawn at all: `hud_draw` leaves out everything from the
-/// readouts to the clock unless last frame's view was the one ahead from the cockpit, so the rest
-/// of the views get a line or two of text in their place.
+/// Whether the display's instruments are drawn: `hud_draw` leaves out the jump prompt, the radar,
+/// the eject marker, the scanner, the status lights and everything from the readouts to the clock
+/// unless last frame's view was 0, the one ahead from the cockpit, in whichever cockpit mode, the
+/// chase view among them. The rest of the views get the view's name in their place.
 pub fn instrumented(last_view: camera.View) bool {
     return last_view == .cockpit;
+}
+
+/// How far down `hud_draw` draws the view's name, centred half of the way across the screen. It
+/// measures both from the screen's edge rather than placing the text with `hud_place`.
+pub const view_name_down: i32 = 10;
+
+/// Whether `hud_draw` names `last_view` at the top of the screen: every view but 0, and but the
+/// fly-bys, `0x24` to `0x26`.
+pub fn namesView(last_view: camera.View) bool {
+    const n = @intFromEnum(last_view);
+    return n != 0 and (n < 0x24 or n > 0x26);
+}
+
+/// Draws the name of `last_view` where `hud_draw` does, the view table's string for it out of
+/// `strings`. A view past the table, or a string past `strings`, draws nothing; the game stops
+/// with a fatal error for either.
+pub fn drawViewName(
+    opened: *Opened,
+    gpa: Allocator,
+    target: device.Device,
+    screen: [2]u32,
+    last_view: camera.View,
+    strings: language.Language,
+    colour: [4]f32,
+    scale: f32,
+) Allocator.Error!void {
+    if (!namesView(last_view)) return;
+    const text = strings.string(last_view.name() orelse return) orelse return;
+    const at: [2]i32 = .{ @intCast(screen[0] >> 1), round(@as(f32, @floatFromInt(view_name_down)) * scale) };
+    _ = try drawText(opened, gpa, target, at, text, colour, .centre, scale);
 }
 
 /// Where `hud_draw` centres the mission's clock: half of the way across, at the foot of the screen
@@ -603,6 +635,16 @@ test drawClock {
     // The figures are padded to two as "%02d:%02d" does.
     var buffer: [16]u8 = undefined;
     try std.testing.expectEqualStrings("09:06", try std.fmt.bufPrint(&buffer, "{d:0>2}:{d:0>2}", .{ @as(u16, 9), @as(u16, 6) }));
+}
+
+test namesView {
+    try std.testing.expect(!namesView(.cockpit));
+    try std.testing.expect(namesView(.cockpit_rear));
+    try std.testing.expect(namesView(.external));
+    try std.testing.expect(namesView(.chase));
+    try std.testing.expect(!namesView(.flyby));
+    try std.testing.expect(!namesView(@enumFromInt(0x26)));
+    try std.testing.expect(namesView(@enumFromInt(0x27)));
 }
 
 test instrumented {

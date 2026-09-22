@@ -9,6 +9,9 @@ const srapi = @import("../surrender/surrenderlib/srapi.zig");
 const input = @import("../input.zig");
 const controls = @import("../input/controls.zig");
 const Vector = math.Vector;
+
+/// The view table, which [`camera/views.zig`](camera/views.zig) transcribes.
+pub const views = @import("camera/views.zig");
 const Matrix = math.Matrix;
 
 /// Where the camera is and which way it looks.
@@ -65,16 +68,28 @@ pub const View = enum(u8) {
     flyby = 0x24,
     _,
 
-    /// Whether the bars slide in (the view table at `0x004F72A8`): for the cutaways from 7 on,
-    /// but not the external view.
-    pub fn letterboxed(view: View) bool {
+    /// The view's record in the view table (`0x004F72A8`), or null for a number past it, which
+    /// `camera_set_view` stops the game for as an invalid camera type.
+    pub fn record(view: View) ?views.Record {
         const n = @intFromEnum(view);
-        return n >= 7 and view != .external;
+        return if (n < views.records.len) views.records[n] else null;
     }
 
-    /// Whether the view is from the cockpit, so the object's own model is not drawn.
+    /// Whether the bars slide in: for the cutaways from 7 to `0x27` and `0x2B`, but not the
+    /// external view.
+    pub fn letterboxed(view: View) bool {
+        return if (view.record()) |found| found.bars else false;
+    }
+
+    /// Whether the view is from the cockpit, so the object's own model is not drawn: views 0 to 3.
     pub fn fromCockpit(view: View) bool {
-        return @intFromEnum(view) <= @intFromEnum(View.cockpit_rear);
+        return if (view.record()) |found| found.cockpit else false;
+    }
+
+    /// The language string that names the view, which `hud_draw` shows at the top of the screen
+    /// in every view but the one ahead from the cockpit.
+    pub fn name(view: View) ?u16 {
+        return if (view.record()) |found| found.name else null;
     }
 };
 
@@ -93,6 +108,26 @@ pub const CockpitMode = enum(u2) {
             .open => .cockpit,
             .cockpit => .chase,
             .chase => .open,
+        };
+    }
+};
+
+/// The options' cockpit setting (`cockpit_mode_setting`, `0x005D5A78`), which the game keeps in
+/// its ini as `[Device] View`, 0 when the ini has none.
+pub const CockpitSetting = enum(u32) {
+    cockpit = 0,
+    chase = 1,
+    none = 2,
+    _,
+
+    /// The cockpit mode a mission's launch ends in (`launch_run`, `0x0041B240`), as it switches
+    /// the camera from the launch's cutaway to view 0: the cockpit's model for 0, the chase view
+    /// for 1, and no cockpit for any other.
+    pub fn mode(setting: CockpitSetting) CockpitMode {
+        return switch (setting) {
+            .cockpit => .cockpit,
+            .chase => .chase,
+            else => .open,
         };
     }
 };
@@ -571,9 +606,23 @@ test View {
     try std.testing.expect(!View.external.letterboxed());
     try std.testing.expect(View.missile.letterboxed());
     try std.testing.expect(!View.target.letterboxed());
+    // The last few views have no bars, but for the table's last.
+    try std.testing.expect(!@as(View, @enumFromInt(0x28)).letterboxed());
+    try std.testing.expect(@as(View, @enumFromInt(0x2B)).letterboxed());
+    // A view past the table has no record.
+    try std.testing.expectEqual(null, @as(View, @enumFromInt(0x2C)).record());
+    try std.testing.expect(!@as(View, @enumFromInt(0x2C)).fromCockpit());
+    // Each named view has its own string; the cutaways share theirs.
+    try std.testing.expectEqual(170, View.cockpit.name().?);
+    try std.testing.expectEqual(180, View.external.name().?);
+    try std.testing.expectEqual(View.chase.name(), @as(View, @enumFromInt(0x0D)).name());
     try std.testing.expectEqual(View.external, keyView(.external_camera).?);
     try std.testing.expectEqual(null, keyView(.fire_lasers));
     try std.testing.expectEqual(CockpitMode.open, CockpitMode.chase.next());
+    try std.testing.expectEqual(CockpitMode.cockpit, CockpitSetting.cockpit.mode());
+    try std.testing.expectEqual(CockpitMode.chase, CockpitSetting.chase.mode());
+    try std.testing.expectEqual(CockpitMode.open, CockpitSetting.none.mode());
+    try std.testing.expectEqual(CockpitMode.open, @as(CockpitSetting, @enumFromInt(7)).mode());
 }
 
 test cockpit {

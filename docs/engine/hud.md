@@ -114,13 +114,32 @@ after which `--original` takes it too.
 
 ## Which views have it
 
-`hud_draw` reads `camera_view_last` (`0x00539A64`) rather than the current view, and branches on it
-in five places. Everything from the readouts to the clock is skipped unless it is 0, the view ahead
-from the cockpit, so the cockpit's own side and rear views do not have the instruments either. The
-views that do not draw them get a line of text at the top instead, except the cutaways from `0x24`
-to `0x26`, which get none. The view ahead also draws a block of its own that no other does: the
-jump prompt, the radar, the eject marker, the scanner and the status lights, in that order. The
-devices' charges run in every view.
+`hud_draw` reads `camera_view_last` (`0x00539A64`) rather than the current view. The instruments
+are drawn only while it is 0, the view ahead from the cockpit, in whichever cockpit mode: the chase
+view the cockpit key cycles to is view 0 too, and has them all. The cockpit's own side and rear
+views, 1 to 3, do not. In its order:
+
+| Drawn | In |
+| --- | --- |
+| the launch's typed text, and a key's prompt | every view |
+| the devices' charges, which run | every view |
+| the jump prompt, the radar, the eject marker, the scanner and the status lights | view 0 |
+| the view's name, centred half of the way across and 10 down: the view table's string for it | every view but 0, and but the fly-bys, `0x24` to `0x26` |
+| a string of `0x0057BF34`'s, `0x3C` above the foot, unless it is `0x90` | view `0xD` |
+| the table of lines `0x0048CF20` draws, placed `(-110, -140)` from the middle | every view |
+| the target ring, the readouts, the ship status indicator, the speed and weapon arcs, and the clock | view 0 |
+| the reticle (`0xD7`) at the middle, and the blind fire sight (`0xD8`) that closes on a target | view 0, but not in the chase mode |
+| in a multiplayer game, a shape of `dmicons.spr` for the player's `+0x754` at the middle | view 0 |
+| the panels the element state machine opens, sliding in and out | view 0 while they slide, every view once open |
+| a line of text at the foot while `0x00529FB8` is set | every view |
+
+The view's name is one of the strings `language_init` (`0x00490DC0`) reads out of `language.dll`
+([`engine/game/language.zig`](../../src/engine/game/language.zig)): Cockpit View, Left View, Target
+Camera, External Camera, Missile Camera and the like, or a single space for the chase views and
+most cutaways. Its place is measured from the screen's edge rather than with `hud_place`.
+
+The port draws the view's name, and in view 0 all it has ported of the rest. A mission's launch
+ends in view 0 ([`camera.md`](camera.md)), and so does the port's start.
 
 While `hud_interference` (`0x00588700`) is above 0, `hud_draw` draws its shapes through `hud_blit`
 (`0x0048C6E0`) rather than `VFX_shape_draw`: under the hardware renderers each row of the shape is
@@ -256,8 +275,10 @@ hardware renderers and `hudsoft.spr` under the software one, which `sr + 0x1AC` 
 `dmicons.spr` or `soft_dmicons.spr` into `0x0057BC3C`. `HUDHARD.SPR` holds 388 shapes, 2 palettes and
 21 remap tables: radar rings, bar gauges, arcs, target boxes, ammunition, and the silhouettes the
 target display shows. `hud_init` hands `VFX_shape_multilookaside` 29 tables of 256 bytes from the
-start of block 0, where the remap tables begin, though the set holds 21. **Unknown:** what draws
-`dmicons.spr`.
+start of block 0, where the remap tables begin, though the set holds 21. In a multiplayer game
+`hud_draw` draws a shape of `dmicons.spr` at the middle of the screen for the player's `+0x754`,
+flashing for the first 100 ticks after `+0x760` and gone once `frame_start` passes `+0x75C`.
+**Unknown:** what the three fields are.
 
 A shape's entry in its set names a palette or none (`VFX_shape_draw` in `winvfx16.dll`); one with
 none is drawn with VFX's global palette. Under the hardware renderers `hud_draw` makes that of
@@ -284,12 +305,15 @@ ahead from the cockpit, which drops the instruments.
   has no name.
 - What sets byte `0x2F` of a fight state, which lights the enemy lock warning.
 - The names of the display's elements, which `hud_init` copies from `0x00515D70`.
-- What the rest of `hud_draw` draws: the radar, the target display, the armour, the targeting
-  cluster, and the lines of text the views without instruments show instead.
+- What the rest of `hud_draw` draws: the radar, the target display, the armour and the targeting
+  cluster.
+- What sets `0x0057BF34`, whose string view `0xD` shows, and `0x00529FB8`, which shows a line at
+  the foot in every view.
 - What the flags at `0x00563160` mark, which flash parts of the ship status schematic.
 - Which of the display's shapes `hud_blit` shakes by `hit_shake` rather than `hud_interference`.
 - What `hud_palette_ramp` (`0x0048D590`) colours, and whether the display's text takes its palette
   from it rather than from the font.
-- What draws `dmicons.spr`.
+- What the player's `+0x754`, `+0x75C` and `+0x760` are, which pick and time the `dmicons.spr`
+  shape of a multiplayer game.
 - How the display reaches the screen in the game, which is `vfx.dll`'s panes rather than anything
   in the payload.

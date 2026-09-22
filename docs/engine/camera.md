@@ -31,21 +31,25 @@ The port keeps the factor down and chooses the factor across that keeps pixels s
 (`0x0045FC90`) places it once a frame. Views from 7 on are the game's cutaways, of launches,
 landings, jumps and deaths among others.
 
-| View | Key | Camera |
-|---|---|---|
-| 0 | Cockpit | From the cockpit, ahead, as the cockpit mode says |
-| 1, 2, 3 | Left, right, rear view | From the cockpit, turned -90, 90 and 180 degrees about the ship's down axis |
-| 4, 0x1E | | Chase |
-| 6 | Target | Round the player's target |
-| 0xC | External | Round the player's ship |
-| 0x12 | Missile | Behind a missile |
-| 0x24 | Flyby | From a point the player flies past |
+| View | Key | Camera | Named |
+|---|---|---|---|
+| 0 | Cockpit | From the cockpit, ahead, as the cockpit mode says | Cockpit View |
+| 1, 2, 3 | Left, right, rear view | From the cockpit, turned -90, 90 and 180 degrees about the ship's down axis | Left View, Right View, Rear View |
+| 4, 0x1E | | Chase | a space |
+| 6 | Target | Round the player's target | Target Camera |
+| 0xC | External | Round the player's ship | External Camera |
+| 0x12 | Missile | Behind a missile | Missile Camera |
+| 0x24 | Flyby | From a point the player flies past | a space |
 
-The view table (`0x4F72A8`) holds for each view whether cinematic bars slide in, for the cutaways
-but not the external view, and whether it is from the cockpit, views 0 to 3. From the cockpit the
-object's flag bit 0 is set, except in the chase mode, and cleared when the view moves off it. The
-bars grow by 0.001 of the screen a tick to 0.1, top and bottom; a view without them clears them at
-once.
+The view table (`camera_view_table`, `0x4F72A8`) holds four bytes a view, for views 0 to `0x2B`:
+the language string that names the view, whether cinematic bars slide in, and whether it is from
+the cockpit. [`camera/views.zig`](../../src/engine/game/camera/views.zig) transcribes it; `make
+view-tables` derives it again. The bars slide in for views 7 to `0x27` and `0x2B`, but not the
+external view; views 0 to 3 are from the cockpit. The names are strings 170 to 182 of
+`language.dll`; string 174, Chase Camera, is none of them, the chase views and most cutaways taking
+181, a single space. From the cockpit the object's flag bit 0 is set, except in the chase mode, and
+cleared when the view moves off it. The bars grow by 0.001 of the screen a tick to 0.1, top and
+bottom; a view without them clears them at once.
 
 `camera_locked` (`0x539ACC`) holds the camera for a script: `camera_set_view` refuses a switch
 unless forced, and the camera keys do nothing. `frame_controls` (`0x00414060`), once a frame, maps
@@ -58,8 +62,16 @@ the camera keys to views. The cockpit key, pressed in the cockpit view, first mo
 | 1 | From the eye, the cockpit's model drawn over the view |
 | 2 | The chase view |
 
-The options' cockpit setting (`0x5D5A78`) picks the mode a mission starts in: 0 for mode 1, 1 for
-mode 2 and 2 for mode 0.
+The options' cockpit setting (`cockpit_mode_setting`, `0x5D5A78`), which the game keeps in its
+ini as `[Device] View` and reads as 0 when the ini has none, picks the mode a mission's launch ends
+in: 0 for mode 1, 1 for mode 2 and any other for mode 0. The launch (`launch_run`, `0x0041B240`)
+shows one of three cutaways, views `0x20` to `0x22`, and at its last step sets the mode and
+switches from the cutaway to view 0. Resuming from the pause (`game_pause`, `0x00491E20`) switches
+to view 0 again when the setting changed while paused.
+
+The port starts a ship in view 0 in the mode `--view` sets, 0 by default, as a launch ends. A ship
+too large for the chase mode's distance starts in the external view instead: the port flies ships
+the game never gives the player.
 
 ## Cockpit
 

@@ -175,6 +175,16 @@ maneuver-tables: ## Re-derive the combat maneuvers, their scripts and handlers f
 	$(ROOT)/zig-out/bin/tablegen maneuvers $(PAYLOAD) $(MANEUVER_TABLES)
 	$(ZIG) fmt $(MANEUVER_TABLES)
 
+VIEW_TABLES := $(ROOT)/src/engine/game/camera/views.zig
+
+.PHONY: view-tables
+view-tables: ## Re-derive the camera's views, the string naming each and its flags, from the payload executable
+	@test -f $(PAYLOAD) || { echo "missing $(PAYLOAD), the game executable with its code readable" >&2; exit 1; }
+	$(ZIG) build tablegen
+	mkdir -p $(dir $(VIEW_TABLES))
+	$(ROOT)/zig-out/bin/tablegen views $(PAYLOAD) $(VIEW_TABLES)
+	$(ZIG) fmt $(VIEW_TABLES)
+
 SOURCE_MAP     := $(ROOT)/src/engine/sources.zig
 PAYLOAD_STRINGS := $(GHIDRA_EXPORT_DIR)/game/LANCER.EXE/strings.tsv
 

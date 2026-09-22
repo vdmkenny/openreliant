@@ -1,0 +1,108 @@
+//! `C:\lancer\game\language.cpp`: the game's strings. `language_init` (`0x00490DC0`) loads
+//! `language.dll` at start-up and reads its string table with `LoadStringA`, from id 1 on, into an
+//! array; `language_string` (`0x00491030`) hands one out by its id.
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const pe = @import("../../formats/pe.zig");
+
+/// The module the strings come from. The game asks for `language.dll`; the disc's file is
+/// named in capitals, and Windows finds either.
+pub const file_name = "LANGUAGE.DLL";
+
+/// The most of a string `LoadStringA` copies: `language_init`'s buffer is 999 bytes, the last
+/// for the terminator.
+pub const max_length = 998;
+
+pub const Language = struct {
+    /// Each string, in the game's code page, by its id less one.
+    strings: []const []const u8,
+
+    /// `language_init`: the strings of `module` from id 1 up to the first one `LoadStringA` finds
+    /// nothing of, which is a missing string or an empty one. A blank string the game wants is
+    /// therefore a space.
+    pub fn load(gpa: Allocator, module: pe.Image) Allocator.Error!Language {
+        var strings: std.ArrayList([]const u8) = .empty;
+        errdefer {
+            for (strings.items) |text| gpa.free(text);
+            strings.deinit(gpa);
+        }
+        var id: u32 = 1;
+        while (id <= std.math.maxInt(u16)) : (id += 1) {
+            const units = module.string(@intCast(id)) orelse break;
+            if (units.len == 0) break;
+            const text = try gpa.alloc(u8, @min(units.len, max_length));
+            for (text, units[0..text.len]) |*out, unit| out.* = codePage1252(unit);
+            try strings.append(gpa, text);
+        }
+        return .{ .strings = try strings.toOwnedSlice(gpa) };
+    }
+
+    pub fn deinit(language: *Language, gpa: Allocator) void {
+        for (language.strings) |text| gpa.free(text);
+        gpa.free(language.strings);
+        language.* = undefined;
+    }
+
+    /// `language_string`: the string of `id`, or null for an id past the table, for which the
+    /// game stops with the fatal error "id out of range".
+    pub fn string(language: Language, id: u32) ?[]const u8 {
+        if (id == 0 or id > language.strings.len) return null;
+        return language.strings[id - 1];
+    }
+};
+
+/// A UTF-16 unit as `LoadStringA` writes it under Windows' Western code page, 1252: itself below
+/// `0x80` and from `0xA0` to `0xFF`, the page's own byte for the characters it holds between, and
+/// a question mark for the rest. **Unverified:** that the game's strings meet the Western page;
+/// `LoadStringA` takes the system's own.
+fn codePage1252(unit: u16) u8 {
+    if (unit < 0x80 or (unit >= 0xA0 and unit <= 0xFF)) return @intCast(unit);
+    for (cp1252_high, 0x80..) |mapped, byte| {
+        if (mapped == unit) return @intCast(byte);
+    }
+    return '?';
+}
+
+/// What code page 1252 holds from `0x80` to `0x9F`. The five places it leaves undefined map to
+/// the control characters of the same number, as Windows round-trips them.
+const cp1252_high = [32]u16{
+    0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+    0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D, 0x017D, 0x008F,
+    0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+    0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178,
+};
+
+test Language {
+    const gpa = std.testing.allocator;
+    var table: [20]?[]const u8 = @splat(null);
+    table[1] = "Cockpit View";
+    table[2] = " ";
+    table[3] = "External Camera";
+    table[5] = "past the gap";
+    const rsrc = try pe.testing.stringResources(gpa, 0x3000, &table);
+    defer gpa.free(rsrc);
+    const bytes = try pe.testing.buildWith(gpa, 0x10000000, &.{
+        .{ .name = ".rsrc", .rva = 0x3000, .data = rsrc },
+    }, &.{.{ .index = .resource, .rva = 0x3000, .size = @intCast(rsrc.len) }});
+    defer gpa.free(bytes);
+
+    var language: Language = try .load(gpa, try .parse(bytes));
+    defer language.deinit(gpa);
+    // Ids count from 1, and the first empty string ends the table.
+    try std.testing.expectEqual(3, language.strings.len);
+    try std.testing.expectEqualStrings("Cockpit View", language.string(1).?);
+    try std.testing.expectEqualStrings(" ", language.string(2).?);
+    try std.testing.expectEqualStrings("External Camera", language.string(3).?);
+    try std.testing.expectEqual(null, language.string(0));
+    try std.testing.expectEqual(null, language.string(5));
+}
+
+test codePage1252 {
+    try std.testing.expectEqual('A', codePage1252('A'));
+    try std.testing.expectEqual(0xE9, codePage1252(0xE9));
+    try std.testing.expectEqual(0x80, codePage1252(0x20AC));
+    try std.testing.expectEqual(0x99, codePage1252(0x2122));
+    try std.testing.expectEqual('?', codePage1252(0x4E2D));
+}

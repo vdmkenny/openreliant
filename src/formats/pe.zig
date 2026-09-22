@@ -1,5 +1,6 @@
 //! Portable Executable reader, covering what this project needs: the section table, the data
-//! directories, and the import descriptors. Read-only, and it never maps or runs anything.
+//! directories, the import descriptors, and the resources, string tables among them. Read-only,
+//! and it never maps or runs anything.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -310,7 +311,128 @@ pub const Image = struct {
         const offset = image.fileOffset(dir.rva) orelse return null;
         return .{ .image = image, .offset = offset };
     }
+
+    /// The data of the resource of `kind` and `id`, in the first language it comes in, as
+    /// `FindResource` and `LoadResource` find it where a module holds one language. Null when the
+    /// image has none, or when a directory points outside the file.
+    pub fn resource(image: Image, kind: ResourceType, id: u16) ?[]const u8 {
+        const dir = image.directory(.resource) orelse return null;
+        const root = image.fileOffset(dir.rva) orelse return null;
+        const kinds = image.resourceEntry(root, 0, @intFromEnum(kind)) orelse return null;
+        const ids = image.resourceEntry(root, kinds.below() orelse return null, id) orelse return null;
+        const languages = ids.below() orelse return null;
+        const language = image.resourceEntries(root, languages) orelse return null;
+        if (language.len == 0 or language[0].below() != null) return null;
+        const at = std.math.add(u32, root, language[0].offset) catch return null;
+        if (at + @sizeOf(ResourceData) > image.bytes.len) return null;
+        const data: *align(1) const ResourceData = @ptrCast(image.bytes[at..][0..@sizeOf(ResourceData)]);
+        const offset = image.fileOffset(data.rva) orelse return null;
+        const end = std.math.add(u32, offset, data.size) catch return null;
+        if (end > image.bytes.len) return null;
+        return image.bytes[offset..end];
+    }
+
+    /// The string of `id` in the image's string tables, as `LoadString` finds it: the table of
+    /// block `id / 16 + 1` holds strings `id` rounded down to a multiple of 16 on, each a length
+    /// and that many UTF-16 units. Null when there is no such string; an empty one is empty.
+    pub fn string(image: Image, id: u16) ?[]align(1) const u16 {
+        const block = image.resource(.string, (id >> 4) + 1) orelse return null;
+        var at: usize = 0;
+        for (0..strings_per_block) |index| {
+            if (at + 2 > block.len) return null;
+            const length = std.mem.readInt(u16, block[at..][0..2], .little);
+            at += 2;
+            const size = @as(usize, length) * 2;
+            if (at + size > block.len) return null;
+            if (index == id & (strings_per_block - 1)) {
+                return std.mem.bytesAsSlice(u16, block[at..][0..size]);
+            }
+            at += size;
+        }
+        return null;
+    }
+
+    /// The entries of the resource directory `offset` past `root`, or null past the file.
+    fn resourceEntries(image: Image, root: u32, offset: u32) ?[]align(1) const ResourceEntry {
+        const at = std.math.add(u32, root, offset) catch return null;
+        if (at + @sizeOf(ResourceDirectory) > image.bytes.len) return null;
+        const directory_header: *align(1) const ResourceDirectory = @ptrCast(image.bytes[at..][0..@sizeOf(ResourceDirectory)]);
+        const count = @as(usize, directory_header.named_count) + directory_header.id_count;
+        const first = at + @sizeOf(ResourceDirectory);
+        if (first + count * @sizeOf(ResourceEntry) > image.bytes.len) return null;
+        return std.mem.bytesAsSlice(ResourceEntry, image.bytes[first..][0 .. count * @sizeOf(ResourceEntry)]);
+    }
+
+    /// The entry of `id` in the resource directory `offset` past `root`.
+    fn resourceEntry(image: Image, root: u32, offset: u32, id: u16) ?ResourceEntry {
+        for (image.resourceEntries(root, offset) orelse return null) |entry| {
+            if (entry.id() == id) return entry;
+        }
+        return null;
+    }
 };
+
+// --- Resources ---------------------------------------------------------------------------------
+
+/// A resource directory, followed by its named entries and then the ones with ids.
+pub const ResourceDirectory = extern struct {
+    characteristics: u32,
+    timestamp: u32,
+    major_version: u16,
+    minor_version: u16,
+    named_count: u16,
+    id_count: u16,
+
+    comptime {
+        assert(@sizeOf(ResourceDirectory) == 16);
+    }
+};
+
+/// An entry of a resource directory. Its offset is from the start of the resource section's
+/// root directory, to a directory below it when the top bit is set and to the entry's data
+/// otherwise.
+pub const ResourceEntry = extern struct {
+    /// An id, or with the top bit set the offset of a name.
+    name: u32,
+    offset: u32,
+
+    const high: u32 = 0x8000_0000;
+
+    /// The entry's id, or null for one that is named.
+    pub fn id(entry: ResourceEntry) ?u16 {
+        return if (entry.name & high != 0) null else @truncate(entry.name);
+    }
+
+    /// The offset of the directory below the entry, or null when it points at data.
+    pub fn below(entry: ResourceEntry) ?u32 {
+        return if (entry.offset & high != 0) entry.offset & ~high else null;
+    }
+
+    comptime {
+        assert(@sizeOf(ResourceEntry) == 8);
+    }
+};
+
+/// Where a resource's data lies: an address relative to the image base, not to the section.
+pub const ResourceData = extern struct {
+    rva: u32,
+    size: u32,
+    code_page: u32,
+    _reserved: u32,
+
+    comptime {
+        assert(@sizeOf(ResourceData) == 16);
+    }
+};
+
+/// The resource types this project reads.
+pub const ResourceType = enum(u16) {
+    string = 6,
+    _,
+};
+
+/// Strings to a block of a string table.
+pub const strings_per_block = 16;
 
 pub const ImportIterator = struct {
     image: Image,
@@ -349,9 +471,26 @@ pub const testing = struct {
     const headers_size = 0x400;
     const file_alignment = 0x200;
 
+    /// A data directory for `buildWith` to set.
+    pub const Directory = struct {
+        index: DirectoryIndex,
+        rva: u32,
+        size: u32,
+    };
+
     /// A PE32 image of `sections`, loaded at `image_base`, that `Image.parse` accepts. Each
     /// section's virtual size is its data's. The caller owns the bytes.
     pub fn build(allocator: std.mem.Allocator, image_base: u32, sections: []const Section) ![]u8 {
+        return buildWith(allocator, image_base, sections, &.{});
+    }
+
+    /// As `build`, with `directories` set.
+    pub fn buildWith(
+        allocator: std.mem.Allocator,
+        image_base: u32,
+        sections: []const Section,
+        directories: []const Directory,
+    ) ![]u8 {
         const optional_offset = nt_offset + nt_signature.len + @sizeOf(FileHeader);
         const optional_size = @sizeOf(OptionalHeader32) + directory_count * @sizeOf(DataDirectory);
         const sections_offset = optional_offset + optional_size;
@@ -383,6 +522,11 @@ pub const testing = struct {
         optional.file_alignment = file_alignment;
         optional.headers_size = headers_size;
         optional.directory_count = directory_count;
+        const table: []align(1) DataDirectory = @alignCast(std.mem.bytesAsSlice(
+            DataDirectory,
+            bytes[optional_offset + @sizeOf(OptionalHeader32) ..][0 .. directory_count * @sizeOf(DataDirectory)],
+        ));
+        for (directories) |entry| table[@intFromEnum(entry.index)] = .{ .rva = entry.rva, .size = entry.size };
 
         var raw_offset: u32 = headers_size;
         for (sections, 0..) |section, index| {
@@ -399,6 +543,72 @@ pub const testing = struct {
             raw_offset += @intCast(std.mem.alignForward(usize, section.data.len, file_alignment));
         }
         return bytes;
+    }
+
+    /// A resource section, to load at `rva`, holding one string table of `strings` from id 0 on,
+    /// ASCII, in language `0x409`. A string of null is left out of its block, as an empty one.
+    pub fn stringResources(allocator: std.mem.Allocator, rva: u32, strings: []const ?[]const u8) ![]u8 {
+        const blocks = (strings.len + strings_per_block - 1) / strings_per_block;
+        var out: std.ArrayList(u8) = .empty;
+        errdefer out.deinit(allocator);
+        const directory_size = @sizeOf(ResourceDirectory);
+        const entry_size = @sizeOf(ResourceEntry);
+        // The root holds the string type; the type's directory each block; each block's directory
+        // its one language; then the data entries and the blocks' data.
+        const root_size = directory_size + entry_size;
+        const kinds_size = directory_size + blocks * entry_size;
+        const languages_size = blocks * (directory_size + entry_size);
+        const data_entries = root_size + kinds_size + languages_size;
+        const block_data = data_entries + blocks * @sizeOf(ResourceData);
+
+        var data: std.ArrayList(u8) = .empty;
+        defer data.deinit(allocator);
+        var offsets = try allocator.alloc(u32, blocks + 1);
+        defer allocator.free(offsets);
+        for (0..blocks) |block| {
+            offsets[block] = @intCast(data.items.len);
+            for (0..strings_per_block) |index| {
+                const at = block * strings_per_block + index;
+                const text = if (at < strings.len) strings[at] orelse "" else "";
+                try appendInt(allocator, &data, u16, @intCast(text.len));
+                for (text) |c| try appendInt(allocator, &data, u16, c);
+            }
+        }
+        offsets[blocks] = @intCast(data.items.len);
+
+        try appendDirectory(allocator, &out, 1);
+        try appendInt(allocator, &out, u32, @intFromEnum(ResourceType.string));
+        try appendInt(allocator, &out, u32, ResourceEntry.high | root_size);
+        try appendDirectory(allocator, &out, blocks);
+        for (0..blocks) |block| {
+            try appendInt(allocator, &out, u32, @intCast(block + 1));
+            try appendInt(allocator, &out, u32, ResourceEntry.high | @as(u32, @intCast(root_size + kinds_size + block * (directory_size + entry_size))));
+        }
+        for (0..blocks) |block| {
+            try appendDirectory(allocator, &out, 1);
+            try appendInt(allocator, &out, u32, 0x409);
+            try appendInt(allocator, &out, u32, @intCast(data_entries + block * @sizeOf(ResourceData)));
+        }
+        for (0..blocks) |block| {
+            try appendInt(allocator, &out, u32, rva + @as(u32, @intCast(block_data)) + offsets[block]);
+            try appendInt(allocator, &out, u32, offsets[block + 1] - offsets[block]);
+            try appendInt(allocator, &out, u32, 0);
+            try appendInt(allocator, &out, u32, 0);
+        }
+        try out.appendSlice(allocator, data.items);
+        return out.toOwnedSlice(allocator);
+    }
+
+    fn appendDirectory(allocator: std.mem.Allocator, out: *std.ArrayList(u8), ids: usize) !void {
+        try out.appendNTimes(allocator, 0, 12);
+        try appendInt(allocator, out, u16, 0);
+        try appendInt(allocator, out, u16, @intCast(ids));
+    }
+
+    fn appendInt(allocator: std.mem.Allocator, out: *std.ArrayList(u8), comptime T: type, value: T) !void {
+        var bytes: [@sizeOf(T)]u8 = undefined;
+        std.mem.writeInt(T, &bytes, value, .little);
+        try out.appendSlice(allocator, &bytes);
     }
 };
 
@@ -438,6 +648,38 @@ test "maps each section to its own file offset" {
     try std.testing.expectEqual(@as(?u32, null), image.fileOffset(0x5300));
     try std.testing.expectEqual(@as(?u32, null), image.fileOffset(0x3000));
     try std.testing.expectEqual(@as(u8, 0xAA), bytes[image.fileOffset(0x5123).?]);
+}
+
+test "finds a string as LoadString does" {
+    const allocator = std.testing.allocator;
+    var strings: [20]?[]const u8 = @splat(null);
+    strings[1] = "COCKPIT";
+    strings[15] = "LAST OF THE FIRST BLOCK";
+    strings[17] = "EXTERNAL";
+    const rsrc = try testing.stringResources(allocator, 0x3000, &strings);
+    defer allocator.free(rsrc);
+    const bytes = try testing.buildWith(allocator, 0x10000000, &.{
+        .{ .name = ".rsrc", .rva = 0x3000, .data = rsrc },
+    }, &.{.{ .index = .resource, .rva = 0x3000, .size = @intCast(rsrc.len) }});
+    defer allocator.free(bytes);
+    const image: Image = try .parse(bytes);
+
+    const expectString = struct {
+        fn check(found: ?[]align(1) const u16, expected: []const u8) !void {
+            const units = found orelse return error.TestExpectedString;
+            try std.testing.expectEqual(expected.len, units.len);
+            for (units, expected) |unit, c| try std.testing.expectEqual(@as(u16, c), unit);
+        }
+    }.check;
+    try expectString(image.string(1), "COCKPIT");
+    try expectString(image.string(15), "LAST OF THE FIRST BLOCK");
+    // The second block holds the strings from 16.
+    try expectString(image.string(17), "EXTERNAL");
+    // A string the block leaves empty is empty; a block the image lacks has none.
+    try std.testing.expectEqual(0, image.string(0).?.len);
+    try std.testing.expectEqual(null, image.string(40));
+    // No resource of another type.
+    try std.testing.expectEqual(null, image.resource(@enumFromInt(3), 1));
 }
 
 test "rejects non-PE input" {
