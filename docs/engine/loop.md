@@ -111,7 +111,15 @@ leaves, and the faces of a leaf the ship's sphere reaches give the nearest point
 shoved at its own centre and the hull at that point, so the hull turns about the hit and the ship
 does not.
 
-Ported so far: the sweep, the pairs it passes over, the shove, setting two objects apart, and the
-hull test ([`collision.zig`](../../src/engine/game/collision.zig)). Not yet: the damage an impact
-does ([#42](https://github.com/vdmkenny/openreliant/issues/42)), and the torpedo's and the mine's
-explosions ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
+An impact also does damage, from the impulse the shove handed the pair: a fifth of it over the
+lighter of the two masses, halved, on the quadrant each was struck in (`0x00465CA0`). The shield
+there takes it first, and what passes through wears the armour, which sets the armour's conditions
+again. A collision does not count toward what a ship has taken lately, so it never sends one after
+its attacker; a shot does.
+
+Ported so far: the sweep, the pairs it passes over, the shove, setting two objects apart, the hull
+test and the damage ([`collision.zig`](../../src/engine/game/collision.zig)). Not yet: destroying an
+object whose armour runs out, and the torpedo's and the mine's explosions
+([#41](https://github.com/vdmkenny/openreliant/issues/41)); the damage a hull's own part takes,
+which needs the components ([#40](https://github.com/vdmkenny/openreliant/issues/40)); and the
+scaling the difficulty setting gives a hit.
