@@ -107,7 +107,8 @@ point midway between the two, so the step that follows does not find them overla
 
 A ship that meets an object listing components is tested against that object's collision tree
 instead ([Models](../formats/shp.md#tree-node-tag-0x07)): each part's boxes are descended to the
-leaves, and the faces of a leaf the ship's sphere reaches give the nearest point. The ship is then
+leaves, and the faces of a leaf the ship's sphere reaches give the nearest point. Those are the
+file's own faces, which the leaf lists by index, not the merged polygons the renderer draws. The ship is then
 shoved at its own centre and the hull at that point, so the hull turns about the hit and the ship
 does not.
 

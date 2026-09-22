@@ -236,9 +236,9 @@ pub fn hitSphere(model: *const Model, source: *const shp.Model, at: Vector, radi
     var best = radius * radius;
     var hit: ?Hit = null;
     for (model.parts, source.parts, 0..) |part, data, index| {
-        if (part.hidden or data.nodes.len == 0 or part.object.levels.len == 0) continue;
-        const mesh = part.object.levels[0].mesh;
-        // The sphere in the part's frame, which the tree's boxes are given in.
+        if (part.hidden or data.nodes.len == 0 or data.meshes.len == 0) continue;
+        const level = data.meshes[0];
+        // The sphere in the part's frame, which the tree's boxes and the faces are given in.
         const local = math.transformTransposed(part.object.orientation, at - part.object.position);
 
         var stack: [hit_stack]u32 = undefined;
@@ -269,30 +269,32 @@ pub fn hitSphere(model: *const Model, source: *const shp.Model, at: Vector, radi
                 continue;
             }
             for (faces) |face| {
-                if (face >= mesh.polygons.len or face >= mesh.planes.len) continue;
-                const polygon = mesh.polygons[face];
-                const plane = mesh.planes[face];
-                if (polygon.count < 3 or polygon.first + polygon.count > mesh.indices.len) continue;
-                // Only a sphere in front of the face, and near enough, is worth the triangles.
-                const corner = mesh.positions[mesh.indices[polygon.first]];
-                const ahead = math.dot(local - corner, plane.normal);
+                if (face >= level.faces.len) continue;
+                const record = level.faces[face];
+                const triangle: [3]Vector = .{
+                    corner(level, record.vertices[0]) orelse continue,
+                    corner(level, record.vertices[1]) orelse continue,
+                    corner(level, record.vertices[2]) orelse continue,
+                };
+                const normal = gameobj.vector(record.normal);
+                // Only a sphere in front of the face, and near enough, is worth the triangle.
+                const ahead = math.dot(local - triangle[0], normal);
                 if (ahead < 0 or ahead * ahead > best) continue;
-                for (1..polygon.count - 1) |step| {
-                    const triangle: [3]Vector = .{
-                        mesh.positions[mesh.indices[polygon.first]],
-                        mesh.positions[mesh.indices[polygon.first + step]],
-                        mesh.positions[mesh.indices[polygon.first + step + 1]],
-                    };
-                    const point = closestOnTriangle(local, triangle);
-                    const away = math.lengthSquared(local - point);
-                    if (away >= best) continue;
-                    best = away;
-                    hit = .{ .part = index, .face = face, .point = point, .normal = plane.normal, .distance = @sqrt(away) };
-                }
+                const point = closestOnTriangle(local, triangle);
+                const away = math.lengthSquared(local - point);
+                if (away >= best) continue;
+                best = away;
+                hit = .{ .part = index, .face = face, .point = point, .normal = normal, .distance = @sqrt(away) };
             }
         }
     }
     return hit;
+}
+
+/// A face's corner, or null where the file names a vertex the level does not hold.
+fn corner(level: shp.Mesh, vertex: u32) ?Vector {
+    if (vertex >= level.vertices.len) return null;
+    return gameobj.vector(level.vertices[vertex].position);
 }
 
 /// The point of a triangle nearest `from`.
