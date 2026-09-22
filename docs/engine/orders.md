@@ -3,11 +3,26 @@
 What each object is doing: flying in formation, escorting, docking, exploding, or following the
 player's controls. An object keeps a stack of orders, the current one on top, which the AI, the
 mission scripts and the player's controls push and pop, and `object_orders` runs the current one.
-[`ai.zig`](../../src/engine/game/ai.zig) and [`aigeneric.zig`](../../src/engine/game/aigeneric.zig)
-define the structures, and [`ai/orders.zig`](../../src/engine/game/ai/orders.zig) lists the orders
-with their flags, priorities and routines; `make order-tables` transcribes it from the executable.
-The names below are those `make ghidra-annotate` gives the Ghidra project, which names each order's
-routines `order_` and the order's name, with `_init` and `_exit` for those two.
+[`aigeneric.zig`](../../src/engine/game/aigeneric.zig) holds the stack and runs the orders,
+[`ai.zig`](../../src/engine/game/ai.zig) the steering they turn by,
+[`aiorders.zig`](../../src/engine/game/aiorders.zig) the orders that fly a ship, and
+[`ai/orders.zig`](../../src/engine/game/ai/orders.zig) lists every order with its flags, priorities
+and routines; `make order-tables` transcribes that table from the executable. The names below are
+those `make ghidra-annotate` gives the Ghidra project, which names each order's routines `order_`
+and the order's name, with `_init` and `_exit` for those two.
+
+Ported so far: the stack (`order_push`, `order_pop`, `orders_clear`, `orders_pop_all`), what runs it
+(`object_orders`, `orders_update`, `order_retaliate`), the steering (`ai_steer`, `ai_roll_upright`),
+and the orders Do Nothing, Fly, Run Away, Slow Rotate, the Random Spins, Match Speed, 44 and 45,
+with Player Control being the player's [controls](controls.md). An order the port does not run yet
+still holds its place on the stack, and pushing it still pops and starts what it should
+([#30](https://github.com/vdmkenny/openreliant/issues/30),
+[#33](https://github.com/vdmkenny/openreliant/issues/33)). Not ported: avoidance
+([#140](https://github.com/vdmkenny/openreliant/issues/140)), and the orders other players' machines
+queue ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
+
+The port keeps each object's stack and order state in its slot rather than allocating them with its
+first order, and hands a fatal "Cannot set ai" back to its caller as an error.
 
 ## The order table
 
@@ -135,8 +150,13 @@ Most orders that fly a ship steer with `ai_steer` (`0x00401380`), which takes a 
 a limit, an ease and flags. It sets the pitch, yaw and roll inputs from the point's direction in
 the ship's frame, through `0x00401710`, or `0x00401690` when the word at `+0x24` of the ship's
 flight stats is nonzero. It takes `(1 - ease) * 6` times each turn rate off its input and
-multiplies the result by 11.46, then holds each input within the limit, at most 1. While frames
-take more than 10 ticks, inputs under 0.39 are halved first.
+multiplies the result by 11.46, which is a fifth of a degree's worth of radians, so an input fills
+at five degrees off; then it holds each input within the limit, at most 1. While frames take more
+than 10 ticks, turns of less than an eighth of a turn are halved first, along with the limit.
+
+`0x00401710` banks the ship round: within 18 degrees of the nose it simply yaws at the point,
+further off it rolls to bring the point overhead, and it pitches only once the roll is within 0.8
+radians of where it wants it. A ship flying backwards turns toward the other way about.
 
 | Flag | Meaning |
 |---|---|
