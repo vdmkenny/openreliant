@@ -11,6 +11,7 @@ const srapi = @import("../surrenderlib/srapi.zig");
 const srapiext = @import("../surrenderlib/srapiext.zig");
 const srbmo = @import("../surrenderlib/srbmo.zig");
 const srclip = @import("../surrenderlib/srclip.zig");
+const srlight = @import("../surrenderlib/srlight.zig");
 const srcore = @import("../surrenderlib/srcore.zig");
 const srmesh = @import("../surrenderlib/srmesh.zig");
 const srstars = @import("../surrenderlib/srstars.zig");
@@ -189,6 +190,7 @@ pub const Driver = struct {
 
     const vtable: srcore.Driver.VTable = .{
         .begin = begin,
+        .lights = lights,
         .mesh = drawMesh,
         .sprites = drawSprites,
         .stars = drawStars,
@@ -211,6 +213,38 @@ pub const Driver = struct {
 
     fn end(ptr: *anyopaque) void {
         from(ptr).target.end();
+    }
+
+    /// The port's: hands the device the frame's directional and point lights in the camera's
+    /// frame, and notes whether it lights each pixel with them.
+    fn lights(ptr: *anyopaque, list: []const srlight.Light) Allocator.Error!void {
+        const driver = from(ptr);
+        const context = driver.context;
+        var taken: std.ArrayList(device.Light) = .empty;
+        defer taken.deinit(driver.gpa);
+        for (list) |l| {
+            const kind: device.Light.Kind = switch (l.kind) {
+                .ambient => continue,
+                .directional => |forward| .{ .directional = .{
+                    .toward = math.normalize(context.turn(forward)) * @as(math.Vector, @splat(l.intensity)),
+                    .colour = l.colour,
+                } },
+                .point => |point| .{ .point = .{
+                    .position = context.view(point.position),
+                    .reach = l.intensity * point.range,
+                    .colour = @as(math.Vector, l.colour) * @as(math.Vector, @splat(l.intensity)),
+                } },
+            };
+            try taken.append(driver.gpa, .{ .mask = l.mask, .kind = kind });
+        }
+        context.pixel_lighting = driver.target.lights(taken.items);
+    }
+
+    /// The light mask a corner of `drawn` goes to the device with: its object's, for a pass lit
+    /// in a frame whose device lights each pixel, and none otherwise.
+    fn pixelMask(drawn: *const srmesh.Drawn, material: Material, pass: u1) u32 {
+        if (drawn.normals == null or !material.lit[pass]) return device.no_lights;
+        return drawn.object.light_mask;
     }
 
     /// The render states for a pass (`set_material`, `0x10001B20`, and `set_depth`, `0x100018B0`).
@@ -287,6 +321,9 @@ pub const Driver = struct {
             .diffuse = if (!material.lit[pass]) device.white else if (drawn.colours) |c| device.pack(c[vertex]) else 0,
             .u = coordinates(drawn, position, material, pass)[0],
             .v = coordinates(drawn, position, material, pass)[1],
+            .view = drawn.view[vertex],
+            .normal = if (drawn.normals) |n| n[vertex] else @splat(0),
+            .light_mask = pixelMask(drawn, material, pass),
         };
     }
 
@@ -431,6 +468,9 @@ pub const Driver = struct {
                     .diffuse = if (material.lit[pass]) device.pack(c.colour) else device.white,
                     .u = uv[0],
                     .v = uv[1],
+                    .view = c.view,
+                    .normal = c.normal,
+                    .light_mask = pixelMask(drawn, material, pass),
                 });
             }
             const vertices = driver.single.items;
@@ -455,6 +495,7 @@ pub const Driver = struct {
             .colour = if (drawn.colours) |colours| colours[vertex] else @splat(0),
             .mesh_uv = @splat(.{ 0, 0 }),
             .generated = @splat(.{ 0, 0 }),
+            .normal = if (drawn.normals) |n| n[vertex] else @splat(0),
         };
         for (0..2) |pass| {
             if (mesh.uv[pass]) |uv| c.mesh_uv[pass] = uv[position];
@@ -677,6 +718,82 @@ test "a pass keeps what it gathers while it clips a polygon" {
         try std.testing.expectApproxEqAbs(1, screen.colour[at[1] * 64 + at[0]][0], 1e-5);
     }
     try std.testing.expectEqual([3]f32{ 0, 0, 0 }, screen.colour[40 * 64 + 32]);
+}
+
+test "a device that lights each pixel" {
+    const gpa = std.testing.allocator;
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Takes the frame's lights, and keeps the vertices of the last draw.
+    const Recorder = struct {
+        lights: [4]device.Light = undefined,
+        taken: usize = 0,
+        vertices: [16]Vertex = undefined,
+        drawn: usize = 0,
+
+        const vtable: device.Device.VTable = .{ .begin = nothing, .end = nothing, .draw = draw, .overlay = nothing, .lights = take };
+
+        fn nothing(_: *anyopaque) void {}
+
+        fn draw(ptr: *anyopaque, _: device.State, _: device.Primitive, vertices: []const Vertex, _: ?[]const u16) void {
+            const recorder: *@This() = @ptrCast(@alignCast(ptr));
+            @memcpy(recorder.vertices[0..vertices.len], vertices);
+            recorder.drawn = vertices.len;
+        }
+
+        fn take(ptr: *anyopaque, list: []const device.Light) bool {
+            const recorder: *@This() = @ptrCast(@alignCast(ptr));
+            @memcpy(recorder.lights[0..list.len], list);
+            recorder.taken = list.len;
+            return true;
+        }
+    };
+    var recorder: Recorder = .{};
+    var driver: Driver = try .init(gpa, .{ .ptr = &recorder, .vtable = &Recorder.vtable });
+    defer driver.deinit();
+
+    const mesh = try srmesh.testing.square(gpa);
+    defer mesh.deinit(gpa);
+    const levels = [_]srapiext.Level{.{ .mesh = &mesh, .until = 50000 }};
+    var object: srapiext.MeshObject = .{ .flags = .{ .lit = true }, .position = .{ 0, 0, 1000 }, .radius = mesh.radius, .levels = &levels, .light_mask = 0x02 };
+
+    var scene: srcore.Scene = .{};
+    defer scene.deinit(gpa);
+    try scene.layers.getPtr(.world).append(gpa, .{ .mesh = &object });
+    try scene.lights.append(gpa, .{ .mask = 0x04, .intensity = 1, .colour = .{ 0.25, 0.25, 0.25 }, .kind = .ambient });
+    try scene.lights.append(gpa, .{ .mask = 0x01, .intensity = 0.5, .colour = .{ 1, 1, 1 }, .kind = .{ .directional = .{ 0, 0, -2 } } });
+    try scene.lights.append(gpa, .{ .mask = 0x08, .intensity = 2, .colour = .{ 1, 0.5, 0 }, .kind = .{ .point = .{ .position = .{ 0, 0, 900 }, .range = 100 } } });
+    var context: srapi.Context = .{ .projection = .init(64, 48, srapi.full_screen, .{ 0.6, 0.8 }) };
+    context.camera.position = .{ 10, 0, 0 };
+
+    try srcore.render(arena, &context, &scene, driver.interface(), null);
+    try std.testing.expect(context.pixel_lighting);
+    // The directional and point lights, last added first, in the camera's frame: the direction
+    // made as long as the intensity, the point's reach and colour scaled by it.
+    try std.testing.expectEqual(2, recorder.taken);
+    try std.testing.expectEqual(0x08, recorder.lights[0].mask);
+    try std.testing.expectEqual(math.Vector{ -10, 0, 900 }, recorder.lights[0].kind.point.position);
+    try std.testing.expectEqual(200, recorder.lights[0].kind.point.reach);
+    try std.testing.expectEqual([3]f32{ 2, 1, 0 }, recorder.lights[0].kind.point.colour);
+    try std.testing.expectEqual([3]f32{ 0, 0, -0.5 }, recorder.lights[1].kind.directional.toward);
+    // The vertices come with the ambient light alone, their normals and their object's mask.
+    try std.testing.expect(recorder.drawn > 0);
+    for (recorder.vertices[0..recorder.drawn]) |v| {
+        try std.testing.expectEqual(device.pack(.{ 0.25, 0.25, 0.25, 0 }), v.diffuse);
+        try std.testing.expectEqual([3]f32{ 0, 0, -1 }, v.normal);
+        try std.testing.expectEqual(0x02, v.light_mask);
+        try std.testing.expectEqual(1000, v.view[2]);
+    }
+
+    // A pass that is not lit takes no lights.
+    mesh.surfaces[0].material.lit[0] = false;
+    try srcore.render(arena, &context, &scene, driver.interface(), null);
+    for (recorder.vertices[0..recorder.drawn]) |v| {
+        try std.testing.expectEqual(device.white, v.diffuse);
+        try std.testing.expectEqual(device.no_lights, v.light_mask);
+    }
 }
 
 test depth {

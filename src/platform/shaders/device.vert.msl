@@ -13,6 +13,9 @@ struct main0_out
     float4 m_80 [[user(locn0)]];
     float2 m_85 [[user(locn1)]];
     int m_90 [[user(locn2)]];
+    float3 m_96 [[user(locn3)]];
+    float3 m_100 [[user(locn4)]];
+    uint m_104 [[user(locn5)]];
     float4 gl_Position [[position]];
     float gl_PointSize [[point_size]];
 };
@@ -23,25 +26,31 @@ struct main0_in
     float4 m_81 [[attribute(1)]];
     float2 m_87 [[attribute(2)]];
     int m_92 [[attribute(3)]];
+    float3 m_98 [[attribute(4)]];
+    float3 m_101 [[attribute(5)]];
+    uint m_106 [[attribute(6)]];
 };
 
 vertex main0_out main0(main0_in in [[stage_in]], constant _37& _39 [[buffer(0)]])
 {
     main0_out out = {};
-    float _94;
+    float _108;
     if (in.m_11.w > 0.0)
     {
-        _94 = 1.0 / in.m_11.w;
+        _108 = 1.0 / in.m_11.w;
     }
     else
     {
-        _94 = 1.0;
+        _108 = 1.0;
     }
-    out.gl_Position = float4(float2((((in.m_11.x + 0.5) / _39._m0.x) * 2.0) - 1.0, 1.0 - (((in.m_11.y + 0.5) / _39._m0.y) * 2.0)) * _94, in.m_11.z * _94, _94);
+    out.gl_Position = float4(float2((((in.m_11.x + 0.5) / _39._m0.x) * 2.0) - 1.0, 1.0 - (((in.m_11.y + 0.5) / _39._m0.y) * 2.0)) * _108, in.m_11.z * _108, _108);
     out.gl_PointSize = 1.0;
     out.m_80 = in.m_81.zyxw;
     out.m_85 = in.m_87;
     out.m_90 = in.m_92;
+    out.m_96 = in.m_98;
+    out.m_100 = in.m_101;
+    out.m_104 = in.m_106;
     return out;
 }
 

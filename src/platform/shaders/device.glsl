@@ -14,6 +14,11 @@ layout(location = 1) in vec4 diffuse;
 layout(location = 2) in vec2 coordinates;
 // Its texture's layer in the bound array, or -1 for none.
 layout(location = 3) in int layer;
+// For lighting each pixel: where it stands in the camera's frame, its normal there, and the lights
+// that don't reach it, all ones for none.
+layout(location = 4) in vec3 view;
+layout(location = 5) in vec3 normal;
+layout(location = 6) in uint lightMask;
 
 layout(set = 1, binding = 0) uniform Target {
     // The frame's width and height in pixels.
@@ -23,6 +28,9 @@ layout(set = 1, binding = 0) uniform Target {
 layout(location = 0) out vec4 colour;
 layout(location = 1) out vec2 uv;
 layout(location = 2) flat out int image;
+layout(location = 3) out vec3 place;
+layout(location = 4) out vec3 facing;
+layout(location = 5) flat out uint mask;
 
 void main() {
     // One over the reciprocal depth as the clip w makes colours and texture coordinates vary in
@@ -35,6 +43,9 @@ void main() {
     colour = diffuse.bgra;
     uv = coordinates;
     image = layer;
+    place = view;
+    facing = normal;
+    mask = lightMask;
 }
 
 #endif
@@ -50,10 +61,58 @@ layout(set = 3, binding = 0) uniform Frame {
     vec4 settings;
 } frame;
 
+// The frame's directional and point lights, for lighting each pixel. A light's colour is its red,
+// green and blue; its vector, toward a directional light and as long as its intensity, or a point
+// light's place and its reach; its mask; and its kind, 0 directional or 1 point.
+struct Light {
+    vec4 colour;
+    vec4 vector;
+    uint mask;
+    uint kind;
+    uvec2 unused;
+};
+
+layout(set = 3, binding = 1) uniform Lighting {
+    uvec4 count;
+    Light lights[64];
+} lighting;
+
 layout(location = 0) in vec4 colour;
 layout(location = 1) in vec2 uv;
 layout(location = 2) flat in int image;
+layout(location = 3) in vec3 place;
+layout(location = 4) in vec3 facing;
+layout(location = 5) flat in uint mask;
 layout(location = 0) out vec4 result;
+
+// The vertices' colour with the directional and point lights added for this pixel, as the
+// pipeline adds them for each vertex (srmesh.zig), each channel then held to 1. A vertex that comes
+// lit already, as every one does in the original's look, takes its colour as it stands.
+vec4 lit(vec4 base) {
+    float length = length(facing);
+    if (mask == 0xFFFFFFFFu || length < 1e-6) return base;
+    vec3 n = facing / length;
+    vec3 sum = base.rgb;
+    for (uint i = 0u; i < lighting.count.x; i++) {
+        Light light = lighting.lights[i];
+        if ((light.mask & mask) != 0u) continue;
+        if (light.kind == 0u) {
+            float amount = dot(n, light.vector.xyz);
+            if (amount > 0.0) sum += amount * light.colour.rgb;
+            continue;
+        }
+        vec3 d = light.vector.xyz - place;
+        float r2 = dot(d, d);
+        float reach = light.vector.w;
+        if (r2 >= reach * reach) continue;
+        float along = dot(d, n);
+        if (along <= 0.0) continue;
+        float r = sqrt(r2);
+        // (1 - r / reach)^2 times the cosine, as the pipeline works it out.
+        sum += (1.0 / r + r / (reach * reach) - 2.0 / reach) * along * light.colour.rgb;
+    }
+    return vec4(min(sum, vec3(1.0)), base.a);
+}
 
 // A texture magnified with a Catmull-Rom filter, from nine bilinear taps: sharper than bilinear,
 // smoother than the nearest texel.
@@ -92,7 +151,8 @@ vec4 sampled() {
 
 void main() {
     // Direct3D 7's stages: the texture times the colour, or the colour alone.
-    vec4 c = image < 0 ? colour : sampled() * colour;
+    vec4 shaded = lit(colour);
+    vec4 c = image < 0 ? shaded : sampled() * shaded;
     if (frame.settings.x > 0.0 || frame.settings.z > 0.0) {
         // Over a 4 by 4 ordered dither, to the levels the frame is kept in: five bits of red and
         // blue and six of green in 16-bit colour, eight bits a channel otherwise.

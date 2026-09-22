@@ -56,7 +56,9 @@ textures are small, so the device gathers a frame before drawing it:
 The shader, [`device.glsl`](../../src/platform/shaders/device.glsl), takes the driver's vertices as
 they are: screen positions with pixel centres at whole numbers, reversed depth, and `rhw`, whose
 inverse as the clip-space `w` makes colours and texture coordinates vary in perspective. The
-fragment is the texel times the vertex colour, or the vertex colour alone. `make shaders` compiles
+fragment is the texel times the vertex colour, or the vertex colour alone. For a lit mesh, the
+shader first adds the frame's directional and point lights to the vertex colour for the pixel
+([Improvements](#improvements)). `make shaders` compiles
 it with `glslc` into SPIR-V, and from that into Metal's language with SPIRV-Cross, which `make`
 builds; the outputs are committed, so building the game needs neither.
 
@@ -79,10 +81,19 @@ Deliberate differences from the original, each marked **Improvement** where it i
   around them, as a camera does. What passes a threshold is taken into a half-size target, blurred
   along each axis in turn and added back, so that a light reads as a light rather than as a bright
   texel. The original drew none.
+- It lights each pixel of a lit mesh with the game's directional and point lights, where the
+  original lit each vertex and interpolated the colours across each polygon. A hull of few polygons
+  shades smoothly, and a point light falls off across a face rather than only between its corners.
+  The pipeline still works out each vertex's own colour, ambient lights and baked colours, and
+  hands the driver the vertex's normal in the camera's frame in place of the other lights. The
+  driver hands the device the frame's directional and point lights, also in the camera's frame, and
+  the shader adds them with `mesh_light`'s sums, to the normal interpolated and made unit length
+  again, and holds each channel to 1. A frame with more than 64 such lights is lit each vertex, as
+  is everything on the software device. `--no-pixel-lighting` turns it off.
 - It draws in 32-bit colour, where the original drew in 16 bits, and dithers that too, which costs
   nothing and keeps a dark gradient, such as the nebula or a light's falloff, from banding. `--original` restores the
   original's look: 16-bit colour, dithered, into a 16-bit buffer where the GPU has one, with a
-  16-bit depth buffer, one sample a pixel and bilinear filtering.
+  16-bit depth buffer, one sample a pixel, bilinear filtering and lighting each vertex.
 
 ## Not yet ported
 

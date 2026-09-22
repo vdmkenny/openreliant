@@ -24,12 +24,15 @@ pub const Vertex = struct {
     colour: [4]f32,
     mesh_uv: [2][2]f32,
     generated: [2][2]f32,
+    /// The port's: its normal in the camera's frame, for a device that lights each pixel.
+    normal: Vector = @splat(0),
 
     /// `clip_vertex_between` (`0x1000C5E0`): the vertex `t` of the way from `a` to `b`, each
     /// attribute alike.
     fn between(a: Vertex, b: Vertex, t: f32) Vertex {
         var c = a;
         c.view = a.view + (b.view - a.view) * @as(Vector, @splat(t));
+        c.normal = a.normal + (b.normal - a.normal) * @as(Vector, @splat(t));
         for (&c.colour, a.colour, b.colour) |*x, p, q| x.* = p + (q - p) * t;
         for (0..2) |pass| {
             for (0..2) |axis| {
@@ -170,4 +173,15 @@ test clip {
     polygon[1] = corner(.{ 100, 0, 50 });
     polygon[2] = corner(.{ 0, 100, -50 });
     try std.testing.expectEqual(0, clip(projection, .{ .near = true }, &polygon, 3));
+}
+
+test "Vertex.between" {
+    const a: Vertex = .{ .view = .{ 0, 0, 100 }, .colour = .{ 0, 0.5, 1, 1 }, .mesh_uv = @splat(.{ 0, 0 }), .generated = @splat(.{ 0, 0 }), .normal = .{ 0, 0, -1 } };
+    const b: Vertex = .{ .view = .{ 40, 0, 200 }, .colour = .{ 1, 0.5, 0, 1 }, .mesh_uv = @splat(.{ 1, 2 }), .generated = @splat(.{ 0, 0 }), .normal = .{ 1, 0, 0 } };
+    // A quarter of the way along, each attribute alike, the port's normal among them.
+    const c = a.between(b, 0.25);
+    try std.testing.expectEqual(Vector{ 10, 0, 125 }, c.view);
+    try std.testing.expectEqual([4]f32{ 0.25, 0.5, 0.75, 1 }, c.colour);
+    try std.testing.expectEqual([2]f32{ 0.25, 0.5 }, c.mesh_uv[1]);
+    try std.testing.expectEqual(Vector{ 0.25, 0, -0.75 }, c.normal);
 }

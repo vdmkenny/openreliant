@@ -11,7 +11,7 @@ const srtexture = @import("../surrenderlib/srtexture.zig");
 
 /// A vertex as the driver hands it over (`D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_SPECULAR |
 /// D3DFVF_TEX1`, `0x1C4`): on the screen, with pixel centres at whole numbers, as Direct3D 7 has
-/// them.
+/// them. The fields after `v` are the port's, for a device that lights each pixel (`lights`).
 pub const Vertex = extern struct {
     x: f32,
     y: f32,
@@ -24,10 +24,38 @@ pub const Vertex = extern struct {
     specular: u32 = 0,
     u: f32 = 0,
     v: f32 = 0,
+    /// Where the vertex stands in the camera's frame, and its normal there.
+    view: [3]f32 = .{ 0, 0, 0 },
+    normal: [3]f32 = .{ 0, 0, 0 },
+    /// The lights that don't reach it, as its object's light mask (`srlight.Light.reaches`). All
+    /// ones, as for everything but a lit mesh, when the device lights none of its pixels:
+    /// `diffuse` is then its whole colour.
+    light_mask: u32 = no_lights,
 
     comptime {
-        std.debug.assert(@sizeOf(Vertex) == 32);
+        std.debug.assert(@sizeOf(Vertex) == 60);
     }
+};
+
+/// A vertex's light mask when no light reaches it.
+pub const no_lights: u32 = std.math.maxInt(u32);
+
+/// A directional or point light as a device that lights each pixel takes it (`Device.lights`), in
+/// the camera's frame. It reaches a vertex whose light mask shares no bit with `mask`, and adds to
+/// the vertex's colour what `srmesh` would add to it, for each pixel instead of each vertex.
+pub const Light = struct {
+    mask: u32,
+    kind: Kind,
+
+    pub const Kind = union(enum) {
+        /// `colour` times the dot product of the pixel's normal with `toward`, where that is
+        /// positive. `toward` points at the light and is as long as its intensity.
+        directional: struct { toward: [3]f32, colour: [3]f32 },
+        /// `colour`, the light's times its intensity, times `(1 - r / reach)²` and the cosine of
+        /// the angle between the normal and the light, for a pixel `r` from `position` and within
+        /// `reach`.
+        point: struct { position: [3]f32, reach: f32, colour: [3]f32 },
+    };
 };
 
 /// Packs a colour as the driver does: each channel times 255, rounded, alpha at the top.
@@ -74,6 +102,10 @@ pub const Device = struct {
         /// straight over the finished frame, so a device that adds anything to the frame of its
         /// own, as the GPU's bloom does, leaves out what follows this.
         overlay: *const fn (*anyopaque) void,
+        /// The port's: takes the frame's directional and point lights, and returns whether the
+        /// device lights each pixel with them. A device without it lights nothing itself, and the
+        /// driver's vertices come lit, as Direct3D 7's did.
+        lights: ?*const fn (*anyopaque, []const Light) bool = null,
     };
 
     pub fn begin(device: Device) void {
@@ -90,6 +122,12 @@ pub const Device = struct {
 
     pub fn overlay(device: Device) void {
         device.vtable.overlay(device.ptr);
+    }
+
+    /// Hands the device the frame's lights, and returns whether it lights each pixel with them.
+    pub fn lights(device: Device, list: []const Light) bool {
+        const take = device.vtable.lights orelse return false;
+        return take(device.ptr, list);
     }
 };
 

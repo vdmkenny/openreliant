@@ -165,6 +165,10 @@ pub const Context = struct {
     /// the driver lessens it for each triangle of an object flagged `sun_occluder` near the point.
     sun: [2]f32 = .{ 0, 0 },
     sun_visibility: f32 = 0,
+    /// The port's: set for a frame whose device lights each pixel with the directional and point
+    /// lights (`device.Device.lights`). The pipeline then leaves them out of the vertices' colours
+    /// and hands the device the vertices' normals instead.
+    pixel_lighting: bool = false,
 
     /// A point of the world in the camera's frame.
     pub fn view(context: Context, point: Vector) Vector {

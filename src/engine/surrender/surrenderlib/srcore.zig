@@ -89,6 +89,9 @@ pub const Driver = struct {
     pub const VTable = struct {
         /// `begin_scene`: clears, and sets the depth scale for the frame.
         begin: *const fn (*anyopaque, *srapi.Context) void,
+        /// The port's: the frame's lights, for a device that lights each pixel. The driver sets
+        /// `srapi.Context.pixel_lighting` if it does.
+        lights: *const fn (*anyopaque, []const srlight.Light) Allocator.Error!void,
         /// Draws what is opaque now and puts the rest in `blended`.
         mesh: *const fn (*anyopaque, *const srmesh.Drawn, Layer, *Blended) Allocator.Error!void,
         sprites: *const fn (*anyopaque, *const srbmo.Drawn, Layer, *Blended) Allocator.Error!void,
@@ -128,6 +131,7 @@ pub fn render(arena: Allocator, context: *srapi.Context, scene: *Scene, driver: 
     // `mesh_light` walks the lights' list, which runs from the last added.
     const lights = try arena.dupe(srlight.Light, scene.lights.items);
     std.mem.reverse(srlight.Light, lights);
+    try driver.vtable.lights(driver.ptr, lights);
 
     var budget: srmesh.Budget = .{};
     for (std.enums.values(Layer)) |layer| {

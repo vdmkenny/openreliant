@@ -47,6 +47,9 @@ pub const Settings = struct {
     dither: bool = true,
     /// Waits for the display to show each frame, as DirectDraw's flip did.
     vsync: bool = true,
+    /// Lights each pixel with the game's own directional and point lights, rather than each
+    /// vertex, so that hulls of few polygons shade smoothly. The original lit each vertex.
+    pixel_lighting: bool = true,
 
     pub const Filter = enum {
         /// As the original: bilinear, from the nearest level.
@@ -64,6 +67,7 @@ pub const Settings = struct {
         .filter = .original,
         .bloom = false,
         .dither = false,
+        .pixel_lighting = false,
     };
 };
 
@@ -76,9 +80,66 @@ const Vertex = extern struct {
     uv: [2]f32,
     /// -1 for none.
     layer: i32,
+    /// For lighting each pixel: where it stands in the camera's frame, its normal there, and the
+    /// lights that don't reach it, all ones for none.
+    view: [3]f32,
+    normal: [3]f32,
+    light_mask: u32,
 
     comptime {
-        std.debug.assert(@sizeOf(Vertex) == 32);
+        std.debug.assert(@sizeOf(Vertex) == 60);
+    }
+};
+
+/// The most lights the shader takes in a frame. A frame with more is lit each vertex instead.
+const max_lights = 64;
+
+/// The frame's directional and point lights as the shader takes them, in std140's layout.
+const Lighting = extern struct {
+    /// How many of `lights` there are, in the first.
+    count: [4]u32 = @splat(0),
+    lights: [max_lights]Light = @splat(.{}),
+
+    const Light = extern struct {
+        /// Red, green and blue; the fourth is unused.
+        colour: [4]f32 = @splat(0),
+        /// For a directional light, toward it, as long as its intensity; for a point light, where
+        /// it stands, and its reach.
+        vector: [4]f32 = @splat(0),
+        mask: u32 = 0,
+        kind: Kind = .directional,
+        unused: [2]u32 = @splat(0),
+
+        const Kind = enum(u32) { directional = 0, point = 1 };
+    };
+
+    /// Takes `list` for the shader, unless it holds more lights than the shader does.
+    fn take(lighting: *Lighting, list: []const device.Light) bool {
+        lighting.count[0] = 0;
+        if (list.len > max_lights) return false;
+        for (list, lighting.lights[0..list.len]) |light, *taken| {
+            taken.* = switch (light.kind) {
+                .directional => |directional| .{
+                    .colour = .{ directional.colour[0], directional.colour[1], directional.colour[2], 0 },
+                    .vector = .{ directional.toward[0], directional.toward[1], directional.toward[2], 0 },
+                    .mask = light.mask,
+                    .kind = .directional,
+                },
+                .point => |point| .{
+                    .colour = .{ point.colour[0], point.colour[1], point.colour[2], 0 },
+                    .vector = .{ point.position[0], point.position[1], point.position[2], point.reach },
+                    .mask = light.mask,
+                    .kind = .point,
+                },
+            };
+        }
+        lighting.count[0] = @intCast(list.len);
+        return true;
+    }
+
+    comptime {
+        std.debug.assert(@sizeOf(Light) == 48);
+        std.debug.assert(@offsetOf(Lighting, "lights") == 16);
     }
 };
 
@@ -165,6 +226,8 @@ pub const Gpu = struct {
     targets: ?Targets = null,
     /// Set when a draw was lost for want of memory: the frame is not shown.
     failed: bool = false,
+    /// The frame's lights, for lighting each pixel.
+    lighting: Lighting = .{},
 
     const Buffers = struct {
         vertices: *c.SDL_GPUBuffer,
@@ -225,9 +288,9 @@ pub const Gpu = struct {
             log.err("the GPU takes neither SPIR-V nor Metal's shaders", .{});
             return error.Sdl;
         }
-        const vertex_shader = try shader(handle, spirv, c.SDL_GPU_SHADERSTAGE_VERTEX, if (spirv) shaders.vertex_spirv else shaders.vertex_msl, 0);
+        const vertex_shader = try shader(handle, spirv, c.SDL_GPU_SHADERSTAGE_VERTEX, if (spirv) shaders.vertex_spirv else shaders.vertex_msl, 0, 1);
         errdefer c.SDL_ReleaseGPUShader(handle, vertex_shader);
-        const fragment_shader = try shader(handle, spirv, c.SDL_GPU_SHADERSTAGE_FRAGMENT, if (spirv) shaders.fragment_spirv else shaders.fragment_msl, 1);
+        const fragment_shader = try shader(handle, spirv, c.SDL_GPU_SHADERSTAGE_FRAGMENT, if (spirv) shaders.fragment_spirv else shaders.fragment_msl, 1, 2);
         errdefer c.SDL_ReleaseGPUShader(handle, fragment_shader);
 
         const modern = settings.filter != .original;
@@ -328,8 +391,8 @@ pub const Gpu = struct {
     /// The shaders and pipelines the bloom passes draw with: a triangle over the whole screen, so
     /// there is nothing to bind but what it reads.
     fn startBloom(gpu: *Gpu, spirv: bool) Error!void {
-        gpu.bloom_vertex_shader = try shader(gpu.handle, spirv, c.SDL_GPU_SHADERSTAGE_VERTEX, if (spirv) shaders.bloom_vertex_spirv else shaders.bloom_vertex_msl, 0);
-        gpu.bloom_fragment_shader = try shader(gpu.handle, spirv, c.SDL_GPU_SHADERSTAGE_FRAGMENT, if (spirv) shaders.bloom_fragment_spirv else shaders.bloom_fragment_msl, 2);
+        gpu.bloom_vertex_shader = try shader(gpu.handle, spirv, c.SDL_GPU_SHADERSTAGE_VERTEX, if (spirv) shaders.bloom_vertex_spirv else shaders.bloom_vertex_msl, 0, 1);
+        gpu.bloom_fragment_shader = try shader(gpu.handle, spirv, c.SDL_GPU_SHADERSTAGE_FRAGMENT, if (spirv) shaders.bloom_fragment_spirv else shaders.bloom_fragment_msl, 2, 1);
         gpu.bloom_pipeline = try gpu.screenPipeline(gpu.colour_format);
     }
 
@@ -378,7 +441,15 @@ pub const Gpu = struct {
         return .{ .ptr = gpu, .vtable = &vtable };
     }
 
-    const vtable: device.Device.VTable = .{ .begin = begin, .end = end, .draw = draw, .overlay = overlay };
+    const vtable: device.Device.VTable = .{ .begin = begin, .end = end, .draw = draw, .overlay = overlay, .lights = lights };
+
+    /// Takes the frame's lights, for the shader to light each pixel with, unless the settings say
+    /// otherwise or the frame has more than the shader takes.
+    fn lights(ptr: *anyopaque, list: []const device.Light) bool {
+        const gpu = from(ptr);
+        gpu.lighting.count[0] = 0;
+        return gpu.settings.pixel_lighting and gpu.lighting.take(list);
+    }
 
     /// What follows is drawn over the finished frame rather than into it, so that the bloom, which
     /// the game has none of, does not reach it.
@@ -427,6 +498,9 @@ pub const Gpu = struct {
             .diffuse = v.diffuse,
             .uv = .{ v.u, v.v },
             .layer = if (slot) |s| s.layer else -1,
+            .view = v.view,
+            .normal = v.normal,
+            .light_mask = v.light_mask,
         });
         const first: u32 = @intCast(gpu.indices.items.len);
         try appendList(gpu.gpa, &gpu.indices, primitive, base, vertices.len, indices);
@@ -599,6 +673,7 @@ pub const Gpu = struct {
             0,
         };
         c.SDL_PushGPUFragmentUniformData(commands, 0, &frame_settings, @sizeOf(@TypeOf(frame_settings)));
+        c.SDL_PushGPUFragmentUniformData(commands, 1, &gpu.lighting, @sizeOf(Lighting));
         const buffers = gpu.buffers orelse return;
         c.SDL_BindGPUVertexBuffers(pass, 0, &c.SDL_GPUBufferBinding{ .buffer = buffers.vertices, .offset = 0 }, 1);
         c.SDL_BindGPUIndexBuffer(pass, &c.SDL_GPUBufferBinding{ .buffer = buffers.indices, .offset = 0 }, c.SDL_GPU_INDEXELEMENTSIZE_32BIT);
@@ -634,6 +709,7 @@ pub const Gpu = struct {
             0,
         };
         c.SDL_PushGPUFragmentUniformData(commands, 0, &frame_settings, @sizeOf(@TypeOf(frame_settings)));
+        c.SDL_PushGPUFragmentUniformData(commands, 1, &gpu.lighting, @sizeOf(Lighting));
         c.SDL_BindGPUVertexBuffers(pass, 0, &c.SDL_GPUBufferBinding{ .buffer = buffers.vertices, .offset = 0 }, 1);
         c.SDL_BindGPUIndexBuffer(pass, &c.SDL_GPUBufferBinding{ .buffer = buffers.indices, .offset = 0 }, c.SDL_GPU_INDEXELEMENTSIZE_32BIT);
         for (runs) |run| {
@@ -809,6 +885,9 @@ pub const Gpu = struct {
             .{ .location = 1, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4_NORM, .offset = @offsetOf(Vertex, "diffuse") },
             .{ .location = 2, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, .offset = @offsetOf(Vertex, "uv") },
             .{ .location = 3, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_INT, .offset = @offsetOf(Vertex, "layer") },
+            .{ .location = 4, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, .offset = @offsetOf(Vertex, "view") },
+            .{ .location = 5, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, .offset = @offsetOf(Vertex, "normal") },
+            .{ .location = 6, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_UINT, .offset = @offsetOf(Vertex, "light_mask") },
         };
         const buffer: c.SDL_GPUVertexBufferDescription = .{ .slot = 0, .pitch = @sizeOf(Vertex), .input_rate = c.SDL_GPU_VERTEXINPUTRATE_VERTEX };
         var colour = std.mem.zeroes(c.SDL_GPUColorTargetDescription);
@@ -952,7 +1031,7 @@ fn blendFactor(factor: srd3d.BlendFactor) c.SDL_GPUBlendFactor {
     };
 }
 
-fn shader(handle: *c.SDL_GPUDevice, spirv: bool, stage: c.SDL_GPUShaderStage, code: []const u8, samplers: u32) error{Sdl}!*c.SDL_GPUShader {
+fn shader(handle: *c.SDL_GPUDevice, spirv: bool, stage: c.SDL_GPUShaderStage, code: []const u8, samplers: u32, uniforms: u32) error{Sdl}!*c.SDL_GPUShader {
     var info = std.mem.zeroes(c.SDL_GPUShaderCreateInfo);
     info.code_size = code.len;
     info.code = code.ptr;
@@ -960,7 +1039,7 @@ fn shader(handle: *c.SDL_GPUDevice, spirv: bool, stage: c.SDL_GPUShaderStage, co
     info.format = if (spirv) c.SDL_GPU_SHADERFORMAT_SPIRV else c.SDL_GPU_SHADERFORMAT_MSL;
     info.stage = stage;
     info.num_samplers = samplers;
-    info.num_uniform_buffers = 1;
+    info.num_uniform_buffers = uniforms;
     return c.SDL_CreateGPUShader(handle, &info) orelse fail("SDL_CreateGPUShader");
 }
 
@@ -997,6 +1076,22 @@ test join {
     // Other render states do not join.
     try std.testing.expect(!join(&last, .{ .key = added, .array = 2, .first = 12, .count = 3 }));
     try std.testing.expectEqual(12, last.count);
+}
+
+test "Lighting.take" {
+    var lighting: Lighting = .{};
+    const list = [_]device.Light{
+        .{ .mask = 0x08, .kind = .{ .directional = .{ .toward = .{ 0, 0, -0.5 }, .colour = .{ 1, 0.9, 0.8 } } } },
+        .{ .mask = 0x01, .kind = .{ .point = .{ .position = .{ 3, 4, 50 }, .reach = 200, .colour = .{ 0.5, 0.5, 1 } } } },
+    };
+    try std.testing.expect(lighting.take(&list));
+    try std.testing.expectEqual(2, lighting.count[0]);
+    try std.testing.expectEqual(Lighting.Light{ .colour = .{ 1, 0.9, 0.8, 0 }, .vector = .{ 0, 0, -0.5, 0 }, .mask = 0x08, .kind = .directional }, lighting.lights[0]);
+    try std.testing.expectEqual(Lighting.Light{ .colour = .{ 0.5, 0.5, 1, 0 }, .vector = .{ 3, 4, 50, 200 }, .mask = 0x01, .kind = .point }, lighting.lights[1]);
+    // More than the shader takes leaves none, for the frame to be lit each vertex.
+    const many: [max_lights + 1]device.Light = @splat(list[0]);
+    try std.testing.expect(!lighting.take(&many));
+    try std.testing.expectEqual(0, lighting.count[0]);
 }
 
 test Slot {
