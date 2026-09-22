@@ -12,6 +12,7 @@ game's own code, under [`src/engine/`](../../src/engine), reaches the platform o
 | [`platform/keyboard.zig`](../../src/platform/keyboard.zig) | DirectInput's keyboard: SDL's scan codes as DirectInput's (`DIK_*`) |
 | [`platform/macos.zig`](../../src/platform/macos.zig) | Nothing: what macOS needs before SDL starts |
 | [`openreliant/main.zig`](../../src/openreliant/main.zig) | `WinMain`: opening the game's files and running the frame loop |
+| [`openreliant/install.zig`](../../src/openreliant/install.zig) | The installer on disc 1, `SETUP.EXE`: unpacking `LANCER.CAB` and copying the disc's `GAME/CAB` files |
 
 SDL comes from the [castholm/SDL](https://github.com/castholm/SDL) package, which builds it from
 source for the target, so no SDL has to be installed. `build.zig` translates its header into the
@@ -61,6 +62,44 @@ a capital ship or a station is seen whole.
 A Zig built for Intel Macs runs under Rosetta on Apple silicon and builds for Intel by default;
 `make play` asks for Apple silicon, and `build.zig` then hands SDL and the linker the SDK's paths
 from `xcrun`.
+
+## Installing the game's files
+
+`openreliant install [--from <disc>] [--force] <directory>` does what the installer on disc 1 did:
+it unpacks `LANCER.CAB` into the directory, leaving out the cabinet's top folder `CAB`, and copies
+the files in the disc's `GAME/CAB` folder next to them. The result is the directory `openreliant`
+runs in, the same on every system. `make game` installs `game/install` with it.
+
+The disc is read from a disc image, raw (`.bin`) or not (`.iso`), with the project's own readers
+([Disc images](../formats/disc-images.md)), or from a folder with the disc's files, which is how a
+mounted disc appears. Names on the disc are matched without regard to case, as Windows matches
+them: Linux shows a disc without Joliet names, like StarLancer's, in lower case. The files copied
+from `GAME/CAB` get upper case names, as the disc records them, so the engine finds `LANGUAGE.DLL`
+on every system.
+
+Without `--from`, the installer looks for disc 1 in the drives:
+
+| System | Looks in |
+|---|---|
+| Windows | The drives Windows reports as CD drives that have a disc in them, mounted disc images included |
+| Linux | The mount points of ISO 9660 and UDF file systems, from `/proc/self/mounts` |
+| macOS | The volumes in `/Volumes` |
+
+It tells the discs apart by their files:
+
+| Disc | Recognized by |
+|---|---|
+| Disc 1 of a release it knows | `LANCER.CAB` of that release's size, 226,746,308 bytes for the North American release |
+| Disc 1 of another release | `LANCER.CAB` of another size; installed from only with `--force` |
+| Disc 2 | The volume label `SL_CD2`, or `GAME/CD2.HOG` |
+
+A file in the cabinet whose name would land outside the directory stops the install. Afterwards the
+installer checks for the files the engine opens at start-up, and names the first one missing.
+
+The cabinet is unpacked with [libarchive](https://libarchive.org), built from source for the target
+by [`deps/libarchive`](../../deps/libarchive): the
+[allyourcodebase/libarchive](https://github.com/allyourcodebase/libarchive) package's build, with
+libarchive pinned to the 3.7.9 release. The LZX decoder in libarchive 3.8.9 fails on `LANCER.CAB`.
 
 ## Builds and releases
 

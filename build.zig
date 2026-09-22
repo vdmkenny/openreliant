@@ -46,6 +46,20 @@ pub fn build(b: *std.Build) void {
         platform.addSystemFrameworkPath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "System/Library/Frameworks" }) });
         platform.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "usr/lib" }) });
     }
+    // The installer unpacks the game's cabinet with libarchive, which deps/libarchive builds from
+    // source for the target.
+    const archive_library = b.dependency("libarchive", .{ .target = target, .optimize = optimize }).artifact("archive");
+    const archive_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/openreliant/archive.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    archive_c.addIncludePath(archive_library.getEmittedIncludeTree());
+    if (macos_sdk) |sdk| {
+        archive_library.root_module.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "usr/include" }) });
+        archive_library.root_module.addSystemFrameworkPath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "System/Library/Frameworks" }) });
+        archive_library.root_module.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "usr/lib" }) });
+    }
     const openreliant = b.addExecutable(.{
         .name = "openreliant",
         .root_module = b.createModule(.{
@@ -55,9 +69,11 @@ pub fn build(b: *std.Build) void {
             .imports = &.{
                 .{ .name = "openreliant", .module = lib },
                 .{ .name = "platform", .module = platform },
+                .{ .name = "archive", .module = archive_c.createModule() },
             },
         }),
     });
+    openreliant.root_module.linkLibrary(archive_library);
     b.installArtifact(openreliant);
 
     const play_step = b.step("play", "Run the game");

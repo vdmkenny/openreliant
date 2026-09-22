@@ -2,7 +2,7 @@
 #
 #   game/discs/disc<N>.bin   raw images of your own discs, which you supply
 #   game/cd<N>/              the files on each disc
-#   game/install/            what the installer would put on disk: LANCER.CAB unpacked, plus the
+#   game/install/            what the installer puts on disk: LANCER.CAB unpacked, plus the
 #                            loader and language DLLs it copies from the disc
 #   game/decrypted/          the game executable with its code readable, which you supply
 #   game/assets/<archive>/   the contents of each .HOG, decompressed
@@ -13,8 +13,8 @@
 #   game/fonts/              the .fnt fonts as glyph atlases
 #   game/renders/            reference images drawn by sltool render
 #
-# Extraction is pure Zig (sltool reads raw sectors and ISO 9660 itself) except for LANCER.CAB, an
-# LZX-compressed Microsoft cabinet, which still goes through 7z.
+# sltool reads the discs' raw sectors and ISO 9660 itself; `openreliant install` installs the game
+# from disc 1, as a player does.
 
 ##@ Game files
 
@@ -146,19 +146,16 @@ $(DISCS_DIR)/disc%.bin: | $(DISCS_DIR)
 	    exit 1; }
 	unzip -p $(DISCS_DIR)/disc$*.zip '*.bin' '*.iso' > $@
 
-# sltool is order-only on purpose: rebuilding it must not re-extract the game, which would in
-# turn make every later step look stale.
+# sltool and openreliant are order-only on purpose: rebuilding them must not extract or install the
+# game again, which would in turn make every later step look stale.
 $(GAME_DIR)/.stamp-cd%: $(DISCS_DIR)/disc%.bin | $(SLTOOL)
 	rm -rf $(GAME_DIR)/cd$*
 	$(SLTOOL) cd extract $< $(GAME_DIR)/cd$*
 	touch $@
 
-$(GAME_DIR)/.stamp-install: $(GAME_DIR)/.stamp-cd1
-	rm -rf $(INSTALL_DIR) $(INSTALL_DIR).tmp
-	7z x -y -bd -o$(INSTALL_DIR).tmp $(GAME_DIR)/cd1/LANCER.CAB > /dev/null
-	mv $(INSTALL_DIR).tmp/CAB $(INSTALL_DIR)
-	rmdir $(INSTALL_DIR).tmp
-	cp $(GAME_DIR)/cd1/GAME/CAB/* $(INSTALL_DIR)/
+$(GAME_DIR)/.stamp-install: $(GAME_DIR)/.stamp-cd1 | $(OPENRELIANT)
+	rm -rf $(INSTALL_DIR)
+	$(OPENRELIANT) install --from $(GAME_DIR)/cd1 $(INSTALL_DIR) > /dev/null
 	touch $@
 
 $(PAYLOAD):

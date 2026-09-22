@@ -4,7 +4,7 @@ OpenReliant is an open-source, faithful reimplementation of the engine of **Star
 combat game developed by Warthog and Digital Anvil and published by Microsoft in 2000. It's written
 in Zig on SDL3 and renders with Vulkan (Metal on macOS) through SDL's GPU API. It runs on Linux,
 Windows and macOS using the files from your copy of the game, and the repository documents how the
-original works.
+original works. To play it, follow [Installing and playing](#installing-and-playing).
 
 <p align="center">
   <img src="docs/images/predator-wireframe.svg" width="560"
@@ -36,27 +36,69 @@ with their keys but don't show anything yet.
 There are no other ships, weapons, missions or sound yet. See the [milestones](../../milestones)
 for what's planned.
 
-## Running
+## Installing and playing
 
-Prebuilt binaries for Linux, Windows and macOS (x86_64 and arm64) are on the
-[latest release](../../releases/latest). Download the archive for your system, extract it and run
-`openreliant`. The macOS builds aren't signed, so run `xattr -d com.apple.quarantine openreliant`
-before the first launch.
+OpenReliant plays the files of StarLancer, which it installs from your own discs.
 
-To build from source you only need [Zig](https://ziglang.org) 0.16; SDL3 is built as part of the
-build.
+1. **Get OpenReliant.** Download the archive for your system from the
+   [latest release](../../releases/latest) and extract it. You get a folder with `openreliant` in it
+   (`openreliant.exe` on Windows).
+2. **Open a terminal in that folder.** On Windows, right-click inside the folder in Explorer and
+   choose *Open in Terminal*. On macOS, right-click the folder in Finder and choose *Services* and
+   then *New Terminal at Folder*. On Linux, most file managers have *Open in Terminal* in the
+   right-click menu.
+3. **On macOS only,** allow the download to run. The builds aren't signed, so macOS blocks them
+   until you run this once:
+
+   ```bash
+   xattr -d com.apple.quarantine openreliant
+   ```
+
+4. **Install the game's files.** Put StarLancer disc 1 in the drive and run:
+
+   ```bash
+   ./openreliant install StarLancer
+   ```
+
+   On Windows, type `.\openreliant.exe` wherever these steps say `./openreliant`. The installer
+   finds the disc by itself and puts the game's files, about 290 MB, in a new folder called
+   `StarLancer`. Any other folder name or path works too.
+
+   If you have an image of disc 1 instead, a `.bin` or an `.iso`, or a folder with the disc's files,
+   tell the installer where it is with `--from`. For a `.bin` with a `.cue` next to it, name the
+   `.bin`:
+
+   ```bash
+   ./openreliant install --from "StarLancer Disc 1.bin" StarLancer
+   ```
+
+   If the installer says it doesn't know your disc, for example because it's from another
+   country's release, add `--force` to install from it anyway. Please also
+   [open an issue](../../issues/new) saying which release you have and the size the installer
+   gives for `LANCER.CAB`, so we can add it.
+5. **Play.**
+
+   ```bash
+   ./openreliant StarLancer
+   ```
+
+Only disc 1 is needed to install. The manual is on disc 2 as `DOCS/MAUNAL.PDF` (misspelled on the
+disc), and the quick reference card as `DOCS/QRC.PDF`.
+
+OpenReliant draws with the GPU at the display's own resolution, with anti-aliasing and sharper
+texture filtering than the original had; `--original` restores the original's look.
+[Platform](docs/port/platform.md) lists the options and keys, and
+[how the installer works](docs/port/platform.md#installing-the-games-files).
+
+### Building from source
+
+You only need [Zig](https://ziglang.org) 0.16; SDL3 and libarchive are built as part of the build.
 
 ```bash
 zig build -Doptimize=ReleaseFast
-zig-out/bin/openreliant <game-directory>
+zig-out/bin/openreliant install StarLancer
+zig-out/bin/openreliant StarLancer
 ```
-
-`<game-directory>` is where StarLancer is installed, the directory holding `resource.hog` and
-`tcachehw.dat`. It draws with the GPU at the display's own resolution, with anti-aliasing and
-sharper texture filtering than the original had; `--original` restores the original's look.
-[Platform](docs/port/platform.md) lists the options and keys, and how to build for each system.
-The manual is on disc 2 as `DOCS/MAUNAL.PDF` (misspelled on the disc), and the quick reference
-card as `DOCS/QRC.PDF`.
 
 ## How it works
 

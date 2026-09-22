@@ -4,7 +4,8 @@
 ##@ Code (Zig)
 
 SLTOOL      := $(ROOT)/zig-out/bin/sltool
-ZIG_SOURCES := $(ROOT)/build.zig $(ROOT)/build.zig.zon $(shell find $(ROOT)/src -name '*.zig')
+OPENRELIANT := $(ROOT)/zig-out/bin/openreliant
+ZIG_SOURCES := $(ROOT)/build.zig $(ROOT)/build.zig.zon $(shell find $(ROOT)/src $(ROOT)/deps -name '*.zig' -o -name '*.zon')
 
 .PHONY: build
 build: $(SLTOOL) ## Build the tools into zig-out/bin
@@ -12,6 +13,9 @@ build: $(SLTOOL) ## Build the tools into zig-out/bin
 $(SLTOOL): $(ZIG_SOURCES)
 	$(ZIG) build -Doptimize=ReleaseSafe
 	@touch $@
+
+# The same build makes both.
+$(OPENRELIANT): $(SLTOOL) ;
 
 # The engine, optimized, for the host's own processor: a Zig built for Intel Macs, run under Rosetta
 # on Apple silicon, would otherwise build it for Intel too.
