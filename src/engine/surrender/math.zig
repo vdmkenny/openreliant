@@ -39,19 +39,20 @@ pub fn normalize(v: Vector) Vector {
     return v * @as(Vector, @splat(1 / l));
 }
 
-/// `m` times `v`.
+/// `m` times `v` (`vec3_turn`, `0x004C22B0`; `mat3_transform`, `0x004C23C0`).
 pub fn transform(m: Matrix, v: Vector) Vector {
     return .{
-        m[0] * v[0] + m[1] * v[1] + m[2] * v[2],
+        m[1] * v[1] + m[2] * v[2] + m[0] * v[0],
         m[3] * v[0] + m[4] * v[1] + m[5] * v[2],
         m[6] * v[0] + m[7] * v[1] + m[8] * v[2],
     };
 }
 
-/// The transpose of `m` times `v`: for a rotation, `v` turned back.
+/// The transpose of `m` times `v`: for a rotation, `v` turned back (`vec3_turn_back`,
+/// `0x004C2310`; `mat3_transform_transposed`, `0x004C2370`).
 pub fn transformTransposed(m: Matrix, v: Vector) Vector {
     return .{
-        m[0] * v[0] + m[3] * v[1] + m[6] * v[2],
+        m[3] * v[1] + m[6] * v[2] + m[0] * v[0],
         m[1] * v[0] + m[4] * v[1] + m[7] * v[2],
         m[2] * v[0] + m[5] * v[1] + m[8] * v[2],
     };
@@ -69,6 +70,35 @@ pub fn product(a: Matrix, b: Matrix) Matrix {
 
 pub fn transpose(m: Matrix) Matrix {
     return .{ m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8] };
+}
+
+/// `mat3_orthonormalize` (`0x004C2690`): `m` with its axes, the columns, made unit length and
+/// perpendicular again. The Z axis keeps its direction, the Y axis becomes Z × X normalized, and
+/// the X axis Y × Z (`mat3_from_axes`, `0x004C2610`).
+pub fn orthonormalize(m: Matrix) Matrix {
+    const x: Vector = .{ m[0], m[3], m[6] };
+    const z = normalize(.{ m[2], m[5], m[8] });
+    const y = normalize(cross(z, x));
+    const new_x = cross(y, z);
+    return .{ new_x[0], y[0], z[0], new_x[1], y[1], z[1], new_x[2], y[2], z[2] };
+}
+
+/// `mat3_angles` (`0x004C2740`): the angles about X, Y and Z that make up `m`, in radians. When
+/// the Y angle is close to a right angle, the X angle takes all of the turn and Z is 0.
+///
+/// **Improvement:** the engine looks the angles up in a table of arctangents in steps of 1/4096
+/// (`sr_atan2`, `0x004C3200`). The port computes them, which is more precise by up to half a step.
+pub fn angles(m: Matrix) Vector {
+    const across = @sqrt(m[1] * m[1] + m[0] * m[0]);
+    const y = std.math.atan2(m[2], across);
+    if (across > 1.6e-5) return .{ std.math.atan2(-m[5], m[8]), y, std.math.atan2(-m[1], m[0]) };
+    return .{ std.math.atan2(m[7], m[4]), y, 0 };
+}
+
+/// A small turn by the angles `a` about X, Y and Z, to first order: turning a vector `v` by it
+/// adds `cross(a, v)`.
+pub fn smallTurn(a: Vector) Matrix {
+    return .{ 1, -a[2], a[1], a[2], 1, -a[0], -a[1], a[0], 1 };
 }
 
 /// `x` rounded to the nearest whole number, halves to even, as the x87 rounds by default (`FISTP`).
@@ -114,8 +144,10 @@ pub fn fromAngles(pitch: f32, yaw: f32, roll: f32) Matrix {
 }
 
 /// An orientation whose forward axis, its third column, points along `direction`: turned about `Y`,
-/// then about `X`, with no roll (`mat3_look_at`, `0x004C1940`). The engine takes the angles from a
-/// table; this computes them.
+/// then about `X`, with no roll (`mat3_look_at`, `0x004C1940`).
+///
+/// **Improvement:** the engine takes the angles from `sr_atan2`'s table, as `angles` does. The port
+/// computes them.
 pub fn lookAt(direction: Vector) Matrix {
     const yaw = std.math.atan2(direction[0], direction[2]);
     const cy = @cos(yaw);
@@ -144,6 +176,15 @@ test lookAt {
         try std.testing.expectApproxEqAbs(0, m[3], 1e-6);
         try expectVector(.{ 0, 0, 1 }, transformTransposed(m, normalize(d)));
     }
+}
+
+test smallTurn {
+    const a: Vector = .{ 0.001, -0.002, 0.0015 };
+    const v: Vector = .{ 3, -1, 2 };
+    try expectVector(v + cross(a, v), transform(smallTurn(a), v));
+    // To first order, the same as turning about each axis in turn.
+    const turn = fromAngles(a[0], a[1], a[2]);
+    for (turn, smallTurn(a)) |e, found| try std.testing.expectApproxEqAbs(e, found, 1e-5);
 }
 
 test normalize {
@@ -181,4 +222,33 @@ test product {
     for (identity, back) |e, a| try std.testing.expectApproxEqAbs(e, a, 1e-5);
     try std.testing.expectEqual(@as(f32, 3), dot(.{ 1, 1, 1 }, .{ 1, 1, 1 }));
     try expectVector(.{ 0, 0, 1 }, cross(.{ 1, 0, 0 }, .{ 0, 1, 0 }));
+}
+
+test orthonormalize {
+    // A rotation stays as it is; a skewed, stretched one comes back square, keeping its Z axis.
+    const turn = rotation(.y, 0.5);
+    for (turn, orthonormalize(turn)) |a, b| try std.testing.expectApproxEqAbs(a, b, 1e-6);
+    const skewed: Matrix = .{ 2, 0.3, 0, 0, 1, 0, 0.2, 0, 3 };
+    const square = orthonormalize(skewed);
+    const x: Vector = .{ square[0], square[3], square[6] };
+    const y: Vector = .{ square[1], square[4], square[7] };
+    const z: Vector = .{ square[2], square[5], square[8] };
+    try std.testing.expectApproxEqAbs(1, length(x), 1e-6);
+    try std.testing.expectApproxEqAbs(0, dot(x, y), 1e-6);
+    try std.testing.expectApproxEqAbs(0, dot(y, z), 1e-6);
+    try std.testing.expectApproxEqAbs(0, z[0], 1e-6);
+}
+
+test angles {
+    // A turn about one axis at a time gives that angle back.
+    for ([_]Axis{ .x, .y, .z }, 0..) |axis, index| {
+        const found: [3]f32 = angles(rotation(axis, 0.3));
+        for (found, 0..) |angle, i| try std.testing.expectApproxEqAbs(if (i == index) @as(f32, 0.3) else 0, angle, 1e-6);
+    }
+    try std.testing.expectEqual(Vector{ 0, 0, 0 }, angles(identity));
+    // At a right angle about Y, the X angle takes all of the turn and Z is 0.
+    const found: [3]f32 = angles(fromAngles(0.4, std.math.pi / 2.0, 0.2));
+    try std.testing.expectApproxEqAbs(0.6, found[0], 1e-6);
+    try std.testing.expectApproxEqAbs(std.math.pi / 2.0, found[1], 1e-6);
+    try std.testing.expectEqual(0, found[2]);
 }

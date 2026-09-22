@@ -643,3 +643,27 @@ address	kind	name	type	comment
 005883bc	data	radar_backing	void *	The radar's backing, 'radaralpha': a quad under the radar, a black disc at three quarters, standing in the camera's frame 1000 ahead, which mission_frame draws with the cockpit unless DISPLAY KILLS is held
 00588328	data	radar_backing_mesh	void *	The radar backing's mesh: four corners from 65 left of the middle to 67 right and 32 either side of the radar's height, unprojected to 1000
 005636e0	data	cockpit_recoil	float	The guns' kick on the cockpit's hands: 1 as the player's guns fire, a twentieth less each frame; camera_frame moves the hands back 30 times it
+00476270	function	object_apply_knocks	void __fastcall (GameObject *object)	Applies the knocks taken since the last move and clears them: the impulse over the mass to the velocity, and the angular impulse, through the inverse inertia tensor, to the rotation and the angular rates
+004763c0	function	object_knock	void __fastcall (GameObject *object, Vec3 *force, Vec3 *at)	A push of force at a world point, from a collision or an explosion: adds the force to the impulse and force × lever to the angular impulse
+00476430	function	object_knock_local	void __fastcall (GameObject *object, Vec3 *force, Vec3 *lever)	object_knock with the force in the object's frame and the lever given directly; the Disrupted order pushes a ship with it
+004c1120	function	vec3_cross	void __fastcall (Vec3 *out, Vec3 *a, Vec3 *b)	out = a × b
+004c10f0	function	vec3_divide_by	void __thiscall (float d)	Divides the vector in ECX by d, by multiplying it by 1 / d
+004c2610	function	mat3_from_axes	void __fastcall (float *m, Vec3 *z, Vec3 *x)	Builds m from a Z axis and an X axis: Z normalized, Y = normalize(Z × X), X = Y × Z
+004c2690	function	mat3_orthonormalize	void __fastcall (float *m)	Makes the axes of m unit length and perpendicular again, keeping the direction of its Z axis
+004c2740	function	mat3_angles	void __fastcall (Vec3 *out, float *m)	The angles about X, Y and Z that make up m, from sr_atan2
+004c2070	function	mat3_determinant	float __fastcall (float *m)	
+004ad9f0	function	mat3_inverse	void __fastcall (float *out, float *m)	out = the inverse of m
+004c3000	function	sr_tables_init	void __cdecl (void)	Fills atan_table and ease_table, once
+004c3140	function	sr_atan	float __cdecl (float x)	The angle whose tangent is x, from atan_table
+004c3120	function	sr_ease	float __cdecl (float t)	(1 - cos(t × pi)) / 2 for t from 0 to 1, from ease_table
+005de344	data	atan_table	float[4097]	The arctangent of 0 to 1 in steps of 1/4096, for sr_atan and sr_atan2
+005e2348	data	ease_table	float[4096]	(sin((i / 4096 - 0.5) × pi) + 1) / 2, for sr_ease
+00562ce4	data	player_speed_change	float	How much the player's speed changed in the last object_move; nothing reads it
+004744e0	function	motion_upward	void __fastcall (int slot)	object_steer without throttle turns, then the velocity through the flight model's inertia toward the throttle times its top speed along the object's Y axis, with a fixed flight model (0x004F9E70) for models of kind 1. Selected by the launch orders and the Ripper
+00474570	function	motion_plain	void __fastcall (int slot)	motion_upward along the object's Z axis, with the fixed flight model for models of kind 1 unless the type is 31: a simpler flight model with no throttle rules or afterburner. Selected by the Ripper, launch and landing orders
+00474610	function	motion_brake	void __fastcall (int slot)	Slows the object to 0.97 of its velocity each update. Selected by the Eject order
+00474640	function	motion_jump_out	void __fastcall (int slot)	Moves the object to a point between the two in its order state (+0x5C, +0x68), each coordinate eased (0x00426900) by the time since the jump started; no rotation. Selected by the Jump Out order
+004746d0	function	motion_jump_in	void __fastcall (int slot)	Flies the object along its nose at 2400 (600 without components), less 0.003 of that per unit of time since the jump started, but never slower than its cruise speed; no rotation. Selected by the Jump In order
+00474770	function	motion_follow	void __fastcall (int slot)	Steers toward the point the order state's callback gives and moves toward it, no faster than the order state's speed limit. Selected by the Follow Curve and Dock orders
+00474930	function	motion_follow_backwards	void __fastcall (int slot)	motion_follow with the angles to the point negated, for flying tail first
+00474b00	function	motion_drift	void __fastcall (int slot)	Slows the object to 0.99 of its velocity each update. Selected by the Jump In order

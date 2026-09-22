@@ -334,7 +334,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             // place the previous step worked out, then the player's orders, then the objects move.
             game.objects.updateTree(&ship.live.root);
             engine.input.playerControls(&player, &devices, &ship.live, view.view);
-            game.gameobj.move(&ship.live, &ship.flight, view.view, .forward);
+            game.gameobj.move(&ship.live, &ship.flight, view.view, .forward, &view.hit_shake);
         }
         clock.frameBegin();
         // An object's place is its root's next one, which is what the game steers and draws by.
