@@ -312,6 +312,9 @@ pub const Slot = struct {
     /// What the current order keeps between its updates (`GameObject.order_state`), allocated with
     /// the stack.
     state: aigeneric.State = .{ .bytes = @splat(0) },
+    /// The parts of its model that count as components, `GameObject.component_count` of them, the
+    /// models mounted on it among them (`GameObject.components`, which holds their nodes).
+    components: [gameobj.max_components]?*objects.Model.Part = @splat(null),
 };
 
 /// `game_objects` (`0x00587CE0`), the GO array: 400 slots, none ever empty. As a mission starts
@@ -572,6 +575,8 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.power_setting = .{ .x = 1, .y = 1, .z = 1 };
     object.gun_count = 0;
     object.component_count = 0;
+    // The components are listed once the count is clear, as the game lists them.
+    if (object.flags.components) collectComponents(slot);
     // Its guns charged.
     object.gun_charge = combat.gun_energy;
     object._unknown_13c = combat._unknown_18;
@@ -688,6 +693,41 @@ pub const Sweep = struct {
         return math.lengthSquared(between) < reach * reach;
     }
 };
+
+/// `object_collect_components` (`0x00468760`): lists the parts of the object's model that count as
+/// components, a node's marked children before their own subtrees, which is the order missions,
+/// triggers and the display name them by. The parts of the models mounted on a part follow it, so
+/// a turret's own components come after the hull's. Each one is marked on its part, and a part the
+/// model marks as targetable becomes targetable.
+///
+/// The game stops with a fatal error past `max_components`; the port leaves the rest unlisted,
+/// since nothing can name them.
+pub fn collectComponents(slot: *Slot) void {
+    const model = if (slot.model) |*live| live else return;
+    slot.object.component_count = 0;
+    collectFrom(slot, model, null);
+}
+
+/// The parts of `model` hanging from `parent`, or from its root for null: the marked ones, then
+/// each part's own children and whatever stands mounted on it.
+fn collectFrom(slot: *Slot, model: *objects.Model, parent: ?usize) void {
+    for (model.parts) |*part| {
+        if (part.parent != parent or !part.flags.component) continue;
+        if (slot.object.component_count >= gameobj.max_components) return;
+        slot.components[@intCast(slot.object.component_count)] = part;
+        slot.object.component_count += 1;
+        part.component = true;
+        if (part.flags.targetable) part.targetable = true;
+    }
+    for (model.parts, 0..) |part, index| {
+        if (part.parent != parent) continue;
+        collectFrom(slot, model, index);
+        for (model.mounts) |*mount| {
+            if (mount.part != index) continue;
+            collectFrom(slot, &mount.model, null);
+        }
+    }
+}
 
 /// How far `create_object` has a part's `startup` track move on each simulation step.
 const startup_speed: f32 = 4;
@@ -860,6 +900,58 @@ test "the loops walk the slots handed out, then the cutaway slot" {
     }
     try std.testing.expectEqual(gameobj.max_objects, count);
     try std.testing.expectEqual(cutaway_slot, last);
+}
+
+test collectComponents {
+    const gpa = std.testing.allocator;
+    // Four parts: one plain at the root, one component at the root, and a component under each.
+    var data: [4]shp.PartData = @splat(objects.testing.part());
+    const parents = [_]i32{ -1, -1, 1, 0 };
+    const marked = [_]bool{ false, true, true, true };
+    for (&data, parents, marked) |*part, parent, is_component| {
+        part.part.parent = parent;
+        part.part.flags.component = is_component;
+    }
+    data[2].part.flags.targetable = true;
+    var loaded_parts: [4]srofiles.LoadedPart = @splat(.{ .flags = .{}, .levels = &.{}, .meshes = &.{} });
+    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &data, .tail_count = 0, .trailing_bytes = 0 };
+    const loaded: srofiles.Loaded = .{ .parts = &loaded_parts };
+    var kind: Type = .{ .model = &source, .loaded = &loaded };
+
+    var slot: Slot = .{ .object = std.mem.zeroes(gameobj.GameObject) };
+    slot.model = try objects.Model.create(gpa, &source, &loaded, .{});
+    defer slot.model.?.deinit(gpa);
+    slot.type = &kind;
+
+    collectComponents(&slot);
+    // The root's marked children come first, then each child's own: part 1, then 0's child 3, then
+    // 1's child 2.
+    try std.testing.expectEqual(3, slot.object.component_count);
+    // The root's marked child first, then part 0's child and part 1's.
+    for (slot.components[0..3], [_]usize{ 1, 3, 2 }) |listed, part| {
+        try std.testing.expectEqual(&slot.model.?.parts[part], listed.?);
+    }
+    for ([_]usize{ 1, 2, 3 }) |part| try std.testing.expect(slot.model.?.parts[part].component);
+    try std.testing.expect(!slot.model.?.parts[0].component);
+    // Only the part the model marks is targetable.
+    try std.testing.expect(slot.model.?.parts[2].targetable);
+    try std.testing.expect(!slot.model.?.parts[1].targetable);
+
+    // A model of nothing but components lists no more than the object holds.
+    var many: [gameobj.max_components + 4]shp.PartData = @splat(objects.testing.part());
+    var many_loaded: [gameobj.max_components + 4]srofiles.LoadedPart = @splat(.{ .flags = .{}, .levels = &.{}, .meshes = &.{} });
+    for (&many) |*part| {
+        part.part.parent = -1;
+        part.part.flags.component = true;
+    }
+    const crowded: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &many, .tail_count = 0, .trailing_bytes = 0 };
+    const crowded_loaded: srofiles.Loaded = .{ .parts = &many_loaded };
+    var crowded_kind: Type = .{ .model = &crowded, .loaded = &crowded_loaded };
+    slot.model.?.deinit(gpa);
+    slot.model = try objects.Model.create(gpa, &crowded, &crowded_loaded, .{});
+    slot.type = &crowded_kind;
+    collectComponents(&slot);
+    try std.testing.expectEqual(gameobj.max_components, slot.object.component_count);
 }
 
 test createObject {

@@ -496,6 +496,11 @@ come first, in part order, and then, part by part and mount by mount, those of t
 A component's entry holds its node, the slot of the parent's child list that holds it, and at `+8`
 a halfword that is nonzero while the component is invulnerable.
 
+The port lists them in [`create.zig`](../../src/engine/game/create.zig) as part numbers in the
+object's slot, since its components hold no pointers, and marks each part's node as a component and,
+where the model asks, as targetable. A model with more components than the object holds leaves the
+rest unlisted, where the game stops with a fatal error.
+
 `sltool shp components` lists a model's components in that order, finding the mounted models beside
 it, and `sltool dte triggers` and `sltool dte script` name the components missions refer to. Every
 component a trigger names in the shipped missions is on its ship's list, and nearly every one a
