@@ -40,6 +40,8 @@ zig-out/bin/openreliant <game-directory>
 `tcachehw.dat`. It draws with the GPU at the display's own resolution, with anti-aliasing and
 sharper texture filtering than the original had; `--original` restores the original's look.
 [Platform](docs/port/platform.md) lists the options and keys, and how to build for each system.
+The manual is on disc 2 as `DOCS/MAUNAL.PDF` (misspelled on the disc), and the quick reference
+card as `DOCS/QRC.PDF`.
 
 ## How it works
 
