@@ -71,6 +71,9 @@ pub const exported = [_]Export{
     // Stat tables.
     .{ "FlightModel", engine.game.create.FlightModel },
     .{ "ShipCombat", engine.game.create.ShipCombat },
+    .{ "ShipTargeting", engine.game.create.ShipCombat.Targeting },
+    .{ "ShipClass", engine.game.create.ShipCombat.Class },
+    .{ "ShipSide", engine.game.gameobj.Side(i16) },
     .{ "GunStats", engine.game.guns.Gun },
     .{ "MissileStats", engine.game.missiles.Missile },
     .{ "PilotStats", engine.game.pilots.Pilot },
@@ -122,6 +125,7 @@ pub const exported = [_]Export{
     // Live objects and their models.
     .{ "GameObject", engine.game.gameobj.GameObject },
     .{ "ObjectFlags", engine.game.gameobj.GameObject.Flags },
+    .{ "ObjectSide", engine.game.gameobj.Side(i32) },
     .{ "NetworkFlags", engine.game.gameobj.NetworkFlags },
     .{ "GunMode", engine.game.gameobj.GunMode },
     .{ "ObjectRoutine", engine.game.gameobj.Routine },
@@ -134,6 +138,7 @@ pub const exported = [_]Export{
     .{ "MountedModel", engine.game.create.MountedModel },
     .{ "ShpPart", shp.Part },
     .{ "ShpPartFlags", shp.Part.Flags },
+    .{ "ShpPartClass", shp.Part.Class },
     .{ "ShpAttachment", shp.Attachment },
     .{ "ShpAttachmentKind", shp.Attachment.Kind },
     .{ "Vec3", shp.Vec3 },

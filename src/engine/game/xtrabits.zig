@@ -1,5 +1,6 @@
 //! `C:\lancer\game\xtrabits.cpp`: odds and ends of the game's frame. `scene_add` (`0x004ADB30`)
-//! puts an object in the scene for the frame.
+//! puts an object in the scene for the frame, and `object_random15` (`0x004ADCE0`) draws an
+//! object's own random numbers.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -8,6 +9,8 @@ const srapiext = @import("../surrender/surrenderlib/srapiext.zig");
 const srcore = @import("../surrender/surrenderlib/srcore.zig");
 const srlight = @import("../surrender/surrenderlib/srlight.zig");
 const srstars = @import("../surrender/surrenderlib/srstars.zig");
+const libcmt = @import("../libcmt.zig");
+const GameObject = @import("gameobj.zig").GameObject;
 
 /// A scene object of any kind `scene_add` takes.
 pub const Object = union(enum) {
@@ -67,4 +70,21 @@ test sceneAdd {
     try sceneAdd(gpa, &scene, .{ .light = &light }, .background);
     try std.testing.expectEqual(1, scene.lights.items.len);
     try std.testing.expectEqual(0, scene.layers.get(.background).items.len);
+}
+
+/// `object_random15` (`0x004ADCE0`): the object's own random number from 0 to 32767, which steps
+/// its seed (`GameObject.random_seed`) as the C runtime's `rand` steps its own. **Unverified:** it
+/// lies after this file's known code, before `deathmatch.cpp`'s.
+pub fn objectRandom15(object: *GameObject) u15 {
+    var random: libcmt.Rand = .{ .seed = object.random_seed };
+    defer object.random_seed = random.seed;
+    return random.rand();
+}
+
+test objectRandom15 {
+    // From the seed the runtime starts on, the runtime's first number, and the seed stepped on.
+    var object = std.mem.zeroes(GameObject);
+    object.random_seed = 1;
+    try std.testing.expectEqual(41, objectRandom15(&object));
+    try std.testing.expectEqual(1 *% 214013 +% 2531011, object.random_seed);
 }

@@ -79,7 +79,7 @@ Stride `0x4C`, one per placed object, nav points included.
 | `0x04` | u16 | Name, as a string pool offset |
 | `0x08` | f32 x3 | Position, copied from `0x1C` when the mission loads |
 | `0x14` | u8 | Flight group, or `0xFF` for none |
-| `0x15` | u8 | Side. 255 marks the player's own record |
+| `0x15` | u8 | Pilot: the record of `pilotstats.bin` the ship gets. 255 marks the player's own record |
 | `0x17` | u8 | Flags, the engine's own: bit 0 marks the ship destroyed. Zero in the files |
 | `0x18` | u16 | Role. Ships stay below `0x100`; nav points and markers use 999 and `0x3E3` to `0x3E8` |
 | `0x1C` | f32 x3 | Position as authored |

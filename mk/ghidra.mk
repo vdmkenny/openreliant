@@ -148,6 +148,15 @@ model-tables: ## Re-derive the ship type and attachment model tables from the pa
 	$(ROOT)/zig-out/bin/tablegen models $(PAYLOAD) $(PAYLOAD_DISASSEMBLY) $(MODEL_TABLES)
 	$(ZIG) fmt $(MODEL_TABLES)
 
+COMBAT_TABLES := $(ROOT)/src/engine/game/create/combat.zig
+
+.PHONY: combat-tables
+combat-tables: ## Re-derive each ship type's class, side, name and targeting from the payload executable
+	@test -f $(PAYLOAD) || { echo "missing $(PAYLOAD), the game executable with its code readable" >&2; exit 1; }
+	$(ZIG) build tablegen
+	$(ROOT)/zig-out/bin/tablegen combat $(PAYLOAD) $(COMBAT_TABLES)
+	$(ZIG) fmt $(COMBAT_TABLES)
+
 CONTROL_TABLES := $(ROOT)/src/engine/input/controls.zig
 
 .PHONY: control-tables

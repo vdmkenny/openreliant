@@ -129,6 +129,9 @@ binary alone and write
 [`src/engine/vm/conditions.zig`](../src/engine/vm/conditions.zig). `make model-tables` reads the
 ship type table from the binary and follows the code that loads the attachment models in the export,
 and writes [`src/engine/game/create/models.zig`](../src/engine/game/create/models.zig). `make
+combat-tables` reads the words of each ship type's combat stats that the binary holds, its class,
+its side, its name and whether it can be targeted, into
+[`src/engine/game/create/combat.zig`](../src/engine/game/create/combat.zig). `make
 control-tables` reads the player's actions and their default bindings from the binary and writes
 [`src/engine/input/controls.zig`](../src/engine/input/controls.zig), `make order-tables` reads the
 order table into [`src/engine/game/ai/orders.zig`](../src/engine/game/ai/orders.zig), and `make

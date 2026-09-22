@@ -115,8 +115,8 @@ pub const Header = extern struct {
 /// tree through `parent`, and each carries its own mesh levels.
 pub const Part = extern struct {
     name_bytes: [64]u8,
-    /// Subsystem class. The engine special-cases 1, 6, and the turret set {3, 9, 10, 18}.
-    part_type: u32,
+    /// What the part is.
+    class: Class,
     /// Origin, in the model's frame whatever the parent: the engine hangs every part from the
     /// object's root at it (`object_add_part`).
     position: Vec3,
@@ -197,8 +197,24 @@ pub const Part = extern struct {
         };
     }
 
+    /// What a part is, going by what the engine does with each class and by the parts' names.
+    /// Classes 3, 9, 10 and 18 are turrets.
+    pub const Class = enum(u32) {
+        /// Hull sections, going by their names.
+        hull = 1,
+        /// A turret, with its own yaw and pitch limits.
+        turret = 3,
+        /// An engine. `create_object` counts them (`GameObject.engines`), and each one destroyed
+        /// takes its share of the thrust (`GameObject.engines_intact`).
+        engine = 5,
+        /// A shield generator: an object with one has `shield_generator` until the part is
+        /// destroyed.
+        shield_generator = 6,
+        _,
+    };
+
     comptime {
-        assert(@offsetOf(Part, "part_type") == 0x40);
+        assert(@offsetOf(Part, "class") == 0x40);
         assert(@offsetOf(Part, "parent") == 0x94);
         assert(@offsetOf(Part, "link_id") == 0xD4);
         assert(@offsetOf(Part, "flags") == 0xF0);
@@ -703,7 +719,7 @@ fn buildTestModel(buffer: []u8) []u8 {
     part.* = std.mem.zeroes(Part);
     @memcpy(part.name_bytes[0..4], "Hull");
     part.parent = -1;
-    part.part_type = 3;
+    part.class = .turret;
     pos += @sizeOf(Part);
 
     pos = put.chunk(buffer, pos, .lod, @sizeOf(Lod), 1);

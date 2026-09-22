@@ -3,14 +3,16 @@
 //! two lie after `language.cpp`'s code, where `main.cpp`'s begins; by what they do they are this
 //! file's.
 //!
-//! Ported so far: the clocks and the pacing, how `mission_frame` puts the scene together and draws
-//! it, and what the mission's start (`0x004934F0`) fits the player's ship with. Not yet: the
-//! simulation's own work, the cockpit, the effects and the rest of what it adds to the scene.
+//! Ported so far: the clocks and the pacing, how `mission_frame` frames the objects and puts the
+//! scene together and draws it, what the mission's start (`0x004934F0`) fits the player's ship
+//! with, and the armour's conditions (`0x00492370`). Not yet: the effects and the rest of what it
+//! adds to the scene.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const input = @import("../input.zig");
+const libcmt = @import("../libcmt.zig");
 const shp = @import("../../formats/shp.zig");
 const math = @import("../surrender/math.zig");
 const srapi = @import("../surrender/surrenderlib/srapi.zig");
@@ -19,6 +21,7 @@ const srcore = @import("../surrender/surrenderlib/srcore.zig");
 const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
 const backdrop = @import("backdrop.zig");
 const camera = @import("camera.zig");
+const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
 const hog_snd = @import("hog_snd.zig");
 const hud = @import("hud.zig");
@@ -113,19 +116,18 @@ pub const Clock = struct {
     }
 
     /// Runs the next game tick the loop owes, as `mission_run` (`0x00494040`) paces them: one for
-    /// each tick of the timer since the last pass. Returns whether the simulation stepped, so that
-    /// the caller can do the step's own work, or null once the loop has caught up with the timer.
-    pub fn nextTick(clock: *Clock, devices: *input.Devices) ?bool {
+    /// each tick of the timer since the last pass. Returns whether the simulation stepped, or null
+    /// once the loop has caught up with the timer.
+    pub fn nextTick(clock: *Clock, devices: *input.Devices, world: gameobj.World) ?bool {
         if (clock.ran_to == clock.game_ticks) return null;
         clock.ran_to +%= 1;
-        return gameobj.gameTick(clock, devices);
+        return gameobj.gameTick(clock, devices, world);
     }
 
-    /// Every tick the loop owes, for a caller with no work of its own in the step. Returns how many
-    /// simulation steps ran.
-    pub fn runTicks(clock: *Clock, devices: *input.Devices) u32 {
+    /// Every tick the loop owes. Returns how many simulation steps ran.
+    pub fn runTicks(clock: *Clock, devices: *input.Devices, world: gameobj.World) u32 {
         var steps: u32 = 0;
-        while (clock.nextTick(devices)) |stepped| {
+        while (clock.nextTick(devices, world)) |stepped| {
             if (stepped) steps += 1;
         }
         return steps;
@@ -148,15 +150,16 @@ pub const Clock = struct {
 
 /// What `mission_frame` draws a frame of.
 pub const Frame = struct {
-    /// The live objects shown, each by its model's nodes.
-    models: []objects.Model,
+    /// The live objects, each drawn by its model's nodes.
+    objects: *create.Objects,
     space: *backdrop.Backdrop,
     sky: *nebula.Sky,
     view: camera.View,
     cockpit_mode: camera.CockpitMode,
     /// Last frame's view (`camera_view_last`, `0x00539A64`).
     last_view: camera.View,
-    /// What the models' own lights and engine glows are drawn by.
+    /// What the models' own lights and engine glows are drawn by; each object's own offset into
+    /// its lights' blinks and its glow come from its record.
     attachments: objects.View = .{},
     /// What is drawn over the scene once its layers are done, which is the head-up display.
     overlay: ?srcore.Overlay = null,
@@ -168,16 +171,32 @@ pub const Frame = struct {
     kills_shown: bool = false,
 };
 
-/// Puts the frame's scene together and draws it, in `mission_frame`'s order: the objects, the
-/// backdrop, the sky; the star streaks are reset when the view has changed since the last frame;
-/// then `sr_render`. `arena` holds what the frame needs until it is drawn.
+/// `mission_frame`'s pass over the objects before the camera's frame: each live object, save
+/// stand-ins and disabled and jumping ones, has `missile_homing` cleared and is framed `fraction`
+/// of the way through the simulation's step (`objects.frameTree`).
+///
+/// Not ported yet: the cloak's frame (`0x004639B0`).
+pub fn frameObjects(all: *create.Objects, fraction: f32) void {
+    var walk = all.walk();
+    while (walk.next()) |index| {
+        const slot = &all.slots[index];
+        const object = &slot.object;
+        if (object.flags.stand_in or object.flags.disabled or object.flags.jumping) continue;
+        object.missile_homing = 0;
+        objects.frameTree(&object.root, if (slot.model) |*model| model else null, &slot.drawn, fraction);
+    }
+}
+
+/// Puts the frame's scene together and draws it, in `mission_frame`'s order: the objects
+/// (`drawObjects`), the backdrop, the sky; the star streaks are reset when the view has changed
+/// since the last frame; then `sr_render`. `arena` holds what the frame needs until it is drawn.
 pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context: *srapi.Context, frame: Frame, driver: srcore.Driver) Allocator.Error!void {
     scene.clear();
     // How far off an object stops being worth drawing follows the frame's own projection, so the
     // caller does not have to hand it over with the rest.
     var attachments = frame.attachments;
     attachments.scale = context.projection.scale[0];
-    for (frame.models) |*model| try model.draw(gpa, scene, .world, attachments);
+    try drawObjects(gpa, scene, frame.objects, attachments);
     try frame.space.frame(gpa, scene, context, frame.view, frame.cockpit_mode);
     if (context.hardware) try frame.sky.frame(gpa, scene, context);
     if (frame.view == .cockpit and frame.cockpit_mode == .cockpit and context.hardware) {
@@ -191,6 +210,61 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     }
     if (frame.view != frame.last_view) frame.space.resetStreaks();
     try srcore.render(arena, context, scene, driver, frame.overlay);
+}
+
+/// `mission_frame`'s pass that draws the objects: each live object, save stand-ins and disabled
+/// and jumping ones, is drawn with `object_draw` (`objects.Model.draw`), with its own offset into
+/// its lights' blinks, its lights unless `lights_disabled`, its engine glows burning by the
+/// throttle of its last update times the share of its engines left, and nothing at all while it is
+/// `hidden`, as the ship the camera sits in is.
+///
+/// Not ported yet: the cloak; what else the pass draws for a few types, and the damage's smoke and
+/// its models (#41); the cutaway scenes' own rules, and the gate's tunnel, in which no object is
+/// drawn.
+pub fn drawObjects(gpa: Allocator, scene: *srcore.Scene, all: *create.Objects, attachments: objects.View) Allocator.Error!void {
+    var walk = all.walk();
+    while (walk.next()) |index| {
+        const slot = &all.slots[index];
+        const object = &slot.object;
+        if (object.flags.stand_in or object.flags.disabled or object.flags.jumping) continue;
+        if (object.flags.hidden) continue;
+        const model = if (slot.model) |*model| model else continue;
+        var view = attachments;
+        view.blink_offset = object.blink_offset;
+        view.lights = !object.flags.lights_disabled;
+        view.throttle = object.last_throttle * object.engines_intact;
+        try model.draw(gpa, scene, .world, view);
+    }
+}
+
+test "the objects are framed and drawn, save those left out" {
+    const gpa = std.testing.allocator;
+    var random: libcmt.Rand = .{};
+    const all = try create.Objects.create(gpa, &random);
+    defer all.destroy();
+    var model: create.testing.Model = undefined;
+    try model.init(gpa);
+    defer model.deinit(gpa);
+    var tables = create.testing.tables();
+    for (0..4) |place| {
+        const at: math.Vector = .{ @floatFromInt(place * 100), 0, 0 };
+        _ = try create.createObject(all, &tables, model.types(), null, 0, at, &random);
+    }
+    // The first is the ship the camera sits in, the second is disabled and the third jumping.
+    all.slots[0].object.flags.hidden = true;
+    all.slots[1].object.flags.disabled = true;
+    all.slots[2].object.flags.jumping = true;
+    all.slots[3].object.missile_homing = 1;
+    frameObjects(all, 0);
+    // Each framed one stands where it was made, and the pass clears the missile warning.
+    try std.testing.expectEqual(math.Vector{ 300, 0, 0 }, all.slots[3].drawn.position);
+    try std.testing.expectEqual(0, all.slots[3].object.missile_homing);
+    var scene: srcore.Scene = .{};
+    defer scene.deinit(gpa);
+    try drawObjects(gpa, &scene, all, .{});
+    // Only the fourth is drawn: its one part.
+    try std.testing.expectEqual(1, scene.layers.get(.world).items.len);
+    try std.testing.expectEqual(math.Vector{ 300, 0, 0 }, scene.layers.get(.world).items[0].mesh.position);
 }
 
 // --- The cockpit ----------------------------------------------------------------------------
@@ -210,12 +284,13 @@ pub const cockpit_light_mask: u32 = 0x12;
 /// The cockpit as the mission's start (`0x004934F0`) makes it: an object of its own
 /// (`0x005883F4`) with a part for each of the cockpit frame model's, each drawn always
 /// (`always_drawn`), reached only by the lights `cockpit_light_mask` lets through, and with every
-/// level pushed out to `cockpit_detail`; its root then hangs from the camera's frame. Its origin
-/// moves to its centre of mass, as `object_link_parts` ends. The levels are made in `gpa`.
+/// level pushed out to `cockpit_detail`; its root then hangs from the camera's frame. Its parts
+/// hang as an object's do, its origin at their centre of mass (`object_link_parts`). The levels
+/// are made in `gpa`.
 pub fn createCockpit(gpa: Allocator, model: *const shp.Model, loaded: *const srofiles.Loaded) Allocator.Error!objects.Model {
     var cockpit: objects.Model = try .create(gpa, model, loaded, .{});
     for (cockpit.parts) |*part| try fitCockpitPart(gpa, part);
-    gameobj.recentre(&cockpit, model);
+    gameobj.linkParts(&cockpit, model);
     return cockpit;
 }
 
@@ -408,6 +483,46 @@ test "the radar's backing stands where the radar does" {
     }
 }
 
+// --- The armour ---------------------------------------------------------------------------
+
+/// `0x00492370`: what an object's armour does to it, from how much of each quadrant's armour is
+/// left of its full armour, `6 * ShipCombat.armor_class - 1`, the fore quadrant being the third
+/// and the aft the fourth: the guns' condition (`gun_condition`), half the fore one's share and a
+/// quarter of each side's; the cruise speed (`armor_speed_factor`), a quarter plus three quarters
+/// of the aft one's; and the shields' recharge (`shield_condition`), a quarter of each quadrant's.
+/// `create_object` runs it once the armour is full, and the damage as it wears. **Unverified:** it
+/// lies after `language.cpp`'s code, where `main.cpp`'s begins, next to `mission_frame`.
+///
+/// Not ported yet: for the player's ship, the warning it sounds at most every 500 ticks while a
+/// quadrant has lost its shield and half its armour (#49).
+pub fn armorConditions(object: *gameobj.GameObject, combat: *const create.ShipCombat) void {
+    const full: f32 = @floatFromInt(combat.armor_class * 6 - 1);
+    const fore = object.armor[2] / full;
+    const aft = object.armor[3] / full;
+    const sides = (object.armor[0] / full) * 0.25 + (object.armor[1] / full) * 0.25;
+    object.gun_condition = fore * 0.5 + sides;
+    object.armor_speed_factor = aft * 0.75 + 0.25;
+    object.shield_condition = fore * 0.25 + aft * 0.25 + sides;
+}
+
+test armorConditions {
+    var object = gameobj.testing.object();
+    const combat = std.mem.zeroInit(create.ShipCombat, .{ .armor_class = 5 });
+    // Whole, everything works fully.
+    object.armor = @splat(29);
+    armorConditions(&object, &combat);
+    try std.testing.expectEqual(1, object.gun_condition);
+    try std.testing.expectEqual(1, object.armor_speed_factor);
+    try std.testing.expectEqual(1, object.shield_condition);
+    // With the aft armour gone the ship is down to a quarter of its speed, and its shields to
+    // three quarters; the guns, at the fore, are untouched.
+    object.armor[3] = 0;
+    armorConditions(&object, &combat);
+    try std.testing.expectEqual(1, object.gun_condition);
+    try std.testing.expectEqual(0.25, object.armor_speed_factor);
+    try std.testing.expectEqual(0.75, object.shield_condition);
+}
+
 // --- The mission's start -------------------------------------------------------------------
 
 /// A ship the player can fly, as the mission's start (`0x004934F0`) knows it.
@@ -482,54 +597,84 @@ test fitDevices {
     try std.testing.expectEqual(null, playerShip(0x0D));
 }
 
+/// A mission with nothing in it but stand-ins, for the tests of the pacing.
+const TestWorld = struct {
+    random: libcmt.Rand = .{},
+    objects: *create.Objects = undefined,
+    player: input.Player = .{},
+    shake: f32 = 0,
+
+    fn init(world: *TestWorld) !void {
+        world.* = .{};
+        world.objects = try .create(std.testing.allocator, &world.random);
+    }
+
+    fn deinit(world: *TestWorld) void {
+        world.objects.destroy();
+    }
+
+    fn get(world: *TestWorld) gameobj.World {
+        return .{ .objects = world.objects, .player = &world.player, .view = .cockpit, .shake = &world.shake };
+    }
+};
+
 test "the simulation steps on every fourth tick" {
     var clock: Clock = .{};
     var devices: input.Devices = .{};
+    var world: TestWorld = undefined;
+    try world.init();
+    defer world.deinit();
     // A second of the timer: 100 ticks, 100 game ticks, 25 steps.
     clock.advanceTimer(100);
     try std.testing.expectEqual(100, clock.game_ticks);
-    try std.testing.expectEqual(25, clock.runTicks(&devices));
+    try std.testing.expectEqual(25, clock.runTicks(&devices, world.get()));
     try std.testing.expectEqual(100, clock.mission_ticks);
     // The ticks already run are not run again.
-    try std.testing.expectEqual(0, clock.runTicks(&devices));
+    try std.testing.expectEqual(0, clock.runTicks(&devices, world.get()));
 }
 
 test "a paused game stops its clocks but not the timer" {
     var clock: Clock = .{};
     var devices: input.Devices = .{};
+    var world: TestWorld = undefined;
+    try world.init();
+    defer world.deinit();
     clock.advanceTimer(8);
-    _ = clock.runTicks(&devices);
+    _ = clock.runTicks(&devices, world.get());
     clock.paused = true;
     clock.advanceTimer(100);
     // The timer counts the paused ticks; the mission's clocks do not move.
     try std.testing.expectEqual(108, clock.timer_ticks);
     try std.testing.expectEqual(8, clock.game_ticks);
     try std.testing.expectEqual(8, clock.mission_ticks);
-    try std.testing.expectEqual(0, clock.runTicks(&devices));
+    try std.testing.expectEqual(0, clock.runTicks(&devices, world.get()));
     // Paused ticks are counted only for the game ticks the loop asks for.
     clock.paused = false;
     clock.advanceTimer(4);
-    try std.testing.expectEqual(1, clock.runTicks(&devices));
+    try std.testing.expectEqual(1, clock.runTicks(&devices, world.get()));
     try std.testing.expectEqual(12, clock.mission_ticks);
 }
 
 test "the step reads the keyboard, and the latches it clears" {
     var clock: Clock = .{};
     var devices: input.Devices = .{};
+    var world: TestWorld = undefined;
+    try world.init();
+    defer world.deinit();
     const keyboard = &devices.keyboard;
     keyboard.down[scan_test_key] = true;
     keyboard.latched[scan_test_key] = true;
     // Three ticks do no work, so the latch stands; the fourth reads and keeps it while held.
     clock.advanceTimer(3);
-    _ = clock.runTicks(&devices);
+    _ = clock.runTicks(&devices, world.get());
     try std.testing.expect(keyboard.latched[scan_test_key]);
     clock.advanceTimer(1);
-    try std.testing.expectEqual(1, clock.runTicks(&devices));
+    try std.testing.expectEqual(1, clock.runTicks(&devices, world.get()));
     try std.testing.expect(keyboard.latched[scan_test_key]);
     // Released, the next read clears it.
     keyboard.down[scan_test_key] = false;
     clock.advanceTimer(4);
-    _ = clock.runTicks(&devices);
+    _ = clock.runTicks(&devices, world.get());
     try std.testing.expect(!keyboard.latched[scan_test_key]);
 }
 
@@ -552,8 +697,11 @@ test "play time rolls a second over after 101 ticks" {
 test "a frame measures the ticks since the last one" {
     var clock: Clock = .{};
     var devices: input.Devices = .{};
+    var world: TestWorld = undefined;
+    try world.init();
+    defer world.deinit();
     clock.advanceTimer(10);
-    _ = clock.runTicks(&devices);
+    _ = clock.runTicks(&devices, world.get());
     clock.frameBegin();
     try std.testing.expectEqual(10, clock.frame_duration);
     try std.testing.expectEqual(10, clock.frame_start);
@@ -561,7 +709,7 @@ test "a frame measures the ticks since the last one" {
     clock.frameBegin();
     try std.testing.expectEqual(0, clock.frame_duration);
     clock.advanceTimer(3);
-    _ = clock.runTicks(&devices);
+    _ = clock.runTicks(&devices, world.get());
     clock.frameReset();
     try std.testing.expectEqual(13, clock.frame_start);
     try std.testing.expectEqual(0, clock.frame_duration);
@@ -570,6 +718,9 @@ test "a frame measures the ticks since the last one" {
 test "the clocks keep to the platform's count however the frames fall" {
     var clock: Clock = .{};
     var devices: input.Devices = .{};
+    var world: TestWorld = undefined;
+    try world.init();
+    defer world.deinit();
     const began: u64 = 12_345;
     clock.start(began);
     // Frames of uneven length: several shorter than a tick, one spanning many, one long stall.
@@ -579,7 +730,7 @@ test "the clocks keep to the platform's count however the frames fall" {
     for (frames) |frame| {
         now += frame;
         clock.advanceTo(now);
-        steps += clock.runTicks(&devices);
+        steps += clock.runTicks(&devices, world.get());
     }
     // Every hundredth between the first count and the last is a tick, and every fourth a step.
     const elapsed: u32 = @intCast(now - began);
@@ -594,6 +745,9 @@ test "the clocks keep to the platform's count however the frames fall" {
 
 test "the frame rate is decoupled from the tick rate" {
     var devices: input.Devices = .{};
+    var world: TestWorld = undefined;
+    try world.init();
+    defer world.deinit();
     // The same second of play, drawn at three very different frame rates.
     const rates = [_]u64{ 4, 60, 240 };
     for (rates) |frames| {
@@ -604,7 +758,7 @@ test "the frame rate is decoupled from the tick rate" {
         for (1..frames + 1) |frame| {
             // Frame `frame` of `frames` ends this far into the second, in hundredths.
             clock.advanceTo(1_000 + @as(u64, @intCast(frame)) * 100 / frames);
-            steps += clock.runTicks(&devices);
+            steps += clock.runTicks(&devices, world.get());
             clock.frameBegin();
             drawn += 1;
         }
@@ -619,17 +773,20 @@ test "the frame rate is decoupled from the tick rate" {
 test "a frame faster than the tick runs none, and a slow one runs the lot" {
     var clock: Clock = .{};
     var devices: input.Devices = .{};
+    var world: TestWorld = undefined;
+    try world.init();
+    defer world.deinit();
     clock.start(0);
     // Four frames inside one hundredth: no tick falls in them, so the simulation stands still.
     for (0..4) |_| {
         clock.advanceTo(0);
-        try std.testing.expectEqual(0, clock.runTicks(&devices));
+        try std.testing.expectEqual(0, clock.runTicks(&devices, world.get()));
         clock.frameBegin();
         try std.testing.expectEqual(0, clock.frame_duration);
     }
     // One frame that took a quarter of a second catches up all 25 ticks at once.
     clock.advanceTo(25);
-    try std.testing.expectEqual(6, clock.runTicks(&devices));
+    try std.testing.expectEqual(6, clock.runTicks(&devices, world.get()));
     clock.frameBegin();
     try std.testing.expectEqual(25, clock.frame_duration);
 }

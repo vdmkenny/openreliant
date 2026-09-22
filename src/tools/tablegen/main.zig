@@ -4,6 +4,7 @@
 //!     tablegen commands <LANCER.EXE> <output.zig>
 //!     tablegen conditions <LANCER.EXE> <output.zig>
 //!     tablegen models <LANCER.EXE> <disassembly.asm> <output.zig>
+//!     tablegen combat <LANCER.EXE> <output.zig>
 //!     tablegen controls <LANCER.EXE> <output.zig>
 //!     tablegen orders <LANCER.EXE> <output.zig>
 //!     tablegen maneuvers <LANCER.EXE> <output.zig>
@@ -20,6 +21,9 @@
 //!
 //! `models`: the model of each ship type, and the models mounted on attachment points, which the
 //! engine loads in code that the listing lets this follow.
+//!
+//! `combat`: the words of each ship type's combat stats that the executable holds: whether it can
+//! be targeted, its name, its class and its side.
 //!
 //! `controls`: the player's actions and the bindings the game starts with.
 //!
@@ -41,6 +45,7 @@ const Io = std.Io;
 const openreliant = @import("openreliant");
 const pe = openreliant.pe;
 
+const combat = @import("combat.zig");
 const commands = @import("commands.zig");
 const conditions = @import("conditions.zig");
 const controls = @import("controls.zig");
@@ -71,6 +76,7 @@ const usage =
     \\       tablegen commands <LANCER.EXE> <output.zig>
     \\       tablegen conditions <LANCER.EXE> <output.zig>
     \\       tablegen models <LANCER.EXE> <disassembly.asm> <output.zig>
+    \\       tablegen combat <LANCER.EXE> <output.zig>
     \\       tablegen controls <LANCER.EXE> <output.zig>
     \\       tablegen orders <LANCER.EXE> <output.zig>
     \\       tablegen maneuvers <LANCER.EXE> <output.zig>
@@ -84,6 +90,7 @@ const Mode = union(enum) {
     commands: struct { binary: []const u8, output: []const u8 },
     conditions: struct { binary: []const u8, output: []const u8 },
     models: struct { binary: []const u8, listing: []const u8, output: []const u8 },
+    combat: struct { binary: []const u8, output: []const u8 },
     controls: struct { binary: []const u8, output: []const u8 },
     orders: struct { binary: []const u8, output: []const u8 },
     maneuvers: struct { binary: []const u8, output: []const u8 },
@@ -99,6 +106,7 @@ const Mode = union(enum) {
             .commands => if (rest.len == 2) .{ .commands = .{ .binary = rest[0], .output = rest[1] } } else null,
             .conditions => if (rest.len == 2) .{ .conditions = .{ .binary = rest[0], .output = rest[1] } } else null,
             .models => if (rest.len == 3) .{ .models = .{ .binary = rest[0], .listing = rest[1], .output = rest[2] } } else null,
+            .combat => if (rest.len == 2) .{ .combat = .{ .binary = rest[0], .output = rest[1] } } else null,
             .controls => if (rest.len == 2) .{ .controls = .{ .binary = rest[0], .output = rest[1] } } else null,
             .orders => if (rest.len == 2) .{ .orders = .{ .binary = rest[0], .output = rest[1] } } else null,
             .maneuvers => if (rest.len == 2) .{ .maneuvers = .{ .binary = rest[0], .output = rest[1] } } else null,
@@ -120,6 +128,7 @@ pub fn main(init: std.process.Init) !u8 {
         .commands => |paths| catalogue(init, arena, paths.binary, paths.output),
         .conditions => |paths| conditionCatalogue(init, arena, paths.binary, paths.output),
         .models => |paths| modelTables(init, arena, paths.binary, paths.listing, paths.output),
+        .combat => |paths| combatTable(init, arena, paths.binary, paths.output),
         .controls => |paths| controlTable(init, arena, paths.binary, paths.output),
         .orders => |paths| orderTable(init, arena, paths.binary, paths.output),
         .maneuvers => |paths| maneuverTable(init, arena, paths.binary, paths.output),
@@ -180,6 +189,22 @@ fn modelTables(
     try out.interface.flush();
 
     std.debug.print("{d} ship types and the attachment models -> {s}\n", .{ tables.ship_types.len, output });
+    return 0;
+}
+
+fn combatTable(init: std.process.Init, arena: std.mem.Allocator, binary_path: []const u8, output: []const u8) !u8 {
+    const cwd: Io.Dir = .cwd();
+    const binary = try cwd.readFileAlloc(init.io, binary_path, arena, .limited(64 << 20));
+    const pe_image: pe.Image = try .parse(binary);
+    const types = try combat.read(arena, .init(pe_image, binary));
+
+    var buffer: [16 << 10]u8 = undefined;
+    var out: Io.File.Writer = .init(try cwd.createFile(init.io, output, .{}), init.io, &buffer);
+    defer out.file.close(init.io);
+    try combat.emit(&out.interface, types);
+    try out.interface.flush();
+
+    std.debug.print("{d} ship types' combat words -> {s}\n", .{ types.len, output });
     return 0;
 }
 
@@ -417,6 +442,7 @@ test Mode {
     const models_mode = Mode.parse(&.{ "models", "LANCER.EXE", "disassembly.asm", "out.zig" }).?;
     try std.testing.expectEqualStrings("disassembly.asm", models_mode.models.listing);
     const controls_mode = Mode.parse(&.{ "controls", "LANCER.EXE", "out.zig" }).?;
+    try std.testing.expectEqualStrings("out.zig", Mode.parse(&.{ "combat", "LANCER.EXE", "out.zig" }).?.combat.output);
     try std.testing.expectEqualStrings("LANCER.EXE", controls_mode.controls.binary);
     try std.testing.expectEqual(@as(?Mode, null), Mode.parse(&.{ "controls", "LANCER.EXE" }));
     try std.testing.expectEqualStrings("out.zig", Mode.parse(&.{ "views", "LANCER.EXE", "out.zig" }).?.views.output);
@@ -426,6 +452,7 @@ test Mode {
 
 test {
     std.testing.refAllDecls(@This());
+    _ = combat;
     _ = commands;
     _ = conditions;
     _ = controls;
