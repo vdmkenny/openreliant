@@ -304,6 +304,64 @@ pub fn armorDamage(world: gameobj.World, index: u16, struck: Quadrant, value: f3
     object.last_attacker = attacker;
 }
 
+/// The damage kinds that hurt a component with armour to spare, whatever its flags. **Unknown:**
+/// what 3 and 4 stand for; a torpedo's hit is one of them.
+fn heavyKind(kind: Kind) bool {
+    return @intFromEnum(kind) == 3 or @intFromEnum(kind) == 4;
+}
+
+/// The armour past which a component takes only a heavy hit, and how heavy that is (`0x9C3` and
+/// `0x004DC4A8`).
+const heavy_component: i32 = 0x9C3;
+const heavy_hit: f32 = 500;
+
+/// What a shield generator leaves of a hit below `shielded_hit` (`0x004DC3D4` and `0x004DC44C`).
+const shielded_damage: f32 = 0.25;
+const shielded_hit: f32 = 1000;
+
+/// `component_damage` (`0x004645C0`): damage to one of an object's components. A collision does
+/// none; guns, missiles and explosions do. Where the component belongs to an assembly, such as a
+/// turret and its barrels, the damage goes to the part of it that still has armour, and a component
+/// whose armour runs out marks the part it hangs from as destroyed.
+///
+/// Not ported: the invulnerability a component may carry, the score a player's hit is worth, and
+/// what multiplayer makes of it.
+pub fn componentDamage(world: gameobj.World, index: u16, component: *objects.Model.Part, value: f32, attacker: u16, kind: Kind) void {
+    const all = world.objects;
+    const slot = &all.slots[index];
+    const object = &slot.object;
+    const model = if (slot.model) |*live| live else return;
+    if (object.flags.jumping or kind == .collision or component.flags.damaged) return;
+
+    // The assembly's first part that still has armour takes the hit.
+    var struck = component;
+    if (component.link_id != 0) {
+        for (model.parts) |*part| {
+            if (part.parent != component.parent or part.link_id != component.link_id) continue;
+            if (part.component_armor <= 0) continue;
+            struck = part;
+            break;
+        }
+    }
+    if (struck.component_armor == 0) return;
+    // A part with armour to spare takes only a heavy hit, and only from what can hurt it.
+    if (struck.component_armor > heavy_component) {
+        if (value < heavy_hit) return;
+        if (!struck.flags.lightmap and !heavyKind(kind)) return;
+    }
+
+    var share = value;
+    if (object.invulnerable != 5 and object.flags.shield_generator and share < shielded_hit) share *= shielded_damage;
+    const protected = object.invulnerable == 2 or (object.invulnerable == 1 and attacker >= all.players);
+
+    const left = struck.armor - share;
+    if (left >= 0 or !protected) struck.armor = left;
+    object.last_attacker = attacker;
+    if (struck.armor < 0) {
+        if (struck.parent) |holder| model.parts[holder].destroyed = true else model.destroyed = true;
+    }
+}
+
 /// Whether the damage counts toward what an object has taken lately, which `order_retaliate` reads.
 fn counted(kind: Kind) bool {
     return switch (@intFromEnum(kind)) {
@@ -568,6 +626,50 @@ test quadrant {
     try std.testing.expectEqual(.aft, quadrant(&object, .{ 0, 0, -300 }));
     try std.testing.expectEqual(.right, quadrant(&object, .{ 90, 0, 10 }));
     try std.testing.expectEqual(.left, quadrant(&object, .{ -90, 0, 10 }));
+}
+
+test componentDamage {
+    const libcmt = @import("../libcmt.zig");
+    const input = @import("../input.zig");
+    const gpa = std.testing.allocator;
+    var random: libcmt.Rand = .{};
+    const all = try create.Objects.create(gpa, &random);
+    defer all.destroy();
+    var model: create.testing.Model = undefined;
+    try model.init(gpa);
+    defer model.deinit(gpa);
+    model.data[0].part.flags.component = true;
+    model.data[0].part.component_armor = 100;
+    var tables = create.testing.tables();
+    var player: input.Player = .{};
+    var shake: f32 = 0;
+    const world = testing.world(all, &player, &shake);
+
+    const index = try create.createObject(all, &tables, model.types(), null, 0, @splat(0), &random);
+    const part = &all.slots[index].model.?.parts[0];
+    try std.testing.expectEqual(100, part.armor);
+
+    // A collision does none, whatever it lands on.
+    componentDamage(world, index, part, 40, 1, .collision);
+    try std.testing.expectEqual(100, part.armor);
+
+    // A shot wears it down, and the attacker is recorded.
+    componentDamage(world, index, part, 40, 1, @enumFromInt(0));
+    try std.testing.expectEqual(60, part.armor);
+    try std.testing.expectEqual(1, all.slots[index].object.last_attacker);
+
+    // Past its armour, the part it hangs from is marked destroyed; this one hangs from the root.
+    componentDamage(world, index, part, 100, 1, @enumFromInt(0));
+    try std.testing.expect(part.armor < 0);
+    try std.testing.expect(all.slots[index].model.?.destroyed);
+
+    // A part with armour to spare takes only a heavy hit of a kind that can hurt it.
+    part.component_armor = 20000;
+    part.armor = 20000;
+    componentDamage(world, index, part, 100, 1, @enumFromInt(0));
+    try std.testing.expectEqual(20000, part.armor);
+    componentDamage(world, index, part, 600, 1, @enumFromInt(3));
+    try std.testing.expectEqual(19400, part.armor);
 }
 
 test "what never collides" {

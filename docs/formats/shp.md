@@ -110,6 +110,7 @@ carries its own levels of detail.
 | `0xDC`, `0xE8` | f32 | Pitch minimum and maximum |
 | `0xF0` | u32 | Flags (below) |
 | `0xF4` | u16 | Turret kind, 0 to 3 |
+| `0x104` | i32 | What the part takes as a [component](../engine/objects.md#components) before it is destroyed, which `node_add_part` (`0x00499430`) gives its node. The Reliant's turrets hold 100 and its body 20000 |
 
 Part flags at `0xF0`:
 

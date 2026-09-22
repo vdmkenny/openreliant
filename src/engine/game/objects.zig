@@ -396,6 +396,9 @@ pub const Model = struct {
     centre: Vector = @splat(0),
     /// The sum of its shown parts' masses (`GameObject.mass`), as `recentre` leaves it.
     mass: f32 = 0,
+    /// The root node's `destroyed` flag, which `component_damage` sets where a component hanging
+    /// from the root runs out of armour.
+    destroyed: bool = false,
     /// Its farthest vertex from its origin, and its bounding box (`GameObject.radius`,
     /// `bounds_min`, `bounds_max`), as `recentre` leaves them.
     radius: f32 = 0,
@@ -552,6 +555,16 @@ pub const Model = struct {
         /// Its node's `component` flag: the object lists the part among its components
         /// (`create.collectComponents`).
         component: bool = false,
+        /// What it has left before it is destroyed, from its part's `component_armor`
+        /// (`node_add_part`). Only a component's is read.
+        armor: f32 = 0,
+        /// What its part's record holds for a component: how much armour it starts with, and the
+        /// assembly it belongs to, such as a turret and its barrels.
+        component_armor: i32 = 0,
+        link_id: u32 = 0,
+        /// Its node's `destroyed` flag, which `component_damage` sets on the holder of a component
+        /// whose armour has run out.
+        destroyed: bool = false,
         /// Its node's `targetable` flag, which cycling subtargets requires and `SetTargetable`
         /// changes.
         targetable: bool = false,
@@ -702,6 +715,9 @@ pub const Model = struct {
             node.* = .{
                 .hidden = source.part.flags.damaged,
                 .flags = source.part.flags,
+                .armor = @floatFromInt(source.part.component_armor),
+                .component_armor = source.part.component_armor,
+                .link_id = source.part.link_id,
                 .parent = parentOf(model, index),
                 .origin = @splat(0),
                 .object = .{

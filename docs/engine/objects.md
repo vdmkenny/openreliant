@@ -496,9 +496,15 @@ come first, in part order, and then, part by part and mount by mount, those of t
 A component's entry holds its node, the slot of the parent's child list that holds it, and at `+8`
 a halfword that is nonzero while the component is invulnerable.
 
-The port lists them in [`create.zig`](../../src/engine/game/create.zig) as part numbers in the
-object's slot, since its components hold no pointers, and marks each part's node as a component and,
-where the model asks, as targetable. A model with more components than the object holds leaves the
+A component's armour comes from its part's record (`0x104`), and `component_damage`
+(`0x004645C0`) wears it down: the damage goes to the part of the component's assembly that still has
+armour, a part with more than 2499 takes only a hit of 500 or more, an object with a shield
+generator keeps three quarters of a hit below 1000, and a component whose armour runs out marks the
+part it hangs from as destroyed. A collision does none of this.
+
+The port lists them in [`create.zig`](../../src/engine/game/create.zig) as the parts themselves,
+since a mounted turret's parts are not the hull's, and marks each one as a component and, where the
+model asks, as targetable. A model with more components than the object holds leaves the
 rest unlisted, where the game stops with a fatal error.
 
 `sltool shp components` lists a model's components in that order, finding the mounted models beside
