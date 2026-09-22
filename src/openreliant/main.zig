@@ -336,7 +336,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         view.frameControls(&keyboard, 0, ticks, at);
         // After the camera's keys, `frame_controls` reads the targeting keys, then its own.
         game.hud.targetKeys(&display.state, &keyboard, false);
-        engine.input.frameKeys(&display.state, &keyboard, &ship.live, false);
+        engine.input.frameKeys(&display.state, &keyboard, &ship.live, view.view, display.clock.game_ticks, false);
         // What moves the cockpit's model: the ship's rates of turn over its full ones, and its
         // speed over its cruise speed.
         const cockpit_input: ?camera.Cockpit.Input = if (ship.cockpit) |*cockpit| input: {
@@ -689,6 +689,7 @@ const Display = struct {
             .full_charge = display.ship.gun_energy,
         }, white, scale);
         try game.hud.drawRadar(&display.art, display.gpa, display.target, display.screen, state.radar_rings, white, scale);
+        game.hud.stepRadarZoom(state, display.clock.game_ticks);
         // The sandbox has no target, so blind fire has nothing to aim at. It would aim with its
         // guns not all firing; the sandbox fits no guns, so no group of them is ever the one.
         const blind_fire: game.hud.BlindFire = if (state.blind_fire_fitted and state.blind_fire and !live.gun_mode.all) .on else .off;

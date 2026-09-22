@@ -2,9 +2,9 @@
 //! follows `srd3d.dll`'s copy. `clip_triangle` (`0x1000BEB0`) cuts a polygon in the camera's frame
 //! by the planes of the view volume it crosses, the near plane, then left, right, top and bottom.
 //! A vertex a cut makes gets clip flags of its own (`SR_clip_vertex_set_clip_flags`,
-//! `0x1000C700`), against the sides as well as the near plane, and each plane they name joins those
-//! still to cut by: a cut through the near plane that lands off the screen is cut again by the sides
-//! it lies beyond.
+//! `0x1000C700`), against the sides as well as the near plane, and each plane they name joins
+//! those still to cut by: a cut through the near plane that lands off the screen is cut again by
+//! the sides it lies beyond.
 
 const std = @import("std");
 

@@ -26,7 +26,7 @@ been found. An element whose code is not found yet is marked so.
 | Jump icon | above the middle | J | the prompt to press JUMP DRIVE, once the mission has a jump ready | [The jump prompt](#the-jump-prompt-the-eject-marker-and-the-scanner) |
 | Target display | foot, right | | the target's image with its shields and armour in a ring, its name, its type, its range and its speed; a larger form for a big target, with its current subtarget and a bar for each | [Windows](#the-windows) 3 and 8. Window 3, the small form, draws `hud_ship_status` in its second mode for the target, its range and its speed; window 8 the target's own picture, its name, its subtarget, its range and its speed. Their frames are ported; what they show is not |
 | Subtarget | on the target's model | S, SHIFT+S | the parts of the subtarget picked out in red | `hud_subtarget` (`0x0048CC30`), which walks the target's assembly by `link_id` |
-| Radar | foot, middle | V | three rings with the ship at their middle and a wedge for its view ahead; each object a dot, red for hostile, green for friendly, blue for one calling on the radio, on a line up or down from the rings by its height. V narrows and widens its range, the middle ring filling the display at the narrowest | `hud_radar` (`0x00488BD0`), [The radar](#the-radar). The rings are ported; the dots are not |
+| Radar | foot, middle | V | three rings with the ship at their middle and a wedge for its view ahead; each object a dot, red for hostile, green for friendly, blue for one calling on the radio, on a line up or down from the rings by its height. V narrows and widens its range, the middle ring filling the display at the narrowest | `hud_radar` (`0x00488BD0`), [The radar](#the-radar). The rings and V's ranges are ported; the dots are not |
 | Ship status | foot, left of middle | always shown | the ship's image in two rings of segments, forward, aft and the two sides: shields outside, armour inside. A shield dims as it wears; an armour segment goes as it is lost. Shifting power fore or aft doubles the shields there | `hud_ship_status` (`0x00489350`). The schematic and the shields are ported; the armour is not yet found |
 | Missile display | top, middle | M | the missile's name, the ship's missiles in a ring, how many of the chosen one are left, and the one armed at six o'clock. Comma and full stop turn the ring | [Window](#the-windows) 2: the ring from the table at `0x00501CC8`, ten entries of five halfwords. The frame is ported; what it shows is not |
 | Mission objectives | right | B | the mission's goals, the current one first; B pages through them | [Window](#the-windows) 10: the mission's objectives from the table at `0x00504120`, ten a mission. The frame is ported; what it shows is not |
@@ -221,15 +221,29 @@ disabled, ejected or a cloaked hostile; placed by its bearing and distance from 
 scales the range (`radar_range`, `0x0057BE00`, 0 to 2) picks, with a line up or down by its height
 in palette index `0x26` for a hostile and `0x62` otherwise, and a shape at its end, `0xE4` or
 `0xE5`, `0x130` for the target. Then it draws the rings, `hud_radar_rings` (`0x0057BC50`), one of
-shapes `0x168` to `0x16B` with the wedge of the view ahead, `0x42` left and `0x20` above a point
-placed half of the way across, at the foot of the screen, 1 right and 51 up. `hud_init` starts it
-on `0x16B`, and `hud_radar_zoom` (`0x004892F0`) steps the rings a shape every 50 ticks toward a new
-range's. The clock stands 79 above the radar's point.
+shapes `0x161` to `0x16B` with the wedge of the view ahead, `0x42` left and `0x20` above a point
+placed half of the way across, at the foot of the screen, 1 right and 51 up. The clock stands 79
+above the radar's point.
+
+| Range | Rings |
+| --- | --- |
+| 0, the closest | `0x161`, one ring |
+| 1 | `0x166`, two |
+| 2, the widest | `0x16B`, three |
+
+`hud_init` starts the radar on range 2. RADAR RANGES (`frame_controls`, `0x00414060`), in the view
+ahead from the cockpit with the rings still, moves it to the next range, round from 2 to 0, and
+starts the rings moving to that range's: `0x00569714` is set while they move, `0x005799B4` holds
+the shape they stop at, and `0x005656AC` whether they step down toward it, which they do only to
+range 0. `hud_radar_zoom` (`0x004892F0`), which `hud_draw` runs after the radar, steps them a shape.
+It steps while `game_ticks` is short of the tick at `0x005656A0`, which RADAR RANGES and each step
+put 50 ahead of it, so the rings step once each frame the radar is drawn, and never wait the 50
+ticks.
 
 In the cockpit's view the radar stands on a dark backing, which `mission_frame` draws with the
 cockpit's model rather than `hud_radar` ([`rendering.md`](rendering.md#the-cockpit)).
 
-The port draws the rings. Not yet ported: the dots, and the change of range.
+The port draws the rings and changes the range. Not yet ported: the dots, which the range scales.
 
 ## The status lights
 

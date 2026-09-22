@@ -4,10 +4,10 @@
 //!
 //! Ported so far: where an element stands, its text, the readouts, the clock, the status lights
 //! with the devices' charges, the jump prompt, the eject marker, the scanner, the ship status
-//! indicator's shields, the targeting cluster, the radar's rings, and the windows, their frames,
-//! and how they open and close ([`hud/windows.zig`](hud/windows.zig)). Not yet: the rest of
-//! `hud_draw`, whose other elements [`hud.md`](../../../docs/engine/hud.md) lists, and what the
-//! windows show.
+//! indicator's shields, the targeting cluster, the radar's rings and ranges, and the windows,
+//! their frames and how they open and close ([`hud/windows.zig`](hud/windows.zig)). Not yet: the
+//! rest of `hud_draw`, whose other elements [`hud.md`](../../../docs/engine/hud.md) lists, and
+//! what the windows show.
 //!
 //! **Improvement.** The game draws the display with the processor, whichever renderer is running:
 //! `hud_text` hands its line to `VFX_string_draw`, out of `vfx.dll`, which blits each glyph into a
@@ -1007,6 +1007,10 @@ pub const State = struct {
     sight: ?[2]i32 = null,
     /// The radar's rings (`0x0057BC50`).
     radar_rings: u16 = Radar.first_rings,
+    /// The radar's range (`radar_range`, `0x0057BE00`), 0 the closest.
+    radar_range: u2 = Radar.first_range,
+    /// The rings moving to a new range's, or null while they are still.
+    radar_zoom: ?Radar.Zoom = null,
     /// The display's windows (`0x00501D30`).
     windows: windows.Windows = .{},
     /// Whether POWERBALL WINDOW is held (`0x0051CEF8`), or the power window was held open with it.
@@ -1729,7 +1733,49 @@ pub const Radar = struct {
     pub const rings_offset: [2]i32 = .{ -0x42, -0x20 };
     /// The rings `hud_init` starts on (`0x0057BC50`), the widest range's.
     pub const first_rings: u16 = 0x16B;
+    /// The range `hud_init` starts on (`radar_range`, `0x0057BE00`), the widest.
+    pub const first_range: u2 = 2;
+    /// The rings each range comes to rest on, 0 the closest: one ring with the wedge of the view
+    /// ahead, two, and three. The shapes between are the steps between them.
+    pub const range_rings = [3]u16{ 0x161, 0x166, 0x16B };
+    /// The ticks `hud_radar_zoom` keeps its next step ahead of `game_ticks`.
+    pub const zoom_ticks: u32 = 50;
+
+    /// The rings moving to a new range's: the shape they stop at (`radar_zoom_rings`,
+    /// `0x005799B4`), whether they step down toward it (`radar_zoom_down`, `0x005656AC`), and the
+    /// tick the step waits to be short of (`radar_zoom_next`, `0x005656A0`). `radar_zooming`
+    /// (`0x00569714`) is set while they move.
+    pub const Zoom = struct {
+        to: u16,
+        down: bool,
+        next: u32,
+    };
 };
+
+/// RADAR RANGES (`frame_controls`, `0x00414060`): in the view ahead from the cockpit, with the
+/// rings still, the radar moves to its next range, round from the widest to the closest, and its
+/// rings start moving to that range's.
+pub fn nextRadarRange(state: *State, view: camera.View, game_ticks: u32) void {
+    if (view != .cockpit or state.radar_zoom != null) return;
+    state.radar_range = if (state.radar_range >= 2) 0 else state.radar_range + 1;
+    state.radar_zoom = .{
+        .to = Radar.range_rings[state.radar_range],
+        .down = state.radar_range == 0,
+        .next = game_ticks + Radar.zoom_ticks,
+    };
+}
+
+/// `hud_radar_zoom` (`0x004892F0`), which `hud_draw` runs after the radar: while the rings are
+/// moving, a step toward the range's. It steps while `game_ticks` is short of the tick it keeps
+/// `zoom_ticks` ahead, and puts that tick ahead again as it steps, so the rings step once each
+/// frame the radar is drawn.
+pub fn stepRadarZoom(state: *State, game_ticks: u32) void {
+    const zoom = &(state.radar_zoom orelse return);
+    if (@as(i32, @bitCast(zoom.next)) <= @as(i32, @bitCast(game_ticks))) return;
+    zoom.next = game_ticks +% Radar.zoom_ticks;
+    if (zoom.down) state.radar_rings -= 1 else state.radar_rings += 1;
+    if (state.radar_rings == zoom.to) state.radar_zoom = null;
+}
 
 /// Draws the radar's rings for a window of `screen`.
 pub fn drawRadar(
@@ -1743,6 +1789,29 @@ pub fn drawRadar(
 ) (spr.Error || Allocator.Error)!void {
     const point = place(screen, Radar.offset, Radar.across, Radar.down, scale);
     try drawShape(art, gpa, target, rings, scaled(point, Radar.rings_offset, scale), colour, scale);
+}
+
+test nextRadarRange {
+    var state: State = .{};
+    // From the widest range the key comes round to the closest, whose rings are one; the rings
+    // step there a shape a frame.
+    nextRadarRange(&state, .cockpit, 1000);
+    try std.testing.expectEqual(0, state.radar_range);
+    for (0..9) |_| stepRadarZoom(&state, 1000);
+    try std.testing.expectEqual(0x162, state.radar_rings);
+    // While they move, the key does nothing.
+    nextRadarRange(&state, .cockpit, 1000);
+    try std.testing.expectEqual(0, state.radar_range);
+    stepRadarZoom(&state, 1000);
+    try std.testing.expectEqual(0x161, state.radar_rings);
+    try std.testing.expectEqual(null, state.radar_zoom);
+    // The next range steps up to two rings; outside the view ahead the key does nothing.
+    nextRadarRange(&state, .cockpit_rear, 1000);
+    try std.testing.expectEqual(0, state.radar_range);
+    nextRadarRange(&state, .cockpit, 1000);
+    for (0..5) |_| stepRadarZoom(&state, 1000);
+    try std.testing.expectEqual(0x166, state.radar_rings);
+    try std.testing.expectEqual(null, state.radar_zoom);
 }
 
 test Cluster {

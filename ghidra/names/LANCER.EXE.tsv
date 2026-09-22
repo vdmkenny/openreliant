@@ -631,7 +631,7 @@
 0057dbc8	data	language_module	void *	language.dll, as LoadLibraryA loads it
 0051d5f0	data	options_cockpit_setting	int	The options screen's cockpit setting, which it copies to cockpit_mode_setting and writes to the ini as [Device] View
 00488bd0	function	hud_radar	void (void)	The radar: a dot for each object in range, targetable and not exploding, disabled, ejected or a cloaked hostile, placed by its bearing and distance from the player at the range 0x0057BE00 picks, with a line up or down by its height in palette index 0x26 for a hostile and 0x62 otherwise, and shape 0xE4 or 0xE5 at its end, 0x130 for the target; then the rings, hud_radar_rings, at hud_place(1, -51, 0.5, 1) less (0x42, 0x20)
-004892f0	function	hud_radar_zoom	void (void)	While 0x00569714 is set, steps hud_radar_rings a shape every 50 ticks, up or down by 0x005656AC, until it reaches 0x005799B4
+004892f0	function	hud_radar_zoom	void (void)	While radar_zooming, steps hud_radar_rings a shape toward radar_zoom_rings, down if radar_zoom_down: whenever game_ticks is short of radar_zoom_next, which it puts 50 ahead as it steps, so once each frame the radar is drawn
 0048b510	function	hud_window_open	bool __fastcall (int window)	Starts a display window opening, not held, if it is shut, and gives it its full time to stay whatever its phase. In a multiplayer game windows 2, 9 and 10 do not open. Returns whether the window is up
 0048b590	function	hud_window_close	void __fastcall (int window)	Starts a display window that is open or opening closing, from its full size, and lets go of it; for windows 3 and 8, the target display, first draws what they show into hud_window_picture, which they close with
 00486830	function	hud_window_draw	void __fastcall (void *pane, int window, int x, int y)	Draws a display window with its place at x, y: in the view ahead its frame, pieces of hud_window_pieces, then what it shows, by a switch on the window
@@ -652,7 +652,11 @@
 0056662c	data	hud_sight_y	int	Where blind fire's sight stands down the screen, as hud_sight_x
 0056664c	data	hud_target_dx	int	How far the target stands right of the middle of the screen
 00566648	data	hud_target_dy	int	How far the target stands below the middle of the screen
-0057bc50	data	hud_radar_rings	int	The radar's rings: one of shapes 0x168 to 0x16B, 0x16B from hud_init
+0057bc50	data	hud_radar_rings	int	The radar's rings: one of shapes 0x161 to 0x16B, 0x161 one ring, 0x166 two and 0x16B three, the ranges' own; 0x16B from hud_init
+00569714	data	radar_zooming	int	Set while the radar's rings move to a new range's, which RADAR RANGES starts and hud_radar_zoom ends; RADAR RANGES does nothing meanwhile
+005799b4	data	radar_zoom_rings	int	The rings shape the radar's rings stop at: 0x161, 0x166 or 0x16B for the range
+005656ac	data	radar_zoom_down	int	1 when the radar's rings step down toward radar_zoom_rings, which they do only to range 0
+005656a0	data	radar_zoom_next	int	The tick hud_radar_zoom steps while game_ticks is short of, which RADAR RANGES and each step put 50 ahead
 0057be00	data	radar_range	short	The radar's range, 0 to 2, 2 from hud_init, which sets the scales the objects are placed by
 00566548	data	hud_speed_lit_pane	void *	The VFX pane the speed arc's lit shape (0xB8) is drawn into, cut off above the speed marker each frame
 00569930	data	hud_speed_unlit_pane	void *	The VFX pane the speed arc's unlit shape (0xB9) is drawn into, cut off below the speed marker each frame

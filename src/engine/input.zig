@@ -411,6 +411,7 @@ pub fn setSpectralShields(display: *hud.State, object: *gameobj.GameObject, on: 
 /// - DAMAGE WINDOW and its locked form open and close the damage window as the wing status keys
 ///   do theirs.
 /// - OBJECTIVES WINDOW closes the wing status window and opens the objectives.
+/// - RADAR RANGES moves the radar to its next range, in the view ahead with its rings still.
 /// - While the radio's window is shut, each of the power keys held opens the power window.
 ///   POWERBALL WINDOW held keeps it open, and its locked form holds it open or closes it.
 /// - SPECTRAL SHIELDS, outside a multiplayer game, turns the spectral shields the other way.
@@ -421,9 +422,9 @@ pub fn setSpectralShields(display: *hud.State, object: *gameobj.GameObject, on: 
 /// Not yet ported: FULL GUNS, and GUNNERY WINDOW's turn to the next group of guns, which need the
 /// guns the sandbox does not fit; the radio's menu COMMS WINDOW starts; OBJECTIVES WINDOW paging
 /// through the objectives once they are open; the shares the power keys give; SHIELD BALANCING,
-/// RADAR RANGES, PRIMARY TARGET and the orders to the wingmen; Betty's word for a device; and the
-/// display's sounds.
-pub fn frameKeys(display: *hud.State, keyboard: *Keyboard, object: *gameobj.GameObject, multiplayer: bool) void {
+/// PRIMARY TARGET and the orders to the wingmen; Betty's word for a device; and the display's
+/// sounds. `view` is the camera's view and `game_ticks` the timer's.
+pub fn frameKeys(display: *hud.State, keyboard: *Keyboard, object: *gameobj.GameObject, view: camera.View, game_ticks: u32, multiplayer: bool) void {
     const windows = &display.windows;
     if (active(keyboard, .toggle_blindfire, true) and display.blind_fire_fitted) {
         display.blind_fire = !display.blind_fire;
@@ -477,6 +478,7 @@ pub fn frameKeys(display: *hud.State, keyboard: *Keyboard, object: *gameobj.Game
         if (windows.up(.wing_status)) windows.close(.wing_status);
         if (windows.status.get(.objectives).phase != .open) _ = windows.open(.objectives, multiplayer);
     }
+    if (active(keyboard, .radar_ranges, true)) hud.nextRadarRange(display, view, game_ticks);
     if (windows.status.get(.comms).phase == .shut) {
         for ([_]controls.Action{ .full_power_to_gunnery, .full_power_to_engines, .full_power_to_shields, .equalize_power }) |action| {
             if (active(keyboard, action, false)) _ = windows.open(.power, multiplayer);
@@ -507,16 +509,16 @@ test frameKeys {
     // ECM turns the ECM on, and again off.
     const ecm = controls.binding(.ecm).key;
     keyboard.down[ecm] = true;
-    frameKeys(&display, &keyboard, &object, false);
+    frameKeys(&display, &keyboard, &object, .cockpit, 0, false);
     try std.testing.expect(object.flags.ecm);
     try std.testing.expectEqual(.on, display.devices.get(.ecm).setting);
     keyboard.read();
-    frameKeys(&display, &keyboard, &object, false);
+    frameKeys(&display, &keyboard, &object, .cockpit, 0, false);
     try std.testing.expect(object.flags.ecm);
     keyboard.down[ecm] = false;
     keyboard.read();
     keyboard.down[ecm] = true;
-    frameKeys(&display, &keyboard, &object, false);
+    frameKeys(&display, &keyboard, &object, .cockpit, 0, false);
     try std.testing.expect(!object.flags.ecm);
     keyboard.down[ecm] = false;
 
@@ -524,18 +526,18 @@ test frameKeys {
     const shields = controls.binding(.spectral_shields).key;
     display.devices.getPtr(.spectral_shields).setting = .absent;
     keyboard.down[shields] = true;
-    frameKeys(&display, &keyboard, &object, false);
+    frameKeys(&display, &keyboard, &object, .cockpit, 0, false);
     try std.testing.expect(!object.flags.spectral_shields);
     keyboard.down[shields] = false;
     keyboard.read();
     display.devices.getPtr(.spectral_shields).setting = .off;
     keyboard.down[shields] = true;
-    frameKeys(&display, &keyboard, &object, true);
+    frameKeys(&display, &keyboard, &object, .cockpit, 0, true);
     try std.testing.expect(!object.flags.spectral_shields);
     keyboard.down[shields] = false;
     keyboard.read();
     keyboard.down[shields] = true;
-    frameKeys(&display, &keyboard, &object, false);
+    frameKeys(&display, &keyboard, &object, .cockpit, 0, false);
     try std.testing.expect(object.flags.spectral_shields);
     try std.testing.expectEqual(.on, display.devices.get(.spectral_shields).setting);
 }
@@ -560,7 +562,7 @@ test "the window keys" {
             };
             press.keyboard.down[key] = true;
             if (modifier) |held| press.keyboard.down[held] = true;
-            frameKeys(press.display, press.keyboard, press.object, false);
+            frameKeys(press.display, press.keyboard, press.object, .cockpit, 0, false);
             press.keyboard.down[key] = false;
             if (modifier) |held| press.keyboard.down[held] = false;
             press.keyboard.read();
@@ -600,6 +602,11 @@ test "the window keys" {
     try std.testing.expect(windows.status.get(.comms).held);
     press.once(.full_power_to_shields);
     try std.testing.expectEqual(.shut, windows.status.get(.power).phase);
+
+    // RADAR RANGES moves the radar round to its closest range, and its rings start moving.
+    press.once(.radar_ranges);
+    try std.testing.expectEqual(0, display.radar_range);
+    try std.testing.expect(display.radar_zoom != null);
 
     // POWERBALL WINDOW held keeps the power window up and says so for the frame.
     press.once(.powerball_window);
