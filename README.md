@@ -22,28 +22,27 @@ support or condone piracy.
 
 ## Status
 
-Early, but it flies. For now it runs as a sandbox: pick any of the game's ships and fly it around
-an empty stretch of space, with the starfield, nebula and sun from the game's files. The
-flight model, throttle and afterburner are ported from the game, and so are the camera views on
-keys 1 to 8, including the cockpit, where the ship's cockpit model sways as you turn, and the chase
-view. F2 and F3 switch ships.
+OpenReliant is in early development. Right now you can fly any ship from the game around an empty
+area of space, with the game's starfield, nebula and sun. The flight model, throttle, afterburner
+and camera views (keys 1 to 8) are ported, including the cockpit view with the ship's cockpit
+model. Press F2 and F3 to switch ships.
 
-Much of the HUD is in: the targeting cluster, the radar, the status lights, the readouts, and the
-ECM, spectral shields and blind fire switches. The HUD's panels (gunnery, damage, power and the
-rest) open and close on their keys, but are still empty.
+Parts of the HUD work: the targeting cluster, radar, status lights, readouts, and the ECM, spectral
+shield and blind fire toggles. The HUD panels (gunnery, damage, power and so on) open and close
+with their keys but don't show anything yet.
 
-There are no other ships yet, and no weapons, missions or sound. The
-[milestones](../../milestones) track what comes next.
+There are no other ships, weapons, missions or sound yet. See the [milestones](../../milestones)
+for what's planned.
 
 ## Running
 
-The [latest release](../../releases/latest) has ready-made builds for Linux, Windows and macOS,
-each for x86_64 and arm64: download the one for your system, unpack it, and run `openreliant`.
-The macOS builds aren't signed, so macOS refuses to open them at first; run
-`xattr -d com.apple.quarantine openreliant` once to allow it.
+Prebuilt binaries for Linux, Windows and macOS (x86_64 and arm64) are on the
+[latest release](../../releases/latest). Download the archive for your system, extract it and run
+`openreliant`. The macOS builds aren't signed, so run `xattr -d com.apple.quarantine openreliant`
+before the first launch.
 
-To build it yourself, OpenReliant needs [Zig](https://ziglang.org) 0.16 and nothing else: SDL3 is
-built from source for the target.
+To build from source you only need [Zig](https://ziglang.org) 0.16; SDL3 is built as part of the
+build.
 
 ```bash
 zig build -Doptimize=ReleaseFast
