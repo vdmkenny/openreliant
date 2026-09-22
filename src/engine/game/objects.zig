@@ -43,8 +43,8 @@ pub const Node = extern struct {
     orientation: [9]f32,
     _unknown_44: [0x18]u8,
     /// Where `position` goes next: `object_move` puts the position plus the velocity here, and
-    /// placing an object sets both. `object_link_part` copies it into `position` and the frame,
-    /// and `node_place` works it out for a part's node.
+    /// placing an object sets both. `node_tree_update` (`updateTree`) and `object_link_part` copy
+    /// it into `position`, and `node_place` works it out for a part's node.
     next_position: shp.Vec3,
     /// Likewise for `orientation`: `object_move` puts the orientation times the rotation here.
     next_orientation: [9]f32,
@@ -77,11 +77,19 @@ pub const Node = extern struct {
     children: Pointer(Pointer(Node)),
 
     pub const Flags = packed struct(u32) {
-        /// Bit 0 is set on a node whose next place has yet to be taken up: `object_move` sets it
-        /// on an object's root, and `object_link_part` clears all four after copying a part's next
-        /// place into its own and its frame's. **Unknown:** the other three, and which routine
-        /// takes up a root's next place.
-        _unknown_0: u4,
+        /// Set while the node's next place is waiting to be committed. `object_move` sets it on an
+        /// object's root; `node_tree_update` commits the place and clears it (`commitNext`), and
+        /// `object_link_part` clears it along with the next three bits.
+        next_pending: bool,
+        /// Set when `node_tree_update` commits a new place for the node, and cleared the next time
+        /// it visits the node. **Unknown:** what reads it.
+        _unknown_1: bool,
+        /// Set when `node_tree_update` commits a new place for the node. **Unknown:** what clears
+        /// or reads it.
+        _unknown_2: bool,
+        /// Cleared each time `node_tree_update` visits the node. **Unknown:** what sets or reads
+        /// it.
+        _unknown_3: bool,
         /// **Unknown.** Set by `node_draw` (`0x0049A8C0`). Cycling subtargets passes over a component
         /// with it.
         _unknown_4: bool,
@@ -104,7 +112,25 @@ pub const Node = extern struct {
         _unknown_14: u18,
     };
 
+    /// The first step of `node_tree_update` for a node: clears flag bits 1 and 3, and if the
+    /// node's next place is pending, commits it. The game copies the whole block from
+    /// `next_position` to the end of `_unknown_8c` over the block from `position` to the end of
+    /// `_unknown_44`, then clears `next_pending` and sets bits 1 and 2.
+    pub fn commitNext(node: *Node) void {
+        node.flags._unknown_1 = false;
+        node.flags._unknown_3 = false;
+        if (!node.flags.next_pending) return;
+        node.position = node.next_position;
+        node.orientation = node.next_orientation;
+        node._unknown_44 = node._unknown_8c;
+        node.flags.next_pending = false;
+        node.flags._unknown_1 = true;
+        node.flags._unknown_2 = true;
+    }
+
     comptime {
+        assert(@offsetOf(Node, "next_position") - @offsetOf(Node, "position") == 0x48);
+        assert(@offsetOf(Node, "part") - @offsetOf(Node, "next_position") == 0x48);
         assert(@bitOffsetOf(Flags, "hidden") == 5);
         assert(@bitOffsetOf(Flags, "component") == 8);
         assert(@bitOffsetOf(Flags, "targetable") == 13);
@@ -117,6 +143,20 @@ pub const Node = extern struct {
         assert(@sizeOf(Node) == 0x104);
     }
 };
+
+/// `node_tree_update` (`0x00476C90`), which `simulation_step` runs for every live object at the
+/// start of each step, before the objects move. For the object's root and each descendant that is
+/// animating, it commits the node's pending next place (`Node.commitNext`), advances the node's
+/// animation and fires its keyframe events. So an object moves from the place the previous step
+/// worked out, and until the next step its `position` stays one step behind `next_position`, which
+/// is what the rest of the game reads as its place.
+///
+/// Ported so far: committing the root's next place. Not yet ported: the animation, and the walk
+/// over the descendants, which descends into a child only while the child is animating (flag bit
+/// 11), is not hidden and doesn't have flag bit 7 set.
+pub fn updateTree(root: *Node) void {
+    root.commitNext();
+}
 
 /// The light mask `node_add_part` gives a part's Surrender object: a light reaches the object unless
 /// their masks share a bit (`docs/engine/rendering.md`).
@@ -708,6 +748,28 @@ fn distanceBrightness(away: f32) f32 {
 fn distanceSize(away: f32) f32 {
     const full = 6000;
     return if (away >= full) 1 else away / full;
+}
+
+test "Node.commitNext" {
+    var node: Node = std.mem.zeroes(Node);
+    node.next_position = .{ .x = 1, .y = 2, .z = 3 };
+    node.next_orientation = .{ 0, 1, 0, 1, 0, 0, 0, 0, 1 };
+    node._unknown_8c[0] = 7;
+    node.flags._unknown_3 = true;
+    // Nothing pending: only bits 1 and 3 are cleared.
+    node.commitNext();
+    try std.testing.expectEqual(0, node.position.x);
+    try std.testing.expect(!node.flags._unknown_3);
+    // Pending: the whole next block is committed, and the flags say so.
+    node.flags.next_pending = true;
+    node.commitNext();
+    try std.testing.expectEqual(node.next_position, node.position);
+    try std.testing.expectEqual(node.next_orientation, node.orientation);
+    try std.testing.expectEqual(7, node._unknown_44[0]);
+    try std.testing.expect(!node.flags.next_pending and node.flags._unknown_1 and node.flags._unknown_2);
+    // The next visit clears bit 1 again but leaves bit 2.
+    node.commitNext();
+    try std.testing.expect(!node.flags._unknown_1 and node.flags._unknown_2);
 }
 
 test lightMask {
