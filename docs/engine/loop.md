@@ -61,10 +61,10 @@ Control, and `objects_update` moves every object. Each frame, `mission_frame` fr
 between its last two steps before the camera's frame, and draws them after it.
 
 Ported so far: the clocks, the pacing, the keyboard and the joystick, which the simulation step
-reads 25 times a second as `read_keyboard` and `read_joystick` do rather than once a frame, and the
+reads 25 times a second as `read_keyboard` and `read_joystick` do rather than once a frame, the
 step's work on the objects save the guns' step
-([#38](https://github.com/vdmkenny/openreliant/issues/38)). The port has no orders yet
-([#32](https://github.com/vdmkenny/openreliant/issues/32)), so the player's controls always run.
+([#38](https://github.com/vdmkenny/openreliant/issues/38)), and each frame's orders and framing
+(`main.missionFrame`), which is what a mission and the sandbox both run.
 Not yet: the mouse, the missiles and bullets the step moves after `objects_update`, the collisions
 ([#40](https://github.com/vdmkenny/openreliant/issues/40)), the countdown `game_tick` steps once a
 second, and the sound streaming that shares `tick_timer`.

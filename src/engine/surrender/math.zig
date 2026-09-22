@@ -59,6 +59,12 @@ pub fn transform(m: Matrix, v: Vector) Vector {
     };
 }
 
+/// The third column of `m`, which for an orientation is the axis its nose points along
+/// (`mat3_forward`, `0x004C18A0`).
+pub fn forward(m: Matrix) Vector {
+    return .{ m[2], m[5], m[8] };
+}
+
 /// The transpose of `m` times `v`: for a rotation, `v` turned back (`vec3_turn_back`,
 /// `0x004C2310`; `mat3_transform_transposed`, `0x004C2370`).
 pub fn transformTransposed(m: Matrix, v: Vector) Vector {

@@ -26,7 +26,7 @@ support or condone piracy.
 
 OpenReliant is in early development. Right now you can fly any ship from the game, with the
 keyboard, a joystick or a gamepad, in a sandbox with the game's starfield, nebula and sun: the
-Reliant stands by, and a wing of Coalition fighters flies at you. The flight model, throttle,
+Reliant crawls past, and a wing of Coalition fighters flies in at you under the game's own orders. The flight model, throttle,
 afterburner and camera views (keys 1 to 8) are ported, including the cockpit view with the ship's
 cockpit model. Press F2 and F3 to switch ships, and F4 for another wing.
 
@@ -34,8 +34,8 @@ Parts of the HUD work: the targeting cluster, radar, status lights, readouts, an
 shield and blind fire toggles. The HUD panels (gunnery, damage, power and so on) open and close
 with their keys but don't show anything yet.
 
-There are no other ships, weapons, missions or sound yet. See the [milestones](../../milestones)
-for what's planned.
+Ships pass straight through each other, since collisions aren't ported, and there are no weapons,
+missions or sound yet. See the [milestones](../../milestones) for what's planned.
 
 ## Installing and playing
 

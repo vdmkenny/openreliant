@@ -22,6 +22,7 @@ const Pointer = engine.Pointer;
 const libcmt = @import("../libcmt.zig");
 const ai = @import("ai.zig");
 const camera = @import("camera.zig");
+const aigeneric = @import("aigeneric.zig");
 const gameobj = @import("gameobj.zig");
 const GameObject = gameobj.GameObject;
 const main = @import("main.zig");
@@ -303,6 +304,12 @@ pub const Slot = struct {
     /// Where its root's frame has it drawn (`objects.frameTree`), which stays put between the
     /// steps that move it.
     drawn: objects.Model.Local = .{},
+    /// Its stack of orders, the current one first, `GameObject.order_count` of them
+    /// (`GameObject.orders`), which the game allocates with the object's first order.
+    orders: [aigeneric.max_stack]aigeneric.Entry = @splat(std.mem.zeroes(aigeneric.Entry)),
+    /// What the current order keeps between its updates (`GameObject.order_state`), allocated with
+    /// the stack.
+    state: aigeneric.State = .{ .bytes = @splat(0) },
 };
 
 /// `game_objects` (`0x00587CE0`), the GO array: 400 slots, none ever empty. As a mission starts
@@ -321,6 +328,9 @@ pub const Objects = struct {
     /// `player_index` (`0x005883FA`): the player's slot, the first in a single-player game.
     player: u16 = 0,
     types: [ship_type_count]TypeUse = @splat(.{}),
+    /// `0x005185AC`: the tick at which `aigeneric.ordersUpdate` next clears what every object has
+    /// lately taken.
+    damage_cleared_at: u32 = 0,
 
     /// Every slot standing in, as a mission's start leaves them (`reset`), made in `gpa`.
     pub fn create(gpa: Allocator, random: *libcmt.Rand) Allocator.Error!*Objects {
@@ -353,8 +363,11 @@ pub const Objects = struct {
     }
 
     /// `object_reset` (`0x004688B0`): replaces the object in slot `index` with a new stand-in
-    /// flagged as one (`GameObject.Flags.standing_in`), and lets its nodes go. Its type's count of
-    /// objects stays as it was. Not ported yet: the orders it pops first (#32).
+    /// flagged as one (`GameObject.Flags.standing_in`), and lets its nodes go, its orders with
+    /// them. Its type's count of objects stays as it was.
+    ///
+    /// Not ported: the `exit` routines popping those orders would run, none of which is ported yet
+    /// ([#30](https://github.com/vdmkenny/openreliant/issues/30)).
     pub fn resetSlot(all: *Objects, index: u16, random: *libcmt.Rand) void {
         const slot = &all.slots[index];
         if (slot.model) |model| model.deinit(all.gpa);

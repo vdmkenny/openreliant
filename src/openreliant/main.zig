@@ -307,7 +307,6 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         .global_palette = global_palette,
     });
     defer sandbox.deinit();
-    try sandbox.start(@intCast(options.ship));
     var player: engine.input.Player = .{};
     var devices: engine.input.Devices = .{};
     // The game's settings file, which `load_key_config` reads the input settings from. If it's
@@ -330,6 +329,11 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     // The mission's clocks, which `mission_run` zeroes before it loops.
     var clock: game.main.Clock = .{};
     clock.start(platform.window.ticks());
+    try sandbox.start(.{
+        .world = .{ .objects = sandbox.objects, .player = &player, .view = view.view, .shake = &view.hit_shake },
+        .clock = &clock,
+        .devices = &devices,
+    }, @intCast(options.ship));
     _ = view.setView(startingView(sandbox.player(), view.cockpit_mode), sandbox.objects.player, false, false, 0);
     // A screenshot waits for the chase view to settle, a tick a frame, and for the second frame,
     // which draws the sun by how much of it the first found showing.
@@ -380,12 +384,14 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         // While the communications window is open the keys 1 to 8 are its menu's.
         devices.keyboard.numbers_taken = display.state.windows.status.get(.comms).phase == .open;
         const world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .view = view.view, .shake = &view.hit_shake };
+        const orders: game.aigeneric.Context = .{ .world = world, .clock = &clock, .devices = &devices };
         while (clock.nextTick(&devices, world)) |_| {}
         clock.frameBegin();
-        // Each frame, before anything is drawn, `mission_frame` has every object's frames drawn
-        // between its last two places, as far into the step as the clock is, and the camera
-        // follows the player's.
-        game.main.frameObjects(sandbox.objects, game.objects.stepFraction(&clock, options.smooth_motion));
+        // Each frame `mission_frame` runs every object's orders, which fly the ships and read the
+        // player's controls, and then, before anything is drawn, has every object's frames drawn
+        // between its last two places, as far into the step as the clock is; the camera follows the
+        // player's.
+        game.main.missionFrame(orders, game.objects.stepFraction(&clock, options.smooth_motion));
 
         const ticks: u32 = @intCast(@max(clock.frame_duration, 0));
         const at: u32 = @intCast(@max(clock.mission_ticks, 0));
@@ -399,7 +405,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
                 // Types whose files the game lacks are passed over; with none to go to, the
                 // sandbox starts again as it was.
                 const next: u8 = @intCast(candidate);
-                sandbox.start(next) catch |err| {
+                sandbox.start(orders, next) catch |err| {
                     if (next == was) return err;
                     std.log.warn("ship type {d} left out: {s}", .{ candidate, @errorName(err) });
                     continue;
@@ -410,7 +416,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             // A ship of another size wants another view to be seen in.
             _ = view.setView(startingView(sandbox.player(), view.cockpit_mode), sandbox.objects.player, false, true, at);
         }
-        if (devices.keyboard.pressed(f4, .none, true)) sandbox.bringWing();
+        if (devices.keyboard.pressed(f4, .none, true)) sandbox.bringWing(orders);
 
         // `frame_controls` and the camera run once a frame, over the ticks the frame spans.
         view.frameControls(&devices, sandbox.objects.player, ticks, at);
@@ -604,11 +610,13 @@ const Sandbox = struct {
         model: game.objects.Model,
     };
 
-    /// The Reliant, which stands still where the sandbox starts it: ahead of the player and
-    /// turned across its way, beyond the wing.
+    /// The Reliant, which the sandbox starts ahead of the player and turned across its way, beyond
+    /// the wing. It flies its heading at `reliant_speed`, a tenth of the 100 its type cruises at,
+    /// which carries it slowly across the player's way.
     const reliant_type = 0x0C;
     const reliant_at: math.Vector = .{ 6000, -9000, 48000 };
     const reliant_turn: f32 = 1.1;
+    const reliant_speed: i32 = 10;
     /// A wing: four Sabres, `wing_ahead` in front of the player and `wing_spacing` apart, near
     /// enough that their models are drawn: a fighter's last level of detail reaches 25000.
     const wing_type = 0x2B;
@@ -648,17 +656,26 @@ const Sandbox = struct {
     }
 
     /// Starts the mission again, as the game's does: every slot a stand-in, then the player in a
-    /// ship of `ship_type`, the Reliant and a wing. The types no object uses any more are let go.
-    /// Fails where the game has no model for the player's type.
-    fn start(sandbox: *Sandbox, ship_type: u8) !void {
+    /// ship of `ship_type` on its own controls, the Reliant flying its slow way across, and a wing.
+    /// The types no object uses any more are let go. Fails where the game has no model for the
+    /// player's type.
+    fn start(sandbox: *Sandbox, orders: game.aigeneric.Context, ship_type: u8) !void {
         sandbox.objects.reset(sandbox.random);
         const index = try sandbox.create(ship_type, @splat(0));
         if (sandbox.objects.slots[index].model == null) return error.NoModel;
+        // The order a mission's start gives the player's ship, which its controls fly it by.
+        _ = game.aigeneric.push(orders, index, .player_control, .none) catch |err| {
+            std.log.warn("the player's controls are left out: {s}", .{@errorName(err)});
+        };
         if (sandbox.create(reliant_type, reliant_at)) |reliant| {
             const slot = &sandbox.objects.slots[reliant];
             game.objects.setOrientation(&slot.object, &slot.drawn, math.rotation(.y, reliant_turn));
+            // Fly with nothing to fly to holds the heading it starts on, at the speed in its data.
+            if (game.aigeneric.push(orders, reliant, .fly, .none) catch false) {
+                if (game.aigeneric.current(sandbox.objects, reliant)) |entry| entry.data.fly = reliant_speed;
+            }
         } else |err| std.log.warn("the Reliant is left out: {s}", .{@errorName(err)});
-        sandbox.bringWing();
+        sandbox.bringWing(orders);
         sandbox.types.sweep(&sandbox.objects.types);
         if (sandbox.player_type != ship_type or sandbox.cockpit == null) try sandbox.loadCockpit(ship_type);
         sandbox.player_type = ship_type;
@@ -668,11 +685,10 @@ const Sandbox = struct {
         return game.create.createObject(sandbox.objects, sandbox.tables, sandbox.types.interface(), null, ship_type, at, sandbox.random);
     }
 
-    /// A wing of fighters `wing_ahead` in front of the player, side by side and facing it. The
-    /// orders that would fly them aren't ported yet (#32), so each is set going at its full
-    /// throttle, which carries it straight at where the player was. A wing past the last slot is
-    /// left out.
-    fn bringWing(sandbox: *Sandbox) void {
+    /// A wing of fighters `wing_ahead` in front of the player, side by side and facing it, each
+    /// under a Fly order aimed at the player, which flies it in at full throttle and stops it once
+    /// it is there. A wing past the last slot is left out.
+    fn bringWing(sandbox: *Sandbox, orders: game.aigeneric.Context) void {
         const root = sandbox.player().object.root;
         const from = game.gameobj.vector(root.next_position);
         const facing = math.product(root.next_orientation, math.rotation(.y, std.math.pi));
@@ -685,7 +701,9 @@ const Sandbox = struct {
             };
             const slot = &sandbox.objects.slots[index];
             game.objects.setOrientation(&slot.object, &slot.drawn, facing);
-            slot.object.throttle = 1;
+            _ = game.aigeneric.pushShip(orders, index, .fly, sandbox.objects.player, -1) catch |err| {
+                std.log.warn("a Sabre flies nowhere: {s}", .{@errorName(err)});
+            };
         }
     }
 
@@ -945,6 +963,20 @@ test nextShipType {
     const last = nextShipType(0, -1);
     try std.testing.expect(game.create.models.ship_types[last].model != null);
     try std.testing.expectEqual(0, nextShipType(last, 1));
+}
+
+test "the sandbox's Reliant flies at a crawl" {
+    // Its type cruises at 100 (`shipstats.bin`, type 0x0C). Fly holds the throttle at the speed in
+    // its data over that, and the flight model settles the nose speed there, so the sandbox's
+    // Reliant makes its 10 a step.
+    const cruise = 100;
+    var flight = game.gameobj.testing.flight;
+    flight.max_speed = cruise;
+    var object = game.gameobj.testing.object();
+    object.throttle = @as(f32, @floatFromInt(Sandbox.reliant_speed)) / cruise;
+    for (0..200) |_| game.motion.fly(&object, &flight, .chase, game.motion.Motion.forward.thrust());
+    const crawl: f32 = @floatFromInt(Sandbox.reliant_speed);
+    try std.testing.expectApproxEqAbs(crawl, math.length(game.gameobj.vector(object.velocity)), 0.01);
 }
 
 test Options {

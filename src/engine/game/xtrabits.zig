@@ -81,6 +81,24 @@ pub fn objectRandom15(object: *GameObject) u15 {
     return random.rand();
 }
 
+/// `object_random` (`0x004ADD10`): the object's own random number from 0 to 1, which is
+/// `objectRandom15` over 32767. **Unverified:** it lies after this file's known code, before
+/// `deathmatch.cpp`'s.
+pub fn objectRandom(object: *GameObject) f32 {
+    return @as(f32, @floatFromInt(objectRandom15(object))) / 32767;
+}
+
+test objectRandom {
+    var object = std.mem.zeroes(GameObject);
+    object.random_seed = 1;
+    try std.testing.expectApproxEqAbs(41.0 / 32767.0, objectRandom(&object), 1e-9);
+    // Every number it gives lies between 0 and 1.
+    for (0..100) |_| {
+        const number = objectRandom(&object);
+        try std.testing.expect(number >= 0 and number <= 1);
+    }
+}
+
 test objectRandom15 {
     // From the seed the runtime starts on, the runtime's first number, and the seed stepped on.
     var object = std.mem.zeroes(GameObject);
