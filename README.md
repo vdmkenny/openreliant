@@ -22,8 +22,8 @@ support or condone piracy.
 
 ## Status
 
-Early, but it flies. OpenReliant is a flying sandbox: pick any of the game's ships and fly it
-around an empty stretch of space, with the starfield, nebula and sun from the game's files. The
+Early, but it flies. For now it runs as a sandbox: pick any of the game's ships and fly it around
+an empty stretch of space, with the starfield, nebula and sun from the game's files. The
 flight model, throttle and afterburner are ported from the game, and so are the camera views on
 keys 1 to 8, including the cockpit, where the ship's cockpit model sways as you turn, and the chase
 view. F2 and F3 switch ships.
