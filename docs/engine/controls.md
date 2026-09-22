@@ -80,10 +80,11 @@ for as long as its button or key is down; with it, only once for each press.
    the button is not latched, and latches it; `read_joystick` clears the latch in
    `button_latched` (`0x5DDC98`) once the button is up.
 2. **The key.** The keys 1 to 8, scan codes 2 to 9, never count while the word at `0x501EE8` is
-   3. **Unverified:** that word is the state of the HUD instrument numbered 11, whose open request
-   `OpenInstrument` sets at `0x501F0C`. Otherwise, without `once`, a key bound with no modifier
-   counts while it is down and neither Shift nor Ctrl is; a key with a modifier counts while it
-   and either key of the modifier are down. With `once`, `control_active` asks `key_pressed`.
+   3: that is the phase of the display's window 11, the communications menu, open, whose number
+   keys call the units in range ([`hud.md`](hud.md#the-windows)). Otherwise, without `once`, a key
+   bound with no modifier counts while it is down and neither Shift nor Ctrl is; a key with a
+   modifier counts while it and either key of the modifier are down. With `once`,
+   `control_active` asks `key_pressed`.
 
 `key_pressed` (`0x004BD570`) takes a scan code, a modifier and `once`, and is what the front-end
 screens use too. It keeps a latch for each key, `key_latched` (`0x5D54EC`), and one for each

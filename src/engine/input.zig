@@ -134,6 +134,10 @@ pub const Keyboard = struct {
     shift_latched: bool = false,
     control_latched: bool = false,
     alt_latched: bool = false,
+    /// Whether the keys 1 to 8 are the radio menu's, so that no action bound to them counts: while
+    /// the display's communications window is open, which `control_active` tests at `0x00501EE8`,
+    /// that window's phase. The port sets it as each frame starts.
+    numbers_taken: bool = false,
 
     /// What `read_keyboard` (`0x004BD490`) does once it has the keys: frees the latch of each key
     /// that is up, and of each modifier with both its keys up.
@@ -202,10 +206,10 @@ pub const Keyboard = struct {
 
 /// Whether an action is active by its binding (`control_active`, `0x00412630`): its key with its
 /// modifier, or with none while neither Shift nor Ctrl is down; with `once`, as `key_pressed` counts
-/// it. While `numbers_taken`, the word at `0x00501EE8` being 3, the keys 1 to 8 count for nothing.
-/// Not yet ported: the joystick's buttons.
-pub fn controlActive(keyboard: *Keyboard, binding: controls.Binding, once: bool, numbers_taken: bool) bool {
-    if (numbers_taken and binding.key > 1 and binding.key < 10) return false;
+/// it. While the keyboard's `numbers_taken`, the keys 1 to 8 count for nothing. Not yet ported: the
+/// joystick's buttons.
+pub fn controlActive(keyboard: *Keyboard, binding: controls.Binding, once: bool) bool {
+    if (keyboard.numbers_taken and binding.key > 1 and binding.key < 10) return false;
     const key = std.math.lossyCast(u8, binding.key);
     if (once) return keyboard.pressed(key, binding.modifier, true);
     return switch (binding.modifier) {
@@ -241,16 +245,18 @@ test controlActive {
     var keyboard: Keyboard = .{};
     const cockpit = controls.binding(.cockpit_camera);
     keyboard.down[cockpit.key] = true;
-    try std.testing.expect(controlActive(&keyboard, cockpit, false, false));
-    try std.testing.expect(!controlActive(&keyboard, cockpit, false, true));
-    try std.testing.expect(controlActive(&keyboard, cockpit, true, false));
-    try std.testing.expect(!controlActive(&keyboard, cockpit, true, false));
+    try std.testing.expect(controlActive(&keyboard, cockpit, false));
+    keyboard.numbers_taken = true;
+    try std.testing.expect(!controlActive(&keyboard, cockpit, false));
+    keyboard.numbers_taken = false;
+    try std.testing.expect(controlActive(&keyboard, cockpit, true));
+    try std.testing.expect(!controlActive(&keyboard, cockpit, true));
     // A binding with Ctrl counts only with it held.
     const smart = controls.binding(.smart_target);
     keyboard.down[smart.key] = true;
-    try std.testing.expect(!controlActive(&keyboard, smart, false, false));
+    try std.testing.expect(!controlActive(&keyboard, smart, false));
     keyboard.down[scan.left_control] = true;
-    try std.testing.expect(controlActive(&keyboard, smart, false, false));
+    try std.testing.expect(controlActive(&keyboard, smart, false));
 }
 
 test {
@@ -286,7 +292,7 @@ const throttle_step: f32 = 0.02;
 const bank_share: f32 = 0.5;
 
 fn active(keyboard: *Keyboard, action: controls.Action, once: bool) bool {
-    return controlActive(keyboard, controls.binding(action), once, false);
+    return controlActive(keyboard, controls.binding(action), once);
 }
 
 /// `player_throttle_keys` (`0x004132C0`): ACCELERATE and DECELERATE step the throttle setting and
@@ -393,17 +399,98 @@ pub fn setSpectralShields(display: *hud.State, object: *gameobj.GameObject, on: 
     shields.setting = if (on) .on else .off;
 }
 
-/// The device keys of `frame_controls`, in its order: TOGGLE BLINDFIRE flips blind fire on a ship
-/// that carries it, ECM turns the ECM the other way from the object's flag, and SPECTRAL SHIELDS,
-/// outside a multiplayer game, does the same for the spectral shields. Each key is read whether
-/// or not the ship carries its device. Not yet ported: Betty's word for each, and the display's
-/// sounds.
-pub fn frameDeviceKeys(display: *hud.State, keyboard: *Keyboard, object: *gameobj.GameObject, multiplayer: bool) void {
+/// The keys `frame_controls` reads after the targeting's, in its order:
+///
+/// - TOGGLE BLINDFIRE flips blind fire on a ship that carries it.
+/// - COMMS WINDOW opens the radio's window held, and closes it once it is open.
+/// - WING STATUS WINDOW closes the objectives, then opens the wing status window or, up already,
+///   closes it; its locked form holds the window open as it opens it.
+/// - GUNNERY WINDOW opens the gunnery window, and its locked form opens it held or closes it once
+///   it is open; SYNCHRONISE GUNS opens it too and flips whether the guns fire together.
+/// - ECM turns the ECM the other way from the object's flag.
+/// - DAMAGE WINDOW and its locked form open and close the damage window as the wing status keys
+///   do theirs.
+/// - OBJECTIVES WINDOW closes the wing status window and opens the objectives.
+/// - While the radio's window is shut, each of the power keys held opens the power window.
+///   POWERBALL WINDOW held keeps it open, and its locked form holds it open or closes it.
+/// - SPECTRAL SHIELDS, outside a multiplayer game, turns the spectral shields the other way.
+///
+/// A device's key is read whether or not the ship carries the device. COMMS WINDOW is read only
+/// while the player's order is Player Control, as it always is in the sandbox.
+///
+/// Not yet ported: FULL GUNS, and GUNNERY WINDOW's turn to the next group of guns, which need the
+/// guns the sandbox does not fit; the radio's menu COMMS WINDOW starts; OBJECTIVES WINDOW paging
+/// through the objectives once they are open; the shares the power keys give; SHIELD BALANCING,
+/// RADAR RANGES, PRIMARY TARGET and the orders to the wingmen; Betty's word for a device; and the
+/// display's sounds.
+pub fn frameKeys(display: *hud.State, keyboard: *Keyboard, object: *gameobj.GameObject, multiplayer: bool) void {
+    const windows = &display.windows;
     if (active(keyboard, .toggle_blindfire, true) and display.blind_fire_fitted) {
         display.blind_fire = !display.blind_fire;
     }
+    if (active(keyboard, .comms_window, true)) {
+        const comms = windows.status.getPtr(.comms);
+        switch (comms.phase) {
+            .shut => if (windows.open(.comms, multiplayer)) {
+                comms.held = true;
+            },
+            .open => {
+                comms.held = false;
+                windows.close(.comms);
+            },
+            .opening, .closing => {},
+        }
+    }
+    for ([_]controls.Action{ .wing_status_window, .wing_status_window_locked }) |action| {
+        if (!active(keyboard, action, true)) continue;
+        if (windows.up(.objectives)) windows.close(.objectives);
+        if (windows.up(.wing_status)) {
+            windows.close(.wing_status);
+        } else if (windows.open(.wing_status, multiplayer) and action == .wing_status_window_locked) {
+            windows.status.getPtr(.wing_status).held = true;
+        }
+    }
+    if (active(keyboard, .gunnery_window, true)) _ = windows.open(.gunnery, multiplayer);
+    if (active(keyboard, .gunnery_window_locked, true)) {
+        if (windows.status.get(.gunnery).phase == .open) {
+            windows.close(.gunnery);
+        } else if (windows.open(.gunnery, multiplayer)) {
+            windows.status.getPtr(.gunnery).held = true;
+        }
+    }
+    if (active(keyboard, .synchronise_guns, true)) {
+        _ = windows.open(.gunnery, multiplayer);
+        object.gun_mode.synchronised = !object.gun_mode.synchronised;
+    }
     if (active(keyboard, .ecm, true) and display.devices.get(.ecm).setting != .absent) {
         setEcm(display, object, !object.flags.ecm);
+    }
+    for ([_]controls.Action{ .damage_window, .damage_window_locked }) |action| {
+        if (!active(keyboard, action, true)) continue;
+        if (windows.up(.damage)) {
+            windows.close(.damage);
+        } else if (windows.open(.damage, multiplayer) and action == .damage_window_locked) {
+            windows.status.getPtr(.damage).held = true;
+        }
+    }
+    if (active(keyboard, .objectives_window, true)) {
+        if (windows.up(.wing_status)) windows.close(.wing_status);
+        if (windows.status.get(.objectives).phase != .open) _ = windows.open(.objectives, multiplayer);
+    }
+    if (windows.status.get(.comms).phase == .shut) {
+        for ([_]controls.Action{ .full_power_to_gunnery, .full_power_to_engines, .full_power_to_shields, .equalize_power }) |action| {
+            if (active(keyboard, action, false)) _ = windows.open(.power, multiplayer);
+        }
+    }
+    display.power_held = active(keyboard, .powerball_window, false);
+    if (display.power_held) _ = windows.open(.power, multiplayer);
+    if (active(keyboard, .powerball_window_locked, true)) {
+        if (windows.status.get(.power).phase == .open) {
+            windows.close(.power);
+        } else if (windows.open(.power, multiplayer)) {
+            windows.status.getPtr(.power).held = true;
+            display.power_held = true;
+        }
     }
     if (!multiplayer and active(keyboard, .spectral_shields, true) and
         display.devices.get(.spectral_shields).setting != .absent)
@@ -412,7 +499,7 @@ pub fn frameDeviceKeys(display: *hud.State, keyboard: *Keyboard, object: *gameob
     }
 }
 
-test frameDeviceKeys {
+test frameKeys {
     var object: gameobj.GameObject = std.mem.zeroes(gameobj.GameObject);
     var keyboard: Keyboard = .{};
     var display: hud.State = .{};
@@ -420,16 +507,16 @@ test frameDeviceKeys {
     // ECM turns the ECM on, and again off.
     const ecm = controls.binding(.ecm).key;
     keyboard.down[ecm] = true;
-    frameDeviceKeys(&display, &keyboard, &object, false);
+    frameKeys(&display, &keyboard, &object, false);
     try std.testing.expect(object.flags.ecm);
     try std.testing.expectEqual(.on, display.devices.get(.ecm).setting);
     keyboard.read();
-    frameDeviceKeys(&display, &keyboard, &object, false);
+    frameKeys(&display, &keyboard, &object, false);
     try std.testing.expect(object.flags.ecm);
     keyboard.down[ecm] = false;
     keyboard.read();
     keyboard.down[ecm] = true;
-    frameDeviceKeys(&display, &keyboard, &object, false);
+    frameKeys(&display, &keyboard, &object, false);
     try std.testing.expect(!object.flags.ecm);
     keyboard.down[ecm] = false;
 
@@ -437,20 +524,89 @@ test frameDeviceKeys {
     const shields = controls.binding(.spectral_shields).key;
     display.devices.getPtr(.spectral_shields).setting = .absent;
     keyboard.down[shields] = true;
-    frameDeviceKeys(&display, &keyboard, &object, false);
+    frameKeys(&display, &keyboard, &object, false);
     try std.testing.expect(!object.flags.spectral_shields);
     keyboard.down[shields] = false;
     keyboard.read();
     display.devices.getPtr(.spectral_shields).setting = .off;
     keyboard.down[shields] = true;
-    frameDeviceKeys(&display, &keyboard, &object, true);
+    frameKeys(&display, &keyboard, &object, true);
     try std.testing.expect(!object.flags.spectral_shields);
     keyboard.down[shields] = false;
     keyboard.read();
     keyboard.down[shields] = true;
-    frameDeviceKeys(&display, &keyboard, &object, false);
+    frameKeys(&display, &keyboard, &object, false);
     try std.testing.expect(object.flags.spectral_shields);
     try std.testing.expectEqual(.on, display.devices.get(.spectral_shields).setting);
+}
+
+test "the window keys" {
+    var object: gameobj.GameObject = std.mem.zeroes(gameobj.GameObject);
+    var keyboard: Keyboard = .{};
+    var display: hud.State = .{};
+    const Press = struct {
+        keyboard: *Keyboard,
+        display: *hud.State,
+        object: *gameobj.GameObject,
+
+        /// A press of `action`'s key, with its modifier, for one frame, and its release.
+        fn once(press: @This(), action: controls.Action) void {
+            const binding = controls.binding(action);
+            const key = std.math.lossyCast(u8, binding.key);
+            const modifier: ?u8 = switch (binding.modifier) {
+                .shift => scan.left_shift,
+                .control => scan.left_control,
+                else => null,
+            };
+            press.keyboard.down[key] = true;
+            if (modifier) |held| press.keyboard.down[held] = true;
+            frameKeys(press.display, press.keyboard, press.object, false);
+            press.keyboard.down[key] = false;
+            if (modifier) |held| press.keyboard.down[held] = false;
+            press.keyboard.read();
+        }
+    };
+    const press: Press = .{ .keyboard = &keyboard, .display = &display, .object = &object };
+    const windows = &display.windows;
+
+    // DAMAGE WINDOW opens the damage window, and pressed while it is up closes it.
+    press.once(.damage_window);
+    try std.testing.expectEqual(.opening, windows.status.get(.damage).phase);
+    try std.testing.expect(!windows.status.get(.damage).held);
+    press.once(.damage_window);
+    try std.testing.expectEqual(.closing, windows.status.get(.damage).phase);
+
+    // The locked form of GUNNERY WINDOW holds its window, and once it is open closes it.
+    press.once(.gunnery_window_locked);
+    try std.testing.expect(windows.status.get(.gunnery).held);
+    _ = windows.step(.gunnery, hud.windows.opening_ticks);
+    press.once(.gunnery_window_locked);
+    try std.testing.expectEqual(.closing, windows.status.get(.gunnery).phase);
+
+    // WING STATUS WINDOW takes the objectives down, and OBJECTIVES WINDOW the wing status.
+    press.once(.objectives_window);
+    press.once(.wing_status_window);
+    try std.testing.expectEqual(.closing, windows.status.get(.objectives).phase);
+    try std.testing.expectEqual(.opening, windows.status.get(.wing_status).phase);
+    press.once(.objectives_window);
+    try std.testing.expectEqual(.closing, windows.status.get(.wing_status).phase);
+
+    // SYNCHRONISE GUNS opens the gunnery window too, and flips the guns' firing together.
+    press.once(.synchronise_guns);
+    try std.testing.expect(object.gun_mode.synchronised);
+
+    // COMMS WINDOW opens the radio's window held; while it is up the power keys do nothing.
+    press.once(.comms_window);
+    try std.testing.expect(windows.status.get(.comms).held);
+    press.once(.full_power_to_shields);
+    try std.testing.expectEqual(.shut, windows.status.get(.power).phase);
+
+    // POWERBALL WINDOW held keeps the power window up and says so for the frame.
+    press.once(.powerball_window);
+    try std.testing.expectEqual(.opening, windows.status.get(.power).phase);
+    try std.testing.expect(display.power_held);
+    press.once(.damage_window);
+    try std.testing.expect(!display.power_held);
 }
 
 test playerControls {

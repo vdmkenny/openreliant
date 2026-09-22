@@ -278,6 +278,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         // takes one tick a frame so that the camera settles the same way on every run.
         const now = platform.window.ticks();
         if (frames_left != null) clock.advanceBy(now, 1) else clock.advanceTo(now);
+        // While the communications window is open the keys 1 to 8 are its menu's.
+        keyboard.numbers_taken = display.state.windows.status.get(.comms).phase == .open;
         while (clock.nextTick(&keyboard)) |stepped| {
             if (!stepped) continue;
             // What `simulation_step` runs in order: the player's orders, then the objects move.
@@ -332,9 +334,9 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         const ticks: u32 = @intCast(@max(clock.frame_duration, 0));
         const at: u32 = @intCast(@max(clock.mission_ticks, 0));
         view.frameControls(&keyboard, 0, ticks, at);
-        // After the camera's keys, `frame_controls` reads the targeting keys, then the devices'.
-        game.hud.smartTargetKey(&display.state, &keyboard);
-        engine.input.frameDeviceKeys(&display.state, &keyboard, &ship.live, false);
+        // After the camera's keys, `frame_controls` reads the targeting keys, then its own.
+        game.hud.targetKeys(&display.state, &keyboard, false);
+        engine.input.frameKeys(&display.state, &keyboard, &ship.live, false);
         // What moves the cockpit's model: the ship's rates of turn over its full ones, and its
         // speed over its cruise speed.
         const cockpit_input: ?camera.Cockpit.Input = if (ship.cockpit) |*cockpit| input: {
@@ -387,7 +389,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .overlay = display.overlay(),
             .cockpit = if (ship.cockpit) |*cockpit| &cockpit.model else null,
             .backing = backing,
-            .kills_shown = engine.input.controlActive(&keyboard, engine.input.controls.binding(.display_kills), false, false),
+            .kills_shown = engine.input.controlActive(&keyboard, engine.input.controls.binding(.display_kills), false),
             .attachments = .{
                 .camera = view.place.position,
                 .frame_start = clock.frame_start,
@@ -655,8 +657,16 @@ const Display = struct {
         }
         // The other views are named instead.
         try game.hud.drawViewName(&display.font, display.gpa, display.target, display.screen, display.last_view, display.strings.*, white, scale);
-        if (!instrumented) return;
+        if (instrumented) try display.drawInstruments(white, scale);
+        // The windows move on in every view, after the instruments.
+        try state.windows.frame(&display.art, display.gpa, display.target, display.screen, display.last_view, frame_duration, white, scale);
+    }
 
+    /// What `hud_draw` draws only in the view ahead from the cockpit.
+    fn drawInstruments(display: *Display, white: [4]f32, scale: f32) (spr.Error || Allocator.Error)!void {
+        const frame_duration = display.clock.frame_duration;
+        const live = &display.ship.live;
+        const state = &display.state;
         for ([_]game.hud.Readout{ .fuel, .skull, .coil }) |readout| {
             if (!state.shows(readout, frame_duration)) continue;
             const value: i32 = switch (readout) {

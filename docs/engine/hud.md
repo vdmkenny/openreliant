@@ -5,9 +5,12 @@ display and the text. Its code lies between `hog_SND.CPP`'s and `hudmovie.cpp`'s
 only `hud_init` asserts, so the source map places that stretch alone.
 
 The port draws the readouts, the clock, the status lights with the devices' charges, the jump
-prompt, the eject marker, the scanner and the ship status indicator's schematic and shields
-([`engine/game/hud.zig`](../../src/engine/game/hud.zig)), reaching them as the engine does, through
-the overlay `srcore.render` runs after a frame's layers and before the scene ends.
+prompt, the eject marker, the scanner, the ship status indicator's schematic and shields, the
+targeting cluster, the radar's rings and the windows' frames
+([`engine/game/hud.zig`](../../src/engine/game/hud.zig),
+[`engine/game/hud/windows.zig`](../../src/engine/game/hud/windows.zig)), reaching them as the
+engine does, through the overlay `srcore.render` runs after a frame's layers and before the scene
+ends.
 
 ## The elements
 
@@ -21,23 +24,23 @@ been found. An element whose code is not found yet is marked so.
 | Directional calipers | the display's edges | | the direction and range of a target out of sight | Not found |
 | Missile lock ring | round the target | | a ring that closes in round the target and turns white once a missile has locked, with a tone | Not found |
 | Jump icon | above the middle | J | the prompt to press JUMP DRIVE, once the mission has a jump ready | [The jump prompt](#the-jump-prompt-the-eject-marker-and-the-scanner) |
-| Target display | foot, right | | the target's image with its shields and armour in a ring, its name, its type, its range and its speed; a larger form for a big target, with its current subtarget and a bar for each | **Unverified:** `hud_ship_status` in its second mode draws the small form. The large form is not found |
+| Target display | foot, right | | the target's image with its shields and armour in a ring, its name, its type, its range and its speed; a larger form for a big target, with its current subtarget and a bar for each | [Windows](#the-windows) 3 and 8. Window 3, the small form, draws `hud_ship_status` in its second mode for the target, its range and its speed; window 8 the target's own picture, its name, its subtarget, its range and its speed. Their frames are ported; what they show is not |
 | Subtarget | on the target's model | S, SHIFT+S | the parts of the subtarget picked out in red | `hud_subtarget` (`0x0048CC30`), which walks the target's assembly by `link_id` |
 | Radar | foot, middle | V | three rings with the ship at their middle and a wedge for its view ahead; each object a dot, red for hostile, green for friendly, blue for one calling on the radio, on a line up or down from the rings by its height. V narrows and widens its range, the middle ring filling the display at the narrowest | `hud_radar` (`0x00488BD0`), [The radar](#the-radar). The rings are ported; the dots are not |
 | Ship status | foot, left of middle | always shown | the ship's image in two rings of segments, forward, aft and the two sides: shields outside, armour inside. A shield dims as it wears; an armour segment goes as it is lost. Shifting power fore or aft doubles the shields there | `hud_ship_status` (`0x00489350`). The schematic and the shields are ported; the armour is not yet found |
-| Missile display | top, middle | M | the missile's name, the ship's missiles in a ring, how many of the chosen one are left, and the one armed at six o'clock. Comma and full stop turn the ring | Not found |
-| Mission objectives | right | B | the mission's goals, the current one first; B pages through them | Not found |
-| Gunnery display | foot, left | G | the gun's name, the ship as a wire frame with the gun lit, the rounds left for a gun that fires them, and whether the guns fire together or in turn. G picks the next gun, F fires them all, CTRL and G switches the two ways of firing them all | Not found |
-| Damage display | top, right | D | a segmented bar each for the weapons, the engines and the shields, shortening with damage | Not found |
-| Power distribution | left | P | the guns, the shields and the engines round a ball, each with its share of the power, a third each at first. P held with the stick moves power toward one; U, I and O give all of it to the guns, the engines or the shields, and `[` shares it out again | `hud_init` works out the ball's shading from `powerball.tga`. The display itself is not found |
-| Communications | top, left | C | the units in range, numbered, which the number keys call. Landing, rearming and a nanny ship are asked of the base ship | **Unverified:** `0x0048CF20`, which draws the lines of the table at `0x0057BC5C` eleven apart |
-| Wing status | right | X | the wing's fighters in a grid, the player's wing first, each with a bar for its damage | Not found |
+| Missile display | top, middle | M | the missile's name, the ship's missiles in a ring, how many of the chosen one are left, and the one armed at six o'clock. Comma and full stop turn the ring | [Window](#the-windows) 2: the ring from the table at `0x00501CC8`, ten entries of five halfwords. The frame is ported; what it shows is not |
+| Mission objectives | right | B | the mission's goals, the current one first; B pages through them | [Window](#the-windows) 10: the mission's objectives from the table at `0x00504120`, ten a mission. The frame is ported; what it shows is not |
+| Gunnery display | foot, left | G | the gun's name, the ship as a wire frame with the gun lit, the rounds left for a gun that fires them, and whether the guns fire together or in turn. G picks the next gun, F fires them all, CTRL and G switches the two ways of firing them all | [Window](#the-windows) 1: the ship's wire frame is the shape `0x005883C0` names. The frame is ported; what it shows is not |
+| Damage display | top, right | D | a segmented bar each for the weapons, the engines and the shields, shortening with damage | [Window](#the-windows) 4: the bars read the player's `+0x66C`, `+0x668` and `+0x664`. The frame is ported; what it shows is not |
+| Power distribution | left | P | the guns, the shields and the engines round a ball, each with its share of the power, a third each at first. P held with the stick moves power toward one; U, I and O give all of it to the guns, the engines or the shields, and `[` shares it out again | [Window](#the-windows) 7: the ball, shaded by the table `hud_init` works out from `powerball.tga`, and the three shares, from the player's `+0x728` and `+0x72C`. The frame is ported; what it shows is not |
+| Communications | top, left | C | the units in range, numbered, which the number keys call. Landing, rearming and a nanny ship are asked of the base ship | [Window](#the-windows) 11, which draws the radio's menu with `0x00453A70`. The frame is ported; what it shows is not |
+| Wing status | right | X | the wing's fighters in a grid, the player's wing first, each with a bar for its damage | [Window](#the-windows) 13. The frame is ported; what it shows is not |
 | Readouts | top, right of middle | | the seconds of afterburner fuel, a tally under a skull, and the countermeasures left | [The readouts](#the-readouts) |
 | Status lights | top, left of middle | | the systems that are on: match speed, blind fire, smart targeting, which makes any ship fired on the target, reverse thrust, the spectral shields and the cloak with a bar for the time left, the ECM | [The status lights](#the-status-lights) |
 | Clock | foot, middle, over the radar | | the time played | [`hud.zig`](../../src/engine/game/hud.zig) |
 
-Each panel but the ship status comes and goes as the game needs it, which is the element state
-machine at `0x00501D30`; SHIFT with a panel's key holds it on.
+Each panel but the ship status is one of the display's [windows](#the-windows), which come and
+go as the game needs them; SHIFT with a panel's key holds it on.
 
 ## How it is reached
 
@@ -50,10 +53,9 @@ allocates the file's work buffer, takes `oldpalette.tga` and `powerball.tga`, an
 by 62 table of shading the power ball is drawn from: the power distribution display, which the
 game binds as POWERBALL WINDOW.
 
-`mission_frame` itself calls only three of the file's routines: the element state machine
-(`0x0048B510` and `0x0048B590`), which runs each element through states 1, 2 and 3 on a timer of 60
-over 20-byte records based at `0x00501D30`; the subtarget (`0x0048CC30`), which walks the target's
-assembly by `link_id`; and a utility (`0x0048CEB0`).
+`mission_frame` itself calls only three of the file's routines: the windows' `hud_window_open`
+(`0x0048B510`) and `hud_window_close` (`0x0048B590`); the subtarget (`0x0048CC30`), which walks the
+target's assembly by `link_id`; and a utility (`0x0048CEB0`).
 
 ## Where an element stands
 
@@ -356,13 +358,93 @@ another block the global palette. The port does the same.
 The element names `hud_init` copies come from `0x00515D70`, which the decrypted dump holds as
 zeroes, so they are not readable from it.
 
+## The windows
+
+The display's panels are windows, fifteen records 40 bytes apart from `0x00501D30`: the window's
+phase (`+0x00`), where it stands as a fraction of the screen across and down (`+0x04`, `+0x08`),
+the pieces of its frame (`+0x0C` their count, from `+0x0E` their numbers), the ticks left before it
+closes (`+0x18`), the ticks it stays (`+0x1C`), how far it has opened (`+0x20`) and whether it is
+held open (`+0x24`).
+
+| Window | Place | Stays | Shows |
+| --- | --- | --- | --- |
+| 0 | top, left | 400 | **Unverified:** the face of whoever speaks on the radio, from the mission's films, with a caption; it closes when the film ends |
+| 1 | foot, left | 1200 | the gunnery display |
+| 2 | top, middle | 200 | the missile display |
+| 3 | foot, `0.7` across | 2000 | the target display's small form |
+| 4 | top, right | 1000 | the damage display |
+| 5, 6, 12 | top, left | 200, 200, 1000 | its frame alone; no key opens them |
+| 7 | left, middle | 1000 | the power distribution |
+| 8 | foot, right | 2000 | the target display's large form |
+| 9 | right, middle | 1000 | its frame alone; no key opens it |
+| 10 | right, middle | 1000 | the mission objectives |
+| 11 | top, left | 1500 | the communications menu |
+| 13 | right, middle | 1000 | the wing status |
+| 14 | top, left | 2000 | **Unknown:** what it shows |
+
+The phases are 0 shut, 1 opening, 2 closing and 3 open.
+
+- `hud_window_open` (`0x0048B510`) gives a window its full time to stay and, if it is shut, starts
+  it opening, not held. It does so whatever the phase, so a window that is closing carries on
+  closing. In a multiplayer game windows 2, 9 and 10 do not open.
+- `hud_window_close` (`0x0048B590`) starts a window that is open or opening closing, from its full
+  size however far it had opened, and lets go of it. For windows 3 and 8 it also draws what they
+  show into a second pane, `0x00566600`, which they close with.
+
+`hud_draw` runs every window in every view, after the instruments (`0x004863F3`):
+
+1. An opening window moves on by the frame's ticks, and at 60 is open; a closing one moves back,
+   and at 0 is shut.
+2. An opening or closing window is drawn, in the view ahead only, into a pane of 225 by 170
+   (`0x0057998C`), its place a pixel in from the pane's edge its place is at, from the table at
+   `0x00501F88`. `VFX_buffer_transform` then draws the pane onto the display scaled about that
+   place, `2 - t` times its size with `t` the ticks it has opened over 60, and with the place `2 - t`
+   times as far from the middle of the screen as its own. A window therefore opens shrinking from
+   twice its size into place from twice as far out, and closes the other way; what falls outside
+   the pane is cut off meanwhile.
+3. An open window counts its time down by the frame's ticks, and once its time has run out and
+   nothing holds it, starts closing. It is drawn in its place (`hud_window_draw`, `0x00486830`)
+   that frame whichever it did.
+
+`hud_window_draw` draws the window's frame in the view ahead, then what it shows. A frame is one or
+two of the pieces at `0x00502078`, 20 bytes each: a shape of the display's set, drawn at an offset
+from the window's place, the record's floats cut down to whole numbers, and a mode for
+`VFX_shape_draw_mirrored` at `+0x0E`, 1 flipping it across, 2 down. The pieces are dark red
+grids, the walls of the corner or edge the window stands in.
+
+In mission 25, until `0x00587CDC` is set, windows 1, 2 and 13 neither move on nor are drawn.
+
+The keys, which `frame_controls` and `hud_target_keys` read:
+
+| Key | Does |
+| --- | --- |
+| COMMS WINDOW | opens window 11 held, and starts the radio's menu; pressed once it is open, closes it. Read only while the player's order is Player Control |
+| WING STATUS WINDOW | closes window 10, then opens window 13, or closes it if it is up. The locked form holds it open as it opens it |
+| GUNNERY WINDOW | opens window 1, and turns to the next group of guns, or out of firing them all |
+| GUNNERY WINDOW LOCKED | opens window 1 held, or closes it once it is open |
+| SYNCHRONISE GUNS | opens window 1, and flips whether the guns fire together |
+| DAMAGE WINDOW | opens window 4, or closes it if it is up. The locked form holds it open as it opens it |
+| FULL GUNS | with more than one group of guns, flips firing them all and opens window 1, held with SHIFT down |
+| OBJECTIVES WINDOW | closes window 13, then opens window 10, or once it is open pages through the objectives |
+| FULL POWER TO GUNNERY, ENGINES, SHIELDS, EQUALIZE POWER | while window 11 is shut, held, give the power its shares and open window 7 |
+| POWERBALL WINDOW | held, keeps window 7 open, and sets `0x0051CEF8` |
+| POWERBALL WINDOW LOCKED | opens window 7 held, or closes it once it is open |
+| MISSILE WINDOW | opens window 2 held, or closes it once it is open |
+| ROTATE MISSILES CLOCKWISE, ANTICLOCKWISE | outside a multiplayer game, open window 2 held and turn the ring |
+
+The rest of the game opens windows too: firing the guns and launching a missile, the targeting keys
+the target display, and the radio its own. A mission's script opens and closes any window by its
+number, `OpenInstrument` and `CloseInstrument` (`0x0045D9D0`, `0x0045DA30`): a window it opens is
+held, window 11 starts the radio's menu too, and window 10 closes window 13 first; one it closes is
+let go of. The display beeps with `hud_beep` 1 as a window opens, 2 as it closes, and 0 for most of
+the keys.
+
 ## Turning it off
 
 No key turns the whole display off: the game binds none, and `hud_draw` has no guard for it.
-Individual panels have their own keys, which is what the element state machine drives: GUNNERY
-WINDOW, MISSILE WINDOW, COMMS WINDOW, POWERBALL WINDOW, OBJECTIVES WINDOW, WING STATUS WINDOW and
-DAMAGE WINDOW, each with a locked form. The nearest thing to turning it off is leaving the view
-ahead from the cockpit, which drops the instruments.
+Individual panels have their own keys, which open and close [the windows](#the-windows). The
+nearest thing to turning the display off is leaving the view ahead from the cockpit, which drops
+the instruments and the windows.
 
 ## What is not known yet
 
@@ -370,6 +452,8 @@ ahead from the cockpit, which drops the instruments.
   has no name.
 - What sets byte `0x2F` of a fight state, which lights the enemy lock warning.
 - The names of the display's elements, which `hud_init` copies from `0x00515D70`.
+- What windows 5, 6, 9, 12 and 14 are for, which no key opens and a mission's script may, and
+  what window 14 shows.
 - What the rest of `hud_draw` draws: the target display, the armour, the targeting cluster's
   indicators for the nav point and the target, and what `0x00489C70`, which the view ahead calls
   before the eject marker, draws.

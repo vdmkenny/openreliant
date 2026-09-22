@@ -290,7 +290,7 @@ pub const Camera = struct {
         }
         var chosen: ?View = null;
         for (camera_actions) |action| {
-            if (input.controlActive(keyboard, controls.binding(action), true, false)) chosen = camera.key(action);
+            if (input.controlActive(keyboard, controls.binding(action), true)) chosen = camera.key(action);
         }
         if (chosen) |view| _ = camera.setView(view, player, false, false, now);
     }

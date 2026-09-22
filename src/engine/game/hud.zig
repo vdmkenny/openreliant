@@ -3,9 +3,11 @@
 //! renders. [`hud.md`](../../../docs/engine/hud.md) describes the file.
 //!
 //! Ported so far: where an element stands, its text, the readouts, the clock, the status lights
-//! with the devices' charges, the jump prompt, the eject marker, the scanner and the ship status
-//! indicator's shields. Not yet: the rest of `hud_draw`, whose other elements
-//! [`hud.md`](../../../docs/engine/hud.md) lists.
+//! with the devices' charges, the jump prompt, the eject marker, the scanner, the ship status
+//! indicator's shields, the targeting cluster, the radar's rings, and the windows, their frames,
+//! and how they open and close ([`hud/windows.zig`](hud/windows.zig)). Not yet: the rest of
+//! `hud_draw`, whose other elements [`hud.md`](../../../docs/engine/hud.md) lists, and what the
+//! windows show.
 //!
 //! **Improvement.** The game draws the display with the processor, whichever renderer is running:
 //! `hud_text` hands its line to `VFX_string_draw`, out of `vfx.dll`, which blits each glyph into a
@@ -30,6 +32,8 @@ const language = @import("language.zig");
 const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
 const srd3d = @import("../surrender/srd3d/srd3d.zig");
 const device = @import("../surrender/srd3d/device.zig");
+
+pub const windows = @import("hud/windows.zig");
 
 /// What `hud_place` takes off the screen's size before working a place out, and what it adds back
 /// afterwards. An element therefore keeps its place at any resolution.
@@ -241,12 +245,23 @@ pub fn drawShape(
 
 /// How a shape is drawn besides as it stands.
 pub const Draw = struct {
-    /// Flipped across, within its own bounds, which keep their place: `VFX_shape_draw_mirrored`
-    /// with 1.
-    mirrored: bool = false,
+    /// Flipped within its own bounds, which keep their place.
+    mirror: Mirror = .{},
     /// Only what falls inside a rectangle of the screen, as a VFX pane clips what is drawn into
     /// it.
     clip: ?Clip = null,
+};
+
+/// Which ways `VFX_shape_draw_mirrored` flips a shape, the two low bits of its mode: 1 across, 2
+/// down, 3 both. Its bit 4, drawing through a remap table, the display does not use with it.
+pub const Mirror = packed struct(u2) {
+    across: bool = false,
+    down: bool = false,
+
+    /// The flips of a mode as the display's tables give it.
+    pub fn of(mode: u2) Mirror {
+        return @bitCast(mode);
+    }
 };
 
 /// A rectangle of the screen in its pixels: its left and top edges inside it, its right and
@@ -277,8 +292,8 @@ pub fn drawShapeWith(
     const bottom = top + @as(f32, @floatFromInt(found.height())) * scale;
     var x: [2]f32 = .{ left, right };
     var y: [2]f32 = .{ top, bottom };
-    var u: [2]f32 = if (how.mirrored) .{ 1, 0 } else .{ 0, 1 };
-    var v: [2]f32 = .{ 0, 1 };
+    var u: [2]f32 = if (how.mirror.across) .{ 1, 0 } else .{ 0, 1 };
+    var v: [2]f32 = if (how.mirror.down) .{ 1, 0 } else .{ 0, 1 };
     if (how.clip) |clip| {
         const kept_x: [2]f32 = .{ @max(left, clip.left), @min(right, clip.right) };
         const kept_y: [2]f32 = .{ @max(top, clip.top), @min(bottom, clip.bottom) };
@@ -992,6 +1007,10 @@ pub const State = struct {
     sight: ?[2]i32 = null,
     /// The radar's rings (`0x0057BC50`).
     radar_rings: u16 = Radar.first_rings,
+    /// The display's windows (`0x00501D30`).
+    windows: windows.Windows = .{},
+    /// Whether POWERBALL WINDOW is held (`0x0051CEF8`), or the power window was held open with it.
+    power_held: bool = false,
 
     /// `hud_draw`'s work on the devices' charges for a frame, which it does in every view: a
     /// device that runs dry is turned off.
@@ -1193,12 +1212,32 @@ fn drawBar(target: device.Device, at: [2]i32, down: i32, length: i32, scale: f32
     }, .fan, &corners, null);
 }
 
-/// SMART TARGET, the one key of `hud_target_keys` (`0x0048B6B0`) ported: it flips smart
-/// targeting. `frame_controls` runs the routine for the targeting and missile keys, before its
-/// own device keys. Not yet ported: the rest of its keys, and the display's sound for this one.
-pub fn smartTargetKey(state: *State, keyboard: *input.Keyboard) void {
-    if (input.controlActive(keyboard, input.controls.binding(.smart_target), true, false)) {
+/// The keys of `hud_target_keys` (`0x0048B6B0`) ported: SMART TARGET, which flips smart
+/// targeting, then MISSILE WINDOW, which opens the missile window held and, pressed again once it
+/// is open, closes it, and outside a multiplayer game the keys that turn the missile ring, which
+/// open it held too. `frame_controls` runs the routine for the targeting and missile keys, before
+/// its own. Not yet ported: the targeting keys, turning the ring, and the display's sounds.
+pub fn targetKeys(state: *State, keyboard: *input.Keyboard, multiplayer: bool) void {
+    if (input.controlActive(keyboard, input.controls.binding(.smart_target), true)) {
         state.smart_targeting = !state.smart_targeting;
+    }
+    const missiles = state.windows.status.getPtr(.missiles);
+    if (input.controlActive(keyboard, input.controls.binding(.missile_window), true)) {
+        switch (missiles.phase) {
+            .shut => if (state.windows.open(.missiles, multiplayer)) {
+                missiles.held = true;
+            },
+            .open => {
+                missiles.held = false;
+                state.windows.close(.missiles);
+            },
+            .opening, .closing => {},
+        }
+    }
+    if (multiplayer) return;
+    for ([_]input.controls.Action{ .rotate_missiles_clockwise, .rotate_missiles_anticlockwise }) |action| {
+        if (!input.controlActive(keyboard, input.controls.binding(action), true)) continue;
+        if (state.windows.open(.missiles, multiplayer)) missiles.held = true;
     }
 }
 
@@ -1531,7 +1570,7 @@ pub fn drawCluster(
     const top = (height >> 1) - round(@as(f32, Cluster.up) * scale);
     const left: [2]i32 = .{ (width >> 1) - apart, top };
     const right: [2]i32 = .{ (width >> 1) + apart - round(@as(f32, Cluster.mirror_shift) * scale), top };
-    try drawShapeWith(art, gpa, target, Cluster.arc_shape, right, colour, scale, .{ .mirrored = true });
+    try drawShapeWith(art, gpa, target, Cluster.arc_shape, right, colour, scale, .{ .mirror = .{ .across = true } });
     try drawShape(art, gpa, target, Cluster.arc_shape, left, colour, scale);
 
     const centre = scaled(left, Cluster.circle, scale);
