@@ -1,7 +1,10 @@
 # Fails a push or pull request whose commits hold a file from the game, or one that looks like it.
 name: No game files
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
 
 jobs:
   check-files:
