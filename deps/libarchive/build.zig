@@ -1,6 +1,6 @@
 //! Builds libarchive for the installer, which reads the game's cabinet with it. Adapted from the
 //! allyourcodebase/libarchive package (MIT, see LICENSE), with the upstream pinned to the 3.7.9
-//! release: the LZX decoder of the releases after it fails on `LANCER.CAB`.
+//! release: the LZX decoder in libarchive 3.8.9 fails on `LANCER.CAB` (libarchive issue 3542).
 
 const std = @import("std");
 

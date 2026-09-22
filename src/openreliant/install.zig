@@ -60,9 +60,10 @@ pub const Options = struct {
 /// The game's files the engine reads before anything else. It has none of its own.
 pub const game_files = [_][]const u8{ game.bigfile.resource_name, "tcachehw.dat", "shipstats.bin", game.language.file_name };
 
-/// The first of the game's files `dir` lacks, or null when it has them all.
+/// The first of the game's files `dir` lacks, or null when it has them all. It asks with `statFile`:
+/// `access` fails for files that exist when the Windows build runs under Wine.
 pub fn missingGameFile(io: Io, dir: Io.Dir) ?[]const u8 {
-    for (game_files) |name| dir.access(io, name, .{}) catch return name;
+    for (game_files) |name| _ = dir.statFile(io, name, .{}) catch return name;
     return null;
 }
 
@@ -1133,7 +1134,7 @@ test "looking for disc 1 in the drives" {
         const mounted = [_][]const u8{ "no-such-drive", "empty", "disc2", "foreign", "disc1" };
         try std.testing.expectEqual(0, try run(io, arena, .{ .directory = "found" }, test_run.environment(tmp.dir, &mounted, &known)));
         try std.testing.expect(std.mem.indexOf(u8, test_run.out.written(), "Installing StarLancer from disc1,") != null);
-        try tmp.dir.access(io, "found/LANGUAGE.DLL", .{});
+        _ = try tmp.dir.statFile(io, "found/LANGUAGE.DLL", .{});
     }
     // With only disc 2 in a drive, that's what's said.
     {
@@ -1149,7 +1150,7 @@ test "looking for disc 1 in the drives" {
         try std.testing.expectEqual(1, try run(io, arena, .{ .directory = "none" }, test_run.environment(tmp.dir, &.{"empty"}, &known)));
         try std.testing.expect(std.mem.startsWith(u8, test_run.err.written(), "openreliant: StarLancer disc 1 isn't in any CD drive."));
     }
-    try std.testing.expectError(error.FileNotFound, tmp.dir.access(io, "none", .{}));
+    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "none", .{}));
     // A disc 1 of a release the installer doesn't know is installed from only when asked to. Its
     // cabinet lacks most of the engine's files, which is then said.
     for ([_]bool{ false, true }) |force| {
@@ -1208,8 +1209,8 @@ test "what the installer refuses" {
             return error.TestUnexpectedResult;
         }
     }
-    try std.testing.expectError(error.FileNotFound, tmp.dir.access(io, "evil.dll", .{}));
-    try std.testing.expectError(error.FileNotFound, tmp.dir.access(io, "install/evil.dll", .{}));
+    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "evil.dll", .{}));
+    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "install/evil.dll", .{}));
 }
 
 test missingGameFile {

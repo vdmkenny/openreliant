@@ -99,7 +99,8 @@ installer checks for the files the engine opens at start-up, and names the first
 The cabinet is unpacked with [libarchive](https://libarchive.org), built from source for the target
 by [`deps/libarchive`](../../deps/libarchive): the
 [allyourcodebase/libarchive](https://github.com/allyourcodebase/libarchive) package's build, with
-libarchive pinned to the 3.7.9 release. The LZX decoder in libarchive 3.8.9 fails on `LANCER.CAB`.
+libarchive pinned to the 3.7.9 release. The LZX decoder in libarchive 3.8.9 fails on `LANCER.CAB`
+([libarchive#3542](https://github.com/libarchive/libarchive/issues/3542)).
 
 ## Builds and releases
 
