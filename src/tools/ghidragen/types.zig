@@ -122,6 +122,7 @@ pub const exported = [_]Export{
     // Live objects and their models.
     .{ "GameObject", engine.game.gameobj.GameObject },
     .{ "ObjectFlags", engine.game.gameobj.GameObject.Flags },
+    .{ "GunMode", engine.game.gameobj.GunMode },
     .{ "ObjectRoutine", engine.game.gameobj.Routine },
     .{ "ModelNode", engine.game.objects.Node },
     .{ "NodeFlags", engine.game.objects.Node.Flags },

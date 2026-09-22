@@ -211,7 +211,10 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
 
     // The engine glows every ship's thrusters burn, built once and shared by them all.
     const glows: game.environfx.Glows = try .create(arena, &textures);
-    var ship = try Ship.load(&resources, &textures, ship_stats, &glows, options.ship);
+    // The display's shapes, whose global palette the ships' schematics are drawn with too.
+    const shapes = try spr.Sprite.parse(try resources.readFile(arena, game.hud.hardware_shapes));
+    const global_palette = game.hud.globalPalette(shapes);
+    var ship = try Ship.load(&resources, &textures, ship_stats, &glows, global_palette, options.ship);
     var player: engine.input.Player = .{};
     defer ship.unload();
     var keyboard: engine.input.Keyboard = .{};
@@ -232,7 +235,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
 
     // The head-up display: its shapes, its font, and what draws it over the finished scene.
     var display: Display = .{
-        .art = try .init(arena, try spr.Sprite.parse(try resources.readFile(arena, game.hud.hardware_shapes))),
+        .art = try .init(arena, shapes, global_palette),
         .font = .open(try fnt.Font.parse(try resources.readFile(arena, hud_font))),
         .gpa = arena,
         .target = undefined,
@@ -241,6 +244,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         .clock = &clock,
         .player = &player,
     };
+    // What the mission's start fits the player's ship with, once `hud_init` has set the display up.
+    game.main.fitDevices(&display.state, @intCast(ship.ship_type), ship.can_cloak);
 
     var scene: srcore.Scene = .{};
     defer scene.deinit(arena);
@@ -295,12 +300,13 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             while (true) {
                 candidate = nextShipType(candidate, step[1]);
                 if (candidate == ship.ship_type) break;
-                const next = Ship.load(&resources, &textures, ship_stats, &glows, candidate) catch |err| {
+                const next = Ship.load(&resources, &textures, ship_stats, &glows, global_palette, candidate) catch |err| {
                     std.log.warn("ship type {d} left out: {s}", .{ candidate, @errorName(err) });
                     continue;
                 };
                 ship.unload();
                 ship = next;
+                game.main.fitDevices(&display.state, @intCast(ship.ship_type), ship.can_cloak);
                 // A ship of another size wants another view to be seen in.
                 _ = view.setView(startingView(ship), 0, false, true, @intCast(@max(clock.mission_ticks, 0)));
                 break;
@@ -311,6 +317,9 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         const ticks: u32 = @intCast(@max(clock.frame_duration, 0));
         const at: u32 = @intCast(@max(clock.mission_ticks, 0));
         view.frameControls(&keyboard, 0, ticks, at);
+        // After the camera's keys, `frame_controls` reads the targeting keys, then the devices'.
+        game.hud.smartTargetKey(&display.state, &keyboard);
+        engine.input.frameDeviceKeys(&display.state, &keyboard, &ship.live, false);
         if (view.frame(.{ .object = ship.subject, .player = ship.subject, .ticks = ticks })) |next| {
             _ = view.setView(next, 0, false, true, at);
         }
@@ -442,8 +451,22 @@ const Ship = struct {
     live: game.gameobj.GameObject,
     /// Its type's flight stats, which `stats_load_ships` builds from `shipstats.bin`.
     flight: game.create.FlightModel,
+    /// Its type's shield power, truncated as `stats_load_ships` keeps it.
+    shield_power: i32,
+    /// Whether its model can cloak.
+    can_cloak: bool,
+    /// Its type's schematic, which the display's ship status indicator draws, where the game has
+    /// one.
+    schematic: ?game.hud.Art,
 
-    fn load(resources: *game.bigfile.Hog, textures: *srtexture.Table, ship_stats: []align(1) const stats.Ship, glows: *const game.environfx.Glows, ship_type: usize) !Ship {
+    fn load(
+        resources: *game.bigfile.Hog,
+        textures: *srtexture.Table,
+        ship_stats: []align(1) const stats.Ship,
+        glows: *const game.environfx.Glows,
+        global_palette: ?*const [spr.palette_size]u8,
+        ship_type: usize,
+    ) !Ship {
         if (ship_type >= ship_stats.len) return error.NoShipStats;
         var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
         errdefer arena.deinit();
@@ -471,11 +494,28 @@ const Ship = struct {
         live.radius = object.radius;
         live.afterburner_fuel = @intFromFloat(100 * ship_stats[ship_type].afterburner_fuel);
         live.countermeasures = game.gameobj.countermeasures_when_created;
+        // Each quadrant's shields and armour, six times the type's figure, less one. The sandbox
+        // fits no guns, so the gun mode stays at nothing: `create_object` sets it by the groups of
+        // guns the ship's loadout gives it.
+        const shield_power: i32 = @intFromFloat(ship_stats[ship_type].shield_power);
+        const armor_class: i32 = @intFromFloat(ship_stats[ship_type].armor_class);
+        live.shields = @splat(@floatFromInt(6 * shield_power - 1));
+        live.armor = @splat(@floatFromInt(6 * armor_class - 1));
+        const schematic: ?game.hud.Art = if (game.create.models.ship_types[ship_type].schematic) |name| found: {
+            const bytes = resources.readFile(gpa, name) catch |err| {
+                std.log.warn("the schematic {s} is left out: {s}", .{ name, @errorName(err) });
+                break :found null;
+            };
+            break :found try .init(gpa, try spr.Sprite.parse(bytes), global_palette);
+        } else null;
         return .{
             .arena = arena,
             .ship_type = ship_type,
             .live = live,
             .flight = game.create.flightModel(ship_stats[ship_type]),
+            .shield_power = shield_power,
+            .can_cloak = model.header.flags.cloak,
+            .schematic = schematic,
             .object = object,
             .subject = .{
                 .position = @splat(0),
@@ -506,9 +546,13 @@ const Display = struct {
     screen: [2]u32,
     /// Last frame's view, which is what `hud_draw` reads to know whether to draw the instruments.
     last_view: camera.View = .cockpit,
-    ship: *const Ship,
+    ship: *Ship,
     clock: *const game.main.Clock,
     player: *const engine.input.Player,
+    /// The display's own state, `hud.cpp`'s globals.
+    state: game.hud.State = .{},
+    /// What the mission has ready for JUMP DRIVE. The sandbox runs no mission, so nothing is.
+    ready: game.hud.Readiness = .{},
 
     fn overlay(display: *Display) srcore.Overlay {
         return .{ .context = display, .draw = draw };
@@ -516,48 +560,46 @@ const Display = struct {
 
     fn draw(context: *anyopaque) Allocator.Error!void {
         const display: *Display = @ptrCast(@alignCast(context));
+        display.drawShapes() catch |err| switch (err) {
+            error.OutOfMemory => |out| return out,
+            // A shape the file does not hold draws nothing, as it does in the game.
+            else => {},
+        };
+    }
+
+    /// What `hud_draw` draws, in its order.
+    fn drawShapes(display: *Display) (spr.Error || Allocator.Error)!void {
+        const frame_duration = display.clock.frame_duration;
+        const live = &display.ship.live;
+        const white: [4]f32 = .{ 1, 1, 1, 1 };
+        // The devices' charges run in every view.
+        display.state.runCharges(live, frame_duration, false);
         // `hud_draw` leaves the instruments out of every view but the one ahead from the cockpit.
         if (!game.hud.instrumented(display.last_view)) return;
         const scale = game.hud.scaleFor(display.screen);
+        const state = &display.state;
+
+        try state.drawJumpPrompt(&display.ready, &display.art, display.gpa, display.target, display.screen, frame_duration, white, scale);
+        // The sandbox runs no mission, so nothing is scanned for.
+        try state.drawEjectMarker(&display.art, display.gpa, display.target, display.screen, frame_duration, white, scale);
+        try state.drawScanner(false, display.clock.game_ticks, &display.art, display.gpa, display.target, display.screen, white, scale);
+        const lit = state.lit(live, display.player.matching_speed, false, frame_duration);
+        try state.drawLights(&display.art, display.gpa, display.target, display.screen, lit, frame_duration, white, scale);
+
         for ([_]game.hud.Readout{ .fuel, .skull, .coil }) |readout| {
+            if (!state.shows(readout, frame_duration)) continue;
             const value: i32 = switch (readout) {
-                // `hud_draw` shows the fuel in hundreds.
-                .fuel => @divTrunc(display.ship.live.afterburner_fuel, 100),
+                .fuel => @divTrunc(live.afterburner_fuel, 100),
                 // The tally a mission's start zeroes; the sandbox runs no mission, so it stays 0.
                 .skull => 0,
-                .coil => display.ship.live.countermeasures,
+                .coil => live.countermeasures,
             };
-            readout.draw(
-                &display.art,
-                &display.font,
-                display.gpa,
-                display.target,
-                display.screen,
-                value,
-                .{ 1, 1, 1, 1 },
-                scale,
-            ) catch |err| switch (err) {
-                error.OutOfMemory => |out| return out,
-                // A shape the file does not hold draws nothing, as it does in the game.
-                else => {},
-            };
+            try readout.draw(&display.art, &display.font, display.gpa, display.target, display.screen, value, white, scale);
         }
-        // The sandbox shows every light, to see them: only the one for holding a target's speed
-        // has a condition the port knows, and the rest read globals it has no names for.
-        var lit: [game.hud.lights.len]bool = @splat(true);
-        lit[game.hud.match_speed_light] = display.player.matching_speed;
-        game.hud.drawLights(
-            &display.art,
-            display.gpa,
-            display.target,
-            display.screen,
-            lit,
-            .{ 1, 1, 1, 1 },
-            scale,
-        ) catch |err| switch (err) {
-            error.OutOfMemory => |out| return out,
-            else => {},
-        };
+        if (display.ship.schematic) |*schematic| {
+            try game.hud.ShipStatus.drawSchematic(schematic, display.ship.arena.allocator(), display.target, display.screen, white, scale);
+        }
+        try game.hud.ShipStatus.draw(&display.art, display.gpa, display.target, display.screen, live.shields, display.ship.shield_power, white, scale);
         try game.hud.drawClock(
             &display.font,
             display.gpa,
@@ -565,7 +607,7 @@ const Display = struct {
             display.screen,
             display.clock.play.minutes,
             display.clock.play.seconds,
-            .{ 1, 1, 1, 1 },
+            white,
             scale,
         );
     }

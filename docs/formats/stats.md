@@ -99,9 +99,9 @@ ships it lists: the Alliance fighters the player can fly, and in a second list C
 The loader stores `100 / fire_rate`, the interval between shots.
 
 The two damage values are **not a minimum and a maximum**: in several guns the first is the larger.
-`threat_pick_gun_type` (`0x00415430`) uses the first alone: it counts each gun type among nearby
-ships, weights each count by that damage, and records the most dangerous type other than the
-two capital-ship guns.
+`player_spectral_shields_set` (`0x00415430`) uses the first alone: turning the spectral shields
+on, it counts each gun type among the hostile ships nearby, weights each count by that damage,
+and tunes the shields to the most dangerous type other than the two capital-ship guns.
 
 ## Missiles
 

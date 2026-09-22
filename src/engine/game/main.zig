@@ -3,9 +3,9 @@
 //! two lie after `language.cpp`'s code, where `main.cpp`'s begins; by what they do they are this
 //! file's.
 //!
-//! Ported so far: the clocks and the pacing, and how `mission_frame` puts the scene together and
-//! draws it. Not yet: the simulation's own work, the HUD, the cockpit, the effects and the rest of
-//! what it adds to the scene.
+//! Ported so far: the clocks and the pacing, how `mission_frame` puts the scene together and draws
+//! it, and what the mission's start (`0x004934F0`) fits the player's ship with. Not yet: the
+//! simulation's own work, the cockpit, the effects and the rest of what it adds to the scene.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -15,6 +15,7 @@ const srapi = @import("../surrender/surrenderlib/srapi.zig");
 const srcore = @import("../surrender/surrenderlib/srcore.zig");
 const backdrop = @import("backdrop.zig");
 const camera = @import("camera.zig");
+const hud = @import("hud.zig");
 const nebula = @import("nebula.zig");
 const objects = @import("objects.zig");
 
@@ -206,6 +207,80 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     if (context.hardware) try frame.sky.frame(gpa, scene, context);
     if (frame.view != frame.last_view) frame.space.resetStreaks();
     try srcore.render(arena, context, scene, driver, frame.overlay);
+}
+
+// --- The mission's start -------------------------------------------------------------------
+
+/// A ship the player can fly, as the mission's start (`0x004934F0`) knows it.
+pub const PlayerShip = struct {
+    /// The model of the cockpit's frame, which the start loads into `0x0057E048`.
+    cockpit: []const u8,
+    /// **Unknown.** What the start keeps at `0x005883C0` for the ship.
+    _unknown_5883c0: u16,
+    spectral_shields: bool = false,
+    blind_fire: bool = false,
+};
+
+/// The twelve ships the player can fly, by ship type.
+///
+/// **Unverified:** the start also loads `kamg_frm.shp` for any ship when the word at `0x00562DC8`,
+/// which looks like the mission's number, is 25 and `0x00587CDC` is clear.
+pub const player_ships = [_]PlayerShip{
+    .{ .cockpit = "preg_frm.shp", ._unknown_5883c0 = 0x116, .blind_fire = true },
+    .{ .cockpit = "nagg_frm.shp", ._unknown_5883c0 = 0x10E, .spectral_shields = true },
+    .{ .cockpit = "gre2_frm.shp", ._unknown_5883c0 = 0x108 },
+    .{ .cockpit = "cru3_frm.shp", ._unknown_5883c0 = 0x107, .spectral_shields = true },
+    .{ .cockpit = "coyg_frm.shp", ._unknown_5883c0 = 0x106, .blind_fire = true },
+    .{ .cockpit = "mirg_frm.shp", ._unknown_5883c0 = 0x10B },
+    .{ .cockpit = "temg_frm.shp", ._unknown_5883c0 = 0x11B, .spectral_shields = true },
+    .{ .cockpit = "pat2_frm.shp", ._unknown_5883c0 = 0x10F, .blind_fire = true },
+    .{ .cockpit = "wolv_frm.shp", ._unknown_5883c0 = 0x11E },
+    .{ .cockpit = "rea2_frm.shp", ._unknown_5883c0 = 0x117, .blind_fire = true },
+    .{ .cockpit = "shr2_frm.shp", ._unknown_5883c0 = 0x11A, .spectral_shields = true, .blind_fire = true },
+    .{ .cockpit = "phe2_frm.shp", ._unknown_5883c0 = 0x112, .blind_fire = true },
+};
+
+/// Where the second set of the player's ship types starts: types `0xF4` to `0xFF`, whose models
+/// are the first twelve's `t_` twins, are the same twelve ships to the start.
+pub const player_twins_first = 0xF4;
+
+/// The player's ship of `ship_type`, or null for a type the start has none for.
+pub fn playerShip(ship_type: u32) ?PlayerShip {
+    const index = if (ship_type >= player_twins_first) ship_type - player_twins_first else ship_type;
+    return if (index < player_ships.len) player_ships[index] else null;
+}
+
+/// Fits the display's devices to the player's ship, as the start does after `hud_init` has set
+/// the display up: every ship carries an ECM, the ships of `player_ships` that say so spectral
+/// shields and blind fire, and a ship whose model can cloak (`shp.Header.Flags.cloak`) a cloak.
+/// Blind fire starts on where it is carried; elsewhere it is left as it was.
+pub fn fitDevices(display: *hud.State, ship_type: u32, can_cloak: bool) void {
+    const ship = playerShip(ship_type);
+    display.devices.getPtr(.ecm).setting = .off;
+    const spectral = if (ship) |known| known.spectral_shields else false;
+    display.devices.getPtr(.spectral_shields).setting = if (spectral) .off else .absent;
+    display.devices.getPtr(.cloak).setting = if (can_cloak) .off else .absent;
+    display.blind_fire_fitted = if (ship) |known| known.blind_fire else false;
+    if (display.blind_fire_fitted) display.blind_fire = true;
+}
+
+test fitDevices {
+    // The Shroud carries all three, and a cloak where its model has one.
+    var display: hud.State = .{ .blind_fire = false };
+    fitDevices(&display, 10, true);
+    try std.testing.expectEqual(.off, display.devices.get(.spectral_shields).setting);
+    try std.testing.expectEqual(.off, display.devices.get(.cloak).setting);
+    try std.testing.expect(display.blind_fire_fitted and display.blind_fire);
+    // Its twin is the same ship.
+    try std.testing.expectEqual(playerShip(10), playerShip(0xFE));
+    // The Grendel carries only the ECM.
+    fitDevices(&display, 2, false);
+    try std.testing.expectEqual(.off, display.devices.get(.ecm).setting);
+    try std.testing.expectEqual(.absent, display.devices.get(.spectral_shields).setting);
+    try std.testing.expectEqual(.absent, display.devices.get(.cloak).setting);
+    try std.testing.expect(!display.blind_fire_fitted);
+    // A capital ship is none of the player's.
+    try std.testing.expectEqual(null, playerShip(0x0D));
 }
 
 test "the simulation steps on every fourth tick" {

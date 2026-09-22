@@ -4,9 +4,40 @@
 display and the text. Its code lies between `hog_SND.CPP`'s and `hudmovie.cpp`'s, about 40KB of it;
 only `hud_init` asserts, so the source map places that stretch alone.
 
-The port draws the first of its readouts
-([`engine/game/hud.zig`](../../src/engine/game/hud.zig)), reaching it as the engine does, through
+The port draws the readouts, the clock, the status lights with the devices' charges, the jump
+prompt, the eject marker, the scanner and the ship status indicator's schematic and shields
+([`engine/game/hud.zig`](../../src/engine/game/hud.zig)), reaching them as the engine does, through
 the overlay `srcore.render` runs after a frame's layers and before the scene ends.
+
+## The elements
+
+The display's elements as the game's manual names them, with where the code that draws each has
+been found. An element whose code is not found yet is marked so.
+
+| Element | Where | Key | Shows | Code |
+| --- | --- | --- | --- | --- |
+| Targeting cluster | middle | | the reticle where the guns aim; speed on an arc to the left, the speed the throttle sets and the speed the ship is making; the weapons' charge on an arc to the right; an indicator pointing to the next nav point, and one pointing to the target, red for hostile and green for friendly | `hud_draw` draws shape `0x7F` either side of the middle in the view ahead, the left one mirrored, then works from the throttle. Not read yet |
+| Target ring | round the target | | a ring round a target in sight, red or green, with its range in metres under it; a lead cursor, a box with a line trailing from it, where to shoot | `hud_draw` works out where the target (`+0x720`) stands on the screen and draws shape `0x15F` there. Not ported |
+| Directional calipers | the display's edges | | the direction and range of a target out of sight | Not found |
+| Missile lock ring | round the target | | a ring that closes in round the target and turns white once a missile has locked, with a tone | Not found |
+| Jump icon | above the middle | J | the prompt to press JUMP DRIVE, once the mission has a jump ready | [The jump prompt](#the-jump-prompt-the-eject-marker-and-the-scanner) |
+| Target display | foot, right | | the target's image with its shields and armour in a ring, its name, its type, its range and its speed; a larger form for a big target, with its current subtarget and a bar for each | **Unverified:** `hud_ship_status` in its second mode draws the small form. The large form is not found |
+| Subtarget | on the target's model | S, SHIFT+S | the parts of the subtarget picked out in red | `hud_subtarget` (`0x0048CC30`), which walks the target's assembly by `link_id` |
+| Radar | foot, middle | V | three rings with the ship at their middle and a wedge for its view ahead; each object a dot, red for hostile, green for friendly, blue for one calling on the radio, on a line up or down from the rings by its height. V narrows and widens its range, the middle ring filling the display at the narrowest | **Unverified:** `0x00489C70`, 5239 bytes, which the view ahead calls. Not read yet |
+| Ship status | foot, left of middle | always shown | the ship's image in two rings of segments, forward, aft and the two sides: shields outside, armour inside. A shield dims as it wears; an armour segment goes as it is lost. Shifting power fore or aft doubles the shields there | `hud_ship_status` (`0x00489350`). The schematic and the shields are ported; the armour is not yet found |
+| Missile display | top, middle | M | the missile's name, the ship's missiles in a ring, how many of the chosen one are left, and the one armed at six o'clock. Comma and full stop turn the ring | Not found |
+| Mission objectives | right | B | the mission's goals, the current one first; B pages through them | Not found |
+| Gunnery display | foot, left | G | the gun's name, the ship as a wire frame with the gun lit, the rounds left for a gun that fires them, and whether the guns fire together or in turn. G picks the next gun, F fires them all, CTRL and G switches the two ways of firing them all | Not found |
+| Damage display | top, right | D | a segmented bar each for the weapons, the engines and the shields, shortening with damage | Not found |
+| Power distribution | left | P | the guns, the shields and the engines round a ball, each with its share of the power, a third each at first. P held with the stick moves power toward one; U, I and O give all of it to the guns, the engines or the shields, and `[` shares it out again | `hud_init` works out the ball's shading from `powerball.tga`. The display itself is not found |
+| Communications | top, left | C | the units in range, numbered, which the number keys call. Landing, rearming and a nanny ship are asked of the base ship | **Unverified:** `0x0048CF20`, which draws the lines of the table at `0x0057BC5C` eleven apart |
+| Wing status | right | X | the wing's fighters in a grid, the player's wing first, each with a bar for its damage | Not found |
+| Readouts | top, right of middle | | the seconds of afterburner fuel, a tally under a skull, and the countermeasures left | [The readouts](#the-readouts) |
+| Status lights | top, left of middle | | the systems that are on: match speed, blind fire, smart targeting, which makes any ship fired on the target, reverse thrust, the spectral shields and the cloak with a bar for the time left, the ECM | [The status lights](#the-status-lights) |
+| Clock | foot, middle, over the radar | | the time played | [`hud.zig`](../../src/engine/game/hud.zig) |
+
+Each panel but the ship status comes and goes as the game needs it, which is the element state
+machine at `0x00501D30`; SHIFT with a panel's key holds it on.
 
 ## How it is reached
 
@@ -87,9 +118,19 @@ after which `--original` takes it too.
 in five places. Everything from the readouts to the clock is skipped unless it is 0, the view ahead
 from the cockpit, so the cockpit's own side and rear views do not have the instruments either. The
 views that do not draw them get a line of text at the top instead, except the cutaways from `0x24`
-to `0x26`, which get none. The view ahead also draws a block of its own that no other does.
+to `0x26`, which get none. The view ahead also draws a block of its own that no other does: the
+jump prompt, the radar, the eject marker, the scanner and the status lights, in that order. The
+devices' charges run in every view.
 
-It does not read `hit_shake` (`0x00588724`), so nothing of the display moves when the ship is hit.
+While `hud_interference` (`0x00588700`) is above 0, `hud_draw` draws its shapes through `hud_blit`
+(`0x0048C6E0`) rather than `VFX_shape_draw`: under the hardware renderers each row of the shape is
+shifted sideways by a random amount scaled by `hud_interference`, or for some shapes by `hit_shake`
+(`0x00588724`). `hud_interference_start` (`0x00494890`) sets it to 0.3 and plays sound 12 at the
+ship no more often than every 15 to 29 ticks; `hud_interference_fade` (`0x004948F0`) lowers it by
+0.005 a tick. The two routines that start it, `0x00463EE0` and `0x004641F0`, lie between
+`cloak.cpp`'s code and `collision.cpp`'s. **Unverified:** that they are where the ship takes
+damage, and which shapes take `hit_shake`. The port draws every shape plain, as the game does
+with no interference.
 
 ## The readouts
 
@@ -99,32 +140,132 @@ stand half of the way across, at offsets of `0x39`, `0x5F` and `0x98`:
 
 | Offset | Shape | Shows |
 | --- | --- | --- |
-| `0x39` | `0xCD`, a ship with its engines burning | the afterburner fuel, in hundreds |
+| `0x39` | `0xCD`, a ship with its engines burning | the seconds of afterburner fuel left: `afterburner_fuel`, which is in hundredths, over 100 |
 | `0x5F` | `0xD0`, a skull and crossbones, drawn 4 left | `skull_count` (`0x00562DF4`), one of a run of tallies at `0x562DEC` to `0x562DF8` that a mission's start zeroes together and that is kept across a run. **Unknown** what it counts; it reads 0 in a fresh mission, and the game binds a DISPLAY KILLS key |
-| `0x98` | `0xCF`, a coil, drawn `0x1A` left | the object's countermeasures (`+0x5EC`), 29 when it is created, drawn only while a condition of its own holds. **Unverified:** that they are countermeasures; `object_spend_countermeasure` (`0x00462550`) takes one at a keypress with a sound, the ships' own code takes them too, and the game binds a COUNTERMEASURES key |
+| `0x98` | `0xCF`, a coil, drawn `0x1A` left | the object's countermeasures left (`+0x5EC`), 29 when it is created, which `object_spend_countermeasure` (`0x00462550`) takes one at a time. It is drawn unless `ShowHudIcon` flashes icon 3 and the flash is dark |
 
-The port draws the fuel ([`engine/game/hud.zig`](../../src/engine/game/hud.zig)); the other two wait
-on what they count.
+The port draws all three ([`engine/game/hud.zig`](../../src/engine/game/hud.zig)).
 
 ## The status lights
 
-Inside the block it draws only for the view ahead, `hud_draw` packs up to seven lights into the
+Inside the block it draws only for the view ahead, `hud_draw` packs up to nine lights into the
 grid, each shown only while its own condition holds. The index it hands `hud_grid_place` is a
-running count that advances only for a light it draws, so one that is not shown takes no place and
-those after it close up.
+running count that advances for each light whose condition holds, so one that is out takes no
+place and those after it close up. A flashing light keeps its place while it is dark.
 
-In the order it draws them: `0xCC`, two ships with arrows, shown while `matching_speed` holds; then
-`0xCB`, `0xC5`, `0xC3`, `0xC4`, `0xC6` and `0xCA`. **Unknown:** what shows the last six, which read
-globals and object fields with no names yet.
+In the order it draws them:
 
-The port draws the first and packs the rest the same way.
+| Shape | Light | Shown while |
+| --- | --- | --- |
+| `0xCC` | match speed | `matching_speed` |
+| `0xCB` | blind fire | the ship carries blind fire (`blind_fire_fitted`, `0x00566F8C`), `blind_fire` (`0x00579990`) is on, and the guns are not all firing (`GunMode.all`, the object's word at `+0x144`) |
+| `0xC5` | smart targeting | `smart_targeting` (`0x0056996C`), which SMART TARGET flips, or icon 4 |
+| `0xC3` | enemy lock | `enemy_lock` (`0x00579988`) with no missile homing on the ship, or icon 0. It flashes for 50 ticks of every 100, and a warning sound loops while it is shown |
+| `0xC4` | missile incoming | the object's `missile_homing` (`+0x64C`), or icon 1. It flashes for 25 ticks of every 50, on the lock warning's count (`0x0057BC44`) |
+| `0xC6` | ECM | `ecm_state` (`0x0057BF4C`) is 1, or icon 2, with a bar for its charge `0x23` below |
+| `0xC7` | cloak | the ship carries a cloak (`cloak_state`, `0x00566638`, not -1), on or off, with a bar for its charge `0x20` below. Never in a multiplayer game |
+| `0xCA` | spectral shields | `spectral_shields_state` (`0x0057BF20`) is 1, with a bar for their charge `0x20` below |
+| `0xC8` | reverse thrust | the object's `reverse_thrust` |
+
+An icon is one of `ShowHudIcon`'s (mission command `0x5B`, `cmd_ShowHudIcon`): it sets an icon of a
+table of twenty (`hud_icons`, `0x00566558`) off, on or flashing, and `hud_icon_lit` (`0x00482F50`)
+says whether one is lit this frame. A flashing icon is lit for the first 50 ticks of every 100; one
+that runs past 100 carries what it ran over into the next hundred, lit. `hud_draw` asks only when
+the light's own condition does not already hold, so an icon's flash stands still while it does. The
+display reads icons 0 to 5: 3 is the countermeasures readout, 5 the eject marker.
+
+`enemy_lock` is set by `mission_frame` each frame when a ship whose order is Fight, against the
+player, has byte `0x2F` of its fight state set. **Unverified:** that the byte is a missile lock.
+Nothing in the payload writes it at that offset; the light's shape is a ship in a gun sight, and the
+manual has countermeasures answer an enemy's missile lock. `missile_homing` is zeroed on every
+object by `mission_frame` and set by `missiles_update` (`0x004960F0`) on the object a live missile's
+order targets.
+
+A bar is a line of `hud_colour(0xE7, 0x68, 0x00)` drawn with `VFX_line_draw` from one pixel right of
+the light's point to the charge times a scale further: `1/62` for the ECM, `1/312` for the cloak and
+`1/187` for the spectral shields, so a full bar is about 32 pixels, rounded as `0x004C3330` rounds.
+
+The port draws all nine by these conditions. Not yet ported: the warning sound.
+
+## The devices
+
+Three devices run off a charge in ticks, which `hud_draw` keeps in every view: charging a tick a
+tick while off, up to full, and draining while on. One that runs dry is turned off.
+
+| Device | State | Charge | Full | Drains a tick |
+| --- | --- | --- | --- | --- |
+| ECM | `ecm_state` (`0x0057BF4C`) | `ecm_charge` (`0x005665F8`) | 2000 | 1 |
+| Cloak | `cloak_state` (`0x00566638`) | `cloak_charge` (`0x0056663C`) | 10000 | 1, outside a multiplayer game |
+| Spectral shields | `spectral_shields_state` (`0x0057BF20`) | `spectral_shields_charge` (`0x00566620`) | 6000 | 6 |
+
+A state is -1 for a ship that does not carry the device, 0 for off and 1 for on. `hud_init` sets
+all three to 0 and full, and turns blind fire on. The mission's start (`0x004934F0`) then fits the
+player's ship by its type: every ship carries an ECM; the Nagi, the Crusader, the Tempest and the
+Shroud carry spectral shields; the Predator, the Coyote, the Patriot, the Reaper, the Shroud and the
+Phoenix carry blind fire, which starts on; a ship whose model can cloak (header flag 2) carries a
+cloak. Ship types `0xF4` to `0xFF`, whose models are the first twelve's `t_` twins, count as the
+same twelve. The same switch picks the cockpit's frame model ([`main.zig`](../../src/engine/game/main.zig)).
+
+`frame_controls` reads the device keys after the camera's and the targeting keys
+(`hud_target_keys`, `0x0048B6B0`, where SMART TARGET flips `smart_targeting`):
+
+- TOGGLE BLINDFIRE flips `blind_fire` on a ship that carries it, and Betty says which.
+- ECM turns the ECM the other way from the object's flag `0x4000000` through `player_ecm_set`
+  (`0x00415370`), which sets the flag and `ecm_state`.
+- SPECTRAL SHIELDS, outside a multiplayer game, does the same through
+  `player_spectral_shields_set` (`0x00415430`) and flag `0x8000000`. Turning the shields on also
+  tunes them, into the object's `+0x670`, to the gun type most dangerous near the ship: it counts
+  the guns of each hostile ship in range, weights each type's count by its first damage value, and
+  takes the highest, leaving out types 13 and 14. Betty says which.
+- CLOAK SHIP is read by `player_controls`; `player_cloak_set` (`0x004153E0`) cloaks or uncloaks the
+  ship through `object_set_cloak`, which sets `cloak_state` for the player.
+
+SMART TARGET, ECM and SPECTRAL SHIELDS play `hud_beep` (`0x0048CE70`) 4 turning a device on and 5
+turning it off: sample 15 + n of `bank_stdsmp`, in the four cockpit views only.
+
+Ported: the charges, the fitting, SMART TARGET, TOGGLE BLINDFIRE, ECM and SPECTRAL SHIELDS
+([`input.zig`](../../src/engine/input.zig)). Not yet: the sounds and Betty, the tuning of the spectral
+shields, and the cloak (`cloak.cpp`), so the cloak's light shows its charge full.
+
+## The jump prompt, the eject marker and the scanner
+
+The block for the view ahead draws three more shapes about the middle of the screen, each placed
+half of the way across and down:
+
+- `hud_jump_prompt` (`0x00482FA0`), at an offset of `(-16, -90)`: while `warp_ready`
+  (`0x0052A3F4`) says a warp is ready, the warp icon `0xC9` flashes; otherwise while `jump_ready`
+  (`0x0052A3F0`) says a jump is, the jump icon `0xCE`. The mission sets one to 1; the prompt's
+  first frame starts its flash and sets it to 2, drawing nothing; then it flashes for 50 ticks of
+  every 100. JUMP DRIVE (`player_jump`, `0x00412B20`) clears it and posts `player_ready_to_jump`
+  or `player_ready_to_warp`.
+- `hud_eject_marker` (`0x004830B0`), at `(-16, -100)` and `0x26` lower: once the player has ejected
+  (`player_ejected`, `0x00579986`, which `order_eject_player_init` sets) or while icon 5 is lit, shape
+  `0xC2`, the pilot rising out of the ship, flashes for 50 ticks of every 100.
+- `hud_scanner` (`0x00489250`), at `(-16, -100)`: while the `Scanner` mission command
+  (`cmd_Scanner`) has `scanner_object` (`0x0057E060`) name an object, shapes `0xD1` to `0xD5`, a hand
+  and the rings it sends out, in turn, moving on once `game_ticks` is past a tick 25 on from the
+  last move. `mission_frame` beeps meanwhile at an interval of 10 to 200 ticks that it works out
+  from the object's distance and bearing.
+
+The port draws all three; the sandbox runs no mission, so none of them shows there.
 
 ## Art
 
-The hardware renderers take their shapes from `HUDHARD.SPR` and the software renderer from
-`HUDSOFT.SPR`; `hud_blit` (`0x0048C6E0`) draws a shape the software way, which `sr + 0x1AC` picks.
-`HUDHARD.SPR` holds 388 shapes, 2 palettes and 21 remap tables: radar rings, bar gauges, arcs,
-target boxes, ammunition, and the silhouettes the target display shows.
+`hud_init` loads the display's shapes into `hud_shapes` (`0x005656A8`): `hudhard.spr` under the
+hardware renderers and `hudsoft.spr` under the software one, which `sr + 0x1AC` picks, and
+`dmicons.spr` or `soft_dmicons.spr` into `0x0057BC3C`. `HUDHARD.SPR` holds 388 shapes, 2 palettes and
+21 remap tables: radar rings, bar gauges, arcs, target boxes, ammunition, and the silhouettes the
+target display shows. `hud_init` hands `VFX_shape_multilookaside` 29 tables of 256 bytes from the
+start of block 0, where the remap tables begin, though the set holds 21. **Unknown:** what draws
+`dmicons.spr`.
+
+A shape's entry in its set names a palette or none (`VFX_shape_draw` in `winvfx16.dll`); one with
+none is drawn with VFX's global palette. Under the hardware renderers `hud_draw` makes that of
+block `0x77` of the display's set, its first palette, every frame (`palette_to_vfx`,
+`0x00428410`), at `hud_brightness` (`0x00569718`), which `hud_init` sets to 1 and nothing changes.
+So the ships' schematics, whose sets carry no palette, are drawn in the display's colours, and so
+are the set's own shapes before block `0x77`. The port does the same: a shape with no palette of its
+own takes block `0x77`'s.
 
 The element names `hud_init` copies come from `0x00515D70`, which the decrypted dump holds as
 zeroes, so they are not readable from it.
@@ -141,10 +282,14 @@ ahead from the cockpit, which drops the instruments.
 
 - What the skull readout counts. Its shape, its place and the tally it reads are known; the tally
   has no name.
-- What shows six of the seven status lights. Each reads a global or an object field with no name.
+- What sets byte `0x2F` of a fight state, which lights the enemy lock warning.
 - The names of the display's elements, which `hud_init` copies from `0x00515D70`.
-- What the rest of `hud_draw`'s 946 lines draw: the radar, the target display, the shields and the
-  armour, the ship's own schematic, the reticle, and the lines of text the views without
-  instruments show instead.
+- What the rest of `hud_draw` draws: the radar, the target display, the armour, the targeting
+  cluster, and the lines of text the views without instruments show instead.
+- What the flags at `0x00563160` mark, which flash parts of the ship status schematic.
+- Which of the display's shapes `hud_blit` shakes by `hit_shake` rather than `hud_interference`.
+- What `hud_palette_ramp` (`0x0048D590`) colours, and whether the display's text takes its palette
+  from it rather than from the font.
+- What draws `dmicons.spr`.
 - How the display reaches the screen in the game, which is `vfx.dll`'s panes rather than anything
   in the payload.

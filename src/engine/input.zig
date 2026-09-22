@@ -261,6 +261,7 @@ test {
 
 const gameobj = @import("game/gameobj.zig");
 const camera = @import("game/camera.zig");
+const hud = @import("game/hud.zig");
 
 /// What the player's controls keep between updates, which the game holds in globals.
 pub const Player = struct {
@@ -365,6 +366,91 @@ pub fn playerControls(player: *Player, keyboard: *Keyboard, object: *gameobj.Gam
         object.afterburner = false;
         object.reverse_thrust = false;
     }
+}
+
+// --- The player's devices ------------------------------------------------------------------
+
+/// `player_ecm_set` (`0x00415370`): turns the ECM on or off, on a ship that carries one: the
+/// object's `ecm` flag and the display's setting. Not yet ported: what it tells a multiplayer
+/// game.
+pub fn setEcm(display: *hud.State, object: *gameobj.GameObject, on: bool) void {
+    const ecm = display.devices.getPtr(.ecm);
+    if (ecm.setting == .absent) return;
+    object.flags.ecm = on;
+    ecm.setting = if (on) .on else .off;
+}
+
+/// `player_spectral_shields_set` (`0x00415430`): turns the spectral shields on or off, on a ship
+/// that carries them: the object's `spectral_shields` flag and the display's setting. Turning
+/// them on tunes them, into `spectral_gun_type`, to the gun type most dangerous near the ship: it
+/// counts the guns of every hostile ship within range, weights each type's count by its first
+/// damage value, and takes the highest, leaving out types 13 and 14. Not yet ported: the tuning,
+/// which needs the other ships' guns, and what it tells a multiplayer game.
+pub fn setSpectralShields(display: *hud.State, object: *gameobj.GameObject, on: bool) void {
+    const shields = display.devices.getPtr(.spectral_shields);
+    if (shields.setting == .absent) return;
+    object.flags.spectral_shields = on;
+    shields.setting = if (on) .on else .off;
+}
+
+/// The device keys of `frame_controls`, in its order: TOGGLE BLINDFIRE flips blind fire on a ship
+/// that carries it, ECM turns the ECM the other way from the object's flag, and SPECTRAL SHIELDS,
+/// outside a multiplayer game, does the same for the spectral shields. Each key is read whether
+/// or not the ship carries its device. Not yet ported: Betty's word for each, and the display's
+/// sounds.
+pub fn frameDeviceKeys(display: *hud.State, keyboard: *Keyboard, object: *gameobj.GameObject, multiplayer: bool) void {
+    if (active(keyboard, .toggle_blindfire, true) and display.blind_fire_fitted) {
+        display.blind_fire = !display.blind_fire;
+    }
+    if (active(keyboard, .ecm, true) and display.devices.get(.ecm).setting != .absent) {
+        setEcm(display, object, !object.flags.ecm);
+    }
+    if (!multiplayer and active(keyboard, .spectral_shields, true) and
+        display.devices.get(.spectral_shields).setting != .absent)
+    {
+        setSpectralShields(display, object, !object.flags.spectral_shields);
+    }
+}
+
+test frameDeviceKeys {
+    var object: gameobj.GameObject = std.mem.zeroes(gameobj.GameObject);
+    var keyboard: Keyboard = .{};
+    var display: hud.State = .{};
+
+    // ECM turns the ECM on, and again off.
+    const ecm = controls.binding(.ecm).key;
+    keyboard.down[ecm] = true;
+    frameDeviceKeys(&display, &keyboard, &object, false);
+    try std.testing.expect(object.flags.ecm);
+    try std.testing.expectEqual(.on, display.devices.get(.ecm).setting);
+    keyboard.read();
+    frameDeviceKeys(&display, &keyboard, &object, false);
+    try std.testing.expect(object.flags.ecm);
+    keyboard.down[ecm] = false;
+    keyboard.read();
+    keyboard.down[ecm] = true;
+    frameDeviceKeys(&display, &keyboard, &object, false);
+    try std.testing.expect(!object.flags.ecm);
+    keyboard.down[ecm] = false;
+
+    // A ship without spectral shields ignores the key, and a multiplayer game ignores it anyway.
+    const shields = controls.binding(.spectral_shields).key;
+    display.devices.getPtr(.spectral_shields).setting = .absent;
+    keyboard.down[shields] = true;
+    frameDeviceKeys(&display, &keyboard, &object, false);
+    try std.testing.expect(!object.flags.spectral_shields);
+    keyboard.down[shields] = false;
+    keyboard.read();
+    display.devices.getPtr(.spectral_shields).setting = .off;
+    keyboard.down[shields] = true;
+    frameDeviceKeys(&display, &keyboard, &object, true);
+    try std.testing.expect(!object.flags.spectral_shields);
+    keyboard.down[shields] = false;
+    keyboard.read();
+    keyboard.down[shields] = true;
+    frameDeviceKeys(&display, &keyboard, &object, false);
+    try std.testing.expect(object.flags.spectral_shields);
+    try std.testing.expectEqual(.on, display.devices.get(.spectral_shields).setting);
 }
 
 test playerControls {

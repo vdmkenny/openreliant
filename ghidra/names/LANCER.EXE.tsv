@@ -133,7 +133,7 @@
 004788f0	function	stats_load_guns	void __fastcall (void)	Reads gunstats.bin to the end of the file into gun_stats
 00494bc0	function	stats_load_missiles	void __fastcall (void)	Reads missilestats.bin into missile_flight_stats and missile_stats
 0049cae0	function	stats_load_pilots	void __fastcall (void)	Fills pilot_stats with defaults, then applies pilotstats.bin
-00415430	function	threat_pick_gun_type		Picks the most dangerous gun type near the player, weighted by damage
+00415430	function	player_spectral_shields_set	void __fastcall (bool on)	Turns the player's spectral shields on or off, when the ship carries them (spectral_shields_state not -1): object flag 0x8000000 and spectral_shields_state. Turning them on tunes them, into the object's +0x670, to the gun type most dangerous near the player: it counts the guns of each hostile ship within range, weights each type's count by its first damage value, and takes the highest, leaving out types 13 and 14
 004f9e70	data	ship_flight_stats	FlightModel[256]
 004fc670	data	ship_combat_stats	ShipCombat[256]
 00500ce4	data	gun_stats	GunStats[15]
@@ -257,7 +257,7 @@
 00494040	function	mission_run	void __fastcall (void)	Runs a mission: resets the clocks, then loops, running a game tick for each timer tick since the last pass
 004827c0	function	tick_timer		Timer callback, 100 times a second: advances game_ticks and the play time, unless paused
 00483150	function	hud_init	void __cdecl (void)	Sets the HUD up once, on the first frame that draws it: copies the element names into the table at 0x57BC5C, a hundred bytes each, allocates hud.cpp's work buffer, takes oldpalette.tga and powerball.tga, and works out the 62 by 62 table of shading the power ball, the power distribution display, is drawn from
-0048c6e0	function	hud_blit	void __fastcall (void *font, int shape, int *place, uint a, uint b, uint c, int d)	Draws one of the display's shapes with the software renderer, which sr + 0x1AC picks; the hardware renderers draw it another way
+0048c6e0	function	hud_blit	void __fastcall (void *pane, void *shapes, int shape, int x, int y, void *buffer, int mirrored)	Draws one of the display's shapes shaken, in place of VFX_shape_draw while hud_interference is above 0: under the hardware renderers each row is shifted sideways by a random amount scaled by hud_interference, or by 0x00588724 for some shapes. Unverified: the last two arguments
 004843b0	function	hud_draw	void __cdecl (void)	Draws the head-up display, once a frame. mission_run puts it in sr + 0x88 and Surrender calls it while it renders, so nothing calls it outright and Ghidra does not find it without being told
 00482f00	function	hud_grid_place	void __fastcall (uint index, int *out_x, int *out_y)	Where the item of index stands in the display's grid: from half-way across the screen, 0x30 apart across and 0x26 down, two to a row
 00482e90	function	hud_place	void __fastcall (int x, int y, float across, float down, int *out_x, int *out_y)	Where a display element stands, so that it keeps its place at any resolution: the screen's size less 0x21, times the fraction across or down, plus 0x10 and the offset given
@@ -419,7 +419,7 @@
 00409be0	function	fight_aim	void __fastcall (int slot, FightState *state, OrderEntry *entry)	Aims the guns: every pilot tier_c_count ticks at the target, leading it by a quarter of its velocity, then moves the aim each update and fires through 0x4096B0
 00409d10	function	fight_call_for_help		Has a ship the player has hurt badly send its nearest fighting wingman at the player
 00409ec0	function	fight_update_cloak	void __fastcall (int slot, FightState *state)	Uncloaks the ship when its maneuver asked for no cloak, and cloaks it once cloak_at passes when it asked for one
-00462550	function	object_spend_countermeasure	void __fastcall (int slot, int unknown)	Spends one of an object's countermeasures, its word at +0x5EC: with none left it flashes the display's element 3 for the player and does nothing else, otherwise it takes one and carries on. **Unverified:** that they are countermeasures; a keypress spends one with a sound, the ships' own code spends them too, and the game binds a COUNTERMEASURES key
+00462550	function	object_spend_countermeasure	void __fastcall (int slot, int unknown)	Spends one of an object's countermeasures, its word at +0x5EC: with none left it plays the display's sound 3 for the player (hud_beep) and does nothing else; otherwise it takes one, plays sound 0 for the player, and carries on
 
 # Textures (srTexture.cpp, srImage.cpp, srTGA.cpp, srColor.cpp)
 004c3830	function	SR_init	void * __fastcall (void)	Clears sr_context and returns it
@@ -566,3 +566,59 @@
 0054ea38	data	engine_glow_flares	void *[8][2]	The flare textures each glow wears, read at its attachment id clamped to 1 to 7: matflarea1 to matflarea7 for the nozzle quad, matflareb1 to matflareb7 for the blades; slot 0 is unused
 0054ea78	data	engine_glows_built	char	Set once engine_glows_build has made the glow meshes, so that it makes them only once
 00562df4	data	skull_count	int	The number the display's skull readout shows, drawn over the top of the screen. One of a run of tallies at 0x562DEC to 0x562DF8 that the mission's start zeroes together, and which is kept across a mission run. **Unknown:** what it counts; it reads 0 in a fresh mission
+00412b20	function	player_jump	void (void)	JUMP DRIVE, while 0x00588394 is 0: when the mission has a jump or a warp ready (jump_ready, warp_ready), clears it and posts player_ready_to_jump or player_ready_to_warp
+00415370	function	player_ecm_set	void __fastcall (bool on)	Turns the player's ECM on or off, when the ship carries one (ecm_state not -1): object flag 0x4000000 and ecm_state
+004153e0	function	player_cloak_set	void __fastcall (bool on)	Cloaks or uncloaks the player's ship through object_set_cloak, outside a multiplayer game, when its model can cloak (header flag 2) and cloak_state is not -1
+00416310	function	order_eject_player_init	ObjectRoutine	The init of order 118, Eject Player: marks the ship ejected (object flags 0x808), sets 0x00588394 to 8, sets player_ejected and starts the eject marker's flash
+00428410	function	palette_to_vfx	void __thiscall (byte *palette, float brightness)	Makes VFX's global palette of a palette of 6-bit levels at a brightness, under the hardware renderers or on a pane of more than 8 bits: at a brightness of 1 each level is shifted up by two
+00482f50	function	hud_icon_lit	bool __fastcall (int icon)	Whether ShowHudIcon has an icon lit this frame: state 1 always, state 2 for the first 50 ticks of every 100, the count carrying what runs past 100 over
+00482fa0	function	hud_jump_prompt	void (void)	Flashes the warp icon (shape 0xC9) or else the jump icon (0xCE) above the middle of the screen while warp_ready or jump_ready says one is ready; the frame one becomes ready (1) it moves it to 2 and starts the flash
+004830b0	function	hud_eject_marker	void (void)	Flashes shape 0xC2, the pilot rising out of the ship, under the middle of the screen while player_ejected is set or ShowHudIcon lights icon 5
+00484260	function	hud_free	void (void)	Frees what hud_init allocated and clears the flag that lets it run again; the device's teardown calls it
+00489250	function	hud_scanner	void (void)	While scanner_object names an object, draws shapes 0xD1 to 0xD5 in turn at the middle of the screen, moving on once game_ticks is past hud_scanner_next
+00489350	function	hud_ship_status	void __fastcall (int slot, int mode, void *pane, int x, int y)	The ship status indicator. Mode 0 draws the player's schematic (type_data shape 0), then shape 1 to 4 once for each of four flags at 0x00563160 that is set, clearing it, then the shields as four arcs of five shapes. Mode 1 draws a target's schematic, through VFX_shape_draw_mirrored unless a word of its combat stats is 1. Unverified: that the flags mark quadrants hit
+0048b6b0	function	hud_target_keys	void (void)	The targeting and missile keys, which frame_controls runs after the camera's: TARGET TORPEDO, the nearest and next targets, the subtargets, TARGET UNDER RETICULE, MISSILE WINDOW, the missile ring, and SMART TARGET, which flips smart_targeting
+0048cc30	function	hud_subtarget	void (void)	The subtarget: walks the target's assembly by link_id. Not read in full
+0048ce70	function	hud_beep	void __fastcall (int sound)	Plays the display's sound n, sample 15 + n of bank_stdsmp, while the camera is in one of the four cockpit views; 4 and 5 are a device turning on and off
+0048d590	function	hud_palette_ramp	void __fastcall (uint rgb)	Sets entries 1 to 15 of VFX's global palette, or on an 8-bit pane a table at 0x0057DAD8, to a ramp of a colour. Unknown: what draws with them
+0048d780	function	hud_colour	uint __fastcall (int red, int green, int blue)	A colour as the display's pane holds one: looked up through the renderer's 6-6-6 table on an 8-bit pane, or shifted into the pixel format
+00494890	function	hud_interference_start	void (void)	Sets hud_interference to 0.3 and, no more than every 15 to 29 ticks, plays sound 12 at the player's ship through 0x00482160. Called from 0x00463EE0 and 0x004641F0
+004948f0	function	hud_interference_fade	void (void)	Lowers hud_interference by 0.005 for each tick since it last ran, to nothing
+004960f0	function	missiles_update	void (void)	Runs each live missile's order for the frame, ends those past their flight time, and sets missile_homing (+0x64C) on the object a missile's order targets. Unverified: the conditions it sets it under, not all read
+0052a3f0	data	jump_ready	int	Whether the mission has a jump ready for JUMP DRIVE: 1 when it becomes ready, 2 once hud_jump_prompt shows it; player_jump clears it
+0052a3f4	data	warp_ready	int	As jump_ready, for a warp, which the prompt shows first
+005656a8	data	hud_shapes	void *	The display's shapes: hudhard.spr under the hardware renderers, hudsoft.spr under the software one
+00566558	data	hud_icons	int[40]	ShowHudIcon's table: twenty icons, each a state (0 off, 1 on, 2 flash) and the count its flash is at. hud_init turns them off; the display reads icons 0 to 5
+00566620	data	spectral_shields_charge	int	The spectral shields' charge in ticks, 6000 when full: it drains 6 a tick while they are on and fills 1 a tick while off; hud_draw turns them off when it runs dry
+00566638	data	cloak_state	int	-1 when the player's ship has no cloak, else 0 off and 1 on. The mission's start sets 0 for a ship whose model can cloak; object_set_cloak sets it for the player
+0056663c	data	cloak_charge	int	The cloak's charge in ticks, 10000 when full: it drains and fills 1 a tick, outside a multiplayer game; hud_draw uncloaks the ship when it runs dry
+005665f8	data	ecm_charge	int	The ECM's charge in ticks, 2000 when full: it drains and fills 1 a tick; hud_draw turns the ECM off when it runs dry
+00566790	data	hud_prompt_ticks	int	The count hud_jump_prompt flashes by
+005667b0	data	hud_scanner_next	int	The game tick after which hud_scanner moves on a frame
+00566f8c	data	blind_fire_fitted	int	Whether the player's ship carries blind fire, which the mission's start decides by its type
+00569718	data	hud_brightness	float	The brightness hud_draw makes VFX's global palette at: 1, which hud_init sets and nothing changes
+00569938	data	hud_eject_ticks	int	The count hud_eject_marker flashes by, which order_eject_player_init starts again
+0056996c	data	smart_targeting	ushort	Smart targeting, which SMART TARGET flips (hud_target_keys)
+00579986	data	player_ejected	ushort	Set by order_eject_player_init; while it is, hud_eject_marker flashes
+00579988	data	enemy_lock	int	Set by mission_frame when a ship whose order is Fight against the player has byte 0x2F of its fight state set; lights the display's lock warning. Unverified: that the byte is a missile lock
+00579990	data	blind_fire	int	Blind fire, which TOGGLE BLINDFIRE flips on a ship that carries it; hud_init and the mission's start turn it on
+0057bc34	data	hud_scanner_frame	int	The frame of five hud_scanner draws
+0057bc3c	data	dm_icons	void *	dmicons.spr, or soft_dmicons.spr under the software renderer, which hud_init loads. Unknown: what draws it
+0057bc44	data	hud_warning_ticks	int	The count the lock and missile warnings flash by, which the two share
+0057bf20	data	spectral_shields_state	int	-1 when the player's ship has no spectral shields, else 0 off and 1 on. The mission's start sets 0 for the Nagi, the Crusader, the Tempest and the Shroud
+0057bf4c	data	ecm_state	int	0 when the ECM is off and 1 when on; the mission's start sets 0, so every ship carries one. -1 would be none
+0057e048	data	cockpit_frame	void *	The model of the cockpit's frame, which the mission's start loads by the player's ship type
+0057e060	data	scanner_object	int	The object the Scanner command has the player look for, or -1: hud_scanner draws while it names one, and mission_frame beeps at an interval of 10 to 200 ticks that it works out from the object's distance and bearing
+00588700	data	hud_interference	float	How much the display is shaken: while above 0, hud_draw draws its shapes with hud_blit. hud_interference_start sets 0.3 and hud_interference_fade lowers it
+0059548c	data	vfx_line_draw	void *	VFX_line_draw, looked up out of the VFX library
+00595498	data	vfx_shape_multilookaside	void *	VFX_shape_multilookaside, looked up out of the VFX library
+005957a4	data	hud_pane	void *	The VFX pane the display draws into
+005957a8	data	vfx_shape_translate_draw	void *	VFX_shape_translate_draw, looked up out of the VFX library
+005957c0	data	vfx_return_global_palette	void *	VFX_return_global_palette, looked up out of the VFX library
+005957d0	data	vfx_init_global_palette	void *	VFX_init_global_palette, looked up out of the VFX library
+005959e4	data	vfx_shape_draw	void *	VFX_shape_draw, looked up out of the VFX library
+00594748	data	vfx_shape_draw_mirrored	void *	VFX_shape_draw_mirrored, looked up out of the VFX library
+00594434	data	vfx_shape_bounds	void *	VFX_shape_bounds, looked up out of the VFX library
+00594538	data	vfx_shape_origin	void *	VFX_shape_origin, looked up out of the VFX library
+00594540	data	vfx_shape_resolution	void *	VFX_shape_resolution, looked up out of the VFX library
+00595070	data	vfx_pane_wipe	void *	VFX_pane_wipe, looked up out of the VFX library

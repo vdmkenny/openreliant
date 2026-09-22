@@ -69,7 +69,10 @@ pub const GameObject = extern struct {
     /// (`node_draw`). `object_alloc` and `create_object` both leave it at 1, so nothing in the
     /// shipped game sees further or less far than its size says.
     visibility: f32,
-    _unknown_130: [0x22]u8,
+    _unknown_130: [0x14]u8,
+    /// How its guns fire, which the gun keys set.
+    gun_mode: GunMode,
+    _unknown_146: [0xC]u8,
     component_count: i16,
     _unknown_154: [0xF4]u8,
     /// The parts of its model whose flags mark them as components, in the order `0x00468760`
@@ -115,11 +118,8 @@ pub const GameObject = extern struct {
     afterburner_fuel: i32,
     /// Countermeasures left, which the display shows under its coil. 29 when the object is created
     /// (`create_object`, `object_alloc`), and `object_spend_countermeasure` (`0x00462550`) takes
-    /// one at a time, flashing a display element when there are none.
-    ///
-    /// **Unverified:** that they are countermeasures. It is a consumable the player spends one of
-    /// at a keypress with a sound, that the ships' own code spends too, and the game binds a
-    /// COUNTERMEASURES key; nothing names it outright.
+    /// one at a time; with none left, the player's COUNTERMEASURES key gets only the display's
+    /// sound 3.
     countermeasures: u16,
     _unknown_5ee: u16,
     /// Four values, each `6 * ShipCombat.shield_power - 1` when created.
@@ -137,14 +137,23 @@ pub const GameObject = extern struct {
     /// Nonzero while it is hostile: `SetHostile`. When created, a value of its combat stats'
     /// (`+0x2A`), or in one of the game's modes one worked out otherwise.
     hostile: i32,
-    _unknown_648: [8]u8,
+    _unknown_648: u32,
+    /// Nonzero while a missile homes on it, which lights the display's missile warning.
+    /// `mission_frame` zeroes it on every object each frame, and `missiles_update` (`0x004960F0`)
+    /// then sets it on the object each live missile's order targets. **Unverified:** the
+    /// conditions it sets it under, which are not all read.
+    missile_homing: i32,
     /// The throttle of the last update.
     last_throttle: f32,
     _unknown_654: [0x14]u8,
     /// Scales the cruise speed as its armor falls, which `object_cruise_speed` applies unless the
     /// camera is in view 13 or the object is invulnerable.
     armor_speed_factor: f32,
-    _unknown_66c: [0x14]u8,
+    _unknown_66c: u32,
+    /// The gun type its spectral shields are tuned to, which turning them on sets
+    /// (`player_spectral_shields_set`): the one most dangerous near it.
+    spectral_gun_type: i32,
+    _unknown_674: [0xC]u8,
     /// Orders on its stack.
     order_count: i16,
     _unknown_682: u16,
@@ -233,7 +242,11 @@ pub const GameObject = extern struct {
         jumping: bool,
         /// Set while the Dock and Ripper orders hold it to another object; their ends clear it.
         attached: bool,
-        _unknown_23: u5,
+        _unknown_23: u3,
+        /// Its ECM is on: `player_ecm_set` (`0x00415370`).
+        ecm: bool,
+        /// Its spectral shields are on: `player_spectral_shields_set` (`0x00415430`).
+        spectral_shields: bool,
         /// **Unknown.** Set by `0x00474B40` as it sends a ship off, the player's into Friendly
         /// Fire and others into Jump Out, and cleared by Friendly Fire. It takes no orders while
         /// it is set.
@@ -250,10 +263,13 @@ pub const GameObject = extern struct {
         assert(@bitOffsetOf(Flags, "shield_generator") == 14);
         assert(@bitOffsetOf(Flags, "engines_disabled") == 17);
         assert(@bitOffsetOf(Flags, "attached") == 22);
+        assert(@bitOffsetOf(Flags, "ecm") == 26);
+        assert(@bitOffsetOf(Flags, "spectral_shields") == 27);
         assert(@bitOffsetOf(Flags, "unlisted") == 29);
         assert(@offsetOf(GameObject, "combat") == 0x10);
         assert(@offsetOf(GameObject, "root") == 0x28);
         assert(@offsetOf(GameObject, "visibility") == 0x12C);
+        assert(@offsetOf(GameObject, "gun_mode") == 0x144);
         assert(@offsetOf(GameObject, "component_count") == 0x152);
         assert(@offsetOf(GameObject, "components") == 0x248);
         assert(@offsetOf(GameObject, "engines") == 0x5D0);
@@ -269,6 +285,8 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "random_seed") == 0x638);
         assert(@offsetOf(GameObject, "motion") == 0x640);
         assert(@offsetOf(GameObject, "hostile") == 0x644);
+        assert(@offsetOf(GameObject, "missile_homing") == 0x64C);
+        assert(@offsetOf(GameObject, "spectral_gun_type") == 0x670);
         assert(@offsetOf(GameObject, "last_throttle") == 0x650);
         assert(@offsetOf(GameObject, "armor_speed_factor") == 0x668);
         assert(@offsetOf(GameObject, "speed_factor") == 0x738);
@@ -307,6 +325,32 @@ pub const Motion = enum {
 
 /// How many countermeasures an object is created with (`0x00407AAE`, `0x0045A0A4`).
 pub const countermeasures_when_created: u16 = 29;
+
+/// How a ship's guns fire (`GameObject.gun_mode`): the group chosen, and the two ways of firing
+/// them all. `create_object` gives a ship of one group of guns `0x20` and one of more `0x30`.
+pub const GunMode = packed struct(u16) {
+    /// The group of guns chosen. GUNNERY WINDOW moves to the next, going round, or only clears
+    /// `all` if it is set.
+    group: u3,
+    _unknown_3: bool,
+    /// Every group fires: FULL GUNS flips it on a ship of more than one group. It keeps the
+    /// display's blind fire light out.
+    all: bool,
+    /// SYNCHRONISE GUNS flips it. **Unverified:** that it has the guns fire together rather than
+    /// in turn, which the manual's CTRL and G does.
+    synchronised: bool,
+    _unknown_6: u10,
+
+    /// What `create_object` starts a ship on, by how many groups of guns it has.
+    pub fn created(groups: u16) GunMode {
+        return .{ .group = 0, ._unknown_3 = false, .all = groups != 1, .synchronised = true, ._unknown_6 = 0 };
+    }
+};
+
+test GunMode {
+    try std.testing.expectEqual(0x20, @as(u16, @bitCast(GunMode.created(1))));
+    try std.testing.expectEqual(0x30, @as(u16, @bitCast(GunMode.created(3))));
+}
 
 /// The view `object_cruise_speed` leaves a ship its undamaged speed in, whatever its armor.
 const full_speed_view: camera.View = @enumFromInt(13);
