@@ -67,7 +67,7 @@ pub fn collide(world: gameobj.World, first: u16, second: u16, pass: u8) bool {
     }
 
     const lists_components = all.slots[near].object.flags.components or all.slots[far].object.flags.components;
-    if (lists_components) return parts(world, near, far);
+    if (lists_components) return parts(world, near, far, pass);
 
     // Two torpedoes and two pieces of debris pass through each other, as do two of `satellite_type`.
     if (classes[0] == classes[1] and (classes[0] == .torpedo or classes[0] == .debris)) return false;
@@ -95,33 +95,38 @@ const bounce: f32 = -2;
 /// sweep has already made (`0x004DC56C`), so a pair that keeps meeting is parted harder each time.
 const resting_speed: f32 = 5;
 
-/// `0x00464E80`: the shove two objects give each other where they meet. The point their spheres
-/// touch at moves with each of them, so a ship that is turning strikes harder with its wingtip; the
-/// impulse is worked out from how fast the two points close, each object's mass and how readily it
-/// turns (`GameObject.angular_response`), and is handed to both through `knock`, equal and
-/// opposite. An object held to another, and the Ripper with something in its grip, take none.
-///
-/// The knocks are applied by the move that follows, which is why a colliding pair moves again.
+/// `0x00464E80`: the shove two objects give each other where their spheres touch. The contact
+/// point lies on the line between their centres, so neither is turned by it.
 fn shove(world: gameobj.World, first: u16, second: u16, pass: u8) void {
+    const all = world.objects;
+    const here = gameobj.vector(all.slots[first].object.root.position);
+    const there = gameobj.vector(all.slots[second].object.root.position);
+    const apart = here - there;
+    if (math.lengthSquared(apart) == 0) return;
+    const toward = math.normalize(apart);
+    const contact = there + toward * @as(Vector, @splat(all.slots[second].object.radius));
+    shoveAt(world, first, second, -toward, .{
+        math.transformTransposed(all.slots[first].object.root.orientation, contact - here),
+        math.transformTransposed(all.slots[second].object.root.orientation, contact - there),
+    }, pass);
+}
+
+/// `0x00464E80` itself: the impulse where two objects meet. `normal` points from the first to the
+/// second, and `levers` gives the contact point in each object's own frame. The impulse follows
+/// how fast those points close between this step and the next, each object's mass and its
+/// `angular_response`, and both take it through `knock`, equal and opposite. An object held to
+/// another, and the Ripper carrying something, take none.
+///
+/// The move that follows applies the knocks, which is why a colliding pair moves again.
+fn shoveAt(world: gameobj.World, first: u16, second: u16, normal: Vector, levers: [2]Vector, pass: u8) void {
     const all = world.objects;
     const near = &all.slots[first].object;
     const far = &all.slots[second].object;
-    const here = gameobj.vector(near.root.position);
-    const there = gameobj.vector(far.root.position);
-    const apart = here - there;
-    if (math.lengthSquared(apart) == 0) return;
-    // The point their spheres touch at, and where it lies in each object's own frame.
-    const normal = -math.normalize(apart);
-    const contact = there + math.normalize(apart) * @as(Vector, @splat(far.radius));
-    const levers: [2]Vector = .{
-        math.transformTransposed(near.root.orientation, contact - here),
-        math.transformTransposed(far.root.orientation, contact - there),
-    };
 
-    // Where that point stands now and where the step is taking it, for each object.
+    // Where each contact point stands now and where the step is taking it.
     const now: [2]Vector = .{
-        math.transform(near.root.orientation, levers[0]) + here,
-        math.transform(far.root.orientation, levers[1]) + there,
+        math.transform(near.root.orientation, levers[0]) + gameobj.vector(near.root.position),
+        math.transform(far.root.orientation, levers[1]) + gameobj.vector(far.root.position),
     };
     const next: [2]Vector = .{
         math.transform(near.root.next_orientation, levers[0]) + gameobj.vector(near.root.next_position),
@@ -129,7 +134,6 @@ fn shove(world: gameobj.World, first: u16, second: u16, pass: u8) void {
     };
     var closing = (next[0] - now[0]) - (next[1] - now[1]);
     if (math.lengthSquared(closing) == 0 and far.flags.components) {
-        // Two points that keep pace are parted by what is left of the first object's reach.
         closing = normal * @as(Vector, @splat(near.radius - math.distance(now[0], next[0])));
     }
     const speed = math.length(closing);
@@ -197,17 +201,58 @@ fn push(world: gameobj.World, first: u16, second: u16, pass: u8) bool {
     return true;
 }
 
-/// `0x00465C50`: a ship that meets an object listing components is tested against its parts rather
-/// than its sphere, up to nine times over as the two are moved apart. Two objects that both list
-/// components pass through each other, as does anything meeting `limpet_pod_type`.
-///
-/// The test itself (`0x00465380`) walks the parts' collision hulls, which the port does not read
-/// yet ([#143](https://github.com/vdmkenny/openreliant/issues/143)), so nothing comes of the pair.
-fn parts(world: gameobj.World, first: u16, second: u16) bool {
+/// `0x00465C50`: a ship that meets an object listing components is tested against that object's
+/// parts, not its sphere. The two are moved apart and tested again, up to nine times. Two objects
+/// that both list components pass through each other, as does anything meeting `limpet_pod_type`.
+fn parts(world: gameobj.World, first: u16, second: u16, pass: u8) bool {
     const all = world.objects;
     if (all.slots[first].object.flags.components and all.slots[second].object.flags.components) return false;
     if (all.slots[first].object.type == limpet_pod_type or all.slots[second].object.type == limpet_pod_type) return false;
-    return false;
+    const hull = if (all.slots[first].object.flags.components) first else second;
+    const ship = if (hull == first) second else first;
+
+    var tries: u8 = 0;
+    while (tries < hull_passes) : (tries += 1) {
+        if (!hullHit(world, ship, hull, pass)) break;
+        for ([_]u16{ ship, hull }) |index| {
+            const slot = &all.slots[index];
+            const flight = slot.flight orelse continue;
+            motion.move(&slot.object, flight, world.view, slot.motion, if (index == all.player) world.shake else null);
+        }
+    }
+    return tries > 0 and tries < hull_passes;
+}
+
+/// How many times a pair is tested against a hull before the sweep gives up on it.
+const hull_passes = 9;
+
+/// `0x00465380`, as far as the shove goes: the nearest face of the hull to the ship's sphere. The
+/// ship is shoved at its own centre and the hull at the face, so the hull turns about the hit and
+/// the ship does not.
+///
+/// Not ported: the damage the hit does, and what it destroys
+/// ([#42](https://github.com/vdmkenny/openreliant/issues/42)). The game also tests the player's
+/// ship against each part's trigger polygons first, which one shipped model carries.
+fn hullHit(world: gameobj.World, ship: u16, hull: u16, pass: u8) bool {
+    const all = world.objects;
+    const model = if (all.slots[hull].model) |*live| live else return false;
+    const source = if (all.slots[hull].type) |kind| kind.model else return false;
+    const object = &all.slots[hull].object;
+
+    // The hull stands where this step is taking it, as the ship's sphere does.
+    model.place(gameobj.vector(object.root.next_position), object.root.next_orientation);
+    const at = gameobj.vector(all.slots[ship].object.root.next_position);
+    const found = objects.hitSphere(model, source, at, all.slots[ship].object.radius) orelse return false;
+
+    const part = model.parts[found.part].object;
+    const contact = math.transform(part.orientation, found.point) + part.position;
+    const normal = math.transform(part.orientation, found.normal);
+    // The ship takes the shove at its own centre, the hull at the face it was hit on. The game
+    // works the hull's lever out in the part's frame; the port uses the object's, which differs
+    // only for a part its model animates.
+    const lever = math.transformTransposed(object.root.orientation, contact - gameobj.vector(object.root.position));
+    shoveAt(world, ship, hull, -normal, .{ @splat(0), lever }, pass);
+    return true;
 }
 
 const testing = struct {
@@ -295,6 +340,61 @@ test "a collision shoves both ships" {
     all.slots[near].object.velocity = .{ .x = 100, .y = 0, .z = 0 };
     try std.testing.expect(collide(world, near, far, 0));
     try std.testing.expectEqual(0, all.slots[far].object.velocity.x);
+}
+
+test "a ship that meets a hull is shoved off the face it hit" {
+    const libcmt = @import("../libcmt.zig");
+    const input = @import("../input.zig");
+    const gpa = std.testing.allocator;
+    var random: libcmt.Rand = .{};
+    const all = try create.Objects.create(gpa, &random);
+    defer all.destroy();
+    var model: create.testing.Model = undefined;
+    try model.init(gpa);
+    defer model.deinit(gpa);
+    model.withHull();
+    var tables = create.testing.tables();
+    var player: input.Player = .{};
+    var shake: f32 = 0;
+    const world = testing.world(all, &player, &shake);
+
+    // A hull of one square part, and a ship flying into its face.
+    // The inverse inertia of a body of this mass, about 6 / (mass * size squared), which is what
+    // `recentre` works out from a model's parts.
+    const hull_turn: math.Matrix = @splat(0);
+    const hull = try create.createObject(all, &tables, model.types(), null, 0, @splat(0), &random);
+    all.slots[hull].object.flags.components = true;
+    all.slots[hull].object.mass = 100000;
+    all.slots[hull].object.angular_response = hull_turn;
+    all.slots[hull].object.angular_response[0] = 6e-9;
+    all.slots[hull].object.angular_response[4] = 6e-9;
+    all.slots[hull].object.angular_response[8] = 6e-9;
+    all.slots[hull].motion = null;
+    // The ship meets the face off to one side, so the hit has a lever on the hull.
+    const ship = try create.createObject(all, &tables, create.testing.no_models, null, 0, .{ 60, 0, -60 }, &random);
+    all.slots[ship].object.radius = 100;
+    all.slots[ship].object.mass = 1000;
+    all.slots[ship].object.angular_response = .{ 6e-7, 0, 0, 0, 6e-7, 0, 0, 0, 6e-7 };
+    all.slots[ship].motion = null;
+    all.slots[ship].object.velocity = .{ .x = 0, .y = 0, .z = 40 };
+    all.slots[ship].object.root.next_position = .{ .x = 60, .y = 0, .z = -20 };
+
+    try std.testing.expect(collide(world, ship, hull, 0));
+    // It is thrown back off the face, which faces along -Z, and the hull is pushed the other way.
+    try std.testing.expect(all.slots[ship].object.velocity.z < 40);
+    try std.testing.expect(all.slots[hull].object.velocity.z > 0);
+    // The hull turns about the hit, which the ship does not: it is shoved at its own centre.
+    try std.testing.expect(all.slots[hull].object.yaw_rate != 0 or all.slots[hull].object.pitch_rate != 0);
+    try std.testing.expectEqual(0, all.slots[ship].object.yaw_rate);
+
+    // A ship nowhere near the hull meets nothing.
+    objects.setPosition(&all.slots[ship].object, &all.slots[ship].drawn, .{ 0, 0, -5000 });
+    all.slots[ship].object.velocity = .{ .x = 0, .y = 0, .z = 0 };
+    try std.testing.expect(!collide(world, ship, hull, 0));
+
+    // Two hulls pass through each other.
+    all.slots[ship].object.flags.components = true;
+    try std.testing.expect(!collide(world, ship, hull, 0));
 }
 
 test "what never collides" {

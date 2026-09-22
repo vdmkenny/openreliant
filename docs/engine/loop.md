@@ -85,7 +85,7 @@ they list components:
 |---|---|
 | Two of one type, where either is a torpedo | Nothing |
 | A torpedo that is already going off | Nothing |
-| Either lists components, but not both, and neither is the limpet pod (`0xBC`) | The ship is tested against the other's parts, up to nine times over (`0x00465C50`) |
+| Either lists components, but not both, and neither is the limpet pod (`0xBC`) | The ship is tested against the other's collision tree, up to nine times over (`0x00465C50`) |
 | Both list components | Nothing |
 | Two torpedoes, two pieces of debris, or two satellites (`0x71`) | Nothing |
 | Either is a mine, against a fighter | The mine goes off |
@@ -105,9 +105,13 @@ ship is set spinning. A hull's own faces do give one ([#143](https://github.com/
 The pair is then set apart along that line: each is placed at 1.1 times its own radius from the
 point midway between the two, so the step that follows does not find them overlapping again.
 
-Ported so far: the sweep, the pairs it passes over, the shove and setting two objects apart
-([`collision.zig`](../../src/engine/game/collision.zig)). Not yet: the damage an impact does
-([#42](https://github.com/vdmkenny/openreliant/issues/42)), the torpedo's and the mine's explosions
-([#41](https://github.com/vdmkenny/openreliant/issues/41)), and the test against a capital ship's
-parts ([#143](https://github.com/vdmkenny/openreliant/issues/143)), so a ship still flies through
-one.
+A ship that meets an object listing components is tested against that object's collision tree
+instead ([Models](../formats/shp.md#tree-node-tag-0x07)): each part's boxes are descended to the
+leaves, and the faces of a leaf the ship's sphere reaches give the nearest point. The ship is then
+shoved at its own centre and the hull at that point, so the hull turns about the hit and the ship
+does not.
+
+Ported so far: the sweep, the pairs it passes over, the shove, setting two objects apart, and the
+hull test ([`collision.zig`](../../src/engine/game/collision.zig)). Not yet: the damage an impact
+does ([#42](https://github.com/vdmkenny/openreliant/issues/42)), and the torpedo's and the mine's
+explosions ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
