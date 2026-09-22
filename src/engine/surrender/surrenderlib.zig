@@ -6,6 +6,7 @@ const std = @import("std");
 pub const srapi = @import("surrenderlib/srapi.zig");
 pub const srapiext = @import("surrenderlib/srapiext.zig");
 pub const srbmo = @import("surrenderlib/srbmo.zig");
+pub const srclip = @import("surrenderlib/srclip.zig");
 pub const srcore = @import("surrenderlib/srcore.zig");
 pub const srlight = @import("surrenderlib/srlight.zig");
 pub const srmesh = @import("surrenderlib/srmesh.zig");

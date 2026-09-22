@@ -6,7 +6,9 @@ The software renderer, `srddraw.dll`, is not covered here.
 
 [`src/engine/game/srofiles.zig`](../../src/engine/game/srofiles.zig) states the rule from shading to
 material; [`src/engine/surrender/srd3d/srd3d.zig`](../../src/engine/surrender/srd3d/srd3d.zig) the
-driver's blend factors, depth rule and highlight textures.
+driver's blend factors, depth rule and highlight textures;
+[`src/engine/surrender/surrenderlib/srclip.zig`](../../src/engine/surrender/surrenderlib/srclip.zig)
+the clipper.
 
 ## Frame
 
@@ -162,6 +164,28 @@ creation:
 | `0x02` | Never culled |
 
 An object with flag `0x800` is not culled.
+
+## Clipping
+
+As the payload turns a mesh's vertices into the camera's frame (`mesh_transform_clipped`,
+`0x004C6710`), it notes the planes of the view volume each lies outside: the near plane alone for
+a vertex short of it, else whichever of left or right and of top or bottom. A polygon whose
+corners all lie outside one plane is dropped; one with any corner outside a plane is clipped by the
+driver, a triangle of its fan at a time (`clip_triangle`, `0x1000BEB0`, from `srClip.cpp`):
+
+1. The triangle is cut by each plane its polygon's corners lie outside, in the order near, left,
+   right, top, bottom.
+2. Each vertex a cut makes notes the planes it lies outside, the near plane and the sides alike
+   (`SR_clip_vertex_set_clip_flags`, `0x1000C700`), and each of them whose turn is still to come
+   cuts the triangle too. A cut through the near plane that lands off the screen is so cut again by
+   the sides.
+3. The vertices left are projected, each kept within the viewport.
+
+A vertex's attributes, its colour and both passes' coordinates, are interpolated along the edge it
+is made on.
+
+An object flagged `0x2` is also cut by planes of its own (`0x1000C7C0`). **Unknown:** what gives an
+object those planes.
 
 ## Lighting
 

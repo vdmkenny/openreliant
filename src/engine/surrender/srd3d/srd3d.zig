@@ -10,6 +10,7 @@ const math = @import("../math.zig");
 const srapi = @import("../surrenderlib/srapi.zig");
 const srapiext = @import("../surrenderlib/srapiext.zig");
 const srbmo = @import("../surrenderlib/srbmo.zig");
+const srclip = @import("../surrenderlib/srclip.zig");
 const srcore = @import("../surrenderlib/srcore.zig");
 const srmesh = @import("../surrenderlib/srmesh.zig");
 const srstars = @import("../surrenderlib/srstars.zig");
@@ -405,14 +406,6 @@ pub const Driver = struct {
         }
     }
 
-    /// A corner as the clipper carries it: in the camera's frame, with everything interpolated.
-    const ClipCorner = struct {
-        view: Vector,
-        colour: [4]f32,
-        mesh_uv: [2][2]f32,
-        generated: [2][2]f32,
-    };
-
     /// `draw_clipped` (`0x10003100`): a polygon clipped triangle by triangle, each piece drawn as a
     /// fan.
     fn drawClipped(driver: *Driver, drawn: *const srmesh.Drawn, v: srmesh.Visible, material: Material, pass: u1, st: device.State) Allocator.Error!void {
@@ -421,10 +414,10 @@ pub const Driver = struct {
         const lines = p.kind == .lines;
         const pieces: usize = if (lines) p.count -| 1 else p.count -| 2;
         for (0..pieces) |t| {
-            var polygon: [16]ClipCorner = undefined;
+            var polygon: [srclip.capacity]srclip.Vertex = undefined;
             const positions: []const usize = if (lines) &.{ p.first, p.first + 1 } else &.{ p.first, p.first + t + 1, p.first + t + 2 };
             for (positions, 0..) |position, i| polygon[i] = clipCorner(drawn, position);
-            const count = clipPolygon(driver.context.projection, v.clip, &polygon, positions.len);
+            const count = srclip.clip(driver.context.projection, v.clip, &polygon, positions.len);
             if (count < (if (lines) @as(usize, 2) else 3)) continue;
             driver.single.clearRetainingCapacity();
             for (polygon[0..count]) |c| {
@@ -453,10 +446,11 @@ pub const Driver = struct {
         }
     }
 
-    fn clipCorner(drawn: *const srmesh.Drawn, position: usize) ClipCorner {
+    /// A corner of a polygon as the clipper takes it.
+    fn clipCorner(drawn: *const srmesh.Drawn, position: usize) srclip.Vertex {
         const mesh = drawn.mesh;
         const vertex = mesh.indices[position];
-        var c: ClipCorner = .{
+        var c: srclip.Vertex = .{
             .view = drawn.view[vertex],
             .colour = if (drawn.colours) |colours| colours[vertex] else @splat(0),
             .mesh_uv = @splat(.{ 0, 0 }),
@@ -465,68 +459,6 @@ pub const Driver = struct {
         for (0..2) |pass| {
             if (mesh.uv[pass]) |uv| c.mesh_uv[pass] = uv[position];
             if (drawn.generated[pass]) |g| c.generated[pass] = g[vertex];
-        }
-        return c;
-    }
-
-    /// `clip_triangle` (`0x1000BEB0`): cuts a polygon in the camera's frame by the planes it
-    /// crosses, near, left, right, top and bottom in turn, each corner's attributes carried along.
-    /// Returns how many corners are left.
-    fn clipPolygon(projection: srapi.Projection, planes: srapi.Outcode, polygon: *[16]ClipCorner, count: usize) usize {
-        var n = count;
-        const bounds = projection.bounds;
-        const Plane = enum { near, left, right, top, bottom };
-        for (std.enums.values(Plane)) |plane| {
-            const crossed = switch (plane) {
-                .near => planes.near,
-                .left => planes.left,
-                .right => planes.right,
-                .top => planes.top,
-                .bottom => planes.bottom,
-            };
-            if (!crossed or n == 0) continue;
-            var out: [16]ClipCorner = undefined;
-            var m: usize = 0;
-            for (0..n) |i| {
-                const a = polygon[i];
-                const b = polygon[(i + 1) % n];
-                const da = inside(plane, a.view, bounds, projection.near);
-                const db = inside(plane, b.view, bounds, projection.near);
-                if (da >= 0 and m < out.len) {
-                    out[m] = a;
-                    m += 1;
-                }
-                if ((da >= 0) != (db >= 0) and m < out.len) {
-                    out[m] = mix(a, b, da / (da - db));
-                    m += 1;
-                }
-            }
-            polygon.* = out;
-            n = m;
-        }
-        return n;
-    }
-
-    /// How far inside a plane a point lies: negative outside.
-    fn inside(plane: anytype, p: Vector, bounds: [4]f32, near: f32) f32 {
-        return switch (plane) {
-            .near => p[2] - near,
-            .left => p[0] - bounds[0] * p[2],
-            .right => bounds[2] * p[2] - p[0],
-            .top => p[1] - bounds[1] * p[2],
-            .bottom => bounds[3] * p[2] - p[1],
-        };
-    }
-
-    fn mix(a: ClipCorner, b: ClipCorner, t: f32) ClipCorner {
-        var c = a;
-        c.view = a.view + (b.view - a.view) * @as(Vector, @splat(t));
-        for (&c.colour, a.colour, b.colour) |*x, p, q| x.* = p + (q - p) * t;
-        for (0..2) |pass| {
-            for (0..2) |axis| {
-                c.mesh_uv[pass][axis] = a.mesh_uv[pass][axis] + (b.mesh_uv[pass][axis] - a.mesh_uv[pass][axis]) * t;
-                c.generated[pass][axis] = a.generated[pass][axis] + (b.generated[pass][axis] - a.generated[pass][axis]) * t;
-            }
         }
         return c;
     }

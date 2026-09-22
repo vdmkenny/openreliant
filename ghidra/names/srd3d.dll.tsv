@@ -32,7 +32,14 @@
 10007420	function	draw_blended_stars	void __cdecl (void *record)
 10006f90	function	draw_polygon	void __cdecl (void *record)	Draws one polygon as a fan, or its lines, and tests its triangles against the sun
 10003100	function	draw_clipped	void __cdecl (void *record)	Clips a polygon triangle by triangle and draws each piece as a fan
-1000beb0	function	clip_triangle	void __fastcall (void *record, int triangle)	Clips a triangle of a polygon in the camera's frame against the planes it crosses, near, left, right, top and bottom in turn, and projects the new vertices
+1000beb0	function	clip_triangle	void __fastcall (void *record, int triangle)	Clips a triangle of a polygon in the camera's frame against the planes its polygon crosses, near, left, right, top and bottom in turn, and against those the vertices each cut makes lie outside while their turn is to come; then projects what is left, kept within the viewport
+1000c380	function	clip_vertex_cut	void __fastcall (void *vertex)	Cuts a clip vertex off by clip_plane_equation when it lies outside: moves it onto the plane toward the neighbour inside, adds a second vertex when both neighbours are inside, or unlinks it when both are outside
+1000c580	function	clip_list_insert	void * __fastcall (void *vertex)	Links a new vertex from the clip list's store in before the given one; asserts clip_list->count < 64
+1000c5e0	function	clip_vertex_between	void __fastcall (void *vertex, void *from, void *to, float t)	Sets a clip vertex t of the way from one vertex to another, with the attributes clip_attributes names, then its clip flags
+1000c700	function	SR_clip_vertex_set_clip_flags	void __fastcall (void *vertex)	The planes a vertex the clipper made lies outside, the near plane and the sides alike, less clip_plane; ORs them into clip_planes. With clip_sets_flags clear, none
+1000c7c0	function	clip_object_planes	void __fastcall (void *planes)	Cuts the clip list by the planes an object flagged 0x2 carries at +0xAC: one, with flag 0x100, or a list, with 0x200
+1000f380	function	plane_set	void __thiscall (float a, float b, float c, float d)	Sets the plane in ECX to a x + b y + c z + d, positive outside
+10012400	function	screen_clamp	void __fastcall (float *screen)	Keeps a point on the screen within the viewport, as the payload's 0x004C5DC0 does
 10001fd0	function	sun_test	int __fastcall (float *a, float *b, float *c)	Lessens the sun's visibility to a triangle's nearest edge, or to 0 when the triangle covers the sun's point
 1000c9d0	function	sprite_cut	void __fastcall (void *sprite, float *u, float *v, float *rect)	A sprite's rectangle cut to the view's bounds, and its texture coordinates cut to match
 10007220	function	draw_sprite	void __fastcall (void *sprite)	Draws a sprite as a strip of two triangles
@@ -55,3 +62,14 @@
 1002977c	data	blend_destination	int[5]	The D3DBLEND destination factor for each MaterialBlend
 100297c8	data	highlights		The eight highlight textures, 16 bytes apart
 10056528	data	stage_table		11 bytes for each material combination: state, stage count, then per stage the first and second arguments and the operation
+10069d18	data	clip_list	int *	The clipper's list: the polygon's corner count, the vertices left, the vertices made (under 64), the store of 0x5C-byte vertices at +0x10, the first vertex at +0x14
+10069d00	data	clip_planes	uint	The planes clip_triangle still cuts by: the polygon's, and those each vertex it makes lies outside
+10069ce0	data	clip_plane	uint	The bit of the plane being cut by: 0x10 near, 0x1 left, 0x2 right, 0x4 top, 0x8 bottom
+10069d04	data	clip_plane_equation	float[4]	The plane being cut by, a, b, c and d, positive outside
+10069cf8	data	clip_sets_flags	bool	Whether the vertices a cut makes get clip flags: set for the view volume's planes, clear for an object's own
+10069cec	data	clip_attributes	uint	The clipped mesh's +0x2C, the attributes the clipper carries along: 0x1 and 0x2 the passes' mesh coordinates, 0x4 and 0x8 the generated ones, 0x400 the colours
+10069d14	data	clip_near	float	The near plane's distance, sr + 0x169E, for the clipper
+10069cf0	data	clip_left	float	The view's left edge over depth, sr + 0x1672, for the clipper
+10069cf4	data	clip_right	float	The right edge, sr + 0x1676
+10069cfc	data	clip_top	float	The top edge, sr + 0x168A
+10069ce4	data	clip_bottom	float	The bottom edge, sr + 0x168E
