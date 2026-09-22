@@ -180,7 +180,11 @@ pub const GameObject = extern struct {
     missile_homing: i32,
     /// The throttle of the last update.
     last_throttle: f32,
-    _unknown_654: [0x14]u8,
+    _unknown_654: [0x10]u8,
+    /// How well its shields recharge as its armour wears: a quarter of each quadrant's armour over
+    /// its full armour, added up (`0x00492370`). 1 when created. The damage display's shield bar
+    /// shows it.
+    shield_condition: f32,
     /// Scales the cruise speed as its armor falls, which `object_cruise_speed` applies unless the
     /// camera is in view 13 or the object is invulnerable.
     armor_speed_factor: f32,
@@ -208,16 +212,30 @@ pub const GameObject = extern struct {
     recent_damage: f32,
     /// The slot of the object that last damaged it, or -1.
     last_attacker: i32,
-    _unknown_698: [0xA0]u8,
-    /// Scales the cruise speed; 1.0 when created.
+    _unknown_698: [0x90]u8,
+    /// Where the power distribution stands on the power ball (`input.power`): a point within a disc
+    /// of radius 64, in `x` and `y`. `z` is 1 when created, and moving the point sets it to 0.
+    /// `create_object` puts the point at (1, 1).
+    power_setting: shp.Vec3,
+    /// How fast its guns recharge, from its share of the power: 0.5 to 1.5, 1 for an even third
+    /// (`input.power.distribute`). 1 when created.
+    gun_factor: f32,
+    /// Scales the cruise speed: the engines' share of the power, as `gun_factor` is the guns'.
+    /// 1 when created.
     speed_factor: f32,
-    _unknown_73c: u32,
+    /// How fast its shields recharge (`rechargeShields`): the shields' share of the power, as
+    /// `gun_factor` is the guns'. 1 when created.
+    shield_factor: f32,
     /// Its pilot: the record in `pilotstats.bin`, which `object_set_pilot` gives it.
     pilot: i32,
     /// **Unknown.** A 24-byte record for the pilot, from a table at `0x5048D8`.
     pilot_record: Pointer(anyopaque),
     pilot_stats: Pointer(@import("pilots.zig").Pilot),
-    _unknown_74c: [0x440]u8,
+    _unknown_74c: [8]u8,
+    /// **Unknown.** -1 when created. Its shields don't recharge while it is 8
+    /// (`rechargeShields`), and the player's controls turn round while it is 9.
+    _unknown_754: i32,
+    _unknown_758: [0x434]u8,
     /// Orders from other players waiting for their frame, in a multiplayer game.
     queued_order_count: i32,
     /// Its queue of `aigeneric.max_queued` entries, allocated when the first order arrives.
@@ -343,7 +361,12 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "blind_fire_aim") == 0x674);
         assert(@offsetOf(GameObject, "last_throttle") == 0x650);
         assert(@offsetOf(GameObject, "armor_speed_factor") == 0x668);
+        assert(@offsetOf(GameObject, "shield_condition") == 0x664);
+        assert(@offsetOf(GameObject, "power_setting") == 0x728);
+        assert(@offsetOf(GameObject, "gun_factor") == 0x734);
         assert(@offsetOf(GameObject, "speed_factor") == 0x738);
+        assert(@offsetOf(GameObject, "shield_factor") == 0x73C);
+        assert(@offsetOf(GameObject, "_unknown_754") == 0x754);
         assert(@offsetOf(GameObject, "order_count") == 0x680);
         assert(@offsetOf(GameObject, "orders") == 0x684);
         assert(@offsetOf(GameObject, "order_state") == 0x68C);
@@ -592,6 +615,56 @@ pub fn applyKnocks(object: *GameObject) void {
     object.impulse = vec3(@splat(0));
     object.angular_impulse = vec3(@splat(0));
 }
+
+/// What the player has shifted into the fore and aft shields beyond their full charge with SHIELD
+/// BALANCING (`input.power.balanceShields`), which keeps the other side's charge down as the
+/// shields recharge (`rechargeShields`).
+pub const ShieldReserves = struct {
+    /// Beyond the fore shield, `shields[2]` (`0x0051CF78`).
+    fore: f32 = 0,
+    /// Beyond the aft shield, `shields[3]` (`0x0051CF34`).
+    aft: f32 = 0,
+};
+
+/// `object_recharge_shields` (`0x00476FC0`), which `simulation_step` runs for every object after
+/// its node update. Each shield gains its full charge, `6 * ShipCombat.shield_power - 1`, times
+/// `shield_factor` and `shield_condition`, over `ShipCombat.shield_recharge` seconds of steps,
+/// and stops at the full charge. For the player's ship, `reserves` are the shields shifted fore or
+/// aft: the full charge of the fore and aft shields is lower by however far the other one and its
+/// reserve go beyond it.
+///
+/// An object whose components are listed recharges no shields here, and neither does one whose
+/// `+0x754` is 8. One whose `invulnerable` is 5 has its shields emptied instead. **Unknown:**
+/// what those values mean. Not ported: the case in a multiplayer game where the player's shields
+/// aren't recharged (`0x005D76F0` at 4 with `0x005DB538` naming the player).
+pub fn rechargeShields(object: *GameObject, combat: *const create.ShipCombat, reserves: ?ShieldReserves) void {
+    if (object.flags.components) return;
+    if (object.invulnerable == 5) {
+        object.shields = @splat(0);
+        return;
+    }
+    if (object._unknown_754 == 8) return;
+    const full = @as(f32, @floatFromInt(combat.shield_power * 6)) - 1;
+    const rate = full * object.shield_factor * object.shield_condition / (combat.shield_recharge * recharge_steps);
+    for (&object.shields, 0..) |*shield, quadrant| {
+        var most = full;
+        if (reserves) |shifted| {
+            const other: ?f32 = switch (quadrant) {
+                2 => shifted.aft + object.shields[3],
+                3 => shifted.fore + object.shields[2],
+                else => null,
+            };
+            if (other) |beside| if (beside > most) {
+                most -= beside - most;
+            };
+        }
+        shield.* = rate + shield.*;
+        if (shield.* > most) shield.* = most;
+    }
+}
+
+/// Simulation steps a second, which `ShipCombat.shield_recharge` is counted in (`0x004DC7F0`).
+const recharge_steps: f32 = 25;
 
 /// A light fighter's flight stats, near the Predator's, for the tests below.
 const testing_flight: create.FlightModel = .{
@@ -842,4 +915,27 @@ test "flying faster than the cruise speed shakes the player's camera" {
     shake = 1;
     move(&object, &testing_flight, .chase, null, &shake);
     try std.testing.expectEqual(1, shake);
+}
+
+test rechargeShields {
+    var object = testingObject();
+    object.shield_factor = 1;
+    object.shield_condition = 1;
+    const combat = std.mem.zeroInit(create.ShipCombat, .{ .shield_power = 8, .shield_recharge = 10 });
+    // From empty, the full charge, 47, comes back over the ten seconds of steps, and no further.
+    for (0..249) |_| rechargeShields(&object, &combat, null);
+    try std.testing.expect(object.shields[0] < 47);
+    rechargeShields(&object, &combat, null);
+    try std.testing.expectApproxEqAbs(47, object.shields[0], 1e-3);
+    rechargeShields(&object, &combat, null);
+    try std.testing.expectEqual(47, object.shields[0]);
+    // With shields shifted aft beyond its full charge, the fore one charges only as far as the
+    // full charge less the excess.
+    object.shields = .{ 47, 47, 45, 40 };
+    rechargeShields(&object, &combat, .{ .aft = 9 });
+    try std.testing.expectEqual(45, object.shields[2]);
+    // An object whose `invulnerable` is 5 loses its shields.
+    object.invulnerable = 5;
+    rechargeShields(&object, &combat, null);
+    try std.testing.expectEqual([4]f32{ 0, 0, 0, 0 }, object.shields);
 }

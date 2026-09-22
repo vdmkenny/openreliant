@@ -332,11 +332,12 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             if (!stepped) continue;
             // What `simulation_step` runs in order: the orientation of the object whose turn it is
             // is orthonormalized, each object's node update commits the place the previous step
-            // worked out, then the player's orders, then the objects move. The sandbox has one
-            // object.
+            // worked out and its shields recharge, then the player's orders, then the objects
+            // move. The sandbox has one object.
             if (clock.nextTurn(1) == ship.live.index) game.main.orthonormalizeTurn(&ship.live.root);
             game.objects.updateTree(&ship.live.root);
-            engine.input.playerControls(&player, &devices, &ship.live, view.view);
+            game.gameobj.rechargeShields(&ship.live, &ship.combat, player.shield_reserves);
+            engine.input.playerControls(&player, &devices, &ship.live, &ship.combat, view.view, clock.frame_duration);
             game.gameobj.move(&ship.live, &ship.flight, view.view, .forward, &view.hit_shake);
         }
         clock.frameBegin();
@@ -383,7 +384,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         view.frameControls(&devices, 0, ticks, at);
         // After the camera's keys, `frame_controls` reads the targeting keys, then its own.
         game.hud.targetKeys(&display.state, &devices, false);
-        engine.input.frameKeys(&display.state, &devices, &ship.live, view.view, display.clock.game_ticks, false);
+        engine.input.frameKeys(&display.state, &player, &devices, &ship.live, view.view, display.clock.game_ticks, false);
         // What moves the cockpit's model: the ship's rates of turn over its full ones, and its
         // speed over its cruise speed.
         const cockpit_input: ?camera.Cockpit.Input = if (ship.cockpit) |*cockpit| input: {
@@ -536,10 +537,8 @@ const Ship = struct {
     live: game.gameobj.GameObject,
     /// Its type's flight stats, which `stats_load_ships` builds from `shipstats.bin`.
     flight: game.create.FlightModel,
-    /// Its type's shield power, truncated as `stats_load_ships` keeps it.
-    shield_power: i32,
-    /// The most its guns' charge holds.
-    gun_energy: f32,
+    /// Its type's combat stats, which `stats_load_ships` builds from `shipstats.bin` too.
+    combat: game.create.ShipCombat,
     /// Whether its model can cloak.
     can_cloak: bool,
     /// Its type's schematic, which the display's ship status indicator draws, where the game has
@@ -587,15 +586,21 @@ const Ship = struct {
         live.armor_speed_factor = 1;
         live.engines_intact = 1;
         live.radius = object.radius;
-        live.afterburner_fuel = @intFromFloat(100 * ship_stats[ship_type].afterburner_fuel);
+        const combat = game.create.shipCombat(ship_stats[ship_type]);
+        live.afterburner_fuel = combat.afterburner_fuel * 100;
         live.countermeasures = game.gameobj.countermeasures_when_created;
+        // The power shared evenly, with the point at (1, 1) on the power ball, and the shields
+        // working fully.
+        live.power_setting = .{ .x = 1, .y = 1, .z = 1 };
+        live.gun_factor = 1;
+        live.shield_factor = 1;
+        live.shield_condition = 1;
+        live._unknown_754 = -1;
         // Each quadrant's shields and armour, six times the type's figure, less one. The sandbox
         // fits no guns, so the gun mode stays at nothing: `create_object` sets it by the groups of
         // guns the ship's loadout gives it.
-        const shield_power: i32 = @intFromFloat(ship_stats[ship_type].shield_power);
-        const armor_class: i32 = @intFromFloat(ship_stats[ship_type].armor_class);
-        live.shields = @splat(@floatFromInt(6 * shield_power - 1));
-        live.armor = @splat(@floatFromInt(6 * armor_class - 1));
+        live.shields = @splat(@floatFromInt(6 * combat.shield_power - 1));
+        live.armor = @splat(@floatFromInt(6 * combat.armor_class - 1));
         // Its guns full.
         live.gun_charge = ship_stats[ship_type].gun_energy;
         const schematic: ?game.hud.Art = if (game.create.models.ship_types[ship_type].schematic) |name| found: {
@@ -625,8 +630,7 @@ const Ship = struct {
             .live = live,
             .cockpit = cockpit,
             .flight = game.create.flightModel(ship_stats[ship_type]),
-            .shield_power = shield_power,
-            .gun_energy = ship_stats[ship_type].gun_energy,
+            .combat = combat,
             .can_cloak = model.header.flags.cloak,
             .schematic = schematic,
             .object = object,
@@ -727,13 +731,13 @@ const Display = struct {
         if (display.ship.schematic) |*schematic| {
             try game.hud.ShipStatus.drawSchematic(schematic, display.ship.arena.allocator(), display.target, display.screen, white, scale);
         }
-        try game.hud.ShipStatus.draw(&display.art, display.gpa, display.target, display.screen, live.shields, display.ship.shield_power, white, scale);
+        try game.hud.ShipStatus.draw(&display.art, display.gpa, display.target, display.screen, live.shields, display.ship.combat.shield_power, white, scale);
         try game.hud.drawCluster(&display.art, &display.font, display.gpa, display.target, display.screen, .{
             .throttle = live.throttle,
             .speed = live.speed,
             .max_speed = display.ship.flight.max_speed,
             .charge = live.gun_charge,
-            .full_charge = display.ship.gun_energy,
+            .full_charge = display.ship.combat.gun_energy,
         }, white, scale);
         try game.hud.drawRadar(&display.art, display.gpa, display.target, display.screen, state.radar_rings, white, scale);
         game.hud.stepRadarZoom(state, display.clock.game_ticks);

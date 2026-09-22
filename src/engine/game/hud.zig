@@ -1013,8 +1013,6 @@ pub const State = struct {
     radar_zoom: ?Radar.Zoom = null,
     /// The display's windows (`0x00501D30`).
     windows: windows.Windows = .{},
-    /// Whether POWERBALL WINDOW is held (`0x0051CEF8`), or the power window was held open with it.
-    power_held: bool = false,
 
     /// `hud_draw`'s work on the devices' charges for a frame, which it does in every view: a
     /// device that runs dry is turned off.
