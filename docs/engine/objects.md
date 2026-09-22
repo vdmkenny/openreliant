@@ -261,6 +261,8 @@ running the motion function:
 arctangents of 0 to 1 in steps of 1/4096 (`0x005DE344`), by the smaller of `y / x` and `x / y`
 rounded to the nearest step.
 
+**Improvement:** the port computes the angles instead, which is more precise by up to half a step.
+
 ### The orders' motion functions
 
 The orders select eight more motion functions, which read the order's state (`0x68C`). They aren't
@@ -287,9 +289,6 @@ the camera's shake as a pointer, set only for the player's ship, where the game 
 with the player's and writes the global. `Motion` is an `enum` of the two routines
 `create_object` installs, in place of the function pointer at `0x640`, and the rule each quantity
 settles by is one `settle` helper rather than the six copies the binary holds.
-
-[`math.zig`](../../src/engine/surrender/math.zig) builds the arctangent table at compile time, where
-the engine fills it at start-up (`0x004C3000`).
 
 `objects.updateTree` ports `node_tree_update` for the root, and the driver runs it where
 `simulation_step` does, at the start of each step.

@@ -85,59 +85,20 @@ pub fn orthonormalize(m: Matrix) Matrix {
 
 /// `mat3_angles` (`0x004C2740`): the angles about X, Y and Z that make up `m`, in radians. When
 /// the Y angle is close to a right angle, the X angle takes all of the turn and Z is 0.
+///
+/// **Improvement:** the engine looks the angles up in a table of arctangents in steps of 1/4096
+/// (`sr_atan2`, `0x004C3200`). The port computes them, which is more precise by up to half a step.
 pub fn angles(m: Matrix) Vector {
     const across = @sqrt(m[1] * m[1] + m[0] * m[0]);
-    const y = atan2(m[2], across);
-    if (across > 1.6e-5) return .{ atan2(-m[5], m[8]), y, atan2(-m[1], m[0]) };
-    return .{ atan2(m[7], m[4]), y, 0 };
+    const y = std.math.atan2(m[2], across);
+    if (across > 1.6e-5) return .{ std.math.atan2(-m[5], m[8]), y, std.math.atan2(-m[1], m[0]) };
+    return .{ std.math.atan2(m[7], m[4]), y, 0 };
 }
 
 /// A small turn by the angles `a` about X, Y and Z, to first order: turning a vector `v` by it
 /// adds `cross(a, v)`.
 pub fn smallTurn(a: Vector) Matrix {
     return .{ 1, -a[2], a[1], a[2], 1, -a[0], -a[1], a[0], 1 };
-}
-
-/// The steps of the tangent `atan_table` holds, 1/4096 apart from 0 to 1.
-const atan_steps = 4096;
-
-/// `atan_table` (`0x005DE344`): the arctangent of each step. The engine fills it when it starts
-/// (`0x004C3000`); here it is computed at compile time.
-const atan_table = table: {
-    @setEvalBranchQuota(1_000_000);
-    var table: [atan_steps + 1]f32 = undefined;
-    for (&table, 0..) |*angle, step| {
-        angle.* = @floatCast(std.math.atan(@as(f64, @floatFromInt(step)) / atan_steps));
-    }
-    break :table table;
-};
-
-/// `sr_atan2` (`0x004C3200`): the angle whose tangent is `y / x`, from -π to π. The engine looks
-/// it up in `atan_table` by the smaller of `y / x` and `x / y`, rounded to the nearest step, so
-/// it can be off by up to half a step. 0/0 gives π/2.
-pub fn atan2(y: f32, x: f32) f32 {
-    const pi: f32 = std.math.pi;
-    const half_pi: f32 = std.math.pi / 2.0;
-    if (@abs(y) < @abs(x)) {
-        const step = atanStep(y / x);
-        const angle = atan_table[@abs(step)];
-        if (x < 0) return if (step < 0) pi - angle else angle - pi;
-        return if (step < 0) -angle else angle;
-    }
-    const step = atanStep(x / y);
-    const angle = atan_table[@abs(step)];
-    if (y < 0) return if (step < 0) angle - half_pi else -half_pi - angle;
-    return if (step < 0) angle + half_pi else half_pi - angle;
-}
-
-/// The step of `atan_table` nearest the tangent `t`, which is between -1 and 1, rounded as
-/// `sr_round` (`FISTP`) rounds. The engine multiplies by 4096 before it divides, `y * 4096 / x`;
-/// multiplying by a power of two is exact, so the step is the same.
-fn atanStep(t: f32) i32 {
-    // 0/0 and ∞/∞. The engine's step is then -2^31, and its table address wraps round to the
-    // first entry, 0, which gives the same angle as step 0 here.
-    if (std.math.isNan(t)) return 0;
-    return @intFromFloat(roundEven(t * atan_steps));
 }
 
 /// `x` rounded to the nearest whole number, halves to even, as the x87 rounds by default (`FISTP`).
@@ -184,13 +145,16 @@ pub fn fromAngles(pitch: f32, yaw: f32, roll: f32) Matrix {
 
 /// An orientation whose forward axis, its third column, points along `direction`: turned about `Y`,
 /// then about `X`, with no roll (`mat3_look_at`, `0x004C1940`).
+///
+/// **Improvement:** the engine takes the angles from `sr_atan2`'s table, as `angles` does. The port
+/// computes them.
 pub fn lookAt(direction: Vector) Matrix {
-    const yaw = atan2(direction[0], direction[2]);
+    const yaw = std.math.atan2(direction[0], direction[2]);
     const cy = @cos(yaw);
     const sy = @sin(yaw);
     // The direction's length in the turned frame, where its x is zero.
     const along = direction[0] * sy + direction[2] * cy;
-    const pitch = atan2(direction[1], along);
+    const pitch = std.math.atan2(direction[1], along);
     const cp = @cos(pitch);
     const sp = @sin(pitch);
     return .{
@@ -207,33 +171,11 @@ fn expectVector(expected: Vector, actual: Vector) !void {
 test lookAt {
     for ([_]Vector{ .{ 0, 0, 1 }, .{ 1, -0.5, 0.2 }, .{ -1, 0.5, 0 }, .{ 0.2, 0.9, -0.3 } }) |d| {
         const m = lookAt(normalize(d));
-        // Within the precision of the angles `atan2` looks up.
-        const forward = transform(m, .{ 0, 0, 1 });
-        inline for (0..3) |i| try std.testing.expectApproxEqAbs(normalize(d)[i], forward[i], atan2_precision);
+        try expectVector(normalize(d), transform(m, .{ 0, 0, 1 }));
         // No roll: the right axis stays level.
         try std.testing.expectApproxEqAbs(0, m[3], 1e-6);
+        try expectVector(.{ 0, 0, 1 }, transformTransposed(m, normalize(d)));
     }
-}
-
-/// How far off `atan2` can be: half a step of the tangent, and a little for rounding.
-const atan2_precision: f32 = 0.5 / @as(f32, atan_steps) + 1e-6;
-
-test atan2 {
-    // Around the circle, the looked-up angle stays within half a step of the tangent of the real one.
-    for (0..720) |i| {
-        const angle = (@as(f32, @floatFromInt(i)) - 360) / 360 * std.math.pi;
-        const found = atan2(@sin(angle) * 3, @cos(angle) * 3);
-        try std.testing.expectApproxEqAbs(0, std.math.wrap(found - angle, std.math.pi), atan2_precision);
-    }
-    // Exact on the table's steps.
-    try std.testing.expectEqual(atan_table[1024], atan2(1, 4));
-    try std.testing.expectEqual(@as(f32, std.math.pi / 4.0), atan2(1, 1));
-    try std.testing.expectEqual(-@as(f32, std.math.pi / 2.0), atan2(-2, 0));
-    try std.testing.expectEqual(@as(f32, std.math.pi / 2.0), atan2(0, 0));
-    // A tangent that rounds to step 0 from below, for a y a little above 0 and an x below it,
-    // gives -π rather than π, as the engine's does.
-    try std.testing.expectEqual(-@as(f32, std.math.pi), atan2(1e-5, -1));
-    try std.testing.expectEqual(@as(f32, std.math.pi) - atan_table[41], atan2(0.01, -1));
 }
 
 test smallTurn {
@@ -298,15 +240,15 @@ test orthonormalize {
 }
 
 test angles {
-    // A turn about one axis at a time gives that angle back, as closely as `atan2` looks it up.
+    // A turn about one axis at a time gives that angle back.
     for ([_]Axis{ .x, .y, .z }, 0..) |axis, index| {
         const found: [3]f32 = angles(rotation(axis, 0.3));
-        for (found, 0..) |angle, i| try std.testing.expectApproxEqAbs(if (i == index) @as(f32, 0.3) else 0, angle, atan2_precision);
+        for (found, 0..) |angle, i| try std.testing.expectApproxEqAbs(if (i == index) @as(f32, 0.3) else 0, angle, 1e-6);
     }
     try std.testing.expectEqual(Vector{ 0, 0, 0 }, angles(identity));
     // At a right angle about Y, the X angle takes all of the turn and Z is 0.
     const found: [3]f32 = angles(fromAngles(0.4, std.math.pi / 2.0, 0.2));
-    try std.testing.expectApproxEqAbs(0.6, found[0], atan2_precision);
-    try std.testing.expectApproxEqAbs(std.math.pi / 2.0, found[1], atan2_precision);
+    try std.testing.expectApproxEqAbs(0.6, found[0], 1e-6);
+    try std.testing.expectApproxEqAbs(std.math.pi / 2.0, found[1], 1e-6);
     try std.testing.expectEqual(0, found[2]);
 }

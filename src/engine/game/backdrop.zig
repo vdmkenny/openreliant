@@ -515,8 +515,7 @@ test "Backdrop.frame" {
     // The fields, the dust, `sunlayer3`, `sunlayer2` and `sunlayer1`; the flares on the overlay.
     try std.testing.expectEqual(field_count + 4, scene.layers.get(.background).items.len);
     try std.testing.expectEqual(flares.len, scene.layers.get(.overlay).items.len);
-    // Within the precision of the angles `lookAt` aims the camera by.
-    try std.testing.expectApproxEqAbs(320, context.sun[0], 0.1);
+    try std.testing.expectApproxEqAbs(320, context.sun[0], 1e-2);
     try std.testing.expectEqual(max_visibility, context.sun_visibility);
     // An 8-pixel-wide texture at depth 1000 reaches 8 * 1000 / 768 to each side, halved for
     // `sunlayer1`.
