@@ -186,7 +186,7 @@ address	kind	name	type	comment
 004760c0	function	object_add_part	void __fastcall (GameObject *object, void *model, int part)	Gives an object a node for a part of its model
 0049a8c0	function	node_draw	void __fastcall (GameObject *object, ModelNode *node, uint flags, float glow)	Adds a node's frame to the scene and draws its children: a model part's mesh on the world layer, or the overlay with flag 0x40; lights, engine glows and the cloak by the node's kind; skips hidden nodes and objects too far away to see. An engine glow of attachment id 7 burns full, the rest by the glow given, negated where the attachment's Z axis and its length point the same way, and drawn nothing at or below zero; a burning one is flickered by rand to between 0.8 and 1 of its length, then scaled by the attachment's sizes, the length by that amount
 0049b390	function	object_draw	void __fastcall (ModelNode *root, uint flags, float glow)	Draws an object from its root node with node_draw, adding flag 0x10, drawn nothing, when it lies beyond the view or outside its sides; mission_frame passes it last_throttle times engines_intact as the glow
-004769f0	function	object_recentre	void __fastcall (GameObject *object)	Moves the object's origin to its parts' centre of mass, adding the shift to +0x524, the root and the position, and finds its bounds
+004769f0	function	object_recentre	void __fastcall (GameObject *object)	Moves the object's origin to its parts' centre of mass, adding the shift to +0x524, the root and the position, then finds its bounds, radius and inertia tensor (object_bounds) and inverts the tensor into angular_response, its lower half mirrored into its upper first
 004764a0	function	node_mass_add	void __fastcall (GameObject *object, ModelNode *node)	Adds a node's mass and its mass times its centre to the object's totals, children first; parts by their mass fields, others by their meshes' boxes
 00499430	function	node_add_part	ModelNode * __fastcall (ModelNode *parent, ShpPart *part)	Hangs a node for a model part from a node, then mounts what its attachment points hold
 00499a10	function	node_mount	void __fastcall (ModelNode *node, ShpAttachment *attachment)	Mounts what an attachment point holds: an object of its own for guns and pods
@@ -278,7 +278,7 @@ address	kind	name	type	comment
 0051cf6c	data	orbit_distance	float	Kept between 1.8 and 3.8 radii of the player's ship, or 5.8 of the target's
 00588724	data	hit_shake	float	How much the cockpit view shakes from a hit, falling by 0.02 a tick
 004c3a60	function	sr_set_projection	void __cdecl (float left, float top, float right, float bottom, float across, float down)	The projection: scales of the screen's size less 0.1 times the factors, the middle, and the viewport's edges in view units and pixels
-00476680	function	object_bounds	void __fastcall (GameObject *object, ModelNode *node, int unused)	Widens the object's bounds and radius over a node's mesh and adds its part's inertia, then does the node's children
+00476680	function	object_bounds	void __fastcall (GameObject *object, ModelNode *node, float *tensor)	Widens the object's bounds and radius over a node's mesh, and adds its part's inertia to the tensor: the second moments about the two other axes on the diagonal and the products off it, each with the term the part's distance from the object's origin adds, times its density; then the node's children
 00588340	data	joystick	JoystickState	The joystick as read_joystick last polled it
 00588398	data	mouse	MouseState	The mouse as read_mouse last read it: its movement since the read before
 00595c68	data	keyboard	byte[256]	DirectInput's keyboard state, by scan code (DIK_*): nonzero while the key is down
@@ -714,3 +714,4 @@ address	kind	name	type	comment
 004c1c10	function	mat3_add	void __fastcall (float *m, float *by)	Adds a 3x3 matrix into another
 004c1160	function	vec3_cross_by	void __fastcall (Vec3 *v, Vec3 *by)	Crosses a vector by another in place
 004c2050	function	det2	float __fastcall (float a, float b, float c, float d)	The determinant of a 2x2 matrix: a*d - b*c, which mat3_determinant sums three of
+00465380	function	collision_test_hull	undefined4 __fastcall (GameObject *ship, GameObject *hull, int pass)	Tests a ship against the faces of each part of an object that lists components, by the planes the loader keeps past the part record, in place of the sphere test
