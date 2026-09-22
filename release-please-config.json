@@ -19,6 +19,7 @@
   "packages": {
     ".": {
       "package-name": "openreliant",
+      "initial-version": "0.0.1",
       "extra-files": [{ "type": "generic", "path": "build.zig.zon" }]
     }
   }
