@@ -1221,12 +1221,12 @@ fn drawBar(target: device.Device, at: [2]i32, down: i32, length: i32, scale: f32
 /// is open, closes it, and outside a multiplayer game the keys that turn the missile ring, which
 /// open it held too. `frame_controls` runs the routine for the targeting and missile keys, before
 /// its own. Not yet ported: the targeting keys, turning the ring, and the display's sounds.
-pub fn targetKeys(state: *State, keyboard: *input.Keyboard, multiplayer: bool) void {
-    if (input.controlActive(keyboard, input.controls.binding(.smart_target), true)) {
+pub fn targetKeys(state: *State, devices: *input.Devices, multiplayer: bool) void {
+    if (devices.active(.smart_target, true)) {
         state.smart_targeting = !state.smart_targeting;
     }
     const missiles = state.windows.status.getPtr(.missiles);
-    if (input.controlActive(keyboard, input.controls.binding(.missile_window), true)) {
+    if (devices.active(.missile_window, true)) {
         switch (missiles.phase) {
             .shut => if (state.windows.open(.missiles, multiplayer)) {
                 missiles.held = true;
@@ -1240,7 +1240,7 @@ pub fn targetKeys(state: *State, keyboard: *input.Keyboard, multiplayer: bool) v
     }
     if (multiplayer) return;
     for ([_]input.controls.Action{ .rotate_missiles_clockwise, .rotate_missiles_anticlockwise }) |action| {
-        if (!input.controlActive(keyboard, input.controls.binding(action), true)) continue;
+        if (!devices.active(action, true)) continue;
         if (state.windows.open(.missiles, multiplayer)) missiles.held = true;
     }
 }

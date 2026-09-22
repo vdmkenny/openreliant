@@ -4,6 +4,7 @@
 const std = @import("std");
 
 pub const gpu = @import("platform/gpu.zig");
+pub const joystick = @import("platform/joystick.zig");
 pub const keyboard = @import("platform/keyboard.zig");
 pub const window = @import("platform/window.zig");
 

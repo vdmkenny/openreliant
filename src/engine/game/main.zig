@@ -125,13 +125,13 @@ pub const Clock = struct {
     /// reads the input devices, then runs each object's own updates and moves them all with
     /// `objects_update`. Returns whether it did that work.
     ///
-    /// Ported so far: the pacing, and the keyboard `read_keyboard` reads here rather than once a
-    /// frame. Not yet: the joystick and the mouse, and the object updates, which the caller stands
-    /// in for until they are ported.
-    pub fn simulationStep(clock: *Clock, keyboard: *input.Keyboard) bool {
+    /// Ported so far: the pacing, and the keyboard and the joystick, which `read_keyboard` and
+    /// `read_joystick` read here rather than once a frame. Not yet: the mouse, and the object
+    /// updates, which the caller stands in for until they are ported.
+    pub fn simulationStep(clock: *Clock, devices: *input.Devices) bool {
         clock.simulation_counter += 1;
         if (clock.simulation_counter < 4) return false;
-        keyboard.read();
+        devices.read();
         clock.simulation_counter = 0;
         return true;
     }
@@ -141,29 +141,29 @@ pub const Clock = struct {
     ///
     /// Not ported: the countdown at `0x0052A474` that it steps once a second, and the timed
     /// sections it brackets the tick with outside a network game.
-    pub fn gameTick(clock: *Clock, keyboard: *input.Keyboard) bool {
+    pub fn gameTick(clock: *Clock, devices: *input.Devices) bool {
         if (clock.paused) {
             clock.paused_ticks +%= 1;
             return false;
         }
         clock.mission_ticks +%= 1;
-        return clock.simulationStep(keyboard);
+        return clock.simulationStep(devices);
     }
 
     /// Runs the next game tick the loop owes, as `mission_run` (`0x00494040`) paces them: one for
     /// each tick of the timer since the last pass. Returns whether the simulation stepped, so that
     /// the caller can do the step's own work, or null once the loop has caught up with the timer.
-    pub fn nextTick(clock: *Clock, keyboard: *input.Keyboard) ?bool {
+    pub fn nextTick(clock: *Clock, devices: *input.Devices) ?bool {
         if (clock.ran_to == clock.game_ticks) return null;
         clock.ran_to +%= 1;
-        return clock.gameTick(keyboard);
+        return clock.gameTick(devices);
     }
 
     /// Every tick the loop owes, for a caller with no work of its own in the step. Returns how many
     /// simulation steps ran.
-    pub fn runTicks(clock: *Clock, keyboard: *input.Keyboard) u32 {
+    pub fn runTicks(clock: *Clock, devices: *input.Devices) u32 {
         var steps: u32 = 0;
-        while (clock.nextTick(keyboard)) |stepped| {
+        while (clock.nextTick(devices)) |stepped| {
             if (stepped) steps += 1;
         }
         return steps;
@@ -522,51 +522,52 @@ test fitDevices {
 
 test "the simulation steps on every fourth tick" {
     var clock: Clock = .{};
-    var keyboard: input.Keyboard = .{};
+    var devices: input.Devices = .{};
     // A second of the timer: 100 ticks, 100 game ticks, 25 steps.
     clock.advanceTimer(100);
     try std.testing.expectEqual(100, clock.game_ticks);
-    try std.testing.expectEqual(25, clock.runTicks(&keyboard));
+    try std.testing.expectEqual(25, clock.runTicks(&devices));
     try std.testing.expectEqual(100, clock.mission_ticks);
     // The ticks already run are not run again.
-    try std.testing.expectEqual(0, clock.runTicks(&keyboard));
+    try std.testing.expectEqual(0, clock.runTicks(&devices));
 }
 
 test "a paused game stops its clocks but not the timer" {
     var clock: Clock = .{};
-    var keyboard: input.Keyboard = .{};
+    var devices: input.Devices = .{};
     clock.advanceTimer(8);
-    _ = clock.runTicks(&keyboard);
+    _ = clock.runTicks(&devices);
     clock.paused = true;
     clock.advanceTimer(100);
     // The timer counts the paused ticks; the mission's clocks do not move.
     try std.testing.expectEqual(108, clock.timer_ticks);
     try std.testing.expectEqual(8, clock.game_ticks);
     try std.testing.expectEqual(8, clock.mission_ticks);
-    try std.testing.expectEqual(0, clock.runTicks(&keyboard));
+    try std.testing.expectEqual(0, clock.runTicks(&devices));
     // Paused ticks are counted only for the game ticks the loop asks for.
     clock.paused = false;
     clock.advanceTimer(4);
-    try std.testing.expectEqual(1, clock.runTicks(&keyboard));
+    try std.testing.expectEqual(1, clock.runTicks(&devices));
     try std.testing.expectEqual(12, clock.mission_ticks);
 }
 
 test "the step reads the keyboard, and the latches it clears" {
     var clock: Clock = .{};
-    var keyboard: input.Keyboard = .{};
+    var devices: input.Devices = .{};
+    const keyboard = &devices.keyboard;
     keyboard.down[scan_test_key] = true;
     keyboard.latched[scan_test_key] = true;
     // Three ticks do no work, so the latch stands; the fourth reads and keeps it while held.
     clock.advanceTimer(3);
-    _ = clock.runTicks(&keyboard);
+    _ = clock.runTicks(&devices);
     try std.testing.expect(keyboard.latched[scan_test_key]);
     clock.advanceTimer(1);
-    try std.testing.expectEqual(1, clock.runTicks(&keyboard));
+    try std.testing.expectEqual(1, clock.runTicks(&devices));
     try std.testing.expect(keyboard.latched[scan_test_key]);
     // Released, the next read clears it.
     keyboard.down[scan_test_key] = false;
     clock.advanceTimer(4);
-    _ = clock.runTicks(&keyboard);
+    _ = clock.runTicks(&devices);
     try std.testing.expect(!keyboard.latched[scan_test_key]);
 }
 
@@ -588,9 +589,9 @@ test "play time rolls a second over after 101 ticks" {
 
 test "a frame measures the ticks since the last one" {
     var clock: Clock = .{};
-    var keyboard: input.Keyboard = .{};
+    var devices: input.Devices = .{};
     clock.advanceTimer(10);
-    _ = clock.runTicks(&keyboard);
+    _ = clock.runTicks(&devices);
     clock.frameBegin();
     try std.testing.expectEqual(10, clock.frame_duration);
     try std.testing.expectEqual(10, clock.frame_start);
@@ -598,7 +599,7 @@ test "a frame measures the ticks since the last one" {
     clock.frameBegin();
     try std.testing.expectEqual(0, clock.frame_duration);
     clock.advanceTimer(3);
-    _ = clock.runTicks(&keyboard);
+    _ = clock.runTicks(&devices);
     clock.frameReset();
     try std.testing.expectEqual(13, clock.frame_start);
     try std.testing.expectEqual(0, clock.frame_duration);
@@ -606,7 +607,7 @@ test "a frame measures the ticks since the last one" {
 
 test "the clocks keep to the platform's count however the frames fall" {
     var clock: Clock = .{};
-    var keyboard: input.Keyboard = .{};
+    var devices: input.Devices = .{};
     const began: u64 = 12_345;
     clock.start(began);
     // Frames of uneven length: several shorter than a tick, one spanning many, one long stall.
@@ -616,7 +617,7 @@ test "the clocks keep to the platform's count however the frames fall" {
     for (frames) |frame| {
         now += frame;
         clock.advanceTo(now);
-        steps += clock.runTicks(&keyboard);
+        steps += clock.runTicks(&devices);
     }
     // Every hundredth between the first count and the last is a tick, and every fourth a step.
     const elapsed: u32 = @intCast(now - began);
@@ -630,7 +631,7 @@ test "the clocks keep to the platform's count however the frames fall" {
 }
 
 test "the frame rate is decoupled from the tick rate" {
-    var keyboard: input.Keyboard = .{};
+    var devices: input.Devices = .{};
     // The same second of play, drawn at three very different frame rates.
     const rates = [_]u64{ 4, 60, 240 };
     for (rates) |frames| {
@@ -641,7 +642,7 @@ test "the frame rate is decoupled from the tick rate" {
         for (1..frames + 1) |frame| {
             // Frame `frame` of `frames` ends this far into the second, in hundredths.
             clock.advanceTo(1_000 + @as(u64, @intCast(frame)) * 100 / frames);
-            steps += clock.runTicks(&keyboard);
+            steps += clock.runTicks(&devices);
             clock.frameBegin();
             drawn += 1;
         }
@@ -655,18 +656,18 @@ test "the frame rate is decoupled from the tick rate" {
 
 test "a frame faster than the tick runs none, and a slow one runs the lot" {
     var clock: Clock = .{};
-    var keyboard: input.Keyboard = .{};
+    var devices: input.Devices = .{};
     clock.start(0);
     // Four frames inside one hundredth: no tick falls in them, so the simulation stands still.
     for (0..4) |_| {
         clock.advanceTo(0);
-        try std.testing.expectEqual(0, clock.runTicks(&keyboard));
+        try std.testing.expectEqual(0, clock.runTicks(&devices));
         clock.frameBegin();
         try std.testing.expectEqual(0, clock.frame_duration);
     }
     // One frame that took a quarter of a second catches up all 25 ticks at once.
     clock.advanceTo(25);
-    try std.testing.expectEqual(6, clock.runTicks(&keyboard));
+    try std.testing.expectEqual(6, clock.runTicks(&devices));
     clock.frameBegin();
     try std.testing.expectEqual(25, clock.frame_duration);
 }

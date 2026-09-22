@@ -14,6 +14,7 @@ const std = @import("std");
 pub const game = @import("engine/game.zig");
 pub const input = @import("engine/input.zig");
 pub const libcmt = @import("engine/libcmt.zig");
+pub const profile = @import("engine/profile.zig");
 pub const sources = @import("engine/sources.zig");
 pub const surrender = @import("engine/surrender.zig");
 pub const vm = @import("engine/vm.zig");
