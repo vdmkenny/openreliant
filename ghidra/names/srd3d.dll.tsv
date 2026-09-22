@@ -1,19 +1,11 @@
-# Names for srd3d.dll, Surrender's Direct3D 7 driver, applied by ghidra/scripts/Annotate.java
-# (make ghidra-annotate). Columns as in LANCER.EXE.tsv. The driver draws what the payload has
-# transformed and lit; SR_driver_init fills the payload's device table with the functions here.
-
-# Device
+address	kind	name	type	comment
 10004840	function	D3D_set_screen_mode		Sets a full-screen display mode: the front, back and depth buffers, the device, and the render states the driver keeps
 10003c20	function	D3D_set_screen_mode_windowed		The same in a window
 100084a0	function	set_render_state	void __fastcall (int state, int value)	Sets a render state unless it already has the value
-
-# Frame
 100056b0	function	SR_driver_init		Fills the payload's device table with the driver's functions and sets up the blend factors for each mode
 100077a0	function	begin_scene	int __fastcall (void)	Clears to black and to depth 0, begins the scene, and draws a background image when one is set
 10007c10	function	end_scene	int __fastcall (void)	Ends the scene
 10003390	function	flush_blended	void __fastcall (void *list, int layer)	Draws a layer's sorted blended polygons: every first pass, then the second passes
-
-# Meshes
 10006ad0	function	draw_mesh	int __fastcall (void *object, int layer)	Draws a mesh object's visible polygons group by group: opaque groups now, in one pass or two; blended ones go to the layer's list
 10002920	function	draw_pass	void __fastcall (void *object, void *polygons, int group)	Draws a group's polygons for the current pass with one texture
 10002500	function	draw_both_passes	void __fastcall (void *object, void *polygons, int group)	Draws a group's polygons with both passes' textures at once
@@ -24,12 +16,11 @@
 10005500	function	stage_table_init	void __fastcall (void)	Fills stage_table
 10001820	function	make_highlights	void __fastcall (void)	Makes the eight highlight textures
 10001620	function	make_highlight	void __fastcall (void *image, int index)	Fills a 64x64 highlight texture
-
 10006bf0	function	draw_sprites	int __fastcall (void *sprites, int layer)	Draws a set of sprites, or, with a blended material, puts each aside keyed by its depth plus its bias
 10006c80	function	draw_stars	int __fastcall (void *stars, int layer)	Draws a star field, or, with a blended material, puts it aside with key 0
 10006ce0	function	draw_blended_polygon	void __cdecl (void *record)	A mesh's polygon from a layer's sorted list: both passes at once, one pass, or clipped
-10007200	function	draw_blended_sprite	void __cdecl (void *record)
-10007420	function	draw_blended_stars	void __cdecl (void *record)
+10007200	function	draw_blended_sprite	void __cdecl (void *record)	
+10007420	function	draw_blended_stars	void __cdecl (void *record)	
 10006f90	function	draw_polygon	void __cdecl (void *record)	Draws one polygon as a fan, or its lines, and tests its triangles against the sun
 10003100	function	draw_clipped	void __cdecl (void *record)	Clips a polygon triangle by triangle and draws each piece as a fan
 1000beb0	function	clip_triangle	void __fastcall (void *record, int triangle)	Clips a triangle of a polygon in the camera's frame against the planes its polygon crosses, near, left, right, top and bottom in turn, and against those the vertices each cut makes lie outside while their turn is to come; then projects what is left, kept within the viewport
@@ -47,17 +38,13 @@
 10002d10	function	draw_mesh_sorted	void __fastcall (void *object)	Sorts all of a mesh's visible polygons, farthest first, and draws them at once: every mesh on the overlay layer and objects flagged 0x4
 10009420	function	sr_round	int __cdecl (float x)	x rounded to the nearest whole number
 1000bba0	function	depth_sort	void * __fastcall (void *list)	The payload's depth_sort, for draw_mesh_sorted
-
-# Textures
 10006ab0	function	texture_upload	int __fastcall (void *image, uint flags)	Makes the device texture for an image
 10003840	function	texture_release	int __fastcall (void *image)	Frees an image's device texture, at its +0xA4
-
-# State
 1005f6dc	data	d3d_device	void *	The IDirect3DDevice7
 10057e24	data	sr_context	void *	The payload's sr_context
-10057e20	data	current_material	SurrenderMaterial *
+10057e20	data	current_material	SurrenderMaterial *	
 1002a4c4	data	current_pass	int	0 or 1
-10029840	data	current_layer	int
+10029840	data	current_layer	int	
 10057e0c	data	blend_source	int[5]	The D3DBLEND source factor for each MaterialBlend
 1002977c	data	blend_destination	int[5]	The D3DBLEND destination factor for each MaterialBlend
 100297c8	data	highlights		The eight highlight textures, 16 bytes apart

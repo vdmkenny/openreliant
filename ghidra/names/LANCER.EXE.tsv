@@ -1,10 +1,4 @@
-# Names for the payload executable, applied by ghidra/scripts/Annotate.java (make ghidra-annotate).
-# Columns: address, kind (function or data), name, type, comment. A function's type is a signature
-# without the name; a data item's is a type string. Types are those of Ghidra and of the schema
-# ghidragen writes from src/engine.zig and src/formats/dte.zig. The VM's opcode handlers and
-# command implementations are named separately, by ghidragen names.
-
-# Script VM
+address	kind	name	type	comment
 0045c980	function	vm_run	uint __fastcall (VmThread *thread)	Interpreter loop: fetch an opcode, call its handler, until one returns 0. Nonzero once the thread has finished
 0045b8d0	function	vm_thread_start	VmThread * __fastcall (ushort *block, VmThread *thread, byte deferred, uint *frame, byte trigger)	Starts a thread on a block, allocating one when thread is null; runs it now unless deferred
 0045b960	function	vm_thread_alloc	VmThread * __fastcall (void)	Returns a free thread, its stack pointer set
@@ -21,11 +15,11 @@
 004f6350	data	vm_dispatch_table	VmHandler *[86]	Opcode handler table
 004f0f50	data	command_catalogue	VmFunction[96]	Executor commands, then an entry with no implementation
 004f3ad0	data	command_catalogue_b	VmFunction	Second command catalogue; empty
-004f6348	data	vm_threads	VmThread *
-00537590	data	vm_thread_pool	VmThread[32]
-004f6344	data	vm_timers	VmTimer *
-00537470	data	vm_timer_table	VmTimer[16]
-00537468	data	vm_timer_count	ushort
+004f6348	data	vm_threads	VmThread *	
+00537590	data	vm_thread_pool	VmThread[32]	
+004f6344	data	vm_timers	VmTimer *	
+00537470	data	vm_timer_table	VmTimer[16]	
+00537468	data	vm_timer_count	ushort	
 00538c9c	data	vm_clock	uint	Seconds of mission time, which timers and waiting threads count by
 00457c10	function	vm_clock_start	void __fastcall (void)	Zeroes vm_clock and starts the timer that advances it once a second
 00458910	function	vm_clock_tick		Timer callback: advances vm_clock, unless the script debugger holds it or the game is paused
@@ -38,17 +32,15 @@
 00537415	data	vm_thread_count	byte	Threads running
 00537584	data	vm_command_flag	uint	Bit 0 of the command's mission flags, inverted, set before each command
 00525f94	data	command_table	VmFunction *	Installed command catalogue
-00525f98	data	command_count	ushort
-005267d4	data	command_table_b	VmFunction *
-00525fae	data	command_count_b	ushort
+00525f98	data	command_count	ushort	
+005267d4	data	command_table_b	VmFunction *	
+00525fae	data	command_count_b	ushort	
 00538c94	data	part_table	VmFunction *	Runtime parts, 256 entries
 00538c98	data	part_table_b	VmFunction *	Runtime parts for script_b
 004f6340	data	vm_component_tags	ComponentTag *	The components push_component named since the last command
-00537420	data	vm_component_tag_list	ComponentTag[9]
-
-# Mission loading
+00537420	data	vm_component_tag_list	ComponentTag[9]	
 00451d90	function	mission_bind_sections		Binds each directory section to its pointer and count
-00452a20	function	mission_bind_section
+00452a20	function	mission_bind_section		
 0045cb40	function	mission_alloc_part_tables	void __fastcall (void)	Allocates the part tables, 256 entries each
 0045cb80	function	mission_alloc_table		Frees and reallocates a table of count x size bytes
 00452f50	function	mission_build_part_tables	void __fastcall (void)	Fills the runtime part tables from sections 8 and 17
@@ -56,34 +48,32 @@
 00453020	function	part_in_table_b	uint __fastcall (MissionPart *part)	Whether a part descriptor lies outside section 8, in section 17
 00525f3c	data	mission_operands_a		Section 1
 005294f8	data	mission_globals	MissionGlobal *	Section 2
-005267bc	data	mission_globals_count	ushort
+005267bc	data	mission_globals_count	ushort	
 0052951c	data	mission_ships	MissionShip *	Section 3
-00529504	data	mission_ships_count	ushort
+00529504	data	mission_ships_count	ushort	
 005267cc	data	mission_flight_groups	FlightGroup *	Section 4
-005267c8	data	mission_flight_groups_count	ushort
+005267c8	data	mission_flight_groups_count	ushort	
 005294e0	data	mission_triggers	Trigger *	Section 5
-00529506	data	mission_triggers_count	ushort
+00529506	data	mission_triggers_count	ushort	
 00525f88	data	mission_script	byte *	Section 6, bytecode
-005294f4	data	mission_script_halfwords	ushort
+005294f4	data	mission_script_halfwords	ushort	
 005267c0	data	mission_objects	MissionObject *	Section 7, the object table, indexed by object ID
-00525fac	data	mission_objects_count	ushort
+00525fac	data	mission_objects_count	ushort	
 005267d0	data	mission_parts	MissionPart *	Section 8
-00529518	data	mission_parts_count	ushort
+00529518	data	mission_parts_count	ushort	
 005294d8	data	mission_script_flags	byte *	Section 10, one flag per script byte
 005294fc	data	mission_squads	Squad *	Section 12
-005294f0	data	mission_squads_count	ushort
+005294f0	data	mission_squads_count	ushort	
 00529500	data	mission_squad_members	SquadMember *	Section 13
-00529520	data	mission_squad_members_count	ushort
+00529520	data	mission_squad_members_count	ushort	
 00525fb0	data	mission_sub_objects		Section 16, 0x44 bytes each
-005267c4	data	mission_sub_objects_count	ushort
+005267c4	data	mission_sub_objects_count	ushort	
 005294ec	data	mission_parts_b	MissionPart *	Section 17
-00529508	data	mission_parts_b_count	ushort
+00529508	data	mission_parts_b_count	ushort	
 00525fb4	data	mission_script_b	byte *	Section 18
-00529510	data	mission_script_b_halfwords	ushort
+00529510	data	mission_script_b_halfwords	ushort	
 00525f9c	data	mission_command_flags	ushort *	Section 24, one per command
 00525f90	data	mission_command_flags_b	ushort *	Section 25, one per command_b entry
-
-# Triggers and objects
 0045cbc0	function	mission_script_start	void __fastcall (void)	Installs conditions and commands, runs the start part, arms every trigger an object's slice holds
 0045cea0	function	trigger_match	void __fastcall (ushort object, byte qualifier, Condition condition, uint *values, ushort count)	Fires the object's armed triggers whose condition, qualifier and operands match an event
 0045d0d0	function	trigger_thread_running	bool __fastcall (Trigger *trigger)	Whether a thread the trigger started is still running, which keeps it from starting another
@@ -93,7 +83,7 @@
 0045b690	function	event_post_group	void __fastcall (MissionShip *ship, Condition condition, byte count, uint *values, byte qualifier)	Queues an event on a ship, to be raised on its flight group and squads as well
 0045b840	function	events_flush	void __fastcall (void)	Raises every queued event, then empties the queue
 0052abd8	data	event_queue		Events waiting for events_flush, 0x30 bytes each: QueuedEvent
-005373e4	data	event_queue_count	uint
+005373e4	data	event_queue_count	uint	
 0045a9b0	function	event_launched		Queues Launched for a live object's ship
 0045a9e0	function	event_shot_at		Queues ShotAt: attacker, the victim's damage value twice, victim, and -1 for the weapon
 0045aa60	function	event_destroyed		Queues Destroyed for a ship, or for one of its components, marking it destroyed
@@ -123,43 +113,37 @@
 00452ac0	function	object_in_squad	uint __fastcall (Squad *squad, ushort *object, uint tag)	in_squad: whether an object is in a squad, following nested squads
 004f6698	data	condition_descriptors	ConditionDescriptor[35]	The condition catalogue
 0052952c	data	condition_table	ConditionDescriptor *	Installed condition catalogue
-00525f8c	data	condition_count	ushort
+00525f8c	data	condition_count	ushort	
 00525f84	data	condition_verdict	byte	The condition handlers' verdict; 1 unless they vetoed the event
 0053757c	data	trigger_current	Trigger *	Trigger the matcher is testing
 00538ca0	data	event_values	ObjectEvents *	Each object's last events, which push_event_value reads
-
-# Stat tables
 00466500	function	stats_load_ships	void __fastcall (void)	Reads shipstats.bin into ship_flight_stats and ship_combat_stats
 004788f0	function	stats_load_guns	void __fastcall (void)	Reads gunstats.bin to the end of the file into gun_stats
 00494bc0	function	stats_load_missiles	void __fastcall (void)	Reads missilestats.bin into missile_flight_stats and missile_stats
 0049cae0	function	stats_load_pilots	void __fastcall (void)	Fills pilot_stats with defaults, then applies pilotstats.bin
 00415430	function	player_spectral_shields_set	void __fastcall (bool on)	Turns the player's spectral shields on or off, when the ship carries them (spectral_shields_state not -1): object flag 0x8000000 and spectral_shields_state. Turning them on tunes them, into the object's +0x670, to the gun type most dangerous near the player: it counts the guns of each hostile ship within range, weights each type's count by its first damage value, and takes the highest, leaving out types 13 and 14
-004f9e70	data	ship_flight_stats	FlightModel[256]
-004fc670	data	ship_combat_stats	ShipCombat[256]
-00500ce4	data	gun_stats	GunStats[15]
-005035e8	data	missile_flight_stats	FlightModel[11]
-005037a8	data	missile_stats	MissileStats[11]
-0058a968	data	pilot_stats	PilotStats[194]
-
-# Loadout screen
+004f9e70	data	ship_flight_stats	FlightModel[256]	
+004fc670	data	ship_combat_stats	ShipCombat[256]	
+00500ce4	data	gun_stats	GunStats[15]	
+005035e8	data	missile_flight_stats	FlightModel[11]	
+005037a8	data	missile_stats	MissileStats[11]	
+0058a968	data	pilot_stats	PilotStats[194]	
 00441aa0	function	loadout_load		Preloads the loadout screen: stats, models, sounds
 00444f20	function	loadout_draw_stats		Draws the stat rows the layout table describes
 00426600	function	loadout_ship_bars_init		Sets the bar ranges from the listed ships, then computes every ship's bars
-00426700	function	loadout_ship_widen_ranges
-00426790	function	loadout_ship_bars
-0044b680	function	loadout_missile_bars_init
-0044b710	function	loadout_missile_widen_ranges
-0044b770	function	loadout_missile_bars
+00426700	function	loadout_ship_widen_ranges		
+00426790	function	loadout_ship_bars		
+0044b680	function	loadout_missile_bars_init		
+0044b710	function	loadout_missile_widen_ranges		
+0044b770	function	loadout_missile_bars		
 004504c0	function	range_widen		Widens a {min, max} pair to include a value
 004504f0	function	range_scale		Places a value within a {min, max} pair on n segments
 004ec020	data	loadout_stat_layout		Eight 8-byte rows: label string ID, display kind
 004e5470	data	loadout_alliance_ships		0x44 bytes per ship; ship index at +0x40
-004e57a0	data	loadout_coalition_ships
+004e57a0	data	loadout_coalition_ships		
 004ec278	data	loadout_ship_stats		Per-ship loadout values, 0x22C bytes apart
-
-# Files, sound, fonts
 004c7e20	function	hog_open	void * __fastcall (char *path)	Opens a .HOG archive (bigfile.cpp): the file, a Win32 handle to it, and its header and directory read whole; null unless it starts BIGF
-004c7f20	function	hog_close	void __fastcall (void *hog)
+004c7f20	function	hog_close	void __fastcall (void *hog)	
 004c7f60	function	hog_read_file	void * __fastcall (void *hog, char *name)	Reads a file from the archive, expanding RefPack: the name less an extension beginning ut, from its last backslash on; a missing one is fatal (HOG bigread2)
 004c8110	function	hog_read_file_as_named	void * __fastcall (void *hog, char *name)	hog_read_file without shortening the name
 004c81f0	function	hog_file_size	int __fastcall (void *hog, char *name)	A member's size, expanded for a RefPack one; 0 when missing
@@ -172,7 +156,7 @@
 005e830c	data	resource_hog	void *	resource.hog, opened by WinMain
 0057bc48	data	speech_hog	void *	msspeech.hog, opened for the HUD
 005e8308	data	hog_last_size	int	The size of the last file read
-004c5bd0	function	hog_load
+004c5bd0	function	hog_load		
 00480d70	function	font_open		Wraps a loaded font and caches the widths of codes below 255
 00481f80	function	sound_play		Plays sound n of a bank, taking over a lower-priority voice if none is free
 004826a0	function	sound_start		Hands Miles the WAVE file at bank + offset
@@ -181,8 +165,6 @@
 00524748	data	bank_ldsmp		ldsmp.fat
 0056654c	data	bank_betty		betty.fat
 0058cb10	data	bank_smp3d		smp3d.fat
-
-# Live objects
 00587ce0	data	game_objects	GameObject *[400]	The GO array: every live object, a mission ship's at its index among the ship records
 005883fa	data	player_index	short	Slot of the player's own object in game_objects
 00466c10	function	create_object		Fills a slot of game_objects: type, stats, model, components
@@ -214,45 +196,39 @@
 0049b600	function	object_set_position	void __fastcall (GameObject *object, Vec3 *position)	Places an object: its root node, the root's frame, and two more copies at 0x768 and 0x798
 0049b650	function	object_set_orientation	void __fastcall (GameObject *object, float *orientation)	Turns an object, into the same places as object_set_position
 0045a5f0	function	mission_ships_sync	void __fastcall (void)	Copies each live object's position into its mission ship's runtime position, and its heading into the runtime yaw and pitch
-
-# Surrender's vector and matrix helpers (surrenderlib)
 004c51c0	function	frame_create		Allocates a 0xB4-byte frame with a name, a position and angles
 004c2a60	function	vec4_set	void __thiscall (float x, float y, float z, float w)	Sets the four floats in ECX
-004c0e30	function	vec3_zero	void __fastcall (Vec3 *v)
+004c0e30	function	vec3_zero	void __fastcall (Vec3 *v)	
 004c0e60	function	vec3_set	void __thiscall (float x, float y, float z)	Sets the vector in ECX
 004c0e80	function	vec3_add	void __fastcall (Vec3 *a, Vec3 *b)	a += b
 004c0f30	function	vec3_sub	void __fastcall (Vec3 *a, Vec3 *b)	a -= b
 004c0f50	function	vec3_difference	void __fastcall (Vec3 *out, Vec3 *a, Vec3 *b)	out = a - b
 004c12d0	function	vec3_distance		Distance between two points
-004c14f0	function	vec3_copy	void __fastcall (Vec3 *to, Vec3 *from)
+004c14f0	function	vec3_copy	void __fastcall (Vec3 *to, Vec3 *from)	
 004c1b50	function	mat3_copy	void __fastcall (float *to, float *from)	Copies a 3x3 matrix
-004c1be0	function	mat3_identity	void __fastcall (float *m)
+004c1be0	function	mat3_identity	void __fastcall (float *m)	
 004c1f30	function	mat3_product_transposed	void __fastcall (float *out, float *a, float *b)	out = the transpose of a, times b
 004c26e0	function	mat3_scale_by	void __thiscall (float s)	Scales every element of the matrix in ECX by s
 004c1da0	function	mat3_multiply	void __fastcall (float *m, float *n)	m = m times n
 004c22b0	function	vec3_turn	void __fastcall (Vec3 *v, float *m)	v = m times v
 004c2310	function	vec3_turn_back	void __fastcall (Vec3 *v, float *m)	v = the transpose of m, times v
 004c0db0	function	sr_clamp	float __cdecl (float x, float low, float high)	x, kept between low and high
-004c30a0	function	sr_fabs	float __cdecl (float x)
-004c30c0	function	sr_sqrt	float __cdecl (float x)
-004c30e0	function	sr_sin	float __cdecl (float x)
-004c3100	function	sr_cos	float __cdecl (float x)
-004c1270	function	vec3_length	float __cdecl (Vec3 *v)
+004c30a0	function	sr_fabs	float __cdecl (float x)	
+004c30c0	function	sr_sqrt	float __cdecl (float x)	
+004c30e0	function	sr_sin	float __cdecl (float x)	
+004c3100	function	sr_cos	float __cdecl (float x)	
+004c1270	function	vec3_length	float __cdecl (Vec3 *v)	
 004c0ea0	function	vec3_sum	void __fastcall (Vec3 *out, Vec3 *a, Vec3 *b)	out = a + b
 004c2370	function	mat3_transform_transposed	void __fastcall (Vec3 *out, Vec3 *v, float *m)	out = the transpose of m, times v
 004c23c0	function	mat3_transform	void __fastcall (Vec3 *out, Vec3 *v, float *m)	out = m times v
 004c1cb0	function	mat3_product	void __fastcall (float *out, float *a, float *b)	The product of two 3x3 matrices
 004c2410	function	mat3_from_angles	void __thiscall (float pitch, float yaw, float roll)	Builds the rotation matrix in ECX from three angles
-
-# The flight model
 00473ff0	function	object_move	void __fastcall (int slot)	Moves an object for one update: its motion function, then its rotation and velocity
 00474150	function	object_steer	void __fastcall (GameObject *object, bool throttle_turns)	Moves each angular rate toward its input times the ship's rate, through its inertia, and builds the rotation
 004742e0	function	object_fly	void __thiscall (float thrust)	The flight model for the object in the slot in ECX: throttle, steering, then speed through the inertia
 004744c0	function	motion_forward	void __fastcall (int slot)	object_fly with thrust 1
 004744d0	function	motion_backward	void __fastcall (int slot)	object_fly with thrust -1
 00403060	function	object_cruise_speed	float __fastcall (GameObject *object)	max_speed, times the factor at 0x738, engines_intact and, outside one mode, the armor factor at 0x668
-
-# The game loop
 004a8b10	function	WinMain	int __stdcall (uint instance, uint previous, char *command_line, int show)	The game's entry, from _WinMainCRTStartup. A second copy finds the first by its StarlancerRunning mutex and restores the first's window instead
 00494040	function	mission_run	void __fastcall (void)	Runs a mission: resets the clocks, then loops, running a game tick for each timer tick since the last pass
 004827c0	function	tick_timer		Timer callback, 100 times a second: advances game_ticks and the play time, unless paused
@@ -269,15 +245,13 @@
 00466170	function	objects_collide	bool __fastcall (int *a, int *b)	Handles two objects whose spheres may meet, pushing them apart when they overlap
 00565064	data	game_ticks	uint	Ticks since the mission started
 00565070	data	play_time_ticks	ushort	Play time: ticks, rolled into seconds after 101
-00565072	data	play_time_seconds	ushort
-00565074	data	play_time_minutes	ushort
-00565076	data	play_time_hours	ushort
+00565072	data	play_time_seconds	ushort	
+00565074	data	play_time_minutes	ushort	
+00565076	data	play_time_hours	ushort	
 0057e04c	data	paused	ushort	Nonzero while the game is paused, which stops the ticks and the script clock
 0049d070	function	frame_time_sum	void __fastcall (void)	Converts the frame's seven timed sections from counter ticks to seconds and totals them in frame_time
 0058c4cc	data	frame_time	float	The last frame's timed sections together, in seconds; mission_frame moves detail_divisor by it
 00539aa0	data	game_object_count	short	Slots of game_objects in use, which create_object extends when given no slot
-
-# The camera (camera.cpp)
 0045f1b0	function	camera_set_view	int __fastcall (int view, int object, char lock, char force)	Switches the camera to a view of an object: refused while locked unless forced; starts or clears the bars, resets the chase and orbit state, then places the camera
 0045fc90	function	camera_frame	void __fastcall (void)	Places the camera once a frame for the view: moves the bars, then the cockpit, chase, orbit, flyby and cutaway views
 0045ed60	function	camera_chase	void __fastcall (void)	The chase view: behind and above the object by ship type, farther with throttle, swinging against its rates of turn
@@ -285,18 +259,18 @@
 00414060	function	frame_controls	void __fastcall (int slot)	The controls read once a frame, from mission_frame: the joystick's hat, which glances ahead, left, right or back while held, the camera keys, steering the orbiting views with the arrow keys, and the wingman and other frame keys
 004f72a8	data	camera_view_table	byte[44][4]	For each view: the language string that names it (a halfword), whether the bars slide in, and whether it is from the cockpit. It ends where the text of camera_set_view's assertion on an invalid camera type begins
 00539a64	data	camera_view_last	int	Last frame's camera_view: mission_frame resets the star streaks when they differ
-00539a34	data	camera_view	short
+00539a34	data	camera_view	short	
 00539a8c	data	camera_object	short	The object the view shows
 00539a9c	data	cockpit_mode	int	What the cockpit view shows: 0 no cockpit, 1 the cockpit's model, 2 the chase view; the cockpit key cycles it
 005d5a78	data	cockpit_mode_setting	int	The options' cockpit setting: 0 the cockpit's model, 1 the chase view, 2 no cockpit
 00539acc	data	camera_locked	char	Set while a script holds the camera; the camera keys do nothing
 00539a38	data	camera_bars	float	How much of the screen each cinematic bar covers, up to 0.1
-00539a50	data	camera_bar_speed	float
+00539a50	data	camera_bar_speed	float	
 00539aa4	data	camera_switched	int	frame_start when the view last changed
 004f72a4	data	chase_distance	float	Along the object's forward axis, smoothed; 1500 on switching to the chase view
-00539a80	data	chase_pitch	float
-00539a3c	data	chase_yaw	float
-00539a74	data	chase_roll	float
+00539a80	data	chase_pitch	float	
+00539a3c	data	chase_yaw	float	
+00539a74	data	chase_roll	float	
 0051cf64	data	orbit_yaw	float	Degrees
 0051cf84	data	orbit_pitch	float	Degrees, -89.5 to 89.5
 0051cf80	data	orbit_yaw_speed	float	Degrees a tick, up to 5
@@ -305,8 +279,6 @@
 00588724	data	hit_shake	float	How much the cockpit view shakes from a hit, falling by 0.02 a tick
 004c3a60	function	sr_set_projection	void __cdecl (float left, float top, float right, float bottom, float across, float down)	The projection: scales of the screen's size less 0.1 times the factors, the middle, and the viewport's edges in view units and pixels
 00476680	function	object_bounds	void __fastcall (GameObject *object, ModelNode *node, int unused)	Widens the object's bounds and radius over a node's mesh and adds its part's inertia, then does the node's children
-
-# Player input
 00588340	data	joystick	JoystickState	The joystick as read_joystick last polled it
 00588398	data	mouse	MouseState	The mouse as read_mouse last read it: its movement since the read before
 00595c68	data	keyboard	byte[256]	DirectInput's keyboard state, by scan code (DIK_*): nonzero while the key is down
@@ -354,8 +326,6 @@
 00413410	function	player_controls	void __fastcall (int slot)	The Player Control order's update: steering, throttle, weapons and the other flight actions from the controls
 00412c10	function	match_target_speed	void (void)	Sets the throttle to the target's speed over the player's cruise speed while the target is within 330000 units; otherwise puts the throttle back and stops matching
 004132c0	function	player_throttle_keys	void __fastcall (void)	Steps the throttle while ACCELERATE or DECELERATE is held; ZERO THROTTLE and FULL THROTTLE set it
-
-# Orders
 004e06e0	data	order_groups	OrderRecord *[3]	The order table: for each hundred order numbers, the records of those orders
 0058832c	data	player_slots	short	Object slots that belong to players, from slot 0: 1 in a single-player game, the player count or 8 in multiplayer
 004924b0	function	mission_frame	int (void)	mission_run's work for each frame while the game is not paused: among it orders_update, events_flush and mission_ships_sync
@@ -388,15 +358,13 @@
 004c10d0	function	vec3_scale	void __fastcall (Vec3 *out, Vec3 *v, float s)	out = v * s
 004c10b0	function	vec3_scale_by	void __thiscall (float s)	Scales the vector in ECX by s
 004c1320	function	vec3_distance_squared	float __cdecl (Vec3 *a, Vec3 *b)	The square of the distance between two points
-004c12a0	function	vec3_length_squared	float __cdecl (Vec3 *v)
+004c12a0	function	vec3_length_squared	float __cdecl (Vec3 *v)	
 00587cc4	data	mission_ticks	int	Ticks game_tick has run since the mission started, paused ones aside
 005883b0	data	frame_start	int	mission_ticks when the current frame began
 00588330	data	frame_duration	int	Ticks between the previous frame and this one
 00491e00	function	frame_begin	void (void)	Starts a frame: frame_duration becomes the ticks since frame_start, and frame_start becomes mission_ticks
 00491de0	function	frame_reset	void (void)	frame_start becomes mission_ticks, and frame_duration zero
 004983a0	function	noop	void (void)	Returns at once; tables use it for a routine with nothing to do
-
-# Combat maneuvers
 00405010	function	maneuver_compile_line	void __fastcall (ManeuverScriptLine *script, int line)	Compiles a line of a maneuver script into maneuver_code, the first time the line runs: src/engine/game/aidefend/script.zig does the same
 00404f00	function	script_skip_spaces	void __fastcall (char **cursor)	Skips spaces and tabs
 00404f20	function	script_read_word	void __fastcall (char **cursor, char *word)	Reads a word of letters, digits and _ . : -
@@ -408,7 +376,7 @@
 00405c50	function	maneuver_stop_weaving	void __fastcall (int slot, FightState *state)	Clears weaving
 00405c60	function	maneuver_steer_to_point	void __fastcall (int slot, FightState *state)	Steers at the state's point at full throttle; once the point is nearly dead ahead it pitches at full rate until the point is 45 degrees off, weaving. With anything to avoid, ai_steer with flags 3 instead
 004c18a0	function	mat3_forward	void __fastcall (Vec3 *out, float *m)	out = the third column of m: for an orientation, the forward axis
-004c11c0	function	vec3_dot	float __fastcall (Vec3 *a, Vec3 *b)
+004c11c0	function	vec3_dot	float __fastcall (Vec3 *a, Vec3 *b)	
 004c1370	function	vec3_normalize	void __cdecl (Vec3 *v)	Scales v to length 1, or makes it a tiny forward vector when it has none
 004e0cb8	data	maneuver_code_end	byte *	Where maneuver_compile_line writes the next instruction
 00515da4	data	maneuver_code		The compiled lines of the maneuver scripts, packed as the compiler writes them
@@ -426,8 +394,6 @@
 00409d10	function	fight_call_for_help		Has a ship the player has hurt badly send its nearest fighting wingman at the player
 00409ec0	function	fight_update_cloak	void __fastcall (int slot, FightState *state)	Uncloaks the ship when its maneuver asked for no cloak, and cloaks it once cloak_at passes when it asked for one
 00462550	function	object_spend_countermeasure	void __fastcall (int slot, int unknown)	Spends one of an object's countermeasures, its word at +0x5EC: with none left it plays the display's sound 3 for the player (hud_beep) and does nothing else; otherwise it takes one, plays sound 0 for the player, and carries on
-
-# Textures (srTexture.cpp, srImage.cpp, srTGA.cpp, srColor.cpp)
 004c3830	function	SR_init	void * __fastcall (void)	Clears sr_context and returns it
 005e6b50	data	sr_context		Surrender's state: the device, its texture limits, the palette and colour cube in use
 00588730	data	sr	void *	What SR_init returned: sr_context
@@ -445,9 +411,9 @@
 004ca320	function	textures_unload	void __fastcall (void)	Frees the pixels of every texture in use
 004ca370	function	textures_reload	void __fastcall (void)	Reads and uploads the pixels of every texture in use again
 00494a30	function	texture_require	TextureImage * __fastcall (char *name)	texture_find, asserting Could not find image %s on a miss
-005e83d0	data	texture_cache_header	TextureCacheHeader
-005e83e0	data	texture_cache	TextureEntry[1000]
-00622e60	data	texture_cache_file	FILE *
+005e83d0	data	texture_cache_header	TextureCacheHeader	
+005e83e0	data	texture_cache	TextureEntry[1000]	
+00622e60	data	texture_cache_file	FILE *	
 004c85b0	function	image_pixel_count	int __fastcall (TextureImage *image)	Pixels in all of an image's levels; sets levels to 1 without mipmaps
 004c8600	function	image_convert	void __fastcall (TextureImage *image, PixelFormat *format)	Converts an image's pixels to another format, through the palette for indices
 004c8e70	function	image_build_mipmaps	void __fastcall (TextureImage *image)	Converts an image to 32 bits and appends its mipmap levels, down to a smaller side of 2
@@ -457,8 +423,6 @@
 004ca9b0	function	SR_TGA_get_palette	void __fastcall (byte *tga, byte *palette)	Copies the first 256 colour map entries of a colour-mapped TGA, as red, green, blue
 004cacb0	function	SR_TGA_allocate_palette	byte * __fastcall (char *name)	Loads an 8-bit TGA and returns its palette
 004cb9d0	function	SR_CCB_load	void * __fastcall (char *name)	Loads a colour cube: a palette and a 64x64x64 table of indices
-
-# Meshes and drawing (srofiles.cpp, srAPIext.cpp, the mesh pipeline)
 004a4070	function	static_lights_mark	void __fastcall (void *model)	Sets part flag 0x40 on the parts of each class, damaged or not, that holds a static light: an attachment of kind 4 with a range and no blinking
 004a4310	function	static_lights_bake	void __fastcall (void *model)	Bakes each static light into the meshes of every level of the parts of its class
 004a4130	function	static_light_bake	void __fastcall (void *part, int level, void *light)	Adds a static light to the baked colours of a part's level
@@ -509,10 +473,8 @@
 005e82f4	data	frame_vertices	int	The vertices of the mesh objects drawn so far this frame; SR_meshpipe_init leaves out an object that would take it past 19999
 005e82f8	data	frame_polygons	int	The polygons of the mesh objects drawn so far this frame, likewise limited to 19999
 005d5618	data	light_maps	int	Lmaps in the Device section of the settings, default 1: light maps and highlights
-
-# Backdrop (nebula.cpp, srstars.cpp, the environment effects, and a file between srofiles.cpp and timer.cpp)
 004a4e70	function	backdrop_create	void __fastcall (void)	Builds the star fields from space.tga, the dust, the lights and the sun's sprites
-004a5930	function	backdrop_free	void __fastcall (void)
+004a5930	function	backdrop_free	void __fastcall (void)	
 004a5a00	function	backdrop_place	void __fastcall (void)	Aims the sun, the key lights and the dome from the sun marker, and the fill lights and the nebula from the nebula marker
 004a5c80	function	backdrop_reset_streaks	void __fastcall (void)	Makes every star field take this frame as its last, so a cut draws no streaks
 004a5cd0	function	backdrop_frame	void __fastcall (void)	Adds the lights, star fields, dust, sun and lens flares to the scene, placing the flares and sizing the sun's sprites
@@ -524,36 +486,36 @@
 00498450	function	nebula_dome_software	void __fastcall (void)	The software renderer's sky dome: a 20x10 band at radius 1000
 00498810	function	nebula_dome	void __fastcall (void)	The sky dome: a 15x8 band at radius 5000, coloured from starref12.tga
 00498b30	function	nebula_create	void __fastcall (void)	Builds the sky dome and both nebula patches
-00498c80	function	nebula_free	void __fastcall (void)
+00498c80	function	nebula_free	void __fastcall (void)	
 00498d00	function	nebula_select	void __fastcall (void)	Shows the nebula nebula_requested names: its texture, its fill light colour, and the smaller patch for nebula 5
 00498e10	function	nebula_frame	void __fastcall (void)	Centres the dome and the nebula on the camera and adds them to the background layer
 00498ea0	function	sky_patch_create	void * __fastcall (void *texture, int columns, float radius, float pitch_min, float pitch_max, float yaw_min, float yaw_max, int rows)	A textured patch of a sphere around the camera: unlit and added
 00469c60	function	environment_effect_set	void __fastcall (int effect, char on)	Sets or clears an environment effect's bit and runs its handler; Ice Field and Planet Bombard have none
 00469d30	function	environment_update	void __fastcall (void)	Applies a pending nebula choice, object flag 0x400 changes and environment effect changes
 004cabe0	function	SR_TGA_allocate_raw	byte * __fastcall (char *name)	A TGA's pixels, top row first; 24-bit ones widened to 4 bytes
-004cad60	function	SR_TGA_rle_uncompress
+004cad60	function	SR_TGA_rle_uncompress		
 004c1940	function	mat3_look_at	void __fastcall (float *m, Vec3 *from, Vec3 *to, float roll)	An orientation whose forward axis points from one point to another: turned about Y, then X, then rolled
 004c2190	function	mat3_turn_y	void __thiscall (float angle)	Turns the matrix in ECX about Y
 004c2100	function	mat3_turn_x	void __thiscall (float angle)	Turns the matrix in ECX about X
 004c2220	function	mat3_turn_z	void __thiscall (float angle)	Turns the matrix in ECX about Z
 004c3200	function	sr_atan2	float __cdecl (float y, float x)	The angle whose tangent is y / x, from a table
-00595a30	data	star_fields	Stars *[100]
-00595bc8	data	star_field_count	int
-00595a28	data	space_dust	Stars *
+00595a30	data	star_fields	Stars *[100]	
+00595bc8	data	star_field_count	int	
+00595a28	data	space_dust	Stars *	
 005959fc	data	light_key_01	void *	The key light for models whose objects list components (mask 0x01)
 00595bcc	data	light_fill_02	void *	The fill light for models whose objects list components (mask 0x02)
 00595bd4	data	light_ambient_04	void *	Ambient, 0.04 (mask 0x04)
 00595bd0	data	light_key_08	void *	The key light for the other models (mask 0x08)
 00595a00	data	light_fill_10	void *	The fill light for the other models, at 0.7 (mask 0x10)
 00595bd8	data	light_ambient_20	void *	Ambient, 0.09 (mask 0x20)
-00595be0	data	sun_direction	Vec3
+00595be0	data	sun_direction	Vec3	
 00595a04	data	sun_sprites	void *[9]	sunlayer1, sunlayer3, six lens flares, sunlayer2
-0058a6a4	data	sky_dome	void *
-0058a6a8	data	nebula_patch	void *
+0058a6a4	data	sky_dome	void *	
+0058a6a8	data	nebula_patch	void *	
 0058a6ac	data	nebula_patch_small	void *	Nebula 5's
-0058a100	data	nebula_shown_patch	void *
+0058a100	data	nebula_shown_patch	void *	
 0058a6b8	data	nebula_requested	int	Set by SetEnvironmentFXNebula
-0058a6b4	data	nebula_shown	int
+0058a6b4	data	nebula_shown	int	
 00504000	data	nebula_fill_colours	float[21]	Red, green and blue for each of the seven nebulae
 004ff808	data	environment_effects		Thirteen 32-byte entries: switch-on and switch-off handlers, then a name
 005db8e8	data	timer_ticks	uint	Every tick of the timer, the paused ones included; tick_timer advances it before it looks at paused
@@ -630,7 +592,7 @@
 00594540	data	vfx_shape_resolution	void *	VFX_shape_resolution, looked up out of the VFX library
 00595070	data	vfx_pane_wipe	void *	VFX_pane_wipe, looked up out of the VFX library
 00490dc0	function	language_init	void (void)	Loads language.dll and reads its string table with LoadStringA, from id 1 up to the first id with no string or an empty one, into language_strings; then reads the module's version language into 0x00563A14
-00491030	function	language_string	char * __fastcall (int id)	The string of an id out of language_strings; stops the game with the fatal error "id out of range" for an id past them
+00491030	function	language_string	char * __fastcall (int id)	The string of an id out of language_strings; stops the game with the fatal error 'id out of range' for an id past them
 0041b240	function	launch_run	void __fastcall (int slot)	Runs a launch a step at a time on its order state's timer. For the player it picks one of three cutaways (views 0x20 to 0x22) and starts the launch's typed text; at the last step it sets cockpit_mode from cockpit_mode_setting (0 the cockpit, 1 the chase view, any other none) and, from a launch cutaway, switches to view 0; then pops the order, makes the ship targetable and posts the Launched event
 00491e20	function	game_pause	void __fastcall (bool pause, bool quiet)	Pauses or resumes the mission. Pausing hands sr + 0x88 another overlay (0x004906F0) in place of hud_draw; resuming puts hud_draw back and, if cockpit_mode_setting changed meanwhile, switches to view 0
 0057dbbc	data	language_strings	char **	The strings language_init reads, by id less one
@@ -670,14 +632,14 @@
 0057bf38	data	hud_charge_lit_pane	void *	The VFX pane the charge arc's lit shape (0xF9) is drawn into, cut off above the guns' charge each frame
 005799c8	data	hud_charge_unlit_pane	void *	The VFX pane the charge arc's unlit shape (0xF8) is drawn into, cut off below the guns' charge each frame
 0057bc54	data	hud_object	GameObject *	The object the display shows, game_objects[0x005883AC], which hud_draw takes each frame
-00569928	data	hud_flip_buffer	void *	hud_init's "flip buffer", 0x19000 bytes, which hud_blit and VFX_shape_draw_mirrored draw a shape into first
-005799c4	data	hud_work_buffer	void *	hud_init's "work buffer", 0x19000 bytes
-00566f88	data	hud_work_buffer2	void *	hud_init's "work buffer2", 0x19000 bytes
+00569928	data	hud_flip_buffer	void *	hud_init's 'flip buffer', 0x19000 bytes, which hud_blit and VFX_shape_draw_mirrored draw a shape into first
+005799c4	data	hud_work_buffer	void *	hud_init's 'work buffer', 0x19000 bytes
+00566f88	data	hud_work_buffer2	void *	hud_init's 'work buffer2', 0x19000 bytes
 00595494	data	vfx_pixel_write	void *	VFX_pixel_write, looked up out of the VFX library
 00595180	data	vfx_buffer_transform	void *	VFX_buffer_transform, looked up out of the VFX library
 005959e8	data	vfx_pane_construct	void *	VFX_pane_construct, looked up out of the VFX library
 00595284	data	vfx_shape_lookaside	void *	VFX_shape_lookaside, looked up out of the VFX library
 005883f4	data	cockpit_object	GameObject *	The cockpit's object, which the mission's start makes of cockpit_frame's parts, each drawn always from its finest level and lit through light mask 0x12, and hangs from the camera's frame; camera_frame moves it, and mission_frame draws its first two parts over the world in cockpit mode 1
-005883bc	data	radar_backing	void *	The radar's backing, "radaralpha": a quad under the radar, a black disc at three quarters, standing in the camera's frame 1000 ahead, which mission_frame draws with the cockpit unless DISPLAY KILLS is held
+005883bc	data	radar_backing	void *	The radar's backing, 'radaralpha': a quad under the radar, a black disc at three quarters, standing in the camera's frame 1000 ahead, which mission_frame draws with the cockpit unless DISPLAY KILLS is held
 00588328	data	radar_backing_mesh	void *	The radar backing's mesh: four corners from 65 left of the middle to 67 right and 32 either side of the radar's height, unprojected to 1000
 005636e0	data	cockpit_recoil	float	The guns' kick on the cockpit's hands: 1 as the player's guns fire, a twentieth less each frame; camera_frame moves the hands back 30 times it
