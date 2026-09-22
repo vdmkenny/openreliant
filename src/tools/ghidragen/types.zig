@@ -127,6 +127,7 @@ pub const exported = [_]Export{
     .{ "ObjectRoutine", engine.game.gameobj.Routine },
     .{ "ModelNode", engine.game.objects.Node },
     .{ "NodeFlags", engine.game.objects.Node.Flags },
+    .{ "NodePose", engine.game.objects.Node.Pose },
     .{ "SurrenderFrame", engine.surrender.surrenderlib.srapiext.Frame },
     .{ "ObjectComponent", engine.game.gameobj.Component },
     .{ "ShipTypeEntry", engine.game.create.ShipType },

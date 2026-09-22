@@ -102,8 +102,9 @@ carries its own levels of detail.
 | `0x8C` | f32 | The volume |
 | `0x90` | f32 | The mass of a unit of volume |
 | `0x94` | i32 | Parent part index, or `-1` for a root |
-| `0x98` | vec3 | A point on the part: the far end of a gun, the base of a mount |
-| `0xA4` | f32[9] | Orientation, row-major 3x3 |
+| `0x98` | vec3 | The mount point, which the part's [animation](../engine/objects.md#animation) turns it about: the far end of a gun, the base of a mount |
+| `0xA4` | f32[9] | Orientation, row-major 3x3: the frame the part's animation turns it in, often a quarter turn about X from the model's |
+| `0xC8` | u32[3] | Axes the part's animation doesn't turn it about, one flag each for X, Y and Z |
 | `0xD4` | u32 | Link id. Parts sharing a non-zero id form one assembly, such as a turret and its barrels |
 | `0xD8`, `0xE4` | f32 | Yaw minimum and maximum, in degrees, bounding a turret's traverse |
 | `0xDC`, `0xE8` | f32 | Pitch minimum and maximum |
@@ -141,6 +142,34 @@ flare and light sprites, 5 cargo and fuel pods. **Unknown:** kinds 2, 3 and 6 to
 
 For kinds 1 and 5 the engine mounts the model as an object of its own, hanging from the part's
 node, whose components join the owner's.
+
+### Animation clip (tag `0x0A`)
+
+One of a part's animation tracks ([Animation](../engine/objects.md#animation)). Its keyframes and
+events follow the level geometry, one keyframe chunk and one event chunk for each clip in turn.
+Older exporters wrote 8-byte records, which stop two bytes into the name.
+
+| Off | Type | Field |
+|---|---|---|
+| `0x00` | i32 | Length, in the track's own time |
+| `0x04` | i16 | How it plays unless its starter says otherwise: 0 not at all, 1 once, 2 looping, 3 back and forth |
+| `0x06` | char[18] | Name. The engine starts the tracks named `startup`, `fire` and `deploy` by name |
+
+### Keyframe (tag `0x0B`)
+
+| Off | Type | Field |
+|---|---|---|
+| `0x00` | i32 | Time |
+| `0x04` | vec3 | Angles in radians about X, Y and Z, in the part's own frame |
+| `0x10` | vec3 | Offset from the part's origin |
+
+### Clip event (tag `0x0C`)
+
+| Off | Type | Field |
+|---|---|---|
+| `0x00` | i32 | Time |
+| `0x04` | i32 | Kind: 0 fires the part's muzzle flashes, 2 puffs particles from its attachments of kind 7. The engine's update ignores any other kind, such as 3 |
+| `0x08` | i32 | **Unknown.** `node_tree_update` doesn't read it |
 
 ### Level of detail (tag `0x02`)
 
@@ -252,7 +281,7 @@ moved from each part's origin to the object's. **Unverified:** that they are int
 part's volume; the engine uses them as such
 ([Live objects](../engine/objects.md#the-model-hierarchy)).
 
-**Unknown:** the interpretation of tree nodes (`0x07`), animation clips (`0x0A`) and trigger
+**Unknown:** the interpretation of tree nodes (`0x07`) and trigger
 polygons (`0x0F`). They are parsed and counted, and their records are available, but their fields
 are not decoded here.
 

@@ -89,12 +89,23 @@ A node (`objects.cpp`, `node_alloc` at `0x004991D0`) is `0x104` bytes:
 | Offset | Size | Field |
 |---|---|---|
 | `0x00` | 4 | Kind: 1 for a model part's node |
-| `0x04` | 4 | Flags, a `Node.Flags`: `0x20` hidden; `0x40` a component's holder once `component_damage` (`0x004645C0`) takes the component's armor below zero; `0x100` listed among the components; `0x2000` targetable, for the parts whose part flag `0x1000` says so, and changed by `SetTargetable`. Cycling subtargets (`0x00414F90`) stops only at components that are targetable and have neither `0x10` nor `0x20` |
+| `0x04` | 4 | Flags, a `Node.Flags`: `0x1` a next place pending; `0x2` a new place committed this step, `0x4` one the frame hasn't taken up yet, and `0x8` a next place worked out from a pose, which [drawing between steps](#drawing-between-steps) reads; `0x800` animating, or carrying a node that is; `0x20` hidden; `0x40` a component's holder once `component_damage` (`0x004645C0`) takes the component's armor below zero; `0x100` listed among the components; `0x2000` targetable, for the parts whose part flag `0x1000` says so, and changed by `SetTargetable`. Cycling subtargets (`0x00414F90`) stops only at components that are targetable and have neither `0x10` nor `0x20` |
 | `0x08` | 4 | Its frame, the transform the renderer uses |
 | `0x14` | 12 | Position, relative to the node it hangs from |
 | `0x20` | 36 | Orientation, a 3x3 matrix, relative likewise |
+| `0x44` | 24 | The [pose](#animation) the committed place came from: angles, then an offset |
+| `0x5C` | 12 | The next position, which the next simulation step commits |
+| `0x68` | 36 | The next orientation |
+| `0x8C` | 24 | The pose the next place came from |
 | `0xA4` | 4 | The model part it stands for: the part's record as loaded, which starts with the [`.SHP` part record](../formats/shp.md#part-tag-0x01) |
 | `0xA8` | 4 | The object that owns it, set in the root |
+| `0xB4` | 4 | How it plays its animation track: 0 not at all, 1 once, 2 looping, 3 back and forth |
+| `0xB8` | 4 | Which of its part's tracks it plays |
+| `0xBC` | 4 | Where it is in the track |
+| `0xC0` | 4 | How far it moves on through the track each simulation step |
+| `0xC4` | 12 | The angles the track has it at |
+| `0xD0` | 12 | The offset the track has it at |
+| `0xDC` | 12 | Angles a turret is steered by, added to the track's |
 | `0xE8` | 4 | A component's counterpart of the object's armor |
 | `0xEC` | 4 | The node it hangs from; null for a root |
 | `0xF4` | 4 | Capacity of the child list: 100 once created |
@@ -111,13 +122,12 @@ marks it damaged. `create_object` hangs every part's node from the root (`object
 and moves the object's origin to its parts' centre of mass (`object_recentre`, `0x004769F0`).
 
 A part keeps its origin in the model whatever it hangs from, so hanging it somewhere else has to
-work that origin out again in the new frame, which `node_place` (`0x0049A140`) does: the part's
-origin less the origin of its parent's part, or less the object's centre for one hung from the
-root, plus whatever the animation has moved it by, turned about the part's mount point by the
-part's angles and the animation's. `object_link_part` runs it through `node_animate`
-(`0x00499F40`) at time zero, which reads the part's animation track, and copies the place it
-leaves into the node and its frame. With no animation the sums cancel and every part stands where
-it stood.
+work that origin out again in the new frame, which `node_place` (`0x0049A140`) does (see
+[Animation](#animation)). `object_link_part` (`0x00476180`) runs it through `node_animate`
+(`0x00499F40`) at time zero, which poses it as the part's first track has it at its start, and
+copies the place, but not the pose, into the node and its frame. With no pose the sums cancel and
+the part stands where it stood; a part whose first track starts it posed, such as a gun barrel
+drawn back, stands so from the start.
 
 The centre of mass:
 
@@ -138,6 +148,61 @@ A frame is Surrender's `0xB4`-byte transform, which `frame_create` (`0x004C51C0`
 name, such as `GOroot object` for an object's root. It holds a parent frame at `+0x10`, an
 orientation at `+0x18` and a position at `+0x3C`. A part's frame hangs from its parent part's, and
 the root frame of an object mounted on an attachment point from the part's.
+
+## Animation
+
+A part can carry animation tracks, which move it about its place ([`.SHP` clips](../formats/shp.md#animation-clip-tag-0x0a)):
+each has a length, a mode it plays in unless told otherwise, a name, keyframes and events. The
+loader (`model_load`, `0x004A44D0`) files the last track named `startup`, `fire` and `deploy`,
+whatever the case, in three slots on the loaded part (`+0x234` to `+0x23C`), and a node starts one
+by its slot (`node_play`, `0x0049A2D0`) or by its name (`node_play_named`, `0x0049A340`): from a
+time, unless that is below zero, in a mode, the track's own for -1, at a speed. Any mode but 0
+marks the node and every node it hangs from as animating (flag `0x800`, `0x0049A2A0`).
+`create_object` plays each part's `startup` track from its start in its own mode at a speed of 4,
+which is how the radar dishes of some capital ships and stations turn from the start.
+
+`node_tree_update`, once a simulation step, walks from the object's root into the children that are
+animating, not hidden and not flagged `0x80`, as the nodes of lights, engine glows and muzzle
+flashes are.
+A node it visits commits its pending place. One that plays no track, or plays at no speed, loses
+its mark, which it keeps while it goes on into a child that has one. One that plays moves its time
+on by its speed and, for a track of some length:
+
+- **Once** (1): stopping at the end, time and speed then set to the length and zero, or at the
+  start, going backwards.
+- **Looping** (2): past the end, starting again.
+- **Back and forth** (3): out over the length and back over the next, round and round.
+
+It then poses the node for the time (`node_animate`) and sets off the track's events whose time it
+passed: from the whole number the old time rounds to up to, but not including, the new one's, and
+for a looping track that went round, from the old time to the end and from zero to the new time.
+Going back and forth sets off none. An event of kind 0 fires the part's guns' muzzle flashes, its
+nodes of kind 4 (`0x0047C7B0`), and one of kind 2 puffs particles from its attachments of kind 7
+(`0x0047C800`); the update knows no others. A track of no length, or a mode past 3, sets off the
+events of whatever span the last node visited left.
+
+`node_animate` takes the pose between the keyframes either side of the time, in a straight line,
+from no pose at time zero before the first, and holds the last past them all. `node_place` then
+takes off the pose's angles about any axis whose flag the part has at `+0xC8`, adds the turret's
+(`+0xDC`), and works out the next place: the part's origin plus the offset, less the origin of its
+parent's part or the object's centre, turned about the part's mount point by
+`Oᵀ · R · O`, where `O` is the part's orientation and `R` the turn `mat3_from_angles` makes of the
+angles. The part turns in its own frame, and with no angles stays unturned.
+
+## Drawing between steps
+
+The simulation steps 25 times a second, but `mission_frame` draws each object where it stands that
+far into the step (`0x0049A880`, for every object before the camera is placed): each node that a
+step committed a new place for is drawn `simulation_counter / 4` of the way from that place to the
+next (`node_frame_update`, `0x0049A460`). At the start of a step it is drawn at the committed
+place. A node posed by `node_place` is drawn between its two poses, the angles turning the short
+way round, so a dish that loops a full turn doesn't spin back at the end of its track. Any other,
+an object's root among them, moves along the straight line between its places and turns by that
+share of the angles that turn one into the other (`mat3_angles`). The camera follows the root's
+frame, so it moves with the object as drawn. A node no step has moved keeps its frame.
+
+In a multiplayer game another player's ship is drawn between the places its last two messages gave
+it (`+0x768`, `+0x798`) instead.
 
 ## What an attachment point holds
 

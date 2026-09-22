@@ -39,12 +39,13 @@ files it says what it needs and exits.
 | `--ship <type>` | Shows the ship type by its number in `shipstats.bin` |
 | `--screenshot <file.png>` | Draws one frame, with the camera settled, to a PNG and quits |
 | `--fullscreen` | Fills the display |
-| `--original` | The original's look: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex |
+| `--original` | The original's look: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks |
 | `--16-bit` | 16-bit colour, dithered |
 | `--msaa <1\|2\|4\|8>` | Samples a pixel; 4 by default |
 | `--filter <original\|trilinear\|crisp>` | How textures are filtered; `crisp` by default |
 | `--no-bloom` | Draws without the bloom around bright things |
 | `--no-pixel-lighting` | Lights each vertex rather than each pixel, as the original does |
+| `--no-smooth-motion` | Moves what moves on with the game's ticks, a hundred a second, as the original does, rather than on every frame |
 | `--no-dither` | Draws without dithering 32-bit colour |
 | `--no-vsync` | Draws without waiting for the display |
 | `--fps <rate>` | Frames a second at most; 0 for no limit |

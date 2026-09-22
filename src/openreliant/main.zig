@@ -44,13 +44,16 @@ const usage =
     \\  --screenshot <file.png>   draw one frame, with the camera settled, to a PNG, and quit
     \\  --fullscreen              fill the display; Alt and Enter switch while running
     \\  --original                the original's look: 16-bit colour, one sample a pixel,
-    \\                            bilinear filtering and lighting each vertex
+    \\                            bilinear filtering, lighting each vertex, and motion that
+    \\                            moves on with the game's ticks
     \\  --16-bit                  16-bit colour, dithered
     \\  --msaa <1|2|4|8>          samples a pixel; 4 by default
     \\  --filter <original|trilinear|crisp>
     \\                            how textures are filtered; crisp by default
     \\  --no-bloom                draw without the bloom around bright things
     \\  --no-pixel-lighting       light each vertex rather than each pixel, as the original does
+    \\  --no-smooth-motion        move what moves on with the game's ticks, a hundred a second,
+    \\                            as the original does, rather than on every frame
     \\  --no-dither               draw without dithering 32-bit colour
     \\  --no-vsync                draw without waiting for the display
     \\  --fps <rate>              frames a second at most; without vsync, the display's rate by
@@ -70,8 +73,11 @@ const Options = struct {
     settings: platform.gpu.Settings = .{},
     /// Frames a second at most, 0 for no limit; null for the display's rate without vsync.
     fps: ?f32 = null,
+    /// Draw what moves between the game's ticks as well as between its steps
+    /// (`Clock.stepFraction`).
+    smooth_motion: bool = true,
 
-    const Flag = enum { @"--fullscreen", @"--original", @"--16-bit", @"--no-vsync", @"--no-bloom", @"--no-dither", @"--no-pixel-lighting", @"--software" };
+    const Flag = enum { @"--fullscreen", @"--original", @"--16-bit", @"--no-vsync", @"--no-bloom", @"--no-dither", @"--no-pixel-lighting", @"--no-smooth-motion", @"--software" };
     const Option = enum { @"--ship", @"--view", @"--screenshot", @"--msaa", @"--filter", @"--fps" };
 
     fn parse(args: []const [:0]const u8) error{Usage}!Options {
@@ -81,12 +87,16 @@ const Options = struct {
             const arg = args[i];
             if (std.meta.stringToEnum(Flag, arg)) |flag| switch (flag) {
                 .@"--fullscreen" => options.fullscreen = true,
-                .@"--original" => options.settings = .original,
+                .@"--original" => {
+                    options.settings = .original;
+                    options.smooth_motion = false;
+                },
                 .@"--16-bit" => options.settings.sixteen_bit = true,
                 .@"--no-vsync" => options.settings.vsync = false,
                 .@"--no-bloom" => options.settings.bloom = false,
                 .@"--no-dither" => options.settings.dither = false,
                 .@"--no-pixel-lighting" => options.settings.pixel_lighting = false,
+                .@"--no-smooth-motion" => options.smooth_motion = false,
                 .@"--software" => options.software = true,
             } else if (std.meta.stringToEnum(Option, arg)) |option| {
                 i += 1;
@@ -330,8 +340,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         // The timer's ticks since the last pass, then a game tick for each, as `mission_run` paces
         // them: the simulation steps on every fourth, reading the keyboard as it goes. A screenshot
         // takes one tick a frame so that the camera settles the same way on every run.
-        const now = platform.window.ticks();
-        if (frames_left != null) clock.advanceBy(now, 1) else clock.advanceTo(now);
+        const now = platform.window.nanoseconds();
+        if (frames_left != null) clock.advanceBy(now / platform.window.tick_nanoseconds, 1) else clock.advanceToFine(now, platform.window.tick_nanoseconds);
         // While the communications window is open the keys 1 to 8 are its menu's.
         devices.keyboard.numbers_taken = display.state.windows.status.get(.comms).phase == .open;
         while (clock.nextTick(&devices)) |stepped| {
@@ -341,17 +351,21 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             // worked out and its shields recharge, then the player's orders, then the objects
             // move. The sandbox has one object.
             if (clock.nextTurn(1) == ship.live.index) game.main.orthonormalizeTurn(&ship.live.root);
-            game.objects.updateTree(&ship.live.root);
+            game.objects.updateTree(&ship.live.root, &ship.object, null);
             game.gameobj.rechargeShields(&ship.live, &ship.combat, player.shield_reserves);
             engine.input.playerControls(&player, &devices, &ship.live, &ship.combat, view.view, clock.frame_duration);
             game.gameobj.move(&ship.live, &ship.flight, view.view, .forward, &view.hit_shake);
         }
         clock.frameBegin();
-        // An object's place is its root's next one, which is what the game steers and draws by.
-        const flown = ship.live.root.next_position;
-        ship.object.place(.{ flown.x, flown.y, flown.z }, ship.live.root.next_orientation);
-        ship.subject.position = .{ flown.x, flown.y, flown.z };
-        ship.subject.orientation = ship.live.root.next_orientation;
+        // Each frame, before anything is drawn, `mission_frame` has every object's frames drawn
+        // between its last two places, as far into the step as the clock is, and the camera
+        // follows the root's.
+        const fraction = clock.stepFraction(options.smooth_motion);
+        if (ship.live.root.framePlace(fraction)) |drawn| ship.drawn = drawn;
+        ship.object.frame(fraction);
+        ship.object.place(ship.drawn.position, ship.drawn.orientation);
+        ship.subject.position = ship.drawn.position;
+        ship.subject.orientation = ship.drawn.orientation;
         // The chase view sits farther back the more throttle the ship carries and swings against
         // its rates of turn, so it lags a turn rather than riding rigidly behind the ship.
         ship.subject.motion = .{
@@ -540,6 +554,9 @@ const Ship = struct {
     ship_type: usize,
     object: game.objects.Model,
     subject: camera.Subject,
+    /// Where the object's root frame has it drawn (`Node.framePlace`), which stays put between the
+    /// steps that move it.
+    drawn: game.objects.Model.Local = .{},
     /// The live object the simulation flies, as `create_object` leaves one.
     live: game.gameobj.GameObject,
     /// Its type's flight stats, which `stats_load_ships` builds from `shipstats.bin`.
@@ -586,6 +603,8 @@ const Ship = struct {
         });
         object.recentre(model);
         object.place(@splat(0), math.identity);
+        // `create_object` then starts each part's `startup` track.
+        object.startUp();
         // What `create_object` sets of a new object: undamaged, at rest, flying itself forward.
         var live: game.gameobj.GameObject = std.mem.zeroes(game.gameobj.GameObject);
         live.blink_offset = game.gameobj.blinkOffset(random);
@@ -829,6 +848,9 @@ test Options {
     try std.testing.expectEqual(8, retro.settings.samples);
     try std.testing.expect(!retro.settings.vsync);
     try std.testing.expectEqual(0, retro.fps.?);
+    try std.testing.expect(!retro.smooth_motion);
+    try std.testing.expect(!(try Options.parse(&.{"--no-smooth-motion"})).smooth_motion);
+    try std.testing.expect((try Options.parse(&.{})).smooth_motion);
     const chosen = try Options.parse(&.{ "--filter", "trilinear", "--16-bit", "--software", "--fullscreen" });
     try std.testing.expectEqual(.trilinear, chosen.settings.filter);
     try std.testing.expect(chosen.settings.sixteen_bit and chosen.software and chosen.fullscreen);

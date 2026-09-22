@@ -97,11 +97,8 @@ pub fn gridPlace(screen: [2]u32, index: i32, scale: f32) [2]i32 {
     return at;
 }
 
-/// A float turned into an integer the way the engine's `0x004C3330` does, with the rounding the
-/// x87 is left in: to the nearest, and to the even one of a tie.
-fn round(value: f32) i32 {
-    return @intFromFloat(math.roundEven(value));
-}
+/// A float turned into an integer as `sr_round` (`0x004C3330`) does.
+const round = math.round;
 
 /// The character codes `font_open` caches the widths of. A glyph of a higher code is never drawn.
 pub const cached_codes = fnt.engine_limit;

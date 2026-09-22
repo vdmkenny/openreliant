@@ -266,6 +266,63 @@ pub const Attachment = extern struct {
 
 /// Tag `0x02`. One per level of detail of a part, up to nine. Records hold only the distance at
 /// which the level takes over; its geometry follows in later chunks.
+/// Tag `0x0A`. One of a part's animation tracks: how long it runs, how it plays unless its starter
+/// says otherwise, and its name. The loader files the tracks named `startup`, `fire` and `deploy`
+/// for the game to start by those names; `create_object` plays a part's `startup` track from the
+/// start. Its keyframes and its events follow in chunks of their own. Older exporters wrote 8-byte
+/// records, which stop two bytes into the name.
+pub const Clip = extern struct {
+    /// In the track's own time, which the part's node advances by its speed each simulation step.
+    length: i32,
+    /// How the track plays unless its starter says otherwise: 0 not at all, 1 once, 2 looping and
+    /// 3 back and forth (`node_tree_update`).
+    mode: i16,
+    name_bytes: [18]u8,
+
+    /// The name, up to its first NUL.
+    pub fn name(clip: *const Clip) []const u8 {
+        return std.mem.sliceTo(&clip.name_bytes, 0);
+    }
+
+    comptime {
+        assert(@sizeOf(Clip) == 24);
+    }
+};
+
+/// Tag `0x0B`. Where a track has its part at a time: angles in radians, which turn it about its
+/// mount point in its own frame, and an offset added to its origin (`node_animate`,
+/// `0x00499F40`). Between two keyframes the part moves in a straight line.
+pub const Keyframe = extern struct {
+    time: i32,
+    angles: Vec3,
+    offset: Vec3,
+
+    comptime {
+        assert(@sizeOf(Keyframe) == 28);
+    }
+};
+
+/// Tag `0x0C`. Something a track sets off as it passes a time (`node_tree_update`): kind 0 fires
+/// the muzzle flashes of the part's guns, the part's nodes of kind 4, and kind 2 puffs particles
+/// from the part's attachments of kind 7. The update knows no other kinds. **Unknown:** the third
+/// field.
+pub const ClipEvent = extern struct {
+    time: i32,
+    kind: i32,
+    _unknown_08: i32,
+
+    comptime {
+        assert(@sizeOf(ClipEvent) == 12);
+    }
+};
+
+/// A clip with its keyframes and events, as the loader keeps them, `0x28` bytes a track.
+pub const Track = struct {
+    clip: Clip,
+    keyframes: []Keyframe,
+    events: []ClipEvent,
+};
+
 pub const Lod = extern struct {
     /// `0` for single-level parts, otherwise a rising sequence such as 5000, 10000, 15000.
     switch_distance: f32,
@@ -507,9 +564,10 @@ pub const PartData = struct {
     part: Part,
     meshes: []Mesh,
     attachments: []Attachment,
+    /// Its animation tracks, in the order the file lists them.
+    tracks: []Track,
     /// Chunks that are read but not yet interpreted, kept as counts.
     node_count: usize,
-    clip_count: usize,
     group_count: usize,
     trigger_count: usize,
 };
@@ -541,7 +599,7 @@ pub const Model = struct {
             const lods = try reader.takeRecords(Lod, gpa, .lod);
             const nodes = try reader.take(.tree_node);
             const attachments = try reader.takeRecords(Attachment, gpa, .attachment);
-            const clips = try reader.take(.animation_clip);
+            const clips = try reader.takeRecords(Clip, gpa, .animation_clip);
             const groups = try reader.take(.face_group);
             const triggers = try reader.take(.trigger_polygon);
 
@@ -556,14 +614,17 @@ pub const Model = struct {
             }
 
             const node_count = if (nodes) |chunk| chunk.count else 0;
-            const clip_count = if (clips) |chunk| chunk.count else 0;
             const group_count = if (groups) |chunk| chunk.count else 0;
 
             // Per-node, per-clip and per-group lists follow the level geometry.
             for (0..node_count) |_| _ = try reader.take(.node_face_list);
-            for (0..clip_count) |_| {
-                _ = try reader.take(.keyframe);
-                _ = try reader.take(.clip_event);
+            const tracks = try gpa.alloc(Track, clips.len);
+            for (clips, tracks) |clip, *track| {
+                track.* = .{
+                    .clip = clip,
+                    .keyframes = try reader.takeRecords(Keyframe, gpa, .keyframe),
+                    .events = try reader.takeRecords(ClipEvent, gpa, .clip_event),
+                };
             }
             for (0..group_count) |_| _ = try reader.take(.group_entry);
 
@@ -572,7 +633,7 @@ pub const Model = struct {
                 .meshes = meshes,
                 .node_count = node_count,
                 .attachments = attachments,
-                .clip_count = clip_count,
+                .tracks = tracks,
                 .group_count = group_count,
                 .trigger_count = if (triggers) |chunk| chunk.count else 0,
             };
@@ -836,8 +897,8 @@ fn testPart(name: []const u8, component: bool, attachments: []Attachment) PartDa
         .part = part,
         .meshes = &.{},
         .attachments = attachments,
+        .tracks = &.{},
         .node_count = 0,
-        .clip_count = 0,
         .group_count = 0,
         .trigger_count = 0,
     };

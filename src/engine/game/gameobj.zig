@@ -822,7 +822,7 @@ test "an object travels from step to step" {
     object.rotation = math.identity;
     // Each step commits the place the previous one worked out, then moves on from it.
     for (0..3) |_| {
-        objects.updateTree(&object.root);
+        objects.updateTree(&object.root, null, null);
         move(&object, &testing_flight, .chase, null, null);
     }
     try std.testing.expectEqual(30, object.root.next_position.z);
