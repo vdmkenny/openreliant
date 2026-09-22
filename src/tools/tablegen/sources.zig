@@ -324,9 +324,9 @@ fn pointedTo(arena: std.mem.Allocator, reader: image.Reader, strings: []const u3
         if (section.characteristics.execute) continue;
         const start = section.raw_offset;
         const end = @min(@as(usize, start) + section.raw_size, reader.bytes.len);
-        var offset: usize = start;
-        while (offset + 4 <= end) : (offset += 4) {
-            const value = std.mem.readInt(u32, reader.bytes[offset..][0..4], .little);
+        if (start >= end) continue;
+        const data = reader.bytes[start..end];
+        for (std.mem.bytesAsSlice(u32, data[0 .. data.len - data.len % @sizeOf(u32)])) |value| {
             if (contains(strings, value)) try pointed.append(arena, value);
         }
     }

@@ -34,9 +34,8 @@ pub const Error = image.Error || error{ Empty, UnknownModifier };
 pub fn read(arena: std.mem.Allocator, reader: image.Reader) (Error || std.mem.Allocator.Error)![]const Binding {
     var bindings: std.ArrayList(Binding) = .empty;
     for (0..max_actions) |index| {
-        const at = table + @as(u32, @intCast(index)) * record_size;
-        const record = try reader.slice(at, record_size);
-        const binding = try parse(record[0..record_size]) orelse break;
+        const record = try reader.view(ControlBinding, table + @as(u32, @intCast(index)) * record_size);
+        const binding = try parse(record) orelse break;
         try bindings.append(arena, binding);
     }
     if (bindings.items.len == 0) return error.Empty;
@@ -44,23 +43,18 @@ pub fn read(arena: std.mem.Allocator, reader: image.Reader) (Error || std.mem.Al
 }
 
 /// The binding one record holds, or null when its name is not an action's, which ends the table.
-fn parse(record: *const [record_size]u8) error{UnknownModifier}!?Binding {
-    const name = std.mem.sliceTo(record[@offsetOf(ControlBinding, "name")..][0..name_size], 0);
+fn parse(record: *align(1) const ControlBinding) error{UnknownModifier}!?Binding {
+    const name = std.mem.sliceTo(&record.name, 0);
     if (!isActionName(name)) return null;
-    const modifier: Modifier = @enumFromInt(field(u16, record, "modifier"));
     return .{
         .name = name,
-        .key = field(u16, record, "key"),
-        .modifier = switch (modifier) {
-            .none, .shift, .control, .alt => modifier,
+        .key = record.key,
+        .modifier = switch (record.modifier) {
+            .none, .shift, .control, .alt => record.modifier,
             _ => return error.UnknownModifier,
         },
-        .button = field(i16, record, "button"),
+        .button = record.button,
     };
-}
-
-fn field(comptime T: type, record: *const [record_size]u8, comptime name: []const u8) T {
-    return std.mem.readInt(T, record[@offsetOf(ControlBinding, name)..][0..@sizeOf(T)], .little);
 }
 
 /// Upper-case words, as every action's name is.
@@ -168,12 +162,9 @@ fn writeModifier(w: *Io.Writer, modifier: Modifier) Io.Writer.Error!void {
     }
 }
 
-fn testRecord(key: u16, modifier: u16, name: []const u8, button: i16) [record_size]u8 {
-    var record: [record_size]u8 = @splat(0);
-    std.mem.writeInt(u16, record[0..2], key, .little);
-    std.mem.writeInt(u16, record[2..4], modifier, .little);
-    @memcpy(record[4..][0..name.len], name);
-    std.mem.writeInt(i16, record[0x4C..0x4E], button, .little);
+fn testRecord(key: u16, modifier: u16, name: []const u8, button: i16) ControlBinding {
+    var record: ControlBinding = .{ .key = key, .modifier = @enumFromInt(modifier), .name = @splat(0), .button = button };
+    @memcpy(record.name[0..name.len], name);
     return record;
 }
 

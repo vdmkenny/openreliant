@@ -45,8 +45,12 @@ pub const Reader = struct {
 
     /// The record of type `T` at `va`: an `extern struct` laid out as the payload lays it.
     pub fn record(reader: Reader, comptime T: type, va: u32) Error!T {
-        const record_bytes = try reader.slice(va, @sizeOf(T));
-        return (layout.view(T, record_bytes) catch return error.OutOfImage).*;
+        return (try reader.view(T, va)).*;
+    }
+
+    /// `record`, in place, for a record whose fields are kept by reference, such as its name.
+    pub fn view(reader: Reader, comptime T: type, va: u32) Error!*align(1) const T {
+        return layout.view(T, try reader.slice(va, @sizeOf(T))) catch error.OutOfImage;
     }
 
     /// `count` records of type `T` from `va`.
