@@ -87,10 +87,15 @@ pub fn product(a: Matrix, b: Matrix) Matrix {
 
 /// The determinant of a 3x3 matrix (`mat3_determinant`, `0x004C2070`), by the cofactors of its
 /// first row.
-pub fn determinant(m: Matrix) f32 {
-    return m[0] * (m[4] * m[8] - m[5] * m[7]) -
-        m[1] * (m[3] * m[8] - m[5] * m[6]) +
-        m[2] * (m[3] * m[7] - m[4] * m[6]);
+///
+/// The sums are made in wider arithmetic, as the engine's are on the x87 stack: a capital ship's
+/// inertia tensor holds entries around 1e20, whose determinant an `f32` cannot hold.
+pub fn determinant(m: Matrix) f64 {
+    var wide: [9]f64 = undefined;
+    for (&wide, m) |*value, term| value.* = term;
+    return wide[0] * (wide[4] * wide[8] - wide[5] * wide[7]) -
+        wide[1] * (wide[3] * wide[8] - wide[5] * wide[6]) +
+        wide[2] * (wide[3] * wide[7] - wide[4] * wide[6]);
 }
 
 /// The inverse of a 3x3 matrix, its adjugate over its determinant, or null for a matrix that has
@@ -98,19 +103,28 @@ pub fn determinant(m: Matrix) f32 {
 /// leaves infinities behind where it is zero.
 pub fn inverse(m: Matrix) ?Matrix {
     const scale = determinant(m);
-    if (scale == 0) return null;
+    if (scale == 0 or !std.math.isFinite(scale)) return null;
+    var wide: [9]f64 = undefined;
+    for (&wide, m) |*value, term| value.* = term;
     const over = 1 / scale;
-    return .{
-        (m[4] * m[8] - m[5] * m[7]) * over,
-        -(m[1] * m[8] - m[2] * m[7]) * over,
-        (m[1] * m[5] - m[2] * m[4]) * over,
-        -(m[8] * m[3] - m[5] * m[6]) * over,
-        (m[8] * m[0] - m[2] * m[6]) * over,
-        -(m[5] * m[0] - m[2] * m[3]) * over,
-        (m[7] * m[3] - m[4] * m[6]) * over,
-        -(m[0] * m[7] - m[1] * m[6]) * over,
-        (m[4] * m[0] - m[1] * m[3]) * over,
+    var out: Matrix = undefined;
+    const adjugate = [9]f64{
+        wide[4] * wide[8] - wide[5] * wide[7],
+        -(wide[1] * wide[8] - wide[2] * wide[7]),
+        wide[1] * wide[5] - wide[2] * wide[4],
+        -(wide[8] * wide[3] - wide[5] * wide[6]),
+        wide[8] * wide[0] - wide[2] * wide[6],
+        -(wide[5] * wide[0] - wide[2] * wide[3]),
+        wide[7] * wide[3] - wide[4] * wide[6],
+        -(wide[0] * wide[7] - wide[1] * wide[6]),
+        wide[4] * wide[0] - wide[1] * wide[3],
     };
+    for (&out, adjugate) |*value, term| {
+        const made = term * over;
+        if (!std.math.isFinite(made)) return null;
+        value.* = @floatCast(made);
+    }
+    return out;
 }
 
 pub fn transpose(m: Matrix) Matrix {
@@ -334,4 +348,13 @@ test inverse {
     for (product(m, back), identity) |got, want| try std.testing.expectApproxEqAbs(want, got, 1e-6);
     // A matrix that flattens space has none.
     try std.testing.expectEqual(null, inverse(.{ 1, 2, 3, 2, 4, 6, 0, 0, 1 }));
+
+    // A capital ship's inertia tensor: its determinant runs past what an f32 holds, and the
+    // inverse still comes out.
+    const heavy: Matrix = .{ 2e20, 0, 0, 0, 4e20, 0, 0, 0, 8e20 };
+    const thin = inverse(heavy).?;
+    try std.testing.expectApproxEqRel(5e-21, thin[0], 1e-6);
+    try std.testing.expectApproxEqRel(1.25e-21, thin[8], 1e-6);
+    // One so heavy that even the inverse's own terms vanish is no matrix to turn by.
+    try std.testing.expectEqual(null, inverse(@splat(std.math.inf(f32))));
 }

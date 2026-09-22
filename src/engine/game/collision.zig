@@ -154,9 +154,11 @@ fn shoveAt(world: gameobj.World, first: u16, second: u16, normal: Vector, levers
         );
         give += 1 / object.mass + math.dot(math.cross(turn, lever), normal);
     }
-    if (give <= 0) return null;
+    // A tensor or a mass the arithmetic cannot hold would throw the pair across the sky.
+    if (!(give > 0) or !std.math.isFinite(give)) return null;
     var force = normal * @as(Vector, @splat(math.dot(closing, normal) * bounce / give));
     if (@reduce(.And, force == @as(Vector, @splat(0)))) force = normal;
+    if (!@reduce(.And, @abs(force) < @as(Vector, @splat(std.math.floatMax(f32))))) return null;
     for ([_]u16{ first, second }, now, 0..) |index, at, which| {
         if (!shoved(all, index)) continue;
         gameobj.knock(&all.slots[index].object, if (which == 0) force else -force, at);
