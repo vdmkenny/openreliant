@@ -547,6 +547,12 @@ pub const Model = struct {
     pub const Part = struct {
         /// The node's `hidden` flag.
         hidden: bool,
+        /// Its node's `component` flag: the object lists the part among its components
+        /// (`create.collectComponents`).
+        component: bool = false,
+        /// Its node's `targetable` flag, which cycling subtargets requires and `SetTargetable`
+        /// changes.
+        targetable: bool = false,
         /// The part its node hangs from (`object_link_part`), or null for one hanging from the
         /// root. A part names its parent by index, or -1 for none.
         parent: ?usize,

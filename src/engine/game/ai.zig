@@ -319,10 +319,10 @@ pub fn targetValid(all: *const create.Objects, target: aigeneric.Target, allowed
     const barred = @as(u32, @bitCast(object.flags)) & ~@as(u32, @bitCast(allowed)) & @as(u32, @bitCast(target_barred));
     if (barred != 0) return false;
     if (target.component < 0) return true;
-    // The game also passes over a component whose node is gone, hidden, or marked to be passed
-    // over. The port's objects don't list their components yet
-    // ([#40](https://github.com/vdmkenny/openreliant/issues/40)), so no component is ever there.
-    return target.component < object.component_count;
+    if (target.component >= object.component_count) return false;
+    // The game also passes over a node marked with flag `0x10`, which the port does not keep.
+    const model = if (slot.model) |*live| live else return false;
+    return !model.parts[slot.components[@intCast(target.component)]].hidden;
 }
 
 comptime {
