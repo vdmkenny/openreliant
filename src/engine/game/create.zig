@@ -25,6 +25,7 @@ const camera = @import("camera.zig");
 const aigeneric = @import("aigeneric.zig");
 const collision = @import("collision.zig");
 const gameobj = @import("gameobj.zig");
+const guns = @import("guns.zig");
 const input = @import("../input.zig");
 const GameObject = gameobj.GameObject;
 const main = @import("main.zig");
@@ -312,9 +313,19 @@ pub const Slot = struct {
     /// What the current order keeps between its updates (`GameObject.order_state`), allocated with
     /// the stack.
     state: aigeneric.State = .{ .bytes = @splat(0) },
+    /// Its guns, one for each muzzle of its model (`GameObject.guns`), made in the objects'
+    /// allocator.
+    guns: []guns.Fitted = &.{},
     /// The parts of its model that count as components, `GameObject.component_count` of them, the
     /// models mounted on it among them (`GameObject.components`, which holds their nodes).
     components: [gameobj.max_components]?*objects.Model.Part = @splat(null),
+
+    /// Lets go of what the slot holds for its object: its model and its guns.
+    pub fn release(slot: *Slot, gpa: Allocator) void {
+        if (slot.model) |model| model.deinit(gpa);
+        gpa.free(slot.guns);
+        slot.guns = &.{};
+    }
 };
 
 /// `game_objects` (`0x00587CE0`), the GO array: 400 slots, none ever empty. As a mission starts
@@ -333,6 +344,9 @@ pub const Objects = struct {
     /// `player_index` (`0x005883FA`): the player's slot, the first in a single-player game.
     player: u16 = 0,
     types: [ship_type_count]TypeUse = @splat(.{}),
+    /// Each ship type's gun groups (`0x00545900`), which `gun_groups_build` works out from an
+    /// object of the type.
+    gun_groups: [ship_type_count][guns.max_groups]guns.Group = @splat(@splat(.{})),
     /// The working lists of the collision sweep `objectsUpdate` runs.
     sweep: Sweep = .{},
     /// `0x005185AC`: the tick at which `aigeneric.ordersUpdate` next clears what every object has
@@ -348,7 +362,7 @@ pub const Objects = struct {
     }
 
     pub fn destroy(all: *Objects) void {
-        for (&all.slots) |*slot| if (slot.model) |model| model.deinit(all.gpa);
+        for (&all.slots) |*slot| slot.release(all.gpa);
         all.gpa.destroy(all);
     }
 
@@ -360,7 +374,7 @@ pub const Objects = struct {
     /// Not ported: the planets' atmospheres, whose texture it loads and whose table it empties.
     pub fn reset(all: *Objects, random: *libcmt.Rand) void {
         for (&all.slots) |*slot| {
-            if (slot.model) |model| model.deinit(all.gpa);
+            slot.release(all.gpa);
             var object = gameobj.objectAlloc(gameobj.stand_in_type, random);
             object.flags.stand_in = true;
             slot.* = .{ .object = object };
@@ -377,7 +391,7 @@ pub const Objects = struct {
     /// ([#30](https://github.com/vdmkenny/openreliant/issues/30)).
     pub fn resetSlot(all: *Objects, index: u16, random: *libcmt.Rand) void {
         const slot = &all.slots[index];
-        if (slot.model) |model| model.deinit(all.gpa);
+        slot.release(all.gpa);
         var object = gameobj.objectAlloc(gameobj.stand_in_type, random);
         object.flags = .standing_in;
         slot.* = .{ .object = object };
@@ -536,6 +550,17 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
         }
         gameobj.linkParts(&model, loaded.model);
         slot.model = model;
+        slot.guns = try guns.fit(all.gpa, &slot.model.?);
+        object.gun_count = @intCast(slot.guns.len);
+        // The type's gun groups follow from this object's guns, and each gun learns its side.
+        if (combat._unknown_1e == 0) {
+            tables.combat[stats_type].gun_groups = @intCast(guns.buildGroups(slot.guns, &all.gun_groups[stats_type]));
+        }
+        for (all.gun_groups[stats_type][0..@intCast(tables.combat[stats_type].gun_groups)]) |group| {
+            if (group.first < 0) continue;
+            slot.guns[@intCast(group.first)].side = 0;
+            if (group.second >= 0) slot.guns[@intCast(group.second)].side = 1;
+        }
         // `object_recentre` puts what it works out in the record.
         object.mass = model.mass;
         object.centre = gameobj.vec3(model.centre);

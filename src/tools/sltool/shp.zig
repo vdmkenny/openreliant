@@ -170,6 +170,7 @@ fn info(ctx: Context, model: shp.Model) !void {
                     .missile => "missile",
                     .gun => "gun",
                     .engine_glow => "engine glow",
+                    .gun_muzzle => "gun muzzle",
                     .light => "light",
                     .pod => "pod",
                     _ => "kind",

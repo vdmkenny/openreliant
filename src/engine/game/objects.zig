@@ -552,6 +552,9 @@ pub const Model = struct {
         hidden: bool,
         /// What its part's record says of it, which the components are collected by.
         flags: shp.Part.Flags = std.mem.zeroes(shp.Part.Flags),
+        /// Its part's attachment points, which the guns are fitted from. The model they belong to
+        /// outlives the object.
+        attachments: []const shp.Attachment = &.{},
         /// Its node's `component` flag: the object lists the part among its components
         /// (`create.collectComponents`).
         component: bool = false,
@@ -715,6 +718,7 @@ pub const Model = struct {
             node.* = .{
                 .hidden = source.part.flags.damaged,
                 .flags = source.part.flags,
+                .attachments = source.attachments,
                 .armor = @floatFromInt(source.part.component_armor),
                 .component_armor = source.part.component_armor,
                 .link_id = source.part.link_id,
@@ -1537,6 +1541,8 @@ test "a model's lights: their sprites, and the light a blinking one casts" {
         .blink = .{ 0, 0 },
         .blink_phase = 0,
         ._unknown_60 = @splat(0),
+        .gun_type = 0,
+        ._unknown_68 = @splat(0),
         .light_range = 50,
         .light_brightness = 1,
     });
@@ -1774,6 +1780,8 @@ test "a gun attachment mounts the model its id names" {
         .blink = .{ 0, 0 },
         .blink_phase = 0,
         ._unknown_60 = @splat(0),
+        .gun_type = 0,
+        ._unknown_68 = @splat(0),
         .light_range = 0,
         .light_brightness = 0,
     };

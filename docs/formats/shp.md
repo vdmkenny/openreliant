@@ -135,11 +135,14 @@ the engine keeps 124 bytes of each.
 | `0x04` | vec3 | Position, relative to the part |
 | `0x10` | f32[9] | Orientation, row-major 3x3 |
 | `0x34` | u32 | Id: which model of its kind |
+| `0x64` | u32 | For kind 3, the gun type it fires, into `gun_stats`: the Sabre's muzzles hold 1 to 3 and an allied turret's 12 |
 
 The engine's attachment table, filled when the game starts, gives the models and sprites for each
 kind and id; [`src/engine/game/create/models.zig`](../../src/engine/game/create/models.zig)
 transcribes it (`make model-tables`). Kind 0 holds missiles and their pods, 1 guns and turrets, 4
-flare and light sprites, 5 cargo and fuel pods. **Unknown:** kinds 2, 3 and 6 to 9.
+flare and light sprites, 5 cargo and fuel pods. Kind 3 is a gun's muzzle: an object takes one gun
+for each, of the type at `0x64`, and its muzzle flash is drawn there. **Unknown:** kinds 2 and 6 to
+9.
 
 For kinds 1 and 5 the engine mounts the model as an object of its own, hanging from the part's
 node, whose components join the owner's.
