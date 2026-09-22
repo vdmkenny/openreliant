@@ -25,6 +25,11 @@ pub const Region = struct {
         std.mem.writeInt(u16, region.bytes[va - region.va ..][0..2], value, .little);
     }
 
+    /// Writes `record`, an `extern struct`, as the payload lays it out.
+    pub fn putRecord(region: Region, va: u32, record: anytype) void {
+        region.put(va, std.mem.asBytes(&record));
+    }
+
     /// Writes `text` and its terminating NUL.
     pub fn putString(region: Region, va: u32, text: []const u8) void {
         region.put(va, text);

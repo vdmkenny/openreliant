@@ -52,15 +52,15 @@ pub const Error = image.Error || error{ Empty, ScriptTooLong, BadChoice };
 pub fn read(arena: std.mem.Allocator, reader: image.Reader) (Error || std.mem.Allocator.Error)!Table {
     var list: std.ArrayList(Maneuver) = .empty;
     for (0..max_maneuvers) |index| {
-        const at = table_address + @as(u32, @intCast(index)) * record_size;
-        const name = reader.string(try reader.word(at + @offsetOf(Record, "name"))) catch break;
+        const record = try reader.record(Record, table_address + @as(u32, @intCast(index)) * record_size);
+        const name = reader.string(@intFromEnum(record.name)) catch break;
         if (name.len == 0) break;
-        const script_address = try reader.word(at + @offsetOf(Record, "script"));
+        const script_address = @intFromEnum(record.script);
         try list.append(arena, .{
             .name = name,
-            .mirror = try reader.int(u8, at + @offsetOf(Record, "mirror")),
-            .min_ticks = try reader.int(u16, at + @offsetOf(Record, "min_ticks")),
-            .max_ticks = try reader.int(u16, at + @offsetOf(Record, "max_ticks")),
+            .mirror = @bitCast(record.mirror),
+            .min_ticks = record.min_ticks,
+            .max_ticks = record.max_ticks,
             .script_address = script_address,
             .script = try readScript(arena, reader, script_address),
         });
@@ -68,13 +68,14 @@ pub fn read(arena: std.mem.Allocator, reader: image.Reader) (Error || std.mem.Al
     if (list.items.len == 0) return error.Empty;
 
     var table: Table = .{ .maneuvers = try list.toOwnedSlice(arena), .handlers = undefined, .choices = undefined };
-    for (&table.handlers, 0..) |*pair, index| {
-        const at = handlers_address + @as(u32, @intCast(index)) * @sizeOf(lancer_maneuvers.Handlers);
-        pair.* = .{ .start = try reader.word(at), .run = try reader.word(at + 4) };
+    const handlers = try reader.records(lancer_maneuvers.Handlers, handlers_address, opcode_count);
+    for (&table.handlers, handlers) |*pair, record| {
+        pair.* = .{ .start = @intFromEnum(record.start), .run = @intFromEnum(record.run) };
     }
+    const lists = try reader.records(u32, choices_address, bearings * bearings);
     for (&table.choices, 0..) |*row, ours| {
         for (row, 0..) |*choice, theirs| {
-            const list_address = try reader.word(choices_address + @as(u32, @intCast(ours * bearings + theirs)) * 4);
+            const list_address = lists[ours * bearings + theirs];
             const count = try reader.int(u8, list_address);
             choice.* = try arena.dupe(u8, try reader.slice(list_address + 1, count));
             for (choice.*) |maneuver| {
@@ -88,9 +89,9 @@ pub fn read(arena: std.mem.Allocator, reader: image.Reader) (Error || std.mem.Al
 fn readScript(arena: std.mem.Allocator, reader: image.Reader, address: u32) (Error || std.mem.Allocator.Error)![]const []const u8 {
     var lines: std.ArrayList([]const u8) = .empty;
     for (0..max_lines) |index| {
-        const text = try reader.word(address + @as(u32, @intCast(index)) * @sizeOf(lancer_maneuvers.ScriptLine));
-        if (text == 0) return lines.toOwnedSlice(arena);
-        try lines.append(arena, try reader.string(text));
+        const line = try reader.record(lancer_maneuvers.ScriptLine, address + @as(u32, @intCast(index)) * @sizeOf(lancer_maneuvers.ScriptLine));
+        if (line.text == .null) return lines.toOwnedSlice(arena);
+        try lines.append(arena, try reader.string(@intFromEnum(line.text)));
     } else return error.ScriptTooLong;
 }
 
@@ -274,24 +275,31 @@ const TestPayload = struct {
         const names = [_][]const u8{ "defend dodge1", "run to ship" };
         var script_at: u32 = handlers_address + opcode_count * 8;
         for (scripts, names, 0..) |lines, name, index| {
-            const at = table_address + @as(u32, @intCast(index)) * record_size;
-            r.put(at, &.{0x05});
-            r.putWord(at + @offsetOf(Record, "script"), script_at);
-            r.putWord(at + @offsetOf(Record, "name"), text.put(r, &next_string, name));
-            r.putHalf(at + @offsetOf(Record, "min_ticks"), 400);
-            r.putHalf(at + @offsetOf(Record, "max_ticks"), 1000);
+            r.putRecord(table_address + @as(u32, @intCast(index)) * record_size, Record{
+                .mirror = .{ .yaw = true, .pitch = false, .roll = true },
+                ._unknown_01 = @splat(0),
+                .script = @enumFromInt(script_at),
+                .name = @enumFromInt(text.put(r, &next_string, name)),
+                .min_ticks = 400,
+                .max_ticks = 1000,
+            });
             for (lines) |line_text| {
-                r.putWord(script_at, text.put(r, &next_string, line_text));
-                script_at += 8;
+                r.putRecord(script_at, lancer_maneuvers.ScriptLine{ .text = @enumFromInt(text.put(r, &next_string, line_text)), .instruction = .null });
+                script_at += @sizeOf(lancer_maneuvers.ScriptLine);
             }
-            script_at += 8;
+            script_at += @sizeOf(lancer_maneuvers.ScriptLine);
         }
         // The third record's name is text, as after the payload's last.
-        r.putWord(table_address + 2 * record_size + @offsetOf(Record, "name"), 0x6E757220);
-        for (0..opcode_count) |index| r.putWord(handlers_address + @as(u32, @intCast(index)) * 8, 0x00405000 + @as(u32, @intCast(index)));
+        var past = std.mem.zeroes(Record);
+        past.name = @enumFromInt(0x6E757220);
+        r.putRecord(table_address + 2 * record_size, past);
+        for (0..opcode_count) |index| {
+            const routine: u32 = 0x00405000 + @as(u32, @intCast(index));
+            r.putRecord(handlers_address + @as(u32, @intCast(index)) * @sizeOf(lancer_maneuvers.Handlers), lancer_maneuvers.Handlers{ .start = @enumFromInt(routine), .run = .null });
+        }
         // Every choice list holds both maneuvers.
         const list_at = text.put(r, &next_string, &.{ 2, 0, 1 });
-        for (0..bearings * bearings) |index| r.putWord(choices_address + @as(u32, @intCast(index)) * 4, list_at);
+        r.putRecord(choices_address, @as([bearings * bearings]u32, @splat(list_at)));
     }
 
     fn table(payload: *TestPayload, arena: std.mem.Allocator) !Table {

@@ -6,7 +6,11 @@
 //! this reader applies the same rule.
 
 const std = @import("std");
+const assert = std.debug.assert;
 const Io = std.Io;
+
+const openreliant = @import("openreliant");
+const layout = openreliant.layout;
 
 const image = @import("image.zig");
 const testing = @import("testing.zig");
@@ -15,7 +19,6 @@ const testing = @import("testing.zig");
 /// command table.
 pub const catalogue: u32 = 0x004F0F50;
 
-pub const entry_size = 0x74;
 pub const max_params = 8;
 
 /// `for_each_ship`: runs a callback for each ship of the ship, flight group or squad record in
@@ -29,16 +32,43 @@ const max_body = 0x400;
 /// How far before that call to look for the `PUSH imm32` of the callback.
 const max_push_distance = 12;
 
-/// Offsets within an entry.
-const layout = struct {
-    const implementation = 0x00;
-    const params = 0x04;
-    const name = 0x08;
-    /// Each parameter is a type, an unidentified word, and a label pointer.
-    const first_param = 0x0C;
-    const param_size = 12;
-    const description = 0x6C;
-    const flag = 0x70;
+/// An entry of the catalogue, as the payload lays it out.
+const Entry = extern struct {
+    implementation: u32,
+    param_count: u32,
+    name: u32,
+    params: [max_params]Parameter,
+    description: u32,
+    flag: u32,
+
+    /// A parameter: a type, an unidentified word, and a label.
+    const Parameter = extern struct {
+        kinds: u32,
+        extra: u32,
+        label: u32,
+    };
+
+    comptime {
+        assert(@offsetOf(Entry, "params") == 0x0C);
+        assert(@offsetOf(Entry, "description") == 0x6C);
+        assert(@sizeOf(Entry) == 0x74);
+    }
+};
+
+/// `CALL rel32`.
+const Call = extern struct {
+    opcode: u8,
+    displacement: i32 align(1),
+
+    const encoding = 0xE8;
+};
+
+/// `PUSH imm32`.
+const Push = extern struct {
+    opcode: u8,
+    value: u32 align(1),
+
+    const encoding = 0x68;
 };
 
 pub const Param = struct {
@@ -62,27 +92,21 @@ pub fn read(arena: std.mem.Allocator, reader: image.Reader) (Error || std.mem.Al
     var commands: std.ArrayList(Command) = .empty;
 
     var at = catalogue;
-    while (true) : (at += entry_size) {
-        const implementation = try reader.word(at + layout.implementation);
-        if (implementation == 0) break;
+    while (true) : (at += @sizeOf(Entry)) {
+        const entry = try reader.record(Entry, at);
+        if (entry.implementation == 0) break;
 
-        const count = try reader.word(at + layout.params);
-        if (count > max_params) return error.TooManyParams;
-        const params = try arena.alloc(Param, count);
-        for (params, 0..) |*param, i| {
-            const field = at + layout.first_param + @as(u32, @intCast(i)) * layout.param_size;
-            param.* = .{
-                .kinds = try reader.word(field),
-                .extra = try reader.word(field + 4),
-                .label = try reader.string(try reader.word(field + 8)),
-            };
+        if (entry.param_count > max_params) return error.TooManyParams;
+        const params = try arena.alloc(Param, entry.param_count);
+        for (params, entry.params[0..params.len]) |*param, raw| {
+            param.* = .{ .kinds = raw.kinds, .extra = raw.extra, .label = try reader.string(raw.label) };
         }
         try commands.append(arena, .{
-            .implementation = implementation,
-            .name = try reader.string(try reader.word(at + layout.name)),
+            .implementation = entry.implementation,
+            .name = try reader.string(entry.name),
             .params = params,
-            .description = try reader.string(try reader.word(at + layout.description)),
-            .flag = try reader.word(at + layout.flag),
+            .description = try reader.string(entry.description),
+            .flag = entry.flag,
         });
     }
     for (commands.items) |*command| command.per_ship = try perShip(reader, commands.items, command.implementation);
@@ -98,15 +122,17 @@ fn perShip(reader: image.Reader, all: []const Command, implementation: u32) Erro
     }
     const body = try reader.slice(implementation, end - implementation);
     var found: ?u32 = null;
-    for (0..body.len -| 4) |i| {
-        if (body[i] != 0xE8) continue;
-        const next = implementation + @as(u32, @intCast(i)) + 5;
-        const displacement = std.mem.readInt(i32, body[i + 1 ..][0..4], .little);
-        if (next +% @as(u32, @bitCast(displacement)) != for_each_ship) continue;
+    for (0..body.len -| @sizeOf(Call) + 1) |i| {
+        const call = layout.view(Call, body[i..]) catch break;
+        if (call.opcode != Call.encoding) continue;
+        const next = implementation + @as(u32, @intCast(i + @sizeOf(Call)));
+        if (next +% @as(u32, @bitCast(call.displacement)) != for_each_ship) continue;
 
         const callback = for (1..@min(i, max_push_distance) + 1) |back| {
             const at = i - back;
-            if (body[at] == 0x68 and at + 5 <= i) break std.mem.readInt(u32, body[at + 1 ..][0..4], .little);
+            if (at + @sizeOf(Push) > i) continue;
+            const push = layout.view(Push, body[at..]) catch continue;
+            if (push.opcode == Push.encoding) break push.value;
         } else return error.NoCallback;
         if (found) |earlier| {
             if (earlier != callback) return error.TwoCallbacks;
@@ -244,31 +270,30 @@ const TestPayload = struct {
     fn callForEachShip(payload: *TestPayload, at: u32, callback: ?u32) u32 {
         var next = at;
         if (callback) |address| {
-            payload.text().put(next, &.{0x68});
-            payload.text().putWord(next + 1, address);
-            next += 5;
+            payload.text().putRecord(next, Push{ .opcode = Push.encoding, .value = address });
+            next += @sizeOf(Push);
         }
-        payload.text().put(next, &.{0xE8});
-        payload.text().putWord(next + 1, for_each_ship -% (next + 5));
-        return next + 5;
+        const displacement = for_each_ship -% (next + @sizeOf(Call));
+        payload.text().putRecord(next, Call{ .opcode = Call.encoding, .displacement = @bitCast(displacement) });
+        return next + @sizeOf(Call);
     }
 
     /// Catalogue entry `index`, with one parameter when `label` is given.
     fn entry(payload: *TestPayload, index: u32, implementation: u32, name: []const u8, label: ?[]const u8) void {
-        const at = catalogue + index * entry_size;
         const region = payload.table();
         const name_at = strings + index * 0x40;
-        region.putWord(at + layout.implementation, implementation);
         region.putString(name_at, name);
-        region.putWord(at + layout.name, name_at);
         region.putString(name_at + 0x10, "Does a thing");
-        region.putWord(at + layout.description, name_at + 0x10);
+        var record = std.mem.zeroes(Entry);
+        record.implementation = implementation;
+        record.name = name_at;
+        record.description = name_at + 0x10;
         if (label) |text_label| {
-            region.putWord(at + layout.params, 1);
-            region.putWord(at + layout.first_param, 0x400);
             region.putString(name_at + 0x20, text_label);
-            region.putWord(at + layout.first_param + 8, name_at + 0x20);
+            record.param_count = 1;
+            record.params[0] = .{ .kinds = 0x400, .extra = 0, .label = name_at + 0x20 };
         }
+        region.putRecord(catalogue + index * @sizeOf(Entry), record);
     }
 
     /// The catalogue as `read` finds it. The image lives in `arena`, as the strings read do.
