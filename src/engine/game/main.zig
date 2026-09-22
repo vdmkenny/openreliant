@@ -54,6 +54,12 @@ pub const PlayTime = struct {
 /// of a second stands in for the multimedia timer `timer_start` (`0x004A70F0`) sets up, so the
 /// clocks advance at the same rate without a thread of their own and without the drift a timer
 /// whose period the device rounds would bring.
+/// The game ticks a simulation step takes: it steps on every fourth.
+pub const ticks_per_step = 4;
+
+/// The share of a simulation step each game tick takes.
+const tick_share: f32 = 1.0 / @as(f32, ticks_per_step);
+
 pub const Clock = struct {
     /// `timer_ticks` (`0x005DB8E8`): every tick of the timer, the paused ones included.
     timer_ticks: u32 = 0,
@@ -79,6 +85,9 @@ pub const Clock = struct {
     ran_to: u32 = 0,
     /// Where the platform's count of hundredths stood at the last tick, in place of the timer.
     timer_at: u64 = 0,
+    /// The port's: how far the platform's time has run past the last tick, as a share of a tick,
+    /// which `stepFraction` draws between the ticks by.
+    past_tick: f32 = 0,
 
     /// Zeroes the clocks and takes the platform's count of hundredths of a second as their start,
     /// as `mission_run` zeroes them before it loops.
@@ -96,10 +105,18 @@ pub const Clock = struct {
         clock.advanceTimer(@truncate(elapsed));
     }
 
+    /// `advanceTo`, from a finer count: the platform's time in units of which `per_tick` make a
+    /// tick. What is left past the last tick is kept for drawing between the ticks.
+    pub fn advanceToFine(clock: *Clock, now: u64, per_tick: u64) void {
+        clock.advanceTo(now / per_tick);
+        clock.past_tick = @as(f32, @floatFromInt(now % per_tick)) / @as(f32, @floatFromInt(per_tick));
+    }
+
     /// Runs `ticks` ticks and takes `now` as where the platform's count has reached, for a
     /// screenshot, which takes a tick a frame so that every run settles alike.
     pub fn advanceBy(clock: *Clock, now: u64, ticks: u32) void {
         clock.timer_at = now;
+        clock.past_tick = 0;
         clock.advanceTimer(ticks);
     }
 
@@ -142,7 +159,7 @@ pub const Clock = struct {
     /// updates, which the caller stands in for until they are ported.
     pub fn simulationStep(clock: *Clock, devices: *input.Devices) bool {
         clock.simulation_counter += 1;
-        if (clock.simulation_counter < 4) return false;
+        if (clock.simulation_counter < ticks_per_step) return false;
         devices.read();
         clock.simulation_counter = 0;
         return true;
@@ -188,6 +205,19 @@ pub const Clock = struct {
             if (stepped) steps += 1;
         }
         return steps;
+    }
+
+    /// How far into its step the simulation is, which `node_frame_update` (`0x0049A460`) draws each
+    /// object between its last two places by: a quarter for each tick since the step.
+    ///
+    /// **Improvement:** with `smooth`, the time past the last tick counts as well, so that what
+    /// moves moves on every frame rather than every tick, and evenly at any display rate; the
+    /// original moves it on in hundredths of a second, which a display's frames fall between
+    /// unevenly. While the game is paused nothing moves, so the time past the tick doesn't count.
+    pub fn stepFraction(clock: *const Clock, smooth: bool) f32 {
+        const ticks: f32 = @floatFromInt(clock.simulation_counter);
+        if (!smooth or clock.paused) return ticks * tick_share;
+        return (ticks + clock.past_tick) * tick_share;
     }
 
     /// `frame_begin` (`0x00491E00`): `frame_duration` becomes the ticks since `frame_start`, and
@@ -646,6 +676,21 @@ test "a frame measures the ticks since the last one" {
     clock.frameReset();
     try std.testing.expectEqual(13, clock.frame_start);
     try std.testing.expectEqual(0, clock.frame_duration);
+}
+
+test "Clock.stepFraction" {
+    var clock: Clock = .{};
+    var devices: input.Devices = .{};
+    clock.start(0);
+    // A frame two ticks into a step, and three quarters of the way through the next tick.
+    clock.advanceToFine(275, 100);
+    _ = clock.runTicks(&devices);
+    try std.testing.expectEqual(2, clock.simulation_counter);
+    try std.testing.expectEqual(0.5, clock.stepFraction(false));
+    try std.testing.expectEqual(0.6875, clock.stepFraction(true));
+    // Paused, nothing moves, so the time past the tick doesn't count.
+    clock.paused = true;
+    try std.testing.expectEqual(0.5, clock.stepFraction(true));
 }
 
 test "the clocks keep to the platform's count however the frames fall" {

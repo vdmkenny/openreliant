@@ -30,7 +30,10 @@ does its work on every fourth call, so 25 times a second: each object's own upda
 `objects_update` (`0x00468FA0`), which moves every object with `object_move` and handles
 collisions. The rates and speeds of the [flight model](objects.md#motion) are therefore per
 twenty-fifth of a second, and afterburner fuel, which burns 4 units an update from 100 per second
-of the ship's stat, lasts that many seconds.
+of the ship's stat, lasts that many seconds. Each frame draws what moves between its last two
+places, as far into the step as the ticks since it have gone
+([Drawing between steps](objects.md#drawing-between-steps)), so motion moves on a hundred times a
+second.
 
 ## Porting
 
@@ -44,6 +47,11 @@ the length of a frame, so the clocks keep to that count however the frames fall 
 accumulates. The frame rate is therefore decoupled from the tick rate in both directions: a frame
 shorter than a hundredth runs no tick, a frame that spans several runs all of them at once, and a
 second of play is 100 ticks and 25 simulation steps whatever the rate the engine draws at.
+
+**Improvement:** `stepFraction` also counts the time past the last tick, which `advanceToFine`
+keeps from a finer count, so that what moves moves on every frame rather than every tick, evenly at
+any display rate. `--no-smooth-motion` and `--original` move it on with the ticks, as the original
+does.
 
 Ported so far: the clocks, the pacing, and the keyboard, which the simulation step reads 25 times a
 second as `read_keyboard` does rather than once a frame. Not yet: the joystick and the mouse the

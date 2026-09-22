@@ -17,12 +17,17 @@ pub const radius: f32 = 64;
 pub const System = enum { shields, guns, engines };
 
 /// The direction of each system's anchor from the middle of the ball (`0x00412560`): the three a
-/// third of a turn apart. The game's figure for their `x` is 0.866.
+/// third of a turn apart.
+///
+/// **Improvement:** the game writes the guns' and engines' `x`, √3/2, as 0.866. The port uses √3/2
+/// itself, which sets those anchors 0.00002 further from the middle.
 pub const anchors = std.EnumArray(System, [2]f32).init(.{
     .shields = .{ 0, 1 },
-    .guns = .{ 0.866, -0.5 },
-    .engines = .{ -0.866, -0.5 },
+    .guns = .{ half_root_three, -0.5 },
+    .engines = .{ -half_root_three, -0.5 },
 });
+
+const half_root_three: f32 = @sqrt(3.0) / 2.0;
 
 /// `0x004124E0`: how far the setting is toward `direction`: the distance from it to the edge of the
 /// disc going the opposite way. At the anchor that is the whole width of the disc, 128; in the
@@ -146,6 +151,16 @@ fn testingObject() gameobj.GameObject {
     var object = std.mem.zeroes(gameobj.GameObject);
     object.power_setting = .{ .x = 1, .y = 1, .z = 1 };
     return object;
+}
+
+test anchors {
+    // A third of a turn apart, each a unit from the middle.
+    for (std.enums.values(System)) |system| {
+        const at = anchors.get(system);
+        try std.testing.expectApproxEqAbs(1, at[0] * at[0] + at[1] * at[1], 1e-6);
+    }
+    const guns = anchors.get(.guns);
+    try std.testing.expectApproxEqAbs(-0.5, guns[0] * anchors.get(.engines)[0] + guns[1] * anchors.get(.engines)[1], 1e-6);
 }
 
 test reach {

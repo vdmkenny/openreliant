@@ -119,6 +119,14 @@ pub fn roundEven(x: f32) f32 {
     return r;
 }
 
+/// `sr_round` (`0x004C3330`): `x` as a whole number, rounded as `roundEven` rounds. A value no
+/// `i32` holds, or no number at all, gives the least `i32`, which is what the x87 stores for it.
+pub fn round(x: f32) i32 {
+    const r = roundEven(x);
+    if (!(r >= -2147483648.0 and r < 2147483648.0)) return std.math.minInt(i32);
+    return @intFromFloat(r);
+}
+
 pub const Axis = enum { x, y, z };
 
 /// A right-handed turn by `angle` radians about `axis`.
@@ -196,6 +204,14 @@ test smallTurn {
     // To first order, the same as turning about each axis in turn.
     const turn = fromAngles(a[0], a[1], a[2]);
     for (turn, smallTurn(a)) |e, found| try std.testing.expectApproxEqAbs(e, found, 1e-5);
+}
+
+test round {
+    try std.testing.expectEqual(2, round(2.5));
+    try std.testing.expectEqual(4, round(3.5));
+    try std.testing.expectEqual(-3, round(-3.4));
+    try std.testing.expectEqual(std.math.minInt(i32), round(1e10));
+    try std.testing.expectEqual(std.math.minInt(i32), round(std.math.nan(f32)));
 }
 
 test distance {

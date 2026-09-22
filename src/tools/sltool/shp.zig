@@ -153,10 +153,15 @@ fn info(ctx: Context, model: shp.Model) !void {
             try ctx.stdout.writeByte('\n');
         }
 
-        if (entry.attachments.len + entry.node_count + entry.clip_count + entry.trigger_count > 0) {
+        if (entry.attachments.len + entry.node_count + entry.tracks.len + entry.trigger_count > 0) {
             try ctx.stdout.print("        {d} nodes, {d} attachments, {d} clips, {d} groups, {d} triggers\n", .{
-                entry.node_count,  entry.attachments.len, entry.clip_count,
+                entry.node_count,  entry.attachments.len, entry.tracks.len,
                 entry.group_count, entry.trigger_count,
+            });
+        }
+        for (entry.tracks) |track| {
+            try ctx.stdout.print("          clip '{s}' length {d} mode {d}, {d} keyframes, {d} events\n", .{
+                track.clip.name(), track.clip.length, track.clip.mode, track.keyframes.len, track.events.len,
             });
         }
         for (entry.attachments) |attachment| {

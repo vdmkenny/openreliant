@@ -204,8 +204,15 @@ test Pacer {
     try std.testing.expectEqual(10_000_000, pacer.delay(1_050_000_000, 100));
 }
 
-/// Hundredths of a second since SDL started: the game's ticks (`tick_timer` runs 100 times a
-/// second).
+/// Nanoseconds since SDL started, which the game's ticks are counted from (`ticks`).
+pub fn nanoseconds() u64 {
+    return c.SDL_GetTicksNS();
+}
+
+/// Nanoseconds in each of the game's ticks: `tick_timer` runs 100 times a second.
+pub const tick_nanoseconds = 10_000_000;
+
+/// Hundredths of a second since SDL started: the game's ticks.
 pub fn ticks() u64 {
-    return c.SDL_GetTicks() / 10;
+    return nanoseconds() / tick_nanoseconds;
 }
