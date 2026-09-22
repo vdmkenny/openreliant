@@ -38,6 +38,7 @@ files it says what it needs and exits.
 |---|---|
 | `--ship <type>` | Shows the ship type by its number in `shipstats.bin` |
 | `--screenshot <file.png>` | Draws one frame, with the camera settled, to a PNG and quits |
+| `--size <width>x<height>` | Draws frames of this size in pixels whatever the window's, which shows them scaled; for a screenshot larger than the display |
 | `--fullscreen` | Fills the display |
 | `--original` | The original's look: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks |
 | `--16-bit` | 16-bit colour, dithered |

@@ -50,6 +50,9 @@ pub const Settings = struct {
     /// Lights each pixel with the game's own directional and point lights, rather than each
     /// vertex, so that hulls of few polygons shade smoothly. The original lit each vertex.
     pixel_lighting: bool = true,
+    /// The frames' size in pixels whatever the window's, which shows them scaled to fit; null for
+    /// the window's own, at the display's density.
+    size: ?[2]u32 = null,
 
     pub const Filter = enum {
         /// As the original: bilinear, from the nearest level.
@@ -464,8 +467,10 @@ pub const Gpu = struct {
         return @ptrCast(@alignCast(ptr));
     }
 
-    /// The frame's size in pixels: the window's, at the display's own density.
+    /// The frame's size in pixels: the settings' where they give one, or the window's, at the
+    /// display's own density.
     pub fn frameSize(gpu: Gpu) [2]u32 {
+        if (gpu.settings.size) |size| return size;
         var width: c_int = 0;
         var height: c_int = 0;
         _ = c.SDL_GetWindowSizeInPixels(gpu.window, &width, &height);

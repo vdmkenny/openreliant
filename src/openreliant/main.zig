@@ -44,6 +44,8 @@ const usage =
     \\  --view <0|1|2>            the view a mission starts in, as the game's ini keeps it: 0 the
     \\                            cockpit, the default; 1 the chase view; 2 no cockpit
     \\  --screenshot <file.png>   draw one frame, with the camera settled, to a PNG, and quit
+    \\  --size <width>x<height>   draw frames of this size in pixels whatever the window's, which
+    \\                            shows them scaled; for a screenshot larger than the display
     \\  --fullscreen              fill the display; Alt and Enter switch while running
     \\  --original                the original's look: 16-bit colour, one sample a pixel,
     \\                            bilinear filtering, lighting each vertex, and motion that
@@ -80,7 +82,7 @@ const Options = struct {
     smooth_motion: bool = true,
 
     const Flag = enum { @"--fullscreen", @"--original", @"--16-bit", @"--no-vsync", @"--no-bloom", @"--no-dither", @"--no-pixel-lighting", @"--no-smooth-motion", @"--software" };
-    const Option = enum { @"--ship", @"--view", @"--screenshot", @"--msaa", @"--filter", @"--fps" };
+    const Option = enum { @"--ship", @"--view", @"--screenshot", @"--size", @"--msaa", @"--filter", @"--fps" };
 
     fn parse(args: []const [:0]const u8) error{Usage}!Options {
         var options: Options = .{};
@@ -116,6 +118,7 @@ const Options = struct {
                         options.cockpit = @enumFromInt(setting);
                     },
                     .@"--screenshot" => options.screenshot = value,
+                    .@"--size" => options.settings.size = parseSize(value) orelse return error.Usage,
                     .@"--msaa" => {
                         options.settings.samples = std.fmt.parseInt(u8, value, 10) catch return error.Usage;
                         if (std.mem.indexOfScalar(u8, &.{ 1, 2, 4, 8 }, options.settings.samples) == null) return error.Usage;
@@ -135,6 +138,21 @@ const Options = struct {
         }
         return options;
     }
+
+    /// A size given as `<width>x<height>`, each from 1 to `max_size`.
+    fn parseSize(text: []const u8) ?[2]u32 {
+        var halves = std.mem.splitScalar(u8, text, 'x');
+        var size: [2]u32 = undefined;
+        for (&size) |*side| {
+            const digits = halves.next() orelse return null;
+            side.* = std.fmt.parseInt(u32, digits, 10) catch return null;
+            if (side.* == 0 or side.* > max_size) return null;
+        }
+        return if (halves.next() == null) size else null;
+    }
+
+    /// The largest side `--size` takes, which GPUs draw to.
+    const max_size = 16384;
 
     /// The frames a second to hold to, where the display does not already.
     fn frameRate(options: Options, window: platform.window.Window) ?f32 {
@@ -425,7 +443,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         const size = switch (screen.*) {
             .gpu => |*device| device.frameSize(),
             .software => |*device| resized: {
-                const size = window.size();
+                const size = options.settings.size orelse window.size();
                 if (device.width != size[0] or device.height != size[1]) {
                     device.deinit(arena);
                     device.* = try .init(arena, size[0], size[1]);
@@ -955,6 +973,10 @@ test Options {
     try std.testing.expect(!retro.smooth_motion);
     try std.testing.expect(!(try Options.parse(&.{"--no-smooth-motion"})).smooth_motion);
     try std.testing.expect((try Options.parse(&.{})).smooth_motion);
+    try std.testing.expectEqual([2]u32{ 3840, 2160 }, (try Options.parse(&.{ "--size", "3840x2160" })).settings.size.?);
+    for ([_][:0]const u8{ "3840", "0x100", "100x", "1x2x3", "99999x100" }) |bad| {
+        try std.testing.expectError(error.Usage, Options.parse(&.{ "--size", bad }));
+    }
     const chosen = try Options.parse(&.{ "--filter", "trilinear", "--16-bit", "--software", "--fullscreen" });
     try std.testing.expectEqual(.trilinear, chosen.settings.filter);
     try std.testing.expect(chosen.settings.sixteen_bit and chosen.software and chosen.fullscreen);
