@@ -10,6 +10,7 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
 const Pointer = @import("../engine.zig").Pointer;
+const layout = @import("layout.zig");
 const tga = @import("tga.zig");
 
 pub const version = 102;
@@ -293,10 +294,10 @@ pub const Cache = struct {
 
     pub fn parse(gpa: Allocator, bytes: []const u8) (Error || Allocator.Error)!Cache {
         if (bytes.len < data_start) return error.Truncated;
-        const header: *align(1) const Header = @ptrCast(bytes[0..header_size]);
+        const header = try layout.view(Header, bytes);
         if (header.version != version) return error.NotACache;
         if (header.count > capacity) return error.TooManyEntries;
-        const entries = std.mem.bytesAsSlice(Entry, bytes[header_size..][0 .. header.count * entry_size]);
+        const entries = try layout.array(Entry, bytes[header_size..], header.count);
 
         var textures: std.ArrayList(Texture) = try .initCapacity(gpa, entries.len);
         errdefer textures.deinit(gpa);
@@ -501,9 +502,10 @@ test "rejects malformed caches" {
     copy[0] = 101;
     try std.testing.expectError(error.NotACache, Cache.parse(gpa, copy));
     copy[0] = version;
-    std.mem.writeInt(u32, copy[4..8], capacity + 1, .little);
+    const header = try layout.viewMut(Header, copy);
+    header.count = capacity + 1;
     try std.testing.expectError(error.TooManyEntries, Cache.parse(gpa, copy));
-    std.mem.writeInt(u32, copy[4..8], 1, .little);
+    header.count = 1;
     copy[header_size] = 4; // four bytes per pixel
     try std.testing.expectError(error.UnsupportedFormat, Cache.parse(gpa, copy));
 }

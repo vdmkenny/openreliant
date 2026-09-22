@@ -14,6 +14,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
+const layout = @import("layout.zig");
+
 /// Every shipped file carries this version, stored as four raw bytes rather than a number.
 pub const magic = "1.40";
 
@@ -149,18 +151,11 @@ pub const Sprite = struct {
     entries: []align(1) const DirectoryEntry,
 
     pub fn parse(data: []const u8) Error!Sprite {
-        if (data.len < @sizeOf(Header)) return error.NotASprite;
-        const header: *align(1) const Header = @ptrCast(data[0..@sizeOf(Header)]);
+        const header = layout.view(Header, data) catch return error.NotASprite;
         if (!std.mem.eql(u8, &header.version, magic)) return error.NotASprite;
-
-        const bytes = @as(usize, header.shape_count) * @sizeOf(DirectoryEntry);
-        if (@sizeOf(Header) + bytes > data.len) return error.Truncated;
         return .{
             .data = data,
-            .entries = @alignCast(std.mem.bytesAsSlice(
-                DirectoryEntry,
-                data[@sizeOf(Header)..][0..bytes],
-            )),
+            .entries = layout.array(DirectoryEntry, data[@sizeOf(Header)..], header.shape_count) catch return error.Truncated,
         };
     }
 
@@ -197,8 +192,8 @@ pub const Sprite = struct {
 
 /// Reads a shape at `offset`, or null if the bytes there are not one.
 fn readShape(data: []const u8, offset: usize, limit: usize) ?Shape {
-    if (offset + @sizeOf(ShapeHeader) > limit or limit > data.len) return null;
-    const header: *align(1) const ShapeHeader = @ptrCast(data[offset..][0..@sizeOf(ShapeHeader)]);
+    if (offset > limit or limit > data.len) return null;
+    const header = layout.view(ShapeHeader, data[offset..limit]) catch return null;
 
     for ([_]i32{ header.x1, header.y1, header.x2, header.y2 }) |value| {
         if (value < -coordinate_limit or value > coordinate_limit) return null;
@@ -306,9 +301,7 @@ test "parses a sprite with a palette and a shape" {
 
     var file: std.ArrayList(u8) = .empty;
     defer file.deinit(gpa);
-    try file.appendSlice(gpa, magic);
-    try file.appendNTimes(gpa, 0, 4); // shape count, filled in below
-    std.mem.writeInt(u32, file.items[4..8], 2, .little);
+    try file.appendSlice(gpa, std.mem.asBytes(&Header{ .version = magic.*, .shape_count = 2 }));
     // Directory: a palette then a shape.
     const directory_at = file.items.len;
     try file.appendNTimes(gpa, 0, 2 * @sizeOf(DirectoryEntry));
@@ -328,8 +321,9 @@ test "parses a sprite with a palette and a shape" {
     try file.appendSlice(gpa, &.{ 0x06, 1, 0x00 });
     try file.appendSlice(gpa, &.{ 0x01, 2, 0x03, 1, 0x00 });
 
-    std.mem.writeInt(u32, file.items[directory_at..][0..4], @intCast(palette_at), .little);
-    std.mem.writeInt(u32, file.items[directory_at + 8 ..][0..4], @intCast(shape_at), .little);
+    const directory = std.mem.bytesAsSlice(DirectoryEntry, file.items[directory_at..][0 .. 2 * @sizeOf(DirectoryEntry)]);
+    directory[0] = .{ .offset = @intCast(palette_at), .reserved = 0 };
+    directory[1] = .{ .offset = @intCast(shape_at), .reserved = 0 };
 
     const sprite: Sprite = try .parse(file.items);
     try std.testing.expectEqual(@as(usize, 2), sprite.count());

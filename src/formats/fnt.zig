@@ -10,6 +10,8 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
+const layout = @import("layout.zig");
+
 pub const header_size = 0x10;
 
 /// Bytes of the palette some fonts carry after their last glyph: 256 RGB triples of 6-bit levels.
@@ -57,24 +59,21 @@ pub const Font = struct {
     palette: ?*const [palette_size]u8,
 
     pub fn parse(bytes: []const u8) Error!Font {
-        if (bytes.len < header_size) return error.Truncated;
-        const header: *align(1) const Header = @ptrCast(bytes[0..header_size]);
+        const header = try layout.view(Header, bytes);
         const version = header.version;
         if (!std.ascii.isDigit(version[0]) or version[1] != '.' or version[2] != 0 or version[3] != 0) {
             return error.NotAFont;
         }
 
-        const table_end = header_size + @as(usize, header.count) * 4;
-        if (table_end > bytes.len) return error.Truncated;
-        const offsets = std.mem.bytesAsSlice(u32, bytes[header_size..table_end]);
+        const offsets = try layout.array(u32, bytes[header_size..], header.count);
 
         // Every glyph must fit, and the last one's end tells whether a palette follows.
-        var end = table_end;
+        var end = header_size + offsets.len * @sizeOf(u32);
         for (offsets) |offset| {
             if (offset == 0) continue;
-            if (offset + 4 > bytes.len) return error.BadGlyph;
-            const width = std.mem.readInt(u32, bytes[offset..][0..4], .little);
-            const glyph_end = @as(usize, offset) + 4 + @as(usize, width) * header.height;
+            if (offset > bytes.len) return error.BadGlyph;
+            const width = (layout.view(u32, bytes[offset..]) catch return error.BadGlyph).*;
+            const glyph_end = @as(usize, offset) + @sizeOf(u32) + @as(usize, width) * header.height;
             if (glyph_end > bytes.len) return error.BadGlyph;
             end = @max(end, glyph_end);
         }
@@ -95,11 +94,11 @@ pub const Font = struct {
         if (code >= font.offsets.len) return null;
         const offset = font.offsets[code];
         if (offset == 0) return null;
-        const width = std.mem.readInt(u32, font.bytes[offset..][0..4], .little);
+        const width = (layout.view(u32, font.bytes[offset..]) catch return null).*;
         return .{
             .width = width,
             .height = font.header.height,
-            .pixels = font.bytes[offset + 4 ..][0 .. @as(usize, width) * font.header.height],
+            .pixels = font.bytes[offset + @sizeOf(u32) ..][0 .. @as(usize, width) * font.header.height],
         };
     }
 };
@@ -112,13 +111,11 @@ pub const testing = struct {
 
 fn testFont(comptime with_palette: bool) []const u8 {
     // Two codes: 0 has no glyph, 1 is two pixels wide and two tall.
-    const table_end = header_size + 2 * 4;
-    const glyph = std.mem.toBytes(std.mem.nativeToLittle(u32, 2)) ++ [_]u8{ 0, 16, 8, 0 };
-    const header = "2.\x00\x00" ++ std.mem.toBytes(std.mem.nativeToLittle(u32, 2)) ++
-        std.mem.toBytes(std.mem.nativeToLittle(u32, 2)) ++ std.mem.toBytes(@as(u32, 0));
-    const table = std.mem.toBytes(@as(u32, 0)) ++ std.mem.toBytes(std.mem.nativeToLittle(u32, table_end));
+    const table: [2]u32 = .{ 0, header_size + 2 * @sizeOf(u32) };
+    const glyph = std.mem.toBytes(@as(u32, 2)) ++ [_]u8{ 0, 16, 8, 0 };
+    const header: Header = .{ .version = "2.\x00\x00".*, .count = table.len, .height = 2, ._unknown_0c = 0 };
     const palette: [palette_size]u8 = @splat(0x3F);
-    return header ++ table ++ glyph ++ (if (with_palette) palette else [0]u8{});
+    return std.mem.toBytes(header) ++ std.mem.sliceAsBytes(&table) ++ glyph ++ (if (with_palette) palette else [0]u8{});
 }
 
 test Font {
