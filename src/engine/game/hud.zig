@@ -12,12 +12,13 @@
 //!
 //! **Improvement.** The game draws the display with the processor, whichever renderer is running:
 //! `hud_text` hands its line to `VFX_string_draw`, out of `vfx.dll`, which blits each glyph into a
-//! pane a pixel at a time. The port draws a glyph as a textured rectangle instead, so the display
-//! costs the processor nothing and scales without blurring. What it draws is the same: a glyph's
-//! bytes index the font's own palette, as they do for `VFX_character_draw`, and index 0 is left
-//! clear. The state is the engine's own, an overlay-layer depth and its alpha blend. It has no
-//! fallback yet: `--original` draws the same way, and the software device cannot draw the text at
-//! all until `VFX_character_draw` is ported.
+//! pane a pixel at a time. The port draws a glyph as a textured rectangle through the device
+//! instead, so on the GPU the display costs the processor nothing and scales without blurring.
+//! What it draws is the same: a glyph's bytes index the font's own palette, as they do for
+//! `VFX_character_draw`, and index 0 is left clear. The state is the engine's own, an overlay-layer
+//! depth and its alpha blend. The software device draws the rectangles too, and `--original` draws
+//! the same way, since the port draws the display larger on a larger window (`scaleFor`), where the
+//! game blitted it at its own size.
 
 const std = @import("std");
 const assert = std.debug.assert;
