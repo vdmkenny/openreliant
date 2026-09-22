@@ -321,8 +321,8 @@ pub fn targetValid(all: *const create.Objects, target: aigeneric.Target, allowed
     if (target.component < 0) return true;
     if (target.component >= object.component_count) return false;
     // The game also passes over a node marked with flag `0x10`, which the port does not keep.
-    const model = if (slot.model) |*live| live else return false;
-    return !model.parts[slot.components[@intCast(target.component)]].hidden;
+    const part = slot.components[@intCast(target.component)] orelse return false;
+    return !part.hidden;
 }
 
 comptime {

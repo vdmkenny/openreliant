@@ -547,6 +547,8 @@ pub const Model = struct {
     pub const Part = struct {
         /// The node's `hidden` flag.
         hidden: bool,
+        /// What its part's record says of it, which the components are collected by.
+        flags: shp.Part.Flags = std.mem.zeroes(shp.Part.Flags),
         /// Its node's `component` flag: the object lists the part among its components
         /// (`create.collectComponents`).
         component: bool = false,
@@ -699,6 +701,7 @@ pub const Model = struct {
             const still = source.part.unknown_c8;
             node.* = .{
                 .hidden = source.part.flags.damaged,
+                .flags = source.part.flags,
                 .parent = parentOf(model, index),
                 .origin = @splat(0),
                 .object = .{

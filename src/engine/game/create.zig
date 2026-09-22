@@ -312,9 +312,9 @@ pub const Slot = struct {
     /// What the current order keeps between its updates (`GameObject.order_state`), allocated with
     /// the stack.
     state: aigeneric.State = .{ .bytes = @splat(0) },
-    /// The parts of its model that count as components, `GameObject.component_count` of them
-    /// (`GameObject.components`, which holds the nodes themselves).
-    components: [gameobj.max_components]u16 = @splat(0),
+    /// The parts of its model that count as components, `GameObject.component_count` of them, the
+    /// models mounted on it among them (`GameObject.components`, which holds their nodes).
+    components: [gameobj.max_components]?*objects.Model.Part = @splat(null),
 };
 
 /// `game_objects` (`0x00587CE0`), the GO array: 400 slots, none ever empty. As a mission starts
@@ -553,7 +553,6 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
         if (loaded.model.header.flags.components) {
             object.flags.components = true;
             object.flags.attached = true;
-            collectComponents(slot);
         }
     }
     object._unknown_24 = 0;
@@ -576,6 +575,8 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.power_setting = .{ .x = 1, .y = 1, .z = 1 };
     object.gun_count = 0;
     object.component_count = 0;
+    // The components are listed once the count is clear, as the game lists them.
+    if (object.flags.components) collectComponents(slot);
     // Its guns charged.
     object.gun_charge = combat.gun_energy;
     object._unknown_13c = combat._unknown_18;
@@ -695,32 +696,36 @@ pub const Sweep = struct {
 
 /// `object_collect_components` (`0x00468760`): lists the parts of the object's model that count as
 /// components, a node's marked children before their own subtrees, which is the order missions,
-/// triggers and the display name them by. Each one is marked on its node, and a part the model
-/// marks as targetable makes its node targetable too.
+/// triggers and the display name them by. The parts of the models mounted on a part follow it, so
+/// a turret's own components come after the hull's. Each one is marked on its part, and a part the
+/// model marks as targetable becomes targetable.
 ///
-/// The game stops with a fatal error past `max_components`; the port leaves the rest of the parts
-/// unlisted, since nothing can name them.
+/// The game stops with a fatal error past `max_components`; the port leaves the rest unlisted,
+/// since nothing can name them.
 pub fn collectComponents(slot: *Slot) void {
     const model = if (slot.model) |*live| live else return;
-    const source = if (slot.type) |kind| kind.model else return;
     slot.object.component_count = 0;
-    collectFrom(slot, model, source, null);
+    collectFrom(slot, model, null);
 }
 
-/// The parts hanging from `parent`, or from the root for null: the marked ones, then each part's
-/// own children.
-fn collectFrom(slot: *Slot, model: *objects.Model, source: *const shp.Model, parent: ?usize) void {
-    for (model.parts, source.parts, 0..) |*part, data, index| {
-        if (part.parent != parent or !data.part.flags.component) continue;
+/// The parts of `model` hanging from `parent`, or from its root for null: the marked ones, then
+/// each part's own children and whatever stands mounted on it.
+fn collectFrom(slot: *Slot, model: *objects.Model, parent: ?usize) void {
+    for (model.parts) |*part| {
+        if (part.parent != parent or !part.flags.component) continue;
         if (slot.object.component_count >= gameobj.max_components) return;
-        slot.components[@intCast(slot.object.component_count)] = @intCast(index);
+        slot.components[@intCast(slot.object.component_count)] = part;
         slot.object.component_count += 1;
         part.component = true;
-        if (data.part.flags.targetable) part.targetable = true;
+        if (part.flags.targetable) part.targetable = true;
     }
     for (model.parts, 0..) |part, index| {
         if (part.parent != parent) continue;
-        collectFrom(slot, model, source, index);
+        collectFrom(slot, model, index);
+        for (model.mounts) |*mount| {
+            if (mount.part != index) continue;
+            collectFrom(slot, &mount.model, null);
+        }
     }
 }
 
@@ -922,7 +927,10 @@ test collectComponents {
     // The root's marked children come first, then each child's own: part 1, then 0's child 3, then
     // 1's child 2.
     try std.testing.expectEqual(3, slot.object.component_count);
-    try std.testing.expectEqualSlices(u16, &.{ 1, 3, 2 }, slot.components[0..3]);
+    // The root's marked child first, then part 0's child and part 1's.
+    for (slot.components[0..3], [_]usize{ 1, 3, 2 }) |listed, part| {
+        try std.testing.expectEqual(&slot.model.?.parts[part], listed.?);
+    }
     for ([_]usize{ 1, 2, 3 }) |part| try std.testing.expect(slot.model.?.parts[part].component);
     try std.testing.expect(!slot.model.?.parts[0].component);
     // Only the part the model marks is targetable.
