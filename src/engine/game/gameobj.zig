@@ -10,6 +10,7 @@ const assert = std.debug.assert;
 
 const shp = @import("../../formats/shp.zig");
 const math = @import("../surrender/math.zig");
+const Vector = math.Vector;
 const camera = @import("camera.zig");
 const engine = @import("../../engine.zig");
 const aigeneric = @import("aigeneric.zig");
@@ -18,6 +19,9 @@ const Node = objects.Node;
 const Pointer = engine.Pointer;
 const create = @import("create.zig");
 const libcmt = @import("../libcmt.zig");
+const motion = @import("motion.zig");
+const input = @import("../input.zig");
+const Clock = @import("main.zig").Clock;
 
 /// Code that acts for the object in a slot: its `motion`, which moves it for one update, such as
 /// `motion_forward` (`0x004744C0`), which flies it forward by the flight model, and the routines
@@ -389,25 +393,6 @@ test {
     std.testing.refAllDecls(@This());
 }
 
-// --- Motion ------------------------------------------------------------------------------------
-
-/// The routine `GameObject.motion` points at, which moves it for one update. `create_object` gives
-/// every object `motion_forward`. The orders select eight more, which aren't ported yet (#30);
-/// docs/engine/objects.md lists them.
-pub const Motion = enum {
-    /// `motion_forward` (`0x004744C0`): the flight model with a thrust of 1.
-    forward,
-    /// `motion_backward` (`0x004744D0`): the flight model with a thrust of -1.
-    backward,
-
-    pub fn thrust(motion: Motion) f32 {
-        return switch (motion) {
-            .forward => 1,
-            .backward => -1,
-        };
-    }
-};
-
 /// How many countermeasures an object is created with (`0x00407AAE`, `0x0045A0A4`).
 pub const countermeasures_when_created: u16 = 29;
 
@@ -437,145 +422,14 @@ test GunMode {
     try std.testing.expectEqual(0x30, @as(u16, @bitCast(GunMode.created(3))));
 }
 
-/// The view `object_cruise_speed` leaves a ship its undamaged speed in, whatever its armor.
-const full_speed_view: camera.View = @enumFromInt(13);
-
-/// The share of the cruise speed the lateral input pushes a ship sideways at (`object_fly`).
-const lateral_share: f32 = 0.25;
-
-/// What each update of the afterburner or of reverse thrust burns of `afterburner_fuel`.
-const burn_fuel: i32 = 4;
-
-/// The rule every quantity of the flight model moves by: it gives up `inertia` of the way it was
-/// going and takes the rest from where it is headed, once per update.
-fn settle(current: f32, target: f32, inertia: f32) f32 {
-    return current * inertia + (1 - inertia) * target;
-}
-
-/// `x` squared, keeping its sign, which is the measure the model works in along the nose.
-fn signedSquare(x: f32) f32 {
-    return @abs(x) * x;
-}
-
-/// The inverse of `signedSquare`.
-fn signedRoot(x: f32) f32 {
-    return if (x >= 0) @sqrt(x) else -@sqrt(-x);
-}
-
-fn vector(v: shp.Vec3) math.Vector {
+/// A record's `Vec3` as a vector, and back.
+pub fn vector(v: shp.Vec3) math.Vector {
     return .{ v.x, v.y, v.z };
 }
 
-fn vec3(v: math.Vector) shp.Vec3 {
+pub fn vec3(v: math.Vector) shp.Vec3 {
     return .{ .x = v[0], .y = v[1], .z = v[2] };
 }
-
-/// `object_cruise_speed` (`0x00403060`): `max_speed` scaled by `speed_factor`, by the share of its
-/// engines left, and, unless the camera is in view 13 or the object is invulnerable, by
-/// `armor_speed_factor` as well. So losing engines or armor slows a ship.
-///
-/// The port takes the flight stats and the view rather than reaching them through the object and a
-/// global, since `GameObject` holds the binary's own 32-bit pointers.
-pub fn cruiseSpeed(object: *const GameObject, flight: *const create.FlightModel, view: camera.View) f32 {
-    var speed = flight.max_speed * object.speed_factor * object.engines_intact;
-    if (view != full_speed_view and object.invulnerable == 0) speed *= object.armor_speed_factor;
-    return speed;
-}
-
-/// `object_steer` (`0x00474150`): each input is clamped to between -1 and 1, and each angular rate
-/// settles toward the ship's rate for that axis times the input. Where `throttle_turns`, that
-/// target is divided by `3 - 2 * |throttle|` while that exceeds 1, so a ship turns more slowly the
-/// less throttle it carries. The three rates then make the rotation.
-pub fn steer(object: *GameObject, flight: *const create.FlightModel, throttle_turns: bool) void {
-    const slowed = 3 - 2 * @abs(object.throttle);
-    const divisor: f32 = if (throttle_turns and slowed >= 1) slowed else 1;
-    const axes = [_]struct { rate: *f32, input: *f32, full: f32, inertia: f32 }{
-        .{ .rate = &object.pitch_rate, .input = &object.pitch_input, .full = flight.pitch_rate, .inertia = flight.pitch_inertia },
-        .{ .rate = &object.yaw_rate, .input = &object.yaw_input, .full = flight.yaw_rate, .inertia = flight.yaw_inertia },
-        .{ .rate = &object.roll_rate, .input = &object.roll_input, .full = flight.roll_rate, .inertia = flight.roll_inertia },
-    };
-    for (axes) |axis| {
-        axis.input.* = std.math.clamp(axis.input.*, -1, 1);
-        axis.rate.* = settle(axis.rate.*, axis.full * axis.input.* / divisor, axis.inertia);
-    }
-    object.rotation = math.fromAngles(object.pitch_rate, object.yaw_rate, object.roll_rate);
-}
-
-/// `object_fly` (`0x004742E0`): the flight model, run for one update by the motion routine. The
-/// throttle settles first, then the steering, then the speed, the last in the ship's own frame.
-///
-/// Along the nose the model settles in speed times its own size, so that thrust tells evenly at
-/// every speed: the speed is squared keeping its sign, settles toward the thrust times the
-/// throttle squared the same way times the target speed squared, and is rooted again. Sideways it
-/// settles toward a quarter of the target times the lateral input, and along the ship's own down
-/// axis it only decays.
-pub fn fly(object: *GameObject, flight: *const create.FlightModel, view: camera.View, thrust: f32) void {
-    if (object.afterburner) {
-        object.throttle = 2;
-        object.afterburner_fuel -= burn_fuel;
-    } else if (object.reverse_thrust) {
-        object.throttle = -1;
-        object.afterburner_fuel -= burn_fuel;
-    } else {
-        object.throttle = std.math.clamp(object.throttle, 0, 1);
-    }
-    object.afterburner_fuel = @max(object.afterburner_fuel, 0);
-
-    steer(object, flight, true);
-
-    // The frame the last update left behind: `object_move` sets it once the motion has run.
-    const frame = object.root.next_orientation;
-    const inertia = flight.inertia;
-    const target = if (object.afterburner or object.reverse_thrust)
-        flight.max_speed
-    else
-        cruiseSpeed(object, flight, view);
-
-    var speed = math.transformTransposed(frame, vector(object.velocity));
-    const push = thrust * object.throttle;
-    speed = .{
-        settle(speed[0], object.lateral_input * target * lateral_share, inertia),
-        settle(speed[1], 0, inertia),
-        signedRoot(settle(signedSquare(speed[2]), signedSquare(push) * target * target, inertia)),
-    };
-    object.velocity = vec3(math.transform(frame, speed));
-    object.last_throttle = object.throttle;
-}
-
-/// `object_move` (`0x00473FF0`): one update of an object. A `frozen` object stays where it is.
-/// Otherwise the root's next place is marked as pending, which the next step's `node_tree_update`
-/// commits (`objects.updateTree`). If knocks are waiting, they are applied instead of the object's
-/// own motion. An `unpowered` object has no motion of its own, and a jumping one only moves when
-/// it is knocked or `unpowered`. Then its next orientation becomes its orientation turned by
-/// `rotation`, its next position becomes its position plus its velocity, and its speed becomes
-/// the length of that velocity. It sets the network flags when the object moves or turns.
-///
-/// For the player's ship, `player_shake` is the camera's shake (`hit_shake`). When the ship flies
-/// faster than its cruise speed, as it does under afterburner, the move raises the shake to at
-/// least `0.2 * (speed / cruise speed - 1)`. The game also stores the change in the player's
-/// speed at `player_speed_change` (`0x00562CE4`), which nothing reads.
-pub fn move(object: *GameObject, flight: *const create.FlightModel, view: camera.View, motion: ?Motion, player_shake: ?*f32) void {
-    if (object.flags.frozen) return;
-    object.root.flags.next_pending = true;
-    const knocked = object.knocks > 0;
-    if (object.flags.jumping and !knocked and !object.flags.unpowered) return;
-    if (!knocked and !object.flags.unpowered) {
-        if (motion) |routine| fly(object, flight, view, routine.thrust());
-    } else {
-        applyKnocks(object);
-    }
-    object.root.next_orientation = math.product(object.root.orientation, object.rotation);
-    object.root.next_position = vec3(vector(object.root.position) + vector(object.velocity));
-    object.speed = math.length(vector(object.velocity));
-    if (object.speed > 0) object.network.moved = true;
-    if (object.pitch_rate != 0 or object.yaw_rate != 0 or object.roll_rate != 0) object.network.turned = true;
-    if (player_shake) |shake| {
-        shake.* = @max(shake.*, speed_shake * (object.speed / cruiseSpeed(object, flight, view)) - speed_shake);
-    }
-}
-
-/// The camera shake at twice the cruise speed (`0x004DC3F8`).
-const speed_shake: f32 = 0.2;
 
 /// `object_knock` (`0x004763C0`): a push of `force` on the object at the world point `at`, from a
 /// collision or an explosion. The force is added to the impulse, and force × lever, the lever
@@ -680,193 +534,313 @@ pub fn blinkOffset(random: *libcmt.Rand) i16 {
     return @intFromFloat(share * 100);
 }
 
-/// A light fighter's flight stats, near the Predator's, for the tests below.
-const testing_flight: create.FlightModel = .{
-    .max_speed = 320,
-    .roll_rate = 3,
-    .pitch_rate = 2,
-    .yaw_rate = 1.5,
-    .inertia = 0.9,
-    .roll_inertia = 0.8,
-    .pitch_inertia = 0.8,
-    .yaw_inertia = 0.8,
-    .speed_per_pitch_rate = 160,
-    ._unknown_24 = 0,
+// --- The simulation's step ---------------------------------------------------------------
+
+/// The game ticks a simulation step takes: it steps on every fourth.
+pub const ticks_per_step = 4;
+
+/// `simulation_step` (`0x004774D0`): the work of every fourth tick, so 25 times a second, which
+/// is why the [flight model](../../../docs/engine/objects.md#motion) moves at that rate.
+/// **Unverified:** it and `game_tick` lie after this file's known code, before `guns.cpp`'s. It
+/// reads the input devices, then runs each object's own updates and moves them all with
+/// `objects_update`. Returns whether it did that work.
+///
+/// Ported so far: the pacing, and the keyboard and the joystick, which `read_keyboard` and
+/// `read_joystick` read here rather than once a frame. Not yet: the mouse, and the object
+/// updates, which the caller stands in for until they are ported.
+pub fn simulationStep(clock: *Clock, devices: *input.Devices) bool {
+    clock.simulation_counter += 1;
+    if (clock.simulation_counter < ticks_per_step) return false;
+    devices.read();
+    clock.simulation_counter = 0;
+    return true;
+}
+
+/// Moves `simulation_turn` on to the next of `objects` live objects, as `simulation_step` does
+/// once a step before the objects' own updates, and returns it. That object's orientation is
+/// orthonormalized this step (`orthonormalizeTurn`), so each object gets its turn in rotation.
+pub fn nextTurn(clock: *Clock, objects_live: u32) u32 {
+    clock.simulation_turn += 1;
+    if (clock.simulation_turn >= objects_live) clock.simulation_turn = 0;
+    return clock.simulation_turn;
+}
+
+/// `game_tick` (`0x00477850`): one tick of the mission. Paused, it counts the tick and does
+/// nothing else. Returns whether the simulation stepped.
+///
+/// Not ported: the countdown at `0x0052A474` that it steps once a second, and the timed
+/// sections it brackets the tick with outside a network game.
+pub fn gameTick(clock: *Clock, devices: *input.Devices) bool {
+    if (clock.paused) {
+        clock.paused_ticks +%= 1;
+        return false;
+    }
+    clock.mission_ticks +%= 1;
+    return simulationStep(clock, devices);
+}
+
+/// What `simulation_step` does for the object whose turn it is (`Clock.nextTurn`), before its node
+/// update: orthonormalizes the root's next orientation (`mat3_orthonormalize`), so that rounding
+/// doesn't build up in the matrix from one step to the next. The game does the same to the
+/// orientation at `GameObject + 0x7A4`, which a multiplayer game draws other players' ships by;
+/// the port doesn't keep that one yet (#55).
+pub fn orthonormalizeTurn(root: *objects.Node) void {
+    root.next_orientation = math.orthonormalize(root.next_orientation);
+}
+
+// --- The node tree -------------------------------------------------------------------------
+
+/// `object_link_part` (`0x00476180`) once the part hangs from its parent: poses it as its first
+/// track has it at the start (`node_animate` at time zero), and takes the place that gives it,
+/// but not the pose, as its node's place and its frame's. Its next place stays in the node,
+/// no longer pending.
+pub fn linkPart(model: *objects.Model, index: usize) void {
+    const part = &model.parts[index];
+    model.animate(index, 0);
+    const a = &part.animation;
+    a.now.place = a.next.place;
+    part.origin = a.next.place.position;
+    part.turn = a.next.place.orientation;
+    a.pending = false;
+}
+
+/// Moves the object's origin to its parts' centre of mass, as `object_link_parts` ends
+/// (`object_recentre`, `0x004769F0`). `node_mass_add` (`0x004764A0`) sums, over the shown
+/// parts, the density times the part's first moment about the root, its origin times its
+/// volume plus its own first moment; over the parts' masses, density times volume, that is the
+/// centre. `object_bounds` (`0x00476680`) takes it off each part's origin, then finds the
+/// object's radius and bounding box over the vertices of each part's current level, hidden ones
+/// too. `source` is the model the parts come from.
+pub fn recentre(model: *objects.Model, source: *const shp.Model) void {
+    // Each part's origin in the model, which is where it stands with the root at rest.
+    model.place(@splat(0), math.identity);
+    var moment: [3]f32 = @splat(0);
+    var mass: f32 = 0;
+    for (model.parts, source.parts) |part, data| {
+        if (part.hidden) continue;
+        const p = data.part;
+        const origin: [3]f32 = part.object.position;
+        for (&moment, origin, p.first_moments) |*m, o, first| m.* = (o * p.volume + first) * p.density + m.*;
+        mass = p.density * p.volume + mass;
+    }
+    if (mass > 0) {
+        const scale = 1 / mass;
+        for (&moment) |*m| m.* = scale * m.*;
+    }
+    const centre: Vector = moment;
+    model.centre += centre;
+    // Only a part standing at the root moves: one hanging from another keeps the origin it has
+    // in its parent, and follows it. What stands on a part likewise moves with the part.
+    // `object_bounds` moves the node's place, its next place and its frame alike.
+    for (model.parts) |*part| {
+        if (part.parent != null) continue;
+        part.origin -= centre;
+        part.animation.now.place.position -= centre;
+        part.animation.next.place.position -= centre;
+    }
+
+    model.place(@splat(0), math.identity);
+    model.radius = 0;
+    model.bounds = .{ @splat(std.math.floatMax(f32)), @splat(-std.math.floatMax(f32)) };
+    for (model.parts) |part| {
+        if (part.object.levels.len == 0) continue;
+        for (part.object.levels[part.object.level].mesh.positions) |position| {
+            const at = position + part.object.position;
+            model.bounds = .{ @min(model.bounds[0], at), @max(model.bounds[1], at) };
+            model.radius = @max(model.radius, math.length(at));
+        }
+    }
+}
+
+/// `node_tree_update` (`0x00476C90`), which `simulation_step` runs for every live object at the
+/// start of each step, before the objects move. For the object's root and each descendant that is
+/// animating, it commits the node's pending next place (`Node.commitNext`), advances the node's
+/// animation and fires its keyframe events. So an object moves from the place the previous step
+/// worked out, and until the next step its `position` stays one step behind `next_position`, which
+/// is what the rest of the game reads as its place.
+///
+/// The root has no part, so it plays no track of its own: it stays marked as animating while a
+/// part standing at it does. The port keeps the part nodes in the object's `Model`, which goes on
+/// with the walk (`walk`).
+pub fn updateTree(root: *Node, model: ?*objects.Model, events: ?Events) void {
+    root.commitNext();
+    root.flags.animating = if (model) |parts| walk(parts, events) else false;
+}
+
+/// The nodes `node_tree_update` can hold on its stack at once, which is as far into a model as
+/// the port's walks go.
+pub const walk_room = 500;
+
+/// The spans of a track's time whose events `node_tree_update` sets off as a node passes
+/// them: two, each from its first figure up to but not including its second. The game keeps
+/// them from node to node, so a node that sets neither checks the last node's.
+const Windows = struct {
+    first: [2]i32 = .{ 0, 0 },
+    second: [2]i32 = .{ 0, 0 },
+
+    fn passes(windows: Windows, time: i32) bool {
+        return (windows.first[0] <= time and time < windows.first[1]) or
+            (windows.second[0] <= time and time < windows.second[1]);
+    }
 };
 
-/// An object as `create_object` leaves one: undamaged, at rest, facing along its own nose.
-fn testingObject() GameObject {
-    var object: GameObject = std.mem.zeroes(GameObject);
-    object.root.orientation = math.identity;
-    object.root.next_orientation = math.identity;
-    object.speed_factor = 1;
-    object.armor_speed_factor = 1;
-    object.engines_intact = 1;
-    return object;
-}
-
-test cruiseSpeed {
-    var object = testingObject();
-    try std.testing.expectEqual(320, cruiseSpeed(&object, &testing_flight, .chase));
-    // Losing half its engines and a fifth of its armor slows it.
-    object.engines_intact = 0.5;
-    object.armor_speed_factor = 0.8;
-    try std.testing.expectEqual(128, cruiseSpeed(&object, &testing_flight, .chase));
-    // The armor tells in every view but 13, and not at all while it is invulnerable.
-    try std.testing.expectEqual(160, cruiseSpeed(&object, &testing_flight, @enumFromInt(13)));
-    object.invulnerable = 1;
-    try std.testing.expectEqual(160, cruiseSpeed(&object, &testing_flight, .chase));
-}
-
-test steer {
-    var object = testingObject();
-    object.throttle = 1;
-    // An input past the ends is clamped, and the rate settles toward the ship's own rate.
-    object.pitch_input = 5;
-    steer(&object, &testing_flight, true);
-    try std.testing.expectEqual(1, object.pitch_input);
-    try std.testing.expectApproxEqAbs(0.4, object.pitch_rate, 1e-6);
-    for (0..200) |_| steer(&object, &testing_flight, true);
-    try std.testing.expectApproxEqAbs(testing_flight.pitch_rate, object.pitch_rate, 1e-4);
-
-    // At rest the same input turns it a third as fast, the divisor being 3 - 2 * |throttle|.
-    var idle = testingObject();
-    idle.pitch_input = 1;
-    for (0..200) |_| steer(&idle, &testing_flight, true);
-    try std.testing.expectApproxEqAbs(testing_flight.pitch_rate / 3, idle.pitch_rate, 1e-4);
-    // A caller that does not ask for it gets no such division.
-    var full = testingObject();
-    full.pitch_input = 1;
-    for (0..200) |_| steer(&full, &testing_flight, false);
-    try std.testing.expectApproxEqAbs(testing_flight.pitch_rate, full.pitch_rate, 1e-4);
-}
-
-test "the throttle settles between 0 and 1, and the burns take it past both ends" {
-    var object = testingObject();
-    object.throttle = 5;
-    fly(&object, &testing_flight, .chase, 1);
-    try std.testing.expectEqual(1, object.throttle);
-    try std.testing.expectEqual(1, object.last_throttle);
-    object.throttle = -3;
-    fly(&object, &testing_flight, .chase, 1);
-    try std.testing.expectEqual(0, object.throttle);
-
-    // The afterburner runs it to 2 and burns fuel; reverse thrust to -1, and burns it as well.
-    object.afterburner = true;
-    object.afterburner_fuel = 10;
-    fly(&object, &testing_flight, .chase, 1);
-    try std.testing.expectEqual(2, object.throttle);
-    try std.testing.expectEqual(6, object.afterburner_fuel);
-    object.afterburner = false;
-    object.reverse_thrust = true;
-    fly(&object, &testing_flight, .chase, 1);
-    try std.testing.expectEqual(-1, object.throttle);
-    try std.testing.expectEqual(2, object.afterburner_fuel);
-    // The fuel stops at zero however long it burns.
-    for (0..4) |_| fly(&object, &testing_flight, .chase, 1);
-    try std.testing.expectEqual(0, object.afterburner_fuel);
-}
-
-test "a ship settles at its cruise speed along its nose" {
-    var object = testingObject();
-    object.throttle = 1;
-    for (0..400) |_| move(&object, &testing_flight, .chase, .forward, null);
-    // The model frame has Z forward, so all of the speed is along the nose.
-    try std.testing.expectApproxEqAbs(320, object.speed, 0.5);
-    try std.testing.expectApproxEqAbs(320, object.velocity.z, 0.5);
-    try std.testing.expectApproxEqAbs(0, object.velocity.x, 1e-3);
-    try std.testing.expectApproxEqAbs(0, object.velocity.y, 1e-3);
-    // It never runs past the speed it is settling toward.
-    try std.testing.expect(object.speed <= 320);
-
-    // Half its engines gone, it settles at half the speed.
-    object.engines_intact = 0.5;
-    for (0..400) |_| move(&object, &testing_flight, .chase, .forward, null);
-    try std.testing.expectApproxEqAbs(160, object.speed, 0.5);
-
-    // Backward, the same ship ends up going the other way at the same speed.
-    var reversed = testingObject();
-    reversed.throttle = 1;
-    for (0..400) |_| move(&reversed, &testing_flight, .chase, .backward, null);
-    try std.testing.expectApproxEqAbs(-320, reversed.velocity.z, 0.5);
-}
-
-test "the lateral input pushes a ship a quarter as fast sideways" {
-    var object = testingObject();
-    object.lateral_input = 1;
-    for (0..400) |_| move(&object, &testing_flight, .chase, .forward, null);
-    try std.testing.expectApproxEqAbs(320 * lateral_share, object.velocity.x, 0.5);
-}
-
-test move {
-    var object = testingObject();
-    object.root.position = .{ .x = 1, .y = 2, .z = 3 };
-    object.velocity = .{ .x = 10, .y = 0, .z = 20 };
-    // `create_object` leaves the rotation zeroed, and the steering builds one before the first
-    // move uses it; a turn of nothing stands in for that here.
-    object.rotation = math.identity;
-    // With no motion routine, it carries on at the velocity it has.
-    move(&object, &testing_flight, .chase, null, null);
-    try std.testing.expectEqual(11, object.root.next_position.x);
-    try std.testing.expectEqual(2, object.root.next_position.y);
-    try std.testing.expectEqual(23, object.root.next_position.z);
-    try std.testing.expectApproxEqAbs(@sqrt(500.0), object.speed, 1e-4);
-    // Its next orientation is its orientation turned by the rotation the steering built.
-    try std.testing.expectEqual(math.identity, object.root.next_orientation);
-    try std.testing.expect(object.root.flags.next_pending);
-}
-
-test "an object travels from step to step" {
-    var object = testingObject();
-    object.velocity = .{ .x = 0, .y = 0, .z = 10 };
-    object.rotation = math.identity;
-    // Each step commits the place the previous one worked out, then moves on from it.
-    for (0..3) |_| {
-        objects.updateTree(&object.root, null, null);
-        move(&object, &testing_flight, .chase, null, null);
+/// The part nodes' share of `node_tree_update` (`updateTree`), once each simulation step: it
+/// visits each part node that is animating, shown, and hangs from the root or from a node it
+/// visited, which leaves out a hidden part and all that hangs from it. A visit commits the
+/// place the last step worked out, moves the node on through its track, poses the part for
+/// the next step, and sets off the track's events it passes. A node stays marked as animating
+/// while it plays a track or one it goes on into does. The models the parts mount are updated
+/// along with them. Returns whether any part standing at the root is animating, which marks
+/// the root.
+///
+/// The port visits the parts parents first, where the game keeps a stack of them, so the events
+/// of different parts go off in another order, and a node that sets no spans of its own, one
+/// whose track has no length or plays in a mode past 3, checks the spans of another node.
+fn walk(model: *objects.Model, events: ?Events) bool {
+    var windows: Windows = .{};
+    var visited: std.StaticBitSet(walk_room) = .initEmpty();
+    var any = false;
+    for (model.order) |index| {
+        const part = &model.parts[index];
+        if (index >= walk_room or part.hidden or !part.animation.animating) continue;
+        if (part.parent) |parent| {
+            if (!visited.isSet(parent)) continue;
+        } else any = true;
+        visited.set(index);
+        visit(model, index, &windows, events);
+        for (model.parts) |child| {
+            if (child.parent == index and !child.hidden and child.animation.animating) {
+                part.animation.animating = true;
+                break;
+            }
+        }
     }
-    try std.testing.expectEqual(30, object.root.next_position.z);
-    // Between steps the committed position is one step behind.
-    try std.testing.expectEqual(20, object.root.position.z);
+    for (model.mounts) |*mount| _ = walk(&mount.model, events);
+    return any;
 }
 
-test "frozen, unpowered and jumping objects" {
-    // A frozen object isn't moved at all.
-    var frozen = testingObject();
-    frozen.velocity = .{ .x = 0, .y = 0, .z = 10 };
-    frozen.rotation = math.identity;
-    frozen.flags.frozen = true;
-    move(&frozen, &testing_flight, .chase, .forward, null);
-    try std.testing.expect(!frozen.root.flags.next_pending);
-    try std.testing.expectEqual(0, frozen.root.next_position.z);
-
-    // An unpowered one drifts: its motion routine doesn't run, so the throttle doesn't change its
-    // velocity.
-    var unpowered = testingObject();
-    unpowered.velocity = .{ .x = 0, .y = 0, .z = 10 };
-    unpowered.rotation = math.identity;
-    unpowered.throttle = 1;
-    unpowered.flags.unpowered = true;
-    move(&unpowered, &testing_flight, .chase, .forward, null);
-    try std.testing.expectEqual(10, unpowered.velocity.z);
-    try std.testing.expectEqual(10, unpowered.root.next_position.z);
-
-    // A jumping one stays where it is until it's knocked.
-    var jumping = testingObject();
-    jumping.velocity = .{ .x = 0, .y = 0, .z = 10 };
-    jumping.rotation = math.identity;
-    jumping.mass = 1;
-    jumping.flags.jumping = true;
-    move(&jumping, &testing_flight, .chase, .forward, null);
-    try std.testing.expect(jumping.root.flags.next_pending);
-    try std.testing.expectEqual(0, jumping.root.next_position.z);
-    knock(&jumping, .{ 0, 0, 5 }, .{ 0, 0, 0 });
-    move(&jumping, &testing_flight, .chase, .forward, null);
-    try std.testing.expectEqual(15, jumping.root.next_position.z);
+/// One part node's visit in `node_tree_update`.
+fn visit(model: *objects.Model, index: usize, windows: *Windows, events: ?Events) void {
+    const a = &model.parts[index].animation;
+    a.committed = false;
+    a.posed = false;
+    if (a.pending) {
+        a.now = a.next;
+        a.pending = false;
+        a.committed = true;
+        a.unframed = true;
+    }
+    if (a.mode == .none or a.speed == 0) {
+        a.animating = false;
+        return;
+    }
+    if (a.track >= a.tracks.len) return;
+    const track = &a.tracks[a.track];
+    const was = a.time;
+    const time = a.speed + a.time;
+    a.time = time;
+    const length: f32 = @floatFromInt(track.clip.length);
+    if (length > 0) switch (a.mode) {
+        .once => {
+            // To the end, or back to the start, and there it stops.
+            if (time >= length) {
+                a.time = length;
+                a.speed = 0;
+            }
+            if (!(a.time > 0)) {
+                a.time = 0;
+                a.speed = 0;
+            }
+            const span: [2]i32 = .{ math.round(was), math.round(a.time) };
+            windows.* = .{ .first = span, .second = span };
+            model.animate(index, a.time);
+        },
+        .loop => {
+            const span: [2]i32 = .{ math.round(was), math.round(time) };
+            windows.* = .{ .first = span, .second = span };
+            // Past the end it starts again: the events from where it was to the end go off,
+            // then those from the start to where it is.
+            if (a.time > length) {
+                windows.second[0] = 0;
+                while (true) {
+                    a.time -= length;
+                    windows.first = .{ math.round(was), math.round(length) };
+                    windows.second[1] = math.round(a.time);
+                    if (!(a.time > length)) break;
+                }
+            }
+            model.animate(index, a.time);
+        },
+        .swing => {
+            // Out to the end over the first length and back over the second; no events go off.
+            const both = length + length;
+            if (time > both) {
+                while (true) {
+                    a.time -= both;
+                    if (!(a.time > both)) break;
+                }
+            }
+            model.animate(index, if (a.time > length) both - a.time else a.time);
+            windows.* = .{};
+        },
+        else => {},
+    };
+    const sink = events orelse return;
+    for (track.events) |event| {
+        if (!windows.passes(event.time)) continue;
+        const kind: EventKind = @enumFromInt(event.kind);
+        switch (kind) {
+            .flash, .puff => sink.fire(sink.context, model, index, kind),
+            _ => {},
+        }
+    }
 }
+
+/// What a track's event sets off as a node passes it (`node_tree_update`). The effects aren't
+/// ported yet: `0x0047C7B0` fires the muzzle flash of each node of kind 4 the part carries, and
+/// `0x0047C800` puffs particles from each of the part's attachments of kind 7.
+pub const EventKind = enum(i32) {
+    flash = 0,
+    puff = 2,
+    _,
+};
+
+/// Whoever sets off the effects of the events a model's tracks pass.
+pub const Events = struct {
+    context: *anyopaque,
+    fire: *const fn (context: *anyopaque, model: *objects.Model, part: usize, kind: EventKind) void,
+};
+
+/// Fixtures for the tests here and in the modules that move objects.
+pub const testing = struct {
+    /// A light fighter's flight stats, near the Predator's.
+    pub const flight: create.FlightModel = .{
+        .max_speed = 320,
+        .roll_rate = 3,
+        .pitch_rate = 2,
+        .yaw_rate = 1.5,
+        .inertia = 0.9,
+        .roll_inertia = 0.8,
+        .pitch_inertia = 0.8,
+        .yaw_inertia = 0.8,
+        .speed_per_pitch_rate = 160,
+        ._unknown_24 = 0,
+    };
+
+    /// An object as `create_object` leaves one: undamaged, at rest, facing along its own nose.
+    pub fn object() GameObject {
+        var made: GameObject = std.mem.zeroes(GameObject);
+        made.root.orientation = math.identity;
+        made.root.next_orientation = math.identity;
+        made.speed_factor = 1;
+        made.armor_speed_factor = 1;
+        made.engines_intact = 1;
+        return made;
+    }
+};
 
 test "a knock pushes and turns an object" {
-    var object = testingObject();
+    var object = testing.object();
     object.rotation = math.identity;
     object.mass = 4;
     object.angular_response = math.identity;
@@ -874,7 +848,7 @@ test "a knock pushes and turns an object" {
     // A push to the side on the nose: the object moves off to that side and turns its nose there.
     knock(&object, .{ 0.02, 0, 0 }, .{ 0, 0, 1 });
     try std.testing.expectEqual(1, object.knocks);
-    move(&object, &testing_flight, .chase, .forward, null);
+    motion.move(&object, &testing.flight, .chase, .forward, null);
     try std.testing.expectEqual(0, object.knocks);
     // The knock replaces the motion routine, so the throttle adds nothing this update.
     try std.testing.expectEqual(math.Vector{ 0.005, 0, 0 }, vector(object.velocity));
@@ -888,7 +862,7 @@ test "a knock pushes and turns an object" {
 
 test knockLocal {
     // Facing +X, a push forward in its own frame moves the object along +X.
-    var object = testingObject();
+    var object = testing.object();
     object.root.orientation = math.rotation(.y, std.math.pi / 2.0);
     object.rotation = math.identity;
     object.mass = 2;
@@ -898,37 +872,6 @@ test knockLocal {
     try std.testing.expectApproxEqAbs(0, object.velocity.z, 1e-6);
     // With no lever, it doesn't turn.
     try std.testing.expectEqual(0, object.yaw_rate);
-}
-
-test "moving and turning set the network flags" {
-    var object = testingObject();
-    object.rotation = math.identity;
-    move(&object, &testing_flight, .chase, null, null);
-    try std.testing.expect(!object.network.moved and !object.network.turned);
-    object.velocity.z = 1;
-    move(&object, &testing_flight, .chase, null, null);
-    try std.testing.expect(object.network.moved and !object.network.turned);
-    object.yaw_rate = 0.1;
-    move(&object, &testing_flight, .chase, null, null);
-    try std.testing.expect(object.network.turned);
-}
-
-test "flying faster than the cruise speed shakes the player's camera" {
-    var object = testingObject();
-    object.rotation = math.identity;
-    var shake: f32 = 0;
-    // At the cruise speed, it doesn't.
-    object.velocity.z = 320;
-    move(&object, &testing_flight, .chase, null, &shake);
-    try std.testing.expectEqual(0, shake);
-    // At twice the cruise speed, by 0.2.
-    object.velocity.z = 640;
-    move(&object, &testing_flight, .chase, null, &shake);
-    try std.testing.expectApproxEqAbs(0.2, shake, 1e-6);
-    // It never lowers a stronger shake, such as a hit's.
-    shake = 1;
-    move(&object, &testing_flight, .chase, null, &shake);
-    try std.testing.expectEqual(1, shake);
 }
 
 test blinkOffset {
@@ -950,7 +893,7 @@ test blinkOffset {
 }
 
 test rechargeShields {
-    var object = testingObject();
+    var object = testing.object();
     object.shield_factor = 1;
     object.shield_condition = 1;
     const combat = std.mem.zeroInit(create.ShipCombat, .{ .shield_power = 8, .shield_recharge = 10 });
@@ -970,4 +913,26 @@ test rechargeShields {
     object.invulnerable = 5;
     rechargeShields(&object, &combat, null);
     try std.testing.expectEqual([4]f32{ 0, 0, 0, 0 }, object.shields);
+}
+
+test "each object's turn comes round in rotation" {
+    var clock: Clock = .{};
+    var turns: [4]u32 = undefined;
+    for (&turns) |*turn| turn.* = nextTurn(&clock, 3);
+    try std.testing.expectEqual([4]u32{ 1, 2, 0, 1 }, turns);
+    // With one object, every step is its turn.
+    clock = .{};
+    for (0..3) |_| try std.testing.expectEqual(0, nextTurn(&clock, 1));
+}
+
+test orthonormalizeTurn {
+    // A skewed next orientation comes back square, keeping its forward axis.
+    var root: Node = std.mem.zeroes(objects.Node);
+    root.next_orientation = .{ 1.01, 0.02, 0, 0, 0.99, 0, 0.01, 0, 1 };
+    orthonormalizeTurn(&root);
+    const m = root.next_orientation;
+    const back = math.product(math.transpose(m), m);
+    for (math.identity, back) |expected, found| try std.testing.expectApproxEqAbs(expected, found, 1e-6);
+    try std.testing.expectEqual(0, m[2]);
+    try std.testing.expectEqual(0, m[5]);
 }

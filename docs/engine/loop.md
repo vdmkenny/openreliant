@@ -37,9 +37,10 @@ second.
 
 ## Porting
 
-[`game/main.zig`](../../src/engine/game/main.zig) holds the clocks and the pacing as `Clock`:
-`timerTick` for what `tick_timer` does to them, `gameTick`, `simulationStep`, `frameBegin` and
-`frameReset`, and `runTicks` for `mission_run`'s pacing, one game tick for each tick of the timer.
+[`game/main.zig`](../../src/engine/game/main.zig) holds the clocks as `Clock`, with `frameBegin`,
+`frameReset`, and `nextTick` and `runTicks` for `mission_run`'s pacing, one game tick for each tick
+of the timer. The functions that tick them live with their files: `hog_snd.tickTimer` for what
+`tick_timer` does to them, and `gameobj.gameTick` and `gameobj.simulationStep`.
 
 **Improvement:** the port has no periodic timer. `advanceTo` takes the platform's monotonic count of
 hundredths of a second, and the ticks come from the difference between two counts rather than from
@@ -48,7 +49,7 @@ accumulates. The frame rate is therefore decoupled from the tick rate in both di
 shorter than a hundredth runs no tick, a frame that spans several runs all of them at once, and a
 second of play is 100 ticks and 25 simulation steps whatever the rate the engine draws at.
 
-**Improvement:** `stepFraction` also counts the time past the last tick, which `advanceToFine`
+**Improvement:** `objects.stepFraction` also counts the time past the last tick, which `advanceToFine`
 keeps from a finer count, so that what moves moves on every frame rather than every tick, evenly at
 any display rate. `--no-smooth-motion` and `--original` move it on with the ticks, as the original
 does.

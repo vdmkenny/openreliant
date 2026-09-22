@@ -19,6 +19,8 @@ const srcore = @import("../surrender/surrenderlib/srcore.zig");
 const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
 const backdrop = @import("backdrop.zig");
 const camera = @import("camera.zig");
+const gameobj = @import("gameobj.zig");
+const hog_snd = @import("hog_snd.zig");
 const hud = @import("hud.zig");
 const matmanager = @import("matmanager.zig");
 const nebula = @import("nebula.zig");
@@ -27,15 +29,6 @@ const srofiles = @import("srofiles.zig");
 const xtrabits = @import("xtrabits.zig");
 
 // --- The clocks and the loop ---------------------------------------------------------------
-
-/// What `simulation_step` does for the object whose turn it is (`Clock.nextTurn`), before its node
-/// update: orthonormalizes the root's next orientation (`mat3_orthonormalize`), so that rounding
-/// doesn't build up in the matrix from one step to the next. The game does the same to the
-/// orientation at `GameObject + 0x7A4`, which a multiplayer game draws other players' ships by;
-/// the port doesn't keep that one yet (#55).
-pub fn orthonormalizeTurn(root: *objects.Node) void {
-    root.next_orientation = math.orthonormalize(root.next_orientation);
-}
 
 /// The play time `tick_timer` keeps (`play_time_ticks` to `play_time_hours`, `0x00565070` to
 /// `0x00565076`). A second takes 101 ticks, as the roll below has it, so the play time runs a
@@ -54,12 +47,6 @@ pub const PlayTime = struct {
 /// of a second stands in for the multimedia timer `timer_start` (`0x004A70F0`) sets up, so the
 /// clocks advance at the same rate without a thread of their own and without the drift a timer
 /// whose period the device rounds would bring.
-/// The game ticks a simulation step takes: it steps on every fourth.
-pub const ticks_per_step = 4;
-
-/// The share of a simulation step each game tick takes.
-const tick_share: f32 = 1.0 / @as(f32, ticks_per_step);
-
 pub const Clock = struct {
     /// `timer_ticks` (`0x005DB8E8`): every tick of the timer, the paused ones included.
     timer_ticks: u32 = 0,
@@ -120,72 +107,9 @@ pub const Clock = struct {
         clock.advanceTimer(ticks);
     }
 
-    /// What `tick_timer` (`0x004827C0`) does to the clocks, 100 times a second. Its other half,
-    /// which keeps the Miles streams and the sound voices going, belongs with the sound.
-    pub fn timerTick(clock: *Clock) void {
-        clock.timer_ticks +%= 1;
-        if (clock.paused) return;
-        clock.game_ticks +%= 1;
-        clock.play.ticks += 1;
-        if (clock.play.ticks > 100) {
-            clock.play.ticks = 0;
-            // Each unit rolls when it stood past 58 before this one, so each counts 0 to 59.
-            const second_over = clock.play.seconds > 58;
-            clock.play.seconds += 1;
-            if (second_over) {
-                clock.play.seconds = 0;
-                const minute_over = clock.play.minutes > 58;
-                clock.play.minutes += 1;
-                if (minute_over) {
-                    clock.play.minutes = 0;
-                    clock.play.hours +%= 1;
-                }
-            }
-        }
-    }
-
     /// Runs the timer on for `ticks` hundredths of a second.
     pub fn advanceTimer(clock: *Clock, ticks: u32) void {
-        for (0..ticks) |_| clock.timerTick();
-    }
-
-    /// `simulation_step` (`0x004774D0`): the work of every fourth tick, so 25 times a second, which
-    /// is why the [flight model](../../../docs/engine/objects.md#motion) moves at that rate. It
-    /// reads the input devices, then runs each object's own updates and moves them all with
-    /// `objects_update`. Returns whether it did that work.
-    ///
-    /// Ported so far: the pacing, and the keyboard and the joystick, which `read_keyboard` and
-    /// `read_joystick` read here rather than once a frame. Not yet: the mouse, and the object
-    /// updates, which the caller stands in for until they are ported.
-    pub fn simulationStep(clock: *Clock, devices: *input.Devices) bool {
-        clock.simulation_counter += 1;
-        if (clock.simulation_counter < ticks_per_step) return false;
-        devices.read();
-        clock.simulation_counter = 0;
-        return true;
-    }
-
-    /// Moves `simulation_turn` on to the next of `objects` live objects, as `simulation_step` does
-    /// once a step before the objects' own updates, and returns it. That object's orientation is
-    /// orthonormalized this step (`orthonormalizeTurn`), so each object gets its turn in rotation.
-    pub fn nextTurn(clock: *Clock, objects_live: u32) u32 {
-        clock.simulation_turn += 1;
-        if (clock.simulation_turn >= objects_live) clock.simulation_turn = 0;
-        return clock.simulation_turn;
-    }
-
-    /// `game_tick` (`0x00477850`): one tick of the mission. Paused, it counts the tick and does
-    /// nothing else. Returns whether the simulation stepped.
-    ///
-    /// Not ported: the countdown at `0x0052A474` that it steps once a second, and the timed
-    /// sections it brackets the tick with outside a network game.
-    pub fn gameTick(clock: *Clock, devices: *input.Devices) bool {
-        if (clock.paused) {
-            clock.paused_ticks +%= 1;
-            return false;
-        }
-        clock.mission_ticks +%= 1;
-        return clock.simulationStep(devices);
+        for (0..ticks) |_| hog_snd.tickTimer(clock);
     }
 
     /// Runs the next game tick the loop owes, as `mission_run` (`0x00494040`) paces them: one for
@@ -194,7 +118,7 @@ pub const Clock = struct {
     pub fn nextTick(clock: *Clock, devices: *input.Devices) ?bool {
         if (clock.ran_to == clock.game_ticks) return null;
         clock.ran_to +%= 1;
-        return clock.gameTick(devices);
+        return gameobj.gameTick(clock, devices);
     }
 
     /// Every tick the loop owes, for a caller with no work of its own in the step. Returns how many
@@ -205,19 +129,6 @@ pub const Clock = struct {
             if (stepped) steps += 1;
         }
         return steps;
-    }
-
-    /// How far into its step the simulation is, which `node_frame_update` (`0x0049A460`) draws each
-    /// object between its last two places by: a quarter for each tick since the step.
-    ///
-    /// **Improvement:** with `smooth`, the time past the last tick counts as well, so that what
-    /// moves moves on every frame rather than every tick, and evenly at any display rate; the
-    /// original moves it on in hundredths of a second, which a display's frames fall between
-    /// unevenly. While the game is paused nothing moves, so the time past the tick doesn't count.
-    pub fn stepFraction(clock: *const Clock, smooth: bool) f32 {
-        const ticks: f32 = @floatFromInt(clock.simulation_counter);
-        if (!smooth or clock.paused) return ticks * tick_share;
-        return (ticks + clock.past_tick) * tick_share;
     }
 
     /// `frame_begin` (`0x00491E00`): `frame_duration` becomes the ticks since `frame_start`, and
@@ -304,7 +215,7 @@ pub const cockpit_light_mask: u32 = 0x12;
 pub fn createCockpit(gpa: Allocator, model: *const shp.Model, loaded: *const srofiles.Loaded) Allocator.Error!objects.Model {
     var cockpit: objects.Model = try .create(gpa, model, loaded, .{});
     for (cockpit.parts) |*part| try fitCockpitPart(gpa, part);
-    cockpit.recentre(model);
+    gameobj.recentre(&cockpit, model);
     return cockpit;
 }
 
@@ -583,28 +494,6 @@ test "the simulation steps on every fourth tick" {
     try std.testing.expectEqual(0, clock.runTicks(&devices));
 }
 
-test "each object's turn comes round in rotation" {
-    var clock: Clock = .{};
-    var turns: [4]u32 = undefined;
-    for (&turns) |*turn| turn.* = clock.nextTurn(3);
-    try std.testing.expectEqual([4]u32{ 1, 2, 0, 1 }, turns);
-    // With one object, every step is its turn.
-    clock = .{};
-    for (0..3) |_| try std.testing.expectEqual(0, clock.nextTurn(1));
-}
-
-test orthonormalizeTurn {
-    // A skewed next orientation comes back square, keeping its forward axis.
-    var root: objects.Node = std.mem.zeroes(objects.Node);
-    root.next_orientation = .{ 1.01, 0.02, 0, 0, 0.99, 0, 0.01, 0, 1 };
-    orthonormalizeTurn(&root);
-    const m = root.next_orientation;
-    const back = math.product(math.transpose(m), m);
-    for (math.identity, back) |expected, found| try std.testing.expectApproxEqAbs(expected, found, 1e-6);
-    try std.testing.expectEqual(0, m[2]);
-    try std.testing.expectEqual(0, m[5]);
-}
-
 test "a paused game stops its clocks but not the timer" {
     var clock: Clock = .{};
     var devices: input.Devices = .{};
@@ -676,21 +565,6 @@ test "a frame measures the ticks since the last one" {
     clock.frameReset();
     try std.testing.expectEqual(13, clock.frame_start);
     try std.testing.expectEqual(0, clock.frame_duration);
-}
-
-test "Clock.stepFraction" {
-    var clock: Clock = .{};
-    var devices: input.Devices = .{};
-    clock.start(0);
-    // A frame two ticks into a step, and three quarters of the way through the next tick.
-    clock.advanceToFine(275, 100);
-    _ = clock.runTicks(&devices);
-    try std.testing.expectEqual(2, clock.simulation_counter);
-    try std.testing.expectEqual(0.5, clock.stepFraction(false));
-    try std.testing.expectEqual(0.6875, clock.stepFraction(true));
-    // Paused, nothing moves, so the time past the tick doesn't count.
-    clock.paused = true;
-    try std.testing.expectEqual(0.5, clock.stepFraction(true));
 }
 
 test "the clocks keep to the platform's count however the frames fall" {

@@ -13,7 +13,8 @@ const srapiext = @import("../surrender/surrenderlib/srapiext.zig");
 const srcore = @import("../surrender/surrenderlib/srcore.zig");
 const srlight = @import("../surrender/surrenderlib/srlight.zig");
 const Frame = srapiext.Frame;
-const GameObject = @import("gameobj.zig").GameObject;
+const gameobj = @import("gameobj.zig");
+const GameObject = gameobj.GameObject;
 const srofiles = @import("srofiles.zig");
 const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
 const matmanager = @import("matmanager.zig");
@@ -21,6 +22,7 @@ const create = @import("create.zig");
 const environfx = @import("environfx.zig");
 const libcmt = @import("../libcmt.zig");
 const xtrabits = @import("xtrabits.zig");
+const Clock = @import("main.zig").Clock;
 const Vector = math.Vector;
 
 /// A node of an object's model hierarchy (`objects.cpp`), allocated at `0x004991D0`: the object's
@@ -189,21 +191,6 @@ pub const Node = extern struct {
         assert(@sizeOf(Node) == 0x104);
     }
 };
-
-/// `node_tree_update` (`0x00476C90`), which `simulation_step` runs for every live object at the
-/// start of each step, before the objects move. For the object's root and each descendant that is
-/// animating, it commits the node's pending next place (`Node.commitNext`), advances the node's
-/// animation and fires its keyframe events. So an object moves from the place the previous step
-/// worked out, and until the next step its `position` stays one step behind `next_position`, which
-/// is what the rest of the game reads as its place.
-///
-/// The root has no part, so it plays no track of its own: it stays marked as animating while a
-/// part standing at it does. The port keeps the part nodes in the object's `Model`, which goes on
-/// with the walk (`Model.update`).
-pub fn updateTree(root: *Node, model: ?*Model, events: ?Model.Events) void {
-    root.commitNext();
-    root.flags.animating = if (model) |parts| parts.update(events) else false;
-}
 
 /// The light mask `node_add_part` gives a part's Surrender object: a light reaches the object unless
 /// their masks share a bit (`docs/engine/rendering.md`).
@@ -467,19 +454,6 @@ pub const Model = struct {
         animating: bool = false,
     };
 
-    /// The spans of a track's time whose events `node_tree_update` sets off as a node passes
-    /// them: two, each from its first figure up to but not including its second. The game keeps
-    /// them from node to node, so a node that sets neither checks the last node's.
-    const Windows = struct {
-        first: [2]i32 = .{ 0, 0 },
-        second: [2]i32 = .{ 0, 0 },
-
-        fn passes(windows: Windows, time: i32) bool {
-            return (windows.first[0] <= time and time < windows.first[1]) or
-                (windows.second[0] <= time and time < windows.second[1]);
-        }
-    };
-
     /// The part `index` hangs from, or null where it hangs from the root: the index a part names,
     /// unless it names none or one no model part answers to.
     fn parentOf(model: *const shp.Model, index: usize) ?usize {
@@ -561,7 +535,7 @@ pub const Model = struct {
         const order = try linkOrder(gpa, model);
         errdefer gpa.free(order);
         var built: Model = .{ .parts = parts, .order = order, .lights = &.{}, .glows = &.{}, .mounts = &.{} };
-        for (order) |index| built.link(index);
+        for (order) |index| gameobj.linkPart(&built, index);
         const lights = try createLights(gpa, model, effects.light_sprites);
         errdefer gpa.free(lights);
         const glows = try createGlows(gpa, model, effects.glows);
@@ -689,141 +663,6 @@ pub const Model = struct {
         while (at) |part| : (at = model.parts[part].parent) model.parts[part].animation.animating = true;
     }
 
-    /// What `create_object` (`0x00466C10`) starts once it has built the object: each part's
-    /// `startup` track, from its start, as the track says to play it, at 4 a step.
-    pub fn startUp(model: *Model) void {
-        for (model.parts, 0..) |part, index| {
-            if (part.animation.tracks.len > 0) model.play(index, .startup, 0, null, startup_speed);
-        }
-    }
-
-    /// The part nodes' share of `node_tree_update` (`updateTree`), once each simulation step: it
-    /// visits each part node that is animating, shown, and hangs from the root or from a node it
-    /// visited, which leaves out a hidden part and all that hangs from it. A visit commits the
-    /// place the last step worked out, moves the node on through its track, poses the part for
-    /// the next step, and sets off the track's events it passes. A node stays marked as animating
-    /// while it plays a track or one it goes on into does. The models the parts mount are updated
-    /// along with them. Returns whether any part standing at the root is animating, which marks
-    /// the root.
-    ///
-    /// The port visits the parts parents first, where the game keeps a stack of them, so the events
-    /// of different parts go off in another order, and a node that sets no spans of its own, one
-    /// whose track has no length or plays in a mode past 3, checks the spans of another node.
-    pub fn update(model: *Model, events: ?Events) bool {
-        var windows: Windows = .{};
-        var visited: std.StaticBitSet(walk_room) = .initEmpty();
-        var any = false;
-        for (model.order) |index| {
-            const part = &model.parts[index];
-            if (index >= walk_room or part.hidden or !part.animation.animating) continue;
-            if (part.parent) |parent| {
-                if (!visited.isSet(parent)) continue;
-            } else any = true;
-            visited.set(index);
-            model.visit(index, &windows, events);
-            for (model.parts) |child| {
-                if (child.parent == index and !child.hidden and child.animation.animating) {
-                    part.animation.animating = true;
-                    break;
-                }
-            }
-        }
-        for (model.mounts) |*mount| _ = mount.model.update(events);
-        return any;
-    }
-
-    /// One part node's visit in `node_tree_update`.
-    fn visit(model: *Model, index: usize, windows: *Windows, events: ?Events) void {
-        const a = &model.parts[index].animation;
-        a.committed = false;
-        a.posed = false;
-        if (a.pending) {
-            a.now = a.next;
-            a.pending = false;
-            a.committed = true;
-            a.unframed = true;
-        }
-        if (a.mode == .none or a.speed == 0) {
-            a.animating = false;
-            return;
-        }
-        if (a.track >= a.tracks.len) return;
-        const track = &a.tracks[a.track];
-        const was = a.time;
-        const time = a.speed + a.time;
-        a.time = time;
-        const length: f32 = @floatFromInt(track.clip.length);
-        if (length > 0) switch (a.mode) {
-            .once => {
-                // To the end, or back to the start, and there it stops.
-                if (time >= length) {
-                    a.time = length;
-                    a.speed = 0;
-                }
-                if (!(a.time > 0)) {
-                    a.time = 0;
-                    a.speed = 0;
-                }
-                const span: [2]i32 = .{ math.round(was), math.round(a.time) };
-                windows.* = .{ .first = span, .second = span };
-                model.animate(index, a.time);
-            },
-            .loop => {
-                const span: [2]i32 = .{ math.round(was), math.round(time) };
-                windows.* = .{ .first = span, .second = span };
-                // Past the end it starts again: the events from where it was to the end go off,
-                // then those from the start to where it is.
-                if (a.time > length) {
-                    windows.second[0] = 0;
-                    while (true) {
-                        a.time -= length;
-                        windows.first = .{ math.round(was), math.round(length) };
-                        windows.second[1] = math.round(a.time);
-                        if (!(a.time > length)) break;
-                    }
-                }
-                model.animate(index, a.time);
-            },
-            .swing => {
-                // Out to the end over the first length and back over the second; no events go off.
-                const both = length + length;
-                if (time > both) {
-                    while (true) {
-                        a.time -= both;
-                        if (!(a.time > both)) break;
-                    }
-                }
-                model.animate(index, if (a.time > length) both - a.time else a.time);
-                windows.* = .{};
-            },
-            else => {},
-        };
-        const sink = events orelse return;
-        for (track.events) |event| {
-            if (!windows.passes(event.time)) continue;
-            const kind: EventKind = @enumFromInt(event.kind);
-            switch (kind) {
-                .flash, .puff => sink.fire(sink.context, model, index, kind),
-                _ => {},
-            }
-        }
-    }
-
-    /// What a track's event sets off as a node passes it (`node_tree_update`). The effects aren't
-    /// ported yet: `0x0047C7B0` fires the muzzle flash of each node of kind 4 the part carries, and
-    /// `0x0047C800` puffs particles from each of the part's attachments of kind 7.
-    pub const EventKind = enum(i32) {
-        flash = 0,
-        puff = 2,
-        _,
-    };
-
-    /// Whoever sets off the effects of the events a model's tracks pass.
-    pub const Events = struct {
-        context: *anyopaque,
-        fire: *const fn (context: *anyopaque, model: *Model, part: usize, kind: EventKind) void,
-    };
-
     /// `node_frame_update` (`0x0049A460`) for each part node, and each mounted object's, once a
     /// frame before it is drawn, `fraction` of the way through the simulation's step: a node
     /// that the last step committed a new place for is drawn between that place and the next.
@@ -832,10 +671,10 @@ pub const Model = struct {
     /// Hidden parts, and all that hangs from them, keep their frames. The models the parts mount
     /// are drawn between their steps along with them.
     pub fn frame(model: *Model, fraction: f32) void {
-        var walked: std.StaticBitSet(walk_room) = .initEmpty();
+        var walked: std.StaticBitSet(gameobj.walk_room) = .initEmpty();
         for (model.order) |index| {
             const part = &model.parts[index];
-            if (index >= walk_room or part.hidden) continue;
+            if (index >= gameobj.walk_room or part.hidden) continue;
             if (part.parent) |parent| {
                 if (!walked.isSet(parent)) continue;
             }
@@ -858,20 +697,6 @@ pub const Model = struct {
             part.turn = local.orientation;
         }
         for (model.mounts) |*mount| mount.model.frame(fraction);
-    }
-
-    /// `object_link_part` (`0x00476180`) once the part hangs from its parent: poses it as its first
-    /// track has it at the start (`node_animate` at time zero), and takes the place that gives it,
-    /// but not the pose, as its node's place and its frame's. Its next place stays in the node,
-    /// no longer pending.
-    fn link(model: *Model, index: usize) void {
-        const part = &model.parts[index];
-        model.animate(index, 0);
-        const a = &part.animation;
-        a.now.place = a.next.place;
-        part.origin = a.next.place.position;
-        part.turn = a.next.place.orientation;
-        a.pending = false;
     }
 
     /// One light for each attachment of kind `light` a part carries, at its place in the model
@@ -1001,58 +826,10 @@ pub const Model = struct {
                     .model = try build(gpa, mounted.model, mounted.loaded, effects, depth + 1),
                 });
                 // A mounted model stands on its own centre of mass, as an object of its own does.
-                made.items[made.items.len - 1].model.recentre(mounted.model);
+                gameobj.recentre(&made.items[made.items.len - 1].model, mounted.model);
             }
         }
         return made.toOwnedSlice(gpa);
-    }
-
-    /// Moves the object's origin to its parts' centre of mass, as `object_link_parts` ends
-    /// (`object_recentre`, `0x004769F0`). `node_mass_add` (`0x004764A0`) sums, over the shown
-    /// parts, the density times the part's first moment about the root, its origin times its
-    /// volume plus its own first moment; over the parts' masses, density times volume, that is the
-    /// centre. `object_bounds` (`0x00476680`) takes it off each part's origin, then finds the
-    /// object's radius and bounding box over the vertices of each part's current level, hidden ones
-    /// too. `source` is the model the parts come from.
-    pub fn recentre(model: *Model, source: *const shp.Model) void {
-        // Each part's origin in the model, which is where it stands with the root at rest.
-        model.place(@splat(0), math.identity);
-        var moment: [3]f32 = @splat(0);
-        var mass: f32 = 0;
-        for (model.parts, source.parts) |part, data| {
-            if (part.hidden) continue;
-            const p = data.part;
-            const origin: [3]f32 = part.object.position;
-            for (&moment, origin, p.first_moments) |*m, o, first| m.* = (o * p.volume + first) * p.density + m.*;
-            mass = p.density * p.volume + mass;
-        }
-        if (mass > 0) {
-            const scale = 1 / mass;
-            for (&moment) |*m| m.* = scale * m.*;
-        }
-        const centre: Vector = moment;
-        model.centre += centre;
-        // Only a part standing at the root moves: one hanging from another keeps the origin it has
-        // in its parent, and follows it. What stands on a part likewise moves with the part.
-        // `object_bounds` moves the node's place, its next place and its frame alike.
-        for (model.parts) |*part| {
-            if (part.parent != null) continue;
-            part.origin -= centre;
-            part.animation.now.place.position -= centre;
-            part.animation.next.place.position -= centre;
-        }
-
-        model.place(@splat(0), math.identity);
-        model.radius = 0;
-        model.bounds = .{ @splat(std.math.floatMax(f32)), @splat(-std.math.floatMax(f32)) };
-        for (model.parts) |part| {
-            if (part.object.levels.len == 0) continue;
-            for (part.object.levels[part.object.level].mesh.positions) |position| {
-                const at = position + part.object.position;
-                model.bounds = .{ @min(model.bounds[0], at), @max(model.bounds[1], at) };
-                model.radius = @max(model.radius, math.length(at));
-            }
-        }
     }
 
     /// Puts the object's root at `position`, turned by `orientation`, and each part's object with
@@ -1196,12 +973,21 @@ pub const View = struct {
     }
 };
 
-/// How far `create_object` has a part's `startup` track move on each simulation step.
-const startup_speed: f32 = 4;
+/// The share of a simulation step each game tick takes, which `node_frame_update` counts in.
+const tick_share: f32 = 1.0 / @as(f32, @import("gameobj.zig").ticks_per_step);
 
-/// The nodes `node_tree_update` can hold on its stack at once, which is as far into a model as
-/// the port's walks go.
-const walk_room = 500;
+/// How far into its step the simulation is, which `node_frame_update` draws each object between
+/// its last two places by: a quarter for each tick since the step (`simulation_counter`).
+///
+/// **Improvement:** with `smooth`, the time past the last tick counts as well, so that what
+/// moves moves on every frame rather than every tick, and evenly at any display rate; the
+/// original moves it on in hundredths of a second, which a display's frames fall between
+/// unevenly. While the game is paused nothing moves, so the time past the tick doesn't count.
+pub fn stepFraction(clock: *const Clock, smooth: bool) f32 {
+    const ticks: f32 = @floatFromInt(clock.simulation_counter);
+    if (!smooth or clock.paused) return ticks * tick_share;
+    return (ticks + clock.past_tick) * tick_share;
+}
 
 /// Where `node_frame_update` draws a node that moved rather than posed, `fraction` of the way from
 /// `now` to `next`: along the straight line between, and turned from `now` by that share of the
@@ -1401,7 +1187,7 @@ test Model {
     data.part.density = 3;
     data.part.first_moments = .{ 0, 0, 20 };
     const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = (&data)[0..1], .tail_count = 0, .trailing_bytes = 0 };
-    model.recentre(&source);
+    gameobj.recentre(&model, &source);
     try std.testing.expectEqual(@as(Vector, .{ 0, 0, 110 }), model.centre);
     try std.testing.expectEqual(@as(Vector, .{ 0, 0, -10 }), parts[0].origin);
     // A light hangs on the part that carries it, so recentring leaves it where it stood on the
@@ -2012,7 +1798,7 @@ test "Model.play" {
 
     // `create_object` plays the `startup` track, whatever its case, as it says, at 4 a step, and
     // marks the part and all it hangs from as animating.
-    model.startUp();
+    create.startUp(&model);
     try std.testing.expectEqual(1, a.track);
     try std.testing.expectEqual(Model.Mode.loop, a.mode);
     try std.testing.expectEqual(4, a.speed);
@@ -2031,14 +1817,14 @@ test "Model.play" {
 
 /// Keeps the events a model's tracks set off.
 const Fired = struct {
-    kinds: [8]Model.EventKind = undefined,
+    kinds: [8]gameobj.EventKind = undefined,
     count: usize = 0,
 
-    fn events(fired: *Fired) Model.Events {
+    fn events(fired: *Fired) gameobj.Events {
         return .{ .context = fired, .fire = fire };
     }
 
-    fn fire(context: *anyopaque, _: *Model, _: usize, kind: Model.EventKind) void {
+    fn fire(context: *anyopaque, _: *Model, _: usize, kind: gameobj.EventKind) void {
         const fired: *Fired = @ptrCast(@alignCast(context));
         fired.kinds[fired.count] = kind;
         fired.count += 1;
@@ -2068,31 +1854,31 @@ test "a track plays once, round and round, and back and forth" {
     // Once: each step moves it on by its speed, setting off the events it passes, a kind the
     // update doesn't know aside; at the end it stops, and the part stops animating.
     model.play(1, .fire, 0, null, 40);
-    updateTree(&root, &model, fired.events());
+    gameobj.updateTree(&root, &model, fired.events());
     try std.testing.expectEqual(40, a.time);
     try std.testing.expectEqual(1, fired.count);
-    try std.testing.expectEqual(Model.EventKind.flash, fired.kinds[0]);
+    try std.testing.expectEqual(gameobj.EventKind.flash, fired.kinds[0]);
     try std.testing.expect(root.flags.animating);
-    updateTree(&root, &model, fired.events());
-    updateTree(&root, &model, fired.events());
+    gameobj.updateTree(&root, &model, fired.events());
+    gameobj.updateTree(&root, &model, fired.events());
     try std.testing.expectEqual(100, a.time);
     try std.testing.expectEqual(0, a.speed);
     try std.testing.expectEqual(2, fired.count);
-    try std.testing.expectEqual(Model.EventKind.puff, fired.kinds[1]);
+    try std.testing.expectEqual(gameobj.EventKind.puff, fired.kinds[1]);
     // Each step commits the place the last worked out. Stopped, the part clears its mark on its
     // next visit, the part it hangs from on the one after, and the root on the one after that.
     try std.testing.expectEqual(@as(Vector, .{ 0, 0, 80 }), a.now.pose.offset);
-    updateTree(&root, &model, fired.events());
+    gameobj.updateTree(&root, &model, fired.events());
     try std.testing.expect(!a.animating and model.parts[0].animation.animating);
-    updateTree(&root, &model, fired.events());
+    gameobj.updateTree(&root, &model, fired.events());
     try std.testing.expect(!model.parts[0].animation.animating and root.flags.animating);
-    updateTree(&root, &model, fired.events());
+    gameobj.updateTree(&root, &model, fired.events());
     try std.testing.expect(!root.flags.animating);
 
     // Round and round: past the end it starts again, and the events on both sides go off.
     fired.count = 0;
     model.play(1, .fire, 80, .loop, 40);
-    updateTree(&root, &model, fired.events());
+    gameobj.updateTree(&root, &model, fired.events());
     try std.testing.expectEqual(20, a.time);
     try std.testing.expectEqual(2, fired.count);
     try std.testing.expectEqual(@as(Vector, .{ 0, 0, 20 }), a.offset);
@@ -2100,18 +1886,18 @@ test "a track plays once, round and round, and back and forth" {
     // Back and forth: out over the length and back over the next, with no events.
     fired.count = 0;
     model.play(1, .fire, 60, .swing, 70);
-    updateTree(&root, &model, fired.events());
+    gameobj.updateTree(&root, &model, fired.events());
     try std.testing.expectEqual(130, a.time);
     try std.testing.expectEqual(@as(Vector, .{ 0, 0, 70 }), a.offset);
-    updateTree(&root, &model, fired.events());
-    updateTree(&root, &model, fired.events());
+    gameobj.updateTree(&root, &model, fired.events());
+    gameobj.updateTree(&root, &model, fired.events());
     try std.testing.expectEqual(70, a.time);
     try std.testing.expectEqual(0, fired.count);
 
     // A hidden part isn't visited, and neither is what hangs from it.
     model.parts[0].hidden = true;
     const was = a.time;
-    updateTree(&root, &model, fired.events());
+    gameobj.updateTree(&root, &model, fired.events());
     try std.testing.expectEqual(was, a.time);
 }
 
@@ -2131,13 +1917,13 @@ test "Model.frame" {
     const part = &model.parts[1];
     const linked = part.origin;
 
-    model.startUp();
+    create.startUp(&model);
     // The first step works out the next pose but commits nothing yet: the frame stays.
-    updateTree(&root, &model, null);
+    gameobj.updateTree(&root, &model, null);
     model.frame(0.5);
     try std.testing.expectEqual(linked, part.origin);
     // After the next it is drawn between the two, at the step at the committed place.
-    updateTree(&root, &model, null);
+    gameobj.updateTree(&root, &model, null);
     model.frame(0);
     try std.testing.expectEqual(part.animation.now.place.position, part.origin);
     model.frame(0.5);
@@ -2173,4 +1959,19 @@ test "Node.framePlace" {
     try std.testing.expectEqual(@as(Vector, .{ 50, 0, 0 }), quarter.position);
     const turned = math.rotation(.y, 0.5);
     for (turned, quarter.orientation) |want, got| try std.testing.expectApproxEqAbs(want, got, 1e-5);
+}
+
+test stepFraction {
+    var clock: Clock = .{};
+    var devices: @import("../input.zig").Devices = .{};
+    clock.start(0);
+    // A frame two ticks into a step, and three quarters of the way through the next tick.
+    clock.advanceToFine(275, 100);
+    _ = clock.runTicks(&devices);
+    try std.testing.expectEqual(2, clock.simulation_counter);
+    try std.testing.expectEqual(0.5, stepFraction(&clock, false));
+    try std.testing.expectEqual(0.6875, stepFraction(&clock, true));
+    // Paused, nothing moves, so the time past the tick doesn't count.
+    clock.paused = true;
+    try std.testing.expectEqual(0.5, stepFraction(&clock, true));
 }
