@@ -22,13 +22,27 @@ support or condone piracy.
 
 ## Status
 
-Early. OpenReliant shows a ship against the game's backdrop, drawn through the reimplemented
-renderer, from the game's camera views, which its own keys pick and steer. Nothing is playable yet.
-The [milestones](../../milestones) track what comes next.
+Early, but it flies. OpenReliant is a flying sandbox: pick any of the game's ships and fly it
+around an empty stretch of space, with the starfield, nebula and sun from the game's files. The
+flight model, throttle and afterburner are ported from the game, and so are the camera views on
+keys 1 to 8, including the cockpit, where the ship's cockpit model sways as you turn, and the chase
+view. F2 and F3 switch ships.
+
+Much of the HUD is in: the targeting cluster, the radar, the status lights, the readouts, and the
+ECM, spectral shields and blind fire switches. The HUD's panels (gunnery, damage, power and the
+rest) open and close on their keys, but are still empty.
+
+There are no other ships yet, and no weapons, missions or sound. The
+[milestones](../../milestones) track what comes next.
 
 ## Running
 
-OpenReliant builds with [Zig](https://ziglang.org) 0.16 and needs nothing else installed: SDL3 is
+The [latest release](../../releases/latest) has ready-made builds for Linux, Windows and macOS,
+each for x86_64 and arm64: download the one for your system, unpack it, and run `openreliant`.
+The macOS builds aren't signed, so macOS refuses to open them at first; run
+`xattr -d com.apple.quarantine openreliant` once to allow it.
+
+To build it yourself, OpenReliant needs [Zig](https://ziglang.org) 0.16 and nothing else: SDL3 is
 built from source for the target.
 
 ```bash
