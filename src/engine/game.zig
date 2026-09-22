@@ -11,6 +11,7 @@ pub const aiorders = @import("game/aiorders.zig");
 pub const backdrop = @import("game/backdrop.zig");
 pub const bigfile = @import("game/bigfile.zig");
 pub const camera = @import("game/camera.zig");
+pub const collision = @import("game/collision.zig");
 pub const create = @import("game/create.zig");
 pub const environfx = @import("game/environfx.zig");
 pub const hud = @import("game/hud.zig");

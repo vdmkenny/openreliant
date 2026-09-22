@@ -302,7 +302,7 @@ test "a ship under a Fly order closes on its target and stops there" {
     for (0..2000) |_| {
         clock.frame_duration = 4;
         aigeneric.ordersUpdate(ctx);
-        create.objectsUpdate(all, .chase, &shake);
+        create.objectsUpdate(ctx.world);
         for (all.slots[0..all.count]) |*live| {
             gameobj.updateTree(&live.object.root, null, null);
             live.drawn = .{ .position = gameobj.vector(live.object.root.position), .orientation = live.object.root.orientation };

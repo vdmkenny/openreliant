@@ -23,7 +23,9 @@ const libcmt = @import("../libcmt.zig");
 const ai = @import("ai.zig");
 const camera = @import("camera.zig");
 const aigeneric = @import("aigeneric.zig");
+const collision = @import("collision.zig");
 const gameobj = @import("gameobj.zig");
+const input = @import("../input.zig");
 const GameObject = gameobj.GameObject;
 const main = @import("main.zig");
 const motion = @import("motion.zig");
@@ -328,6 +330,8 @@ pub const Objects = struct {
     /// `player_index` (`0x005883FA`): the player's slot, the first in a single-player game.
     player: u16 = 0,
     types: [ship_type_count]TypeUse = @splat(.{}),
+    /// The working lists of the collision sweep `objectsUpdate` runs.
+    sweep: Sweep = .{},
     /// `0x005185AC`: the tick at which `aigeneric.ordersUpdate` next clears what every object has
     /// lately taken.
     damage_cleared_at: u32 = 0,
@@ -555,7 +559,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     main.armorConditions(object, combat);
 
     object.engines_intact = 1;
-    object.passes_through = @splat(-1);
+    object.passes_through = @splat(.none);
     object._unknown_620 = -1;
     object._unknown_754 = -1;
     object.afterburner_fuel = combat.afterburner_fuel * 100;
@@ -582,17 +586,107 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
 ///
 /// Not ported yet: the collision sweep that follows (#40), and in a multiplayer game, what places
 /// the other players' ships (#55).
-pub fn objectsUpdate(all: *Objects, view: camera.View, shake: *f32) void {
+pub fn objectsUpdate(world: gameobj.World) void {
+    const all = world.objects;
+    var sweep = &all.sweep;
+    sweep.count = 0;
     var walk = all.walk();
     while (walk.next()) |index| {
         const slot = &all.slots[index];
         const object = &slot.object;
         if (object.type >= ship_type_count or object.flags.stand_in or object.flags.disabled) continue;
-        if (object.flags.frozen) continue;
-        const flight = slot.flight orelse continue;
-        motion.move(object, flight, view, slot.motion, if (index == all.player) shake else null);
+        // A frozen object stays where it is, and is still there to be run into.
+        if (!object.flags.frozen) {
+            if (slot.flight) |flight| {
+                motion.move(object, flight, world.view, slot.motion, if (index == all.player) world.shake else null);
+            }
+        }
+        if (object.flags.no_collisions) continue;
+        sweep.add(index, object);
     }
+    sweep.run(world);
 }
+
+/// The sweep for the pairs of objects that meet, which `objects_update` runs once every object has
+/// moved. It holds what the game keeps in globals: an extent along X for each object that collides
+/// (`0x0054D110`), the order they sort in (`0x0054E3D4`) and how many there are (`0x0054EA14`).
+///
+/// Sorting by the far end of each extent leaves every object that can reach a given one after it in
+/// the order, so each object is tested against those that follow while their extents still reach
+/// back to it. A pass that moves anything is followed by another, up to `passes` of them; the game
+/// puts a "collision" message on the screen when the last one still finds a pair, which the port
+/// leaves out.
+pub const Sweep = struct {
+    entries: [gameobj.max_objects]Entry = @splat(.{}),
+    order: [gameobj.max_objects]u16 = @splat(0),
+    count: u16 = 0,
+
+    /// How many passes `objects_update` makes over the pairs at most.
+    pub const passes = 10;
+
+    pub const Entry = struct {
+        index: u16 = 0,
+        /// Its radius for the sweep: the sphere it collides by, times `visibility`.
+        radius: f32 = 0,
+        /// Where its sphere reaches along X, which the entries sort by.
+        far: f32 = 0,
+    };
+
+    fn add(sweep: *Sweep, index: u16, object: *const gameobj.GameObject) void {
+        const radius = object.radius * object.visibility;
+        sweep.entries[sweep.count] = .{
+            .index = index,
+            .radius = radius,
+            .far = object.root.next_position.x + radius,
+        };
+        sweep.order[sweep.count] = sweep.count;
+        sweep.count += 1;
+    }
+
+    /// The far end of an entry's extent, which they sort by, the farthest first.
+    fn farthestFirst(entries: []const Entry, a: u16, b: u16) bool {
+        return entries[a].far > entries[b].far;
+    }
+
+    fn run(sweep: *Sweep, world: gameobj.World) void {
+        const all = world.objects;
+        for (0..passes) |_| {
+            std.mem.sort(u16, sweep.order[0..sweep.count], sweep.entries[0..sweep.count], farthestFirst);
+            var moved = false;
+            for (0..sweep.count) |first| {
+                const near = sweep.entries[sweep.order[first]];
+                const object = &all.slots[near.index].object;
+                const back = object.root.next_position.x - near.radius;
+                for (sweep.order[first + 1 .. sweep.count]) |entry| {
+                    const far = sweep.entries[entry];
+                    // Past the first entry that cannot reach back this far, neither can any after
+                    // it.
+                    if (far.far < back) break;
+                    if (!meets(all, near.index, far.index)) continue;
+                    if (!collision.collide(world, near.index, far.index)) continue;
+                    moved = true;
+                    // Both have been moved, so their extents are worked out again for the pass
+                    // that follows.
+                    sweep.entries[sweep.order[first]].far = object.root.next_position.x + near.radius;
+                    sweep.entries[entry].far = all.slots[far.index].object.root.next_position.x + far.radius;
+                }
+            }
+            if (!moved) break;
+        }
+    }
+
+    /// Whether the two objects are near enough to collide and not a pair that passes through: each
+    /// object names up to two slots it goes through, which a launch and the Ripper set.
+    fn meets(all: *const Objects, first: u16, second: u16) bool {
+        const near = &all.slots[first].object;
+        const far = &all.slots[second].object;
+        for (near.passes_through) |through| if (through.index() == second) return false;
+        for (far.passes_through) |through| if (through.index() == first) return false;
+        const reach = near.radius + far.radius;
+        const between = gameobj.vector(near.root.next_position) - gameobj.vector(far.root.next_position);
+        return math.lengthSquared(between) < reach * reach;
+    }
+};
 
 /// How far `create_object` has a part's `startup` track move on each simulation step.
 const startup_speed: f32 = 4;
@@ -744,7 +838,7 @@ test createObject {
     try std.testing.expectEqual(6000, object.afterburner_fuel);
     try std.testing.expectEqual(100, object.gun_charge);
     try std.testing.expectEqual(gameobj.countermeasures_when_created, object.countermeasures);
-    try std.testing.expectEqual([2]i32{ -1, -1 }, object.passes_through);
+    try std.testing.expectEqual([2]gameobj.Slot{ .none, .none }, object.passes_through);
     // Its model's one part, and the mass `object_recentre` put in the record.
     try std.testing.expectEqual(1, made.model.?.parts.len);
     try std.testing.expectEqual(6, object.mass);
@@ -811,7 +905,8 @@ test "a type with no model still flies" {
     all.slots[index].object.throttle = 1;
     all.slots[index].object.rotation = math.identity;
     var shake: f32 = 0;
-    objectsUpdate(all, .chase, &shake);
+    var player: input.Player = .{};
+    objectsUpdate(.{ .objects = all, .player = &player, .view = .chase, .shake = &shake });
     try std.testing.expect(all.slots[index].object.root.flags.next_pending);
     try std.testing.expect(all.slots[index].object.velocity.z > 0);
 }
@@ -830,11 +925,52 @@ test objectsUpdate {
         slot.motion = null;
     }
     var shake: f32 = 0;
-    objectsUpdate(all, .chase, &shake);
+    var player: input.Player = .{};
+    objectsUpdate(.{ .objects = all, .player = &player, .view = .chase, .shake = &shake });
     // The first moves on; the disabled and the frozen ones stay where they are.
     try std.testing.expectEqual(10, all.slots[0].object.root.next_position.z);
     try std.testing.expectEqual(0, all.slots[1].object.root.next_position.z);
     try std.testing.expectEqual(0, all.slots[2].object.root.next_position.z);
+}
+
+test "the sweep pushes apart the objects that meet" {
+    var random: libcmt.Rand = .{};
+    const all = try Objects.create(std.testing.allocator, &random);
+    defer all.destroy();
+    var tables = testing.tables();
+    var shake: f32 = 0;
+    var player: input.Player = .{};
+    const world: gameobj.World = .{ .objects = all, .player = &player, .view = .chase, .shake = &shake };
+
+    // Three ships in a row, the first two of them overlapping, each 1000 units across and drifting
+    // nowhere.
+    const places = [_]math.Vector{ .{ -200, 0, 0 }, .{ 200, 0, 0 }, .{ 20000, 0, 0 } };
+    for (places) |at| {
+        const index = try createObject(all, &tables, testing.no_models, null, 0, at, &random);
+        all.slots[index].object.radius = 1000;
+        all.slots[index].motion = null;
+    }
+
+    objectsUpdate(world);
+    // The pair is set apart, and the ship far off is left where it was.
+    try std.testing.expectApproxEqAbs(-1100, all.slots[0].object.root.position.x, 0.01);
+    try std.testing.expectApproxEqAbs(1100, all.slots[1].object.root.position.x, 0.01);
+    try std.testing.expectEqual(20000, all.slots[2].object.root.position.x);
+    try std.testing.expectEqual(3, all.sweep.count);
+
+    // A pair that passes through each other is left alone, and so is an object that collides with
+    // nothing.
+    objects.setPosition(&all.slots[0].object, &all.slots[0].drawn, .{ -200, 0, 0 });
+    objects.setPosition(&all.slots[1].object, &all.slots[1].drawn, .{ 200, 0, 0 });
+    all.slots[0].object.passes_through[0] = .of(1);
+    objectsUpdate(world);
+    try std.testing.expectEqual(-200, all.slots[0].object.root.position.x);
+
+    all.slots[0].object.passes_through[0] = .none;
+    all.slots[1].object.flags.no_collisions = true;
+    objectsUpdate(world);
+    try std.testing.expectEqual(-200, all.slots[0].object.root.position.x);
+    try std.testing.expectEqual(2, all.sweep.count);
 }
 
 test "the tables hold the executable's words until the file fills in the figures" {

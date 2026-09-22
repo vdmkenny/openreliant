@@ -24,6 +24,22 @@ const motion = @import("motion.zig");
 const input = @import("../input.zig");
 const Clock = @import("main.zig").Clock;
 
+/// A slot of the object array as an object names one, or `none` for no slot, which the game holds
+/// as -1.
+pub const Slot = enum(i32) {
+    none = -1,
+    _,
+
+    pub fn of(slot: u16) Slot {
+        return @enumFromInt(slot);
+    }
+
+    /// The slot it names, or null for none.
+    pub fn index(slot: Slot) ?u16 {
+        return if (slot == .none) null else @intCast(@intFromEnum(slot));
+    }
+};
+
 /// Code that acts for the object in a slot: its `motion`, which moves it for one update, such as
 /// `motion_forward` (`0x004744C0`), which flies it forward by the flight model, and the routines
 /// of its orders.
@@ -198,8 +214,8 @@ pub const GameObject = extern struct {
     /// few other types, which `node_draw` runs as one of the object's components is destroyed.
     _unknown_614: Pointer(Routine),
     /// The slots of two objects it passes through: the collision sweep of `objects_update` tests
-    /// no pair where either names the other. -1 when created.
-    passes_through: [2]i32,
+    /// no pair where either names the other. Both are `none` when created.
+    passes_through: [2]Slot,
     /// **Unknown.** -1 when created.
     _unknown_620: i32,
     _unknown_624: u8,
@@ -714,7 +730,7 @@ pub fn simulationStep(clock: *Clock, devices: *input.Devices, world: World) bool
     if (player.object.order_count > 0 and player.orders[0].order == .player_control) {
         aigeneric.objectOrders(.{ .world = world, .clock = clock, .devices = devices }, all.player);
     }
-    create.objectsUpdate(all, world.view, world.shake);
+    create.objectsUpdate(world);
     return true;
 }
 
