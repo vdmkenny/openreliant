@@ -14,6 +14,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
+const layout = @import("layout.zig");
 const models = @import("../engine/game/create/models.zig");
 
 pub const Vec3 = extern struct {
@@ -488,8 +489,8 @@ pub const Reader = struct {
 
     /// Reads the chunk at `offset` without moving the cursor.
     fn at(reader: Reader, offset: usize) Error!Chunk {
-        if (offset + @sizeOf(ChunkHeader) > reader.data.len) return error.Truncated;
-        const header: *align(1) const ChunkHeader = @ptrCast(reader.data[offset..][0..@sizeOf(ChunkHeader)]);
+        if (offset > reader.data.len) return error.Truncated;
+        const header = try layout.view(ChunkHeader, reader.data[offset..]);
         const body = offset + @sizeOf(ChunkHeader);
         const len = @as(usize, header.record_size) * header.count;
         if (body + len > reader.data.len) return error.Truncated;

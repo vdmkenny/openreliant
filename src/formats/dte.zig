@@ -12,6 +12,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
+const layout = @import("layout.zig");
 const commands = @import("../engine/game/executor/commands.zig");
 const conditions = @import("../engine/vm/conditions.zig");
 const opcodes = @import("../engine/vm/opcodes.zig");
@@ -1003,8 +1004,8 @@ pub const BlockReader = struct {
 
     /// Reads the block at `offset` in `section`, returning a reader over its instructions.
     pub fn at(section: []const u8, offset: usize) ?BlockReader {
-        if (offset + header_len > section.len) return null;
-        const declared = std.mem.readInt(u16, section[offset..][0..header_len], .little);
+        if (offset > section.len) return null;
+        const declared = (layout.view(u16, section[offset..]) catch return null).*;
         if (declared <= header_len) return null;
         const body = section[offset + header_len ..];
         return .{
@@ -1422,19 +1423,16 @@ test "reads a weighted branch's arms" {
 }
 
 test "a part's offset and length are in halfwords" {
-    var bytes: [@sizeOf(Part)]u8 = @splat(0);
-    std.mem.writeInt(u16, bytes[0x0A..][0..2], 870, .little);
-    std.mem.writeInt(u16, bytes[0x10..][0..2], 96, .little);
-    bytes[0x0D] = 2;
-
-    const part: Part = @bitCast(bytes);
+    var part = std.mem.zeroes(Part);
+    part.offset = 870;
+    part.length = 96;
+    part.arguments = 2;
     try std.testing.expectEqual(@as(usize, 1740), part.start());
     try std.testing.expectEqual(@as(usize, 192), part.size());
-    try std.testing.expectEqual(@as(u8, 2), part.arguments);
     try std.testing.expect(!part.isEmpty());
 
-    std.mem.writeInt(u16, bytes[0x0A..][0..2], Part.no_block, .little);
-    try std.testing.expect(@as(Part, @bitCast(bytes)).isEmpty());
+    part.offset = Part.no_block;
+    try std.testing.expect(part.isEmpty());
 }
 
 test "maps the script into trigger blocks and parts, with their constants" {
@@ -1469,14 +1467,14 @@ test "maps the script into trigger blocks and parts, with their constants" {
 
     const slices_at = 0x180;
     place(directory, .objects, 1, slices_at);
-    image[slices_at + 1] = 1; // count
-    std.mem.writeInt(u16, image[slices_at + 2 ..][0..2], 0, .little); // first
+    (try layout.viewMut(Object, image[slices_at..])).* = .{ .kind = .ship, .count = 1, .first = 0, ._unknown_04 = 0 };
 
     // One part, at byte 16, spanning its block and one 8-byte unit of constants.
     const parts_at = 0x1A0;
     place(directory, .parts, 1, parts_at);
-    std.mem.writeInt(u16, image[parts_at + 0x0A ..][0..2], 8, .little);
-    std.mem.writeInt(u16, image[parts_at + 0x10 ..][0..2], 6, .little);
+    const part = try layout.viewMut(Part, image[parts_at..]);
+    part.offset = 8;
+    part.length = 6;
 
     const script_at = 0x200;
     const script = [_]u8{
