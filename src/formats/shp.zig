@@ -156,7 +156,11 @@ pub const Part = extern struct {
     turret_kind: u16,
     _pad: u16,
     turret_slot: u32,
-    _reserved: [60]u8,
+    _reserved_fc: [8]u8,
+    /// What the part takes before it is destroyed, where it is a component: `node_add_part` gives
+    /// its node this much armour. The Reliant's turrets hold 100 and its body 20000.
+    component_armor: i32,
+    _reserved_108: [48]u8,
 
     pub const Flags = packed struct(u32) {
         _unknown0: u1,
@@ -219,6 +223,7 @@ pub const Part = extern struct {
         assert(@offsetOf(Part, "parent") == 0x94);
         assert(@offsetOf(Part, "link_id") == 0xD4);
         assert(@offsetOf(Part, "flags") == 0xF0);
+        assert(@offsetOf(Part, "component_armor") == 0x104);
         assert(@sizeOf(Part) == 312);
     }
 };
