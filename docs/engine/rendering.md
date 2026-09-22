@@ -92,7 +92,7 @@ The material is 16 bytes (`Material` in
 | Off | Field |
 |---|---|
 | `0x00` | `1` when a second pass is drawn over the first |
-| `0x02` | Texture coordinates, per pass: `0` none, `1` the mesh's, `2` from the normals |
+| `0x02` | Texture coordinates, per pass: `0` none, `1` the mesh's, `2` made each frame, from the normals or the object's own |
 | `0x04` | Lit, per pass: coloured by the vertex lighting, else by white |
 | `0x06` | Blend, per pass |
 | `0x08` | Texture, per pass. Below 8, one of the driver's highlight textures |
@@ -278,6 +278,36 @@ pipeline draws it facing the camera, reaching its half size to either side of it
 
 For a pass whose coordinates come from the normals (`mesh_sphere_map`, `0x004C7360`), with `n` the
 vertex normal turned into the camera's frame: `u = 0.5 + 0.5 * n.x`, `v = 0.5 + 0.5 * n.y`.
+
+An object made with flag `0x200000` carries texture coordinates of its own for the first pass,
+at `+0x114`, and with `0x400000` for the second, at `+0x118` (`mesh_object_create`).
+`SR_meshpipe_init` takes them in place of the generated ones.
+
+## The cockpit
+
+The mission's start (`0x004934F0`) loads the player's ship's cockpit frame model
+([`main.zig`](../../src/engine/game/main.zig)'s `player_ships`) and makes an object of it
+(`0x005883F4`): a part for each of the model's, every level's distance pushed out to 1048576, each
+part's object flagged `0x1000`, so it is neither tested against the view nor given a level by
+distance and always clipped, and reached by the lights of masks without bits 1 and 4 (`0x12`). The
+object's origin moves to its centre of mass as its parts are linked, and its root hangs from the
+camera's frame, where `camera_frame` moves it ([`camera.md`](camera.md)).
+
+In view 0, in cockpit mode 1, under the hardware renderers, `mission_frame` adds three objects to
+layer 2, so they are drawn over the world, sorted by depth: the radar's backing, unless DISPLAY
+KILLS is held; the model's second part, the pilot's hands; and its first, the cockpit's frame. A
+model with more parts has the rest left out: the Phoenix's has a third, its base.
+
+The radar's backing (`0x005883BC`) is a quad the start builds by hand: from 65 left of the middle
+of the screen to 67 right, and 32 either side of the radar's height, 68 above the foot, with the
+`radaralpha` texture, a black disc, on it by coordinates of its own (flag `0x200000`), coloured
+by its own colours, black at three quarters (flag `0x40000`), and blended by alpha, never culled.
+The start unprojects its corners to 1000 in front of the camera, and the object stands in the
+camera's own frame, so it keeps its place on the screen.
+
+**Improvement:** the port measures the backing's corners in the display's pixels from where the
+radar stands, and works them out again each frame, so it stays under the radar as the display is
+scaled.
 
 ## Highlight textures
 

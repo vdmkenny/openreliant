@@ -259,7 +259,7 @@ pub const Sky = struct {
         sky.dome_levels = .{.{ .mesh = &sky.dome_mesh, .until = std.math.inf(f32) }};
         // Coloured by its own colours, never culled, always clipped.
         sky.dome = .{
-            .flags = .{ .baked_object = true, ._unknown_12 = true, .not_culled = true },
+            .flags = .{ .baked_object = true, .always_drawn = true, .not_culled = true },
             .position = @splat(0),
             .radius = sky.dome_mesh.radius,
             .levels = &sky.dome_levels,

@@ -56,9 +56,10 @@ pub const Material = extern struct {
         none = 0,
         /// The mesh's own.
         mesh = 1,
-        /// Made each frame from the vertex normals, turned into the camera's frame: `u` is
-        /// `0.5 + 0.5 * x`, `v` is `0.5 + 0.5 * y`.
-        normals = 2,
+        /// Made each frame: from the vertex normals, turned into the camera's frame, where the
+        /// object asks (`normals_first`, `normals_second`), `u` being `0.5 + 0.5 * x` and `v`
+        /// `0.5 + 0.5 * y`; or the object's own (`own_uv`).
+        generated = 2,
         _,
     };
 
@@ -130,8 +131,9 @@ pub const ObjectFlags = packed struct(u32) {
     /// Never culled (`mesh_cull`).
     not_culled: bool = false,
     /// Neither tested against the view nor given a level of detail by distance, and always
-    /// clipped (`SR_meshpipe_init`).
-    _unknown_12: bool = false,
+    /// clipped (`SR_meshpipe_init`): the nebula's patches, the engine glows and the cockpit's
+    /// parts.
+    always_drawn: bool = false,
     /// Not tested against the view, and always clipped (`0x004C5E20`).
     unbounded: bool = false,
     _unknown_14: bool = false,
@@ -142,13 +144,20 @@ pub const ObjectFlags = packed struct(u32) {
     /// Coloured by the mesh's baked colours, or by the object's own.
     baked_mesh: bool = false,
     baked_object: bool = false,
-    _unknown_20: u12 = 0,
+    _unknown_20: bool = false,
+    /// Made with texture coordinates of its own for the first pass, and for the second
+    /// (`mesh_object_create`), which stand in for the generated ones (`own_uv`).
+    own_first: bool = false,
+    own_second: bool = false,
+    _unknown_23: u9 = 0,
 
     comptime {
         assert(@bitOffsetOf(ObjectFlags, "lit") == 8);
         assert(@bitOffsetOf(ObjectFlags, "not_culled") == 11);
         assert(@bitOffsetOf(ObjectFlags, "sun_occluder") == 15);
         assert(@bitOffsetOf(ObjectFlags, "baked_object") == 19);
+        assert(@bitOffsetOf(ObjectFlags, "own_first") == 21);
+        assert(@bitOffsetOf(ObjectFlags, "always_drawn") == 12);
     }
 };
 
@@ -266,6 +275,9 @@ pub const MeshObject = struct {
     levels: []const Level,
     /// The level drawn (`+0xB8`): the pipeline picks it each frame.
     level: usize = 0,
+    /// Its own texture coordinates for each pass (`+0x114`, `+0x118`), a pair a vertex, which
+    /// `SR_meshpipe_init` takes in place of the generated ones where it has them.
+    own_uv: [2]?[][2]f32 = .{ null, null },
     /// The object's own baked colours (`+0x110`), for `baked_object`.
     baked: ?[]const [4]f32 = null,
 };

@@ -389,7 +389,7 @@ pub const Model = struct {
                     .level = .{.{ .mesh = built.mesh(attachment.id), .until = std.math.inf(f32) }},
                     .object = .{
                         // Neither culled nor given a level of detail by how far off it is.
-                        .flags = .{ .not_culled = true, ._unknown_12 = true },
+                        .flags = .{ .not_culled = true, .always_drawn = true },
                         .position = @splat(0),
                         .radius = @reduce(.Max, @abs(size)),
                         .levels = &.{},

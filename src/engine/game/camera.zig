@@ -8,6 +8,7 @@ const math = @import("../surrender/math.zig");
 const srapi = @import("../surrender/surrenderlib/srapi.zig");
 const input = @import("../input.zig");
 const controls = @import("../input/controls.zig");
+const libcmt = @import("../libcmt.zig");
 const Vector = math.Vector;
 
 /// The view table, which [`camera/views.zig`](camera/views.zig) transcribes.
@@ -177,11 +178,16 @@ pub const World = struct {
     target: ?Subject = null,
     /// Hundredths of a second since the last frame (`frame_duration`).
     ticks: u32,
+    /// The cockpit's model and what moves it, for view 0 outside the chase mode; null for an
+    /// object with no cockpit.
+    cockpit: ?Cockpit.Input = null,
+    /// The runtime's `rand`, which the cockpit's jitter and the shake from hits draw on.
+    random: ?*libcmt.Rand = null,
 };
 
 /// The camera: the state `camera_set_view` and `camera_frame` keep in globals, and Surrender's
-/// camera frame they place. Leaves out the views not named in `View`, the cockpit's model and the
-/// shake from hits.
+/// camera frame they place, with the cockpit's model it moves in view 0. Leaves out the views not
+/// named in `View`, and the shake from hits in any view but 0.
 pub const Camera = struct {
     place: Place = .{ .position = @splat(0), .orientation = math.identity },
     view: View = .cockpit,
@@ -198,6 +204,15 @@ pub const Camera = struct {
     switched: u32 = 0,
     chase: Chase = .{},
     orbit: Orbit = .{},
+    /// How hard the last hit shook the camera (`hit_shake`, `0x00588724`): at most 2, and less by
+    /// 0.02 a tick.
+    hit_shake: f32 = 0,
+    /// The guns' kick on the cockpit's hands (`0x005636E0`): 1 as the player's guns fire
+    /// (`0x0047BE3A`), and a twentieth less each frame.
+    recoil: f32 = 0,
+    /// Where the cockpit's model stands this frame, in view 0 outside the chase mode; null in the
+    /// rest.
+    cockpit_place: ?Cockpit.Placed = null,
 
     /// Bars grow this share of the screen a tick, times their speed.
     pub const bar_rate: f32 = 0.001;
@@ -284,6 +299,15 @@ pub const Camera = struct {
     /// the view says. Returns a view to switch to when this one cannot go on, as the game does.
     pub fn frame(camera: *Camera, world: World) ?View {
         const ticks: f32 = @floatFromInt(world.ticks);
+        // What the shake from hits jitters by this frame, before it dies away some more.
+        var shake: f32 = 0;
+        if (camera.hit_shake > 0) {
+            if (camera.hit_shake > Cockpit.shake_most) camera.hit_shake = Cockpit.shake_most;
+            shake = camera.hit_shake * Cockpit.shake_share;
+            camera.hit_shake -= ticks * Cockpit.shake_fade;
+            if (camera.hit_shake < 0) camera.hit_shake = 0;
+        }
+        camera.cockpit_place = null;
         if (camera.bar_speed != 0) {
             camera.bars += ticks * camera.bar_speed * bar_rate;
             if (camera.bars >= 0) {
@@ -297,10 +321,17 @@ pub const Camera = struct {
             }
         }
         switch (camera.view) {
-            .cockpit => camera.place = if (camera.cockpit_mode == .chase)
-                camera.chase.frame(world.object.motion, world.object.position, world.object.orientation)
-            else
-                cockpit(0, world.object.position, world.object.orientation, world.object.eye),
+            .cockpit => if (camera.cockpit_mode == .chase) {
+                camera.place = camera.chase.frame(world.object.motion, world.object.position, world.object.orientation);
+            } else {
+                camera.place = cockpit(0, world.object.position, world.object.orientation, world.object.eye);
+                if (world.cockpit) |model| camera.cockpit_place = Cockpit.place(model, &camera.recoil, shake, world.random);
+                // The camera itself shakes with a hit, by what is left of it.
+                if (shake > 0) camera.place.orientation = math.product(
+                    Cockpit.jitter(camera.hit_shake * Cockpit.camera_shake, world.random),
+                    camera.place.orientation,
+                );
+            },
             .cockpit_left, .cockpit_right, .cockpit_rear => {
                 const n: u2 = @truncate(@intFromEnum(camera.view));
                 camera.place = if (camera.view == .cockpit_rear and world.object.motion.ship_type == kamov)
@@ -353,6 +384,142 @@ fn kamovRear(position: Vector, orientation: Matrix) Place {
 pub fn cockpit(view: u2, position: Vector, orientation: Matrix, eye: Vector) Place {
     const turned = math.turned(orientation, .y, std.math.degreesToRadians(cockpit_turns[view]));
     return .{ .position = position + math.transform(turned, eye), .orientation = turned };
+}
+
+// --- The cockpit's model ------------------------------------------------------------------------
+
+/// The cockpit's model as `camera_frame` moves it in view 0 outside the chase mode. The mission's
+/// start makes an object of the ship's cockpit frame (`0x005883F4`) and hangs its root from the
+/// camera's frame; each frame the camera sways the root against the ship's turns and slides it
+/// with its speed, and turns the hands, its second part, with the stick.
+pub const Cockpit = struct {
+    /// How far the root turns against each rate of turn at its full: its pitch, its yaw and its
+    /// roll.
+    pub const sway: [3]f32 = .{ -0.1, -0.15, -0.1 };
+    /// How far it slides back at the cruise speed.
+    pub const slide: f32 = 50;
+    /// How far the hands turn: their pitch with the ship's pitch rate, and their roll with its
+    /// roll and its yaw rates together.
+    pub const hands_pitch: f32 = 0.15;
+    pub const hands_roll: f32 = 0.2;
+    /// How far the guns' kick moves the hands back at its full, and what is left of it the frame
+    /// after.
+    pub const recoil_kick: f32 = 30;
+    pub const recoil_fade: f32 = 0.95;
+    /// The shake from a hit: `hit_shake` goes no higher than `shake_most` and dies away by
+    /// `shake_fade` a tick; the root jitters by a random share of `shake_share` of it, up to half
+    /// of that either way, and the camera by a share of `camera_shake` of what is left.
+    pub const shake_most: f32 = 2;
+    pub const shake_share: f32 = 0.1;
+    pub const shake_fade: f32 = 0.02;
+    pub const camera_shake: f32 = 0.03;
+
+    /// What moves the cockpit, and where its model stands.
+    pub const Input = struct {
+        /// The ship's rates of turn over its flight model's full ones: pitch, yaw and roll.
+        rates: [3]f32,
+        /// Its speed over its cruise speed (`object_cruise_speed`).
+        speed: f32,
+        /// The cockpit frame model's eye (its header's vector at `0x08`), which the root is set
+        /// back by so that the eye stands at the camera.
+        eye: Vector,
+        /// Where the hands stand from the root, their part's position less the object's centre,
+        /// and the point they turn about, their part's mount point.
+        hands_origin: Vector,
+        hands_pivot: Vector,
+    };
+
+    /// Where the root stands in the camera's frame, and the hands in the root's.
+    pub const Placed = struct {
+        root: Place,
+        hands: Place,
+    };
+
+    /// Moves the cockpit for a frame. The rates and the speed count to 1 either way at most.
+    pub fn place(model: Input, recoil: *f32, shake: f32, random: ?*libcmt.Rand) Placed {
+        var rates = model.rates;
+        for (&rates) |*rate| rate.* = std.math.clamp(rate.*, -1, 1);
+        const speed = std.math.clamp(model.speed, -1, 1);
+        const swayed = math.fromAngles(rates[0] * sway[0], rates[1] * sway[1], rates[2] * sway[2]);
+        const root: Place = .{
+            .position = Vector{ 0, 0, speed * slide } - model.eye,
+            .orientation = math.product(jitter(shake * 0.5, random), swayed),
+        };
+
+        const turn = math.fromAngles(rates[0] * hands_pitch, 0, (rates[2] + rates[1]) * hands_roll);
+        var at = model.hands_origin;
+        at[2] -= recoil.* * recoil_kick;
+        recoil.* *= recoil_fade;
+        // They turn about their mount point rather than their origin.
+        at += model.hands_pivot - math.transform(turn, model.hands_pivot);
+        return .{ .root = root, .hands = .{ .position = at, .orientation = turn } };
+    }
+
+    /// A turn of up to half of `amount` either way in yaw and in roll, as `camera_frame` draws two
+    /// of `rand`'s numbers, the first for the roll. Without a `rand` it draws none, and does not
+    /// turn.
+    pub fn jitter(amount: f32, random: ?*libcmt.Rand) Matrix {
+        const source = random orelse return math.identity;
+        const roll = share(source.rand()) * amount;
+        const yaw = share(source.rand()) * amount;
+        return math.fromAngles(0, yaw, roll);
+    }
+
+    /// One of `rand`'s numbers as a share between -0.5 and 0.5.
+    fn share(value: u15) f32 {
+        return @as(f32, @floatFromInt(value)) * (1.0 / @as(f32, libcmt.Rand.max)) - 0.5;
+    }
+};
+
+test Cockpit {
+    const model: Cockpit.Input = .{
+        .rates = .{ 0, 0, 0 },
+        .speed = 0,
+        .eye = .{ 0, -100, 300 },
+        .hands_origin = .{ 10, 20, 30 },
+        .hands_pivot = .{ 0, 0, 50 },
+    };
+    // At rest the root stands back by the eye, unturned, and the hands where their part does.
+    var recoil: f32 = 0;
+    const still = Cockpit.place(model, &recoil, 0, null);
+    try expectVector(.{ 0, 100, -300 }, still.root.position);
+    try std.testing.expectEqual(math.identity, still.root.orientation);
+    try expectVector(.{ 10, 20, 30 }, still.hands.position);
+
+    // Flying at the cruise speed, the root slides 50 back; turning, it sways against the turn,
+    // to no more than a full rate's worth.
+    var moving = model;
+    moving.speed = 3;
+    moving.rates = .{ 2, 0, 0 };
+    const swayed = Cockpit.place(moving, &recoil, 0, null);
+    try expectVector(.{ 0, 100, -250 }, swayed.root.position);
+    for (math.fromAngles(-0.1, 0, 0), swayed.root.orientation) |e, a| try std.testing.expectApproxEqAbs(e, a, 1e-6);
+
+    // The guns' kick moves the hands back, and fades by a twentieth each frame.
+    recoil = 1;
+    const kicked = Cockpit.place(model, &recoil, 0, null);
+    try expectVector(.{ 10, 20, 0 }, kicked.hands.position);
+    try std.testing.expectApproxEqAbs(0.95, recoil, 1e-6);
+
+    // The hands turn about their mount point: that point stays where it is.
+    var turning = model;
+    turning.rates = .{ 1, 0, 0 };
+    const turned = Cockpit.place(turning, &recoil, 0, null);
+    const pivot_after = turned.hands.position + math.transform(turned.hands.orientation, model.hands_pivot);
+    try expectVector(model.hands_origin + model.hands_pivot - Vector{ 0, 0, 0.95 * 30 }, pivot_after);
+}
+
+test "the shake from a hit dies away and turns the camera" {
+    var camera: Camera = .{ .hit_shake = 3 };
+    var random: libcmt.Rand = .{};
+    const ship: Subject = .{ .position = @splat(0), .orientation = math.identity };
+    _ = camera.frame(.{ .object = ship, .player = ship, .ticks = 10, .random = &random });
+    // It goes no higher than 2, then dies away by 0.02 a tick.
+    try std.testing.expectApproxEqAbs(1.8, camera.hit_shake, 1e-6);
+    // The camera is turned off the ship's own orientation.
+    try std.testing.expect(!std.meta.eql(math.identity, camera.place.orientation));
+    // Without a cockpit model there is nothing to place.
+    try std.testing.expectEqual(null, camera.cockpit_place);
 }
 
 // --- Chase --------------------------------------------------------------------------------------

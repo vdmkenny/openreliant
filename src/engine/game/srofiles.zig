@@ -122,7 +122,7 @@ fn coordinates(texture: Texture) Material.Coordinates {
     return switch (texture) {
         .none => .none,
         .material, .light_map => .mesh,
-        .highlight => .normals,
+        .highlight => .generated,
     };
 }
 

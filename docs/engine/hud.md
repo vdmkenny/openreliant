@@ -224,6 +224,9 @@ placed half of the way across, at the foot of the screen, 1 right and 51 up. `hu
 on `0x16B`, and `hud_radar_zoom` (`0x004892F0`) steps the rings a shape every 50 ticks toward a new
 range's. The clock stands 79 above the radar's point.
 
+In the cockpit's view the radar stands on a dark backing, which `mission_frame` draws with the
+cockpit's model rather than `hud_radar` ([`rendering.md`](rendering.md#the-cockpit)).
+
 The port draws the rings. Not yet ported: the dots, and the change of range.
 
 ## The status lights

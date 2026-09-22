@@ -79,6 +79,27 @@ The camera's orientation is the ship's turned by the view's angle, and its posit
 the model's eye point, the `.SHP` header's vector at `0x08`, turned likewise, so the rear view looks
 back from behind the ship. The Kamov (ship type 0x2D) looks back from 1500 behind it instead.
 
+In view 0 outside the chase mode, `camera_frame` also moves the cockpit's model
+([`rendering.md`](rendering.md#the-cockpit)), whose root hangs from the camera's frame. With each
+of the ship's rates of turn taken over its flight model's full rate, and its speed over its cruise
+speed, each held between -1 and 1:
+
+- The root turns by the pitch rate times -0.1, the yaw rate times -0.15 and the roll rate times
+  -0.1, so the cockpit sways against a turn, and stands at 50 times the speed along `Z` less the
+  cockpit model's own eye point, so that the eye is at the camera and the cockpit slides back as
+  the ship speeds up.
+- The hands, the model's second part, turn by the pitch rate times 0.15 in pitch and the roll and
+  yaw rates together times 0.2 in roll, about their part's mount point; they stand at their
+  part's position less the object's centre, less 30 along `Z` times the guns' kick
+  (`0x005636E0`), which the player's guns set to 1 as they fire (`0x0047BE3A`) and which loses a
+  twentieth each frame.
+
+Each frame `camera_frame` first takes `hit_shake` (`0x00588724`) to at most 2, keeps a tenth of it,
+and lowers it by 0.02 a tick. The root then jitters by a random share of up to half of that tenth
+either way in yaw and in roll, two numbers of `rand` drawn every frame, the first for the roll; and
+when the tenth is above nothing the camera turns likewise by up to half of 0.03 times what is left
+of `hit_shake`, in the world's frame.
+
 ## Chase
 
 `camera_chase` (`0x0045ED60`) puts the camera at `(0, h, d)` in the ship's frame, turned:

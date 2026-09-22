@@ -11,13 +11,20 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const input = @import("../input.zig");
+const shp = @import("../../formats/shp.zig");
+const math = @import("../surrender/math.zig");
 const srapi = @import("../surrender/surrenderlib/srapi.zig");
+const srapiext = @import("../surrender/surrenderlib/srapiext.zig");
 const srcore = @import("../surrender/surrenderlib/srcore.zig");
+const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
 const backdrop = @import("backdrop.zig");
 const camera = @import("camera.zig");
 const hud = @import("hud.zig");
+const matmanager = @import("matmanager.zig");
 const nebula = @import("nebula.zig");
 const objects = @import("objects.zig");
+const srofiles = @import("srofiles.zig");
+const xtrabits = @import("xtrabits.zig");
 
 // --- The clocks and the loop ---------------------------------------------------------------
 
@@ -191,6 +198,12 @@ pub const Frame = struct {
     attachments: objects.View = .{},
     /// What is drawn over the scene once its layers are done, which is the head-up display.
     overlay: ?srcore.Overlay = null,
+    /// The cockpit's model and the radar's backing, which view 0 draws over the world in cockpit
+    /// mode 1 under the hardware renderers.
+    cockpit: ?*objects.Model = null,
+    backing: ?*RadarBacking = null,
+    /// Whether DISPLAY KILLS is held, which leaves the backing out.
+    kills_shown: bool = false,
 };
 
 /// Puts the frame's scene together and draws it, in `mission_frame`'s order: the objects, the
@@ -205,8 +218,232 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     for (frame.models) |*model| try model.draw(gpa, scene, .world, attachments);
     try frame.space.frame(gpa, scene, context, frame.view, frame.cockpit_mode);
     if (context.hardware) try frame.sky.frame(gpa, scene, context);
+    if (frame.view == .cockpit and frame.cockpit_mode == .cockpit and context.hardware) {
+        // The backing, then the hands, then the cockpit, all over the world, sorted by depth.
+        if (frame.backing) |backing| if (!frame.kills_shown) try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &backing.object }, .overlay);
+        if (frame.cockpit) |model| {
+            for ([_]usize{ cockpit_hands, cockpit_frame }) |index| {
+                if (index < model.parts.len) try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &model.parts[index].object }, .overlay);
+            }
+        }
+    }
     if (frame.view != frame.last_view) frame.space.resetStreaks();
     try srcore.render(arena, context, scene, driver, frame.overlay);
+}
+
+// --- The cockpit ----------------------------------------------------------------------------
+
+/// The cockpit model's two parts `mission_frame` draws: the cockpit's frame and the pilot's hands.
+/// A model with more has the rest left out; the Phoenix's has a third, its base.
+pub const cockpit_frame = 0;
+pub const cockpit_hands = 1;
+
+/// How far the cockpit's every level of detail reaches: the mission's start pushes them all out
+/// to this, so the finest is always the one drawn.
+pub const cockpit_detail: f32 = 1048576;
+
+/// The lights' masks that reach the cockpit's parts, as a mask of those that do not (`+0xDC`).
+pub const cockpit_light_mask: u32 = 0x12;
+
+/// The cockpit as the mission's start (`0x004934F0`) makes it: an object of its own
+/// (`0x005883F4`) with a part for each of the cockpit frame model's, each drawn always
+/// (`always_drawn`), reached only by the lights `cockpit_light_mask` lets through, and with every
+/// level pushed out to `cockpit_detail`; its root then hangs from the camera's frame. Its origin
+/// moves to its centre of mass, as `object_link_parts` ends. The levels are made in `gpa`.
+pub fn createCockpit(gpa: Allocator, model: *const shp.Model, loaded: *const srofiles.Loaded) Allocator.Error!objects.Model {
+    var cockpit: objects.Model = try .create(gpa, model, loaded, .{});
+    for (cockpit.parts) |*part| try fitCockpitPart(gpa, part);
+    cockpit.recentre(model);
+    return cockpit;
+}
+
+/// What the start does to each of the cockpit's parts.
+fn fitCockpitPart(gpa: Allocator, part: *objects.Model.Part) Allocator.Error!void {
+    part.object.flags.always_drawn = true;
+    part.object.light_mask = cockpit_light_mask;
+    const levels = try gpa.dupe(srapiext.Level, part.object.levels);
+    for (levels) |*level| level.until = cockpit_detail;
+    part.object.levels = levels;
+}
+
+/// What `camera_frame` reads of the cockpit's model to move it, for a ship turning at `rates`,
+/// each over its full rate, and flying at `speed`, over its cruise speed.
+pub fn cockpitInput(cockpit: *const objects.Model, model: *const shp.Model, rates: [3]f32, speed: f32) ?camera.Cockpit.Input {
+    if (cockpit.parts.len <= cockpit_hands) return null;
+    const eye = model.header.eye;
+    const pivot = model.parts[cockpit_hands].part.mount_point;
+    return .{
+        .rates = rates,
+        .speed = speed,
+        .eye = .{ eye.x, eye.y, eye.z },
+        .hands_origin = cockpit.parts[cockpit_hands].origin,
+        .hands_pivot = .{ pivot.x, pivot.y, pivot.z },
+    };
+}
+
+/// Places the cockpit's parts in the world for the camera at `at`: its root hangs from the
+/// camera's frame where `placed` puts it, each part stands from the root as it does in the model,
+/// and the hands where the camera turned them.
+pub fn placeCockpit(cockpit: *objects.Model, at: camera.Place, placed: camera.Cockpit.Placed) void {
+    const orientation = math.product(at.orientation, placed.root.orientation);
+    const position = at.position + math.transform(at.orientation, placed.root.position);
+    cockpit.place(position, orientation);
+    if (cockpit.parts.len <= cockpit_hands) return;
+    const hands = &cockpit.parts[cockpit_hands].object;
+    hands.position = position + math.transform(orientation, placed.hands.position);
+    hands.orientation = math.product(orientation, placed.hands.orientation);
+}
+
+/// The radar's backing (`0x005883BC`), which the mission's start makes and the cockpit's view
+/// draws first: a rectangle across the radar, from 65 left of the middle of the screen to 67
+/// right, and 32 either side of the radar's height, `radaralpha`'s disc on it, 75% black. The
+/// start unprojects its corners to 1000 in front of the camera, and the object stands in the
+/// camera's frame, so it keeps its place on the screen.
+///
+/// **Improvement.** The port keeps it on the radar as the display is scaled: its corners are
+/// measured in the display's pixels from where the radar stands, and worked out again each frame
+/// for the window's size.
+pub const RadarBacking = struct {
+    positions: [4]math.Vector,
+    normals: [4]math.Vector = @splat(@splat(0)),
+    polygons: [1]srapiext.Polygon = .{.{ .kind = .triangle, .continues = 0, .first = 0, .count = 4 }},
+    indices: [4]u16 = .{ 0, 1, 2, 3 },
+    planes: [1]srapiext.Plane = .{.{ .normal = @splat(0), .distance = 0 }},
+    biases: [1]f32 = .{0},
+    surfaces: [1]srapiext.Surface,
+    baked: [4][4]f32 = @splat(colour),
+    uv: [4][2]f32 = .{ .{ 0, 0 }, .{ 1, 0 }, .{ 1, 1 }, .{ 0, 1 } },
+    mesh: srapiext.Mesh,
+    levels: [1]srapiext.Level,
+    object: srapiext.MeshObject,
+
+    /// Its corners across from the middle of the screen, and down from the radar's point.
+    pub const across: [2]i32 = .{ -65, 67 };
+    pub const down: [2]i32 = .{ -32, 32 };
+    /// How far in front of the camera the corners stand.
+    pub const depth: f32 = 1000;
+    pub const colour: [4]f32 = .{ 0, 0, 0, 0.75 };
+    pub const texture_name = "radaralpha";
+
+    /// Makes the backing, with its texture from `textures`, as the start does: lit by its own
+    /// colours, textured by its own coordinates and blended by alpha, never culled.
+    pub fn create(gpa: Allocator, textures: *srtexture.Table) matmanager.Error!*RadarBacking {
+        const texture = try matmanager.textureRequire(textures, texture_name);
+        const backing = try gpa.create(RadarBacking);
+        backing.* = .{
+            .positions = @splat(@splat(0)),
+            .surfaces = .{.{ .polygons = 1, .material = .{
+                .two_pass = false,
+                ._unknown_01 = 0,
+                .coordinates = .{ .generated, .none },
+                .lit = .{ true, false },
+                .blend = .{ .alpha, .off },
+                .image = .{ .null, .null },
+            }, .textures = .{ .{ .image = texture }, .none } }},
+            .mesh = undefined,
+            .levels = undefined,
+            .object = undefined,
+        };
+        backing.mesh = .{
+            .positions = &backing.positions,
+            .normals = &backing.normals,
+            .polygons = &backing.polygons,
+            .indices = &backing.indices,
+            .uv = .{ null, null },
+            .planes = &backing.planes,
+            .biases = &backing.biases,
+            .surfaces = &backing.surfaces,
+            .baked = &backing.baked,
+            .bounds = undefined,
+            .radius = undefined,
+        };
+        backing.levels = .{.{ .mesh = &backing.mesh, .until = std.math.inf(f32) }};
+        backing.object = .{
+            .flags = .{ .not_culled = true, .baked_mesh = true, .own_first = true },
+            .position = @splat(0),
+            .radius = 0,
+            .levels = &backing.levels,
+            .own_uv = .{ &backing.uv, null },
+        };
+        return backing;
+    }
+
+    /// Puts the corners on the radar for this frame's `projection`, and the object at the camera.
+    pub fn place(backing: *RadarBacking, projection: srapi.Projection, at: camera.Place, scale: f32) void {
+        backing.positions = corners(projection, scale);
+        srapi.findBoundingBox(&backing.mesh);
+        backing.object.radius = backing.mesh.radius;
+        backing.object.position = at.position;
+        backing.object.orientation = at.orientation;
+    }
+
+    /// The corners in the camera's frame: across from the middle of the screen and down from the
+    /// radar's height, in the display's pixels, unprojected to `depth`.
+    pub fn corners(projection: srapi.Projection, scale: f32) [4]math.Vector {
+        const radar = hud.place(projection.screen, hud.Radar.offset, hud.Radar.across, hud.Radar.down, scale);
+        const around = [4][2]i32{ .{ across[0], down[0] }, .{ across[1], down[0] }, .{ across[1], down[1] }, .{ across[0], down[1] } };
+        var out: [4]math.Vector = undefined;
+        for (&out, around) |*position, corner| {
+            const x = @as(f32, @floatFromInt(corner[0])) * scale;
+            const y = @as(f32, @floatFromInt(radar[1])) + @as(f32, @floatFromInt(corner[1])) * scale - projection.centre[1];
+            position.* = .{ x * depth / projection.scale[0], y * depth / projection.scale[1], depth };
+        }
+        return out;
+    }
+};
+
+test "each cockpit part is drawn always, from its finest level" {
+    const gpa = std.testing.allocator;
+    const srmesh = @import("../surrender/surrenderlib/srmesh.zig");
+    const mesh = try srmesh.testing.square(gpa);
+    defer mesh.deinit(gpa);
+    const levels = [_]srapiext.Level{ .{ .mesh = &mesh, .until = 1000 }, .{ .mesh = &mesh, .until = 5000 } };
+    var part: objects.Model.Part = .{
+        .hidden = false,
+        .parent = null,
+        .origin = @splat(0),
+        .object = .{ .flags = .{}, .position = @splat(0), .radius = 1, .levels = &levels },
+    };
+    try fitCockpitPart(gpa, &part);
+    defer gpa.free(part.object.levels);
+    try std.testing.expect(part.object.flags.always_drawn);
+    try std.testing.expectEqual(cockpit_light_mask, part.object.light_mask);
+    for (part.object.levels) |level| try std.testing.expectEqual(cockpit_detail, level.until);
+    // The model's own levels are left as they were.
+    try std.testing.expectEqual(1000, levels[0].until);
+}
+
+test placeCockpit {
+    var parts = [_]objects.Model.Part{
+        .{ .hidden = false, .parent = null, .origin = .{ 0, 0, 100 }, .object = .{ .flags = .{}, .position = @splat(0), .radius = 1, .levels = &.{} } },
+        .{ .hidden = false, .parent = null, .origin = .{ 0, 0, 50 }, .object = .{ .flags = .{}, .position = @splat(0), .radius = 1, .levels = &.{} } },
+    };
+    var model: objects.Model = .{ .parts = &parts, .order = &.{ 0, 1 }, .lights = &.{}, .glows = &.{}, .mounts = &.{} };
+    // The camera turned a quarter about Y: the root, set back from the eye, turns with it.
+    const at: camera.Place = .{ .position = .{ 1000, 0, 0 }, .orientation = math.rotation(.y, std.math.pi / 2.0) };
+    const placed: camera.Cockpit.Placed = .{
+        .root = .{ .position = .{ 0, 0, -300 }, .orientation = math.identity },
+        .hands = .{ .position = .{ 0, 10, 0 }, .orientation = math.identity },
+    };
+    placeCockpit(&model, at, placed);
+    const root = at.position + math.transform(at.orientation, .{ 0, 0, -300 });
+    const frame_at: [3]f32 = root + math.transform(at.orientation, .{ 0, 0, 100 });
+    for (frame_at, @as([3]f32, parts[cockpit_frame].object.position)) |e, a| try std.testing.expectApproxEqAbs(e, a, 1e-3);
+    // The hands stand where the camera put them, not at their origin.
+    const hands_at: [3]f32 = root + math.transform(at.orientation, .{ 0, 10, 0 });
+    for (hands_at, @as([3]f32, parts[cockpit_hands].object.position)) |e, a| try std.testing.expectApproxEqAbs(e, a, 1e-3);
+}
+
+test "the radar's backing stands where the radar does" {
+    // At 640 by 480 and the game's scale, the corners project back to 65 left of the middle to
+    // 67 right, and 32 either side of the radar's height, 68 above the foot.
+    const projection = srapi.Projection.init(640, 480, .{ 0, 0, 1, 1 }, camera.factors);
+    const corners = RadarBacking.corners(projection, 1);
+    for (corners, [4][2]f32{ .{ 320 - 65, 480 - 68 - 32 }, .{ 320 + 67, 480 - 68 - 32 }, .{ 320 + 67, 480 - 68 + 32 }, .{ 320 - 65, 480 - 68 + 32 } }) |corner, expected| {
+        const screen = projection.transform(corner);
+        try std.testing.expectApproxEqAbs(expected[0], screen.x, 0.01);
+        try std.testing.expectApproxEqAbs(expected[1], screen.y, 0.01);
+    }
 }
 
 // --- The mission's start -------------------------------------------------------------------

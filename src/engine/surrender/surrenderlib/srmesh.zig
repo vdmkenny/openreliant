@@ -109,7 +109,7 @@ pub fn pipe(
 
     var clip: Outcode = Outcode.all;
     var morph: Morph = .{};
-    if (!object.flags._unknown_12) {
+    if (!object.flags.always_drawn) {
         clip = sphereTest(context.projection, object, relative) orelse return null;
         clip = try chooseLevel(context, object, relative, matrix, clip, &morph) orelse return null;
     }
@@ -122,7 +122,8 @@ pub fn pipe(
         .screen = try arena.alloc(srapi.Transformed, mesh.positions.len),
         .outcodes = try arena.alloc(Outcode, mesh.positions.len),
         .colours = null,
-        .generated = .{ null, null },
+        // The object's own texture coordinates stand in for the generated ones.
+        .generated = object.own_uv,
         .visible = undefined,
         .counts = try arena.alloc(u32, mesh.surfaces.len),
     };

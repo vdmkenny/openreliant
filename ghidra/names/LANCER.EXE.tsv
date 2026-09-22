@@ -653,3 +653,7 @@
 00595180	data	vfx_buffer_transform	void *	VFX_buffer_transform, looked up out of the VFX library
 005959e8	data	vfx_pane_construct	void *	VFX_pane_construct, looked up out of the VFX library
 00595284	data	vfx_shape_lookaside	void *	VFX_shape_lookaside, looked up out of the VFX library
+005883f4	data	cockpit_object	GameObject *	The cockpit's object, which the mission's start makes of cockpit_frame's parts, each drawn always from its finest level and lit through light mask 0x12, and hangs from the camera's frame; camera_frame moves it, and mission_frame draws its first two parts over the world in cockpit mode 1
+005883bc	data	radar_backing	void *	The radar's backing, "radaralpha": a quad under the radar, a black disc at three quarters, standing in the camera's frame 1000 ahead, which mission_frame draws with the cockpit unless DISPLAY KILLS is held
+00588328	data	radar_backing_mesh	void *	The radar backing's mesh: four corners from 65 left of the middle to 67 right and 32 either side of the radar's height, unprojected to 1000
+005636e0	data	cockpit_recoil	float	The guns' kick on the cockpit's hands: 1 as the player's guns fire, a twentieth less each frame; camera_frame moves the hands back 30 times it

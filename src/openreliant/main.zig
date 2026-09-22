@@ -222,6 +222,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
 
     // The engine glows every ship's thrusters burn, built once and shared by them all.
     const glows: game.environfx.Glows = try .create(arena, &textures);
+    // The radar's backing, which the cockpit's view draws under the radar.
+    const backing = try game.main.RadarBacking.create(arena, &textures);
     // The display's shapes, whose global palette the ships' schematics are drawn with too.
     const shapes = try spr.Sprite.parse(try resources.readFile(arena, game.hud.hardware_shapes));
     const global_palette = game.hud.globalPalette(shapes);
@@ -333,7 +335,19 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         // After the camera's keys, `frame_controls` reads the targeting keys, then the devices'.
         game.hud.smartTargetKey(&display.state, &keyboard);
         engine.input.frameDeviceKeys(&display.state, &keyboard, &ship.live, false);
-        if (view.frame(.{ .object = ship.subject, .player = ship.subject, .ticks = ticks })) |next| {
+        // What moves the cockpit's model: the ship's rates of turn over its full ones, and its
+        // speed over its cruise speed.
+        const cockpit_input: ?camera.Cockpit.Input = if (ship.cockpit) |*cockpit| input: {
+            const live = &ship.live;
+            const rates: [3]f32 = .{
+                live.pitch_rate / ship.flight.pitch_rate,
+                live.yaw_rate / ship.flight.yaw_rate,
+                live.roll_rate / ship.flight.roll_rate,
+            };
+            const speed = live.speed / game.gameobj.cruiseSpeed(live, &ship.flight, view.view);
+            break :input game.main.cockpitInput(&cockpit.model, cockpit.source, rates, speed);
+        } else null;
+        if (view.frame(.{ .object = ship.subject, .player = ship.subject, .ticks = ticks, .cockpit = cockpit_input, .random = &rand })) |next| {
             _ = view.setView(next, 0, false, true, at);
         }
         // From its cockpit, the ship is not drawn, as `camera_set_view` sees to.
@@ -355,6 +369,9 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
 
         context.camera = .{ .position = view.place.position, .orientation = view.place.orientation };
         context.projection = view.projection(size[0], size[1]);
+        // The cockpit's model hangs from the camera, and the radar's backing stands on the radar.
+        if (ship.cockpit) |*cockpit| if (view.cockpit_place) |placed| game.main.placeCockpit(&cockpit.model, view.place, placed);
+        backing.place(context.projection, view.place, game.hud.scaleFor(size));
         _ = frame_arena.reset(.retain_capacity);
         display.target = screen.interface();
         display.screen = size;
@@ -368,6 +385,9 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .cockpit_mode = view.cockpit_mode,
             .last_view = last_view,
             .overlay = display.overlay(),
+            .cockpit = if (ship.cockpit) |*cockpit| &cockpit.model else null,
+            .backing = backing,
+            .kills_shown = engine.input.controlActive(&keyboard, engine.input.controls.binding(.display_kills), false, false),
             .attachments = .{
                 .camera = view.place.position,
                 .frame_start = clock.frame_start,
@@ -476,6 +496,14 @@ const Ship = struct {
     /// Its type's schematic, which the display's ship status indicator draws, where the game has
     /// one.
     schematic: ?game.hud.Art,
+    /// The cockpit's frame model, for a ship the player can fly, which the view ahead from the
+    /// cockpit draws over the world; null for the rest.
+    cockpit: ?Cockpit,
+
+    const Cockpit = struct {
+        source: *shp.Model,
+        model: game.objects.Model,
+    };
 
     fn load(
         resources: *game.bigfile.Hog,
@@ -528,10 +556,25 @@ const Ship = struct {
             };
             break :found try .init(gpa, try spr.Sprite.parse(bytes), global_palette);
         } else null;
+        // The cockpit the mission's start loads for a ship the player can fly.
+        const cockpit: ?Cockpit = if (game.main.playerShip(@intCast(ship_type))) |player| found: {
+            const source = try gpa.create(shp.Model);
+            source.* = shp.Model.parse(gpa, resources.readFile(gpa, player.cockpit) catch |err| {
+                std.log.warn("the cockpit {s} is left out: {s}", .{ player.cockpit, @errorName(err) });
+                break :found null;
+            }) catch |err| {
+                std.log.warn("the cockpit {s} is left out: {s}", .{ player.cockpit, @errorName(err) });
+                break :found null;
+            };
+            const built = try gpa.create(game.srofiles.Loaded);
+            built.* = try game.srofiles.modelLoad(gpa, textures, source, .{}, false);
+            break :found .{ .source = source, .model = try game.main.createCockpit(gpa, source, built) };
+        } else null;
         return .{
             .arena = arena,
             .ship_type = ship_type,
             .live = live,
+            .cockpit = cockpit,
             .flight = game.create.flightModel(ship_stats[ship_type]),
             .shield_power = shield_power,
             .gun_energy = ship_stats[ship_type].gun_energy,
