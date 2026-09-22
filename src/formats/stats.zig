@@ -157,7 +157,9 @@ pub const Ship = extern struct {
     afterburner_fuel: f32,
     /// Shown as **Shield Recharge**. The loader substitutes 10 for zero.
     shield_recharge: f32,
-    _unknown_70: f32,
+    /// The most the guns' charge holds: `create_object` gives a new ship this much, the guns
+    /// recharge to it, and the display's right arc measures against it. Mods: GunEnergy.
+    gun_energy: f32,
     _unknown_74: f32,
     /// Truncated to an integer on load.
     _unknown_78: f32,

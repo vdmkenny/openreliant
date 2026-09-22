@@ -69,7 +69,10 @@ pub const GameObject = extern struct {
     /// (`node_draw`). `object_alloc` and `create_object` both leave it at 1, so nothing in the
     /// shipped game sees further or less far than its size says.
     visibility: f32,
-    _unknown_130: [0x14]u8,
+    _unknown_130: [0x10]u8,
+    /// The guns' charge: `ShipCombat.gun_energy` when created, which the guns recharge to
+    /// (`0x00477114`). The display's right arc shows it against that.
+    gun_charge: f32,
     /// How its guns fire, which the gun keys set.
     gun_mode: GunMode,
     _unknown_146: [0xC]u8,
@@ -153,7 +156,10 @@ pub const GameObject = extern struct {
     /// The gun type its spectral shields are tuned to, which turning them on sets
     /// (`player_spectral_shields_set`): the one most dangerous near it.
     spectral_gun_type: i32,
-    _unknown_674: [0xC]u8,
+    /// Nonzero while blind fire aims the guns at the target: `hud_draw` sets it each frame it
+    /// draws the reticle.
+    blind_fire_aim: i32,
+    _unknown_678: [8]u8,
     /// Orders on its stack.
     order_count: i16,
     _unknown_682: u16,
@@ -269,6 +275,7 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "combat") == 0x10);
         assert(@offsetOf(GameObject, "root") == 0x28);
         assert(@offsetOf(GameObject, "visibility") == 0x12C);
+        assert(@offsetOf(GameObject, "gun_charge") == 0x140);
         assert(@offsetOf(GameObject, "gun_mode") == 0x144);
         assert(@offsetOf(GameObject, "component_count") == 0x152);
         assert(@offsetOf(GameObject, "components") == 0x248);
@@ -287,6 +294,7 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "hostile") == 0x644);
         assert(@offsetOf(GameObject, "missile_homing") == 0x64C);
         assert(@offsetOf(GameObject, "spectral_gun_type") == 0x670);
+        assert(@offsetOf(GameObject, "blind_fire_aim") == 0x674);
         assert(@offsetOf(GameObject, "last_throttle") == 0x650);
         assert(@offsetOf(GameObject, "armor_speed_factor") == 0x668);
         assert(@offsetOf(GameObject, "speed_factor") == 0x738);

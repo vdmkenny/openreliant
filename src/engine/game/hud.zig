@@ -36,9 +36,11 @@ const device = @import("../surrender/srd3d/device.zig");
 const inset: i32 = 0x21;
 const margin: i32 = 0x10;
 
-/// The screen the display is drawn for: the size the game gives its window (`0x004A85BC`). At that
-/// size `scaleFor` is 1 and the port draws the display as the game does.
-pub const base_screen: [2]u32 = .{ 640, 480 };
+/// The screen the port draws the display for: 1024 by 768, a mode the hardware renderers run in
+/// and the size of the retail game's own screenshots. At that size `scaleFor` is 1 and the port
+/// draws the display as the game does. The game's window starts at 640 by 480 (`0x004A85BC`),
+/// where the same offsets in pixels stand further in from the edges.
+pub const base_screen: [2]u32 = .{ 1024, 768 };
 
 /// **Improvement.** How much larger than its own art the display is drawn in a window of `screen`.
 /// The game drew its shapes and its glyphs at their own size whatever the window's, so on a screen
@@ -148,8 +150,10 @@ pub const software_shapes = "HUDSOFT.SPR";
 /// The block of the display's set that `hud_draw` makes VFX's global palette of every frame
 /// under the hardware renderers (`0x00428410`), at the brightness `0x00569718` holds, which
 /// `hud_init` sets to 1 and nothing changes. `VFX_shape_draw` draws a shape whose entry names no
-/// palette with the global one: the ships' schematics, and the set's own shapes before its first
-/// palette, which is this block.
+/// palette with the global one, and no entry of a shipped set names one: so every shape of the
+/// display is drawn with this block's palette, those after the set's second palette block
+/// included, and the ships' schematics too. Nothing in the display makes another block the
+/// global palette.
 pub const global_palette_block = 0x77;
 
 /// VFX's global palette as `hud_draw` sets it from the display's set, or null for a set whose
@@ -162,13 +166,14 @@ pub fn globalPalette(set: spr.Sprite) ?*const [spr.palette_size]u8 {
     };
 }
 
-/// A set of the display's shapes, with an image made of each as it is first drawn. A shape takes
-/// the nearest palette at or before it in the file, as the sprites do everywhere, or else the
-/// global palette.
+/// A set of the display's shapes, with an image made of each as it is first drawn. Every entry of
+/// a shipped set names no palette, so VFX draws each shape with its global palette, which
+/// `hud_draw` makes of the display's own set; a set given none takes the nearest palette at or
+/// before a shape, as the tools show them.
 pub const Art = struct {
     set: spr.Sprite,
     images: []?srtexture.Image,
-    /// The palette a shape with none of its own is drawn with.
+    /// The palette every shape is drawn with: VFX's global palette.
     global: ?*const [spr.palette_size]u8 = null,
 
     pub fn init(gpa: Allocator, set: spr.Sprite, global: ?*const [spr.palette_size]u8) Allocator.Error!Art {
@@ -199,7 +204,7 @@ pub const Art = struct {
         if (index >= art.images.len) return null;
         if (art.images[index]) |*made| return made;
         const found = art.shape(index) orelse return null;
-        const palette = art.set.paletteFor(index) orelse art.global orelse return null;
+        const palette = art.global orelse art.set.paletteFor(index) orelse return null;
         var expanded: [spr.palette_size]u8 = undefined;
         spr.expandPalette(palette, &expanded);
 
@@ -231,18 +236,69 @@ pub fn drawShape(
     colour: [4]f32,
     scale: f32,
 ) (spr.Error || Allocator.Error)!void {
+    return drawShapeWith(art, gpa, target, index, at, colour, scale, .{});
+}
+
+/// How a shape is drawn besides as it stands.
+pub const Draw = struct {
+    /// Flipped across, within its own bounds, which keep their place: `VFX_shape_draw_mirrored`
+    /// with 1.
+    mirrored: bool = false,
+    /// Only what falls inside a rectangle of the screen, as a VFX pane clips what is drawn into
+    /// it.
+    clip: ?Clip = null,
+};
+
+/// A rectangle of the screen in its pixels: its left and top edges inside it, its right and
+/// bottom ones not.
+pub const Clip = struct {
+    left: f32,
+    top: f32,
+    right: f32,
+    bottom: f32,
+};
+
+/// Draws the shape at `index` as `drawShape` does, mirrored or clipped as `how` says.
+pub fn drawShapeWith(
+    art: *Art,
+    gpa: Allocator,
+    target: device.Device,
+    index: usize,
+    at: [2]i32,
+    colour: [4]f32,
+    scale: f32,
+    how: Draw,
+) (spr.Error || Allocator.Error)!void {
     const found = art.shape(index) orelse return;
     const image = try art.image(gpa, index) orelse return;
     const left = @as(f32, @floatFromInt(at[0])) + @as(f32, @floatFromInt(found.header.x1)) * scale;
     const top = @as(f32, @floatFromInt(at[1])) + @as(f32, @floatFromInt(found.header.y1)) * scale;
     const right = left + @as(f32, @floatFromInt(found.width())) * scale;
     const bottom = top + @as(f32, @floatFromInt(found.height())) * scale;
+    var x: [2]f32 = .{ left, right };
+    var y: [2]f32 = .{ top, bottom };
+    var u: [2]f32 = if (how.mirrored) .{ 1, 0 } else .{ 0, 1 };
+    var v: [2]f32 = .{ 0, 1 };
+    if (how.clip) |clip| {
+        const kept_x: [2]f32 = .{ @max(left, clip.left), @min(right, clip.right) };
+        const kept_y: [2]f32 = .{ @max(top, clip.top), @min(bottom, clip.bottom) };
+        if (kept_x[0] >= kept_x[1] or kept_y[0] >= kept_y[1]) return;
+        // Each texture coordinate follows its edge in, in the shape's own proportion.
+        const across = u;
+        const down = v;
+        for (0..2) |edge| {
+            u[edge] = across[0] + (across[1] - across[0]) * (kept_x[edge] - left) / (right - left);
+            v[edge] = down[0] + (down[1] - down[0]) * (kept_y[edge] - top) / (bottom - top);
+        }
+        x = kept_x;
+        y = kept_y;
+    }
     const tint = device.pack(colour);
     const corners = [4]device.Vertex{
-        .{ .x = left, .y = top, .z = 1, .rhw = 1, .diffuse = tint, .u = 0, .v = 0 },
-        .{ .x = right, .y = top, .z = 1, .rhw = 1, .diffuse = tint, .u = 1, .v = 0 },
-        .{ .x = right, .y = bottom, .z = 1, .rhw = 1, .diffuse = tint, .u = 1, .v = 1 },
-        .{ .x = left, .y = bottom, .z = 1, .rhw = 1, .diffuse = tint, .u = 0, .v = 1 },
+        .{ .x = x[0], .y = y[0], .z = 1, .rhw = 1, .diffuse = tint, .u = u[0], .v = v[0] },
+        .{ .x = x[1], .y = y[0], .z = 1, .rhw = 1, .diffuse = tint, .u = u[1], .v = v[0] },
+        .{ .x = x[1], .y = y[1], .z = 1, .rhw = 1, .diffuse = tint, .u = u[1], .v = v[1] },
+        .{ .x = x[0], .y = y[1], .z = 1, .rhw = 1, .diffuse = tint, .u = u[0], .v = v[1] },
     };
     target.draw(.{
         .texture = image,
@@ -360,11 +416,11 @@ test "a scaled element keeps its share of the window" {
 test scaleFor {
     // The screen the display is drawn for leaves it at its own size.
     try std.testing.expectEqual(1, scaleFor(base_screen));
-    // Three times as tall and four times as wide: the side with room for less wins.
-    try std.testing.expectEqual(3, scaleFor(.{ 2560, 1440 }));
-    try std.testing.expectEqual(2, scaleFor(.{ 1280, 960 }));
+    // Wider than it is tall: the side with room for less wins.
+    try std.testing.expectEqual(1.875, scaleFor(.{ 2560, 1440 }));
+    try std.testing.expectEqual(2, scaleFor(.{ 2048, 1536 }));
     // A window smaller than the screen it was drawn for draws it smaller, so that it still fits.
-    try std.testing.expectEqual(0.5, scaleFor(.{ 320, 240 }));
+    try std.testing.expectEqual(0.625, scaleFor(.{ 640, 480 }));
 }
 
 test gridPlace {
@@ -500,16 +556,16 @@ pub const Readout = enum {
         shape: u16,
         /// Where the shape hangs from it, which two of the three shift along.
         shape_offset: [2]i32 = .{ 0, 0 },
+        /// Where the number is centred from the point: `0x1E` below it, and across by as much
+        /// as its shape is shifted, near enough to stand under it.
+        text_offset: [2]i32,
     };
-
-    /// How far right of the point the number is centred, and how far below it.
-    pub const text_offset: [2]i32 = .{ 0x10, 0x1E };
 
     pub fn spec(readout: Readout) Spec {
         return switch (readout) {
-            .fuel => .{ .offset = .{ 0x39, 0 }, .across = 0.5, .down = 0, .shape = 0xCD },
-            .skull => .{ .offset = .{ 0x5F, 0 }, .across = 0.5, .down = 0, .shape = 0xD0, .shape_offset = .{ -4, 0 } },
-            .coil => .{ .offset = .{ 0x98, 0 }, .across = 0.5, .down = 0, .shape = 0xCF, .shape_offset = .{ -0x1A, 0 } },
+            .fuel => .{ .offset = .{ 0x39, 0 }, .across = 0.5, .down = 0, .shape = 0xCD, .text_offset = .{ 0x10, 0x1E } },
+            .skull => .{ .offset = .{ 0x5F, 0 }, .across = 0.5, .down = 0, .shape = 0xD0, .shape_offset = .{ -4, 0 }, .text_offset = .{ 0x0B, 0x1E } },
+            .coil => .{ .offset = .{ 0x98, 0 }, .across = 0.5, .down = 0, .shape = 0xCF, .shape_offset = .{ -0x1A, 0 }, .text_offset = .{ -9, 0x1E } },
         };
     }
 
@@ -531,7 +587,7 @@ pub const Readout = enum {
 
         var buffer: [16]u8 = undefined;
         const text = std.fmt.bufPrint(&buffer, "{d}", .{value}) catch return;
-        _ = try drawText(opened, gpa, target, scaled(point, text_offset, scale), text, colour, .centre, scale);
+        _ = try drawText(opened, gpa, target, scaled(point, at.text_offset, scale), text, colour, .centre, scale);
     }
 };
 
@@ -558,7 +614,11 @@ test Readout {
     }
     // An offset the display measures in its own pixels grows with it.
     try std.testing.expectEqual([2]i32{ 100 - 8, 20 }, scaled(.{ 100, 20 }, .{ -4, 0 }, 2));
-    try std.testing.expectEqual([2]i32{ 100 + 0x10, 20 + 0x1E }, scaled(.{ 100, 20 }, Readout.text_offset, 1));
+    try std.testing.expectEqual([2]i32{ 100 + 0x10, 20 + 0x1E }, scaled(.{ 100, 20 }, Readout.fuel.spec().text_offset, 1));
+    // Each number stands under its own shape: the coil's shape and number both lie left of the
+    // point, its number 9 left.
+    try std.testing.expectEqual(-9, Readout.coil.spec().text_offset[0]);
+    try std.testing.expectEqual(0x0B, Readout.skull.spec().text_offset[0]);
 }
 
 /// Whether the display's instruments are drawn: `hud_draw` leaves out the jump prompt, the radar,
@@ -927,6 +987,11 @@ pub const State = struct {
     /// (`0x005667B0`).
     scanner_frame: u8 = 0,
     scanner_next: u32 = 0,
+    /// Where blind fire's sight stands (`0x00566628`, `0x0056662C`), which `hud_init` puts at
+    /// the middle of the screen; null until the port first draws it there.
+    sight: ?[2]i32 = null,
+    /// The radar's rings (`0x0057BC50`).
+    radar_rings: u16 = Radar.first_rings,
 
     /// `hud_draw`'s work on the devices' charges for a frame, which it does in every view: a
     /// device that runs dry is turned off.
@@ -1369,4 +1434,325 @@ test ShipStatus {
     }
     std.mem.sort(u16, &shapes, {}, std.sort.asc(u16));
     for (shapes, 0..) |shape, i| try std.testing.expectEqual(0x99 + i, shape);
+}
+
+// --- The targeting cluster -------------------------------------------------------------------
+
+/// The targeting cluster about the middle of the screen, which `hud_draw` draws in view 0 after
+/// the ship status indicator: an arc either side, the left one for the speed and the right one
+/// for the guns' charge, each lit from the foot up to its level; a marker on the left arc for the
+/// speed the ship makes and another for the speed its throttle asks, each with its figure; and
+/// the reticle at the middle.
+pub const Cluster = struct {
+    /// The left arc; the right one is the same shape drawn mirrored.
+    pub const arc_shape: u16 = 0x7F;
+    /// How far either arc stands from the middle: this share of the screen's width, cut down to
+    /// a whole number as `__ftol` does. The arcs part as the screen widens.
+    pub const spread: f32 = 0.15625;
+    /// How far above the middle the arcs' tops stand.
+    pub const up: i32 = 0x4A;
+    /// How far left of its place the right arc is drawn, near the arc's own width.
+    pub const mirror_shift: i32 = 0x43;
+    /// The centre of the circle the markers ride, from the left arc's point, and how far out
+    /// across and down they ride from it.
+    pub const circle: [2]i32 = .{ 100, 80 };
+    pub const reach: [2]f32 = .{ 124, 94 };
+    /// A marker's angle, in degrees: 310 at nothing, less 100 at full.
+    pub const empty_angle: f32 = 310;
+    pub const sweep: f32 = 100;
+    pub const marker_shape: u16 = 0xEA;
+    /// Where a marker's figure stands from the marker, ending there.
+    pub const figure_offset: [2]i32 = .{ -10, -8 };
+    /// The throttle's marker shows while the throttle differs from the speed by more than this,
+    /// three times over, and as bright as that, to full.
+    pub const throttle_shown: f32 = 0.1;
+    pub const throttle_fade: f32 = 3;
+
+    /// An arc's fill: the lit shape below the level and the unlit one above it, both drawn at
+    /// `offset` from the arc's point, into two panes a pixel above and left of it, `pane_width`
+    /// wide and down to `pane_bottom` below the arcs' top.
+    pub const Fill = struct { lit: u16, unlit: u16, offset: [2]i32 };
+    pub const speed_fill: Fill = .{ .lit = 0xB8, .unlit = 0xB9, .offset = .{ -10, 0 } };
+    pub const charge_fill: Fill = .{ .lit = 0xF9, .unlit = 0xF8, .offset = .{ 14, 0 } };
+    pub const pane_width: i32 = 0x42;
+    pub const pane_bottom: i32 = 0x8A;
+    /// The charge arc's height in pixels, all of it lit when the guns are full.
+    pub const charge_height: f32 = 0x8A;
+
+    /// What the cluster shows: the object's throttle and speed, its type's top speed, and its
+    /// guns' charge against the most it holds.
+    pub const Gauges = struct {
+        throttle: f32,
+        speed: f32,
+        max_speed: f32,
+        charge: f32,
+        full_charge: f32,
+    };
+
+    /// Where a marker for `share` of the arc stands from the circle's centre, in the display's
+    /// own pixels, rounded as `0x004C3330` does.
+    pub fn markerOffset(share: f32) [2]i32 {
+        const angle = (empty_angle - share * sweep) * std.math.rad_per_deg;
+        return .{ round(@sin(angle) * reach[0]), round(@cos(angle) * reach[1]) };
+    }
+
+    /// How far down from the arcs' top the charge arc is unlit: all of it for no charge, none
+    /// for a full one. A ship whose guns hold nothing has it all unlit; the game divides by the
+    /// nothing regardless.
+    pub fn chargeLevel(charge: f32, full: f32) i32 {
+        if (full <= 0) return @intFromFloat(charge_height);
+        return @as(i32, @intFromFloat(charge_height)) - round(charge * charge_height / full);
+    }
+
+    /// The throttle and the speed as shares of the arc: the throttle's size to 1, and the speed
+    /// over the top speed to 1.
+    pub fn shares(gauges: Gauges) [2]f32 {
+        const throttle = @min(@abs(gauges.throttle), 1);
+        const speed = if (gauges.max_speed > 0) @min(gauges.speed / gauges.max_speed, 1) else 0;
+        return .{ throttle, speed };
+    }
+};
+
+/// Draws the targeting cluster's arcs and markers as `hud_draw` does, from its right arc to the
+/// charge's fill.
+pub fn drawCluster(
+    art: *Art,
+    opened: *Opened,
+    gpa: Allocator,
+    target: device.Device,
+    screen: [2]u32,
+    gauges: Cluster.Gauges,
+    colour: [4]f32,
+    scale: f32,
+) (spr.Error || Allocator.Error)!void {
+    const width: i32 = @intCast(screen[0]);
+    const height: i32 = @intCast(screen[1]);
+    const apart: i32 = @intFromFloat(@trunc(@as(f32, @floatFromInt(width)) * Cluster.spread));
+    const top = (height >> 1) - round(@as(f32, Cluster.up) * scale);
+    const left: [2]i32 = .{ (width >> 1) - apart, top };
+    const right: [2]i32 = .{ (width >> 1) + apart - round(@as(f32, Cluster.mirror_shift) * scale), top };
+    try drawShapeWith(art, gpa, target, Cluster.arc_shape, right, colour, scale, .{ .mirrored = true });
+    try drawShape(art, gpa, target, Cluster.arc_shape, left, colour, scale);
+
+    const centre = scaled(left, Cluster.circle, scale);
+    const throttle, const speed = Cluster.shares(gauges);
+    var buffer: [16]u8 = undefined;
+
+    // The throttle's marker, dimmed as it nears the speed: `hud_draw` makes the global palette
+    // that much darker for it.
+    const brightness = @min(@abs(throttle - speed) * Cluster.throttle_fade, 1);
+    if (brightness > Cluster.throttle_shown) {
+        const dim: [4]f32 = .{ colour[0] * brightness, colour[1] * brightness, colour[2] * brightness, colour[3] };
+        const marker = scaled(centre, Cluster.markerOffset(throttle), scale);
+        try drawShape(art, gpa, target, Cluster.marker_shape, marker, dim, scale);
+        const asked = std.fmt.bufPrint(&buffer, "{d}", .{round(gauges.max_speed * gauges.throttle)}) catch return;
+        _ = try drawText(opened, gpa, target, scaled(marker, Cluster.figure_offset, scale), asked, dim, .right, scale);
+    }
+
+    const offset = Cluster.markerOffset(speed);
+    const marker = scaled(centre, offset, scale);
+    try drawShape(art, gpa, target, Cluster.marker_shape, marker, colour, scale);
+    const made = std.fmt.bufPrint(&buffer, "{d}", .{round(gauges.speed)}) catch return;
+    _ = try drawText(opened, gpa, target, scaled(marker, Cluster.figure_offset, scale), made, colour, .right, scale);
+
+    // The speed's fill is lit below its marker, the charge's below its level.
+    try drawFill(art, gpa, target, Cluster.speed_fill, left, offset[1] + Cluster.circle[1], colour, scale);
+    try drawFill(art, gpa, target, Cluster.charge_fill, right, Cluster.chargeLevel(gauges.charge, gauges.full_charge), colour, scale);
+}
+
+/// An arc's fill for `level` pixels down from the arcs' top: the lit shape into the pane from
+/// a pixel above the level to the foot, then the unlit one into the pane from a pixel above the
+/// top to the level, so the row they share is unlit.
+fn drawFill(
+    art: *Art,
+    gpa: Allocator,
+    target: device.Device,
+    fill: Cluster.Fill,
+    arc: [2]i32,
+    level: i32,
+    colour: [4]f32,
+    scale: f32,
+) (spr.Error || Allocator.Error)!void {
+    const at = scaled(arc, fill.offset, scale);
+    const x: f32 = @floatFromInt(at[0]);
+    const y: f32 = @floatFromInt(at[1]);
+    const edge = struct {
+        fn of(from: f32, pixels: i32, by: f32) f32 {
+            return from + @as(f32, @floatFromInt(pixels)) * by;
+        }
+    }.of;
+    const pane_left = x - scale;
+    const pane_right = edge(x, Cluster.pane_width - 1, scale);
+    try drawShapeWith(art, gpa, target, fill.lit, at, colour, scale, .{ .clip = .{
+        .left = pane_left,
+        .top = edge(y, level - 1, scale),
+        .right = pane_right,
+        .bottom = edge(y, Cluster.pane_bottom, scale),
+    } });
+    try drawShapeWith(art, gpa, target, fill.unlit, at, colour, scale, .{ .clip = .{
+        .left = pane_left,
+        .top = y - scale,
+        .right = pane_right,
+        .bottom = edge(y, level, scale),
+    } });
+}
+
+/// The reticle at the middle of the screen, and blind fire's sight: the same shape brighter, which
+/// jumps onto a target near the middle while blind fire aims the guns at it and glides back.
+pub const reticle_shape: u16 = 0xD7;
+pub const sight_shape: u16 = 0xD8;
+/// How near the middle a target stands for the reticle to be drawn bright: within `0x10` either
+/// way.
+pub const under_reticle: i32 = 0x10;
+/// How near the middle blind fire takes a target: within `0x46` across and `0x32` down.
+pub const blind_fire_reach: [2]i32 = .{ 0x46, 0x32 };
+/// How near the middle the sight comes to rest, gliding a pixel a tick.
+pub const sight_rest: i32 = 2;
+
+/// What blind fire does about a target near the middle.
+pub const BlindFire = enum {
+    /// The ship does not carry it, it is off, or every group of guns fires on a ship of more
+    /// than one.
+    off,
+    /// It aims the guns at the target.
+    on,
+    /// It is on, but the chosen group's first gun is of type 11, which it does not aim.
+    excluded,
+};
+
+/// Draws the reticle as `hud_draw` does in view 0, for a target standing at `target_at` on the
+/// screen, if one does, and says whether blind fire aims at it, which the game keeps as the
+/// object's `blind_fire_aim`. The chase view draws neither the reticle nor the sight.
+pub fn drawReticle(
+    state: *State,
+    art: *Art,
+    gpa: Allocator,
+    target: device.Device,
+    screen: [2]u32,
+    mode: camera.CockpitMode,
+    target_at: ?[2]i32,
+    blind_fire: BlindFire,
+    frame_duration: i32,
+    colour: [4]f32,
+    scale: f32,
+) (spr.Error || Allocator.Error)!bool {
+    const middle: [2]i32 = .{ @as(i32, @intCast(screen[0])) >> 1, @as(i32, @intCast(screen[1])) >> 1 };
+    const drawn = mode != .chase;
+    if (drawn) try drawShape(art, gpa, target, reticle_shape, middle, colour, scale);
+    const found = target_at orelse {
+        if (drawn) try drawShape(art, gpa, target, reticle_shape, middle, colour, scale);
+        return false;
+    };
+    const near = round(@as(f32, @floatFromInt(under_reticle)) * scale);
+    var bright = found[0] > middle[0] - near and found[0] < middle[0] + near and
+        found[1] > middle[1] - near and found[1] < middle[1] + near;
+    const reach: [2]i32 = .{
+        round(@as(f32, @floatFromInt(blind_fire_reach[0])) * scale),
+        round(@as(f32, @floatFromInt(blind_fire_reach[1])) * scale),
+    };
+    const apart: [2]i32 = .{ found[0] - middle[0], found[1] - middle[1] };
+    var at = middle;
+    var aims = false;
+    const within = @abs(apart[0]) < reach[0] and @abs(apart[1]) < reach[1];
+    if (within and blind_fire == .on) {
+        at = found;
+        state.sight = found;
+        aims = true;
+        bright = true;
+    } else if (!(within and blind_fire == .excluded)) {
+        var sight = state.sight orelse middle;
+        const rest = round(@as(f32, @floatFromInt(sight_rest)) * scale);
+        const glide = round(@as(f32, @floatFromInt(frame_duration)) * scale);
+        for (0..2) |axis| {
+            if (sight[axis] < middle[axis] - rest) {
+                sight[axis] += glide;
+                at[axis] = sight[axis];
+            } else if (sight[axis] > middle[axis] + rest) {
+                sight[axis] -= glide;
+                at[axis] = sight[axis];
+            }
+        }
+        state.sight = sight;
+    }
+    if (drawn) try drawShape(art, gpa, target, if (bright) sight_shape else reticle_shape, at, colour, scale);
+    return aims;
+}
+
+/// The radar (`hud_radar`, `0x00488BD0`): its rings, the shape `hud_init` starts on and the
+/// range key steps through, stand from a point placed half of the way across, at the foot of the
+/// screen, 1 right and 51 up. Not yet ported: the dots for the objects in range, with their
+/// lines up or down to the rings, and the rings' change of range.
+pub const Radar = struct {
+    pub const offset: [2]i32 = .{ 1, -51 };
+    pub const across: f32 = 0.5;
+    pub const down: f32 = 1;
+    /// Where the rings hang from the point.
+    pub const rings_offset: [2]i32 = .{ -0x42, -0x20 };
+    /// The rings `hud_init` starts on (`0x0057BC50`), the widest range's.
+    pub const first_rings: u16 = 0x16B;
+};
+
+/// Draws the radar's rings for a window of `screen`.
+pub fn drawRadar(
+    art: *Art,
+    gpa: Allocator,
+    target: device.Device,
+    screen: [2]u32,
+    rings: u16,
+    colour: [4]f32,
+    scale: f32,
+) (spr.Error || Allocator.Error)!void {
+    const point = place(screen, Radar.offset, Radar.across, Radar.down, scale);
+    try drawShape(art, gpa, target, rings, scaled(point, Radar.rings_offset, scale), colour, scale);
+}
+
+test Cluster {
+    // At nothing a marker rides the foot of the left arc, left of the circle's centre and below
+    // it; at full it rides near the top.
+    const empty = Cluster.markerOffset(0);
+    try std.testing.expect(empty[0] < 0 and empty[1] > 0);
+    const full = Cluster.markerOffset(1);
+    try std.testing.expect(full[0] < 0 and full[1] < 0);
+    try std.testing.expectEqual([2]i32{ -95, 60 }, empty);
+    // Full guns light the whole charge arc; none light nothing of it.
+    try std.testing.expectEqual(0, Cluster.chargeLevel(50, 50));
+    try std.testing.expectEqual(0x8A, Cluster.chargeLevel(0, 50));
+    try std.testing.expectEqual(0x8A / 2, Cluster.chargeLevel(25, 50));
+    try std.testing.expectEqual(0x8A, Cluster.chargeLevel(10, 0));
+    // The throttle counts by its size, the speed by its share of the top speed, each to 1.
+    try std.testing.expectEqual([2]f32{ 1, 0.5 }, Cluster.shares(.{ .throttle = -1.5, .speed = 50, .max_speed = 100, .charge = 0, .full_charge = 0 }));
+    try std.testing.expectEqual([2]f32{ 0.25, 1 }, Cluster.shares(.{ .throttle = 0.25, .speed = 300, .max_speed = 100, .charge = 0, .full_charge = 0 }));
+}
+
+test "the arcs part as the screen widens" {
+    // At 640 across the arcs stand 100 either side of the middle; at 1024, 160.
+    const narrow: i32 = @intFromFloat(@trunc(640 * Cluster.spread));
+    const wide: i32 = @intFromFloat(@trunc(1024 * Cluster.spread));
+    try std.testing.expectEqual(100, narrow);
+    try std.testing.expectEqual(160, wide);
+}
+
+test "the sight glides back to the middle" {
+    var state: State = .{ .sight = .{ 300, 250 } };
+    const screen: [2]u32 = .{ 640, 480 };
+    // With a target off the reach of blind fire, the sight moves a pixel a tick toward the
+    // middle, and rests within two of it.
+    const Null = struct {
+        fn begin(_: *anyopaque) void {}
+        fn end(_: *anyopaque) void {}
+        fn mark(_: *anyopaque) void {}
+        fn draw(_: *anyopaque, _: device.State, _: device.Primitive, _: []const device.Vertex, _: ?[]const u16) void {}
+    };
+    var nothing: u8 = 0;
+    const target: device.Device = .{ .ptr = &nothing, .vtable = &.{ .begin = Null.begin, .end = Null.end, .draw = Null.draw, .overlay = Null.mark } };
+    var art: Art = .{ .set = undefined, .images = &.{} };
+    const aims = try drawReticle(&state, &art, std.testing.allocator, target, screen, .chase, .{ 600, 400 }, .on, 10, .{ 1, 1, 1, 1 }, 1);
+    try std.testing.expect(!aims);
+    try std.testing.expectEqual([2]i32{ 310, 240 }, state.sight.?);
+    // Within its reach, blind fire takes the target.
+    try std.testing.expect(try drawReticle(&state, &art, std.testing.allocator, target, screen, .chase, .{ 350, 260 }, .on, 10, .{ 1, 1, 1, 1 }, 1));
+    try std.testing.expectEqual([2]i32{ 350, 260 }, state.sight.?);
+    // A gun it does not aim leaves the sight where it is.
+    _ = try drawReticle(&state, &art, std.testing.allocator, target, screen, .chase, .{ 350, 260 }, .excluded, 10, .{ 1, 1, 1, 1 }, 1);
+    try std.testing.expectEqual([2]i32{ 350, 260 }, state.sight.?);
 }

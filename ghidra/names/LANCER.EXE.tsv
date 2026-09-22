@@ -630,3 +630,26 @@
 0057dbc0	data	language_count	int	How many strings language_init read
 0057dbc8	data	language_module	void *	language.dll, as LoadLibraryA loads it
 0051d5f0	data	options_cockpit_setting	int	The options screen's cockpit setting, which it copies to cockpit_mode_setting and writes to the ini as [Device] View
+00488bd0	function	hud_radar	void (void)	The radar: a dot for each object in range, targetable and not exploding, disabled, ejected or a cloaked hostile, placed by its bearing and distance from the player at the range 0x0057BE00 picks, with a line up or down by its height in palette index 0x26 for a hostile and 0x62 otherwise, and shape 0xE4 or 0xE5 at its end, 0x130 for the target; then the rings, hud_radar_rings, at hud_place(1, -51, 0.5, 1) less (0x42, 0x20)
+004892f0	function	hud_radar_zoom	void (void)	While 0x00569714 is set, steps hud_radar_rings a shape every 50 ticks, up or down by 0x005656AC, until it reaches 0x005799B4
+0056569c	data	hud_target_x	int	Where the target stands across the screen, or -1 when it is not on it
+005656a4	data	hud_target_y	int	Where the target stands down the screen, or -1 when it is not on it
+00566550	data	target_under_reticle	byte	Set while the target stands within 0x10 of the middle of the screen either way, or while blind fire aims at it; the reticle is then drawn bright (0xD8)
+00566628	data	hud_sight_x	int	Where blind fire's sight stands across the screen: on the target while blind fire aims at it, gliding back to the middle a pixel a tick otherwise. hud_init puts it at the middle
+0056662c	data	hud_sight_y	int	Where blind fire's sight stands down the screen, as hud_sight_x
+0056664c	data	hud_target_dx	int	How far the target stands right of the middle of the screen
+00566648	data	hud_target_dy	int	How far the target stands below the middle of the screen
+0057bc50	data	hud_radar_rings	int	The radar's rings: one of shapes 0x168 to 0x16B, 0x16B from hud_init
+0057be00	data	radar_range	short	The radar's range, 0 to 2, 2 from hud_init, which sets the scales the objects are placed by
+00566548	data	hud_speed_lit_pane	void *	The VFX pane the speed arc's lit shape (0xB8) is drawn into, cut off above the speed marker each frame
+00569930	data	hud_speed_unlit_pane	void *	The VFX pane the speed arc's unlit shape (0xB9) is drawn into, cut off below the speed marker each frame
+0057bf38	data	hud_charge_lit_pane	void *	The VFX pane the charge arc's lit shape (0xF9) is drawn into, cut off above the guns' charge each frame
+005799c8	data	hud_charge_unlit_pane	void *	The VFX pane the charge arc's unlit shape (0xF8) is drawn into, cut off below the guns' charge each frame
+0057bc54	data	hud_object	GameObject *	The object the display shows, game_objects[0x005883AC], which hud_draw takes each frame
+00569928	data	hud_flip_buffer	void *	hud_init's "flip buffer", 0x19000 bytes, which hud_blit and VFX_shape_draw_mirrored draw a shape into first
+005799c4	data	hud_work_buffer	void *	hud_init's "work buffer", 0x19000 bytes
+00566f88	data	hud_work_buffer2	void *	hud_init's "work buffer2", 0x19000 bytes
+00595494	data	vfx_pixel_write	void *	VFX_pixel_write, looked up out of the VFX library
+00595180	data	vfx_buffer_transform	void *	VFX_buffer_transform, looked up out of the VFX library
+005959e8	data	vfx_pane_construct	void *	VFX_pane_construct, looked up out of the VFX library
+00595284	data	vfx_shape_lookaside	void *	VFX_shape_lookaside, looked up out of the VFX library

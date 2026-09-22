@@ -359,6 +359,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         display.target = screen.interface();
         display.screen = size;
         display.last_view = last_view;
+        display.cockpit_mode = view.cockpit_mode;
         try game.main.drawFrame(arena, frame_arena.allocator(), &scene, &context, .{
             .models = (&ship.object)[0..1],
             .space = space,
@@ -468,6 +469,8 @@ const Ship = struct {
     flight: game.create.FlightModel,
     /// Its type's shield power, truncated as `stats_load_ships` keeps it.
     shield_power: i32,
+    /// The most its guns' charge holds.
+    gun_energy: f32,
     /// Whether its model can cloak.
     can_cloak: bool,
     /// Its type's schematic, which the display's ship status indicator draws, where the game has
@@ -516,6 +519,8 @@ const Ship = struct {
         const armor_class: i32 = @intFromFloat(ship_stats[ship_type].armor_class);
         live.shields = @splat(@floatFromInt(6 * shield_power - 1));
         live.armor = @splat(@floatFromInt(6 * armor_class - 1));
+        // Its guns full.
+        live.gun_charge = ship_stats[ship_type].gun_energy;
         const schematic: ?game.hud.Art = if (game.create.models.ship_types[ship_type].schematic) |name| found: {
             const bytes = resources.readFile(gpa, name) catch |err| {
                 std.log.warn("the schematic {s} is left out: {s}", .{ name, @errorName(err) });
@@ -529,6 +534,7 @@ const Ship = struct {
             .live = live,
             .flight = game.create.flightModel(ship_stats[ship_type]),
             .shield_power = shield_power,
+            .gun_energy = ship_stats[ship_type].gun_energy,
             .can_cloak = model.header.flags.cloak,
             .schematic = schematic,
             .object = object,
@@ -561,6 +567,8 @@ const Display = struct {
     screen: [2]u32,
     /// Last frame's view, which is what `hud_draw` reads to know whether to draw the instruments.
     last_view: camera.View = .cockpit,
+    /// What the cockpit view shows, which leaves the reticle out of the chase view.
+    cockpit_mode: camera.CockpitMode = .cockpit,
     ship: *Ship,
     clock: *const game.main.Clock,
     player: *const engine.input.Player,
@@ -620,6 +628,19 @@ const Display = struct {
             try game.hud.ShipStatus.drawSchematic(schematic, display.ship.arena.allocator(), display.target, display.screen, white, scale);
         }
         try game.hud.ShipStatus.draw(&display.art, display.gpa, display.target, display.screen, live.shields, display.ship.shield_power, white, scale);
+        try game.hud.drawCluster(&display.art, &display.font, display.gpa, display.target, display.screen, .{
+            .throttle = live.throttle,
+            .speed = live.speed,
+            .max_speed = display.ship.flight.max_speed,
+            .charge = live.gun_charge,
+            .full_charge = display.ship.gun_energy,
+        }, white, scale);
+        try game.hud.drawRadar(&display.art, display.gpa, display.target, display.screen, state.radar_rings, white, scale);
+        // The sandbox has no target, so blind fire has nothing to aim at. It would aim with its
+        // guns not all firing; the sandbox fits no guns, so no group of them is ever the one.
+        const blind_fire: game.hud.BlindFire = if (state.blind_fire_fitted and state.blind_fire and !live.gun_mode.all) .on else .off;
+        const aims = try game.hud.drawReticle(state, &display.art, display.gpa, display.target, display.screen, display.cockpit_mode, null, blind_fire, frame_duration, white, scale);
+        live.blind_fire_aim = @intFromBool(aims);
         try game.hud.drawClock(
             &display.font,
             display.gpa,

@@ -72,7 +72,7 @@ which located fields by diffing known mods.
 | `0x64` | Armor class | truncated | Screen: **Armor Class** bar |
 | `0x68` | Afterburner fuel | truncated | Screen: **Afterburner Fuel**, a number labelled ` SECS` |
 | `0x6C` | Shield recharge | float; 0 becomes 10 | Screen: **Shield Recharge** bar |
-| `0x70` | | float | **Unknown.** Mods: GunEnergy, unverified |
+| `0x70` | Gun energy | float | The most the guns' charge holds: `create_object` gives a new ship this much (`GameObject.gun_charge`), the guns recharge to it, and the display's right arc measures against it. Mods: GunEnergy |
 | `0x74` | | float | **Unknown.** Mods: GunRecharge, unverified |
 | `0x78` | | truncated | **Unknown.** Mods: Ammo, unverified |
 

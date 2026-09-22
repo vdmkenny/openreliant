@@ -68,8 +68,8 @@ pub const ShipCombat = extern struct {
     afterburner_fuel: i32,
     /// `Ship.shield_recharge`, or 10 in place of zero.
     shield_recharge: f32,
-    /// `Ship._unknown_70`.
-    _unknown_10: f32,
+    /// `Ship.gun_energy`: the most the guns' charge holds.
+    gun_energy: f32,
     /// `Ship._unknown_74`.
     _unknown_14: f32,
     /// `Ship._unknown_78`, truncated.
