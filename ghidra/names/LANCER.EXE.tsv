@@ -667,3 +667,17 @@ address	kind	name	type	comment
 00474770	function	motion_follow	void __fastcall (int slot)	Steers toward the point the order state's callback gives and moves toward it, no faster than the order state's speed limit. Selected by the Follow Curve and Dock orders
 00474930	function	motion_follow_backwards	void __fastcall (int slot)	motion_follow with the angles to the point negated, for flying tail first
 00474b00	function	motion_drift	void __fastcall (int slot)	Slows the object to 0.99 of its velocity each update. Selected by the Jump In order
+004124e0	function	power_reach	float __thiscall (float x, float y)	How far the power setting in ECX is toward the direction (x, y): the distance from it to the edge of the power ball's disc, radius 64, going the other way. 128 at the anchor, 64 in the middle
+00412560	function	power_distribute	void __fastcall (GameObject *object)	Sets the object's shield, gun and speed factors from its power setting: each system's share of the three reaches, s, gives (1.75 - 0.75 s) s + 0.5
+00412d40	function	shield_balance	void __cdecl (float x, float y)	SHIELD BALANCING held: past half-way, the stick's y shifts a quarter of the shield power a step between the fore and aft shields, through their reserves
+00413180	function	power_move	void __cdecl (float x, float y)	POWERBALL WINDOW held: moves the player's power setting against the stick by the frame's ticks, keeps it within the disc and distributes the power
+00476fc0	function	object_recharge_shields	void __fastcall (GameObject *object)	Each simulation step: each shield gains its full charge times the shield factor and condition over the recharge time, up to the full charge, less what SHIELD BALANCING shifted to the other side for the player
+00482de0	function	hud_channel	uchar __cdecl (float x)	A colour channel: x cut to a whole number and kept within 0 and 255
+0051cefc	data	shield_balancing_held	short	Set while SHIELD BALANCING is held: the stick shifts the shields instead of steering
+0051cf34	data	shield_reserve_aft	float	What SHIELD BALANCING shifted beyond the aft shield's most
+0051cf78	data	shield_reserve_fore	float	What SHIELD BALANCING shifted beyond the fore shield's most
+00569984	data	power_ball_texture	byte[65536]	powerball.tga, a byte a pixel, each the top 5 bits of the grey
+00579e2c	data	power_ball_sphere	ushort[3844]	Where each pixel of the 62 by 62 power ball shows the texture, a sphere mapped onto it
+00567f90	data	power_ball_shade	byte[3844]	How brightly each pixel of the power ball is lit, 0 to 63
+00566f90	data	power_ball_colours16	ushort[2048]	The power ball's colours in the 16-bit display: 32 for each of 64 levels of light
+00568e94	data	power_ball_colours8	byte[2048]	The same for the 8-bit display, as palette indices

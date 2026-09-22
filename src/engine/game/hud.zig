@@ -4,10 +4,11 @@
 //!
 //! Ported so far: where an element stands, its text, the readouts, the clock, the status lights
 //! with the devices' charges, the jump prompt, the eject marker, the scanner, the ship status
-//! indicator's shields, the targeting cluster, the radar's rings and ranges, and the windows,
-//! their frames and how they open and close ([`hud/windows.zig`](hud/windows.zig)). Not yet: the
-//! rest of `hud_draw`, whose other elements [`hud.md`](../../../docs/engine/hud.md) lists, and
-//! what the windows show.
+//! indicator's shields, the targeting cluster, the radar's rings and ranges, the windows, their
+//! frames and how they open and close ([`hud/windows.zig`](hud/windows.zig)), and what window 7,
+//! the power distribution, shows ([`hud/power.zig`](hud/power.zig)). Not yet: the rest of
+//! `hud_draw`, whose other elements [`hud.md`](../../../docs/engine/hud.md) lists, and what the
+//! other windows show.
 //!
 //! **Improvement.** The game draws the display with the processor, whichever renderer is running:
 //! `hud_text` hands its line to `VFX_string_draw`, out of `vfx.dll`, which blits each glyph into a
@@ -34,6 +35,12 @@ const srd3d = @import("../surrender/srd3d/srd3d.zig");
 const device = @import("../surrender/srd3d/device.zig");
 
 pub const windows = @import("hud/windows.zig");
+pub const power = @import("hud/power.zig");
+
+test {
+    _ = windows;
+    _ = power;
+}
 
 /// What `hud_place` takes off the screen's size before working a place out, and what it adds back
 /// afterwards. An element therefore keeps its place at any resolution.
@@ -286,10 +293,20 @@ pub fn drawShapeWith(
 ) (spr.Error || Allocator.Error)!void {
     const found = art.shape(index) orelse return;
     const image = try art.image(gpa, index) orelse return;
-    const left = @as(f32, @floatFromInt(at[0])) + @as(f32, @floatFromInt(found.header.x1)) * scale;
-    const top = @as(f32, @floatFromInt(at[1])) + @as(f32, @floatFromInt(found.header.y1)) * scale;
-    const right = left + @as(f32, @floatFromInt(found.width())) * scale;
-    const bottom = top + @as(f32, @floatFromInt(found.height())) * scale;
+    const corner: [2]f32 = .{
+        @as(f32, @floatFromInt(at[0])) + @as(f32, @floatFromInt(found.header.x1)) * scale,
+        @as(f32, @floatFromInt(at[1])) + @as(f32, @floatFromInt(found.header.y1)) * scale,
+    };
+    drawImage(target, image, corner, colour, scale, how);
+}
+
+/// Draws `image` with its top left corner at `corner` on the screen, `scale` times its own size,
+/// mirrored or clipped as `how` says.
+pub fn drawImage(target: device.Device, image: *srtexture.Image, corner: [2]f32, colour: [4]f32, scale: f32, how: Draw) void {
+    const left = corner[0];
+    const top = corner[1];
+    const right = left + @as(f32, @floatFromInt(image.width())) * scale;
+    const bottom = top + @as(f32, @floatFromInt(image.height())) * scale;
     var x: [2]f32 = .{ left, right };
     var y: [2]f32 = .{ top, bottom };
     var u: [2]f32 = if (how.mirror.across) .{ 1, 0 } else .{ 0, 1 };
@@ -298,7 +315,7 @@ pub fn drawShapeWith(
         const kept_x: [2]f32 = .{ @max(left, clip.left), @min(right, clip.right) };
         const kept_y: [2]f32 = .{ @max(top, clip.top), @min(bottom, clip.bottom) };
         if (kept_x[0] >= kept_x[1] or kept_y[0] >= kept_y[1]) return;
-        // Each texture coordinate follows its edge in, in the shape's own proportion.
+        // Each texture coordinate follows its edge in, in the image's own proportion.
         const across = u;
         const down = v;
         for (0..2) |edge| {

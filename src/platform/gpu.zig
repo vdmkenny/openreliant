@@ -447,12 +447,20 @@ pub const Gpu = struct {
         try gpu.runs.append(gpu.gpa, run);
     }
 
-    /// Where an image's texture lies, placing it the first time.
+    /// Where an image's texture lies, placing it the first time, and sending its pixels up again
+    /// into the same layer when they have changed.
     fn slotOf(gpu: *Gpu, image: *srtexture.Image) Error!?Slot {
         if (image.levels.len == 0) return null;
-        if (Slot.of(image.*)) |slot| return slot;
+        if (Slot.of(image.*)) |slot| {
+            if (image.changed) {
+                try gpu.uploads.append(gpu.gpa, .{ .levels = image.levels, .slot = slot });
+                image.changed = false;
+            }
+            return slot;
+        }
         const slot = try gpu.place(image.levels);
         image.device = @as(u32, @bitCast(slot));
+        image.changed = false;
         return slot;
     }
 

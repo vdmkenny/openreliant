@@ -1,0 +1,449 @@
+//! Window 7 of the display, the power distribution (`hud_window_draw`'s case for it, at
+//! `0x00488491`): the power ball, and the shields', guns' and engines' shares of the power as
+//! percentages and bars. `hud_init` (`0x00483150`) works out the tables the ball is drawn from.
+//!
+//! The ball is a sphere textured with `powerball.tga` and lit from the front and above. The
+//! texture scrolls with the power setting, so the ball looks as if it turns toward wherever the
+//! power is. The game writes it into the display a pixel at a time; the port writes the same
+//! pixels into an image each frame and draws that.
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const math = @import("../../surrender/math.zig");
+const srtexture = @import("../../surrender/surrenderlib/srtexture.zig");
+const device = @import("../../surrender/srd3d/device.zig");
+const spr = @import("../../../formats/spr.zig");
+const tga = @import("../../../formats/tga.zig");
+const libcmt = @import("../../libcmt.zig");
+const input_power = @import("../../input/power.zig");
+const gameobj = @import("../gameobj.zig");
+const hud = @import("../hud.zig");
+const language = @import("../language.zig");
+
+/// The texture `hud_init` reads for the ball.
+pub const picture_name = "powerball.tga";
+
+/// The ball's size: 62 pixels across and down, holding a circle of radius 31.
+pub const size = 62;
+const radius = size / 2;
+
+/// The texture's size: `powerball.tga` is 256 by 256.
+const texture_size = 256;
+
+/// Levels of light, and colours for each: a colour is picked by the texture's level at a pixel
+/// and the light there.
+const lights = 64;
+const levels = 32;
+
+/// How far the display's shake can move a row of the ball to the right: `hit_shake` is at most 2
+/// by the time the display is drawn, which gives 20 pixels.
+const most_jitter = 20;
+
+/// The width of the image the ball is drawn into, with room for the shake.
+pub const image_width = size + most_jitter;
+
+/// A step across the ball, from one pixel to the next: its radius is 1 in the tables' sums.
+const step: f32 = 1.0 / 31.0;
+
+/// The tables the ball is drawn from, and the image the port draws it into.
+pub const Ball = struct {
+    /// `powerball.tga`'s levels, a byte a pixel, top row first (`0x00569984`). The image is grey,
+    /// and `hud_init` keeps the top 5 bits of each pixel's first channel.
+    texture: [texture_size * texture_size]u8,
+    /// Where each pixel of the ball shows the texture: a sphere mapped onto it, an offset from the
+    /// texture's middle, 16 bits wide (`0x00579E2C`).
+    sphere: [size * size]u16,
+    /// How brightly each pixel is lit, 0 to 63 (`0x00567F90`).
+    shade: [size * size]u8,
+    /// The colours: for each level of light, one for each of the texture's levels (`0x00566F90`,
+    /// in the display's 16-bit format, and `0x00568E94` for the 8-bit one).
+    colours: [lights][levels][3]u8,
+    /// The ball, drawn afresh each frame, and the image the display draws it with.
+    pixels: [image_width * size * 4]u8,
+    level: [1]srtexture.Level,
+    image: srtexture.Image,
+
+    /// What `hud_init` works out from `powerball.tga`.
+    pub fn create(gpa: Allocator, picture: tga.Image) Allocator.Error!*Ball {
+        const ball = try gpa.create(Ball);
+        fillTexture(&ball.texture, picture);
+        fillSphere(&ball.sphere);
+        const left_over = fillShade(&ball.shade);
+        fillColours(&ball.colours, left_over);
+        @memset(&ball.pixels, 0);
+        ball.level = .{.{ .width = image_width, .height = size, .rgba = &ball.pixels }};
+        ball.image = .{ .levels = &ball.level };
+        return ball;
+    }
+
+    /// The ball for the power setting `setting`, as window 7 writes it into the display: each row
+    /// of the circle, the texture scrolled by half the setting, lit by `shade` and coloured by
+    /// `colours`. While `hit_shake` is above zero, each row moves right by a random share of
+    /// `10 * hit_shake` pixels, a number of `random` a row, as the game does in 16-bit colour.
+    pub fn render(ball: *Ball, setting: [2]f32, hit_shake: f32, random: ?*libcmt.Rand) void {
+        @memset(&ball.pixels, 0);
+        const scroll = whole(setting[0] * 0.5) - whole(setting[1] * -0.5) * texture_size;
+        var row: i32 = -radius;
+        while (row < radius) : (row += 1) {
+            const span = whole(@sqrt(@as(f32, @floatFromInt(radius * radius - row * row))) + 0.5);
+            const jitter = @min(shake(hit_shake, random), most_jitter);
+            const first: usize = @intCast((row + radius) * size + radius - span);
+            const into: usize = @intCast((row + radius) * image_width + radius - span + jitter);
+            for (0..@intCast(2 * span)) |across| {
+                const at = first + across;
+                const texel = ball.texture[@intCast(std.math.clamp(@as(i32, ball.sphere[at]) + scroll, 0, texture_size * texture_size - 1))];
+                const colour = ball.colours[ball.shade[at]][texel];
+                const pixel = ball.pixels[(into + across) * 4 ..][0..4];
+                pixel.* = .{ colour[0], colour[1], colour[2], 255 };
+            }
+        }
+        ball.image.changed = true;
+    }
+};
+
+/// How far the shake moves a row: nothing while `hit_shake` is not above zero, and otherwise a
+/// random share of `10 * hit_shake` pixels, rounded as `sr_round` rounds.
+fn shake(hit_shake: f32, random: ?*libcmt.Rand) i32 {
+    if (!(hit_shake > 0)) return 0;
+    const source = random orelse return 0;
+    const share = @as(f32, @floatFromInt(source.rand())) * (1.0 / @as(f32, libcmt.Rand.max));
+    return @intFromFloat(math.roundEven(share * 10 * hit_shake));
+}
+
+/// `x` cut down to a whole number, as the runtime's `__ftol` does.
+fn whole(x: f32) i32 {
+    return std.math.lossyCast(i32, @trunc(x));
+}
+
+/// `0x00482DE0`: a colour channel, cut down to a whole number and kept within 0 and 255.
+fn channel(x: f32) u8 {
+    return @intCast(std.math.clamp(whole(x), 0, 255));
+}
+
+fn fillTexture(texture: *[texture_size * texture_size]u8, picture: tga.Image) void {
+    for (0..texture_size) |y| {
+        for (0..texture_size) |x| {
+            const grey = if (x < picture.width and y < picture.height) picture.pixel(x, y)[0] else 0;
+            texture[y * texture_size + x] = grey >> 3;
+        }
+    }
+}
+
+/// Each pixel of the ball as a point on a sphere of radius √2 seen from the front, and where it
+/// falls on the texture: 138 texels to the half turn from its middle, `x` to the right and `y`
+/// down. A pixel outside the circle is pulled in toward it.
+fn fillSphere(sphere: *[size * size]u16) void {
+    for (0..size) |row| {
+        const y = centred(row) * step;
+        const y_squared = y * y;
+        for (0..size) |column| {
+            const x = centred(column) * step;
+            const at = inside(x, y, x * x + y_squared);
+            const z = @sqrt(2 - at.squared);
+            const across: f32 = std.math.asin(at.x / z);
+            const down = whole(std.math.asin(at.y / z) * (1.0 / std.math.pi) * -138);
+            const offset = whole(across * (1.0 / std.math.pi) * 138) - down * texture_size - 0x7F80;
+            sphere[row * size + column] = @truncate(@as(u32, @bitCast(offset)));
+        }
+    }
+}
+
+/// How much light each pixel of the ball gets, from 0 to 63: the pixel at `x`, `y` stands for the
+/// point `(x + 0.3, y + 0.3)` on a sphere of radius 1, so the brightest spot is up and to the left
+/// of the middle, and gets 64 times the cosine of the angle between the sphere's surface there and
+/// a light at 8 in front. Returns the `x` of the last pixel's point, which the colours start from.
+fn fillShade(shade: *[size * size]u8) f32 {
+    const light: math.Vector = .{ 0, 0, 8 };
+    var left_over: f32 = 0;
+    for (0..size) |row| {
+        const y = centred(row) * step + 0.3;
+        const y_squared = y * y;
+        for (0..size) |column| {
+            const x = centred(column) * step + 0.3;
+            const at = inside(x, y, x * x + y_squared);
+            const point: math.Vector = .{ at.x, at.y, @sqrt(1 - at.squared) };
+            const towards = light - point;
+            const lit = math.dot(towards, point) * 64 / math.length(towards);
+            shade[row * size + column] = @intCast(std.math.clamp(whole(lit), 0, lights - 1));
+            left_over = at.x;
+        }
+    }
+    return left_over;
+}
+
+/// The colours: orange shades of the texture's level, brighter with the light, and past three
+/// quarters of it a white highlight added to every channel. Below that, the game adds what is left
+/// in the highlight's place from working the shade out, `left_over`, which is well under 1 and
+/// only moves where the channels round to.
+fn fillColours(colours: *[lights][levels][3]u8, left_over: f32) void {
+    var highlight = left_over;
+    for (colours, 0..) |*light, row| {
+        const t = @as(f32, @floatFromInt(row)) * (1.0 / 63.0);
+        for (light, 0..) |*colour, level| {
+            var brightness = t * t + 0.25;
+            if (brightness > 1) {
+                highlight = (brightness - 1) * 255;
+                brightness = 1;
+            }
+            const value = @as(f32, @floatFromInt(level)) * step * brightness;
+            colour.* = .{ channel(value * 184 + highlight), channel(value * 67 + highlight), channel(highlight) };
+        }
+    }
+}
+
+/// A row or column of the ball, from its middle.
+fn centred(index: usize) f32 {
+    return @floatFromInt(@as(i32, @intCast(index)) - radius);
+}
+
+const Inside = struct { x: f32, y: f32, squared: f32 };
+
+/// A point of the ball's square outside its circle, divided by its distance squared, and taken as
+/// lying on it; one inside, as it stands.
+fn inside(x: f32, y: f32, squared: f32) Inside {
+    if (squared > 1) return .{ .x = x / squared, .y = y / squared, .squared = 1 };
+    return .{ .x = x, .y = y, .squared = squared };
+}
+
+/// What window 7 needs to draw what it shows.
+pub const Shown = struct {
+    ball: *Ball,
+    /// The player's ship, whose power setting the window shows.
+    object: *const gameobj.GameObject,
+    /// The camera's shake, which shakes the ball too.
+    hit_shake: f32,
+    random: ?*libcmt.Rand,
+    font: *hud.Opened,
+    strings: *const language.Language,
+};
+
+/// The string the window's title is (`0xA7`).
+const title = 0xA7;
+
+/// The shares as whole percentages, which `hud_window_draw` rounds from each share and then, where
+/// they come to 101, takes one from the first that is 34.
+pub fn percentages(setting: [2]f32) std.EnumArray(input_power.System, i32) {
+    const shares = input_power.shares(setting);
+    var found: std.EnumArray(input_power.System, i32) = undefined;
+    for (std.enums.values(input_power.System)) |system| {
+        found.set(system, @intFromFloat(math.roundEven(shares.get(system) * 100)));
+    }
+    if (found.get(.shields) + found.get(.guns) + found.get(.engines) == 101) {
+        for (std.enums.values(input_power.System)) |system| {
+            if (found.get(system) != 34) continue;
+            found.set(system, 33);
+            break;
+        }
+    }
+    return found;
+}
+
+/// A bar of the window: the shape that stands for its empty bar, the shape drawn over it for the
+/// share, and the pane that cuts the share down to size (`0x00566658`, `0x00566654` and
+/// `0x00566650`), as the pane's edges stand for a share, from the window's place.
+const Bar = struct {
+    empty: u16,
+    full: u16,
+    at: [2]i32,
+    /// The pane's left, top, right and bottom edges, inclusive, for a share.
+    pane: *const fn (share: f32) [4]i32,
+};
+
+const bars = std.EnumArray(input_power.System, Bar).init(.{
+    // Across the top, emptying from the left.
+    .shields = .{ .empty = 0x83, .full = 0x80, .at = .{ 41, -32 }, .pane = struct {
+        fn pane(share: f32) [4]i32 {
+            return .{ 40 + round(54 - share * 54), -33, 94, -17 };
+        }
+    }.pane },
+    // Up the left side, filling from the foot.
+    .guns = .{ .empty = 0x84, .full = 0x81, .at = .{ 34, -13 }, .pane = struct {
+        fn pane(share: f32) [4]i32 {
+            return .{ 33, -14 + round(48 - share * 48), 64, 34 };
+        }
+    }.pane },
+    // Down the right side, filling from the top.
+    .engines = .{ .empty = 0x85, .full = 0x82, .at = .{ 70, -13 }, .pane = struct {
+        fn pane(share: f32) [4]i32 {
+            return .{ 69, -14, 100, -14 + round(share * 48) };
+        }
+    }.pane },
+});
+
+/// Where each share's percentage stands from the window's place.
+const figures = std.EnumArray(input_power.System, [2]i32).init(.{
+    .shields = .{ 86, -43 },
+    .guns = .{ 18, 30 },
+    .engines = .{ 86, 30 },
+});
+
+/// The shapes the window draws last, and where from its place: the frames round the figures.
+const labels = [_]struct { shape: u16, at: [2]i32 }{
+    .{ .shape = 0xBE, .at = .{ 53, -67 } },
+    .{ .shape = 0xBD, .at = .{ 103, 1 } },
+    .{ .shape = 0xC1, .at = .{ 2, 4 } },
+};
+
+/// Where the ball's image stands from the window's place: the circle's middle is at 68 across and
+/// 1 up.
+const ball_at: [2]i32 = .{ 68 - radius, -1 - radius };
+
+/// Draws what window 7 shows, the window's place at `at` on the screen and `size` times its own
+/// size, cut to `clip` while it opens or closes, in the order `hud_window_draw` draws it: the title,
+/// the ball, the percentages, then each bar and the shapes round them.
+pub fn draw(
+    shown: Shown,
+    art: *hud.Art,
+    gpa: Allocator,
+    target: device.Device,
+    at: [2]i32,
+    size_on_screen: f32,
+    clip: ?hud.Clip,
+    colour: [4]f32,
+) (spr.Error || Allocator.Error)!void {
+    const place = struct {
+        fn of(from: [2]i32, offset: [2]i32, by: f32) [2]i32 {
+            return .{
+                from[0] + round(@as(f32, @floatFromInt(offset[0])) * by),
+                from[1] + round(@as(f32, @floatFromInt(offset[1])) * by),
+            };
+        }
+    }.of;
+    if (shown.strings.string(title)) |text| {
+        _ = try hud.drawText(shown.font, gpa, target, place(at, .{ 2, -77 }, size_on_screen), text, colour, .left, size_on_screen);
+    }
+
+    const setting = input_power.point(shown.object);
+    shown.ball.render(setting, shown.hit_shake, shown.random);
+    const corner = place(at, ball_at, size_on_screen);
+    hud.drawImage(target, &shown.ball.image, .{ @floatFromInt(corner[0]), @floatFromInt(corner[1]) }, colour, size_on_screen, .{ .clip = clip });
+
+    const found = percentages(setting);
+    for (std.enums.values(input_power.System)) |system| {
+        var buffer: [16]u8 = undefined;
+        const text = std.fmt.bufPrint(&buffer, "{d}%", .{found.get(system)}) catch continue;
+        _ = try hud.drawText(shown.font, gpa, target, place(at, figures.get(system), size_on_screen), text, colour, .left, size_on_screen);
+    }
+
+    const shares = input_power.shares(setting);
+    for ([_]input_power.System{ .guns, .engines, .shields }) |system| {
+        const bar = bars.get(system);
+        const from = place(at, bar.at, size_on_screen);
+        try hud.drawShapeWith(art, gpa, target, bar.empty, from, colour, size_on_screen, .{ .clip = clip });
+        const pane = bar.pane(shares.get(system));
+        const cut = within(.{
+            .left = edge(at[0], pane[0], size_on_screen),
+            .top = edge(at[1], pane[1], size_on_screen),
+            .right = edge(at[0], pane[2] + 1, size_on_screen),
+            .bottom = edge(at[1], pane[3] + 1, size_on_screen),
+        }, clip);
+        try hud.drawShapeWith(art, gpa, target, bar.full, from, colour, size_on_screen, .{ .clip = cut });
+    }
+    for (labels) |label| {
+        try hud.drawShapeWith(art, gpa, target, label.shape, place(at, label.at, size_on_screen), colour, size_on_screen, .{ .clip = clip });
+    }
+}
+
+/// Where a pane's edge `pixels` from the window's place falls on the screen.
+fn edge(from: i32, pixels: i32, by: f32) f32 {
+    return @as(f32, @floatFromInt(from)) + @as(f32, @floatFromInt(pixels)) * by;
+}
+
+/// `pane` cut to `clip` as well, if there is one.
+fn within(pane: hud.Clip, clip: ?hud.Clip) hud.Clip {
+    const outer = clip orelse return pane;
+    return .{
+        .left = @max(pane.left, outer.left),
+        .top = @max(pane.top, outer.top),
+        .right = @min(pane.right, outer.right),
+        .bottom = @min(pane.bottom, outer.bottom),
+    };
+}
+
+fn round(value: f32) i32 {
+    return @intFromFloat(math.roundEven(value));
+}
+
+fn testingPicture(gpa: Allocator) !tga.Image {
+    const rgb = try gpa.alloc(u8, texture_size * texture_size * 3);
+    for (0..texture_size * texture_size) |at| {
+        // A gradient across, so that where the ball samples it shows.
+        const grey: u8 = @intCast(at % texture_size);
+        @memset(rgb[at * 3 ..][0..3], grey);
+    }
+    return .{ .width = texture_size, .height = texture_size, .rgb = rgb };
+}
+
+test Ball {
+    const gpa = std.testing.allocator;
+    const picture = try testingPicture(gpa);
+    defer gpa.free(picture.rgb);
+    const ball = try Ball.create(gpa, picture);
+    defer gpa.destroy(ball);
+
+    // The middle of the ball shows the middle of the texture; the texture keeps 5 bits a level.
+    try std.testing.expectEqual(0x8080, ball.sphere[radius * size + radius]);
+    try std.testing.expectEqual(128 >> 3, ball.texture[0x8080]);
+    // The light is brightest above and to the left of the middle, and none reaches the far edge.
+    try std.testing.expect(ball.shade[20 * size + 20] > ball.shade[40 * size + 40]);
+    try std.testing.expectEqual(lights - 1, std.mem.max(u8, &ball.shade));
+    // Dark and unlit is black; the brightest light adds a white highlight.
+    try std.testing.expectEqual([3]u8{ 0, 0, 0 }, ball.colours[0][0]);
+    try std.testing.expect(ball.colours[lights - 1][0][2] > 0);
+    try std.testing.expectEqual(0, ball.colours[10][levels - 1][2]);
+
+    // Drawn, the ball is a circle, clear outside it.
+    ball.render(.{ 1, 1 }, 0, null);
+    try std.testing.expect(ball.image.changed);
+    const middle = (radius * image_width + radius) * 4;
+    try std.testing.expectEqual(255, ball.pixels[middle + 3]);
+    try std.testing.expectEqual(0, ball.pixels[3]);
+    // The texture scrolls with the setting: across it, the ball's middle shows another level.
+    const before = ball.pixels[middle..][0..3].*;
+    ball.render(.{ -60, 1 }, 0, null);
+    try std.testing.expect(!std.mem.eql(u8, &before, ball.pixels[middle..][0..3]));
+}
+
+test "the shake moves the ball's rows to the right" {
+    const gpa = std.testing.allocator;
+    const picture = try testingPicture(gpa);
+    defer gpa.free(picture.rgb);
+    const ball = try Ball.create(gpa, picture);
+    defer gpa.destroy(ball);
+    var random: libcmt.Rand = .{};
+    ball.render(.{ 1, 1 }, 2, &random);
+    // Some row starts right of where it would stand still, and none reaches past the image.
+    var moved = false;
+    for (0..size) |row| {
+        const at = row * image_width * 4;
+        const start = for (0..image_width) |x| {
+            if (ball.pixels[at + x * 4 + 3] != 0) break x;
+        } else continue;
+        const centre: i32 = @intCast(row);
+        const span = whole(@sqrt(@as(f32, @floatFromInt(radius * radius - (centre - radius) * (centre - radius)))) + 0.5);
+        if (start > @as(usize, @intCast(radius - span))) moved = true;
+    }
+    try std.testing.expect(moved);
+}
+
+test percentages {
+    // EQUALIZE POWER's point rounds to 34, 34 and 33, and the first 34 gives one back.
+    const found = percentages(input_power.presets.get(.equal));
+    try std.testing.expectEqual(33, found.get(.shields));
+    try std.testing.expectEqual(34, found.get(.guns));
+    try std.testing.expectEqual(33, found.get(.engines));
+    // Nearly all of it to the engines.
+    const engines = percentages(input_power.presets.get(.engines));
+    try std.testing.expect(engines.get(.engines) > 90);
+}
+
+test "the bars' panes cut them to their shares" {
+    // The guns' bar shows all of its 48 rows at a whole share and one at none.
+    try std.testing.expectEqual(-14, bars.get(.guns).pane(1)[1]);
+    try std.testing.expectEqual(34, bars.get(.guns).pane(0)[1]);
+    // The engines' bar shows a row for each forty-eighth.
+    try std.testing.expectEqual(-14 + 24, bars.get(.engines).pane(0.5)[3]);
+    // The shields' bar empties from the left.
+    try std.testing.expectEqual(40 + 54, bars.get(.shields).pane(0)[0]);
+}

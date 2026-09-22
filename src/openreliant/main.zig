@@ -294,16 +294,20 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         frames_left = 2;
     }
 
-    // The head-up display: its shapes, its font, and what draws it over the finished scene.
+    // The head-up display: its shapes, its font, the power ball `hud_init` works out, and what
+    // draws it over the finished scene.
     var display: Display = .{
         .art = try .init(arena, shapes, global_palette),
         .font = .open(try fnt.Font.parse(try resources.readFile(arena, hud_font))),
+        .ball = try .create(arena, try tga.decode(arena, try resources.readFile(arena, game.hud.power.picture_name))),
         .gpa = arena,
         .target = undefined,
         .screen = .{ 0, 0 },
         .ship = &ship,
         .clock = &clock,
         .player = &player,
+        .view = &view,
+        .random = &rand,
         .strings = &strings,
     };
     // What the mission's start fits the player's ship with, once `hud_init` has set the display up.
@@ -657,6 +661,8 @@ const hud_font = "FONT.FNT";
 const Display = struct {
     art: game.hud.Art,
     font: game.hud.Opened,
+    /// The power ball's tables, and the image it is drawn into.
+    ball: *game.hud.power.Ball,
     gpa: Allocator,
     /// Filled in each frame, before the scene is drawn.
     target: srd3d.device.Device,
@@ -668,6 +674,10 @@ const Display = struct {
     ship: *Ship,
     clock: *const game.main.Clock,
     player: *const engine.input.Player,
+    /// The camera, whose shake shakes the power ball too.
+    view: *const camera.Camera,
+    /// The C runtime's `rand`, which the camera and the display both draw from.
+    random: *engine.libcmt.Rand,
     /// The display's own state, `hud.cpp`'s globals.
     state: game.hud.State = .{},
     /// What the mission has ready for JUMP DRIVE. The sandbox runs no mission, so nothing is.
@@ -710,7 +720,15 @@ const Display = struct {
         try game.hud.drawViewName(&display.font, display.gpa, display.target, display.screen, display.last_view, display.strings.*, white, scale);
         if (instrumented) try display.drawInstruments(white, scale);
         // The windows move on in every view, after the instruments.
-        try state.windows.frame(&display.art, display.gpa, display.target, display.screen, display.last_view, frame_duration, white, scale);
+        const contents: game.hud.windows.Contents = .{ .power = .{
+            .ball = display.ball,
+            .object = live,
+            .hit_shake = display.view.hit_shake,
+            .random = display.random,
+            .font = &display.font,
+            .strings = display.strings,
+        } };
+        try state.windows.frame(&display.art, display.gpa, display.target, display.screen, display.last_view, frame_duration, contents, white, scale);
     }
 
     /// What `hud_draw` draws only in the view ahead from the cockpit.

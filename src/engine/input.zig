@@ -696,8 +696,8 @@ pub const Player = struct {
     matching_speed: bool = false,
     /// `afterburner_toggled` (`0x0051CEFE`), flipped by AFTERBURNER TOGGLE.
     afterburner_toggled: bool = false,
-    /// `powerball_held` (`0x0051CEF8`): set while POWERBALL WINDOW is held, or once its locked
-    /// form has opened the power window. The stick then moves the power instead of steering.
+    /// `powerball_held` (`0x0051CEF8`): set while POWERBALL WINDOW is held, and for the frame its
+    /// locked form opens the power window. The stick then moves the power instead of steering.
     power_held: bool = false,
     /// `0x0051CEFC`: set while SHIELD BALANCING is held. The stick then shifts the shields fore and
     /// aft instead of steering.
