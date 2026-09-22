@@ -833,14 +833,48 @@ pub fn recentre(model: *objects.Model, source: *const shp.Model) void {
     model.place(@splat(0), math.identity);
     model.radius = 0;
     model.bounds = .{ @splat(std.math.floatMax(f32)), @splat(-std.math.floatMax(f32)) };
-    for (model.parts) |part| {
-        if (part.object.levels.len == 0) continue;
-        for (part.object.levels[part.object.level].mesh.positions) |position| {
-            const at = position + part.object.position;
-            model.bounds = .{ @min(model.bounds[0], at), @max(model.bounds[1], at) };
-            model.radius = @max(model.radius, math.length(at));
+    var tensor: math.Matrix = @splat(0);
+    for (model.parts, source.parts) |part, data| {
+        if (part.object.levels.len > 0) {
+            for (part.object.levels[part.object.level].mesh.positions) |position| {
+                const at = position + part.object.position;
+                model.bounds = .{ @min(model.bounds[0], at), @max(model.bounds[1], at) };
+                model.radius = @max(model.radius, math.length(at));
+            }
         }
+        if (part.hidden) continue;
+        for (&tensor, partInertia(part.object.position, &data.part)) |*sum, term| sum.* += term;
     }
+    // The tensor is built as its own lower half, which the upper half mirrors before it is
+    // inverted, since the two are the same for it.
+    tensor[1] = tensor[3];
+    tensor[2] = tensor[6];
+    tensor[5] = tensor[7];
+    // A model whose parts have no volume, as a few do, leaves a tensor that cannot be inverted:
+    // the game divides by its determinant whatever it is, and the port leaves nothing to turn by.
+    model.angular_response = math.inverse(tensor) orelse @splat(0);
+}
+
+/// What a part adds to its object's inertia tensor (`object_bounds`), with `at` its origin in the
+/// object's frame: its second moments about the two other axes on the diagonal and its products off
+/// it, each with the term its distance from the object's own origin adds, all times its density.
+///
+/// The part's own frame is not taken into account, so a part that its model turns counts as though
+/// it stood square.
+fn partInertia(at: math.Vector, part: *const shp.Part) math.Matrix {
+    const first = part.first_moments;
+    const second = part.second_moments;
+    const products = part.products;
+    const volume = part.volume;
+    var own: math.Matrix = @splat(0);
+    own[0] = -(2 * at[1] * first[1] + 2 * at[2] * first[2] + at[2] * at[2] * volume + at[1] * at[1] * volume + second[1] + second[2]);
+    own[4] = -(2 * at[0] * first[0] + 2 * at[2] * first[2] + at[2] * at[2] * volume + at[0] * at[0] * volume + second[0] + second[2]);
+    own[8] = -(2 * at[1] * first[1] + 2 * at[0] * first[0] + at[1] * at[1] * volume + at[0] * at[0] * volume + second[1] + second[0]);
+    own[3] = at[1] * first[0] + (at[1] * volume + first[1]) * at[0] + products[0];
+    own[6] = at[2] * first[0] + (at[2] * volume + first[2]) * at[0] + products[2];
+    own[7] = at[2] * first[1] + (at[2] * volume + first[2]) * at[1] + products[1];
+    for (&own) |*term| term.* *= -part.density;
+    return own;
 }
 
 /// `node_tree_update` (`0x00476C90`), which `simulation_step` runs for every live object at the

@@ -708,3 +708,9 @@ address	kind	name	type	comment
 00465c50	function	objects_collide_parts	void __fastcall (int *a, int *b, int flag)	Tests the ship of a pair against the parts of whichever object lists components, through 0x465380; type 0x83 runs 0x465B40 first
 00465ca0	function	collision_damage	void __fastcall (int *a, int *b)	The damage two objects do each other as they collide: a fifth of the closing speed over the lighter one's mass, halved, through each ship's shields and armour at the quadrant the other struck
 00468f60	function	collision_extent_compare	int __cdecl (int *a, int *b)	qsort's comparator for the collision sweep: orders the entries by how far each sphere reaches along X, the farthest first
+00464e80	function	collision_impulse	void __fastcall (GameObject *a, ModelNode *a_root, GameObject *b, ModelNode *b_root)	The shove two objects give each other where they meet: how fast the contact point closes between this step and the next, over each object's mass and angular_response, twice it for the bounce, handed to both through object_knock. An attached object, and the Ripper carrying something, take none
+004ad8d0	function	node_next_place	void __fastcall (ModelNode *node, Vec3 *position, float *orientation)	A node's next place in the world: its own next place, turned and moved by each parent's in turn
+004ad960	function	node_world_place	void __fastcall (ModelNode *node, Vec3 *position, float *orientation)	A node's place in the world: its own, turned and moved by each parent's in turn
+004c1c10	function	mat3_add	void __fastcall (float *m, float *by)	Adds a 3x3 matrix into another
+004c1160	function	vec3_cross_by	void __fastcall (Vec3 *v, Vec3 *by)	Crosses a vector by another in place
+004c2050	function	det2	float __fastcall (float a, float b, float c, float d)	The determinant of a 2x2 matrix: a*d - b*c, which mat3_determinant sums three of

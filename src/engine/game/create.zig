@@ -537,6 +537,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
         object.mass = model.mass;
         object.centre = gameobj.vec3(model.centre);
         object.radius = model.radius;
+        object.angular_response = model.angular_response;
         object.bounds_min = gameobj.vec3(model.bounds[0]);
         object.bounds_max = gameobj.vec3(model.bounds[1]);
         objects.setPosition(object, &slot.drawn, at);
@@ -650,7 +651,7 @@ pub const Sweep = struct {
 
     fn run(sweep: *Sweep, world: gameobj.World) void {
         const all = world.objects;
-        for (0..passes) |_| {
+        for (0..passes) |pass| {
             std.mem.sort(u16, sweep.order[0..sweep.count], sweep.entries[0..sweep.count], farthestFirst);
             var moved = false;
             for (0..sweep.count) |first| {
@@ -663,7 +664,7 @@ pub const Sweep = struct {
                     // it.
                     if (far.far < back) break;
                     if (!meets(all, near.index, far.index)) continue;
-                    if (!collision.collide(world, near.index, far.index)) continue;
+                    if (!collision.collide(world, near.index, far.index, @intCast(pass))) continue;
                     moved = true;
                     // Both have been moved, so their extents are worked out again for the pass
                     // that follows.

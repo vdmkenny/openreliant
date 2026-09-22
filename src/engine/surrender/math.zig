@@ -85,6 +85,34 @@ pub fn product(a: Matrix, b: Matrix) Matrix {
     return m;
 }
 
+/// The determinant of a 3x3 matrix (`mat3_determinant`, `0x004C2070`), by the cofactors of its
+/// first row.
+pub fn determinant(m: Matrix) f32 {
+    return m[0] * (m[4] * m[8] - m[5] * m[7]) -
+        m[1] * (m[3] * m[8] - m[5] * m[6]) +
+        m[2] * (m[3] * m[7] - m[4] * m[6]);
+}
+
+/// The inverse of a 3x3 matrix, its adjugate over its determinant, or null for a matrix that has
+/// none (`mat3_inverse`, `0x004AD9F0`). The game divides by the determinant whatever it is, and
+/// leaves infinities behind where it is zero.
+pub fn inverse(m: Matrix) ?Matrix {
+    const scale = determinant(m);
+    if (scale == 0) return null;
+    const over = 1 / scale;
+    return .{
+        (m[4] * m[8] - m[5] * m[7]) * over,
+        -(m[1] * m[8] - m[2] * m[7]) * over,
+        (m[1] * m[5] - m[2] * m[4]) * over,
+        -(m[8] * m[3] - m[5] * m[6]) * over,
+        (m[8] * m[0] - m[2] * m[6]) * over,
+        -(m[5] * m[0] - m[2] * m[3]) * over,
+        (m[7] * m[3] - m[4] * m[6]) * over,
+        -(m[0] * m[7] - m[1] * m[6]) * over,
+        (m[4] * m[0] - m[1] * m[3]) * over,
+    };
+}
+
 pub fn transpose(m: Matrix) Matrix {
     return .{ m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8] };
 }
@@ -296,4 +324,14 @@ test angles {
     try std.testing.expectApproxEqAbs(0.6, found[0], 1e-6);
     try std.testing.expectApproxEqAbs(std.math.pi / 2.0, found[1], 1e-6);
     try std.testing.expectEqual(0, found[2]);
+}
+
+test inverse {
+    // A matrix times its inverse is the identity.
+    const m: Matrix = .{ 2, 0, 0, 0, 4, 0, 1, 0, 8 };
+    try std.testing.expectEqual(64, determinant(m));
+    const back = inverse(m).?;
+    for (product(m, back), identity) |got, want| try std.testing.expectApproxEqAbs(want, got, 1e-6);
+    // A matrix that flattens space has none.
+    try std.testing.expectEqual(null, inverse(.{ 1, 2, 3, 2, 4, 6, 0, 0, 1 }));
 }

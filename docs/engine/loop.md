@@ -92,11 +92,20 @@ they list components:
 | A torpedo against anything else | It goes off |
 | Anything else | The impact's damage, then both move again and are set apart |
 
-Two objects are set apart along the line between them: each is placed at 1.1 times its own radius
-from the point midway between the two, so the step that follows does not find them overlapping
-again.
+Before that, the two shove each other (`0x00464E80`). The point their spheres touch at moves with
+each of them between this step and the next, so a turning ship strikes with its wingtip's speed;
+the impulse comes from how fast the two points close, over each object's mass and its
+`angular_response`, doubled so the bounce keeps the speed they met at, and both take it through
+`object_knock`, equal and opposite. The move that follows applies those knocks. An object held to
+another, and the Ripper with something in its grip, take no shove.
 
-Ported so far: the sweep, the pairs it passes over, and setting two objects apart
+Two spheres meet on the line between their centres, so a shove between them has no lever and neither
+ship is set spinning. A hull's own faces do give one ([#143](https://github.com/vdmkenny/openreliant/issues/143)).
+
+The pair is then set apart along that line: each is placed at 1.1 times its own radius from the
+point midway between the two, so the step that follows does not find them overlapping again.
+
+Ported so far: the sweep, the pairs it passes over, the shove and setting two objects apart
 ([`collision.zig`](../../src/engine/game/collision.zig)). Not yet: the damage an impact does
 ([#42](https://github.com/vdmkenny/openreliant/issues/42)), the torpedo's and the mine's explosions
 ([#41](https://github.com/vdmkenny/openreliant/issues/41)), and the test against a capital ship's

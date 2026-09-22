@@ -255,6 +255,10 @@ pub const Model = struct {
     /// Its farthest vertex from its origin, and its bounding box (`GameObject.radius`,
     /// `bounds_min`, `bounds_max`), as `recentre` leaves them.
     radius: f32 = 0,
+    /// The inverse of the inertia tensor its parts sum to, which turns an angular impulse into the
+    /// turn it gives the object (`GameObject.angular_response`), as `recentre` leaves it. Zero for
+    /// a model whose parts have no volume, which nothing can turn.
+    angular_response: math.Matrix = @splat(0),
     /// How far off it stays worth drawing, over what its radius alone gives it
     /// (`GameObject.visibility`). Nothing in the shipped game moves it off 1.
     visibility: f32 = 1,

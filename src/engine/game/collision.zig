@@ -47,7 +47,7 @@ comptime {
 /// parts of a ship that lists components
 /// ([#143](https://github.com/vdmkenny/openreliant/issues/143)), which leaves those pairs passing
 /// through each other for now.
-pub fn collide(world: gameobj.World, first: u16, second: u16) bool {
+pub fn collide(world: gameobj.World, first: u16, second: u16, pass: u8) bool {
     const all = world.objects;
     var near = first;
     var far = second;
@@ -77,7 +77,7 @@ pub fn collide(world: gameobj.World, first: u16, second: u16) bool {
     if (classes[0] == .mine or classes[1] == .mine) return false;
     if (classes[0] == .torpedo) return true;
 
-    return push(world, near, far);
+    return push(world, near, far, pass);
 }
 
 /// The class of the ship type in a slot, or null for an object with no stats, which the game would
@@ -87,11 +87,97 @@ fn className(all: *const create.Objects, index: u16) ?create.ShipCombat.Class {
     return combat.class;
 }
 
-/// Both objects move again, and are then set apart along the line between them where they still
-/// overlap. The game does the impact's damage first, which may knock them about, so they are moved
-/// again before the two are placed.
-fn push(world: gameobj.World, first: u16, second: u16) bool {
+/// How hard the two come off each other (`0x004DC4A4`): the impulse carries twice the speed they
+/// meet at, so the bounce keeps it.
+const bounce: f32 = -2;
+
+/// The speed a pair whose contact points are not closing is pushed apart at, for each pass the
+/// sweep has already made (`0x004DC56C`), so a pair that keeps meeting is parted harder each time.
+const resting_speed: f32 = 5;
+
+/// `0x00464E80`: the shove two objects give each other where they meet. The point their spheres
+/// touch at moves with each of them, so a ship that is turning strikes harder with its wingtip; the
+/// impulse is worked out from how fast the two points close, each object's mass and how readily it
+/// turns (`GameObject.angular_response`), and is handed to both through `knock`, equal and
+/// opposite. An object held to another, and the Ripper with something in its grip, take none.
+///
+/// The knocks are applied by the move that follows, which is why a colliding pair moves again.
+fn shove(world: gameobj.World, first: u16, second: u16, pass: u8) void {
     const all = world.objects;
+    const near = &all.slots[first].object;
+    const far = &all.slots[second].object;
+    const here = gameobj.vector(near.root.position);
+    const there = gameobj.vector(far.root.position);
+    const apart = here - there;
+    if (math.lengthSquared(apart) == 0) return;
+    // The point their spheres touch at, and where it lies in each object's own frame.
+    const normal = -math.normalize(apart);
+    const contact = there + math.normalize(apart) * @as(Vector, @splat(far.radius));
+    const levers: [2]Vector = .{
+        math.transformTransposed(near.root.orientation, contact - here),
+        math.transformTransposed(far.root.orientation, contact - there),
+    };
+
+    // Where that point stands now and where the step is taking it, for each object.
+    const now: [2]Vector = .{
+        math.transform(near.root.orientation, levers[0]) + here,
+        math.transform(far.root.orientation, levers[1]) + there,
+    };
+    const next: [2]Vector = .{
+        math.transform(near.root.next_orientation, levers[0]) + gameobj.vector(near.root.next_position),
+        math.transform(far.root.next_orientation, levers[1]) + gameobj.vector(far.root.next_position),
+    };
+    var closing = (next[0] - now[0]) - (next[1] - now[1]);
+    if (math.lengthSquared(closing) == 0 and far.flags.components) {
+        // Two points that keep pace are parted by what is left of the first object's reach.
+        closing = normal * @as(Vector, @splat(near.radius - math.distance(now[0], next[0])));
+    }
+    const speed = math.length(closing);
+    if (math.dot(closing, normal) < 0 and speed > 0) {
+        closing *= @as(Vector, @splat(-(1 + @as(f32, @floatFromInt(pass))) * resting_speed / speed));
+    }
+
+    var give: f32 = 0;
+    for ([_]u16{ first, second }, now) |index, at| {
+        if (!shoved(all, index)) continue;
+        const object = &all.slots[index].object;
+        const lever = at - gameobj.vector(object.root.position);
+        const turn = math.transform(
+            object.root.orientation,
+            math.transform(object.angular_response, math.transformTransposed(object.root.orientation, math.cross(lever, normal))),
+        );
+        give += 1 / object.mass + math.dot(math.cross(turn, lever), normal);
+    }
+    if (give <= 0) return;
+    var force = normal * @as(Vector, @splat(math.dot(closing, normal) * bounce / give));
+    if (@reduce(.And, force == @as(Vector, @splat(0)))) force = normal;
+    for ([_]u16{ first, second }, now, 0..) |index, at, which| {
+        if (!shoved(all, index)) continue;
+        gameobj.knock(&all.slots[index].object, if (which == 0) force else -force, at);
+    }
+}
+
+/// Whether the object takes a shove at all: one held to another does not, nor does the Ripper while
+/// it is carrying something.
+///
+/// **Improvement:** neither does an object of no mass, which the game would divide by, since a
+/// model whose parts hold no volume leaves one.
+fn shoved(all: *const create.Objects, index: u16) bool {
+    const slot = &all.slots[index];
+    if (slot.object.flags.attached or slot.object.mass <= 0) return false;
+    if (slot.object.type != ripper_type) return true;
+    return slot.object.order_count == 0 or slot.orders[0].order != .ripper_grabs_target_object;
+}
+
+/// The Ripper, which is not shoved while it is carrying something.
+const ripper_type: u32 = 0x1F;
+
+/// Both objects shove each other, move again, and are then set apart along the line between them
+/// where they still overlap. The move applies the knocks the shove handed them, which is why it
+/// runs again here.
+fn push(world: gameobj.World, first: u16, second: u16, pass: u8) bool {
+    const all = world.objects;
+    shove(world, first, second, pass);
     for ([_]u16{ first, second }) |index| {
         const slot = &all.slots[index];
         const flight = slot.flight orelse continue;
@@ -156,7 +242,7 @@ test collide {
     // Two ships of 1000 units, 400 apart: each ends 1100 from the point between them.
     const near = try testing.ship(all, &tables, &random, .{ -200, 0, 0 }, 1000);
     const far = try testing.ship(all, &tables, &random, .{ 200, 0, 0 }, 1000);
-    try std.testing.expect(collide(world, near, far));
+    try std.testing.expect(collide(world, near, far, 0));
     try std.testing.expectApproxEqAbs(-1100, all.slots[near].object.root.position.x, 0.01);
     try std.testing.expectApproxEqAbs(1100, all.slots[far].object.root.position.x, 0.01);
     // What is drawn moves with them.
@@ -164,8 +250,51 @@ test collide {
 
     // Once they are clear of each other, nothing moves them.
     const held = all.slots[near].object.root.position.x;
-    try std.testing.expect(collide(world, near, far));
+    try std.testing.expect(collide(world, near, far, 0));
     try std.testing.expectEqual(held, all.slots[near].object.root.position.x);
+}
+
+test "a collision shoves both ships" {
+    const libcmt = @import("../libcmt.zig");
+    const input = @import("../input.zig");
+    var random: libcmt.Rand = .{};
+    const all = try create.Objects.create(std.testing.allocator, &random);
+    defer all.destroy();
+    var tables = create.testing.tables();
+    var player: input.Player = .{};
+    var shake: f32 = 0;
+    const world = testing.world(all, &player, &shake);
+
+    // Two ships of the same mass, the first flying into the second.
+    const near = try testing.ship(all, &tables, &random, .{ -900, 0, 0 }, 1000);
+    const far = try testing.ship(all, &tables, &random, .{ 900, 0, 0 }, 1000);
+    for ([_]u16{ near, far }) |index| {
+        all.slots[index].object.mass = 1000;
+        all.slots[index].object.angular_response = math.identity;
+    }
+    all.slots[near].object.velocity = .{ .x = 100, .y = 0, .z = 0 };
+    all.slots[near].object.root.next_position = .{ .x = -800, .y = 0, .z = 0 };
+
+    try std.testing.expect(collide(world, near, far, 0));
+    // The one that ran in is thrown back, and the one it struck is pushed on.
+    try std.testing.expect(all.slots[near].object.velocity.x < 100);
+    try std.testing.expect(all.slots[far].object.velocity.x > 0);
+    // What one takes, the other gives: the two shares of the momentum match.
+    const given = 100 - all.slots[near].object.velocity.x;
+    try std.testing.expectApproxEqAbs(given, all.slots[far].object.velocity.x, 1e-3);
+    // Neither is set spinning: the point two spheres meet at lies on the line between their
+    // centres, so the shove has no lever to turn them by. A hull's own faces do (#143).
+    try std.testing.expectEqual(0, all.slots[near].object.rotation[1]);
+    try std.testing.expectEqual(0, all.slots[far].object.rotation[1]);
+
+    // An object held to another takes no shove.
+    all.slots[far].object.flags.attached = true;
+    all.slots[far].object.velocity = .{ .x = 0, .y = 0, .z = 0 };
+    objects.setPosition(&all.slots[near].object, &all.slots[near].drawn, .{ -900, 0, 0 });
+    objects.setPosition(&all.slots[far].object, &all.slots[far].drawn, .{ 900, 0, 0 });
+    all.slots[near].object.velocity = .{ .x = 100, .y = 0, .z = 0 };
+    try std.testing.expect(collide(world, near, far, 0));
+    try std.testing.expectEqual(0, all.slots[far].object.velocity.x);
 }
 
 test "what never collides" {
@@ -183,23 +312,23 @@ test "what never collides" {
     const near = try testing.ship(all, &tables, &random, @splat(0), 1000);
     const far = try testing.ship(all, &tables, &random, .{ 100, 0, 0 }, 1000);
     tables.combat[0].class = .debris;
-    try std.testing.expect(!collide(world, near, far));
+    try std.testing.expect(!collide(world, near, far, 0));
 
     // So do a torpedo and another object of its own type.
     tables.combat[0].class = .torpedo;
-    try std.testing.expect(!collide(world, near, far));
+    try std.testing.expect(!collide(world, near, far, 0));
 
     // A torpedo of another type goes off against it instead of pushing it.
     tables.combat[1].class = .fighter;
     all.slots[far].object.type = 1;
     all.slots[far].combat = &tables.combat[1];
-    try std.testing.expect(collide(world, near, far));
+    try std.testing.expect(collide(world, near, far, 0));
     try std.testing.expectEqual(0, all.slots[near].object.root.position.x);
 
     // An object that lists components is met by its parts, which aren't ported, so nothing comes
     // of it.
     tables.combat[0].class = .fighter;
     all.slots[far].object.flags.components = true;
-    try std.testing.expect(!collide(world, near, far));
+    try std.testing.expect(!collide(world, near, far, 0));
     try std.testing.expectEqual(0, all.slots[near].object.root.position.x);
 }
