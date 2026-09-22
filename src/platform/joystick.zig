@@ -1,10 +1,10 @@
-//! Joysticks and gamepads, with SDL3, in place of DirectInput's joystick. Each controller SDL finds
-//! reaches the game as the joystick DirectInput would have handed it
-//! (`engine.input.JoystickDevice`): axes in the ranges the game sets, read through its dead zone,
-//! 32 buttons and up to four hats. SDL reads a wide range of controllers, old and new, on every
+//! Joysticks and gamepads with SDL3, replacing DirectInput's joystick support. Each controller SDL
+//! detects is presented to the game as a DirectInput-style joystick device
+//! (`engine.input.JoystickDevice`), with axes scaled to the ranges the game sets, its dead zone
+//! applied, 32 buttons and up to four hats. SDL supports a wide range of controllers on every
 //! system: flight sticks, throttles, wheels and old gameport sticks on USB adapters as plain
-//! joysticks, and the gamepads its mappings know, Xbox, PlayStation and Nintendo pads and many
-//! others, in one layout.
+//! joysticks, and the gamepads in its mapping database (Xbox, PlayStation, Nintendo and many
+//! others) with a standard layout.
 
 const std = @import("std");
 const c = @import("sdl");
@@ -22,18 +22,18 @@ fn fail(what: []const u8) Error {
     return error.Sdl;
 }
 
-/// What SDL's joystick support serves.
+/// How the program uses SDL's joystick support.
 pub const Mode = enum {
-    /// The game, which handles SDL's events, Ctrl+C's quit among them, and reads the controllers
-    /// while its window is in front.
+    /// The game: it handles SDL's events, including the quit event SDL sends for Ctrl+C, and reads
+    /// controllers while its window has focus.
     game,
-    /// A tool without a window, which reads no events: the controllers are read whatever is in
-    /// front, and Ctrl+C ends it as it ends any program, rather than SDL turning it into an event.
+    /// A tool without a window that handles no events: controllers are read even without focus,
+    /// and Ctrl+C ends the program normally instead of being turned into an SDL event.
     tool,
 };
 
-/// Starts SDL's joystick and gamepad support. SDL then reports each controller already attached as
-/// plugged in.
+/// Initializes SDL's joystick and gamepad support. SDL then sends a connection event for each
+/// controller that is already connected.
 pub fn init(mode: Mode) Error!void {
     if (mode == .tool) {
         _ = c.SDL_SetHint(c.SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
@@ -46,19 +46,18 @@ pub fn deinit() void {
     c.SDL_QuitSubSystem(c.SDL_INIT_GAMEPAD);
 }
 
-/// The gamepad mappings in the file at `path`, in SDL's format, added to those SDL knows, so that
-/// a gamepad it does not know is read as one. Returns how many there were; a missing file has
-/// none.
+/// Adds the gamepad mappings in the file at `path`, in SDL's format, so that gamepads missing from
+/// SDL's database are recognized. Returns the number of mappings added; 0 if the file is missing.
 pub fn addMappings(path: [:0]const u8) u32 {
     return @intCast(@max(c.SDL_AddGamepadMappingsFromFile(path), 0));
 }
 
-/// Has SDL read the controllers now, rather than as it next handles events.
+/// Updates the controllers' state now, instead of on the next event poll.
 pub fn update() void {
     c.SDL_UpdateJoysticks();
 }
 
-/// How many axes, buttons and hats SDL finds on a joystick.
+/// The number of axes, buttons and hats SDL reports for a joystick.
 pub fn axisCount(plain: *c.SDL_Joystick) u32 {
     return @intCast(@max(c.SDL_GetNumJoystickAxes(plain), 0));
 }
@@ -71,18 +70,18 @@ pub fn hatCount(plain: *c.SDL_Joystick) u32 {
     return @intCast(@max(c.SDL_GetNumJoystickHats(plain), 0));
 }
 
-/// A controller SDL has found, before it is opened.
+/// A controller SDL has detected, before it is opened.
 pub const Found = struct {
     id: c.SDL_JoystickID,
     name: []const u8,
     kind: input.JoystickDevice.Kind,
-    /// What SDL takes the controller for, from its maker's description or from what SDL knows of it.
+    /// The type SDL reports, from the device's description or SDL's list of known devices.
     sdl_type: c.SDL_JoystickType,
     vendor: u16,
     product: u16,
 };
 
-/// The controllers attached now, in the order SDL found them.
+/// The connected controllers, in the order SDL lists them.
 pub fn attached(arena: std.mem.Allocator) ![]Found {
     var count: c_int = 0;
     const ids = c.SDL_GetJoysticks(&count) orelse return fail("SDL_GetJoysticks");
@@ -102,11 +101,11 @@ pub fn attached(arena: std.mem.Allocator) ![]Found {
     return found;
 }
 
-/// The controller the game plays with. With `Joystick` in `starlancer.ini`'s `JoyConfig`,
-/// `preference`, the first whose name holds it. Otherwise the first joystick that is not a gamepad,
-/// as a player who plugs in a flight stick means to fly with it, leaving out a throttle on its own;
-/// then the first gamepad; then whatever there is. The game itself takes the first joystick with
-/// force feedback, then the first of any.
+/// Selects the controller the game uses. If `preference` (`Joystick` in `JoyConfig`) is set, the
+/// first controller whose name contains it. Otherwise the first joystick that isn't a gamepad or a
+/// standalone throttle, since a player who connects a flight stick wants to fly with it; then the
+/// first gamepad; then any controller. The original game picks the first joystick with force
+/// feedback, then the first of any kind.
 pub fn choose(found: []const Found, preference: ?[]const u8) ?Found {
     if (preference) |text| {
         if (text.len > 0) for (found) |each| {
@@ -122,9 +121,9 @@ pub fn choose(found: []const Found, preference: ?[]const u8) ?Found {
     return if (found.len > 0) found[0] else null;
 }
 
-/// What `ThrottleAxis` or `TwistAxis` in `starlancer.ini`'s `JoyConfig` asks for, added for the
-/// port: an axis by SDL's number, counted from 0 as `openreliant joysticks` shows it, or none for
-/// `-1`, or the port's guess without an entry.
+/// The value of `ThrottleAxis` or `TwistAxis` in `JoyConfig` (settings added by the port): an SDL
+/// axis number, starting at 0 as `openreliant joysticks` shows it; -1 for none; or no entry, which
+/// keeps the automatic choice.
 pub const Choice = union(enum) {
     guess,
     none,
@@ -138,26 +137,30 @@ pub const Choice = union(enum) {
     }
 };
 
-/// The axes a plain joystick's axes stand for, by SDL's numbering: X and Y, the throttle, which
-/// the game reads as Z, and the twist, its Rz.
+/// Which of a joystick's axes, by SDL's numbering, are used for X, Y, the throttle (the game's Z
+/// axis) and the twist (the game's Rz axis).
 pub const Layout = struct {
     x: ?u8 = null,
     y: ?u8 = null,
     throttle: ?u8 = null,
     twist: ?u8 = null,
+    /// Reverses the throttle axis (`ThrottleInvert` in `JoyConfig`, added by the port). The game
+    /// expects a throttle's lowest value to mean full throttle, which is what most levers report
+    /// when pushed forward.
+    throttle_inverted: bool = false,
 
-    /// The layout of a joystick with `axes` axes, as the joysticks most seen have theirs. SDL
-    /// numbers a joystick's axes in the order of the kinds they are, X, Y, Z, Rx, Ry, Rz, sliders,
-    /// on every system, but does not say which kinds a joystick has. So X and Y are the first two;
-    /// with three axes the third is taken for a throttle, with four for a twist, with the throttle
-    /// last, as on most flight sticks; with more, the third for a throttle and the fourth, or with
-    /// six or more the sixth, for the twist, as on throttle and stick sets. A throttle on its own
-    /// has its first axis for the throttle, and a gamepad SDL has no mapping for, which it knows
-    /// by the maker's description, the third for the twist and no throttle.
+    /// Guesses the layout of a joystick with `axes` axes from common devices. SDL orders a
+    /// joystick's axes the same way on every system (X, Y, Z, Rx, Ry, Rz, then sliders), but
+    /// doesn't say which of these a joystick has. X and Y are always the first two. With three
+    /// axes, the third is the throttle. With four, the third is the twist and the fourth the
+    /// throttle, as on most flight sticks. With more, the third is the throttle and the twist is
+    /// the fourth (five axes) or the sixth (six or more), as on HOTAS sets. A standalone throttle
+    /// uses its first axis as the throttle. A gamepad SDL has no mapping for uses its third axis as
+    /// the twist and has no throttle.
     pub fn guess(axes: u8, sdl_type: c.SDL_JoystickType) Layout {
         if (sdl_type == c.SDL_JOYSTICK_TYPE_THROTTLE) return .{ .throttle = if (axes > 0) 0 else null };
-        // A gamepad SDL has no mapping for: the left stick steers, the right stick's first axis
-        // twists, and with no throttle axis the keys and buttons step the throttle.
+        // A gamepad without an SDL mapping: the left stick steers, the right stick's horizontal
+        // axis is the twist, and without a throttle axis the throttle keys and buttons are used.
         if (sdl_type == c.SDL_JOYSTICK_TYPE_GAMEPAD) {
             return .{ .x = if (axes > 0) 0 else null, .y = if (axes > 1) 1 else null, .twist = if (axes > 2) 2 else null };
         }
@@ -174,7 +177,8 @@ pub const Layout = struct {
         return layout;
     }
 
-    /// The layout with `throttle` and `twist` as `starlancer.ini` asks, on a joystick with `axes`.
+    /// The layout with the throttle and twist overridden from `starlancer.ini`, for a joystick with
+    /// `axes` axes.
     pub fn with(layout: Layout, axes: u8, throttle: Choice, twist: Choice) Layout {
         var chosen = layout;
         chosen.throttle = pick(layout.throttle, axes, throttle);
@@ -190,13 +194,13 @@ pub const Layout = struct {
         };
     }
 
-    /// Each of the game's axes the layout gives, and the joystick's axis it comes from.
+    /// Each of the game's axes and the joystick axis it is read from.
     fn sources(layout: Layout) [4]struct { Axis, ?u8 } {
         return .{ .{ .x, layout.x }, .{ .y, layout.y }, .{ .z, layout.throttle }, .{ .rz, layout.twist } };
     }
 };
 
-/// A hat as SDL gives it: a bit for each way it is pushed.
+/// A hat's position as SDL reports it: one bit per direction.
 const Hat = packed struct(u8) {
     up: bool = false,
     right: bool = false,
@@ -205,8 +209,8 @@ const Hat = packed struct(u8) {
     _unused: u4 = 0,
 };
 
-/// DirectInput's point of view for each position of a hat, in hundredths of a degree clockwise
-/// from ahead, or centred. Two opposite ways at once cancel.
+/// The DirectInput point-of-view value for each hat position: hundredths of a degree clockwise
+/// from forward, or centered. Opposite directions cancel out.
 const hat_angles: [16]u32 = angles: {
     var angles: [16]u32 = undefined;
     for (&angles, 0..) |*angle, bits| {
@@ -238,9 +242,10 @@ fn pov(hat: Hat) u32 {
     return hat_angles[@as(u4, @truncate(@as(u8, @bitCast(hat))))];
 }
 
-/// A raw axis value, -32768 to 32767, as DirectInput reports it with `range` and `dead_zone`, in
-/// hundredths of a percent of the travel from the centre: within the dead zone the axis reads
-/// as the middle of its range, and beyond it the rest of its travel spans the range.
+/// Scales a raw axis value (-32768 to 32767) the way DirectInput does for the given `range` and
+/// `dead_zone` (in hundredths of a percent of the travel from the center): inside the dead zone
+/// the result is the center of the range, and outside it the remaining travel is scaled to cover
+/// the full range.
 pub fn scale(raw: i16, range: [2]i32, dead_zone: u16) i32 {
     const position = @max(@as(f32, @floatFromInt(raw)) / 32767, -1);
     const zone = @as(f32, @floatFromInt(@min(dead_zone, 10000))) / 10000;
@@ -251,12 +256,12 @@ pub fn scale(raw: i16, range: [2]i32, dead_zone: u16) i32 {
     return @intFromFloat(@round((low + high) / 2 + live * (high - low) / 2));
 }
 
-/// How far a trigger is pulled, and the right stick pushed one way, to count as its button down.
+/// How far a trigger must be pulled, or the right stick pushed, to count as a button press.
 const trigger_press: i16 = 8192;
 const stick_press: i16 = 16384;
 
-/// Where each of a gamepad's buttons comes from: an SDL button, a trigger pulled, or the right
-/// stick pushed one way.
+/// Where each gamepad button is read from: an SDL button, a trigger, or a direction of the right
+/// stick.
 const Source = union(enum) {
     button: c.SDL_GamepadButton,
     trigger: c.SDL_GamepadAxis,
@@ -298,20 +303,20 @@ const sources = std.EnumArray(GamepadButton, Source).init(.{
     .right_stick_right = .{ .stick = .{ .axis = c.SDL_GAMEPAD_AXIS_RIGHTX, .positive = true } },
 });
 
-/// A gamepad's axes, as the game's: the left stick is X and Y, the right stick's left and right
-/// the twist.
+/// The gamepad axes the game reads: the left stick as X and Y, and the right stick's horizontal
+/// axis as the twist.
 const gamepad_axes = [_]struct { Axis, c.SDL_GamepadAxis }{
     .{ .x, c.SDL_GAMEPAD_AXIS_LEFTX },
     .{ .y, c.SDL_GAMEPAD_AXIS_LEFTY },
     .{ .rz, c.SDL_GAMEPAD_AXIS_RIGHTX },
 };
 
-/// An open controller, which the game reads as its joystick.
+/// An open controller, used by the game as its joystick.
 pub const Controller = struct {
     handle: Handle,
-    /// A plain joystick's axes; a gamepad's are `gamepad_axes`.
+    /// The axis layout of a plain joystick; gamepads use `gamepad_axes`.
     layout: Layout,
-    /// The ranges the game gave its axes, and the dead zone.
+    /// The axis ranges and dead zone the game set.
     ranges: std.EnumArray(Axis, ?[2]i32) = .initFill(null),
     dead_zone: u16 = input.default_dead_zone,
 
@@ -320,8 +325,14 @@ pub const Controller = struct {
         gamepad: *c.SDL_Gamepad,
     };
 
-    /// Opens `found`, with the throttle and twist on a plain joystick as `starlancer.ini` asks.
+    /// Opens `found`, applying the throttle and twist settings from `starlancer.ini` to a plain
+    /// joystick.
     pub fn open(found: Found, throttle: Choice, twist: Choice) Error!Controller {
+        return openInverted(found, throttle, twist, false);
+    }
+
+    /// Like `open`, and reverses the throttle axis when `throttle_inverted` is set.
+    pub fn openInverted(found: Found, throttle: Choice, twist: Choice, throttle_inverted: bool) Error!Controller {
         switch (found.kind) {
             .gamepad => {
                 const gamepad = c.SDL_OpenGamepad(found.id) orelse return fail("SDL_OpenGamepad");
@@ -330,10 +341,9 @@ pub const Controller = struct {
             .joystick => {
                 const plain = c.SDL_OpenJoystick(found.id) orelse return fail("SDL_OpenJoystick");
                 const axes: u8 = @intCast(@min(axisCount(plain), 255));
-                return .{
-                    .handle = .{ .joystick = plain },
-                    .layout = Layout.guess(axes, found.sdl_type).with(axes, throttle, twist),
-                };
+                var layout = Layout.guess(axes, found.sdl_type).with(axes, throttle, twist);
+                layout.throttle_inverted = throttle_inverted;
+                return .{ .handle = .{ .joystick = plain }, .layout = layout };
             },
         }
     }
@@ -345,7 +355,7 @@ pub const Controller = struct {
         }
     }
 
-    /// SDL's joystick underneath, which a gamepad has too.
+    /// The underlying SDL joystick (gamepads have one too).
     pub fn sdlJoystick(controller: Controller) *c.SDL_Joystick {
         return switch (controller.handle) {
             .joystick => |plain| plain,
@@ -357,7 +367,7 @@ pub const Controller = struct {
         return c.SDL_GetJoystickID(controller.sdlJoystick());
     }
 
-    /// The controller as the game's joystick device.
+    /// The controller as a joystick device for the game.
     pub fn device(controller: *Controller) input.JoystickDevice {
         return .{ .context = controller, .vtable = &.{
             .capabilities = capabilities,
@@ -411,7 +421,9 @@ pub const Controller = struct {
                 if (!c.SDL_JoystickConnected(plain)) return error.Unplugged;
                 for (controller.layout.sources()) |source| {
                     const index = source[1] orelse continue;
-                    controller.setAxis(state, source[0], c.SDL_GetJoystickAxis(plain, index));
+                    var raw = c.SDL_GetJoystickAxis(plain, index);
+                    if (source[0] == .z and controller.layout.throttle_inverted) raw = ~raw;
+                    controller.setAxis(state, source[0], raw);
                 }
                 const buttons = @min(buttonCount(plain), 32);
                 for (state.buttons[0..buttons], 0..) |*button, index| {
@@ -446,8 +458,8 @@ pub const Controller = struct {
         }
     }
 
-    /// Puts an axis's raw value into the state, scaled to the range the game gave it. An axis the
-    /// game gave no range stays zero, as the game never reads one.
+    /// Stores an axis's raw value in the state, scaled to the range the game set. Axes without a
+    /// range stay at zero; the game doesn't read them.
     fn setAxis(controller: *Controller, state: *JoystickState, which: Axis, raw: i16) void {
         const range = controller.ranges.get(which) orelse return;
         state.axis(which).* = scale(raw, range, controller.dead_zone);
@@ -455,7 +467,7 @@ pub const Controller = struct {
 };
 
 test scale {
-    // The centre, the dead zone, and each end, over the stick's range and the throttle's.
+    // The center, the dead zone and both ends, for a stick's range and a throttle's.
     try std.testing.expectEqual(0, scale(0, .{ -1000, 1000 }, 1000));
     try std.testing.expectEqual(0, scale(3000, .{ -1000, 1000 }, 1000));
     try std.testing.expectEqual(1000, scale(32767, .{ -1000, 1000 }, 1000));
@@ -463,9 +475,9 @@ test scale {
     try std.testing.expectEqual(500, scale(0, .{ 0, 1000 }, 1000));
     try std.testing.expectEqual(1000, scale(32767, .{ 0, 1000 }, 1000));
     try std.testing.expectEqual(0, scale(-32768, .{ 0, 1000 }, 1000));
-    // Past the dead zone the rest of the travel spans the range: halfway beyond it, half.
+    // Outside the dead zone the remaining travel covers the range: halfway there reads as half.
     try std.testing.expectEqual(500, scale(18022, .{ -1000, 1000 }, 1000));
-    // Without a dead zone the travel maps straight; all dead zone and the axis never moves.
+    // Without a dead zone the mapping is linear; with a 100% dead zone the axis never moves.
     try std.testing.expectEqual(100, scale(3277, .{ -1000, 1000 }, 0));
     try std.testing.expectEqual(0, scale(32767, .{ -1000, 1000 }, 10000));
 }
@@ -479,10 +491,10 @@ test pov {
     try std.testing.expectEqual(22500, pov(.{ .down = true, .left = true }));
     try std.testing.expectEqual(27000, pov(.{ .left = true }));
     try std.testing.expectEqual(31500, pov(.{ .left = true, .up = true }));
-    // Opposite ways cancel.
+    // Opposite directions cancel out.
     try std.testing.expectEqual(JoystickState.centred, pov(.{ .up = true, .down = true }));
     try std.testing.expectEqual(9000, pov(.{ .up = true, .down = true, .right = true }));
-    // SDL's own bits are the hat's.
+    // SDL's hat constants use the same bits.
     try std.testing.expectEqual(27000, pov(@bitCast(@as(u8, c.SDL_HAT_LEFT))));
     try std.testing.expectEqual(4500, pov(@bitCast(@as(u8, c.SDL_HAT_RIGHTUP))));
 }
@@ -495,11 +507,18 @@ test Layout {
     try std.testing.expectEqual(Layout{ .x = 0, .y = 1, .throttle = 2, .twist = 3 }, Layout.guess(5, unknown));
     try std.testing.expectEqual(Layout{ .x = 0, .y = 1, .throttle = 2, .twist = 5 }, Layout.guess(7, unknown));
     try std.testing.expectEqual(Layout{ .throttle = 0 }, Layout.guess(3, c.SDL_JOYSTICK_TYPE_THROTTLE));
-    // `starlancer.ini` moves or removes the throttle and the twist, within the joystick's axes.
+    // `starlancer.ini` can move or remove the throttle and twist, within the joystick's axes.
     const stick = Layout.guess(4, unknown);
     try std.testing.expectEqual(Layout{ .x = 0, .y = 1, .twist = 3, .throttle = 2 }, stick.with(4, .{ .axis = 2 }, .{ .axis = 3 }));
     try std.testing.expectEqual(Layout{ .x = 0, .y = 1, .twist = 2 }, stick.with(4, .none, .guess));
     try std.testing.expectEqual(Layout{ .x = 0, .y = 1, .twist = 2 }, stick.with(4, .{ .axis = 9 }, .guess));
+}
+
+test "an inverted throttle" {
+    // `~` reverses the raw value: -32768 and 32767 swap, and the center stays the same.
+    try std.testing.expectEqual(1000, scale(~@as(i16, -32768), .{ 0, 1000 }, 1000));
+    try std.testing.expectEqual(0, scale(~@as(i16, 32767), .{ 0, 1000 }, 1000));
+    try std.testing.expectEqual(500, scale(~@as(i16, 0), .{ 0, 1000 }, 1000));
 }
 
 test Choice {
@@ -513,23 +532,23 @@ test choose {
     const pad: Found = .{ .id = 1, .name = "Xbox Wireless Controller", .kind = .gamepad, .sdl_type = c.SDL_JOYSTICK_TYPE_GAMEPAD, .vendor = 0x045E, .product = 0x0B13 };
     const throttle: Found = .{ .id = 2, .name = "TWCS Throttle", .kind = .joystick, .sdl_type = c.SDL_JOYSTICK_TYPE_THROTTLE, .vendor = 0x044F, .product = 0xB687 };
     const stick: Found = .{ .id = 3, .name = "T.16000M", .kind = .joystick, .sdl_type = c.SDL_JOYSTICK_TYPE_FLIGHT_STICK, .vendor = 0x044F, .product = 0xB10A };
-    // A stick before a gamepad, and never a throttle on its own while there is either.
+    // A stick is preferred over a gamepad, and a standalone throttle is only used on its own.
     try std.testing.expectEqual(3, choose(&.{ pad, throttle, stick }, null).?.id);
     try std.testing.expectEqual(1, choose(&.{ throttle, pad }, null).?.id);
     try std.testing.expectEqual(2, choose(&.{throttle}, null).?.id);
     try std.testing.expectEqual(null, choose(&.{}, null));
-    // `Joystick` in `starlancer.ini` picks by name.
+    // `Joystick` in `starlancer.ini` selects by name.
     try std.testing.expectEqual(1, choose(&.{ pad, stick }, "xbox").?.id);
     try std.testing.expectEqual(3, choose(&.{ pad, stick }, "nothing like it").?.id);
 }
 
-/// SDL's joystick support, for the tests, or null where the system has none.
+/// Initializes SDL's joystick support for the tests; null if the system doesn't support it.
 fn testInit() ?void {
     init(.tool) catch return null;
 }
 
-/// A controller SDL makes up, for the tests: a joystick of `sdl_type` with `axes`, `buttons` and
-/// `hats`, or with the masks, a gamepad of those controls.
+/// Creates a virtual SDL controller for the tests: a joystick of `sdl_type` with the given numbers
+/// of axes, buttons and hats, or, with the masks, a gamepad with those controls.
 fn attachVirtual(sdl_type: c.SDL_JoystickType, axes: u16, buttons: u16, hats: u16, masks: ?[2]u32) !c.SDL_JoystickID {
     var desc = std.mem.zeroes(c.SDL_VirtualJoystickDesc);
     desc.version = @sizeOf(c.SDL_VirtualJoystickDesc);
@@ -547,7 +566,7 @@ fn attachVirtual(sdl_type: c.SDL_JoystickType, axes: u16, buttons: u16, hats: u1
     return id;
 }
 
-test "a flight stick, as the game reads it" {
+test "reading a flight stick" {
     testInit() orelse return error.SkipZigTest;
     defer deinit();
     const id = try attachVirtual(c.SDL_JOYSTICK_TYPE_FLIGHT_STICK, 4, 12, 1, null);
@@ -561,7 +580,7 @@ test "a flight stick, as the game reads it" {
     defer controller.close();
     var joystick: input.Joystick = .{};
     joystick.open(controller.device(), input.default_dead_zone);
-    // Four axes: X and Y, the twist, and the throttle last.
+    // Four axes: X, Y, the twist, and the throttle last.
     try std.testing.expect(joystick.axes.x and joystick.axes.y and joystick.axes.z and joystick.axes.rz);
     try std.testing.expectEqual(12, joystick.buttons);
     try std.testing.expectEqual(1, joystick.hats);
@@ -579,7 +598,7 @@ test "a flight stick, as the game reads it" {
     const state = joystick.state;
     try std.testing.expectEqual(1000, state.x);
     try std.testing.expectEqual(-1000, state.y);
-    // The twist is within the dead zone; the throttle is pulled all the way back.
+    // The twist is inside the dead zone; the throttle is pulled all the way back.
     try std.testing.expectEqual(0, state.rz);
     try std.testing.expectEqual(0, state.z);
     try std.testing.expectEqual(0x80, state.buttons[0]);
@@ -588,14 +607,14 @@ test "a flight stick, as the game reads it" {
     try std.testing.expectEqual(27000, state.pov[0]);
     try std.testing.expectEqual(JoystickState.centred, state.pov[1]);
 
-    // Unplugged, the game reads it as idle.
+    // Once disconnected, it reads as idle.
     _ = c.SDL_DetachVirtualJoystick(id);
     update();
     joystick.read();
     try std.testing.expectEqual(null, joystick.device);
 }
 
-test "a gamepad, as the game reads it" {
+test "reading a gamepad" {
     testInit() orelse return error.SkipZigTest;
     defer deinit();
     const all_buttons: u32 = (1 << c.SDL_GAMEPAD_BUTTON_COUNT) - 1;
@@ -653,7 +672,7 @@ test "controllers of many kinds" {
         buttons: u16,
         hats: u16,
         gamepad: bool = false,
-        /// What the game should find: its kind, its axes, and how many buttons and hats.
+        /// What the game should see: the kind of device, its axes, and its buttons and hats.
         kind: input.JoystickDevice.Kind,
         game_axes: []const Axis,
         game_buttons: u8,
@@ -714,7 +733,7 @@ test "controllers of many kinds" {
         try std.testing.expectEqual(model.game_buttons, joystick.buttons);
         try std.testing.expectEqual(model.game_hats, joystick.hats);
     }
-    // With all of them attached, the flight stick is the one the game plays with.
+    // With all of them connected, the game uses the flight stick.
     var ours: std.ArrayList(Found) = .empty;
     for (found) |each| {
         for (ids) |id| {

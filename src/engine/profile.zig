@@ -1,17 +1,17 @@
-//! Windows' private profile functions, `GetPrivateProfileIntA` and `GetPrivateProfileStringA`,
-//! which the game reads its settings from `starlancer.ini` with. A profile is lines of text:
-//! `[section]` starts a section, and `key=value` gives a key its value. Sections and keys are
-//! matched without regard to case, and a value loses the spaces around it and one pair of quotes.
+//! Replacements for Windows' `GetPrivateProfileIntA` and `GetPrivateProfileStringA`, which the game
+//! uses to read its settings from `starlancer.ini`. An ini file consists of lines of text:
+//! `[section]` starts a section, and `key=value` sets a value. Section and key names are not
+//! case-sensitive, and values have surrounding spaces and one pair of quotes removed.
 
 const std = @import("std");
 
 pub const Profile = struct {
     text: []const u8,
 
-    /// A profile with nothing in it, as when the file is missing: every read gives its default.
+    /// An empty profile, used when the file is missing: every read returns its default.
     pub const empty: Profile = .{ .text = "" };
 
-    /// The value of `key` in `section`, or null when the profile has none.
+    /// The value of `key` in `section`, or null if there is none.
     pub fn value(profile: Profile, section: []const u8, key: []const u8) ?[]const u8 {
         var in_section = false;
         var lines = std.mem.splitAny(u8, profile.text, "\r\n");
@@ -35,15 +35,15 @@ pub const Profile = struct {
         return null;
     }
 
-    /// `GetPrivateProfileStringA`: the value, or `default` when there is none, cut to `size - 1`
-    /// bytes as the game's buffer holds.
+    /// `GetPrivateProfileStringA`: the value, or `default` if there is none, truncated to `size - 1`
+    /// bytes to fit the game's buffer.
     pub fn string(profile: Profile, section: []const u8, key: []const u8, default: []const u8, size: usize) []const u8 {
         const found = profile.value(section, key) orelse default;
         return found[0..@min(found.len, size -| 1)];
     }
 
-    /// `GetPrivateProfileIntA`: the value's leading decimal digits, 0 if it starts with none, or
-    /// `default` when there is no value.
+    /// `GetPrivateProfileIntA`: the number formed by the value's leading decimal digits (0 if it
+    /// doesn't start with a digit), or `default` if there is no value.
     pub fn int(profile: Profile, section: []const u8, key: []const u8, default: u32) u32 {
         const found = profile.value(section, key) orelse return default;
         var number: u32 = 0;
@@ -55,8 +55,8 @@ pub const Profile = struct {
     }
 };
 
-/// `atol`, as the C runtime reads a number: spaces, an optional sign, then decimal digits, as many
-/// as there are; 0 without any.
+/// The C runtime's `atol`: skips spaces, reads an optional sign and then as many decimal digits as
+/// there are. Returns 0 if there are none.
 pub fn atol(text: []const u8) i32 {
     var rest = std.mem.trimStart(u8, text, " \t");
     var negative = false;

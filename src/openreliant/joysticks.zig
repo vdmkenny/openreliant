@@ -1,7 +1,7 @@
-//! `openreliant joysticks`: lists the joysticks and gamepads attached, and how the game reads each:
-//! which one it plays with, and which of a joystick's axes it takes for what. With `--watch` it
-//! shows the one the game plays with as the game reads it, live, so that an axis's or a button's
-//! number can be found for `starlancer.ini`.
+//! `openreliant joysticks`: lists the connected joysticks and gamepads, shows which one the game
+//! will use and, for joysticks, which axis is used for what. With `--watch` it shows live input from
+//! the selected controller as the game sees it, to help find axis and button numbers for
+//! `starlancer.ini`.
 
 const std = @import("std");
 const Io = std.Io;
@@ -16,10 +16,9 @@ const Profile = openreliant.engine.profile.Profile;
 
 pub const usage =
     \\usage: openreliant joysticks [<game-directory>] [--watch]
-    \\  <game-directory>  where StarLancer is installed, whose starlancer.ini can pick the
-    \\                    joystick and its axes; the current directory by default
-    \\  --watch           show the joystick the game plays with, as the game reads it, until
-    \\                    Ctrl+C
+    \\  <game-directory>  the folder StarLancer is installed in, for the settings in its
+    \\                    starlancer.ini; the current directory by default
+    \\  --watch           show live input from the controller the game uses, until Ctrl+C
     \\
 ;
 
@@ -44,7 +43,7 @@ pub const Options = struct {
     }
 };
 
-/// `openreliant joysticks`, given its arguments. Returns the exit code.
+/// Runs `openreliant joysticks` with the given arguments. Returns the exit code.
 pub fn main(io: Io, arena: Allocator, args: []const [:0]const u8) !u8 {
     var out_buffer: [4096]u8 = undefined;
     var stdout: Io.File.Writer = .initStreaming(.stdout(), io, &out_buffer);
@@ -73,9 +72,10 @@ pub fn main(io: Io, arena: Allocator, args: []const [:0]const u8) !u8 {
     const chosen = joystick.choose(found, settings_file.value("JoyConfig", "Joystick")).?;
     const throttle: joystick.Choice = .parse(settings_file.value("JoyConfig", "ThrottleAxis"));
     const twist: joystick.Choice = .parse(settings_file.value("JoyConfig", "TwistAxis"));
+    const inverted = settings_file.int("JoyConfig", "ThrottleInvert", 0) != 0;
     for (found, 1..) |each, number| {
-        var controller = joystick.Controller.open(each, throttle, twist) catch {
-            try out.print("{d}. {s}: SDL can't open it.\n", .{ number, each.name });
+        var controller = joystick.Controller.openInverted(each, throttle, twist, inverted) catch {
+            try out.print("{d}. {s}: can't be opened.\n", .{ number, each.name });
             continue;
         };
         defer controller.close();
@@ -84,11 +84,11 @@ pub fn main(io: Io, arena: Allocator, args: []const [:0]const u8) !u8 {
     try out.flush();
     if (!options.watch) return 0;
 
-    var controller = try joystick.Controller.open(chosen, throttle, twist);
+    var controller = try joystick.Controller.openInverted(chosen, throttle, twist, inverted);
     defer controller.close();
     var devices: input.Devices = .{};
     devices.joystick.open(controller.device(), interface.deadZone(settings_file));
-    try out.print("\nWatching {s} as the game reads it; Ctrl+C stops.\n", .{chosen.name});
+    try out.print("\nShowing input from {s} as the game sees it. Press Ctrl+C to stop.\n", .{chosen.name});
     try out.flush();
     var last: [256]u8 = undefined;
     var last_len: usize = 0;
@@ -96,7 +96,7 @@ pub fn main(io: Io, arena: Allocator, args: []const [:0]const u8) !u8 {
         joystick.update();
         devices.joystick.read();
         if (devices.joystick.device == null) {
-            try out.writeAll("It was unplugged.\n");
+            try out.writeAll("The controller was disconnected.\n");
             return 1;
         }
         var line_buffer: [256]u8 = undefined;
@@ -111,13 +111,13 @@ pub fn main(io: Io, arena: Allocator, args: []const [:0]const u8) !u8 {
     }
 }
 
-/// A controller's line in the list, and how the game reads it.
+/// Prints a controller's entry in the list: its name, type and axis layout.
 fn describe(out: *Io.Writer, number: usize, found: joystick.Found, controller: *joystick.Controller, chosen: bool) !void {
     const plain = controller.sdlJoystick();
     try out.print("{d}. {s}{s}\n   {s}, USB ID {x:0>4}:{x:0>4}", .{
         number,
         found.name,
-        if (chosen) " (the game plays with this one)" else "",
+        if (chosen) " (used by the game)" else "",
         @tagName(found.kind),
         found.vendor,
         found.product,
@@ -125,7 +125,7 @@ fn describe(out: *Io.Writer, number: usize, found: joystick.Found, controller: *
     switch (controller.handle) {
         .gamepad => try out.writeAll(
             \\
-            \\   The left stick steers, the right stick rolls and moves the throttle, the pad glances.
+            \\   Left stick: pitch and turn. Right stick: roll and speed. D-pad: look around.
             \\
         ),
         .joystick => {
@@ -157,7 +157,7 @@ fn count(out: *Io.Writer, how_many: u32, one: []const u8, many: []const u8) !voi
     try out.print(", {d} {s}", .{ how_many, if (how_many == 1) one else many });
 }
 
-/// The joystick's state as the game reads it, on one line.
+/// Formats the joystick's state, as the game sees it, on one line.
 fn state(buffer: []u8, read: input.Joystick) []const u8 {
     var line: Io.Writer = .fixed(buffer);
     const values = read.state;

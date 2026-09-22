@@ -162,15 +162,15 @@ pub fn main(init: std.process.Init) !u8 {
 /// The game's settings file, in its directory, which it names in lower case.
 const settings_name = "starlancer.ini";
 
-/// Added for the port: gamepad mappings in SDL's format, read from the game's directory when there,
-/// for gamepads SDL does not know.
+/// Added by the port: an optional file in the game folder with extra gamepad mappings in SDL's
+/// format, for gamepads missing from SDL's database.
 pub const mappings_name = "gamecontrollerdb.txt";
 
-/// Opens the controller the game plays with, unless it is open already, and reads the input
-/// settings and bindings, which depend on it: what `input_init` and `load_key_config` do as the
-/// game starts, and the port does again whenever a controller is plugged in or out.
-/// `platform.joystick.choose` picks the controller; `ThrottleAxis` and `TwistAxis` in `JoyConfig`
-/// place a joystick's throttle and twist.
+/// Opens the controller the game should use, unless it is already open, and loads the input
+/// settings and bindings, which depend on the controller. The original does this once at startup
+/// in `input_init` and `load_key_config`; the port also does it whenever a controller is connected
+/// or disconnected. `platform.joystick.choose` selects the controller; `ThrottleAxis`, `TwistAxis`
+/// and `ThrottleInvert` in `JoyConfig` configure a joystick's throttle and twist axes.
 fn connectController(arena: Allocator, devices: *engine.input.Devices, controller: *?platform.joystick.Controller, settings_file: engine.profile.Profile) void {
     const joystick = platform.joystick;
     const found = joystick.attached(arena) catch &.{};
@@ -184,7 +184,8 @@ fn connectController(arena: Allocator, devices: *engine.input.Devices, controlle
     if (chosen) |which| {
         const throttle: joystick.Choice = .parse(settings_file.value("JoyConfig", "ThrottleAxis"));
         const twist: joystick.Choice = .parse(settings_file.value("JoyConfig", "TwistAxis"));
-        controller.* = joystick.Controller.open(which, throttle, twist) catch null;
+        const inverted = settings_file.int("JoyConfig", "ThrottleInvert", 0) != 0;
+        controller.* = joystick.Controller.openInverted(which, throttle, twist, inverted) catch null;
         if (controller.*) |*open| devices.joystick.open(open.device(), game.interface.deadZone(settings_file));
     }
     game.interface.loadKeyConfig(devices, settings_file);
@@ -264,13 +265,13 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     var player: engine.input.Player = .{};
     defer ship.unload();
     var devices: engine.input.Devices = .{};
-    // The game's settings, which `load_key_config` reads the input's from; without the file, each
-    // keeps its default.
+    // The game's settings file, which `load_key_config` reads the input settings from. If it's
+    // missing, every setting keeps its default.
     const settings_file: engine.profile.Profile = .{
         .text = directory.readFileAlloc(io, settings_name, arena, .limited(1 << 20)) catch "",
     };
-    // The joystick or gamepad the game plays with, opened as `input_init` opens a joystick, and
-    // again whenever one is plugged in or out.
+    // The joystick or gamepad the game uses, opened as `input_init` opens a joystick, and again
+    // whenever a controller is connected or disconnected.
     try platform.joystick.init(.game);
     defer platform.joystick.deinit();
     _ = platform.joystick.addMappings(try std.fs.path.joinZ(arena, &.{ options.directory, mappings_name }));

@@ -139,9 +139,9 @@ pub const camera_actions = [_]controls.Action{
     .flyby_camera,   .target_camera,    .external_camera,   .missile_camera,
 };
 
-/// The view the joystick's hat glances to (`frame_controls`): ahead, left, right or behind, for its
-/// four straight directions, in DirectInput's hundredths of a degree clockwise from ahead. Its
-/// diagonals and its centre glance nowhere.
+/// The view the joystick's hat switches to (`frame_controls`) for each of its four straight
+/// directions, given in DirectInput's hundredths of a degree clockwise from forward: the cockpit's
+/// front, right, rear or left view. Diagonals and the center select nothing.
 pub fn hatView(pov: u32) ?View {
     return switch (pov) {
         0 => .cockpit,
@@ -226,8 +226,8 @@ pub const Camera = struct {
     /// Where the cockpit's model stands this frame, in view 0 outside the chase mode; null in the
     /// rest.
     cockpit_place: ?Cockpit.Placed = null,
-    /// Set while the joystick's hat glances (`0x0051CF8C`), so that letting it go looks ahead
-    /// again.
+    /// Set while the joystick's hat is held (`0x0051CF8C`), so that the view returns to the front
+    /// when it is released.
     hat_glancing: bool = false,
 
     /// Bars grow this share of the screen a tick, times their speed.
@@ -281,10 +281,10 @@ pub const Camera = struct {
 
     /// The camera's part of `frame_controls` for a frame `ticks` hundredths of a second long: in
     /// the target and external views, the arrow keys steer the orbit, with Shift up and down to
-    /// zoom. With `HatEnable`, the hat pushed straight glances that way while it is held, and let
-    /// go looks ahead again. Then each camera key pressed picks its view, the last one in the
-    /// game's order winning, with `player` as the object. The keys are read as the game reads
-    /// them, in its order, since `key_pressed` frees latches.
+    /// zoom. With `HatEnable`, holding the hat in a straight direction switches to the matching
+    /// cockpit view, and releasing it returns to the front view. Then each camera key that was
+    /// pressed selects its view (the last one in the game's order wins), with `player` as the
+    /// object. The keys are read in the game's order, since `key_pressed` clears latches.
     pub fn frameControls(camera: *Camera, devices: *input.Devices, player: u16, ticks: u32, now: u32) void {
         const keyboard = &devices.keyboard;
         if (camera.view == .target or camera.view == .external) {
@@ -902,19 +902,19 @@ test "Camera.frameControls" {
     try std.testing.expectEqual(CockpitMode.cockpit, camera.cockpit_mode);
 }
 
-test "the hat glances while it is held" {
+test "the hat switches views while it is held" {
     var camera: Camera = .{};
     var devices: input.Devices = .{};
     devices.joystick.hats = 1;
     const pov = &devices.joystick.state.pov[0];
 
-    // Pushed left, the hat looks left, again each frame it is held.
+    // Holding the hat left selects the left view, again every frame.
     pov.* = 27000;
     camera.frameControls(&devices, 0, 1, 100);
     try std.testing.expectEqual(View.cockpit_left, camera.view);
     camera.frameControls(&devices, 0, 1, 200);
     try std.testing.expectEqual(200, camera.switched);
-    // Let go, it looks ahead again; a diagonal glances nowhere.
+    // Releasing it returns to the front view; a diagonal selects nothing.
     pov.* = input.JoystickState.centred;
     camera.frameControls(&devices, 0, 1, 300);
     try std.testing.expectEqual(View.cockpit, camera.view);
@@ -922,7 +922,7 @@ test "the hat glances while it is held" {
     camera.frameControls(&devices, 0, 1, 400);
     try std.testing.expectEqual(300, camera.switched);
 
-    // Without HatEnable, or without a hat, it does nothing.
+    // Without HatEnable, the hat does nothing.
     pov.* = 18000;
     devices.settings.hat_enabled = false;
     camera.frameControls(&devices, 0, 1, 500);

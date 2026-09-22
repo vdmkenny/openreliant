@@ -23,7 +23,7 @@ pub const JoystickState = extern struct {
     /// Nonzero while the button is down.
     buttons: [32]u8,
 
-    /// A hat's direction when it is not pushed any way: DirectInput's centred point of view.
+    /// The value DirectInput reports for a centered hat.
     pub const centred: u32 = 0xFFFF_FFFF;
 
     comptime {
@@ -47,8 +47,8 @@ pub const JoystickState = extern struct {
     }
 };
 
-/// The axes of a joystick, in the order of `JoystickState`, as DirectInput names an axis by where
-/// its value lies in `DIJOYSTATE`.
+/// A joystick's axes, in `DIJOYSTATE` order. DirectInput identifies an axis by its offset in
+/// `DIJOYSTATE`.
 pub const Axis = enum(u3) {
     x,
     y,
@@ -62,8 +62,8 @@ pub const Axis = enum(u3) {
     slider,
     second_slider,
 
-    /// The values `joystick_object_found` (`0x004BD050`) has the axis report from one end of its
-    /// travel to the other, or null for an axis the game leaves alone and never reads.
+    /// The range `joystick_object_found` (`0x004BD050`) sets for the axis, or null for axes the
+    /// game doesn't set up or read.
     pub fn range(which: Axis) ?[2]i32 {
         return switch (which) {
             .x, .y, .rz => .{ -1000, 1000 },
@@ -73,14 +73,14 @@ pub const Axis = enum(u3) {
     }
 };
 
-/// The dead zone `joystick_object_found` gives the whole device, in hundredths of a percent of
-/// each axis's travel from its centre: a tenth. `DeadZone` in `starlancer.ini` changes it in the
-/// port.
+/// The dead zone `joystick_object_found` sets for the whole device, in hundredths of a percent of
+/// each axis's travel from the center: 10%. The port reads `DeadZone` from `starlancer.ini` to
+/// change it.
 pub const default_dead_zone: u16 = 1000;
 
-/// A joystick as DirectInput gives it to the game: the stand-in for `joystick_device`
-/// (`0x005DDD24`), an `IDirectInputDevice7`, with the calls the game makes on it. The platform
-/// provides one for each controller it finds, gamepads included.
+/// A joystick device: the port's replacement for `joystick_device` (`0x005DDD24`), the game's
+/// `IDirectInputDevice7`, with the calls the game makes on it. The platform implements it for each
+/// connected controller, including gamepads.
 pub const JoystickDevice = struct {
     context: *anyopaque,
     vtable: *const VTable,
@@ -92,8 +92,8 @@ pub const JoystickDevice = struct {
         poll: *const fn (context: *anyopaque, state: *JoystickState) error{Unplugged}!void,
     };
 
-    /// What `joystick_found` asks of the device: `GetCapabilities`, the axes `EnumObjects` finds,
-    /// and the product name DirectInput's enumeration hands it.
+    /// What `joystick_found` needs from the device: the counts from `GetCapabilities`, the axes
+    /// `EnumObjects` reports, and the product name from DirectInput's enumeration.
     pub const Capabilities = struct {
         name: []const u8,
         axes: std.EnumSet(Axis),
@@ -101,8 +101,8 @@ pub const JoystickDevice = struct {
         buttons: u8,
         /// `DIDEVCAPS.dwPOVs`, at most 4.
         hats: u8,
-        /// Added for the port: whether the controller is a gamepad, whose buttons are
-        /// `GamepadButton`'s and which has bindings of its own.
+        /// Added by the port: whether the controller is a gamepad. A gamepad's buttons are
+        /// numbered as in `GamepadButton`, and it has its own default bindings.
         kind: Kind = .joystick,
     };
 
@@ -112,27 +112,27 @@ pub const JoystickDevice = struct {
         return device.vtable.capabilities(device.context);
     }
 
-    /// `SetProperty(DIPROP_RANGE)` for one axis: the values it reports from one end to the other.
+    /// `SetProperty(DIPROP_RANGE)` for one axis: the values it reports at either end of its travel.
     pub fn setRange(device: JoystickDevice, axis: Axis, min: i32, max: i32) void {
         device.vtable.setRange(device.context, axis, min, max);
     }
 
-    /// `SetProperty(DIPROP_DEADZONE)` for the whole device: how far from its centre, in hundredths
-    /// of a percent of its travel, an axis still reads as centred.
+    /// `SetProperty(DIPROP_DEADZONE)` for the whole device: how far an axis can move from its
+    /// center, in hundredths of a percent of its travel, and still read as centered.
     pub fn setDeadZone(device: JoystickDevice, zone: u16) void {
         device.vtable.setDeadZone(device.context, zone);
     }
 
-    /// `Poll` and `GetDeviceState`. Fails once the device is gone.
+    /// `Poll` and `GetDeviceState`. Fails if the device has been disconnected.
     pub fn poll(device: JoystickDevice, state: *JoystickState) error{Unplugged}!void {
         return device.vtable.poll(device.context, state);
     }
 };
 
-/// The joystick as the game keeps it: the device (`joystick_device`), its state (`joystick`,
-/// `0x00588340`), which axes it set up (`joystick_axes`), its button and hat counts
-/// (`joystick_buttons`, `joystick_hats`), its name (`joystick_name`), and the latches
-/// `control_active` keeps so that a press counts once (`button_latched`, `0x005DDC98`).
+/// The game's joystick globals: the device (`joystick_device`), its state (`joystick`,
+/// `0x00588340`), the axes that were set up (`joystick_axes`), the button and hat counts
+/// (`joystick_buttons`, `joystick_hats`), the name (`joystick_name`), and the latches
+/// `control_active` uses to count each press only once (`button_latched`, `0x005DDC98`).
 pub const Joystick = struct {
     device: ?JoystickDevice = null,
     state: JoystickState = idle,
@@ -143,13 +143,13 @@ pub const Joystick = struct {
     kind: JoystickDevice.Kind = .joystick,
     latched: [32]bool = @splat(false),
 
-    /// The state without a device: every value zero, as `read_joystick` leaves it.
+    /// The state when there is no device: all zero, as `read_joystick` leaves it.
     const idle = std.mem.zeroes(JoystickState);
 
-    /// What `joystick_found` (`0x004BD190`) does with the device DirectInput hands it: takes its
-    /// button and hat counts and its name, and has `joystick_object_found` give each axis the game
-    /// reads its range, mark it in `axes`, and set the dead zone, `zone`. Not yet ported: turning
-    /// off a force feedback joystick's centring spring.
+    /// `joystick_found` (`0x004BD190`): stores the device's button and hat counts and its name,
+    /// then, as `joystick_object_found` does, sets the range of each axis the game uses, marks it
+    /// in `axes`, and sets the dead zone to `zone`. Not yet ported: turning off the centering
+    /// spring of a force feedback joystick.
     pub fn open(joystick: *Joystick, device: JoystickDevice, zone: u16) void {
         const found = device.capabilities();
         joystick.* = .{
@@ -170,13 +170,14 @@ pub const Joystick = struct {
         }
     }
 
-    /// The device gone, as when it is unplugged: the game reads it as idle from then on.
+    /// Removes the device, for example when it has been disconnected; the joystick then reads as
+    /// idle.
     pub fn close(joystick: *Joystick) void {
         joystick.* = .{};
     }
 
-    /// `read_joystick` (`0x004BD300`): the device's state, all zero without one, then frees the
-    /// latch of each button that is up. A device that is gone is closed.
+    /// `read_joystick` (`0x004BD300`): reads the device's state (all zero without a device), then
+    /// clears the latch of each released button. A disconnected device is closed.
     pub fn read(joystick: *Joystick) void {
         joystick.state = idle;
         const device = joystick.device orelse return;
@@ -189,7 +190,7 @@ pub const Joystick = struct {
         }
     }
 
-    /// Whether `button` is down: a number past the 32 `JoystickState` holds never is.
+    /// Whether `button` is pressed. Numbers beyond the 32 buttons in `JoystickState` never are.
     pub fn down(joystick: Joystick, button: u8) bool {
         return button < joystick.state.buttons.len and joystick.state.buttons[button] != 0;
     }
@@ -377,23 +378,24 @@ pub const Settings = struct {
     /// `JoystickInvert` (`joystick_invert`, `0x0051D610`): while false, pitch is reversed, from
     /// the stick, the keys and the mouse.
     joystick_invert: bool = true,
-    /// `HatEnable` (`hat_enabled`, `0x0052029C`): whether the hat glances left, right and back.
+    /// `HatEnable` (`hat_enabled`, `0x0052029C`): whether the hat switches to the left, right and
+    /// rear views.
     hat_enabled: bool = true,
     /// `TwistEnable` (`twist_enabled`, `0x00595D88`): whether the joystick's twist rolls the ship.
     twist_enabled: bool = false,
     /// `Controller` (`control_mode`, `0x0057E064`).
     control_mode: ControlMode = .joystick,
-    /// Added for the port: `DeadZone` in the `JoyConfig` section, the joystick's dead zone in
+    /// Added by the port: `DeadZone` in the `JoyConfig` section, the joystick's dead zone in
     /// hundredths of a percent.
     dead_zone: u16 = default_dead_zone,
 };
 
-/// `control_bindings` (`0x004E2380`): each action's key, modifier and joystick button, which start
-/// as the game's defaults and `load_key_config` changes from `starlancer.ini`.
+/// `control_bindings` (`0x004E2380`): each action's key, modifier and joystick button, starting
+/// from the game's defaults, which `load_key_config` changes from `starlancer.ini`.
 pub const Bindings = std.EnumArray(controls.Action, controls.Binding);
 
-/// The bindings a controller of `kind` starts with. A joystick has the game's own; a gamepad,
-/// added for the port, has `gamepad_buttons` in place of the joystick buttons.
+/// The default bindings for a controller of `kind`: the game's own for a joystick, and for a
+/// gamepad (added by the port) the same keys with `gamepad_buttons` as the buttons.
 pub fn defaultBindings(kind: JoystickDevice.Kind) Bindings {
     var bindings: Bindings = undefined;
     for (std.enums.values(controls.Action)) |action| bindings.set(action, controls.binding(action));
@@ -404,11 +406,11 @@ pub fn defaultBindings(kind: JoystickDevice.Kind) Bindings {
     return bindings;
 }
 
-/// The buttons a gamepad reaches the game with, added for the port: a gamepad is a joystick whose
-/// buttons are these, in this order, so that `JoyConfig`'s `JOY BUTTON` numbers name them. The
-/// face buttons go by where they sit, whatever they are labelled. The triggers and the right
-/// stick's four directions count as buttons too. Of the axes, the left stick is X and Y and the
-/// right stick's left and right the twist; the pad is the hat.
+/// How the port numbers a gamepad's buttons when it presents the gamepad to the game as a joystick.
+/// These are the numbers `JOY BUTTON` uses in `JoyConfig`. Face buttons are named by position, not
+/// by label. The triggers and the four directions of the right stick are buttons too. The left
+/// stick is the X and Y axes, the right stick's horizontal axis is the twist, and the D-pad is the
+/// hat.
 pub const GamepadButton = enum(u5) {
     south,
     east,
@@ -444,8 +446,8 @@ pub const GamepadButton = enum(u5) {
     right_stick_right,
 };
 
-/// The actions a gamepad's buttons start with, added for the port, in place of the joystick's.
-/// With no throttle axis, the right stick's up and down step the throttle as the keys do.
+/// The default gamepad bindings, added by the port. Gamepads have no throttle axis, so the right
+/// stick's up and down directions change the throttle, like the throttle keys.
 pub const gamepad_buttons = [_]struct { controls.Action, GamepadButton }{
     .{ .fire_lasers, .right_trigger },
     .{ .launch_missile, .left_trigger },
@@ -462,26 +464,25 @@ pub const gamepad_buttons = [_]struct { controls.Action, GamepadButton }{
     .{ .radar_ranges, .back },
 };
 
-/// The player's devices as the game reads them, and what it reads them by: the state of the
-/// keyboard and the joystick, the bindings and the input settings, which the game keeps in
-/// globals. Not yet ported: the mouse.
+/// The input state the game keeps in globals: the keyboard and joystick states, the bindings and
+/// the input settings. Not yet ported: the mouse.
 pub const Devices = struct {
     keyboard: Keyboard = .{},
     joystick: Joystick = .{},
     bindings: Bindings = defaultBindings(.joystick),
     settings: Settings = .{},
 
-    /// What `simulation_step` reads at the start of each step: the keyboard, then the joystick.
+    /// Reads the keyboard, then the joystick, as `simulation_step` does at the start of each step.
     pub fn read(devices: *Devices) void {
         devices.keyboard.read();
         devices.joystick.read();
     }
 
-    /// Whether `action` is active (`control_active`, `0x00412630`): its joystick button down, or
-    /// its key with its modifier, or with none while neither Shift nor Ctrl is down. With `once`
-    /// only once for each press: the button counts while it is not latched, and latches it, and
-    /// the key as `key_pressed` counts it. While the keyboard's `numbers_taken`, the keys 1 to 8
-    /// count for nothing.
+    /// `control_active` (`0x00412630`): whether `action` is active because its joystick button is
+    /// pressed, or its key is pressed with its modifier (or, without a modifier, with neither Shift
+    /// nor Ctrl held). With `once`, each press counts only once: a button counts while it isn't
+    /// latched and is then latched, and a key is checked with `key_pressed`. While the keyboard's
+    /// `numbers_taken` is set, the keys 1 to 8 are ignored.
     pub fn active(devices: *Devices, action: controls.Action, once: bool) bool {
         const binding = devices.bindings.get(action);
         const keyboard = &devices.keyboard;
@@ -544,7 +545,7 @@ test "Devices.active with the keyboard" {
     try std.testing.expect(devices.active(.smart_target, false));
 }
 
-/// A joystick device for the tests: `state` is what it reports, and it keeps what the game set.
+/// A joystick device for the tests: it reports `state` and records the settings the game makes.
 const TestDevice = struct {
     state: JoystickState = Joystick.idle,
     capabilities: JoystickDevice.Capabilities,
@@ -597,7 +598,7 @@ test Joystick {
     var stick = testStick();
     var joystick: Joystick = .{};
     joystick.open(stick.device(), default_dead_zone);
-    // The axes the game reads get their ranges and are marked; the dead zone is a tenth.
+    // The axes the game uses get their ranges and are marked; the dead zone is 10%.
     try std.testing.expectEqual([2]i32{ -1000, 1000 }, stick.ranges.get(.x).?);
     try std.testing.expectEqual([2]i32{ 0, 1000 }, stick.ranges.get(.slider).?);
     try std.testing.expectEqual(null, stick.ranges.get(.z));
@@ -606,7 +607,7 @@ test Joystick {
     try std.testing.expectEqual(12, joystick.buttons);
     try std.testing.expectEqualStrings("Test Stick", joystick.name);
 
-    // Reading takes the device's state, and frees the latches of the buttons that are up.
+    // Reading copies the device's state and clears the latches of released buttons.
     stick.state.x = 250;
     stick.state.buttons[3] = 0x80;
     joystick.latched[3] = true;
@@ -616,7 +617,7 @@ test Joystick {
     try std.testing.expect(joystick.latched[3] and !joystick.latched[4]);
     try std.testing.expect(joystick.down(3) and !joystick.down(4) and !joystick.down(200));
 
-    // Unplugged, it reads as idle and is closed.
+    // Once disconnected, it reads as idle and is closed.
     stick.unplugged = true;
     joystick.read();
     try std.testing.expectEqual(null, joystick.device);
@@ -631,7 +632,7 @@ test "Devices.active with the joystick's buttons" {
     devices.joystick.open(stick.device(), default_dead_zone);
     const fire = controls.binding(.fire_lasers).button.?;
 
-    // Held, a button counts every time; with `once`, only until the button is let go.
+    // A held button counts every time; with `once`, only once per press.
     stick.state.buttons[fire] = 0x80;
     devices.read();
     try std.testing.expect(devices.active(.fire_lasers, false));
@@ -646,7 +647,7 @@ test "Devices.active with the joystick's buttons" {
     devices.read();
     try std.testing.expect(devices.active(.fire_lasers, true));
 
-    // Its key still counts too.
+    // The key still works too.
     stick.state.buttons[fire] = 0;
     devices.read();
     devices.keyboard.down[controls.binding(.fire_lasers).key] = true;
@@ -660,7 +661,7 @@ test defaultBindings {
     const pad = defaultBindings(.gamepad);
     try std.testing.expectEqual(@intFromEnum(GamepadButton.right_trigger), pad.get(.fire_lasers).button.?);
     try std.testing.expectEqual(@intFromEnum(GamepadButton.right_stick_up), pad.get(.accelerate).button.?);
-    // The joystick's own buttons are gone from the gamepad's, and every key stays.
+    // Gamepad bindings drop the joystick buttons but keep every key.
     try std.testing.expectEqual(null, pad.get(.strafe_left).button);
     for (std.enums.values(controls.Action)) |action| {
         try std.testing.expectEqual(stick.get(action).key, pad.get(action).key);
@@ -705,8 +706,8 @@ const throttle_step: f32 = 0.02;
 /// The share of the yaw added to the roll, which banks the ship into its turns (`0x004DC408`).
 const bank_share: f32 = 0.5;
 
-/// How far one unit of a joystick axis moves an input (`0x004DC418`): the stick's travel, -1000 to
-/// 1000, spans -1 to 1.
+/// The factor from joystick axis units to steering input (`0x004DC418`): -1000 to 1000 becomes -1
+/// to 1.
 const axis_scale: f32 = 0.001;
 
 /// `player_throttle_keys` (`0x004132C0`): ACCELERATE and DECELERATE step the throttle setting and
@@ -737,15 +738,16 @@ pub fn playerThrottleKeys(player: *Player, devices: *Devices, object: *gameobj.G
 /// steering inputs, its throttle and its two burns from the controls. It runs once a frame with the
 /// ship's orders and once again in each simulation step, before the objects move.
 ///
-/// With the joystick (`control_mode` 0), X yaws and Y pitches; the roll keys roll, and JOYSTICK
-/// ROLL held has X roll instead of yawing; with `TwistEnable` and a twist axis, the twist rolls.
-/// The throttle axis, Z or else the first slider, sets the throttle outright; without one, the
-/// keys step it. With the keyboard, the steering keys step the inputs. In each mode half the yaw
-/// banks the ship, and `JoystickInvert` off reverses pitch.
+/// With the joystick (`control_mode` 0), X yaws and Y pitches; the roll keys roll, and holding
+/// JOYSTICK ROLL makes X roll instead of yaw. With `TwistEnable` and a twist axis, the twist rolls.
+/// The throttle axis (Z, or else the first slider) sets the throttle directly; without one, the
+/// throttle keys change it. With the keyboard, the steering keys change the inputs step by step.
+/// In every mode, half the yaw is added to the roll so the ship banks into turns, and turning
+/// `JoystickInvert` off reverses pitch.
 ///
-/// Not yet ported: the mouse, which steers by the keys meanwhile; matching a target's speed; the
-/// weapons and the other actions it reads; and what it does while the player's object has 7 or 9
-/// at `0x754`, or while any of the flags at `0x0051CEF8`, `0x0051CEFC` and `0x0051CF04` is set.
+/// Not yet ported: the mouse (mouse mode uses the keys for now); matching a target's speed; the
+/// weapons and the other actions it reads; and the special cases for 7 or 9 in the player's object
+/// at `0x754` and for the flags at `0x0051CEF8`, `0x0051CEFC` and `0x0051CF04`.
 pub fn playerControls(player: *Player, devices: *Devices, object: *gameobj.GameObject, view: camera.View) void {
     const pitch_sign: f32 = if (devices.settings.joystick_invert) 1 else -1;
     switch (devices.settings.control_mode) {
@@ -805,7 +807,7 @@ pub fn playerControls(player: *Player, devices: *Devices, object: *gameobj.GameO
     }
     object.roll_input += object.yaw_input * bank_share;
 
-    // STRAFE RIGHT wins over STRAFE LEFT, as the game reads them in that order.
+    // If both strafe keys are held, STRAFE RIGHT wins, since the game checks it last.
     object.lateral_input = 0;
     if (devices.active(.strafe_left, false)) object.lateral_input = -1;
     if (devices.active(.strafe_right, false)) object.lateral_input = 1;
@@ -822,8 +824,8 @@ pub fn playerControls(player: *Player, devices: *Devices, object: *gameobj.GameO
     }
 }
 
-/// The roll the roll keys give: 1 for ROLL SHIP CLOCKWISE, -1 for ROLL SHIP ANTI-CLOCKWISE, the
-/// first held winning, and 0 without either.
+/// The roll input from the roll keys: 1 for ROLL SHIP CLOCKWISE, -1 for ROLL SHIP ANTI-CLOCKWISE
+/// (clockwise wins if both are held), and 0 for neither.
 fn rollKeys(devices: *Devices) f32 {
     if (devices.active(.roll_ship_clockwise, false)) return 1;
     if (devices.active(.roll_ship_anti_clockwise, false)) return -1;
@@ -1136,8 +1138,8 @@ test "steering with the joystick" {
     devices.joystick.open(stick.device(), default_dead_zone);
     var player: Player = .{};
 
-    // X yaws, banking the ship by half, and Y pitches; the slider sets the throttle outright,
-    // none at 1000 and full at 0.
+    // X yaws (and banks the ship by half as much), Y pitches, and the slider sets the throttle
+    // directly: 1000 is none and 0 is full.
     stick.state = .{ .x = 500, .y = -250, .z = 0, .rx = 0, .ry = 0, .rz = 800, .sliders = .{ 250, 0 }, .pov = @splat(JoystickState.centred), .buttons = @splat(0) };
     devices.read();
     playerControls(&player, &devices, &object, .cockpit);
@@ -1146,21 +1148,21 @@ test "steering with the joystick" {
     try std.testing.expectApproxEqAbs(0.25, object.roll_input, 1e-6);
     try std.testing.expectApproxEqAbs(0.75, object.throttle, 1e-6);
 
-    // JOYSTICK ROLL held, X rolls instead.
+    // Holding JOYSTICK ROLL makes X roll instead.
     devices.keyboard.down[controls.binding(.joystick_roll).key] = true;
     playerControls(&player, &devices, &object, .cockpit);
     try std.testing.expectEqual(0, object.yaw_input);
     try std.testing.expectApproxEqAbs(0.5, object.roll_input, 1e-6);
     devices.keyboard.down[controls.binding(.joystick_roll).key] = false;
 
-    // With the twist on, the twist rolls, and X still yaws and banks.
+    // With TwistEnable, the twist rolls, and X still yaws and banks.
     devices.settings.twist_enabled = true;
     playerControls(&player, &devices, &object, .cockpit);
     try std.testing.expectApproxEqAbs(0.5, object.yaw_input, 1e-6);
     try std.testing.expectApproxEqAbs(0.8 + 0.25, object.roll_input, 1e-6);
     devices.settings.twist_enabled = false;
 
-    // JoystickInvert off reverses pitch; the orbiting views leave the stick steering.
+    // Turning JoystickInvert off reverses pitch; in the orbiting views the stick still steers.
     devices.settings.joystick_invert = false;
     playerControls(&player, &devices, &object, .external);
     try std.testing.expectApproxEqAbs(0.25, object.pitch_input, 1e-6);

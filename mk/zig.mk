@@ -49,6 +49,19 @@ $(SHADER_DIR)/%.msl: $(SHADER_DIR)/%.spv | $(SPIRV_CROSS)
 test: ## Run the unit tests
 	$(ZIG) build test --summary all
 
+# Tests joystick and gamepad support on Linux with virtual controllers that imitate real ones
+# (scripts/controllers). It runs in a privileged Docker container with the host's /dev mounted,
+# which also works on macOS through Docker's Linux VM.
+CONTROLLER_TEST_ARCH := $(if $(filter arm64 aarch64,$(HOST_ARCH)),aarch64,x86_64)
+CONTROLLER_TEST_PLATFORM := $(if $(filter arm64 aarch64,$(HOST_ARCH)),linux/arm64,linux/amd64)
+
+.PHONY: test-controllers
+test-controllers: ## Test joysticks and gamepads on Linux with virtual controllers (needs Docker)
+	$(ZIG) build -Doptimize=ReleaseFast -Dtarget=$(CONTROLLER_TEST_ARCH)-linux-gnu --prefix $(ROOT)/zig-out/linux
+	docker run --rm --privileged --platform $(CONTROLLER_TEST_PLATFORM) -v /dev:/dev \
+	    -v $(ROOT)/scripts/controllers:/test:ro -v $(ROOT)/zig-out/linux/bin/openreliant:/opt/openreliant:ro \
+	    ubuntu:24.04 /test/run.sh /opt/openreliant
+
 .PHONY: fmt
 fmt: ## Format the Zig sources
 	$(ZIG) fmt build.zig src
