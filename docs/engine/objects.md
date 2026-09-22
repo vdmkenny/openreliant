@@ -183,6 +183,12 @@ part, whose animation it also advances. So an object moves on from the place the
 worked out, and between steps its `position` is one step behind `next_position`, which the rest
 of the game reads as the object's place.
 
+Each step, before the node updates, `simulation_step` also orthonormalizes the root's next
+orientation (`0x004C2690`) of one object, the one `simulation_turn` (`0x00562FFC`) names. The turn
+moves on by one each step and goes round the live objects, so rounding never builds up in any
+object's orientation. The same object's orientation at `0x7A4`, which a multiplayer game draws
+other players' ships by, is orthonormalized too.
+
 `create_object` gives every object `motion_forward` (`0x004744C0`), which runs the flight model,
 `object_fly` (`0x004742E0`), with a thrust of 1; `motion_backward` runs it with -1. The orders
 select the others (see [The orders' motion functions](#the-orders-motion-functions)).
@@ -291,7 +297,8 @@ with the player's and writes the global. `Motion` is an `enum` of the two routin
 settles by is one `settle` helper rather than the six copies the binary holds.
 
 `objects.updateTree` ports `node_tree_update` for the root, and the driver runs it where
-`simulation_step` does, at the start of each step.
+`simulation_step` does, at the start of each step, after `main.orthonormalizeTurn` on the object
+whose turn it is (`Clock.nextTurn`).
 
 Not yet ported: the orders' motion functions
 ([#30](https://github.com/vdmkenny/openreliant/issues/30)), the inertia tensor that
