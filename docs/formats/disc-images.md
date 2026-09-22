@@ -67,5 +67,6 @@ sltool cd ls <image>              # every file, with size and timestamp
 sltool cd extract <image> <dir>   # copy everything off
 ```
 
-`make game` runs the extraction for both discs, then unpacks `LANCER.CAB` (an LZX-compressed
-Microsoft cabinet, handled by `7z`) into `game/install/`.
+`make game` runs the extraction for both discs, then installs `game/install/` from disc 1 with
+`openreliant install`, which unpacks `LANCER.CAB`, an LZX-compressed Microsoft cabinet
+([Platform](../port/platform.md#installing-the-games-files)).

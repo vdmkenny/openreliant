@@ -9,7 +9,6 @@ under [Ghidra](#ghidra).
 | Tool | Used for |
 |---|---|
 | Zig 0.16 | Building `sltool` and everything else in `src/`. |
-| `7z` | Unpacking `LANCER.CAB`, which is LZX-compressed. |
 | `uv` | Creating the virtualenv for the `ghydra` CLI and MCP bridge. |
 | A C++ toolchain | Compiling Ghidra's native helpers. On macOS, the Xcode command line tools. |
 | Gradle 8.5+ | Driving that native build. |

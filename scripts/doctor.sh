@@ -17,7 +17,6 @@ native() { [[ -x "$ghidra_home/Ghidra/Features/Decompiler/build/os/$platform/dec
 
 echo "toolchain"
 check "zig ($("$zig" version 2>/dev/null || echo '?'))"   "$zig" version
-check "7z (unpacks LANCER.CAB)"                            command -v 7z
 check "uv (ghydra CLI + MCP bridge)"                       command -v uv
 check "JDK at tools/jdk"                                   "$jdk_home/bin/java" -version
 check "Ghidra at ${ghidra_home#"$root"/}"                  test -x "$ghidra_home/ghidraRun"

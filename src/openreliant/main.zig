@@ -1,6 +1,7 @@
 //! `openreliant`: the engine, on SDL3 in place of Win32 and DirectX. It has no data of its own: it
 //! runs in the directory of an installed copy of StarLancer, or in the one given, and reads
-//! `resource.hog` and the texture cache from it as the game does.
+//! `resource.hog` and the texture cache from it as the game does. `openreliant install` installs
+//! the game's files from its discs; see `install.zig`.
 //!
 //! So far it shows a ship in space, drawn through Surrender's pipeline and its Direct3D driver with
 //! the GPU, or onto the software device, from the camera's views, which the game's camera keys pick
@@ -27,9 +28,11 @@ const srtexture = engine.surrender.surrenderlib.srtexture;
 const srd3d = engine.surrender.srd3d;
 const game = engine.game;
 const camera = game.camera;
+const install = @import("install.zig");
 
 const usage =
     \\usage: openreliant [<game-directory>] [<option>...]
+    \\       openreliant install [--from <disc>] [--force] <game-directory>
     \\  <game-directory>          where StarLancer is installed, with resource.hog and
     \\                            tcachehw.dat; the current directory by default
     \\  --ship <type>             the ship type to show, by its number in shipstats.bin; 0 is the
@@ -141,6 +144,7 @@ const Screen = union(enum) {
 pub fn main(init: std.process.Init) !u8 {
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
+    if (args.len > 1 and std.mem.eql(u8, args[1], "install")) return install.main(init.io, arena, args[2..]);
     const options = Options.parse(args[1..]) catch {
         std.debug.print("{s}", .{usage});
         return 2;
@@ -150,15 +154,6 @@ pub fn main(init: std.process.Init) !u8 {
         else => return err,
     };
     return 0;
-}
-
-/// The game's files the engine reads before anything else. It has none of its own.
-const game_files = [_][]const u8{ game.bigfile.resource_name, "tcachehw.dat", "shipstats.bin", game.language.file_name };
-
-/// The first of the game's files `dir` lacks, or null when it has them all.
-fn missingGameFile(io: Io, dir: Io.Dir) ?[]const u8 {
-    for (game_files) |name| dir.access(io, name, .{}) catch return name;
-    return null;
 }
 
 /// Says that `directory` holds no installed copy of the game, and what the engine needs.
@@ -174,6 +169,10 @@ fn missingGameFiles(directory: []const u8, file: ?[]const u8) error{MissingGameF
         \\
         \\    openreliant <game-directory>
         \\
+        \\To install the game's files from your StarLancer discs:
+        \\
+        \\    openreliant install <game-directory>
+        \\
     , .{});
     return error.MissingGameFiles;
 }
@@ -184,7 +183,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         else => return err,
     };
     defer directory.close(io);
-    if (missingGameFile(io, directory)) |name| return missingGameFiles(options.directory, name);
+    if (install.missingGameFile(io, directory)) |name| return missingGameFiles(options.directory, name);
 
     // What `WinMain` opens at start-up, and the texture cache `renderer_start` opens.
     var resources: game.bigfile.Hog = try .open(arena, io, directory, game.bigfile.resource_name);
@@ -719,28 +718,16 @@ fn nextShipType(from: usize, step: isize) usize {
     return from;
 }
 
+test {
+    _ = install;
+}
+
 test nextShipType {
     // The Predator's neighbours: the Nagi after it, and the last type with a model before it.
     try std.testing.expectEqual(1, nextShipType(0, 1));
     const last = nextShipType(0, -1);
     try std.testing.expect(game.create.models.ship_types[last].model != null);
     try std.testing.expectEqual(0, nextShipType(last, 1));
-}
-
-test missingGameFile {
-    const io = std.testing.io;
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    // Each of the game's files in turn, and none once all are there.
-    try std.testing.expectEqualStrings(game.bigfile.resource_name, missingGameFile(io, tmp.dir).?);
-    try tmp.dir.writeFile(io, .{ .sub_path = game.bigfile.resource_name, .data = "" });
-    try std.testing.expectEqualStrings("tcachehw.dat", missingGameFile(io, tmp.dir).?);
-    try tmp.dir.writeFile(io, .{ .sub_path = "tcachehw.dat", .data = "" });
-    try std.testing.expectEqualStrings("shipstats.bin", missingGameFile(io, tmp.dir).?);
-    try tmp.dir.writeFile(io, .{ .sub_path = "shipstats.bin", .data = "" });
-    try std.testing.expectEqualStrings(game.language.file_name, missingGameFile(io, tmp.dir).?);
-    try tmp.dir.writeFile(io, .{ .sub_path = game.language.file_name, .data = "" });
-    try std.testing.expectEqual(null, missingGameFile(io, tmp.dir));
 }
 
 test Options {
