@@ -87,7 +87,7 @@ pub const Stats = struct {
             record.shield_recharge = if (ship.shield_recharge == 0) stats.Ship.default_shield_recharge else ship.shield_recharge;
             record.gun_energy = ship.gun_energy;
             record._unknown_14 = ship._unknown_74;
-            record._unknown_18 = std.math.lossyCast(i32, ship._unknown_78);
+            record.rounds = std.math.lossyCast(i32, ship.rounds);
         }
         for (&tables.flight) |*flight| flight.speed_per_pitch_rate = flight.max_speed / flight.pitch_rate;
     }
@@ -167,8 +167,8 @@ pub const ShipCombat = extern struct {
     /// step adds `gun_energy * gun_factor * gun_condition / (this * 25)` to their charge
     /// (`0x004770E0`).
     _unknown_14: f32,
-    /// `Ship._unknown_78`, truncated: what `GameObject._unknown_13c` starts at.
-    _unknown_18: i32,
+    /// `Ship.rounds`, truncated: the rounds a new object's guns have (`GameObject.rounds`).
+    rounds: i32,
     /// The type's guns in groups, which `0x004667F0` works out from its first object's guns,
     /// pairing each gun with its mirror image across the ship; zero until then (#131).
     gun_groups: i16,
@@ -316,6 +316,8 @@ pub const Slot = struct {
     /// Its guns, one for each muzzle of its model (`GameObject.guns`), made in the objects'
     /// allocator.
     guns: []guns.Fitted = &.{},
+    /// Its type's gun groups (`ShipCombat.gun_group_table`), in `Objects.gun_groups`.
+    gun_groups: *const [guns.max_groups]guns.Group = &guns.no_groups,
     /// The parts of its model that count as components, `GameObject.component_count` of them, the
     /// models mounted on it among them (`GameObject.components`, which holds their nodes).
     components: [gameobj.max_components]?*objects.Model.Part = @splat(null),
@@ -347,6 +349,9 @@ pub const Objects = struct {
     /// Each ship type's gun groups (`0x00545900`), which `gun_groups_build` works out from an
     /// object of the type.
     gun_groups: [ship_type_count][guns.max_groups]guns.Group = @splat(@splat(.{})),
+    /// `gun_stats` (`0x00500CA4`): every gun type's figures, which `stats_load_guns` fills from
+    /// `gunstats.bin`.
+    gun_stats: guns.Stats = .initial,
     /// The working lists of the collision sweep `objectsUpdate` runs.
     sweep: Sweep = .{},
     /// `0x005185AC`: the tick at which `aigeneric.ordersUpdate` next clears what every object has
@@ -507,7 +512,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.gun_condition = 1;
     object._unknown_750 = 0;
     object._unknown_b96 = 0xFFFF;
-    object._unknown_14c = 0;
+    object.gun_turn = 0;
     object.blind_fire_aim = 0;
     object._unknown_678 = 0;
     object._unknown_710 = @splat(0);
@@ -551,16 +556,6 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
         gameobj.linkParts(&model, loaded.model);
         slot.model = model;
         slot.guns = try guns.fit(all.gpa, &slot.model.?);
-        object.gun_count = @intCast(slot.guns.len);
-        // The type's gun groups follow from this object's guns, and each gun learns its side.
-        if (combat._unknown_1e == 0) {
-            tables.combat[stats_type].gun_groups = @intCast(guns.buildGroups(slot.guns, &all.gun_groups[stats_type]));
-        }
-        for (all.gun_groups[stats_type][0..@intCast(tables.combat[stats_type].gun_groups)]) |group| {
-            if (group.first < 0) continue;
-            slot.guns[@intCast(group.first)].side = 0;
-            if (group.second >= 0) slot.guns[@intCast(group.second)].side = 1;
-        }
         // `object_recentre` puts what it works out in the record.
         object.mass = model.mass;
         object.centre = gameobj.vec3(model.centre);
@@ -600,11 +595,24 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.power_setting = .{ .x = 1, .y = 1, .z = 1 };
     object.gun_count = 0;
     object.component_count = 0;
-    // The components are listed once the count is clear, as the game lists them.
+    // The components are listed once the count is clear, as the game lists them, and the guns are
+    // fitted after them (`object_fit_guns`).
     if (object.flags.components) collectComponents(slot);
+    object.gun_count = @intCast(slot.guns.len);
+    // The type's gun groups follow from this object's guns, and each gun learns its side.
+    // `gun_groups_build` leaves a type with no model alone.
+    if (slot.model != null and combat._unknown_1e == 0) {
+        tables.combat[stats_type].gun_groups = @intCast(guns.buildGroups(slot.guns, &all.gun_groups[stats_type]));
+    }
+    slot.gun_groups = &all.gun_groups[stats_type];
+    for (all.gun_groups[stats_type][0..@intCast(tables.combat[stats_type].gun_groups)]) |group| {
+        if (group.first < 0 or group.first >= slot.guns.len) continue;
+        slot.guns[@intCast(group.first)].side = 0;
+        if (group.second >= 0 and group.second < slot.guns.len) slot.guns[@intCast(group.second)].side = 1;
+    }
     // Its guns charged.
     object.gun_charge = combat.gun_energy;
-    object._unknown_13c = combat._unknown_18;
+    object.rounds = combat.rounds;
     object.gun_mode = .created(combat.gun_groups);
     ai.setTargetable(object, combat, true);
     object.type = becomes;
@@ -1044,6 +1052,41 @@ test createObject {
     _ = try createObject(all, &tables, model.types(), player, 0, @splat(0), &random);
 }
 
+test "an object is created with the guns its model holds" {
+    const gpa = std.testing.allocator;
+    var random: libcmt.Rand = .{};
+    const all = try Objects.create(gpa, &random);
+    defer all.destroy();
+    var tables = testing.tables();
+    var model: testing.Model = undefined;
+    try model.init(gpa);
+    defer model.deinit(gpa);
+    // Two muzzles of one type, one either side of the nose.
+    var muzzles: [2]shp.Attachment = @splat(std.mem.zeroes(shp.Attachment));
+    for (&muzzles, [_]f32{ -100, 100 }) |*muzzle, x| {
+        muzzle.kind = .gun_muzzle;
+        muzzle.gun_type = 1;
+        muzzle.position = .{ .x = x, .y = 0, .z = 0 };
+    }
+    model.data[0].attachments = &muzzles;
+
+    const index = try createObject(all, &tables, model.types(), null, 7, @splat(0), &random);
+    const slot = &all.slots[index];
+    // The guns are fitted after the count is cleared, so the object holds them all.
+    try std.testing.expectEqual(2, slot.object.gun_count);
+    try std.testing.expectEqual(2, slot.guns.len);
+    // They make one group, whose two guns fire in turn as its left and right.
+    try std.testing.expectEqual(1, tables.combat[7].gun_groups);
+    try std.testing.expectEqual(&all.gun_groups[7], slot.gun_groups);
+    try std.testing.expectEqual(0, slot.gun_groups[0].first);
+    try std.testing.expectEqual(1, slot.gun_groups[0].second);
+    try std.testing.expectEqual(0, slot.guns[0].side);
+    try std.testing.expectEqual(1, slot.guns[1].side);
+    // One group of guns fires them in step (`GunMode.created`).
+    try std.testing.expect(slot.object.gun_mode.synchronised);
+    try std.testing.expect(!slot.object.gun_mode.all);
+}
+
 test "a type under another number takes its stats, then its number" {
     const gpa = std.testing.allocator;
     var random: libcmt.Rand = .{};
@@ -1078,7 +1121,7 @@ test "a type with no model still flies" {
     all.slots[index].object.rotation = math.identity;
     var shake: f32 = 0;
     var player: input.Player = .{};
-    objectsUpdate(.{ .objects = all, .player = &player, .view = .chase, .shake = &shake });
+    objectsUpdate(.{ .objects = all, .player = &player, .view = .chase, .shake = &shake, .random = &random });
     try std.testing.expect(all.slots[index].object.root.flags.next_pending);
     try std.testing.expect(all.slots[index].object.velocity.z > 0);
 }
@@ -1098,7 +1141,7 @@ test objectsUpdate {
     }
     var shake: f32 = 0;
     var player: input.Player = .{};
-    objectsUpdate(.{ .objects = all, .player = &player, .view = .chase, .shake = &shake });
+    objectsUpdate(.{ .objects = all, .player = &player, .view = .chase, .shake = &shake, .random = &random });
     // The first moves on; the disabled and the frozen ones stay where they are.
     try std.testing.expectEqual(10, all.slots[0].object.root.next_position.z);
     try std.testing.expectEqual(0, all.slots[1].object.root.next_position.z);
@@ -1112,7 +1155,7 @@ test "the sweep pushes apart the objects that meet" {
     var tables = testing.tables();
     var shake: f32 = 0;
     var player: input.Player = .{};
-    const world: gameobj.World = .{ .objects = all, .player = &player, .view = .chase, .shake = &shake };
+    const world: gameobj.World = .{ .objects = all, .player = &player, .view = .chase, .shake = &shake, .random = &random };
 
     // Three ships in a row, the first two of them overlapping, each 1000 units across and drifting
     // nowhere.

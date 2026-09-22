@@ -56,17 +56,17 @@ does.
 
 The simulation step walks the objects ([The object array](objects.md#the-object-array)): each has
 its orientation orthonormalized in its turn, then its node update, its shields' recharge and its
-guns' step, and then the player's controls fly the player's ship, while its top order is Player
+[guns' step](guns.md#the-step), and then the player's controls fly the player's ship, while its top order is Player
 Control, and `objects_update` moves every object. Each frame, `mission_frame` frames each object
 between its last two steps before the camera's frame, and draws them after it.
 
 Ported so far: the clocks, the pacing, the keyboard and the joystick, which the simulation step
 reads 25 times a second as `read_keyboard` and `read_joystick` do rather than once a frame, the
-step's work on the objects save the guns' step
-([#38](https://github.com/vdmkenny/openreliant/issues/38)), and each frame's orders and framing
-(`main.missionFrame`), which is what a mission and the sandbox both run.
-Not yet: the mouse, the missiles and bullets the step moves after `objects_update`, the countdown
-`game_tick` steps once a second, and the sound streaming that shares `tick_timer`.
+step's work on the objects, and each frame's orders and framing (`main.missionFrame`), which is
+what a mission and the sandbox both run.
+Not yet: the mouse, the missiles and bullets the step moves after `objects_update`
+([#151](https://github.com/vdmkenny/openreliant/issues/151)), the countdown `game_tick` steps once
+a second, and the sound streaming that shares `tick_timer`.
 
 ## Collisions
 

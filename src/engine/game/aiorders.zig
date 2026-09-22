@@ -194,9 +194,9 @@ pub fn matchSpeed(ctx: Context, index: u16) void {
 
 const testing = struct {
     /// A world of objects with no models, and the clock and view the orders run against.
-    fn world(all: *create.Objects, clock: *const main.Clock, player: *input.Player, shake: *f32) Context {
+    fn world(all: *create.Objects, clock: *const main.Clock, player: *input.Player, shake: *f32, random: *libcmt.Rand) Context {
         return .{
-            .world = .{ .objects = all, .player = player, .view = .chase, .shake = shake },
+            .world = .{ .objects = all, .player = player, .view = .chase, .shake = shake, .random = random },
             .clock = clock,
         };
     }
@@ -218,7 +218,7 @@ test doNothing {
     var clock: main.Clock = .{};
     var player: input.Player = .{};
     var shake: f32 = 0;
-    const ctx = testing.world(all, &clock, &player, &shake);
+    const ctx = testing.world(all, &clock, &player, &shake, &random);
 
     all.slots[index].object.throttle = 1;
     all.slots[index].object.yaw_input = 1;
@@ -235,7 +235,7 @@ test fly {
     var clock: main.Clock = .{};
     var player: input.Player = .{};
     var shake: f32 = 0;
-    const ctx = testing.world(all, &clock, &player, &shake);
+    const ctx = testing.world(all, &clock, &player, &shake, &random);
 
     const index = try testing.ship(all, &tables, &random, @splat(0));
     const other = try testing.ship(all, &tables, &random, .{ 0, 0, 30000 });
@@ -268,7 +268,7 @@ test "Fly without a target holds the heading it started on" {
     var clock: main.Clock = .{};
     var player: input.Player = .{};
     var shake: f32 = 0;
-    const ctx = testing.world(all, &clock, &player, &shake);
+    const ctx = testing.world(all, &clock, &player, &shake, &random);
 
     const index = try testing.ship(all, &tables, &random, @splat(0));
     const slot = &all.slots[index];
@@ -289,7 +289,7 @@ test "a ship under a Fly order closes on its target and stops there" {
     var clock: main.Clock = .{};
     var player: input.Player = .{};
     var shake: f32 = 0;
-    const ctx = testing.world(all, &clock, &player, &shake);
+    const ctx = testing.world(all, &clock, &player, &shake, &random);
 
     const index = try testing.ship(all, &tables, &random, @splat(0));
     const target = try testing.ship(all, &tables, &random, .{ 8000, 0, 30000 });
@@ -326,7 +326,7 @@ test matchSpeed {
     var clock: main.Clock = .{};
     var player: input.Player = .{};
     var shake: f32 = 0;
-    const ctx = testing.world(all, &clock, &player, &shake);
+    const ctx = testing.world(all, &clock, &player, &shake, &random);
 
     const index = try testing.ship(all, &tables, &random, @splat(0));
     const other = try testing.ship(all, &tables, &random, .{ 0, 0, 5000 });
@@ -351,7 +351,7 @@ test randomSpinInit {
     var clock: main.Clock = .{};
     var player: input.Player = .{};
     var shake: f32 = 0;
-    const ctx = testing.world(all, &clock, &player, &shake);
+    const ctx = testing.world(all, &clock, &player, &shake, &random);
 
     const index = try testing.ship(all, &tables, &random, @splat(0));
     const object = &all.slots[index].object;
@@ -374,7 +374,7 @@ test runAway {
     var clock: main.Clock = .{};
     var player: input.Player = .{};
     var shake: f32 = 0;
-    const ctx = testing.world(all, &clock, &player, &shake);
+    const ctx = testing.world(all, &clock, &player, &shake, &random);
 
     const index = try testing.ship(all, &tables, &random, @splat(0));
     const other = try testing.ship(all, &tables, &random, .{ 0, 0, 5000 });

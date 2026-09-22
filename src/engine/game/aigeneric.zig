@@ -406,7 +406,11 @@ fn playerControl(ctx: Context, index: u16) void {
     const devices = ctx.devices orelse return;
     const slot = &ctx.world.objects.slots[index];
     const combat = slot.combat orelse return;
-    input.playerControls(ctx.world.player, devices, &slot.object, combat, ctx.world.view, ctx.clock.frame_duration);
+    input.playerControls(ctx.world.player, devices, &slot.object, combat, ctx.world.view, ctx.clock.frame_duration, .{
+        .fitted = slot.guns,
+        .groups = slot.gun_groups,
+        .frame_start = ctx.clock.frame_start,
+    });
 }
 
 test {
@@ -423,9 +427,9 @@ fn testShip(all: *create.Objects, tables: *create.Stats, random: *libcmt.Rand) !
 }
 
 /// The world a test runs its orders in.
-fn testContext(all: *create.Objects, clock: *const Clock, player: *input.Player, shake: *f32) Context {
+fn testContext(all: *create.Objects, clock: *const Clock, player: *input.Player, shake: *f32, random: *libcmt.Rand) Context {
     return .{
-        .world = .{ .objects = all, .player = player, .view = .chase, .shake = shake },
+        .world = .{ .objects = all, .player = player, .view = .chase, .shake = shake, .random = random },
         .clock = clock,
     };
 }
@@ -438,7 +442,7 @@ test push {
     var clock: Clock = .{};
     var player: input.Player = .{};
     var shake: f32 = 0;
-    const ctx = testContext(all, &clock, &player, &shake);
+    const ctx = testContext(all, &clock, &player, &shake, &random);
     const index = try testShip(all, &tables, &random);
     const slot = &all.slots[index];
 
@@ -476,7 +480,7 @@ test "a player's ship refuses the orders that are not its own" {
     var clock: Clock = .{};
     var player: input.Player = .{};
     var shake: f32 = 0;
-    const ctx = testContext(all, &clock, &player, &shake);
+    const ctx = testContext(all, &clock, &player, &shake, &random);
     const index = try create.createObject(all, &tables, create.testing.no_models, null, 0, @splat(0), &random);
     const none: Target = .none;
     try std.testing.expectEqual(0, index);
@@ -499,7 +503,7 @@ test pop {
     var clock: Clock = .{};
     var player: input.Player = .{};
     var shake: f32 = 0;
-    const ctx = testContext(all, &clock, &player, &shake);
+    const ctx = testContext(all, &clock, &player, &shake, &random);
     const index = try testShip(all, &tables, &random);
     const slot = &all.slots[index];
     const none: Target = .none;
@@ -527,7 +531,7 @@ test giveWay {
     var clock: Clock = .{};
     var player: input.Player = .{};
     var shake: f32 = 0;
-    const ctx = testContext(all, &clock, &player, &shake);
+    const ctx = testContext(all, &clock, &player, &shake, &random);
     const index = try testShip(all, &tables, &random);
     const slot = &all.slots[index];
     const none: Target = .none;
@@ -553,7 +557,7 @@ test objectOrders {
     var clock: Clock = .{};
     var player: input.Player = .{};
     var shake: f32 = 0;
-    const ctx = testContext(all, &clock, &player, &shake);
+    const ctx = testContext(all, &clock, &player, &shake, &random);
     const index = try testShip(all, &tables, &random);
     const slot = &all.slots[index];
     const none: Target = .none;
@@ -598,7 +602,7 @@ test ordersUpdate {
     var clock: Clock = .{};
     var player: input.Player = .{};
     var shake: f32 = 0;
-    const ctx = testContext(all, &clock, &player, &shake);
+    const ctx = testContext(all, &clock, &player, &shake, &random);
     const none: Target = .none;
     // The player's slot comes first, then three ships that all turn on the spot.
     for (0..4) |_| _ = try create.createObject(all, &tables, create.testing.no_models, null, 0, @splat(0), &random);

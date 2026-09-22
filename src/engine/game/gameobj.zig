@@ -19,6 +19,7 @@ const objects = @import("objects.zig");
 const Node = objects.Node;
 const Pointer = engine.Pointer;
 const create = @import("create.zig");
+const guns = @import("guns.zig");
 const libcmt = @import("../libcmt.zig");
 const motion = @import("motion.zig");
 const input = @import("../input.zig");
@@ -124,19 +125,25 @@ pub const GameObject = extern struct {
     gun_count: i16,
     _unknown_132: u16,
     guns: Pointer(anyopaque),
+    /// The count each gun keeps of the steps it has been firing (`guns.Fitted.sounded`), which
+    /// the game allocates with the guns, one word each.
     _unknown_138: u32,
-    /// `ShipCombat._unknown_18` when created. **Unverified:** rounds for the guns that use them:
-    /// the guns' step takes one for each shot of a gun whose type's first word is 1
-    /// (`0x004770E0`).
-    _unknown_13c: i32,
+    /// The rounds its guns have left: `ShipCombat.rounds` when created, one for each shot of a gun
+    /// of kind `rounds` (`guns.step`). The gunnery window shows them.
+    rounds: i32,
     /// The guns' charge: `ShipCombat.gun_energy` when created, which the guns recharge to
     /// (`0x00477114`). The display's right arc shows it against that.
     gun_charge: f32,
     /// How its guns fire, which the gun keys set.
     gun_mode: GunMode,
     _unknown_146: u16,
-    _unknown_148: u32,
-    _unknown_14c: u32,
+    /// How far a gun that charges up before it fires has charged, from 0 to 1, which scales its
+    /// damage. Only gun type 11, the Nova Cannon, uses it. Its guns' charge does not recharge
+    /// while it is not zero (`guns.step`).
+    nova_charge: f32,
+    /// Which side of a gun group fires next, 0 or 1, while the ship fires one group out of step
+    /// (`guns.step`).
+    gun_turn: u32,
     _unknown_150: i16,
     component_count: i16,
     _unknown_154: [0xF4]u8,
@@ -458,8 +465,8 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "side") == 0x644);
         assert(@offsetOf(GameObject, "gun_count") == 0x130);
         assert(@offsetOf(GameObject, "guns") == 0x134);
-        assert(@offsetOf(GameObject, "_unknown_13c") == 0x13C);
-        assert(@offsetOf(GameObject, "_unknown_14c") == 0x14C);
+        assert(@offsetOf(GameObject, "rounds") == 0x13C);
+        assert(@offsetOf(GameObject, "gun_turn") == 0x14C);
         assert(@offsetOf(GameObject, "_unknown_614") == 0x614);
         assert(@offsetOf(GameObject, "passes_through") == 0x618);
         assert(@offsetOf(GameObject, "_unknown_624") == 0x624);
@@ -688,6 +695,9 @@ pub const World = struct {
     player: *input.Player,
     view: camera.View,
     shake: *f32,
+    /// The runtime's numbers (`libcmt.Rand`), which the guns' step draws a damaged gun's misfire
+    /// from.
+    random: *libcmt.Rand,
     /// Whoever sets off the effects of the events the objects' tracks pass.
     events: ?Events = null,
 };
@@ -698,15 +708,16 @@ pub const World = struct {
 /// reads the input devices and moves `simulation_turn` on (`nextTurn`). Then each live object in
 /// the loops' order (`create.Objects.walk`), stand-ins and disabled ones passed over, has its own
 /// updates: the one whose turn it is is orthonormalized (`orthonormalizeTurn`), then comes its
-/// node update (`updateTree`), its shields' recharge (`rechargeShields`) and its guns' step. Then
+/// node update (`updateTree`), its shields' recharge (`rechargeShields`) and its guns' step
+/// (`guns.step`). Then
 /// the player's controls fly the player's ship, and `objects_update` moves them all
 /// (`create.objectsUpdate`). Returns whether it did that work.
 ///
 /// The player's own order runs here as well as once a frame, while its top order is Player
 /// Control, so the controls are read on every step.
 ///
-/// Not ported yet: the mouse; the guns' step (`0x004770E0`, #38); what runs after
-/// `objects_update`, the missiles and the bullets (`0x00495720`, `0x0047A4E0`).
+/// Not ported yet: the mouse; what runs after `objects_update`, the missiles and the bullets
+/// (`0x00495720`, `0x0047A4E0`).
 pub fn simulationStep(clock: *Clock, devices: *input.Devices, world: World) bool {
     clock.simulation_counter += 1;
     if (clock.simulation_counter < ticks_per_step) return false;
@@ -723,6 +734,12 @@ pub fn simulationStep(clock: *Clock, devices: *input.Devices, world: World) bool
         updateTree(&object.root, if (slot.model) |*model| model else null, world.events);
         const combat = slot.combat orelse continue;
         rechargeShields(object, combat, if (index == all.player) world.player.shield_reserves else null);
+        guns.step(.{
+            .stats = &all.gun_stats,
+            .frame_start = clock.frame_start,
+            .random = world.random,
+            .player = index == all.player,
+        }, object, combat, slot.guns, slot.gun_groups);
     }
     // The player's own order runs again here, before the objects move, so the controls tell on
     // every step rather than once a frame.
@@ -1158,7 +1175,7 @@ test "a step updates and moves every live object" {
     var devices: input.Devices = .{};
     var shake: f32 = 0;
     var clock: Clock = .{};
-    const world: World = .{ .objects = all, .player = &controls, .view = .chase, .shake = &shake };
+    const world: World = .{ .objects = all, .player = &controls, .view = .chase, .shake = &shake, .random = &random };
     var steps: usize = 0;
     for (0..ticks_per_step * 10) |_| {
         if (gameTick(&clock, &devices, world)) steps += 1;

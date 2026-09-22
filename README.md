@@ -39,8 +39,12 @@ Parts of the HUD work: the targeting cluster, radar, status lights, readouts, an
 shield and blind fire toggles. The HUD panels (gunnery, damage, power and so on) open and close
 with their keys but don't show anything yet.
 
-Nothing can be destroyed yet, and there are no weapons, missions or sound. See the
-[milestones](../../milestones) for what's planned.
+Your ship carries the guns its model holds. Hold the fire key and they fire, drawing on the gun
+charge the power ball feeds, at the rate and cost their type has in the game's own data. The shots
+themselves are not drawn yet, so nothing leaves the muzzle and nothing can be destroyed.
+
+There are no missiles, missions or sound yet. See the [milestones](../../milestones) for what's
+planned.
 
 ## Installing and playing
 

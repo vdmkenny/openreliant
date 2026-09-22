@@ -161,8 +161,9 @@ pub const Ship = extern struct {
     /// recharge to it, and the display's right arc measures against it. Mods: GunEnergy.
     gun_energy: f32,
     _unknown_74: f32,
-    /// Truncated to an integer on load.
-    _unknown_78: f32,
+    /// The rounds a new ship's guns have, truncated on load: what a shot of a gun of kind
+    /// `rounds` takes (`guns.step`).
+    rounds: f32,
     _unread: [record_size - 0x7C]u8,
 
     /// What the loader substitutes for a `shield_recharge` of zero.
@@ -177,12 +178,14 @@ pub const Ship = extern struct {
     }
 };
 
-/// One gun. The loader reads until the end of the file into a table of 15.
+/// One gun. The loader reads until the end of the file into `gun_stats`, whose first record is
+/// no gun: the file's 15 records are the gun types 1 to 15 a muzzle can name.
 pub const Gun = extern struct {
     name: [name_size]u8,
-    /// Truncated to an integer on load.
+    /// The ticks a shot lives, truncated on load, which is what gives the gun its range.
     range: f32,
-    _unknown_44: f32,
+    /// How fast a shot flies.
+    speed: f32,
     /// Two damage values. The first is also what the engine weights nearby guns by when it picks
     /// the most dangerous gun type around the player. They are not a minimum and a maximum: the
     /// first is the larger in several shipped guns.
@@ -190,8 +193,9 @@ pub const Gun = extern struct {
     /// Shots per unit time. The loader stores `100 / fire_rate`, truncated, which is the interval
     /// between shots.
     fire_rate: f32,
-    /// Truncated to an integer on load.
-    _unknown_54: f32,
+    /// What a shot draws from the guns' charge, truncated on load, for a gun that draws energy
+    /// rather than rounds (`guns.Kind`). The guns that fire rounds have none.
+    shot_energy: f32,
     _unread: [record_size - 0x58]u8,
 
     /// What the loader divides by `fire_rate`.

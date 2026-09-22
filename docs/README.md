@@ -26,6 +26,7 @@ of a legally owned copy. The repository holds none of the game's files.
 | [`engine/backdrop.md`](engine/backdrop.md) | The backdrop: sky dome, nebula, stars, dust, sun, lens flares and the default lights. |
 | [`engine/rendering.md`](engine/rendering.md) | Rendering: layers, depth, shading modes as materials, lighting, blending, highlights. |
 | [`engine/objects.md`](engine/objects.md) | Live objects: the object array, model hierarchies, components, the flight model. |
+| [`engine/guns.md`](engine/guns.md) | Guns: the guns a model holds, their groups, the trigger and the step that fires them. |
 | [`engine/loop.md`](engine/loop.md) | The game loop: the 100 Hz tick, the 25 Hz simulation step, collisions. |
 | [`engine/controls.md`](engine/controls.md) | Player input: devices, bindings, settings, steering and throttle. |
 | [`engine/hud.md`](engine/hud.md) | The head-up display: how it is reached, where an element stands, its text and its art. |
