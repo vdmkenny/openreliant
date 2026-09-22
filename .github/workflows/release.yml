@@ -1,0 +1,97 @@
+# Keeps a release pull request open with the next version and its changelog, worked out by
+# release-please from the Conventional Commits pushed to main. Merging that pull request tags the
+# version and publishes a GitHub release with its changelog; the builds for each system are then
+# attached to it. The builds hold no game files: the game needs your own copy.
+#
+# Run by hand from the Actions tab, it builds everything and keeps the archives as the run's
+# artifacts, but publishes nothing.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      created: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  build:
+    needs: release-please
+    if: needs.release-please.outputs.created == 'true' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x86_64, os: ubuntu-latest, target: x86_64-linux-gnu }
+          - { name: linux-aarch64, os: ubuntu-latest, target: aarch64-linux-gnu }
+          - { name: windows-x86_64, os: windows-latest, target: x86_64-windows-gnu }
+          - { name: windows-aarch64, os: windows-latest, target: aarch64-windows-gnu }
+          - { name: macos-x86_64, os: macos-latest, target: x86_64-macos }
+          - { name: macos-aarch64, os: macos-latest, target: aarch64-macos }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      # An explicit target builds for the architecture's baseline processor, so the binary runs on
+      # any machine of that kind, not just ones like the runner.
+      - run: zig build -Doptimize=ReleaseFast -Dtarget=${{ matrix.target }}
+      - name: Package
+        shell: bash
+        env:
+          VERSION: ${{ needs.release-please.outputs.tag || github.ref_name }}
+        run: |
+          name="openreliant-$VERSION-${{ matrix.name }}"
+          mkdir -p "$name" dist
+          cp README.md LICENSE CHANGELOG.md "$name"/
+          case "${{ matrix.target }}" in
+            *windows*)
+              cp zig-out/bin/openreliant.exe "$name"/
+              7z a -tzip "dist/$name.zip" "$name" > /dev/null
+              ;;
+            *)
+              cp zig-out/bin/openreliant "$name"/
+              tar -czf "dist/$name.tar.gz" "$name"
+              ;;
+          esac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: dist/*
+
+  attach:
+    needs: [release-please, build]
+    if: needs.release-please.outputs.created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Attach the builds to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release-please.outputs.tag }}
+        run: |
+          gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          changelog="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
+          note="OpenReliant needs your own copy of StarLancer: see the README for where to point it. The macOS builds are not signed, so macOS blocks them at first; run \`xattr -d com.apple.quarantine openreliant\` once to allow it."
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes "$note
+
+          $changelog"

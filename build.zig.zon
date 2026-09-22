@@ -1,6 +1,6 @@
 .{
     .name = .openreliant,
-    .version = "0.0.0",
+    .version = "0.0.0", // x-release-please-version
     .fingerprint = 0x51560fdd72ea15d0,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{

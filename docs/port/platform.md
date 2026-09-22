@@ -62,6 +62,46 @@ A Zig built for Intel Macs runs under Rosetta on Apple silicon and builds for In
 `make play` asks for Apple silicon, and `build.zig` then hands SDL and the linker the SDK's paths
 from `xcrun`.
 
+## Builds and releases
+
+Every push and pull request builds the executables and runs the tests on Linux, macOS and Windows
+([`tests.yml`](../../.github/workflows/tests.yml)), next to the check that no game files are
+committed ([`check-files.yml`](../../.github/workflows/check-files.yml)).
+
+Releases come from [release-please](https://github.com/googleapis/release-please)
+([`release.yml`](../../.github/workflows/release.yml),
+[`release-please-config.json`](../../release-please-config.json)). Commit messages follow
+[Conventional Commits](https://www.conventionalcommits.org): `feat` for a new feature, `fix` for a
+bug fix, `docs` for documentation, and `build`, `ci`, `chore`, `perf`, `refactor` or `test` for the
+rest, with a `!` after the type for a breaking change. From these, release-please keeps a release
+pull request open with the next version and the changelog so far. Before 1.0, a feature raises the
+minor version, a fix the patch version, and a breaking change the minor version.
+
+Merging the release pull request updates [`CHANGELOG.md`](../../CHANGELOG.md) and the version in
+`build.zig.zon`, tags the version, and publishes a GitHub release with that version's changelog as
+its notes. The workflow then builds `openreliant` for each system and attaches the archives:
+
+| Archive | Built on | Target |
+|---|---|---|
+| `linux-x86_64.tar.gz` | Linux | `x86_64-linux-gnu` |
+| `linux-aarch64.tar.gz` | Linux | `aarch64-linux-gnu` |
+| `windows-x86_64.zip` | Windows | `x86_64-windows-gnu` |
+| `windows-aarch64.zip` | Windows | `aarch64-windows-gnu` |
+| `macos-x86_64.tar.gz` | macOS | `x86_64-macos` |
+| `macos-aarch64.tar.gz` | macOS | `aarch64-macos` |
+
+Run by hand from the Actions tab, the workflow builds all six and keeps the archives as the run's
+artifacts, but publishes nothing.
+
+Each archive holds the executable, the README, the license and the changelog, and no game files.
+Every build names its target explicitly, so it is built for its architecture's baseline processor
+and runs on any machine of that kind. The Linux builds need glibc 2.31 or newer, and SDL loads the
+display, sound and input libraries at run time. The macOS builds are not signed, so macOS blocks
+them until the quarantine flag is removed with `xattr -d com.apple.quarantine openreliant`.
+
+release-please opens its pull request with the workflow's own token, which needs "Allow GitHub
+Actions to create and approve pull requests" turned on in the repository's Actions settings.
+
 ## Frames
 
 The window is drawn into at the display's own density. With vsync, the default, the display paces
