@@ -201,7 +201,8 @@ vertex's colour is the sum, each channel then clamped to 1, of:
    normal's dot product with the light's forward axis, where that is positive.
 
 Point and directional lights add no alpha. A light reaches an object unless their light masks
-share a bit; an object whose mask is all ones takes no lights.
+share a bit; an object whose mask is all ones takes no lights. The port adds the point and
+directional lights for each pixel instead, with the same sums ([Renderer](../port/renderer.md#improvements)).
 
 ## Engine glows
 

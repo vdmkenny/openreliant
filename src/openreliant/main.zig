@@ -43,13 +43,14 @@ const usage =
     \\                            cockpit, the default; 1 the chase view; 2 no cockpit
     \\  --screenshot <file.png>   draw one frame, with the camera settled, to a PNG, and quit
     \\  --fullscreen              fill the display; Alt and Enter switch while running
-    \\  --original                the original's look: 16-bit colour, one sample a pixel and
-    \\                            bilinear filtering
+    \\  --original                the original's look: 16-bit colour, one sample a pixel,
+    \\                            bilinear filtering and lighting each vertex
     \\  --16-bit                  16-bit colour, dithered
     \\  --msaa <1|2|4|8>          samples a pixel; 4 by default
     \\  --filter <original|trilinear|crisp>
     \\                            how textures are filtered; crisp by default
     \\  --no-bloom                draw without the bloom around bright things
+    \\  --no-pixel-lighting       light each vertex rather than each pixel, as the original does
     \\  --no-dither               draw without dithering 32-bit colour
     \\  --no-vsync                draw without waiting for the display
     \\  --fps <rate>              frames a second at most; without vsync, the display's rate by
@@ -70,7 +71,7 @@ const Options = struct {
     /// Frames a second at most, 0 for no limit; null for the display's rate without vsync.
     fps: ?f32 = null,
 
-    const Flag = enum { @"--fullscreen", @"--original", @"--16-bit", @"--no-vsync", @"--no-bloom", @"--no-dither", @"--software" };
+    const Flag = enum { @"--fullscreen", @"--original", @"--16-bit", @"--no-vsync", @"--no-bloom", @"--no-dither", @"--no-pixel-lighting", @"--software" };
     const Option = enum { @"--ship", @"--view", @"--screenshot", @"--msaa", @"--filter", @"--fps" };
 
     fn parse(args: []const [:0]const u8) error{Usage}!Options {
@@ -85,6 +86,7 @@ const Options = struct {
                 .@"--no-vsync" => options.settings.vsync = false,
                 .@"--no-bloom" => options.settings.bloom = false,
                 .@"--no-dither" => options.settings.dither = false,
+                .@"--no-pixel-lighting" => options.settings.pixel_lighting = false,
                 .@"--software" => options.software = true,
             } else if (std.meta.stringToEnum(Option, arg)) |option| {
                 i += 1;

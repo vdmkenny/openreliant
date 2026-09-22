@@ -66,6 +66,9 @@ pub const Drawn = struct {
     outcodes: []Outcode,
     /// Red, green, blue and alpha (`+0x100`), for a lit or baked object.
     colours: ?[][4]f32,
+    /// The port's: the normals in the camera's frame, for a lit object in a frame whose device
+    /// lights each pixel (`srapi.Context.pixel_lighting`).
+    normals: ?[]Vector = null,
     /// Coordinates from the normals (`+0x104`, `+0x108`), for the passes the object asks them for.
     generated: [2]?[][2]f32,
     /// The visible polygons (`+0xD8`), surface by surface: `counts[i]` of them for surface `i`
@@ -155,7 +158,15 @@ pub fn pipe(
         }
     }
 
-    drawn.colours = try light(arena, object, mesh, lights, listed.items, morph);
+    const pixel_lit = context.pixel_lighting and object.flags.lit and object.light_mask != std.math.maxInt(u32);
+    drawn.colours = try light(arena, object, mesh, lights, listed.items, morph, pixel_lit);
+    if (pixel_lit) {
+        // Turned into the camera's frame without the object's scale, as the lights see them.
+        const turn = math.product(math.transpose(context.camera.orientation), object.orientation);
+        const normals = try arena.alloc(Vector, mesh.positions.len);
+        for (listed.items) |v| normals[v] = math.transform(turn, blendedNormal(mesh, morph, v));
+        drawn.normals = normals;
+    }
     for ([2]bool{ object.flags.normals_first, object.flags.normals_second }, 0..) |wanted, pass| {
         if (wanted) drawn.generated[pass] = try sphereMapped(arena, mesh, matrix, listed.items, morph);
     }
@@ -326,7 +337,8 @@ fn blendedNormal(mesh: *const Mesh, morph: Morph, v: usize) Vector {
 /// The listed vertices' colours (`mesh_light`, `0x004C7060`): the object's colour and the ambient
 /// lights for a lit object, plus baked colours, then each point and directional light, clamped to 1
 /// when anything past the colour and the ambient lights was added. Null for an object neither lit
-/// nor baked.
+/// nor baked. With `pixel_lit`, the point and directional lights are left out, for the device to
+/// add to each pixel.
 fn light(
     arena: Allocator,
     object: *const MeshObject,
@@ -334,6 +346,7 @@ fn light(
     lights: []const srlight.Light,
     listed: []const u16,
     morph: Morph,
+    pixel_lit: bool,
 ) Allocator.Error!?[][4]f32 {
     const flags = object.flags;
     if (!flags.lit and !flags.baked_mesh and !flags.baked_object) return null;
@@ -361,7 +374,7 @@ fn light(
     }
     var clamp = baked != null;
 
-    if (flags.lit and takes_lights) {
+    if (flags.lit and takes_lights and !pixel_lit) {
         for (lights) |l| {
             if (!l.reaches(object.light_mask)) continue;
             switch (l.kind) {
@@ -514,4 +527,41 @@ test pipe {
     try std.testing.expect(!near.visible[0].clip.near);
     object.position = .{ 0, 0, 50 };
     try std.testing.expectEqual(null, try pipe(arena, &context, &object, &lights, &budget));
+}
+
+test "pipe for a device that lights each pixel" {
+    const gpa = std.testing.allocator;
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const mesh = try testing.square(gpa);
+    defer mesh.deinit(gpa);
+    const levels = [_]srapiext.Level{.{ .mesh = &mesh, .until = 5000 }};
+    var object: MeshObject = .{ .flags = .{ .lit = true }, .position = .{ 0, 0, 1000 }, .radius = mesh.radius, .levels = &levels };
+    var context: srapi.Context = .{ .projection = .init(1024, 768, srapi.full_screen, .{ 0.6, 0.8 }), .pixel_lighting = true };
+    const lights = [_]srlight.Light{
+        .{ .mask = 0x04, .intensity = 1, .colour = .{ 0.25, 0.25, 0.25 }, .kind = .ambient },
+        .{ .mask = 0x01, .intensity = 1, .colour = .{ 1, 1, 1 }, .kind = .{ .directional = .{ 0, 0, -1 } } },
+    };
+    var budget: Budget = .{};
+
+    // The vertices keep the ambient light alone, and carry their normals in the camera's frame
+    // for the device to add the directional light with.
+    object.orientation = math.rotation(.x, 0.5);
+    context.camera.orientation = math.rotation(.y, 0.25);
+    const drawn = (try pipe(arena, &context, &object, &lights, &budget)).?;
+    try std.testing.expectEqual([4]f32{ 0.25, 0.25, 0.25, 0 }, drawn.colours.?[0]);
+    const turned = math.transformTransposed(context.camera.orientation, math.transform(object.orientation, .{ 0, 0, -1 }));
+    try std.testing.expect(math.length(drawn.normals.?[2] - turned) < 1e-6);
+
+    // An object that takes no lights has none to hand over, and neither does a device that
+    // lights each vertex.
+    object.light_mask = std.math.maxInt(u32);
+    try std.testing.expectEqual(null, (try pipe(arena, &context, &object, &lights, &budget)).?.normals);
+    object.light_mask = 0;
+    context.pixel_lighting = false;
+    const lit = (try pipe(arena, &context, &object, &lights, &budget)).?;
+    try std.testing.expectEqual(null, lit.normals);
+    try std.testing.expect(lit.colours.?[0][0] > 0.25);
 }
