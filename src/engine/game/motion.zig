@@ -1,0 +1,327 @@
+//! The code that moves live objects, which the binary names no file for: `object_move`
+//! (`0x00473FF0`) and the flight model the motion routines run, `object_fly` (`0x004742E0`) with
+//! `object_steer` (`0x00474150`). **Unknown:** its source file. The code lies after `explode.cpp`'s
+//! and before `gameflow.cpp`'s, and nothing in it asserts. docs/engine/objects.md describes the
+//! motion.
+
+const std = @import("std");
+
+const math = @import("../surrender/math.zig");
+const ai = @import("ai.zig");
+const camera = @import("camera.zig");
+const create = @import("create.zig");
+const gameobj = @import("gameobj.zig");
+const objects = @import("objects.zig");
+const GameObject = gameobj.GameObject;
+
+/// The routine `GameObject.motion` points at, which moves it for one update. `create_object` gives
+/// every object `motion_forward`. The orders select eight more, which aren't ported yet (#30);
+/// docs/engine/objects.md lists them.
+pub const Motion = enum {
+    /// `motion_forward` (`0x004744C0`): the flight model with a thrust of 1.
+    forward,
+    /// `motion_backward` (`0x004744D0`): the flight model with a thrust of -1.
+    backward,
+
+    pub fn thrust(motion: Motion) f32 {
+        return switch (motion) {
+            .forward => 1,
+            .backward => -1,
+        };
+    }
+};
+
+/// The share of the cruise speed the lateral input pushes a ship sideways at (`object_fly`).
+const lateral_share: f32 = 0.25;
+
+/// What each update of the afterburner or of reverse thrust burns of `afterburner_fuel`.
+const burn_fuel: i32 = 4;
+
+/// The rule every quantity of the flight model moves by: it gives up `inertia` of the way it was
+/// going and takes the rest from where it is headed, once per update.
+fn settle(current: f32, target: f32, inertia: f32) f32 {
+    return current * inertia + (1 - inertia) * target;
+}
+
+/// `x` squared, keeping its sign, which is the measure the model works in along the nose.
+fn signedSquare(x: f32) f32 {
+    return @abs(x) * x;
+}
+
+/// The inverse of `signedSquare`.
+fn signedRoot(x: f32) f32 {
+    return if (x >= 0) @sqrt(x) else -@sqrt(-x);
+}
+
+/// `object_steer` (`0x00474150`): each input is clamped to between -1 and 1, and each angular rate
+/// settles toward the ship's rate for that axis times the input. Where `throttle_turns`, that
+/// target is divided by `3 - 2 * |throttle|` while that exceeds 1, so a ship turns more slowly the
+/// less throttle it carries. The three rates then make the rotation.
+pub fn steer(object: *GameObject, flight: *const create.FlightModel, throttle_turns: bool) void {
+    const slowed = 3 - 2 * @abs(object.throttle);
+    const divisor: f32 = if (throttle_turns and slowed >= 1) slowed else 1;
+    const axes = [_]struct { rate: *f32, input: *f32, full: f32, inertia: f32 }{
+        .{ .rate = &object.pitch_rate, .input = &object.pitch_input, .full = flight.pitch_rate, .inertia = flight.pitch_inertia },
+        .{ .rate = &object.yaw_rate, .input = &object.yaw_input, .full = flight.yaw_rate, .inertia = flight.yaw_inertia },
+        .{ .rate = &object.roll_rate, .input = &object.roll_input, .full = flight.roll_rate, .inertia = flight.roll_inertia },
+    };
+    for (axes) |axis| {
+        axis.input.* = std.math.clamp(axis.input.*, -1, 1);
+        axis.rate.* = settle(axis.rate.*, axis.full * axis.input.* / divisor, axis.inertia);
+    }
+    object.rotation = math.fromAngles(object.pitch_rate, object.yaw_rate, object.roll_rate);
+}
+
+/// `object_fly` (`0x004742E0`): the flight model, run for one update by the motion routine. The
+/// throttle settles first, then the steering, then the speed, the last in the ship's own frame.
+///
+/// Along the nose the model settles in speed times its own size, so that thrust tells evenly at
+/// every speed: the speed is squared keeping its sign, settles toward the thrust times the
+/// throttle squared the same way times the target speed squared, and is rooted again. Sideways it
+/// settles toward a quarter of the target times the lateral input, and along the ship's own down
+/// axis it only decays.
+pub fn fly(object: *GameObject, flight: *const create.FlightModel, view: camera.View, thrust: f32) void {
+    if (object.afterburner) {
+        object.throttle = 2;
+        object.afterburner_fuel -= burn_fuel;
+    } else if (object.reverse_thrust) {
+        object.throttle = -1;
+        object.afterburner_fuel -= burn_fuel;
+    } else {
+        object.throttle = std.math.clamp(object.throttle, 0, 1);
+    }
+    object.afterburner_fuel = @max(object.afterburner_fuel, 0);
+
+    steer(object, flight, true);
+
+    // The frame the last update left behind: `object_move` sets it once the motion has run.
+    const frame = object.root.next_orientation;
+    const inertia = flight.inertia;
+    const target = if (object.afterburner or object.reverse_thrust)
+        flight.max_speed
+    else
+        ai.cruiseSpeed(object, flight, view);
+
+    var speed = math.transformTransposed(frame, gameobj.vector(object.velocity));
+    const push = thrust * object.throttle;
+    speed = .{
+        settle(speed[0], object.lateral_input * target * lateral_share, inertia),
+        settle(speed[1], 0, inertia),
+        signedRoot(settle(signedSquare(speed[2]), signedSquare(push) * target * target, inertia)),
+    };
+    object.velocity = gameobj.vec3(math.transform(frame, speed));
+    object.last_throttle = object.throttle;
+}
+
+/// `object_move` (`0x00473FF0`): one update of an object. A `frozen` object stays where it is.
+/// Otherwise the root's next place is marked as pending, which the next step's `node_tree_update`
+/// commits (`objects.updateTree`). If knocks are waiting, they are applied instead of the object's
+/// own motion. An `unpowered` object has no motion of its own, and a jumping one only moves when
+/// it is knocked or `unpowered`. Then its next orientation becomes its orientation turned by
+/// `rotation`, its next position becomes its position plus its velocity, and its speed becomes
+/// the length of that velocity. It sets the network flags when the object moves or turns.
+///
+/// For the player's ship, `player_shake` is the camera's shake (`hit_shake`). When the ship flies
+/// faster than its cruise speed, as it does under afterburner, the move raises the shake to at
+/// least `0.2 * (speed / cruise speed - 1)`. The game also stores the change in the player's
+/// speed at `player_speed_change` (`0x00562CE4`), which nothing reads.
+pub fn move(object: *GameObject, flight: *const create.FlightModel, view: camera.View, motion: ?Motion, player_shake: ?*f32) void {
+    if (object.flags.frozen) return;
+    object.root.flags.next_pending = true;
+    const knocked = object.knocks > 0;
+    if (object.flags.jumping and !knocked and !object.flags.unpowered) return;
+    if (!knocked and !object.flags.unpowered) {
+        if (motion) |routine| fly(object, flight, view, routine.thrust());
+    } else {
+        gameobj.applyKnocks(object);
+    }
+    object.root.next_orientation = math.product(object.root.orientation, object.rotation);
+    object.root.next_position = gameobj.vec3(gameobj.vector(object.root.position) + gameobj.vector(object.velocity));
+    object.speed = math.length(gameobj.vector(object.velocity));
+    if (object.speed > 0) object.network.moved = true;
+    if (object.pitch_rate != 0 or object.yaw_rate != 0 or object.roll_rate != 0) object.network.turned = true;
+    if (player_shake) |shake| {
+        shake.* = @max(shake.*, speed_shake * (object.speed / ai.cruiseSpeed(object, flight, view)) - speed_shake);
+    }
+}
+
+/// The camera shake at twice the cruise speed (`0x004DC3F8`).
+const speed_shake: f32 = 0.2;
+
+test steer {
+    var object = gameobj.testing.object();
+    object.throttle = 1;
+    // An input past the ends is clamped, and the rate settles toward the ship's own rate.
+    object.pitch_input = 5;
+    steer(&object, &gameobj.testing.flight, true);
+    try std.testing.expectEqual(1, object.pitch_input);
+    try std.testing.expectApproxEqAbs(0.4, object.pitch_rate, 1e-6);
+    for (0..200) |_| steer(&object, &gameobj.testing.flight, true);
+    try std.testing.expectApproxEqAbs(gameobj.testing.flight.pitch_rate, object.pitch_rate, 1e-4);
+
+    // At rest the same input turns it a third as fast, the divisor being 3 - 2 * |throttle|.
+    var idle = gameobj.testing.object();
+    idle.pitch_input = 1;
+    for (0..200) |_| steer(&idle, &gameobj.testing.flight, true);
+    try std.testing.expectApproxEqAbs(gameobj.testing.flight.pitch_rate / 3, idle.pitch_rate, 1e-4);
+    // A caller that does not ask for it gets no such division.
+    var full = gameobj.testing.object();
+    full.pitch_input = 1;
+    for (0..200) |_| steer(&full, &gameobj.testing.flight, false);
+    try std.testing.expectApproxEqAbs(gameobj.testing.flight.pitch_rate, full.pitch_rate, 1e-4);
+}
+
+test "the throttle settles between 0 and 1, and the burns take it past both ends" {
+    var object = gameobj.testing.object();
+    object.throttle = 5;
+    fly(&object, &gameobj.testing.flight, .chase, 1);
+    try std.testing.expectEqual(1, object.throttle);
+    try std.testing.expectEqual(1, object.last_throttle);
+    object.throttle = -3;
+    fly(&object, &gameobj.testing.flight, .chase, 1);
+    try std.testing.expectEqual(0, object.throttle);
+
+    // The afterburner runs it to 2 and burns fuel; reverse thrust to -1, and burns it as well.
+    object.afterburner = true;
+    object.afterburner_fuel = 10;
+    fly(&object, &gameobj.testing.flight, .chase, 1);
+    try std.testing.expectEqual(2, object.throttle);
+    try std.testing.expectEqual(6, object.afterburner_fuel);
+    object.afterburner = false;
+    object.reverse_thrust = true;
+    fly(&object, &gameobj.testing.flight, .chase, 1);
+    try std.testing.expectEqual(-1, object.throttle);
+    try std.testing.expectEqual(2, object.afterburner_fuel);
+    // The fuel stops at zero however long it burns.
+    for (0..4) |_| fly(&object, &gameobj.testing.flight, .chase, 1);
+    try std.testing.expectEqual(0, object.afterburner_fuel);
+}
+
+test "a ship settles at its cruise speed along its nose" {
+    var object = gameobj.testing.object();
+    object.throttle = 1;
+    for (0..400) |_| move(&object, &gameobj.testing.flight, .chase, .forward, null);
+    // The model frame has Z forward, so all of the speed is along the nose.
+    try std.testing.expectApproxEqAbs(320, object.speed, 0.5);
+    try std.testing.expectApproxEqAbs(320, object.velocity.z, 0.5);
+    try std.testing.expectApproxEqAbs(0, object.velocity.x, 1e-3);
+    try std.testing.expectApproxEqAbs(0, object.velocity.y, 1e-3);
+    // It never runs past the speed it is settling toward.
+    try std.testing.expect(object.speed <= 320);
+
+    // Half its engines gone, it settles at half the speed.
+    object.engines_intact = 0.5;
+    for (0..400) |_| move(&object, &gameobj.testing.flight, .chase, .forward, null);
+    try std.testing.expectApproxEqAbs(160, object.speed, 0.5);
+
+    // Backward, the same ship ends up going the other way at the same speed.
+    var reversed = gameobj.testing.object();
+    reversed.throttle = 1;
+    for (0..400) |_| move(&reversed, &gameobj.testing.flight, .chase, .backward, null);
+    try std.testing.expectApproxEqAbs(-320, reversed.velocity.z, 0.5);
+}
+
+test "the lateral input pushes a ship a quarter as fast sideways" {
+    var object = gameobj.testing.object();
+    object.lateral_input = 1;
+    for (0..400) |_| move(&object, &gameobj.testing.flight, .chase, .forward, null);
+    try std.testing.expectApproxEqAbs(320 * lateral_share, object.velocity.x, 0.5);
+}
+
+test move {
+    var object = gameobj.testing.object();
+    object.root.position = .{ .x = 1, .y = 2, .z = 3 };
+    object.velocity = .{ .x = 10, .y = 0, .z = 20 };
+    // `create_object` leaves the rotation zeroed, and the steering builds one before the first
+    // move uses it; a turn of nothing stands in for that here.
+    object.rotation = math.identity;
+    // With no motion routine, it carries on at the velocity it has.
+    move(&object, &gameobj.testing.flight, .chase, null, null);
+    try std.testing.expectEqual(11, object.root.next_position.x);
+    try std.testing.expectEqual(2, object.root.next_position.y);
+    try std.testing.expectEqual(23, object.root.next_position.z);
+    try std.testing.expectApproxEqAbs(@sqrt(500.0), object.speed, 1e-4);
+    // Its next orientation is its orientation turned by the rotation the steering built.
+    try std.testing.expectEqual(math.identity, object.root.next_orientation);
+    try std.testing.expect(object.root.flags.next_pending);
+}
+
+test "an object travels from step to step" {
+    var object = gameobj.testing.object();
+    object.velocity = .{ .x = 0, .y = 0, .z = 10 };
+    object.rotation = math.identity;
+    // Each step commits the place the previous one worked out, then moves on from it.
+    for (0..3) |_| {
+        gameobj.updateTree(&object.root, null, null);
+        move(&object, &gameobj.testing.flight, .chase, null, null);
+    }
+    try std.testing.expectEqual(30, object.root.next_position.z);
+    // Between steps the committed position is one step behind.
+    try std.testing.expectEqual(20, object.root.position.z);
+}
+
+test "frozen, unpowered and jumping objects" {
+    // A frozen object isn't moved at all.
+    var frozen = gameobj.testing.object();
+    frozen.velocity = .{ .x = 0, .y = 0, .z = 10 };
+    frozen.rotation = math.identity;
+    frozen.flags.frozen = true;
+    move(&frozen, &gameobj.testing.flight, .chase, .forward, null);
+    try std.testing.expect(!frozen.root.flags.next_pending);
+    try std.testing.expectEqual(0, frozen.root.next_position.z);
+
+    // An unpowered one drifts: its motion routine doesn't run, so the throttle doesn't change its
+    // velocity.
+    var unpowered = gameobj.testing.object();
+    unpowered.velocity = .{ .x = 0, .y = 0, .z = 10 };
+    unpowered.rotation = math.identity;
+    unpowered.throttle = 1;
+    unpowered.flags.unpowered = true;
+    move(&unpowered, &gameobj.testing.flight, .chase, .forward, null);
+    try std.testing.expectEqual(10, unpowered.velocity.z);
+    try std.testing.expectEqual(10, unpowered.root.next_position.z);
+
+    // A jumping one stays where it is until it's knocked.
+    var jumping = gameobj.testing.object();
+    jumping.velocity = .{ .x = 0, .y = 0, .z = 10 };
+    jumping.rotation = math.identity;
+    jumping.mass = 1;
+    jumping.flags.jumping = true;
+    move(&jumping, &gameobj.testing.flight, .chase, .forward, null);
+    try std.testing.expect(jumping.root.flags.next_pending);
+    try std.testing.expectEqual(0, jumping.root.next_position.z);
+    gameobj.knock(&jumping, .{ 0, 0, 5 }, .{ 0, 0, 0 });
+    move(&jumping, &gameobj.testing.flight, .chase, .forward, null);
+    try std.testing.expectEqual(15, jumping.root.next_position.z);
+}
+
+test "moving and turning set the network flags" {
+    var object = gameobj.testing.object();
+    object.rotation = math.identity;
+    move(&object, &gameobj.testing.flight, .chase, null, null);
+    try std.testing.expect(!object.network.moved and !object.network.turned);
+    object.velocity.z = 1;
+    move(&object, &gameobj.testing.flight, .chase, null, null);
+    try std.testing.expect(object.network.moved and !object.network.turned);
+    object.yaw_rate = 0.1;
+    move(&object, &gameobj.testing.flight, .chase, null, null);
+    try std.testing.expect(object.network.turned);
+}
+
+test "flying faster than the cruise speed shakes the player's camera" {
+    var object = gameobj.testing.object();
+    object.rotation = math.identity;
+    var shake: f32 = 0;
+    // At the cruise speed, it doesn't.
+    object.velocity.z = 320;
+    move(&object, &gameobj.testing.flight, .chase, null, &shake);
+    try std.testing.expectEqual(0, shake);
+    // At twice the cruise speed, by 0.2.
+    object.velocity.z = 640;
+    move(&object, &gameobj.testing.flight, .chase, null, &shake);
+    try std.testing.expectApproxEqAbs(0.2, shake, 1e-6);
+    // It never lowers a stronger shake, such as a hit's.
+    shake = 1;
+    move(&object, &gameobj.testing.flight, .chase, null, &shake);
+    try std.testing.expectEqual(1, shake);
+}

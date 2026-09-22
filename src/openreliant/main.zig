@@ -350,17 +350,17 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             // is orthonormalized, each object's node update commits the place the previous step
             // worked out and its shields recharge, then the player's orders, then the objects
             // move. The sandbox has one object.
-            if (clock.nextTurn(1) == ship.live.index) game.main.orthonormalizeTurn(&ship.live.root);
-            game.objects.updateTree(&ship.live.root, &ship.object, null);
+            if (game.gameobj.nextTurn(&clock, 1) == ship.live.index) game.gameobj.orthonormalizeTurn(&ship.live.root);
+            game.gameobj.updateTree(&ship.live.root, &ship.object, null);
             game.gameobj.rechargeShields(&ship.live, &ship.combat, player.shield_reserves);
             engine.input.playerControls(&player, &devices, &ship.live, &ship.combat, view.view, clock.frame_duration);
-            game.gameobj.move(&ship.live, &ship.flight, view.view, .forward, &view.hit_shake);
+            game.motion.move(&ship.live, &ship.flight, view.view, .forward, &view.hit_shake);
         }
         clock.frameBegin();
         // Each frame, before anything is drawn, `mission_frame` has every object's frames drawn
         // between its last two places, as far into the step as the clock is, and the camera
         // follows the root's.
-        const fraction = clock.stepFraction(options.smooth_motion);
+        const fraction = game.objects.stepFraction(&clock, options.smooth_motion);
         if (ship.live.root.framePlace(fraction)) |drawn| ship.drawn = drawn;
         ship.object.frame(fraction);
         ship.object.place(ship.drawn.position, ship.drawn.orientation);
@@ -414,7 +414,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
                 live.yaw_rate / ship.flight.yaw_rate,
                 live.roll_rate / ship.flight.roll_rate,
             };
-            const speed = live.speed / game.gameobj.cruiseSpeed(live, &ship.flight, view.view);
+            const speed = live.speed / game.ai.cruiseSpeed(live, &ship.flight, view.view);
             break :input game.main.cockpitInput(&cockpit.model, cockpit.source, rates, speed);
         } else null;
         if (view.frame(.{ .object = ship.subject, .player = ship.subject, .ticks = ticks, .cockpit = cockpit_input, .random = &rand })) |next| {
@@ -601,10 +601,10 @@ const Ship = struct {
             .glows = glows,
             .mounts = library.mounts(),
         });
-        object.recentre(model);
+        game.gameobj.recentre(&object, model);
         object.place(@splat(0), math.identity);
         // `create_object` then starts each part's `startup` track.
-        object.startUp();
+        game.create.startUp(&object);
         // What `create_object` sets of a new object: undamaged, at rest, flying itself forward.
         var live: game.gameobj.GameObject = std.mem.zeroes(game.gameobj.GameObject);
         live.blink_offset = game.gameobj.blinkOffset(random);

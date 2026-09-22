@@ -358,8 +358,11 @@ ported yet ([#30](https://github.com/vdmkenny/openreliant/issues/30)).
 
 ### Porting
 
-[`gameobj.zig`](../../src/engine/game/gameobj.zig) holds the model: `cruiseSpeed`, `steer`, `fly`,
-`move`, `knock`, `knockLocal` and `applyKnocks`. The port passes the flight stats and the camera
+[`motion.zig`](../../src/engine/game/motion.zig) holds the model, `steer`, `fly` and `move`, whose
+file the binary doesn't name: it lies after `explode.cpp`'s code and before `gameflow.cpp`'s.
+`cruiseSpeed` is in [`ai.zig`](../../src/engine/game/ai.zig), since `object_cruise_speed` lies after
+`Ai.cpp`'s code, and [`gameobj.zig`](../../src/engine/game/gameobj.zig) has `knock`, `knockLocal`
+and `applyKnocks`. The port passes the flight stats and the camera
 view in, where the game reaches them through the object's own pointer and a global, because
 `GameObject` keeps the binary's 32-bit pointers for its layout. For the same reason `move` takes
 the camera's shake as a pointer, set only for the player's ship, where the game compares the slot
@@ -367,9 +370,9 @@ with the player's and writes the global. `Motion` is an `enum` of the two routin
 `create_object` installs, in place of the function pointer at `0x640`, and the rule each quantity
 settles by is one `settle` helper rather than the six copies the binary holds.
 
-`objects.updateTree` ports `node_tree_update` for the root, and the driver runs it where
-`simulation_step` does, at the start of each step, after `main.orthonormalizeTurn` on the object
-whose turn it is (`Clock.nextTurn`).
+`gameobj.updateTree` ports `node_tree_update`, and the driver runs it where `simulation_step`
+does, at the start of each step, after `gameobj.orthonormalizeTurn` on the object whose turn it is
+(`gameobj.nextTurn`).
 
 Not yet ported: the orders' motion functions
 ([#30](https://github.com/vdmkenny/openreliant/issues/30)), the inertia tensor that

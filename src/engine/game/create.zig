@@ -13,6 +13,7 @@ const stats = @import("../../formats/stats.zig");
 const Pointer = engine.Pointer;
 
 pub const models = @import("create/models.zig");
+const objects = @import("objects.zig");
 
 /// The flight stats `stats_load_ships` (`0x00466500`) builds for a ship type: the speed, rates and
 /// inertias as the record holds them, and `speed_per_pitch_rate` worked out once the file is read.
@@ -45,6 +46,17 @@ pub fn shipCombat(ship: stats.Ship) ShipCombat {
         ._unknown_18 = std.math.lossyCast(i32, ship._unknown_78),
         ._unknown_1c = @splat(0),
     };
+}
+
+/// How far `create_object` has a part's `startup` track move on each simulation step.
+const startup_speed: f32 = 4;
+
+/// What `create_object` (`0x00466C10`) starts once it has built the object: each part's
+/// `startup` track, from its start, as the track says to play it, at 4 a step.
+pub fn startUp(model: *objects.Model) void {
+    for (model.parts, 0..) |part, index| {
+        if (part.animation.tracks.len > 0) model.play(index, .startup, 0, null, startup_speed);
+    }
 }
 
 /// How a ship or a missile flies. `ship_flight_stats` holds one per ship, `missile_flight_stats`

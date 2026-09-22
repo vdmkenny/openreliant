@@ -5,6 +5,8 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
+const Clock = @import("main.zig").Clock;
+
 /// One voice of `sound_voices`: a Miles sample and what is playing on it.
 pub const Voice = extern struct {
     /// The Miles `HSAMPLE`.
@@ -24,4 +26,29 @@ pub const Voice = extern struct {
 
 test {
     std.testing.refAllDecls(@This());
+}
+
+/// What `tick_timer` (`0x004827C0`) does to the mission's clocks, 100 times a second. Its other
+/// half, which keeps the Miles streams and the sound voices going, isn't ported yet (#49).
+/// **Unverified:** it lies after this file's known code, before `hud.cpp`'s.
+pub fn tickTimer(clock: *Clock) void {
+    clock.timer_ticks +%= 1;
+    if (clock.paused) return;
+    clock.game_ticks +%= 1;
+    clock.play.ticks += 1;
+    if (clock.play.ticks > 100) {
+        clock.play.ticks = 0;
+        // Each unit rolls when it stood past 58 before this one, so each counts 0 to 59.
+        const second_over = clock.play.seconds > 58;
+        clock.play.seconds += 1;
+        if (second_over) {
+            clock.play.seconds = 0;
+            const minute_over = clock.play.minutes > 58;
+            clock.play.minutes += 1;
+            if (minute_over) {
+                clock.play.minutes = 0;
+                clock.play.hours +%= 1;
+            }
+        }
+    }
 }
