@@ -17,6 +17,7 @@ const objects = @import("objects.zig");
 const Node = objects.Node;
 const Pointer = engine.Pointer;
 const create = @import("create.zig");
+const libcmt = @import("../libcmt.zig");
 
 /// Code that acts for the object in a slot: its `motion`, which moves it for one update, such as
 /// `motion_forward` (`0x004744C0`), which flies it forward by the flight model, and the routines
@@ -162,7 +163,12 @@ pub const GameObject = extern struct {
     /// Four values, each `6 * ShipCombat.armor_class - 1` when created. `ship_damage_value` reports
     /// the lowest.
     armor: [4]f32,
-    _unknown_610: [0x28]u8,
+    _unknown_610: [0x24]u8,
+    /// Where its lights stand in their blinks, in ticks added to the mission's clock
+    /// (`node_draw`): from 0 to 100 at random when allocated (`blinkOffset`), so that ships of one
+    /// type don't blink together.
+    blink_offset: i16,
+    _unknown_636: u16,
     /// The seed of its own random numbers (`object_random`): C's `rand()` when created.
     random_seed: u32,
     /// Its cloak's state, 0x2C bytes that `object_cloak` allocates; null until then.
@@ -353,6 +359,7 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "throttle") == 0x5B8);
         assert(@offsetOf(GameObject, "afterburner") == 0x5CC);
         assert(@offsetOf(GameObject, "speed") == 0x5D8);
+        assert(@offsetOf(GameObject, "blink_offset") == 0x634);
         assert(@offsetOf(GameObject, "random_seed") == 0x638);
         assert(@offsetOf(GameObject, "motion") == 0x640);
         assert(@offsetOf(GameObject, "hostile") == 0x644);
@@ -666,6 +673,13 @@ pub fn rechargeShields(object: *GameObject, combat: *const create.ShipCombat, re
 /// Simulation steps a second, which `ShipCombat.shield_recharge` is counted in (`0x004DC7F0`).
 const recharge_steps: f32 = 25;
 
+/// A new object's `blink_offset` (`object_alloc`, `0x00475DD0`): C's `rand()` over its largest
+/// value, times 100, truncated.
+pub fn blinkOffset(random: *libcmt.Rand) i16 {
+    const share = @as(f32, @floatFromInt(random.rand())) * (1.0 / @as(f32, libcmt.Rand.max));
+    return @intFromFloat(share * 100);
+}
+
 /// A light fighter's flight stats, near the Predator's, for the tests below.
 const testing_flight: create.FlightModel = .{
     .max_speed = 320,
@@ -915,6 +929,24 @@ test "flying faster than the cruise speed shakes the player's camera" {
     shake = 1;
     move(&object, &testing_flight, .chase, null, &shake);
     try std.testing.expectEqual(1, shake);
+}
+
+test blinkOffset {
+    var random: libcmt.Rand = .{};
+    // The runtime's first number from its first seed is 41, 41 / 32767 of the way to 100.
+    try std.testing.expectEqual(0, blinkOffset(&random));
+    for (0..1000) |_| {
+        const offset = blinkOffset(&random);
+        try std.testing.expect(offset >= 0 and offset <= 100);
+    }
+    // The largest number C's `rand()` gives makes 100, its share of the way rounding up to 1 in
+    // single precision. The seed that gives it is the runtime's step run backwards from one whose
+    // bits 16 to 30 are all set.
+    const step: u32 = 214013;
+    var inverse: u32 = step;
+    for (0..5) |_| inverse *%= 2 -% step *% inverse;
+    var largest: libcmt.Rand = .{ .seed = (0x7FFF_0000 -% 2531011) *% inverse };
+    try std.testing.expectEqual(100, blinkOffset(&largest));
 }
 
 test rechargeShields {

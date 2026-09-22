@@ -85,11 +85,13 @@ Deliberate differences from the original, each marked **Improvement** where it i
   original lit each vertex and interpolated the colours across each polygon. A hull of few polygons
   shades smoothly, and a point light falls off across a face rather than only between its corners.
   The pipeline still works out each vertex's own colour, ambient lights and baked colours, and
-  hands the driver the vertex's normal in the camera's frame in place of the other lights. The
-  driver hands the device the frame's directional and point lights, also in the camera's frame, and
-  the shader adds them with `mesh_light`'s sums, to the normal interpolated and made unit length
-  again, and holds each channel to 1. A frame with more than 64 such lights is lit each vertex, as
-  is everything on the software device. `--no-pixel-lighting` turns it off.
+  hands the driver the vertex's normal in the camera's frame as well. The driver hands the device
+  the frame's directional and point lights, also in the camera's frame, and the shader adds them
+  with `mesh_light`'s sums, to the normal interpolated and made unit length again, and holds each
+  channel to 1. The shader takes up to 64 lights a frame, which keeps them within the 4 KiB of
+  uniform data SDL's Vulkan device binds: the directional lights first, then the point lights
+  nearest the camera. The pipeline adds any others to each vertex, as the original adds them all.
+  The software device lights each vertex. `--no-pixel-lighting` turns it off.
 - It draws in 32-bit colour, where the original drew in 16 bits, and dithers that too, which costs
   nothing and keeps a dark gradient, such as the nebula or a light's falloff, from banding. `--original` restores the
   original's look: 16-bit colour, dithered, into a 16-bit buffer where the GPU has one, with a
@@ -101,9 +103,7 @@ Deliberate differences from the original, each marked **Improvement** where it i
 - The mesh sets `model_load` builds for cloaking.
 - Hanging each part from its parent part's node (`object_link_parts`), which leaves every part
   where it is, and the moment of inertia `object_bounds` sums.
-- What `node_draw` draws besides a model's parts and its lights: engine glows, which brighten with
-  the throttle, and the cloak; and its leaving out objects too far away to see. A light's sprite is
-  drawn, but not the light it also casts on what stands near it.
+- What `node_draw` draws for the cloak and for nodes of kinds 4 and 6.
 - `backdrop_place`, which aims the sun, the lights and the nebula from a mission's markers, and the
   objects `backdrop_frame` turns and makes glow.
 - Scene objects of kinds 5 and 6.

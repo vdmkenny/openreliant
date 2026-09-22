@@ -102,10 +102,11 @@ pub const Device = struct {
         /// straight over the finished frame, so a device that adds anything to the frame of its
         /// own, as the GPU's bloom does, leaves out what follows this.
         overlay: *const fn (*anyopaque) void,
-        /// The port's: takes the frame's directional and point lights, and returns whether the
-        /// device lights each pixel with them. A device without it lights nothing itself, and the
+        /// The port's: takes the frame's directional and point lights, most wanted first, and
+        /// returns how many of them, from the first, it adds to each pixel. The driver lights
+        /// the vertices with the rest. A device without it lights nothing itself, and the
         /// driver's vertices come lit, as Direct3D 7's did.
-        lights: ?*const fn (*anyopaque, []const Light) bool = null,
+        lights: ?*const fn (*anyopaque, []const Light) usize = null,
     };
 
     pub fn begin(device: Device) void {
@@ -124,9 +125,10 @@ pub const Device = struct {
         device.vtable.overlay(device.ptr);
     }
 
-    /// Hands the device the frame's lights, and returns whether it lights each pixel with them.
-    pub fn lights(device: Device, list: []const Light) bool {
-        const take = device.vtable.lights orelse return false;
+    /// Hands the device the frame's lights, most wanted first, and returns how many of them it
+    /// adds to each pixel.
+    pub fn lights(device: Device, list: []const Light) usize {
+        const take = device.vtable.lights orelse return 0;
         return take(device.ptr, list);
     }
 };

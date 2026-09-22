@@ -284,6 +284,9 @@ pub const MeshObject = struct {
 
 /// A sprite of a set (`sprite_set_create`, `0x004C4DB0`): a rectangle facing the camera.
 pub const Sprite = struct {
+    /// Its own material (`+0x04`), where it has one: `sprite_set_create` points every sprite at
+    /// the set's, and the driver draws a blended sprite with the one it points at.
+    surface: ?*const Surface = null,
     /// From the set's position, in the world.
     offset: Vector = @splat(0),
     /// How far it reaches either side of its centre, in the camera's units.

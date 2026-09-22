@@ -91,7 +91,7 @@ const Vertex = extern struct {
     }
 };
 
-/// The most lights the shader takes in a frame. A frame with more is lit each vertex instead.
+/// The most lights the shader takes in a frame. The driver lights the vertices with the rest.
 const max_lights = 64;
 
 /// The frame's directional and point lights as the shader takes them, in std140's layout.
@@ -113,11 +113,10 @@ const Lighting = extern struct {
         const Kind = enum(u32) { directional = 0, point = 1 };
     };
 
-    /// Takes `list` for the shader, unless it holds more lights than the shader does.
-    fn take(lighting: *Lighting, list: []const device.Light) bool {
-        lighting.count[0] = 0;
-        if (list.len > max_lights) return false;
-        for (list, lighting.lights[0..list.len]) |light, *taken| {
+    /// Takes as many of `list` as the shader does, from the first, and returns how many.
+    fn take(lighting: *Lighting, list: []const device.Light) usize {
+        const count = @min(list.len, max_lights);
+        for (list[0..count], lighting.lights[0..count]) |light, *taken| {
             taken.* = switch (light.kind) {
                 .directional => |directional| .{
                     .colour = .{ directional.colour[0], directional.colour[1], directional.colour[2], 0 },
@@ -133,13 +132,15 @@ const Lighting = extern struct {
                 },
             };
         }
-        lighting.count[0] = @intCast(list.len);
-        return true;
+        lighting.count[0] = @intCast(count);
+        return count;
     }
 
     comptime {
         std.debug.assert(@sizeOf(Light) == 48);
         std.debug.assert(@offsetOf(Lighting, "lights") == 16);
+        // SDL's Vulkan device binds 4 KiB of each uniform push, so the shader sees no more.
+        std.debug.assert(@sizeOf(Lighting) <= 4096);
     }
 };
 
@@ -443,12 +444,13 @@ pub const Gpu = struct {
 
     const vtable: device.Device.VTable = .{ .begin = begin, .end = end, .draw = draw, .overlay = overlay, .lights = lights };
 
-    /// Takes the frame's lights, for the shader to light each pixel with, unless the settings say
-    /// otherwise or the frame has more than the shader takes.
-    fn lights(ptr: *anyopaque, list: []const device.Light) bool {
+    /// Takes the frame's lights, as many as the shader does, for it to light each pixel with,
+    /// unless the settings say otherwise.
+    fn lights(ptr: *anyopaque, list: []const device.Light) usize {
         const gpu = from(ptr);
         gpu.lighting.count[0] = 0;
-        return gpu.settings.pixel_lighting and gpu.lighting.take(list);
+        if (!gpu.settings.pixel_lighting) return 0;
+        return gpu.lighting.take(list);
     }
 
     /// What follows is drawn over the finished frame rather than into it, so that the bloom, which
@@ -1084,14 +1086,14 @@ test "Lighting.take" {
         .{ .mask = 0x08, .kind = .{ .directional = .{ .toward = .{ 0, 0, -0.5 }, .colour = .{ 1, 0.9, 0.8 } } } },
         .{ .mask = 0x01, .kind = .{ .point = .{ .position = .{ 3, 4, 50 }, .reach = 200, .colour = .{ 0.5, 0.5, 1 } } } },
     };
-    try std.testing.expect(lighting.take(&list));
+    try std.testing.expectEqual(2, lighting.take(&list));
     try std.testing.expectEqual(2, lighting.count[0]);
     try std.testing.expectEqual(Lighting.Light{ .colour = .{ 1, 0.9, 0.8, 0 }, .vector = .{ 0, 0, -0.5, 0 }, .mask = 0x08, .kind = .directional }, lighting.lights[0]);
     try std.testing.expectEqual(Lighting.Light{ .colour = .{ 0.5, 0.5, 1, 0 }, .vector = .{ 3, 4, 50, 200 }, .mask = 0x01, .kind = .point }, lighting.lights[1]);
-    // More than the shader takes leaves none, for the frame to be lit each vertex.
+    // Past the shader's room it takes the first, and the driver lights the vertices with the rest.
     const many: [max_lights + 1]device.Light = @splat(list[0]);
-    try std.testing.expect(!lighting.take(&many));
-    try std.testing.expectEqual(0, lighting.count[0]);
+    try std.testing.expectEqual(max_lights, lighting.take(&many));
+    try std.testing.expectEqual(max_lights, lighting.count[0]);
 }
 
 test Slot {

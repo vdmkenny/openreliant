@@ -523,7 +523,7 @@ address	kind	name	type	comment
 00588718	data	simulation_counter	int	game_tick calls since the simulation step last did its work, which it does on the fourth
 00562ffc	data	simulation_turn	int	The object whose orientation simulation_step orthonormalizes this step; moves on by one each step and goes round the live objects
 00499540	function	node_mount_glow	void __fastcall (void *node, ShpAttachment *attachment)	Makes an engine glow node, kind 2, for an attachment of kind 2: its mesh is the Engine Mesh, and its cull radius the largest of the attachment sizes
-00499730	function	node_mount_light	void __fastcall (void *node, ShpAttachment *attachment)	Makes a light node for an attachment of kind 4, which node_draw draws as a sprite and a light
+00499730	function	node_mount_light	void __fastcall (void *node, ShpAttachment *attachment)	Makes the nodes of a light attachment (kind 4): kind 3, its two sprites, where the attachment has a width; kind 5, a point light, where it blinks and has a brightness
 00476c90	function	node_tree_update	void __fastcall (ModelNode *root)	Once each simulation step for each live object, before the objects move: for the root and each animating descendant, commits a pending next place (the 0x48-byte block at +0x5C over +0x14, clearing flag bit 0 and setting bits 1 and 2), advances the animation and fires its keyframe events
 00499f40	function	node_animate	void __fastcall (ModelNode *node, float at)	Sets a node's animated offset and angles from its part's animation track at a time, taken between the keyframes either side of it, or from the last where the time runs past them; a node whose track index is past the part's tracks takes none. Then node_place works its place out
 0049a140	function	node_place	void __fastcall (ModelNode *node)	Works a node's next place out in the frame of the node it hangs from: its part's origin less the origin of its parent's part, or less the object's centre for one hung from the root, plus the animated offset, turned about the part's mount point by the part's angles plus the animated ones. Marks the place as not yet taken up
@@ -681,3 +681,6 @@ address	kind	name	type	comment
 00567f90	data	power_ball_shade	byte[3844]	How brightly each pixel of the power ball is lit, 0 to 63
 00566f90	data	power_ball_colours16	ushort[2048]	The power ball's colours in the 16-bit display: 32 for each of 64 levels of light
 00568e94	data	power_ball_colours8	byte[2048]	The same for the 8-bit display, as palette indices
+004c1050	function	lerp	float __stdcall (float a, float b, float t)	The value t of the way from a to b: (b - a) t + a
+004c4190	function	SR_object_init	void __fastcall (void *object)	Clears a new scene object: identity orientations, zero positions, no name
+004c43e0	function	SR_light_init	void __fastcall (void *light)	Readies a new light: frame type 2, intensity 1, range 1. It leaves the kind at +0xB4, which a cleared allocation makes 0, a point light

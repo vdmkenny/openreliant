@@ -263,7 +263,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     // The display's shapes, whose global palette the ships' schematics are drawn with too.
     const shapes = try spr.Sprite.parse(try resources.readFile(arena, game.hud.hardware_shapes));
     const global_palette = game.hud.globalPalette(shapes);
-    var ship = try Ship.load(&resources, &textures, ship_stats, &glows, global_palette, options.ship);
+    var ship = try Ship.load(&resources, &textures, ship_stats, &glows, global_palette, options.ship, &rand);
     var player: engine.input.Player = .{};
     defer ship.unload();
     var devices: engine.input.Devices = .{};
@@ -371,7 +371,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             while (true) {
                 candidate = nextShipType(candidate, step[1]);
                 if (candidate == ship.ship_type) break;
-                const next = Ship.load(&resources, &textures, ship_stats, &glows, global_palette, candidate) catch |err| {
+                const next = Ship.load(&resources, &textures, ship_stats, &glows, global_palette, candidate, &rand) catch |err| {
                     std.log.warn("ship type {d} left out: {s}", .{ candidate, @errorName(err) });
                     continue;
                 };
@@ -447,6 +447,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .attachments = .{
                 .camera = view.place.position,
                 .frame_start = clock.frame_start,
+                .blink_offset = ship.live.blink_offset,
                 // A ship's glows burn by the throttle of its last update, dimmed by the share of
                 // its engines still standing.
                 .throttle = ship.live.last_throttle * ship.live.engines_intact,
@@ -566,6 +567,7 @@ const Ship = struct {
         glows: *const game.environfx.Glows,
         global_palette: ?*const [spr.palette_size]u8,
         ship_type: usize,
+        random: *engine.libcmt.Rand,
     ) !Ship {
         if (ship_type >= ship_stats.len) return error.NoShipStats;
         var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
@@ -578,7 +580,7 @@ const Ship = struct {
         const library = try gpa.create(Library);
         library.* = .{ .gpa = gpa, .resources = resources, .textures = textures };
         var object: game.objects.Model = try .create(gpa, model, loaded, .{
-            .light_sprite = try game.objects.lightSprite(textures),
+            .light_sprites = try .load(textures),
             .glows = glows,
             .mounts = library.mounts(),
         });
@@ -586,6 +588,7 @@ const Ship = struct {
         object.place(@splat(0), math.identity);
         // What `create_object` sets of a new object: undamaged, at rest, flying itself forward.
         var live: game.gameobj.GameObject = std.mem.zeroes(game.gameobj.GameObject);
+        live.blink_offset = game.gameobj.blinkOffset(random);
         live.root.orientation = math.identity;
         live.root.next_orientation = math.identity;
         live.speed_factor = 1;

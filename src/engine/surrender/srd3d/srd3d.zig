@@ -216,15 +216,29 @@ pub const Driver = struct {
     }
 
     /// The port's: hands the device the frame's directional and point lights in the camera's
-    /// frame, and notes whether it lights each pixel with them.
-    fn lights(ptr: *anyopaque, list: []const srlight.Light) Allocator.Error!void {
+    /// frame, the directional lights first and then the point lights nearest the camera, and
+    /// marks those it adds to each pixel. The pipeline adds the rest to each vertex.
+    fn lights(ptr: *anyopaque, list: []srlight.Light) Allocator.Error!void {
         const driver = from(ptr);
         const context = driver.context;
+        var wanted: std.ArrayList(Wanted) = .empty;
+        defer wanted.deinit(driver.gpa);
+        for (list, 0..) |*l, index| {
+            l.per_pixel = false;
+            const away: f32 = switch (l.kind) {
+                .ambient => continue,
+                .directional => -1,
+                .point => |point| math.lengthSquared(context.view(point.position)),
+            };
+            try wanted.append(driver.gpa, .{ .index = index, .away = away });
+        }
+        std.mem.sort(Wanted, wanted.items, {}, Wanted.before);
         var taken: std.ArrayList(device.Light) = .empty;
         defer taken.deinit(driver.gpa);
-        for (list) |l| {
+        for (wanted.items) |w| {
+            const l = list[w.index];
             const kind: device.Light.Kind = switch (l.kind) {
-                .ambient => continue,
+                .ambient => unreachable,
                 .directional => |forward| .{ .directional = .{
                     .toward = math.normalize(context.turn(forward)) * @as(math.Vector, @splat(l.intensity)),
                     .colour = l.colour,
@@ -237,8 +251,21 @@ pub const Driver = struct {
             };
             try taken.append(driver.gpa, .{ .mask = l.mask, .kind = kind });
         }
-        context.pixel_lighting = driver.target.lights(taken.items);
+        const count = @min(driver.target.lights(taken.items), wanted.items.len);
+        for (wanted.items[0..count]) |w| list[w.index].per_pixel = true;
+        context.pixel_lighting = count > 0;
     }
+
+    /// A light the device may add to each pixel, and how far it stands from the camera, squared;
+    /// a directional light stands before them all.
+    const Wanted = struct {
+        index: usize,
+        away: f32,
+
+        fn before(_: void, a: Wanted, b: Wanted) bool {
+            return a.away < b.away;
+        }
+    };
 
     /// The light mask a corner of `drawn` goes to the device with: its object's, for a pass lit
     /// in a frame whose device lights each pixel, and none otherwise.
@@ -505,15 +532,17 @@ pub const Driver = struct {
     }
 
     /// `draw_sprites` (`0x10006BF0`): with a blended material, each sprite put aside keyed by its
-    /// depth plus its bias; else drawn now.
+    /// depth plus its bias, to be drawn with its own material (`draw_blended_sprite`,
+    /// `0x10007200`); else each drawn now with the set's.
     fn drawSprites(ptr: *anyopaque, drawn: *const srbmo.Drawn, layer: Layer, blended: *srcore.Blended) Allocator.Error!void {
         const driver = from(ptr);
         const surface = &drawn.set.surface;
         if (surface.material.blend[0] != .off) {
             for (drawn.sprites, 0..) |p, index| {
+                const sprite = drawn.set.sprites[p.index];
                 try blended.add(.{
-                    .key = srcore.key(p.depth + drawn.set.sprites[p.index].bias),
-                    .surface = surface,
+                    .key = srcore.key(p.depth + sprite.bias),
+                    .surface = sprite.surface orelse surface,
                     .item = .{ .sprite = .{ .drawn = drawn, .index = @intCast(index) } },
                 });
             }
@@ -726,10 +755,12 @@ test "a device that lights each pixel" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // Takes the frame's lights, and keeps the vertices of the last draw.
+    // Takes as many of the frame's lights as it has room for, and keeps the vertices of the last
+    // draw.
     const Recorder = struct {
+        room: usize = 4,
         lights: [4]device.Light = undefined,
-        taken: usize = 0,
+        given: usize = 0,
         vertices: [16]Vertex = undefined,
         drawn: usize = 0,
 
@@ -743,11 +774,11 @@ test "a device that lights each pixel" {
             recorder.drawn = vertices.len;
         }
 
-        fn take(ptr: *anyopaque, list: []const device.Light) bool {
+        fn take(ptr: *anyopaque, list: []const device.Light) usize {
             const recorder: *@This() = @ptrCast(@alignCast(ptr));
             @memcpy(recorder.lights[0..list.len], list);
-            recorder.taken = list.len;
-            return true;
+            recorder.given = list.len;
+            return @min(list.len, recorder.room);
         }
     };
     var recorder: Recorder = .{};
@@ -770,14 +801,15 @@ test "a device that lights each pixel" {
 
     try srcore.render(arena, &context, &scene, driver.interface(), null);
     try std.testing.expect(context.pixel_lighting);
-    // The directional and point lights, last added first, in the camera's frame: the direction
+    // The directional light first, then the point light, in the camera's frame: the direction
     // made as long as the intensity, the point's reach and colour scaled by it.
-    try std.testing.expectEqual(2, recorder.taken);
-    try std.testing.expectEqual(0x08, recorder.lights[0].mask);
-    try std.testing.expectEqual(math.Vector{ -10, 0, 900 }, recorder.lights[0].kind.point.position);
-    try std.testing.expectEqual(200, recorder.lights[0].kind.point.reach);
-    try std.testing.expectEqual([3]f32{ 2, 1, 0 }, recorder.lights[0].kind.point.colour);
-    try std.testing.expectEqual([3]f32{ 0, 0, -0.5 }, recorder.lights[1].kind.directional.toward);
+    try std.testing.expectEqual(2, recorder.given);
+    try std.testing.expectEqual(0x01, recorder.lights[0].mask);
+    try std.testing.expectEqual([3]f32{ 0, 0, -0.5 }, recorder.lights[0].kind.directional.toward);
+    try std.testing.expectEqual(0x08, recorder.lights[1].mask);
+    try std.testing.expectEqual(math.Vector{ -10, 0, 900 }, recorder.lights[1].kind.point.position);
+    try std.testing.expectEqual(200, recorder.lights[1].kind.point.reach);
+    try std.testing.expectEqual([3]f32{ 2, 1, 0 }, recorder.lights[1].kind.point.colour);
     // The vertices come with the ambient light alone, their normals and their object's mask.
     try std.testing.expect(recorder.drawn > 0);
     for (recorder.vertices[0..recorder.drawn]) |v| {
@@ -786,6 +818,27 @@ test "a device that lights each pixel" {
         try std.testing.expectEqual(0x02, v.light_mask);
         try std.testing.expectEqual(1000, v.view[2]);
     }
+
+    // With room for one, the device takes the directional light, and the point light is added to
+    // each vertex: a corner within its reach and facing it is redder than the ambient light.
+    recorder.room = 1;
+    try srcore.render(arena, &context, &scene, driver.interface(), null);
+    try std.testing.expectEqual(2, recorder.given);
+    var reddened: usize = 0;
+    for (recorder.vertices[0..recorder.drawn]) |v| {
+        try std.testing.expectEqual(0x02, v.light_mask);
+        const red: u8 = @truncate(v.diffuse >> 16);
+        const blue: u8 = @truncate(v.diffuse);
+        try std.testing.expectEqual(64, blue);
+        reddened += @intFromBool(red > 64);
+    }
+    try std.testing.expect(reddened > 0);
+    // With no room, every light goes to the vertices.
+    recorder.room = 0;
+    try srcore.render(arena, &context, &scene, driver.interface(), null);
+    try std.testing.expect(!context.pixel_lighting);
+    for (recorder.vertices[0..recorder.drawn]) |v| try std.testing.expectEqual(device.no_lights, v.light_mask);
+    recorder.room = 4;
 
     // A pass that is not lit takes no lights.
     mesh.surfaces[0].material.lit[0] = false;

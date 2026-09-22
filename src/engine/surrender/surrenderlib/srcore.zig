@@ -89,9 +89,10 @@ pub const Driver = struct {
     pub const VTable = struct {
         /// `begin_scene`: clears, and sets the depth scale for the frame.
         begin: *const fn (*anyopaque, *srapi.Context) void,
-        /// The port's: the frame's lights, for a device that lights each pixel. The driver sets
-        /// `srapi.Context.pixel_lighting` if it does.
-        lights: *const fn (*anyopaque, []const srlight.Light) Allocator.Error!void,
+        /// The port's: the frame's lights, for a device that lights each pixel. The driver marks
+        /// the lights the device adds to each pixel (`srlight.Light.per_pixel`), and sets
+        /// `srapi.Context.pixel_lighting` if there are any.
+        lights: *const fn (*anyopaque, []srlight.Light) Allocator.Error!void,
         /// Draws what is opaque now and puts the rest in `blended`.
         mesh: *const fn (*anyopaque, *const srmesh.Drawn, Layer, *Blended) Allocator.Error!void,
         sprites: *const fn (*anyopaque, *const srbmo.Drawn, Layer, *Blended) Allocator.Error!void,

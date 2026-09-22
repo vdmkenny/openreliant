@@ -136,7 +136,7 @@ fn draw(ctx: Context, command: Command) !void {
             return error.FileNotFound;
         };
         const loaded = try srofiles.modelLoad(gpa, &textures, model, .{}, false);
-        var placed: objects.Model = try .create(gpa, model, &loaded, .{ .light_sprite = try objects.lightSprite(&textures) });
+        var placed: objects.Model = try .create(gpa, model, &loaded, .{ .light_sprites = try .load(&textures) });
         placed.recentre(model);
         const distance = command.distance orelse @max(placed.radius, 1) * context.projection.scale[1] / (0.35 * @as(f32, @floatFromInt(command.height)));
         placed.place(math.normalize(command.toward) * @as(math.Vector, @splat(distance)), math.lookAt(math.normalize(command.heading)));
