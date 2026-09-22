@@ -330,8 +330,11 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         devices.keyboard.numbers_taken = display.state.windows.status.get(.comms).phase == .open;
         while (clock.nextTick(&devices)) |stepped| {
             if (!stepped) continue;
-            // What `simulation_step` runs in order: each object's node update, which commits the
-            // place the previous step worked out, then the player's orders, then the objects move.
+            // What `simulation_step` runs in order: the orientation of the object whose turn it is
+            // is orthonormalized, each object's node update commits the place the previous step
+            // worked out, then the player's orders, then the objects move. The sandbox has one
+            // object.
+            if (clock.nextTurn(1) == ship.live.index) game.main.orthonormalizeTurn(&ship.live.root);
             game.objects.updateTree(&ship.live.root);
             engine.input.playerControls(&player, &devices, &ship.live, view.view);
             game.gameobj.move(&ship.live, &ship.flight, view.view, .forward, &view.hit_shake);

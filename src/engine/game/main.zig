@@ -28,6 +28,15 @@ const xtrabits = @import("xtrabits.zig");
 
 // --- The clocks and the loop ---------------------------------------------------------------
 
+/// What `simulation_step` does for the object whose turn it is (`Clock.nextTurn`), before its node
+/// update: orthonormalizes the root's next orientation (`mat3_orthonormalize`), so that rounding
+/// doesn't build up in the matrix from one step to the next. The game does the same to the
+/// orientation at `GameObject + 0x7A4`, which a multiplayer game draws other players' ships by;
+/// the port doesn't keep that one yet (#55).
+pub fn orthonormalizeTurn(root: *objects.Node) void {
+    root.next_orientation = math.orthonormalize(root.next_orientation);
+}
+
 /// The play time `tick_timer` keeps (`play_time_ticks` to `play_time_hours`, `0x00565070` to
 /// `0x00565076`). A second takes 101 ticks, as the roll below has it, so the play time runs a
 /// hundredth slow.
@@ -63,6 +72,9 @@ pub const Clock = struct {
     frame_duration: i32 = 0,
     /// `simulation_counter` (`0x00588718`).
     simulation_counter: u32 = 0,
+    /// `simulation_turn` (`0x00562FFC`): the object whose orientation `simulation_step`
+    /// orthonormalizes this step (`nextTurn`).
+    simulation_turn: u32 = 0,
     /// What the loop has already run game ticks for, which `mission_run` keeps to itself.
     ran_to: u32 = 0,
     /// Where the platform's count of hundredths stood at the last tick, in place of the timer.
@@ -134,6 +146,15 @@ pub const Clock = struct {
         devices.read();
         clock.simulation_counter = 0;
         return true;
+    }
+
+    /// Moves `simulation_turn` on to the next of `objects` live objects, as `simulation_step` does
+    /// once a step before the objects' own updates, and returns it. That object's orientation is
+    /// orthonormalized this step (`orthonormalizeTurn`), so each object gets its turn in rotation.
+    pub fn nextTurn(clock: *Clock, objects_live: u32) u32 {
+        clock.simulation_turn += 1;
+        if (clock.simulation_turn >= objects_live) clock.simulation_turn = 0;
+        return clock.simulation_turn;
     }
 
     /// `game_tick` (`0x00477850`): one tick of the mission. Paused, it counts the tick and does
@@ -530,6 +551,28 @@ test "the simulation steps on every fourth tick" {
     try std.testing.expectEqual(100, clock.mission_ticks);
     // The ticks already run are not run again.
     try std.testing.expectEqual(0, clock.runTicks(&devices));
+}
+
+test "each object's turn comes round in rotation" {
+    var clock: Clock = .{};
+    var turns: [4]u32 = undefined;
+    for (&turns) |*turn| turn.* = clock.nextTurn(3);
+    try std.testing.expectEqual([4]u32{ 1, 2, 0, 1 }, turns);
+    // With one object, every step is its turn.
+    clock = .{};
+    for (0..3) |_| try std.testing.expectEqual(0, clock.nextTurn(1));
+}
+
+test orthonormalizeTurn {
+    // A skewed next orientation comes back square, keeping its forward axis.
+    var root: objects.Node = std.mem.zeroes(objects.Node);
+    root.next_orientation = .{ 1.01, 0.02, 0, 0, 0.99, 0, 0.01, 0, 1 };
+    orthonormalizeTurn(&root);
+    const m = root.next_orientation;
+    const back = math.product(math.transpose(m), m);
+    for (math.identity, back) |expected, found| try std.testing.expectApproxEqAbs(expected, found, 1e-6);
+    try std.testing.expectEqual(0, m[2]);
+    try std.testing.expectEqual(0, m[5]);
 }
 
 test "a paused game stops its clocks but not the timer" {

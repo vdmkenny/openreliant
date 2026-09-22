@@ -521,7 +521,7 @@ address	kind	name	type	comment
 005db8e8	data	timer_ticks	uint	Every tick of the timer, the paused ones included; tick_timer advances it before it looks at paused
 00587cb0	data	paused_ticks	int	Ticks game_tick has skipped while the game is paused
 00588718	data	simulation_counter	int	game_tick calls since the simulation step last did its work, which it does on the fourth
-00562ffc	data	simulation_turn	int	The object whose turn it is for the extra work simulation_step gives one object a step; it cycles through the live objects
+00562ffc	data	simulation_turn	int	The object whose orientation simulation_step orthonormalizes this step; moves on by one each step and goes round the live objects
 00499540	function	node_mount_glow	void __fastcall (void *node, ShpAttachment *attachment)	Makes an engine glow node, kind 2, for an attachment of kind 2: its mesh is the Engine Mesh, and its cull radius the largest of the attachment sizes
 00499730	function	node_mount_light	void __fastcall (void *node, ShpAttachment *attachment)	Makes a light node for an attachment of kind 4, which node_draw draws as a sprite and a light
 00476c90	function	node_tree_update	void __fastcall (ModelNode *root)	Once each simulation step for each live object, before the objects move: for the root and each animating descendant, commits a pending next place (the 0x48-byte block at +0x5C over +0x14, clearing flag bit 0 and setting bits 1 and 2), advances the animation and fires its keyframe events
