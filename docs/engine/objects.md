@@ -155,6 +155,15 @@ rotation (`0x56C`), and its next position to its position plus the object's velo
 and records the length of the velocity as the speed (`0x5D8`). The root keeps that next place at
 `+0x5C` and `+0x68`.
 
+`object_move` also sets bit 0 of the root's node flags, marking the next place as pending. At the
+start of the next simulation step, before the objects move, `simulation_step` runs
+`node_tree_update` (`0x00476C90`) for every live object. It commits the pending next place by
+copying the 0x48 bytes from `+0x5C` over those from `+0x14` (the next position and orientation
+over the current ones), clears bit 0 and sets bits 1 and 2. It does the same for each animating
+part, whose animation it also advances. So an object moves on from the place the previous step
+worked out, and between steps its `position` is one step behind `next_position`, which the rest
+of the game reads as the object's place.
+
 `create_object` gives every object `motion_forward` (`0x004744C0`), which runs the flight model,
 `object_fly` (`0x004742E0`), with a thrust of 1; `motion_backward` runs it with -1.
 
@@ -210,14 +219,12 @@ pointers for its layout. `Motion` is an `enum` of the two routines the game inst
 the function pointer at `0x640`, and the rule each quantity settles by is one `settle` helper
 rather than the six copies the binary holds.
 
-Not yet ported: the guards `object_move` opens with, which hold an object still while it jumps or
-docks, the flags it sets for a moving or turning object, and the speed readout it keeps for the
-player's HUD.
+`objects.updateTree` ports `node_tree_update` for the root, and the driver runs it where
+`simulation_step` does, at the start of each step.
 
-**Open:** which routine takes a root's next place up. `object_move` marks the root with bit 0 of its
-node flags, and `object_link_part` clears that bit once it has copied a part's next place into its
-own and its frame's, but nothing found so far does the same for a root. The engine takes it up
-itself after each move, so that the next one carries on from where the last left off.
+Not yet ported: the guards `object_move` opens with, which hold an object still while it jumps or
+docks, the flags it sets for a moving or turning object, the speed readout it keeps for the
+player's HUD, and the parts' animation in `node_tree_update`.
 
 ## Components
 

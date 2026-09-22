@@ -13,7 +13,8 @@ const math = @import("../surrender/math.zig");
 const camera = @import("camera.zig");
 const engine = @import("../../engine.zig");
 const aigeneric = @import("aigeneric.zig");
-const Node = @import("objects.zig").Node;
+const objects = @import("objects.zig");
+const Node = objects.Node;
 const Pointer = engine.Pointer;
 const create = @import("create.zig");
 
@@ -465,13 +466,15 @@ pub fn fly(object: *GameObject, flight: *const create.FlightModel, view: camera.
     object.last_throttle = object.throttle;
 }
 
-/// `object_move` (`0x00473FF0`): one update of an object. Its motion routine runs first, then its
-/// next orientation becomes its orientation turned by `rotation`, its next position its position
-/// plus its velocity, and its speed the length of that velocity.
+/// `object_move` (`0x00473FF0`): one update of an object. It marks the root's next place as
+/// pending, which the next step's `node_tree_update` commits (`objects.updateTree`). Its motion
+/// routine runs, then its next orientation becomes its orientation turned by `rotation`, its next
+/// position its position plus its velocity, and its speed the length of that velocity.
 ///
 /// Not ported: the guards that hold an object still while it jumps or docks, the flags it sets for
 /// a moving or turning object, and the speed readout it keeps for the player's HUD.
 pub fn move(object: *GameObject, flight: *const create.FlightModel, view: camera.View, motion: ?Motion) void {
+    object.root.flags.next_pending = true;
     if (motion) |routine| fly(object, flight, view, routine.thrust());
     object.root.next_orientation = math.product(object.root.orientation, object.rotation);
     object.root.next_position = vec3(vector(object.root.position) + vector(object.velocity));
@@ -611,4 +614,19 @@ test move {
     try std.testing.expectApproxEqAbs(@sqrt(500.0), object.speed, 1e-4);
     // Its next orientation is its orientation turned by the rotation the steering built.
     try std.testing.expectEqual(math.identity, object.root.next_orientation);
+    try std.testing.expect(object.root.flags.next_pending);
+}
+
+test "an object travels from step to step" {
+    var object = testingObject();
+    object.velocity = .{ .x = 0, .y = 0, .z = 10 };
+    object.rotation = math.identity;
+    // Each step commits the place the previous one worked out, then moves on from it.
+    for (0..3) |_| {
+        objects.updateTree(&object.root);
+        move(&object, &testing_flight, .chase, null);
+    }
+    try std.testing.expectEqual(30, object.root.next_position.z);
+    // Between steps the committed position is one step behind.
+    try std.testing.expectEqual(20, object.root.position.z);
 }

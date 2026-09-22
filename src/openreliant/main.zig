@@ -330,15 +330,11 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         devices.keyboard.numbers_taken = display.state.windows.status.get(.comms).phase == .open;
         while (clock.nextTick(&devices)) |stepped| {
             if (!stepped) continue;
-            // What `simulation_step` runs in order: the player's orders, then the objects move.
+            // What `simulation_step` runs in order: each object's node update, which commits the
+            // place the previous step worked out, then the player's orders, then the objects move.
+            game.objects.updateTree(&ship.live.root);
             engine.input.playerControls(&player, &devices, &ship.live, view.view);
             game.gameobj.move(&ship.live, &ship.flight, view.view, .forward);
-            // The object takes up the place the move worked out, so that the next one carries on
-            // from it. The game marks the root instead, with the node flag `object_move` sets and
-            // `object_link_part` clears for a part; which routine takes a root's up is not yet
-            // known.
-            ship.live.root.position = ship.live.root.next_position;
-            ship.live.root.orientation = ship.live.root.next_orientation;
         }
         clock.frameBegin();
         // An object's place is its root's next one, which is what the game steers and draws by.
