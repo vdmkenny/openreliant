@@ -1425,6 +1425,14 @@ pub const ShipStatus = struct {
         .{ .offset = .{ -0x22, 0x19 }, .base = 0xA8 },
     };
 
+    /// The arcs for what SHIELD BALANCING has shifted beyond the fore and aft shields
+    /// (`gameobj.ShieldReserves`), outside the top arc and the foot arc. `hud_ship_status` draws
+    /// them for the player's own ship only, each by its reserve as `level` works it out.
+    pub const reserve_arcs = struct {
+        pub const fore: Arc = .{ .offset = .{ -0x1A, -0x24 }, .base = 0xB2 };
+        pub const aft: Arc = .{ .offset = .{ -0x26, 0x1D }, .base = 0xB7 };
+    };
+
     /// How much of an arc is drawn: the quadrant's shield over the ship's shield power, cut down to
     /// a whole number as the runtime's `__ftol` does, less one. An arc of 0 or less is not drawn.
     /// A ship with no shield power has no arcs; the game divides by it regardless.
@@ -1448,7 +1456,8 @@ pub const ShipStatus = struct {
         try drawShape(schematic, gpa, target, 0, scaled(point, schematic_offset, scale), colour, scale);
     }
 
-    /// Draws the shields of a ship of `shields` and `shield_power` round its schematic.
+    /// Draws the shields of a ship of `shields` and `shield_power` round its schematic, and for the
+    /// player's ship the shields shifted fore and aft beyond them, `reserves`.
     pub fn draw(
         art: *Art,
         gpa: Allocator,
@@ -1456,17 +1465,23 @@ pub const ShipStatus = struct {
         screen: [2]u32,
         shields: [4]f32,
         shield_power: i32,
+        reserves: ?gameobj.ShieldReserves,
         colour: [4]f32,
         scale: f32,
     ) (spr.Error || Allocator.Error)!void {
         const point = place(screen, offset, across, down, scale);
-        for (arcs, shields) |arc, shield| {
-            const drawn = level(shield, shield_power);
-            if (drawn <= 0) continue;
-            const shape = @as(i32, arc.base) - drawn;
-            if (shape < 0) continue;
-            try drawShape(art, gpa, target, @intCast(shape), scaled(point, arc.offset, scale), colour, scale);
-        }
+        for (arcs, shields) |arc, shield| try drawArc(art, gpa, target, arc, level(shield, shield_power), point, colour, scale);
+        const shifted = reserves orelse return;
+        try drawArc(art, gpa, target, reserve_arcs.fore, level(shifted.fore, shield_power), point, colour, scale);
+        try drawArc(art, gpa, target, reserve_arcs.aft, level(shifted.aft, shield_power), point, colour, scale);
+    }
+
+    /// An arc drawn `drawn` shapes from its base, if any of it is.
+    fn drawArc(art: *Art, gpa: Allocator, target: device.Device, arc: Arc, drawn: i32, point: [2]i32, colour: [4]f32, scale: f32) (spr.Error || Allocator.Error)!void {
+        if (drawn <= 0) return;
+        const shape = @as(i32, arc.base) - drawn;
+        if (shape < 0) return;
+        try drawShape(art, gpa, target, @intCast(shape), scaled(point, arc.offset, scale), colour, scale);
     }
 };
 
@@ -1492,6 +1507,12 @@ test ShipStatus {
     }
     std.mem.sort(u16, &shapes, {}, std.sort.asc(u16));
     for (shapes, 0..) |shape, i| try std.testing.expectEqual(0x99 + i, shape);
+
+    // The shifted shields' arcs follow on from those: a full reserve, five times the shield
+    // power, draws four of the five, 0xAE to 0xB1 fore and 0xB3 to 0xB6 aft.
+    try std.testing.expectEqual(4, ShipStatus.level(5 * 3, 3));
+    try std.testing.expectEqual(0xAE, ShipStatus.reserve_arcs.fore.base - 4);
+    try std.testing.expectEqual(0xB3, ShipStatus.reserve_arcs.aft.base - 4);
 }
 
 // --- The targeting cluster -------------------------------------------------------------------

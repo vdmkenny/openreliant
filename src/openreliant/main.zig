@@ -749,7 +749,7 @@ const Display = struct {
         if (display.ship.schematic) |*schematic| {
             try game.hud.ShipStatus.drawSchematic(schematic, display.ship.arena.allocator(), display.target, display.screen, white, scale);
         }
-        try game.hud.ShipStatus.draw(&display.art, display.gpa, display.target, display.screen, live.shields, display.ship.combat.shield_power, white, scale);
+        try game.hud.ShipStatus.draw(&display.art, display.gpa, display.target, display.screen, live.shields, display.ship.combat.shield_power, display.player.shield_reserves, white, scale);
         try game.hud.drawCluster(&display.art, &display.font, display.gpa, display.target, display.screen, .{
             .throttle = live.throttle,
             .speed = live.speed,

@@ -233,7 +233,8 @@ while it is below -0.5, as long as the shield it comes from has any left. The qu
 of that side's reserve first (`0x51CF78` for the fore shield, `0x51CF34` for the aft one), then
 out of the shield. The shield it goes to holds at most five times the shield power, and what goes
 beyond that is added to its reserve, which holds as much again. A reserve keeps the other side's
-shield from [recharging](objects.md#shields) to full.
+shield from [recharging](objects.md#shields) to full. The ship status display shows each reserve as a
+second arc outside the fore or aft shield's ([Head-up display](hud.md#the-elements)).
 
 ## Porting
 
