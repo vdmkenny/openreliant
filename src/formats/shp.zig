@@ -223,6 +223,28 @@ pub const Part = extern struct {
     }
 };
 
+/// Tag `0x07`. A node of the part's collision tree: a box in the part's frame, and either two
+/// child nodes or a list of the part's faces. A node with faces is a leaf, whatever `children`
+/// holds. The engine descends the tree to find what a ship has hit (`0x0049BD30`).
+pub const TreeNode = extern struct {
+    /// **Unknown.** Zero in every shipped model but one, which holds 100.
+    _unknown_00: u32,
+    /// The box's axes in the part's frame, row-major.
+    orientation: [9]f32,
+    /// Half the box's size along each of its own axes.
+    half_size: Vec3,
+    /// The box's centre in the part's frame.
+    centre: Vec3,
+    /// The two nodes it splits into, as indices into the part's nodes, or -1.
+    children: [2]i32,
+
+    comptime {
+        assert(@offsetOf(TreeNode, "half_size") == 0x28);
+        assert(@offsetOf(TreeNode, "children") == 0x40);
+        assert(@sizeOf(TreeNode) == 72);
+    }
+};
+
 /// Tag `0x09`. A point on a part where the engine mounts something: a gun or turret, a missile
 /// pod, a light, a cargo pod. The engine keeps 124 bytes of each record, and exporters that write
 /// longer ones add nothing it reads.
@@ -583,8 +605,12 @@ pub const PartData = struct {
     attachments: []Attachment,
     /// Its animation tracks, in the order the file lists them.
     tracks: []Track,
+    /// Its collision tree, the root first; empty for a part that has none.
+    nodes: []TreeNode,
+    /// The faces of each node, as indices into the first level's faces. Empty for a node that has
+    /// children rather than faces.
+    node_faces: [][]u32,
     /// Chunks that are read but not yet interpreted, kept as counts.
-    node_count: usize,
     group_count: usize,
     trigger_count: usize,
 };
@@ -614,7 +640,7 @@ pub const Model = struct {
 
         for (parts, out) |part, *entry| {
             const lods = try reader.takeRecords(Lod, gpa, .lod);
-            const nodes = try reader.take(.tree_node);
+            const nodes = try reader.takeRecords(TreeNode, gpa, .tree_node);
             const attachments = try reader.takeRecords(Attachment, gpa, .attachment);
             const clips = try reader.takeRecords(Clip, gpa, .animation_clip);
             const groups = try reader.take(.face_group);
@@ -630,11 +656,11 @@ pub const Model = struct {
                 };
             }
 
-            const node_count = if (nodes) |chunk| chunk.count else 0;
             const group_count = if (groups) |chunk| chunk.count else 0;
 
             // Per-node, per-clip and per-group lists follow the level geometry.
-            for (0..node_count) |_| _ = try reader.take(.node_face_list);
+            const node_faces = try gpa.alloc([]u32, nodes.len);
+            for (node_faces) |*faces| faces.* = try reader.takeRecords(u32, gpa, .node_face_list);
             const tracks = try gpa.alloc(Track, clips.len);
             for (clips, tracks) |clip, *track| {
                 track.* = .{
@@ -648,7 +674,8 @@ pub const Model = struct {
             entry.* = .{
                 .part = part,
                 .meshes = meshes,
-                .node_count = node_count,
+                .nodes = nodes,
+                .node_faces = node_faces,
                 .attachments = attachments,
                 .tracks = tracks,
                 .group_count = group_count,
@@ -915,7 +942,8 @@ fn testPart(name: []const u8, component: bool, attachments: []Attachment) PartDa
         .meshes = &.{},
         .attachments = attachments,
         .tracks = &.{},
-        .node_count = 0,
+        .nodes = &.{},
+        .node_faces = &.{},
         .group_count = 0,
         .trigger_count = 0,
     };

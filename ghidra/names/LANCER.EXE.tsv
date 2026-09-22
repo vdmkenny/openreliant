@@ -715,3 +715,6 @@ address	kind	name	type	comment
 004c1160	function	vec3_cross_by	void __fastcall (Vec3 *v, Vec3 *by)	Crosses a vector by another in place
 004c2050	function	det2	float __fastcall (float a, float b, float c, float d)	The determinant of a 2x2 matrix: a*d - b*c, which mat3_determinant sums three of
 00465380	function	collision_test_hull	undefined4 __fastcall (GameObject *ship, GameObject *hull, int pass)	Tests a ship against the faces of each part of an object that lists components, by the planes the loader keeps past the part record, in place of the sphere test
+004a2eb0	function	model_take_chunk	ushort __fastcall (void **out, uint tag, uint size)	Reads the next chunk with this tag from the model file, allocating count records of size bytes and copying min(record size, size) into each; returns the count and leaves the rest zero
+0049bef0	function	object_hit_test	void __thiscall (ModelNode *node, void *query)	Tests a query against a node's collision tree, then against each child node that is neither hidden nor 0x80
+0049bd30	function	node_hit_test	undefined4 __fastcall (ModelNode *node, code *test)	Descends the collision tree of the node's part with a stack, calling test with each box in the world; a node with faces is a leaf
