@@ -107,7 +107,8 @@ that code, so the script disassembles it first. Names are user-defined, re-runni
 that is already in place, and the tables are the record of what is named and typed: re-import a
 program and one command restores it. The hand tables' rows are applied after the generated ones and
 so override them; `zig build test` checks that every row is well formed and that no address is named
-twice among the hand tables. Then [`ApplySources.java`](../ghidra/scripts/ApplySources.java) builds
+twice among the hand tables. [`ghidra/names/README.md`](../ghidra/names/README.md) describes their
+format. Then [`ApplySources.java`](../ghidra/scripts/ApplySources.java) builds
 the Sources program tree from `ghidragen sources`' rows for
 [`src/engine/sources.zig`](../src/engine/sources.zig) ([`binary/sources.md`](binary/sources.md)).
 `functions.tsv` gives each function's place in it. Last, `Annotate.java` runs on `srd3d.dll` with the

@@ -1,7 +1,8 @@
 //! The names tables kept by hand in `ghidra/names`, which `ghidra/scripts/Annotate.java` applies
 //! after the rows `names` writes, so that a hand row overrides a generated one. Their rows are
-//! checked here, so that a malformed row fails the tests instead of a Ghidra run, and so that no
-//! address is named twice among the hand tables or among the generated rows.
+//! checked here, so that a malformed row fails the tests instead of a Ghidra run, so that GitHub
+//! can show each table as one, and so that no address is named twice among the hand tables or
+//! among the generated rows.
 
 const std = @import("std");
 const Io = std.Io;
@@ -34,9 +35,12 @@ pub const Row = struct {
 
 pub const Error = error{ Malformed, BadAddress, BadKind, BadName, BadCharacter };
 
-/// A line's row, or null for a comment or a blank line.
+/// The first line of each hand table, which GitHub shows as the table's header.
+pub const header = "address\tkind\tname\ttype\tcomment";
+
+/// A line's row, or null for the header, a comment or a blank line.
 pub fn parseLine(line: []const u8) Error!?Row {
-    if (line.len == 0 or line[0] == '#') return null;
+    if (line.len == 0 or line[0] == '#' or std.mem.eql(u8, line, header)) return null;
     // The project writes no en or em dashes, in these tables either.
     if (std.mem.indexOf(u8, line, "\u{2013}") != null or std.mem.indexOf(u8, line, "\u{2014}") != null)
         return error.BadCharacter;
@@ -69,6 +73,25 @@ pub fn parseLine(line: []const u8) Error!?Row {
     };
 }
 
+/// A row of a hand table. GitHub shows a file as a table only if every row has the same columns,
+/// so each has all five, with empty fields where there is no type or comment, and no double quote,
+/// which GitHub reads as quoting.
+pub fn handRow(line: []const u8) Error!Row {
+    if (std.mem.count(u8, line, "\t") != 4) return error.Malformed;
+    if (std.mem.indexOfScalar(u8, line, '"') != null) return error.BadCharacter;
+    return try parseLine(line) orelse error.Malformed;
+}
+
+test handRow {
+    const row = try handRow("00515240\tdata\t__iob\t\t");
+    try std.testing.expectEqualStrings("__iob", row.name);
+    try std.testing.expectError(error.Malformed, handRow("00515240\tdata\t__iob"));
+    try std.testing.expectError(error.Malformed, handRow(""));
+    try std.testing.expectError(error.Malformed, handRow("# Script VM\t\t\t\t"));
+    try std.testing.expectError(error.Malformed, handRow(header));
+    try std.testing.expectError(error.BadCharacter, handRow("00515240\tdata\t__iob\t\tthe \"iob\""));
+}
+
 test parseLine {
     try std.testing.expectEqual(null, try parseLine(""));
     try std.testing.expectEqual(null, try parseLine("# Script VM"));
@@ -96,10 +119,15 @@ test parseLine {
 
 test "the hand tables' rows are well formed" {
     for (hand) |table| {
-        var lines = std.mem.splitScalar(u8, table.text, '\n');
-        var number: usize = 1;
+        if (!std.mem.startsWith(u8, table.text, header ++ "\n")) {
+            std.debug.print("{s}: the first line isn't the header\n", .{table.name});
+            return error.TestUnexpectedResult;
+        }
+        const rows = std.mem.trimEnd(u8, table.text[header.len + 1 ..], "\n");
+        var lines = std.mem.splitScalar(u8, rows, '\n');
+        var number: usize = 2;
         while (lines.next()) |line| : (number += 1) {
-            _ = parseLine(line) catch |err| {
+            _ = handRow(line) catch |err| {
                 std.debug.print("{s}:{d}: {s}\n", .{ table.name, number, @errorName(err) });
                 return err;
             };

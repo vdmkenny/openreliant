@@ -286,7 +286,8 @@ public class Annotate extends GhidraScript {
     private void applyNames(Path table) throws Exception {
         for (String line : Files.readAllLines(table)) {
             monitor.checkCancelled();
-            if (line.isBlank() || line.startsWith("#")) {
+            // The hand tables start with a header row, which GitHub shows as the table's header.
+            if (line.isBlank() || line.startsWith("#") || line.startsWith("address\t")) {
                 continue;
             }
             String[] fields = line.split("\t", -1);
