@@ -6,6 +6,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 const hog = @import("../../formats/hog.zig");
+const layout = @import("../../formats/layout.zig");
 const refpack = @import("../../formats/refpack.zig");
 
 const log = std.log.scoped(.bigfile);
@@ -81,15 +82,19 @@ test Hog {
     defer tmp.cleanup();
 
     // One member, `Ship.SHP`, holding `hello`.
-    const directory_end = 16 + 8 + "Ship.SHP".len + 1;
+    const name = "Ship.SHP";
+    const records_at = @sizeOf(hog.Header);
+    const name_at = records_at + @sizeOf(hog.Record);
+    const directory_end = name_at + name.len + 1;
     var bytes: [directory_end + 5]u8 = undefined;
-    @memcpy(bytes[0..4], hog.magic);
-    std.mem.writeInt(u32, bytes[4..8], bytes.len, .big);
-    std.mem.writeInt(u32, bytes[8..12], 1, .big);
-    std.mem.writeInt(u32, bytes[12..16], directory_end, .big);
-    std.mem.writeInt(u32, bytes[16..20], directory_end, .big);
-    std.mem.writeInt(u32, bytes[20..24], 5, .big);
-    @memcpy(bytes[24..][0.."Ship.SHP".len], "Ship.SHP");
+    (try layout.viewMut(hog.Header, &bytes)).* = .{
+        .magic = hog.magic.*,
+        .archive_size = .of(bytes.len),
+        .entry_count = .of(1),
+        .data_offset = .of(directory_end),
+    };
+    (try layout.viewMut(hog.Record, bytes[records_at..])).* = .{ .offset = .of(directory_end), .size = .of(5) };
+    @memcpy(bytes[name_at..][0..name.len], name);
     bytes[directory_end - 1] = 0;
     @memcpy(bytes[directory_end..], "hello");
     try tmp.dir.writeFile(io, .{ .sub_path = "resource.hog", .data = &bytes });

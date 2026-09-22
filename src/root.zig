@@ -1,6 +1,9 @@
 //! The `openreliant` module: readers for the game's file formats, and the reimplementation of the
 //! game's code, shared by the engine and every tool in this repository.
 
+/// Reading fixed layouts in place, which the readers below share.
+pub const layout = @import("formats/layout.zig");
+
 /// Containers the game shipped in, rather than formats the game itself reads.
 pub const cdimage = @import("formats/cdimage.zig");
 pub const iso9660 = @import("formats/iso9660.zig");

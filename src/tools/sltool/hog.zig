@@ -87,10 +87,10 @@ fn info(ctx: Context, archive: hog.Archive) !void {
         \\uncompressed: {Bi:.1}
         \\
     , .{
-        archive.header.archiveSize(),
+        archive.header.archive_size.get(),
         archive.entries.len,
-        archive.header.dataOffset() - @sizeOf(hog.Header),
-        archive.header.dataOffset(),
+        archive.header.data_offset.get() - @sizeOf(hog.Header),
+        archive.header.data_offset.get(),
         archive.isContiguous(),
         compressed,
         archive.entries.len,
