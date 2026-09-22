@@ -160,7 +160,8 @@ pub const Ship = extern struct {
     /// The most the guns' charge holds: `create_object` gives a new ship this much, the guns
     /// recharge to it, and the display's right arc measures against it. Mods: GunEnergy.
     gun_energy: f32,
-    _unknown_74: f32,
+    /// The seconds the guns take to charge fully (`guns.step`). Mods: GunRecharge.
+    gun_recharge: f32,
     /// The rounds a new ship's guns have, truncated on load: what a shot of a gun of kind
     /// `rounds` takes (`guns.step`).
     rounds: f32,

@@ -86,7 +86,7 @@ pub const Stats = struct {
             record.afterburner_fuel = std.math.lossyCast(i32, ship.afterburner_fuel);
             record.shield_recharge = if (ship.shield_recharge == 0) stats.Ship.default_shield_recharge else ship.shield_recharge;
             record.gun_energy = ship.gun_energy;
-            record._unknown_14 = ship._unknown_74;
+            record.gun_recharge = ship.gun_recharge;
             record.rounds = std.math.lossyCast(i32, ship.rounds);
         }
         for (&tables.flight) |*flight| flight.speed_per_pitch_rate = flight.max_speed / flight.pitch_rate;
@@ -163,10 +163,9 @@ pub const ShipCombat = extern struct {
     shield_recharge: f32,
     /// `Ship.gun_energy`: the most the guns' charge holds.
     gun_energy: f32,
-    /// `Ship._unknown_74`. **Unverified:** the seconds the guns take to charge fully: the guns'
-    /// step adds `gun_energy * gun_factor * gun_condition / (this * 25)` to their charge
-    /// (`0x004770E0`).
-    _unknown_14: f32,
+    /// `Ship.gun_recharge`: the seconds the guns take to charge fully, over which the guns' step
+    /// adds `gun_energy * gun_factor * gun_condition` to their charge (`guns.step`).
+    gun_recharge: f32,
     /// `Ship.rounds`, truncated: the rounds a new object's guns have (`GameObject.rounds`).
     rounds: i32,
     /// The type's guns in groups, which `0x004667F0` works out from its first object's guns,

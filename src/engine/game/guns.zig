@@ -298,7 +298,7 @@ test buildGroups {
 
 // --- Firing ------------------------------------------------------------------------------------
 
-/// Simulation steps a second, which `ShipCombat._unknown_14` is counted in (`0x004DC7F0`).
+/// Simulation steps a second, which `ShipCombat.gun_recharge` is counted in (`0x004DC7F0`).
 const recharge_steps: f32 = 25;
 
 /// The gun condition a ship fires steadily at (`0x004DC470`). Below it a shot goes off only as
@@ -371,7 +371,7 @@ pub fn fire(object: *gameobj.GameObject, trigger: Trigger, ticks: i32) void {
 
 /// `guns_step` (`0x004770E0`), which `simulation_step` runs for every object after its shields
 /// recharge. The guns' charge grows by `gun_energy` times the guns' share of the power and their
-/// condition, over `ShipCombat._unknown_14` seconds of steps, up to `gun_energy`, while no gun is
+/// condition, over `ShipCombat.gun_recharge` seconds of steps, up to `gun_energy`, while no gun is
 /// charging up. Then each gun whose trigger is held fires once its refire interval has passed, as
 /// long as the ship has the charge or the rounds for it: the guns firing this step share out the
 /// charge the step began with, so a ship fires none of them rather than some.
@@ -390,7 +390,7 @@ pub fn step(ctx: Context, object: *gameobj.GameObject, combat: *const create.Shi
     if (object.flags.components) return;
     if (object.nova_charge == 0) {
         object.gun_charge += combat.gun_energy * object.gun_factor * object.gun_condition /
-            (combat._unknown_14 * recharge_steps);
+            (combat.gun_recharge * recharge_steps);
     }
     if (object.gun_charge > combat.gun_energy) object.gun_charge = combat.gun_energy;
 
@@ -557,7 +557,7 @@ const testing = struct {
         return object;
     }
 
-    const combat = std.mem.zeroInit(create.ShipCombat, .{ .gun_energy = 100, ._unknown_14 = 4 });
+    const combat = std.mem.zeroInit(create.ShipCombat, .{ .gun_energy = 100, .gun_recharge = 4 });
     const frame_start: i32 = 700;
 };
 
