@@ -604,11 +604,13 @@ const Sandbox = struct {
         model: game.objects.Model,
     };
 
-    /// The Reliant, which stands still where the sandbox starts it: ahead of the player and
-    /// turned across its way, beyond the wing.
+    /// The Reliant, which the sandbox starts ahead of the player and turned across its way, beyond
+    /// the wing. Its orders aren't ported yet either (#32), so it flies on a tenth of its throttle,
+    /// a tenth of the 100 its type cruises at, which carries it slowly across the player's way.
     const reliant_type = 0x0C;
     const reliant_at: math.Vector = .{ 6000, -9000, 48000 };
     const reliant_turn: f32 = 1.1;
+    const reliant_throttle: f32 = 0.1;
     /// A wing: four Sabres, `wing_ahead` in front of the player and `wing_spacing` apart, near
     /// enough that their models are drawn: a fighter's last level of detail reaches 25000.
     const wing_type = 0x2B;
@@ -657,6 +659,7 @@ const Sandbox = struct {
         if (sandbox.create(reliant_type, reliant_at)) |reliant| {
             const slot = &sandbox.objects.slots[reliant];
             game.objects.setOrientation(&slot.object, &slot.drawn, math.rotation(.y, reliant_turn));
+            slot.object.throttle = reliant_throttle;
         } else |err| std.log.warn("the Reliant is left out: {s}", .{@errorName(err)});
         sandbox.bringWing();
         sandbox.types.sweep(&sandbox.objects.types);
@@ -945,6 +948,17 @@ test nextShipType {
     const last = nextShipType(0, -1);
     try std.testing.expect(game.create.models.ship_types[last].model != null);
     try std.testing.expectEqual(0, nextShipType(last, 1));
+}
+
+test "the sandbox's Reliant flies at a crawl" {
+    // Its type cruises at 100 (`shipstats.bin`, type 0x0C), and the flight model settles the nose
+    // speed at the throttle's share of that, so the sandbox's Reliant makes 10 a step.
+    var flight = game.gameobj.testing.flight;
+    flight.max_speed = 100;
+    var object = game.gameobj.testing.object();
+    object.throttle = Sandbox.reliant_throttle;
+    for (0..200) |_| game.motion.fly(&object, &flight, .chase, game.motion.Motion.forward.thrust());
+    try std.testing.expectApproxEqAbs(10, math.length(game.gameobj.vector(object.velocity)), 0.01);
 }
 
 test Options {

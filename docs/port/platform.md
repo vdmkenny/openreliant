@@ -53,10 +53,11 @@ files it says what it needs and exits.
 | `--software` | Draws on the software device, the port's reference, at the window's size in points |
 
 It runs a sandbox of its own, drawn through the ported pipeline and driver with the GPU
-([Renderer](renderer.md)): the player's ship at the origin, facing along Z, the Reliant standing
-still ahead of it, and a wing of four Sabres between the two. The orders that would fly the Sabres
-aren't ported yet, so each is set going at its full throttle, which carries it straight at where
-the player was. The game's own bindings drive the camera ([Controls](../engine/controls.md),
+([Renderer](renderer.md)): the player's ship at the origin, facing along Z, the Reliant ahead of it
+and turned across its way, and a wing of four Sabres between the two. The orders that would fly
+them aren't ported yet, so each is set going at a throttle of its own: the Sabres at full, which
+carries them straight at where the player was, and the Reliant at a tenth, which has it crawl
+across the player's way. The game's own bindings drive the camera ([Controls](../engine/controls.md),
 [Camera](../engine/camera.md)): the keys 1 to 8 pick the cockpit, left, right, rear, flyby,
 target, external and missile views, the cockpit key cycles the cockpit mode while in it, and in the
 target and external views the arrow keys orbit and Shift with up or down zooms. Added for the port:

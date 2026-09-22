@@ -26,7 +26,7 @@ support or condone piracy.
 
 OpenReliant is in early development. Right now you can fly any ship from the game, with the
 keyboard, a joystick or a gamepad, in a sandbox with the game's starfield, nebula and sun: the
-Reliant stands by, and a wing of Coalition fighters flies at you. The flight model, throttle,
+Reliant crawls past, and a wing of Coalition fighters flies at you. The flight model, throttle,
 afterburner and camera views (keys 1 to 8) are ported, including the cockpit view with the ship's
 cockpit model. Press F2 and F3 to switch ships, and F4 for another wing.
 
