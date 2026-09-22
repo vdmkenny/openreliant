@@ -44,6 +44,20 @@ pub const Component = extern struct {
     }
 };
 
+/// Flags for the multiplayer code about an object (`GameObject + 0x0C`).
+pub const NetworkFlags = packed struct(u32) {
+    /// Set by `object_move` when the object moves, and by code that places it. The multiplayer
+    /// code (`0x004BB2D0`) then sends the object's position.
+    moved: bool,
+    /// Set by `object_move` when the object turns. The multiplayer code then sends its
+    /// orientation.
+    turned: bool,
+    /// Set while the Scoop Up order runs (`order_scoop_up_init`, `order_scoop_up`) and cleared
+    /// when it ends. The multiplayer code's round of updates (`0x004BBEF0`) skips the object.
+    _unknown_2: bool,
+    _unknown_3: u29,
+};
+
 /// A live object (`gameobj.cpp`), allocated at `0x00475DD0`.
 pub const GameObject = extern struct {
     /// The ship type: its record in `shipstats.bin`, which `combat` and `flight` point into. Types
@@ -52,7 +66,7 @@ pub const GameObject = extern struct {
     /// Its slot in `game_objects`.
     index: u32,
     flags: Flags,
-    _unknown_0c: u32,
+    network: NetworkFlags,
     combat: Pointer(create.ShipCombat),
     flight: Pointer(create.FlightModel),
     /// The type's model, as loaded.
@@ -82,7 +96,24 @@ pub const GameObject = extern struct {
     /// The parts of its model whose flags mark them as components, in the order `0x00468760`
     /// finds them: each node's marked children, then each child's in turn.
     components: [max_components]Component,
-    _unknown_518: [0x54]u8,
+    _unknown_518: u32,
+    /// How many knocks, from collisions and explosions, the object has taken since its last move
+    /// (`knock`). The next `object_move` applies them in place of the object's own motion
+    /// (`applyKnocks`).
+    knocks: u32,
+    /// The sum of its parts' masses (`object_recentre`).
+    mass: f32,
+    /// How far `object_recentre` moved the object's origin to its centre of mass
+    /// (`objects.Model.centre`).
+    centre: shp.Vec3,
+    /// The sum of the forces of the knocks since the last move.
+    impulse: shp.Vec3,
+    /// The sum of each knock's force × lever, in world coordinates: the opposite of the torque.
+    angular_impulse: shp.Vec3,
+    /// The inverse of the object's inertia tensor, which `object_recentre` builds from its parts
+    /// (`object_bounds`) and inverts (`0x004AD9F0`). `applyKnocks` turns the angular impulse by it.
+    /// Not filled in by the port yet (#87).
+    angular_response: [9]f32,
     /// The turn applied to its orientation each update, which `object_steer` builds from the
     /// angular rates.
     rotation: [9]f32,
@@ -209,7 +240,12 @@ pub const GameObject = extern struct {
         components: bool,
         /// The collision sweep of `objects_update` leaves it out.
         no_collisions: bool,
-        _unknown_3: u2,
+        /// `object_move` runs no motion routine for it, so it drifts at its velocity; knocks still
+        /// move it. Set while the object is disrupted (`order_disrupted_init`) and once it is
+        /// wrecked, and together with `frozen` during gate jumps and warps and by `object_reset`.
+        unpowered: bool,
+        /// `object_move` isn't run for it (`objects_update`), and returns straight away if it is.
+        frozen: bool,
         /// Set on objects of types above 255, such as the type-1001 stand-in an empty slot holds;
         /// the per-object loops skip them.
         stand_in: bool,
@@ -265,6 +301,7 @@ pub const GameObject = extern struct {
 
     comptime {
         assert(@bitOffsetOf(Flags, "components") == 1);
+        assert(@bitOffsetOf(Flags, "unpowered") == 3);
         assert(@bitOffsetOf(Flags, "stand_in") == 5);
         assert(@bitOffsetOf(Flags, "disabled") == 10);
         assert(@bitOffsetOf(Flags, "shield_generator") == 14);
@@ -285,7 +322,15 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "countermeasures") == 0x5EC);
         assert(@offsetOf(GameObject, "shields") == 0x5F0);
         assert(@offsetOf(GameObject, "armor") == 0x600);
+        assert(@offsetOf(GameObject, "knocks") == 0x51C);
+        assert(@offsetOf(GameObject, "centre") == 0x524);
+        assert(@offsetOf(GameObject, "impulse") == 0x530);
+        assert(@offsetOf(GameObject, "angular_impulse") == 0x53C);
+        assert(@offsetOf(GameObject, "angular_response") == 0x548);
         assert(@offsetOf(GameObject, "rotation") == 0x56C);
+        assert(@offsetOf(GameObject, "roll_rate") == 0x5DC);
+        assert(@offsetOf(GameObject, "pitch_rate") == 0x5E0);
+        assert(@offsetOf(GameObject, "yaw_rate") == 0x5E4);
         assert(@offsetOf(GameObject, "velocity") == 0x590);
         assert(@offsetOf(GameObject, "throttle") == 0x5B8);
         assert(@offsetOf(GameObject, "afterburner") == 0x5CC);
@@ -317,7 +362,8 @@ test {
 // --- Motion ------------------------------------------------------------------------------------
 
 /// The routine `GameObject.motion` points at, which moves it for one update. `create_object` gives
-/// every object `motion_forward`.
+/// every object `motion_forward`. The orders select eight more, which aren't ported yet (#30);
+/// docs/engine/objects.md lists them.
 pub const Motion = enum {
     /// `motion_forward` (`0x004744C0`): the flight model with a thrust of 1.
     forward,
@@ -466,19 +512,85 @@ pub fn fly(object: *GameObject, flight: *const create.FlightModel, view: camera.
     object.last_throttle = object.throttle;
 }
 
-/// `object_move` (`0x00473FF0`): one update of an object. It marks the root's next place as
-/// pending, which the next step's `node_tree_update` commits (`objects.updateTree`). Its motion
-/// routine runs, then its next orientation becomes its orientation turned by `rotation`, its next
-/// position its position plus its velocity, and its speed the length of that velocity.
+/// `object_move` (`0x00473FF0`): one update of an object. A `frozen` object stays where it is.
+/// Otherwise the root's next place is marked as pending, which the next step's `node_tree_update`
+/// commits (`objects.updateTree`). If knocks are waiting, they are applied instead of the object's
+/// own motion. An `unpowered` object has no motion of its own, and a jumping one only moves when
+/// it is knocked or `unpowered`. Then its next orientation becomes its orientation turned by
+/// `rotation`, its next position becomes its position plus its velocity, and its speed becomes
+/// the length of that velocity. It sets the network flags when the object moves or turns.
 ///
-/// Not ported: the guards that hold an object still while it jumps or docks, the flags it sets for
-/// a moving or turning object, and the speed readout it keeps for the player's HUD.
-pub fn move(object: *GameObject, flight: *const create.FlightModel, view: camera.View, motion: ?Motion) void {
+/// For the player's ship, `player_shake` is the camera's shake (`hit_shake`). When the ship flies
+/// faster than its cruise speed, as it does under afterburner, the move raises the shake to at
+/// least `0.2 * (speed / cruise speed - 1)`. The game also stores the change in the player's
+/// speed at `player_speed_change` (`0x00562CE4`), which nothing reads.
+pub fn move(object: *GameObject, flight: *const create.FlightModel, view: camera.View, motion: ?Motion, player_shake: ?*f32) void {
+    if (object.flags.frozen) return;
     object.root.flags.next_pending = true;
-    if (motion) |routine| fly(object, flight, view, routine.thrust());
+    const knocked = object.knocks > 0;
+    if (object.flags.jumping and !knocked and !object.flags.unpowered) return;
+    if (!knocked and !object.flags.unpowered) {
+        if (motion) |routine| fly(object, flight, view, routine.thrust());
+    } else {
+        applyKnocks(object);
+    }
     object.root.next_orientation = math.product(object.root.orientation, object.rotation);
     object.root.next_position = vec3(vector(object.root.position) + vector(object.velocity));
     object.speed = math.length(vector(object.velocity));
+    if (object.speed > 0) object.network.moved = true;
+    if (object.pitch_rate != 0 or object.yaw_rate != 0 or object.roll_rate != 0) object.network.turned = true;
+    if (player_shake) |shake| {
+        shake.* = @max(shake.*, speed_shake * (object.speed / cruiseSpeed(object, flight, view)) - speed_shake);
+    }
+}
+
+/// The camera shake at twice the cruise speed (`0x004DC3F8`).
+const speed_shake: f32 = 0.2;
+
+/// `object_knock` (`0x004763C0`): a push of `force` on the object at the world point `at`, from a
+/// collision or an explosion. The force is added to the impulse, and force × lever, the lever
+/// running from the object's position to `at`, to the angular impulse. The next move applies both
+/// (`applyKnocks`).
+pub fn knock(object: *GameObject, force: math.Vector, at: math.Vector) void {
+    const lever = at - vector(object.root.position);
+    object.impulse = vec3(vector(object.impulse) + force);
+    object.angular_impulse = vec3(vector(object.angular_impulse) + math.cross(force, lever));
+    object.knocks += 1;
+}
+
+/// `object_knock_local` (`0x00476430`): `knock` with `force` in the object's own frame and the
+/// lever given directly. The Disrupted order pushes a ship with it, with no lever
+/// (`order_disrupted_init`).
+pub fn knockLocal(object: *GameObject, force: math.Vector, lever: math.Vector) void {
+    const push = math.transform(object.root.orientation, force);
+    object.impulse = vec3(vector(object.impulse) + push);
+    object.angular_impulse = vec3(vector(object.angular_impulse) + math.cross(push, lever));
+    object.knocks += 1;
+}
+
+/// `object_apply_knocks` (`0x00476270`): applies the knocks taken since the last move, then
+/// clears them. The impulse divided by the mass is added to the velocity. The angular impulse is
+/// converted to the object's frame and multiplied by `angular_response`, and `rotation` is turned
+/// by the result, to first order, and orthonormalized. The angular rates are set to the angles of
+/// the new rotation, so the object keeps spinning until its steering takes over again.
+pub fn applyKnocks(object: *GameObject) void {
+    if (object.knocks == 0) return;
+    object.knocks = 0;
+    // `vec3_divide_by` multiplies by the reciprocal.
+    const impulse = vector(object.impulse) * @as(math.Vector, @splat(1 / object.mass));
+    object.velocity = vec3(vector(object.velocity) + impulse);
+    const angular = vector(object.angular_impulse);
+    if (@reduce(.Or, angular != @as(math.Vector, @splat(0)))) {
+        const turn = math.transform(object.angular_response, math.transformTransposed(object.root.orientation, angular));
+        // The angular impulse is the opposite of the torque, so the object turns by its negative.
+        object.rotation = math.orthonormalize(math.product(object.rotation, math.smallTurn(-turn)));
+        const rates = math.angles(object.rotation);
+        object.pitch_rate = rates[0];
+        object.yaw_rate = rates[1];
+        object.roll_rate = rates[2];
+    }
+    object.impulse = vec3(@splat(0));
+    object.angular_impulse = vec3(@splat(0));
 }
 
 /// A light fighter's flight stats, near the Predator's, for the tests below.
@@ -571,7 +683,7 @@ test "the throttle settles between 0 and 1, and the burns take it past both ends
 test "a ship settles at its cruise speed along its nose" {
     var object = testingObject();
     object.throttle = 1;
-    for (0..400) |_| move(&object, &testing_flight, .chase, .forward);
+    for (0..400) |_| move(&object, &testing_flight, .chase, .forward, null);
     // The model frame has Z forward, so all of the speed is along the nose.
     try std.testing.expectApproxEqAbs(320, object.speed, 0.5);
     try std.testing.expectApproxEqAbs(320, object.velocity.z, 0.5);
@@ -582,20 +694,20 @@ test "a ship settles at its cruise speed along its nose" {
 
     // Half its engines gone, it settles at half the speed.
     object.engines_intact = 0.5;
-    for (0..400) |_| move(&object, &testing_flight, .chase, .forward);
+    for (0..400) |_| move(&object, &testing_flight, .chase, .forward, null);
     try std.testing.expectApproxEqAbs(160, object.speed, 0.5);
 
     // Backward, the same ship ends up going the other way at the same speed.
     var reversed = testingObject();
     reversed.throttle = 1;
-    for (0..400) |_| move(&reversed, &testing_flight, .chase, .backward);
+    for (0..400) |_| move(&reversed, &testing_flight, .chase, .backward, null);
     try std.testing.expectApproxEqAbs(-320, reversed.velocity.z, 0.5);
 }
 
 test "the lateral input pushes a ship a quarter as fast sideways" {
     var object = testingObject();
     object.lateral_input = 1;
-    for (0..400) |_| move(&object, &testing_flight, .chase, .forward);
+    for (0..400) |_| move(&object, &testing_flight, .chase, .forward, null);
     try std.testing.expectApproxEqAbs(320 * lateral_share, object.velocity.x, 0.5);
 }
 
@@ -607,7 +719,7 @@ test move {
     // move uses it; a turn of nothing stands in for that here.
     object.rotation = math.identity;
     // With no motion routine, it carries on at the velocity it has.
-    move(&object, &testing_flight, .chase, null);
+    move(&object, &testing_flight, .chase, null, null);
     try std.testing.expectEqual(11, object.root.next_position.x);
     try std.testing.expectEqual(2, object.root.next_position.y);
     try std.testing.expectEqual(23, object.root.next_position.z);
@@ -624,9 +736,110 @@ test "an object travels from step to step" {
     // Each step commits the place the previous one worked out, then moves on from it.
     for (0..3) |_| {
         objects.updateTree(&object.root);
-        move(&object, &testing_flight, .chase, null);
+        move(&object, &testing_flight, .chase, null, null);
     }
     try std.testing.expectEqual(30, object.root.next_position.z);
     // Between steps the committed position is one step behind.
     try std.testing.expectEqual(20, object.root.position.z);
+}
+
+test "frozen, unpowered and jumping objects" {
+    // A frozen object isn't moved at all.
+    var frozen = testingObject();
+    frozen.velocity = .{ .x = 0, .y = 0, .z = 10 };
+    frozen.rotation = math.identity;
+    frozen.flags.frozen = true;
+    move(&frozen, &testing_flight, .chase, .forward, null);
+    try std.testing.expect(!frozen.root.flags.next_pending);
+    try std.testing.expectEqual(0, frozen.root.next_position.z);
+
+    // An unpowered one drifts: its motion routine doesn't run, so the throttle doesn't change its
+    // velocity.
+    var unpowered = testingObject();
+    unpowered.velocity = .{ .x = 0, .y = 0, .z = 10 };
+    unpowered.rotation = math.identity;
+    unpowered.throttle = 1;
+    unpowered.flags.unpowered = true;
+    move(&unpowered, &testing_flight, .chase, .forward, null);
+    try std.testing.expectEqual(10, unpowered.velocity.z);
+    try std.testing.expectEqual(10, unpowered.root.next_position.z);
+
+    // A jumping one stays where it is until it's knocked.
+    var jumping = testingObject();
+    jumping.velocity = .{ .x = 0, .y = 0, .z = 10 };
+    jumping.rotation = math.identity;
+    jumping.mass = 1;
+    jumping.flags.jumping = true;
+    move(&jumping, &testing_flight, .chase, .forward, null);
+    try std.testing.expect(jumping.root.flags.next_pending);
+    try std.testing.expectEqual(0, jumping.root.next_position.z);
+    knock(&jumping, .{ 0, 0, 5 }, .{ 0, 0, 0 });
+    move(&jumping, &testing_flight, .chase, .forward, null);
+    try std.testing.expectEqual(15, jumping.root.next_position.z);
+}
+
+test "a knock pushes and turns an object" {
+    var object = testingObject();
+    object.rotation = math.identity;
+    object.mass = 4;
+    object.angular_response = math.identity;
+    object.throttle = 1;
+    // A push to the side on the nose: the object moves off to that side and turns its nose there.
+    knock(&object, .{ 0.02, 0, 0 }, .{ 0, 0, 1 });
+    try std.testing.expectEqual(1, object.knocks);
+    move(&object, &testing_flight, .chase, .forward, null);
+    try std.testing.expectEqual(0, object.knocks);
+    // The knock replaces the motion routine, so the throttle adds nothing this update.
+    try std.testing.expectEqual(math.Vector{ 0.005, 0, 0 }, vector(object.velocity));
+    try std.testing.expectApproxEqAbs(0.02, object.yaw_rate, 2e-4);
+    try std.testing.expectApproxEqAbs(0, object.pitch_rate, 2e-4);
+    try std.testing.expectApproxEqAbs(0, object.roll_rate, 2e-4);
+    try std.testing.expect(object.root.next_orientation[2] > 0);
+    try std.testing.expectEqual(math.Vector{ 0, 0, 0 }, vector(object.impulse));
+    try std.testing.expectEqual(math.Vector{ 0, 0, 0 }, vector(object.angular_impulse));
+}
+
+test knockLocal {
+    // Facing +X, a push forward in its own frame moves the object along +X.
+    var object = testingObject();
+    object.root.orientation = math.rotation(.y, std.math.pi / 2.0);
+    object.rotation = math.identity;
+    object.mass = 2;
+    knockLocal(&object, .{ 0, 0, 4 }, .{ 0, 0, 0 });
+    applyKnocks(&object);
+    try std.testing.expectApproxEqAbs(2, object.velocity.x, 1e-6);
+    try std.testing.expectApproxEqAbs(0, object.velocity.z, 1e-6);
+    // With no lever, it doesn't turn.
+    try std.testing.expectEqual(0, object.yaw_rate);
+}
+
+test "moving and turning set the network flags" {
+    var object = testingObject();
+    object.rotation = math.identity;
+    move(&object, &testing_flight, .chase, null, null);
+    try std.testing.expect(!object.network.moved and !object.network.turned);
+    object.velocity.z = 1;
+    move(&object, &testing_flight, .chase, null, null);
+    try std.testing.expect(object.network.moved and !object.network.turned);
+    object.yaw_rate = 0.1;
+    move(&object, &testing_flight, .chase, null, null);
+    try std.testing.expect(object.network.turned);
+}
+
+test "flying faster than the cruise speed shakes the player's camera" {
+    var object = testingObject();
+    object.rotation = math.identity;
+    var shake: f32 = 0;
+    // At the cruise speed, it doesn't.
+    object.velocity.z = 320;
+    move(&object, &testing_flight, .chase, null, &shake);
+    try std.testing.expectEqual(0, shake);
+    // At twice the cruise speed, by 0.2.
+    object.velocity.z = 640;
+    move(&object, &testing_flight, .chase, null, &shake);
+    try std.testing.expectApproxEqAbs(0.2, shake, 1e-6);
+    // It never lowers a stronger shake, such as a hit's.
+    shake = 1;
+    move(&object, &testing_flight, .chase, null, &shake);
+    try std.testing.expectEqual(1, shake);
 }

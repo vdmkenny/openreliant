@@ -94,11 +94,13 @@ speed, each held between -1 and 1:
   (`0x005636E0`), which the player's guns set to 1 as they fire (`0x0047BE3A`) and which loses a
   twentieth each frame.
 
-Each frame `camera_frame` first takes `hit_shake` (`0x00588724`) to at most 2, keeps a tenth of it,
-and lowers it by 0.02 a tick. The root then jitters by a random share of up to half of that tenth
-either way in yaw and in roll, two numbers of `rand` drawn every frame, the first for the roll; and
-when the tenth is above nothing the camera turns likewise by up to half of 0.03 times what is left
-of `hit_shake`, in the world's frame.
+Each frame, `camera_frame` first caps `hit_shake` (`0x00588724`) at 2, takes a tenth of it as the
+shake, and lowers `hit_shake` by 0.02 a tick. The root then jitters in yaw and roll by a random
+amount of up to half the shake either way, from two `rand` numbers drawn every frame, the first for
+the roll. While the shake is above zero, the camera also turns by a random amount of up to half of
+0.03 times the remaining `hit_shake`, in the world's frame. Hits raise `hit_shake`, and so does
+`object_move` while the player's ship flies faster than its cruise speed (see
+[Motion](objects.md#motion)).
 
 ## Chase
 

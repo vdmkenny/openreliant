@@ -52,6 +52,8 @@ commands and their like set; the names in quotes are the developers' labels for 
 |---|---|---|
 | `0x2` | `components` | Its components are listed, as its model's header asks. The collision code treats such objects apart. |
 | `0x4` | `no_collisions` | The collision sweep of `objects_update` leaves it out. |
+| `0x8` | `unpowered` | `object_move` runs no motion function for it, so it drifts; knocks still move it. Set while it is disrupted and once it is wrecked, and with `0x10` during gate jumps and warps and by `object_reset`. |
+| `0x10` | `frozen` | `object_move` isn't run for it. |
 | `0x20` | `stand_in` | Set on objects of types above 255, such as the type-1001 stand-in an empty slot holds. The per-object loops skip them. |
 | `0x40` | `exploding` | Set as it starts to explode (`object_destroyed`). It takes no more orders. |
 | `0x80` | `can_reverse` | Reverse thrust works only while it is set. |
@@ -155,6 +157,23 @@ rotation (`0x56C`), and its next position to its position plus the object's velo
 and records the length of the velocity as the speed (`0x5D8`). The root keeps that next place at
 `+0x5C` and `+0x68`.
 
+Before that, it checks the flags:
+
+- A `frozen` object isn't moved at all.
+- If the object has taken knocks since its last move, they are applied in place of the motion
+  function (see [Knocks](#knocks)). An `unpowered` object has no motion function run either.
+- A `jumping` object that isn't knocked or `unpowered` stays where it is.
+
+After the move, it sets bit 0 of the network flags (`0x00C`) if the object is moving and bit 1 if
+any of its angular rates is nonzero. The multiplayer code (`0x004BB2D0`) then sends the object's
+position and orientation. Bit 2 is set while the Scoop Up order runs, and the multiplayer code
+skips such objects.
+
+For the player's ship, `object_move` raises the camera's shake (`hit_shake`) to at least
+`0.2 * (speed / cruise speed - 1)`, so the view shakes when the ship flies faster than its cruise
+speed, as it does under afterburner. It also stores the change in the player's speed at
+`0x00562CE4`, which nothing reads.
+
 `object_move` also sets bit 0 of the root's node flags, marking the next place as pending. At the
 start of the next simulation step, before the objects move, `simulation_step` runs
 `node_tree_update` (`0x00476C90`) for every live object. It commits the pending next place by
@@ -165,10 +184,18 @@ worked out, and between steps its `position` is one step behind `next_position`,
 of the game reads as the object's place.
 
 `create_object` gives every object `motion_forward` (`0x004744C0`), which runs the flight model,
-`object_fly` (`0x004742E0`), with a thrust of 1; `motion_backward` runs it with -1.
+`object_fly` (`0x004742E0`), with a thrust of 1; `motion_backward` runs it with -1. The orders
+select the others (see [The orders' motion functions](#the-orders-motion-functions)).
 
 | Offset | Size | Field |
 |---|---|---|
+| `0x00C` | 4 | Network flags |
+| `0x51C` | 4 | Knocks since the last move |
+| `0x520` | 4 | Mass: the sum of the parts' masses (`object_recentre`) |
+| `0x524` | 12 | How far `object_recentre` moved the origin to the centre of mass |
+| `0x530` | 12 | Impulse: the sum of the knocks' forces |
+| `0x53C` | 12 | Angular impulse: the sum of the knocks' force × lever |
+| `0x548` | 36 | The inverse of the inertia tensor |
 | `0x56C` | 36 | Rotation: the turn applied each update, a 3x3 matrix |
 | `0x590` | 12 | Velocity, added to the position each update |
 | `0x5B8` | 4 | Throttle |
@@ -210,21 +237,68 @@ The cruise speed (`object_cruise_speed`, `0x00403060`) is `max_speed` times `spe
 or the object is invulnerable, times `armor_speed_factor` (`0x668`), which falls as the armor does.
 So losing engines or armor slows a ship.
 
+### Knocks
+
+Collisions and explosions push objects with `object_knock` (`0x004763C0`), which takes a force and
+the world point it acts at. It adds the force to the impulse (`0x530`), adds force × lever to the
+angular impulse (`0x53C`), where the lever runs from the object's position to the point, and counts
+the knock (`0x51C`). The engine takes the cross product in that order, which gives the opposite of
+the torque. `object_knock_local` (`0x00476430`) does the same with the force in the object's own
+frame and the lever given directly; the Disrupted order pushes a ship with it, with no lever.
+
+The next `object_move` applies the knocks with `object_apply_knocks` (`0x00476270`) instead of
+running the motion function:
+
+1. The impulse times `1 / mass` is added to the velocity.
+2. If the angular impulse isn't zero, it is converted to the object's frame and multiplied by the
+   inverse inertia tensor (`0x548`), which `object_recentre` builds from the parts
+   (`object_bounds`) and inverts (`0x004AD9F0`). The rotation is turned by the negative of the
+   result, to first order, and orthonormalized (`0x004C2690`), and the angular rates are set to
+   its angles (`0x004C2740`). So the object keeps spinning until its steering takes over again.
+3. The count and both impulses are cleared.
+
+`0x004C2740` takes its angles from `sr_atan2` (`0x004C3200`), which looks them up in a table of the
+arctangents of 0 to 1 in steps of 1/4096 (`0x005DE344`), by the smaller of `y / x` and `x / y`
+rounded to the nearest step.
+
+### The orders' motion functions
+
+The orders select eight more motion functions, which read the order's state (`0x68C`). They aren't
+ported yet ([#30](https://github.com/vdmkenny/openreliant/issues/30)).
+
+| Address | Selected by | What it does |
+|---|---|---|
+| `0x004744E0` | Launch orders, the Ripper | Steers, then moves the velocity through the flight stats' `inertia` toward the throttle times `max_speed`, along the object's Y axis. Models of kind 1 use fixed flight stats (`0x004F9E70`). |
+| `0x00474570` | The Ripper, launch and landing orders | The same along the Z axis, and keeps the throttle as the last update's. A flight model without the throttle rules or the burns. |
+| `0x00474610` | Eject | Slows the velocity to 0.97 of itself each update. |
+| `0x00474640` | Jump Out | Places the object between the two points of the order's state, each coordinate eased by the time since the jump started. No rotation. |
+| `0x004746D0` | Jump In | Flies along the nose at 2400, or 600 for an object without components, less 0.003 of that per unit of time since the jump started, but never slower than the cruise speed. No rotation. |
+| `0x00474770` | Follow Curve, Dock | Steers toward the point the order's state gives and moves toward it, no faster than the order's speed limit. |
+| `0x00474930` | Follow Curve | The same, flying tail first. |
+| `0x00474B00` | Jump In | Slows the velocity to 0.99 of itself each update. |
+
 ### Porting
 
-[`gameobj.zig`](../../src/engine/game/gameobj.zig) holds the model: `cruiseSpeed`, `steer`, `fly`
-and `move`. The port passes the flight stats and the camera view in, where the game reaches them
-through the object's own pointer and a global, because `GameObject` keeps the binary's 32-bit
-pointers for its layout. `Motion` is an `enum` of the two routines the game installs, in place of
-the function pointer at `0x640`, and the rule each quantity settles by is one `settle` helper
-rather than the six copies the binary holds.
+[`gameobj.zig`](../../src/engine/game/gameobj.zig) holds the model: `cruiseSpeed`, `steer`, `fly`,
+`move`, `knock`, `knockLocal` and `applyKnocks`. The port passes the flight stats and the camera
+view in, where the game reaches them through the object's own pointer and a global, because
+`GameObject` keeps the binary's 32-bit pointers for its layout. For the same reason `move` takes
+the camera's shake as a pointer, set only for the player's ship, where the game compares the slot
+with the player's and writes the global. `Motion` is an `enum` of the two routines
+`create_object` installs, in place of the function pointer at `0x640`, and the rule each quantity
+settles by is one `settle` helper rather than the six copies the binary holds.
+
+[`math.zig`](../../src/engine/surrender/math.zig) builds the arctangent table at compile time, where
+the engine fills it at start-up (`0x004C3000`).
 
 `objects.updateTree` ports `node_tree_update` for the root, and the driver runs it where
 `simulation_step` does, at the start of each step.
 
-Not yet ported: the guards `object_move` opens with, which hold an object still while it jumps or
-docks, the flags it sets for a moving or turning object, the speed readout it keeps for the
-player's HUD, and the parts' animation in `node_tree_update`.
+Not yet ported: the orders' motion functions
+([#30](https://github.com/vdmkenny/openreliant/issues/30)), the inertia tensor that
+`object_recentre` inverts into `0x548` ([#87](https://github.com/vdmkenny/openreliant/issues/87)),
+so knocks don't turn objects in the port yet, and the parts' animation in `node_tree_update`
+([#119](https://github.com/vdmkenny/openreliant/issues/119)).
 
 ## Components
 
