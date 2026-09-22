@@ -32,6 +32,7 @@ slot, stopping the game with a fatal error past the last slot or for a slot fill
 | `0x5E8` | 4 | Afterburner fuel: `100 * afterburner_fuel` from its stats when created, or zero in one of the game's modes |
 | `0x5F0` | 16 | Shields: four values, each `6 * shield_power - 1` when created |
 | `0x600` | 16 | Armor: four values, each `6 * armor_class - 1` when created |
+| `0x634` | 2 | Where its lights stand in their [blinks](rendering.md#static-lights), in ticks added to the mission's clock: `rand()` over its largest value, times 100 and truncated, when allocated (`object_alloc`, `0x00475DD0`) |
 | `0x644` | 4 | Nonzero while hostile: `SetHostile` |
 | `0x664` | 4 | The shields' condition, how well they [recharge](#shields) as the armor wears: 1.0 when created |
 | `0x680` to `0x697` | | Its [orders](orders.md): the stack and what the current order keeps, the damage it has taken lately and its last attacker |

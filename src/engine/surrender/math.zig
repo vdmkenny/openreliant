@@ -31,6 +31,17 @@ pub fn length(v: Vector) f32 {
     return @sqrt(lengthSquared(v));
 }
 
+/// How far apart two points are (`vec3_distance`, `0x004C12D0`).
+pub fn distance(a: Vector, b: Vector) f32 {
+    const d = a - b;
+    return @sqrt(d[1] * d[1] + d[2] * d[2] + d[0] * d[0]);
+}
+
+/// The value `t` of the way from `a` to `b` (`lerp`, `0x004C1050`).
+pub fn lerp(a: f32, b: f32, t: f32) f32 {
+    return (b - a) * t + a;
+}
+
 /// `v` scaled to a length of 1 (`vec3_normalize`, `0x004C1370`). The zero vector becomes a tiny
 /// one pointing forward.
 pub fn normalize(v: Vector) Vector {
@@ -185,6 +196,18 @@ test smallTurn {
     // To first order, the same as turning about each axis in turn.
     const turn = fromAngles(a[0], a[1], a[2]);
     for (turn, smallTurn(a)) |e, found| try std.testing.expectApproxEqAbs(e, found, 1e-5);
+}
+
+test distance {
+    try std.testing.expectEqual(5, distance(.{ 1, 5, 2 }, .{ 1, 1, 5 }));
+    try std.testing.expectEqual(0, distance(.{ 7, 7, 7 }, .{ 7, 7, 7 }));
+}
+
+test lerp {
+    try std.testing.expectEqual(1, lerp(1, 0.1, 0));
+    try std.testing.expectEqual(3, lerp(2, 6, 0.25));
+    // In single precision the far end can miss `b` by the rounding of `b - a`, as the engine's does.
+    try std.testing.expectEqual(0.100000024, lerp(1, 0.1, 1));
 }
 
 test normalize {

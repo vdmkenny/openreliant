@@ -14,6 +14,9 @@ pub const Light = struct {
     /// Only an ambient light adds it, to the vertices' alpha (`mesh_light`).
     alpha: f32 = 0,
     kind: Kind,
+    /// The port's: added to each pixel of a lit mesh by a device that lights each pixel, rather
+    /// than to each vertex (`srapi.Context.pixel_lighting`). The driver sets it for the frame.
+    per_pixel: bool = false,
 
     pub const Kind = union(enum) {
         /// Adds its colour everywhere.

@@ -180,13 +180,18 @@ fn info(ctx: Context, model: shp.Model) !void {
                 });
             }
             if (attachment.kind == .light) {
-                try ctx.stdout.print("  id {d} brightness {d:.2} range {d:.0} size {d:.1}{s}", .{
+                try ctx.stdout.print("  id {d} brightness {d:.2} range {d:.0} size ({d:.1},{d:.1})", .{
                     attachment.id,
                     attachment.light_brightness,
                     attachment.light_range,
+                    attachment.size[0],
                     attachment.size[1],
-                    if (attachment.blink[0] != 0 or attachment.blink[1] != 0) "  blinks" else "",
                 });
+                if (attachment.blink[0] != 0 or attachment.blink[1] != 0) {
+                    try ctx.stdout.print("  blinks {d} on, {d} off, from {d}", .{
+                        attachment.blink[0], attachment.blink[1], attachment.blink_phase,
+                    });
+                }
             }
             try ctx.stdout.writeByte('\n');
         }

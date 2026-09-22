@@ -202,7 +202,8 @@ vertex's colour is the sum, each channel then clamped to 1, of:
 
 Point and directional lights add no alpha. A light reaches an object unless their light masks
 share a bit; an object whose mask is all ones takes no lights. The port adds the point and
-directional lights for each pixel instead, with the same sums ([Renderer](../port/renderer.md#improvements)).
+directional lights for each pixel instead, as many as its shader takes, with the same sums
+([Renderer](../port/renderer.md#improvements)).
 
 ## Engine glows
 
@@ -273,19 +274,34 @@ own class, so a component's damaged model is lit separately from its intact one.
 class that holds a light takes baked colours for all of its levels, which is what the part flag
 `has_static_light` marks (`static_lights_bake`, `0x004A4310`).
 
-Drawing a light is another matter, and `node_draw` (`0x0049A8C0`) takes more ids than the baking
-does: 0 blue, 1 green, 2 yellow, 3 red, 4 cyan and 5 white, each with a paler colour for the sprite
-than for the light it casts. A light of id 4 or 5 is therefore drawn in its own colour but bakes
-nothing, since the baking knows only the first four. A light blinks by its two blink values, the
-first how long it stays on and the second how long it stays off, from a start its `blink_phase`
-sets, and fades over 200 ticks at each end; the light it casts is cut once that fade takes it below
-0.9, while its sprite keeps fading.
+Drawing a light is another matter. `node_mount_light` (`0x00499730`) makes up to two nodes of each
+light attachment, and `node_draw` (`0x0049A8C0`) draws them at the light's place on the part that
+carries it:
 
-A light is drawn as one sprite, the one attachment kind 4 id 0 names, at its place on the part that
-carries it. Its sprite grows with how far off it is, up to six thousand units, so that it stays
-worth seeing at a distance, and takes half its colour; its brightness is full within a thousand
-units and fades to a tenth by fifteen thousand, staying there beyond. The size the attachment gives
-it is how far it reaches either side of its centre, seven times over.
+- Node kind 3, for an attachment whose width (`size[0]`) is above zero: a set of two sprites. The
+  flare, the sprite attachment kind 4 id 0 names, grows with how far off it is, up to six thousand
+  units, so that it stays worth seeing at a distance: at its largest it reaches seven times the
+  attachment's height (`size[1]`) either side of its centre. It takes half its light's colour, full
+  within a thousand units and fading to a tenth by fifteen thousand, staying there beyond. The
+  lamp, the sprite kind 4 id 1 names, has a material of its own and reaches 0.3 times the height
+  either side, in a paler colour. Both are drawn 2.25 times the width nearer than they stand, for
+  sorting and for the depth test.
+- Node kind 5, for an attachment that blinks and has a brightness: a point light of its colour, its
+  brightness and its range, with mask 0, so it reaches every object that takes lights. A steady
+  light casts none, since the loader bakes it into the meshes instead. In the software renderer
+  there is none for an object of type 13, the Yamato.
+
+The drawing takes more ids than the baking does: 0 blue, 1 green, 2 yellow, 3 red, 4 cyan and 5
+white, with the lamp paler: (0.2, 0.5, 1), (0.5, 1, 0.5), (1, 1, 0.5), (1, 0.5, 0.2), (0.5, 1, 1) and
+white. A light of id 4 or 5 is therefore drawn in its own colour but bakes nothing, since the
+baking knows only the first four.
+
+A light blinks by its two blink values, the first how long it stays on and the second how long it
+stays off. Its clock runs ten to the tick, from the mission's clock plus the object's own offset
+(`+0x634`), less its `blink_phase`, and is taken modulo the two together as an unsigned number.
+Past its on time it fades over 200 of its clock and then stays out; a light with no blink values
+is always on. Nothing of it is drawn, and it casts nothing, while the fade is at 0 or less; the
+lamp goes out once the fade is below 0.9, while the flare keeps fading.
 
 Each light adds to a vertex what a point light would (`static_light_bake`, `0x004A4130`): its
 colour times its brightness, the cosine between the vertex's normal and the direction to the light,

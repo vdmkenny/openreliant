@@ -337,8 +337,8 @@ fn blendedNormal(mesh: *const Mesh, morph: Morph, v: usize) Vector {
 /// The listed vertices' colours (`mesh_light`, `0x004C7060`): the object's colour and the ambient
 /// lights for a lit object, plus baked colours, then each point and directional light, clamped to 1
 /// when anything past the colour and the ambient lights was added. Null for an object neither lit
-/// nor baked. With `pixel_lit`, the point and directional lights are left out, for the device to
-/// add to each pixel.
+/// nor baked. With `pixel_lit`, the lights the device adds to each pixel are left out
+/// (`srlight.Light.per_pixel`).
 fn light(
     arena: Allocator,
     object: *const MeshObject,
@@ -374,9 +374,10 @@ fn light(
     }
     var clamp = baked != null;
 
-    if (flags.lit and takes_lights and !pixel_lit) {
+    if (flags.lit and takes_lights) {
         for (lights) |l| {
             if (!l.reaches(object.light_mask)) continue;
+            if (pixel_lit and l.per_pixel) continue;
             switch (l.kind) {
                 .ambient => {},
                 .directional => |forward| {
@@ -540,9 +541,9 @@ test "pipe for a device that lights each pixel" {
     const levels = [_]srapiext.Level{.{ .mesh = &mesh, .until = 5000 }};
     var object: MeshObject = .{ .flags = .{ .lit = true }, .position = .{ 0, 0, 1000 }, .radius = mesh.radius, .levels = &levels };
     var context: srapi.Context = .{ .projection = .init(1024, 768, srapi.full_screen, .{ 0.6, 0.8 }), .pixel_lighting = true };
-    const lights = [_]srlight.Light{
+    var lights = [_]srlight.Light{
         .{ .mask = 0x04, .intensity = 1, .colour = .{ 0.25, 0.25, 0.25 }, .kind = .ambient },
-        .{ .mask = 0x01, .intensity = 1, .colour = .{ 1, 1, 1 }, .kind = .{ .directional = .{ 0, 0, -1 } } },
+        .{ .mask = 0x01, .intensity = 1, .colour = .{ 1, 1, 1 }, .kind = .{ .directional = .{ 0, 0, -1 } }, .per_pixel = true },
     };
     var budget: Budget = .{};
 
@@ -554,6 +555,11 @@ test "pipe for a device that lights each pixel" {
     try std.testing.expectEqual([4]f32{ 0.25, 0.25, 0.25, 0 }, drawn.colours.?[0]);
     const turned = math.transformTransposed(context.camera.orientation, math.transform(object.orientation, .{ 0, 0, -1 }));
     try std.testing.expect(math.length(drawn.normals.?[2] - turned) < 1e-6);
+
+    // A light the device doesn't take is still added to each vertex.
+    lights[1].per_pixel = false;
+    try std.testing.expect((try pipe(arena, &context, &object, &lights, &budget)).?.colours.?[0][0] > 0.25);
+    lights[1].per_pixel = true;
 
     // An object that takes no lights has none to hand over, and neither does a device that
     // lights each vertex.
