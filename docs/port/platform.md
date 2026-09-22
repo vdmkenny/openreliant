@@ -10,6 +10,7 @@ game's own code, under [`src/engine/`](../../src/engine), reaches the platform o
 | [`platform/window.zig`](../../src/platform/window.zig) | The window and message loop `WinMain` runs, and the flip to the screen |
 | [`platform/gpu.zig`](../../src/platform/gpu.zig) | Direct3D 7's device, `IDirect3DDevice7`, which the driver draws with ([Renderer](renderer.md#the-gpu-device)) |
 | [`platform/keyboard.zig`](../../src/platform/keyboard.zig) | DirectInput's keyboard: SDL's scan codes as DirectInput's (`DIK_*`) |
+| [`platform/joystick.zig`](../../src/platform/joystick.zig) | DirectInput's joystick: SDL's joysticks and gamepads as the device the game reads into `DIJOYSTATE` |
 | [`platform/macos.zig`](../../src/platform/macos.zig) | Nothing: what macOS needs before SDL starts |
 | [`openreliant/main.zig`](../../src/openreliant/main.zig) | `WinMain`: opening the game's files and running the frame loop |
 | [`openreliant/install.zig`](../../src/openreliant/install.zig) | The installer on disc 1, `SETUP.EXE`: unpacking `LANCER.CAB` and copying the disc's `GAME/CAB` files |
@@ -65,42 +66,133 @@ from `xcrun`.
 
 ## Installing the game's files
 
-`openreliant install [--from <disc>] [--force] <directory>` does what the installer on disc 1 did:
-it unpacks `LANCER.CAB` into the directory, leaving out the cabinet's top folder `CAB`, and copies
-the files in the disc's `GAME/CAB` folder next to them. The result is the directory `openreliant`
-runs in, the same on every system. `make game` installs `game/install` with it.
+`openreliant install [--from <disc>] [--force] <directory>` does the same job as the installer on
+disc 1: it unpacks `LANCER.CAB` into the directory, without the cabinet's top-level `CAB` folder,
+and copies the files from the disc's `GAME/CAB` folder next to them. The result is the directory
+`openreliant` runs from, and it's the same on every system. `make game` uses it to create
+`game/install`.
 
-The disc is read from a disc image, raw (`.bin`) or not (`.iso`), with the project's own readers
-([Disc images](../formats/disc-images.md)), or from a folder with the disc's files, which is how a
-mounted disc appears. Names on the disc are matched without regard to case, as Windows matches
-them: Linux shows a disc without Joliet names, like StarLancer's, in lower case. The files copied
-from `GAME/CAB` get upper case names, as the disc records them, so the engine finds `LANGUAGE.DLL`
-on every system.
+The disc can be a disc image, raw (`.bin`) or cooked (`.iso`), which is read with the project's own
+readers ([Disc images](../formats/disc-images.md)), or a folder with the disc's files, which is how
+a mounted disc appears. File names on the disc are matched case-insensitively, as on Windows,
+because Linux shows discs without Joliet names, like StarLancer's, in lower case. The files copied
+from `GAME/CAB` get upper-case names, as on the disc, so the engine finds `LANGUAGE.DLL` on every
+system.
 
-Without `--from`, the installer looks for disc 1 in the drives:
+Without `--from`, the installer searches for disc 1:
 
-| System | Looks in |
+| System | Where it looks |
 |---|---|
-| Windows | The drives Windows reports as CD drives that have a disc in them, mounted disc images included |
-| Linux | The mount points of ISO 9660 and UDF file systems, from `/proc/self/mounts` |
+| Windows | CD drives that contain a disc, including mounted disc images |
+| Linux | Mount points of ISO 9660 and UDF file systems, read from `/proc/self/mounts` |
 | macOS | The volumes in `/Volumes` |
 
-It tells the discs apart by their files:
+It identifies the discs by their files:
 
-| Disc | Recognized by |
+| Disc | Identified by |
 |---|---|
-| Disc 1 of a release it knows | `LANCER.CAB` of that release's size, 226,746,308 bytes for the North American release |
-| Disc 1 of another release | `LANCER.CAB` of another size; installed from only with `--force` |
+| Disc 1 of a known release | `LANCER.CAB` with that release's size: 226,746,308 bytes for the North American release |
+| Disc 1 of another release | `LANCER.CAB` with any other size; only installed with `--force` |
 | Disc 2 | The volume label `SL_CD2`, or `GAME/CD2.HOG` |
 
-A file in the cabinet whose name would land outside the directory stops the install. Afterwards the
-installer checks for the files the engine opens at start-up, and names the first one missing.
+The install stops if a file name in the cabinet would end up outside the target directory. At the
+end, the installer checks that the files the engine needs at startup are present, and reports the
+first one that's missing.
 
-The cabinet is unpacked with [libarchive](https://libarchive.org), built from source for the target
-by [`deps/libarchive`](../../deps/libarchive): the
-[allyourcodebase/libarchive](https://github.com/allyourcodebase/libarchive) package's build, with
-libarchive pinned to the 3.7.9 release. The LZX decoder in libarchive 3.8.9 fails on `LANCER.CAB`
-([libarchive#3542](https://github.com/libarchive/libarchive/issues/3542)).
+The cabinet is unpacked with [libarchive](https://libarchive.org), which
+[`deps/libarchive`](../../deps/libarchive) builds from source for the target, using the build
+script of the [allyourcodebase/libarchive](https://github.com/allyourcodebase/libarchive) package
+with libarchive pinned to the 3.7.9 release. The LZX decoder in libarchive 3.8.9 fails on
+`LANCER.CAB` ([libarchive#3542](https://github.com/libarchive/libarchive/issues/3542)).
+
+## Joysticks and gamepads
+
+[`platform/joystick.zig`](../../src/platform/joystick.zig) replaces DirectInput's joystick support.
+Each controller that SDL detects is presented to the game as a DirectInput-style joystick device
+(`engine.input.JoystickDevice`). As in the original, the game sets a range for each axis it uses
+and a dead zone for the device, and reads the device into a `DIJOYSTATE` at every simulation step
+([Controls](../engine/controls.md#devices)). [`docs/controllers.md`](../controllers.md) is the
+user guide.
+
+- SDL reports axes from -32768 to 32767. The platform maps them to the range the game set, applying
+  the dead zone the way DirectInput does: inside the dead zone the axis reads as the center of its
+  range, and outside it the remaining travel is scaled to cover the full range.
+- Hats are converted to DirectInput point-of-view values: hundredths of a degree clockwise from
+  forward, or centered. Opposite directions pressed together cancel out.
+- `DIJOYSTATE` has room for 32 buttons and four hats; any beyond that are ignored.
+
+The game uses one controller at a time, selected by `platform.joystick.choose`: if `Joystick` is
+set in `JoyConfig`, the first controller whose name contains that text; otherwise the first
+joystick that isn't a gamepad or a standalone throttle, then the first gamepad. When a controller
+is connected or disconnected, SDL sends an event, and the driver selects the controller again and
+reloads the settings with `load_key_config`, since the bindings depend on the type of controller.
+A controller that is disconnected reads as centered, with no buttons pressed.
+
+### Joysticks
+
+SDL numbers a joystick's axes in the same order on every system (X, Y, Z, Rx, Ry, Rz, then
+sliders), but it doesn't say which of these axes a given joystick has. The platform therefore
+guesses the throttle and twist axes from the number of axes, based on common joysticks:
+
+| Axes | X | Y | Throttle | Twist | Typical device |
+|---|---|---|---|---|---|
+| 2 | 0 | 1 | | | Old gameport sticks |
+| 3 | 0 | 1 | 2 | | Sticks with a throttle wheel |
+| 4 | 0 | 1 | 3 | 2 | Most flight sticks: X, Y, twist and a throttle slider |
+| 5 | 0 | 1 | 2 | 3 | HOTAS sets |
+| 6 or more | 0 | 1 | 2 | 5 | HOTAS sets with X, Y, Z, Rx, Ry and Rz |
+
+If SDL identifies the device as a standalone throttle, its first axis is the throttle. If SDL
+identifies it as a gamepad but has no mapping for it, axis 2 is the twist and there is no
+throttle. The game receives the throttle as its Z axis and the twist as Rz. `ThrottleAxis` and
+`TwistAxis` in `JoyConfig` override the guess with an SDL axis number, or -1 for none.
+`ThrottleInvert=1` reverses the throttle, for levers that report their highest value when pushed
+forward.
+
+### Gamepads
+
+A controller that SDL maps as a gamepad is presented to the game as a joystick with a fixed layout
+(`input.GamepadButton`): the left stick is X and Y, the right stick's horizontal axis is the twist,
+the D-pad is the hat, and there are 32 buttons. Buttons 0 to 25 are SDL's gamepad buttons in SDL's
+order, 26 and 27 are the triggers (pressed past a quarter of their travel), and 28 to 31 are the
+right stick's four directions (pushed past half). Gamepads have no throttle axis, so the throttle
+is controlled with ACCELERATE and DECELERATE, which gamepads bind to the right stick's up and
+down.
+
+SDL's built-in database covers Xbox, PlayStation and Nintendo controllers and many others. A
+`gamecontrollerdb.txt` file in the game folder can add mappings, in SDL's format, for gamepads SDL
+doesn't recognize.
+
+### Improvements
+
+Deliberate differences from the original's joystick support:
+
+- Gamepads get their own default bindings (`input.gamepad_buttons`) and have `TwistEnable` on by
+  default, so the right stick rolls. The original treated a gamepad like any other joystick.
+- A joystick is preferred over a gamepad. The original preferred joysticks with force feedback,
+  which the port doesn't support yet.
+- Controllers can be connected and disconnected while the game runs. The original only looked for
+  a joystick at startup.
+- The `DeadZone`, `Joystick`, `ThrottleAxis`, `TwistAxis` and `ThrottleInvert` settings and the
+  `gamecontrollerdb.txt` file are new; the original game ignores them.
+- Two bugs in how `load_key_config` reads bindings are fixed
+  ([Controls](../engine/controls.md#bindings)).
+
+### Listing controllers
+
+`openreliant joysticks [<game-directory>] [--watch]` lists the connected controllers, shows which
+one the game will use and, for joysticks, which axis is used for what. It reads the settings from
+the game's `starlancer.ini`. With `--watch`, it prints the selected controller's state as the game
+sees it whenever it changes, until you press Ctrl+C.
+
+### Testing
+
+The unit tests in `platform/joystick.zig` use SDL's virtual controllers, modelled on real ones, on
+every system. `make test-controllers` also tests the Linux path end to end: in a privileged Docker
+container, [`scripts/controllers`](../../scripts/controllers) creates kernel virtual devices
+(uinput) with the USB IDs, names, axes and buttons of real controllers (an Xbox 360 controller, a
+DualShock 4, a Logitech Extreme 3D Pro, a Saitek X52, a gameport stick and an unknown gamepad),
+and checks what `openreliant joysticks` reports for each of them.
 
 ## Builds and releases
 

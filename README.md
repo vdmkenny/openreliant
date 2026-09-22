@@ -25,9 +25,9 @@ support or condone piracy.
 ## Status
 
 OpenReliant is in early development. Right now you can fly any ship from the game around an empty
-area of space, with the game's starfield, nebula and sun. The flight model, throttle, afterburner
-and camera views (keys 1 to 8) are ported, including the cockpit view with the ship's cockpit
-model. Press F2 and F3 to switch ships.
+area of space, with the game's starfield, nebula and sun, with the keyboard, a joystick or a
+gamepad. The flight model, throttle, afterburner and camera views (keys 1 to 8) are ported,
+including the cockpit view with the ship's cockpit model. Press F2 and F3 to switch ships.
 
 Parts of the HUD work: the targeting cluster, radar, status lights, readouts, and the ECM, spectral
 shield and blind fire toggles. The HUD panels (gunnery, damage, power and so on) open and close
@@ -84,6 +84,13 @@ OpenReliant plays the files of StarLancer, which it installs from your own discs
 
 Only disc 1 is needed to install. The manual is on disc 2 as `DOCS/MAUNAL.PDF` (misspelled on the
 disc), and the quick reference card as `DOCS/QRC.PDF`.
+
+### Joysticks and gamepads
+
+OpenReliant supports joysticks and gamepads, including flight sticks, HOTAS sets, old gameport
+sticks on USB adapters, and Xbox, PlayStation, Nintendo and most other controllers. See
+[Joysticks and gamepads](docs/controllers.md) for the default controls and how to set up your
+controller.
 
 OpenReliant draws with the GPU at the display's own resolution, with anti-aliasing and sharper
 texture filtering than the original had; `--original` restores the original's look.

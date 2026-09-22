@@ -29,10 +29,12 @@ const srd3d = engine.surrender.srd3d;
 const game = engine.game;
 const camera = game.camera;
 const install = @import("install.zig");
+const joysticks = @import("joysticks.zig");
 
 const usage =
     \\usage: openreliant [<game-directory>] [<option>...]
     \\       openreliant install [--from <disc>] [--force] <game-directory>
+    \\       openreliant joysticks [<game-directory>] [--watch]
     \\  <game-directory>          where StarLancer is installed, with resource.hog and
     \\                            tcachehw.dat; the current directory by default
     \\  --ship <type>             the ship type to show, by its number in shipstats.bin; 0 is the
@@ -145,6 +147,7 @@ pub fn main(init: std.process.Init) !u8 {
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
     if (args.len > 1 and std.mem.eql(u8, args[1], "install")) return install.main(init.io, arena, args[2..]);
+    if (args.len > 1 and std.mem.eql(u8, args[1], "joysticks")) return joysticks.main(init.io, arena, args[2..]);
     const options = Options.parse(args[1..]) catch {
         std.debug.print("{s}", .{usage});
         return 2;
@@ -154,6 +157,38 @@ pub fn main(init: std.process.Init) !u8 {
         else => return err,
     };
     return 0;
+}
+
+/// The game's settings file, in its directory, which it names in lower case.
+const settings_name = "starlancer.ini";
+
+/// Added by the port: an optional file in the game folder with extra gamepad mappings in SDL's
+/// format, for gamepads missing from SDL's database.
+pub const mappings_name = "gamecontrollerdb.txt";
+
+/// Opens the controller the game should use, unless it is already open, and loads the input
+/// settings and bindings, which depend on the controller. The original does this once at startup
+/// in `input_init` and `load_key_config`; the port also does it whenever a controller is connected
+/// or disconnected. `platform.joystick.choose` selects the controller; `ThrottleAxis`, `TwistAxis`
+/// and `ThrottleInvert` in `JoyConfig` configure a joystick's throttle and twist axes.
+fn connectController(arena: Allocator, devices: *engine.input.Devices, controller: *?platform.joystick.Controller, settings_file: engine.profile.Profile) void {
+    const joystick = platform.joystick;
+    const found = joystick.attached(arena) catch &.{};
+    const chosen = joystick.choose(found, settings_file.value("JoyConfig", "Joystick"));
+    if (controller.*) |*open| {
+        if (chosen != null and chosen.?.id == open.id() and devices.joystick.device != null) return;
+        devices.joystick.close();
+        open.close();
+        controller.* = null;
+    }
+    if (chosen) |which| {
+        const throttle: joystick.Choice = .parse(settings_file.value("JoyConfig", "ThrottleAxis"));
+        const twist: joystick.Choice = .parse(settings_file.value("JoyConfig", "TwistAxis"));
+        const inverted = settings_file.int("JoyConfig", "ThrottleInvert", 0) != 0;
+        controller.* = joystick.Controller.openInverted(which, throttle, twist, inverted) catch null;
+        if (controller.*) |*open| devices.joystick.open(open.device(), game.interface.deadZone(settings_file));
+    }
+    game.interface.loadKeyConfig(devices, settings_file);
 }
 
 /// Says that `directory` holds no installed copy of the game, and what the engine needs.
@@ -229,7 +264,20 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     var ship = try Ship.load(&resources, &textures, ship_stats, &glows, global_palette, options.ship);
     var player: engine.input.Player = .{};
     defer ship.unload();
-    var keyboard: engine.input.Keyboard = .{};
+    var devices: engine.input.Devices = .{};
+    // The game's settings file, which `load_key_config` reads the input settings from. If it's
+    // missing, every setting keeps its default.
+    const settings_file: engine.profile.Profile = .{
+        .text = directory.readFileAlloc(io, settings_name, arena, .limited(1 << 20)) catch "",
+    };
+    // The joystick or gamepad the game uses, opened as `input_init` opens a joystick, and again
+    // whenever a controller is connected or disconnected.
+    try platform.joystick.init(.game);
+    defer platform.joystick.deinit();
+    _ = platform.joystick.addMappings(try std.fs.path.joinZ(arena, &.{ options.directory, mappings_name }));
+    var controller: ?platform.joystick.Controller = null;
+    defer if (controller) |*open| open.close();
+    connectController(arena, &devices, &controller, settings_file);
 
     // The camera as a mission's launch leaves it: in the cockpit mode the options pick.
     var view: camera.Camera = .{ .cockpit_mode = options.cockpit.mode() };
@@ -270,7 +318,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     while (true) {
         while (window.poll()) |event| switch (event) {
             .quit => return,
-            .key => |key| keyboard.down[key.scan] = key.down,
+            .key => |key| devices.keyboard.down[key.scan] = key.down,
+            .controllers => connectController(arena, &devices, &controller, settings_file),
         };
         // The timer's ticks since the last pass, then a game tick for each, as `mission_run` paces
         // them: the simulation steps on every fourth, reading the keyboard as it goes. A screenshot
@@ -278,11 +327,11 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         const now = platform.window.ticks();
         if (frames_left != null) clock.advanceBy(now, 1) else clock.advanceTo(now);
         // While the communications window is open the keys 1 to 8 are its menu's.
-        keyboard.numbers_taken = display.state.windows.status.get(.comms).phase == .open;
-        while (clock.nextTick(&keyboard)) |stepped| {
+        devices.keyboard.numbers_taken = display.state.windows.status.get(.comms).phase == .open;
+        while (clock.nextTick(&devices)) |stepped| {
             if (!stepped) continue;
             // What `simulation_step` runs in order: the player's orders, then the objects move.
-            engine.input.playerControls(&player, &keyboard, &ship.live, view.view);
+            engine.input.playerControls(&player, &devices, &ship.live, view.view);
             game.gameobj.move(&ship.live, &ship.flight, view.view, .forward);
             // The object takes up the place the move worked out, so that the next one carries on
             // from it. The game marks the root instead, with the node flag `object_move` sets and
@@ -308,9 +357,9 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .roll_rate = ship.live.roll_rate,
         };
 
-        if (keyboard.pressed(engine.input.scan.escape, .none, true)) return;
+        if (devices.keyboard.pressed(engine.input.scan.escape, .none, true)) return;
         for ([_]struct { u8, isize }{ .{ f2, -1 }, .{ f3, 1 } }) |step| {
-            if (!keyboard.pressed(step[0], .none, true)) continue;
+            if (!devices.keyboard.pressed(step[0], .none, true)) continue;
             // Types whose files the game lacks are passed over.
             var candidate = ship.ship_type;
             while (true) {
@@ -332,10 +381,10 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         // `frame_controls` and the camera run once a frame, over the ticks the frame spans.
         const ticks: u32 = @intCast(@max(clock.frame_duration, 0));
         const at: u32 = @intCast(@max(clock.mission_ticks, 0));
-        view.frameControls(&keyboard, 0, ticks, at);
+        view.frameControls(&devices, 0, ticks, at);
         // After the camera's keys, `frame_controls` reads the targeting keys, then its own.
-        game.hud.targetKeys(&display.state, &keyboard, false);
-        engine.input.frameKeys(&display.state, &keyboard, &ship.live, view.view, display.clock.game_ticks, false);
+        game.hud.targetKeys(&display.state, &devices, false);
+        engine.input.frameKeys(&display.state, &devices, &ship.live, view.view, display.clock.game_ticks, false);
         // What moves the cockpit's model: the ship's rates of turn over its full ones, and its
         // speed over its cruise speed.
         const cockpit_input: ?camera.Cockpit.Input = if (ship.cockpit) |*cockpit| input: {
@@ -388,7 +437,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .overlay = display.overlay(),
             .cockpit = if (ship.cockpit) |*cockpit| &cockpit.model else null,
             .backing = backing,
-            .kills_shown = engine.input.controlActive(&keyboard, engine.input.controls.binding(.display_kills), false),
+            .kills_shown = devices.active(.display_kills, false),
             .attachments = .{
                 .camera = view.place.position,
                 .frame_start = clock.frame_start,
@@ -720,6 +769,7 @@ fn nextShipType(from: usize, step: isize) usize {
 
 test {
     _ = install;
+    _ = joysticks;
 }
 
 test nextShipType {

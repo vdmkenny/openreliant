@@ -282,7 +282,7 @@
 0045fc90	function	camera_frame	void __fastcall (void)	Places the camera once a frame for the view: moves the bars, then the cockpit, chase, orbit, flyby and cutaway views
 0045ed60	function	camera_chase	void __fastcall (void)	The chase view: behind and above the object by ship type, farther with throttle, swinging against its rates of turn
 0045ed40	function	camera_chase_level	void __fastcall (void)	Zeroes the chase view's swing
-00414060	function	frame_controls	void __fastcall (int slot)	The controls read once a frame, from mission_frame: the camera keys, steering the orbiting views with the arrow keys, and the wingman and other frame keys
+00414060	function	frame_controls	void __fastcall (int slot)	The controls read once a frame, from mission_frame: the joystick's hat, which glances ahead, left, right or back while held, the camera keys, steering the orbiting views with the arrow keys, and the wingman and other frame keys
 004f72a8	data	camera_view_table	byte[44][4]	For each view: the language string that names it (a halfword), whether the bars slide in, and whether it is from the cockpit. It ends where the text of camera_set_view's assertion on an invalid camera type begins
 00539a64	data	camera_view_last	int	Last frame's camera_view: mission_frame resets the star streaks when they differ
 00539a34	data	camera_view	short
@@ -320,6 +320,12 @@
 0051d610	data	joystick_invert	int	The JoystickInvert setting, 1 by default: while it is clear, player_controls reverses pitch from the stick, keys and mouse
 00595d88	data	twist_enabled	bool	The TwistEnable setting: the joystick's twist (Rz) rolls the ship when it has one
 0050e1a4	data	force_feedback	bool	Set while the joystick in use has force feedback
+0052029c	data	hat_enabled	int	The HatEnable setting, 1 by default: while it is set, frame_controls glances with the joystick's first hat
+0051cf8c	data	hat_glancing	bool	Set while the joystick's hat glances, so that frame_controls looks ahead again once it is let go
+0051d458	data	twist_setting	int	The TwistEnable setting as load_key_config reads it; twist_enabled is whether it is nonzero
+0051da4c	data	force_feedback_setting	int	The ForceFeedback setting, 1 by default. Unknown: its use
+005d5644	data	settings_path		The path of starlancer.ini: the game's directory, then the file's name
+005ddb18	data	joystick_caps		The joystick's DIDEVCAPS, which joystick_found takes the button and hat counts from
 005ddd18	data	direct_input		The IDirectInput7 interface
 005ddd1c	data	keyboard_device		The keyboard's IDirectInputDevice7
 005ddd20	data	mouse_device		The mouse's IDirectInputDevice7

@@ -23,10 +23,176 @@ pub const JoystickState = extern struct {
     /// Nonzero while the button is down.
     buttons: [32]u8,
 
+    /// The value DirectInput reports for a centered hat.
+    pub const centred: u32 = 0xFFFF_FFFF;
+
     comptime {
         assert(@offsetOf(JoystickState, "rz") == 0x14);
         assert(@offsetOf(JoystickState, "buttons") == 0x30);
         assert(@sizeOf(JoystickState) == 0x50);
+    }
+
+    /// Where `axis`'s value lies.
+    pub fn axis(state: *JoystickState, which: Axis) *i32 {
+        return switch (which) {
+            .x => &state.x,
+            .y => &state.y,
+            .z => &state.z,
+            .rx => &state.rx,
+            .ry => &state.ry,
+            .rz => &state.rz,
+            .slider => &state.sliders[0],
+            .second_slider => &state.sliders[1],
+        };
+    }
+};
+
+/// A joystick's axes, in `DIJOYSTATE` order. DirectInput identifies an axis by its offset in
+/// `DIJOYSTATE`.
+pub const Axis = enum(u3) {
+    x,
+    y,
+    /// The throttle, on most joysticks that have one.
+    z,
+    rx,
+    ry,
+    /// The twist.
+    rz,
+    /// The first slider, where some joysticks put the throttle.
+    slider,
+    second_slider,
+
+    /// The range `joystick_object_found` (`0x004BD050`) sets for the axis, or null for axes the
+    /// game doesn't set up or read.
+    pub fn range(which: Axis) ?[2]i32 {
+        return switch (which) {
+            .x, .y, .rz => .{ -1000, 1000 },
+            .z, .slider => .{ 0, 1000 },
+            .rx, .ry, .second_slider => null,
+        };
+    }
+};
+
+/// The dead zone `joystick_object_found` sets for the whole device, in hundredths of a percent of
+/// each axis's travel from the center: 10%. The port reads `DeadZone` from `starlancer.ini` to
+/// change it.
+pub const default_dead_zone: u16 = 1000;
+
+/// A joystick device: the port's replacement for `joystick_device` (`0x005DDD24`), the game's
+/// `IDirectInputDevice7`, with the calls the game makes on it. The platform implements it for each
+/// connected controller, including gamepads.
+pub const JoystickDevice = struct {
+    context: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        capabilities: *const fn (context: *anyopaque) Capabilities,
+        setRange: *const fn (context: *anyopaque, axis: Axis, min: i32, max: i32) void,
+        setDeadZone: *const fn (context: *anyopaque, zone: u16) void,
+        poll: *const fn (context: *anyopaque, state: *JoystickState) error{Unplugged}!void,
+    };
+
+    /// What `joystick_found` needs from the device: the counts from `GetCapabilities`, the axes
+    /// `EnumObjects` reports, and the product name from DirectInput's enumeration.
+    pub const Capabilities = struct {
+        name: []const u8,
+        axes: std.EnumSet(Axis),
+        /// `DIDEVCAPS.dwButtons`, at most the 32 `JoystickState` holds.
+        buttons: u8,
+        /// `DIDEVCAPS.dwPOVs`, at most 4.
+        hats: u8,
+        /// Added by the port: whether the controller is a gamepad. A gamepad's buttons are
+        /// numbered as in `GamepadButton`, and it has its own default bindings.
+        kind: Kind = .joystick,
+    };
+
+    pub const Kind = enum { joystick, gamepad };
+
+    pub fn capabilities(device: JoystickDevice) Capabilities {
+        return device.vtable.capabilities(device.context);
+    }
+
+    /// `SetProperty(DIPROP_RANGE)` for one axis: the values it reports at either end of its travel.
+    pub fn setRange(device: JoystickDevice, axis: Axis, min: i32, max: i32) void {
+        device.vtable.setRange(device.context, axis, min, max);
+    }
+
+    /// `SetProperty(DIPROP_DEADZONE)` for the whole device: how far an axis can move from its
+    /// center, in hundredths of a percent of its travel, and still read as centered.
+    pub fn setDeadZone(device: JoystickDevice, zone: u16) void {
+        device.vtable.setDeadZone(device.context, zone);
+    }
+
+    /// `Poll` and `GetDeviceState`. Fails if the device has been disconnected.
+    pub fn poll(device: JoystickDevice, state: *JoystickState) error{Unplugged}!void {
+        return device.vtable.poll(device.context, state);
+    }
+};
+
+/// The game's joystick globals: the device (`joystick_device`), its state (`joystick`,
+/// `0x00588340`), the axes that were set up (`joystick_axes`), the button and hat counts
+/// (`joystick_buttons`, `joystick_hats`), the name (`joystick_name`), and the latches
+/// `control_active` uses to count each press only once (`button_latched`, `0x005DDC98`).
+pub const Joystick = struct {
+    device: ?JoystickDevice = null,
+    state: JoystickState = idle,
+    axes: JoystickAxes = std.mem.zeroes(JoystickAxes),
+    buttons: u8 = 0,
+    hats: u8 = 0,
+    name: []const u8 = "",
+    kind: JoystickDevice.Kind = .joystick,
+    latched: [32]bool = @splat(false),
+
+    /// The state when there is no device: all zero, as `read_joystick` leaves it.
+    const idle = std.mem.zeroes(JoystickState);
+
+    /// `joystick_found` (`0x004BD190`): stores the device's button and hat counts and its name,
+    /// then, as `joystick_object_found` does, sets the range of each axis the game uses, marks it
+    /// in `axes`, and sets the dead zone to `zone`. Not yet ported: turning off the centering
+    /// spring of a force feedback joystick.
+    pub fn open(joystick: *Joystick, device: JoystickDevice, zone: u16) void {
+        const found = device.capabilities();
+        joystick.* = .{
+            .device = device,
+            .buttons = @min(found.buttons, 32),
+            .hats = @min(found.hats, 4),
+            .name = found.name,
+            .kind = found.kind,
+        };
+        var axes = found.axes.iterator();
+        while (axes.next()) |axis| {
+            const range = axis.range() orelse continue;
+            device.setRange(axis, range[0], range[1]);
+            device.setDeadZone(zone);
+            switch (axis) {
+                inline else => |known| @field(joystick.axes, @tagName(known)) = true,
+            }
+        }
+    }
+
+    /// Removes the device, for example when it has been disconnected; the joystick then reads as
+    /// idle.
+    pub fn close(joystick: *Joystick) void {
+        joystick.* = .{};
+    }
+
+    /// `read_joystick` (`0x004BD300`): reads the device's state (all zero without a device), then
+    /// clears the latch of each released button. A disconnected device is closed.
+    pub fn read(joystick: *Joystick) void {
+        joystick.state = idle;
+        const device = joystick.device orelse return;
+        device.poll(&joystick.state) catch {
+            joystick.close();
+            return;
+        };
+        for (joystick.latched[0..joystick.buttons], joystick.state.buttons[0..joystick.buttons]) |*latched, state| {
+            if (state == 0) latched.* = false;
+        }
+    }
+
+    /// Whether `button` is pressed. Numbers beyond the 32 buttons in `JoystickState` never are.
+    pub fn down(joystick: Joystick, button: u8) bool {
+        return button < joystick.state.buttons.len and joystick.state.buttons[button] != 0;
     }
 };
 
@@ -204,22 +370,143 @@ pub const Keyboard = struct {
     }
 };
 
-/// Whether an action is active by its binding (`control_active`, `0x00412630`): its key with its
-/// modifier, or with none while neither Shift nor Ctrl is down; with `once`, as `key_pressed` counts
-/// it. While the keyboard's `numbers_taken`, the keys 1 to 8 count for nothing. Not yet ported: the
-/// joystick's buttons.
-pub fn controlActive(keyboard: *Keyboard, binding: controls.Binding, once: bool) bool {
-    if (keyboard.numbers_taken and binding.key > 1 and binding.key < 10) return false;
-    const key = std.math.lossyCast(u8, binding.key);
-    if (once) return keyboard.pressed(key, binding.modifier, true);
-    return switch (binding.modifier) {
-        .none => !keyboard.shift() and !keyboard.control() and keyboard.down[key],
-        .shift => keyboard.down[key] and keyboard.shift(),
-        .control => keyboard.down[key] and keyboard.control(),
-        .alt => keyboard.down[key] and keyboard.alt(),
-        _ => false,
-    };
+/// The input settings `load_key_config` reads from the `KeyConfig` section of `starlancer.ini`,
+/// with the game's defaults.
+pub const Settings = struct {
+    /// `ForceFeedback` (`0x0051DA4C`). **Unknown:** its use.
+    force_feedback: bool = true,
+    /// `JoystickInvert` (`joystick_invert`, `0x0051D610`): while false, pitch is reversed, from
+    /// the stick, the keys and the mouse.
+    joystick_invert: bool = true,
+    /// `HatEnable` (`hat_enabled`, `0x0052029C`): whether the hat switches to the left, right and
+    /// rear views.
+    hat_enabled: bool = true,
+    /// `TwistEnable` (`twist_enabled`, `0x00595D88`): whether the joystick's twist rolls the ship.
+    twist_enabled: bool = false,
+    /// `Controller` (`control_mode`, `0x0057E064`).
+    control_mode: ControlMode = .joystick,
+    /// Added by the port: `DeadZone` in the `JoyConfig` section, the joystick's dead zone in
+    /// hundredths of a percent.
+    dead_zone: u16 = default_dead_zone,
+};
+
+/// `control_bindings` (`0x004E2380`): each action's key, modifier and joystick button, starting
+/// from the game's defaults, which `load_key_config` changes from `starlancer.ini`.
+pub const Bindings = std.EnumArray(controls.Action, controls.Binding);
+
+/// The default bindings for a controller of `kind`: the game's own for a joystick, and for a
+/// gamepad (added by the port) the same keys with `gamepad_buttons` as the buttons.
+pub fn defaultBindings(kind: JoystickDevice.Kind) Bindings {
+    var bindings: Bindings = undefined;
+    for (std.enums.values(controls.Action)) |action| bindings.set(action, controls.binding(action));
+    if (kind == .gamepad) {
+        for (&bindings.values) |*binding| binding.button = null;
+        for (gamepad_buttons) |pair| bindings.getPtr(pair[0]).button = @intFromEnum(pair[1]);
+    }
+    return bindings;
 }
+
+/// How the port numbers a gamepad's buttons when it presents the gamepad to the game as a joystick.
+/// These are the numbers `JOY BUTTON` uses in `JoyConfig`. Face buttons are named by position, not
+/// by label. The triggers and the four directions of the right stick are buttons too. The left
+/// stick is the X and Y axes, the right stick's horizontal axis is the twist, and the D-pad is the
+/// hat.
+pub const GamepadButton = enum(u5) {
+    south,
+    east,
+    west,
+    north,
+    back,
+    guide,
+    start,
+    left_stick,
+    right_stick,
+    left_shoulder,
+    right_shoulder,
+    dpad_up,
+    dpad_down,
+    dpad_left,
+    dpad_right,
+    misc1,
+    right_paddle1,
+    left_paddle1,
+    right_paddle2,
+    left_paddle2,
+    touchpad,
+    misc2,
+    misc3,
+    misc4,
+    misc5,
+    misc6,
+    left_trigger,
+    right_trigger,
+    right_stick_up,
+    right_stick_down,
+    right_stick_left,
+    right_stick_right,
+};
+
+/// The default gamepad bindings, added by the port. Gamepads have no throttle axis, so the right
+/// stick's up and down directions change the throttle, like the throttle keys.
+pub const gamepad_buttons = [_]struct { controls.Action, GamepadButton }{
+    .{ .fire_lasers, .right_trigger },
+    .{ .launch_missile, .left_trigger },
+    .{ .afterburners, .south },
+    .{ .match_speed, .east },
+    .{ .countermeasures, .west },
+    .{ .target_nearest_enemy, .north },
+    .{ .next_enemy_target, .right_shoulder },
+    .{ .previous_enemy_target, .left_shoulder },
+    .{ .accelerate, .right_stick_up },
+    .{ .decelerate, .right_stick_down },
+    .{ .afterburner_toggle, .left_stick },
+    .{ .target_under_reticule, .right_stick },
+    .{ .radar_ranges, .back },
+};
+
+/// The input state the game keeps in globals: the keyboard and joystick states, the bindings and
+/// the input settings. Not yet ported: the mouse.
+pub const Devices = struct {
+    keyboard: Keyboard = .{},
+    joystick: Joystick = .{},
+    bindings: Bindings = defaultBindings(.joystick),
+    settings: Settings = .{},
+
+    /// Reads the keyboard, then the joystick, as `simulation_step` does at the start of each step.
+    pub fn read(devices: *Devices) void {
+        devices.keyboard.read();
+        devices.joystick.read();
+    }
+
+    /// `control_active` (`0x00412630`): whether `action` is active because its joystick button is
+    /// pressed, or its key is pressed with its modifier (or, without a modifier, with neither Shift
+    /// nor Ctrl held). With `once`, each press counts only once: a button counts while it isn't
+    /// latched and is then latched, and a key is checked with `key_pressed`. While the keyboard's
+    /// `numbers_taken` is set, the keys 1 to 8 are ignored.
+    pub fn active(devices: *Devices, action: controls.Action, once: bool) bool {
+        const binding = devices.bindings.get(action);
+        const keyboard = &devices.keyboard;
+        if (binding.button) |button| {
+            if (devices.joystick.down(button)) {
+                if (!once) return true;
+                if (!devices.joystick.latched[button]) {
+                    devices.joystick.latched[button] = true;
+                    return true;
+                }
+            }
+        }
+        if (keyboard.numbers_taken and binding.key > 1 and binding.key < 10) return false;
+        const key = std.math.lossyCast(u8, binding.key);
+        if (once) return keyboard.pressed(key, binding.modifier, true);
+        return switch (binding.modifier) {
+            .none => !keyboard.shift() and !keyboard.control() and keyboard.down[key],
+            .shift => keyboard.down[key] and keyboard.shift(),
+            .control => keyboard.down[key] and keyboard.control(),
+            .alt => keyboard.down[key] and keyboard.alt(),
+            _ => false,
+        };
+    }
+};
 
 test Keyboard {
     var keyboard: Keyboard = .{};
@@ -241,22 +528,150 @@ test Keyboard {
     try std.testing.expect(!keyboard.pressed(scan.up, .none, true));
 }
 
-test controlActive {
-    var keyboard: Keyboard = .{};
-    const cockpit = controls.binding(.cockpit_camera);
-    keyboard.down[cockpit.key] = true;
-    try std.testing.expect(controlActive(&keyboard, cockpit, false));
+test "Devices.active with the keyboard" {
+    var devices: Devices = .{};
+    const keyboard = &devices.keyboard;
+    keyboard.down[controls.binding(.cockpit_camera).key] = true;
+    try std.testing.expect(devices.active(.cockpit_camera, false));
     keyboard.numbers_taken = true;
-    try std.testing.expect(!controlActive(&keyboard, cockpit, false));
+    try std.testing.expect(!devices.active(.cockpit_camera, false));
     keyboard.numbers_taken = false;
-    try std.testing.expect(controlActive(&keyboard, cockpit, true));
-    try std.testing.expect(!controlActive(&keyboard, cockpit, true));
+    try std.testing.expect(devices.active(.cockpit_camera, true));
+    try std.testing.expect(!devices.active(.cockpit_camera, true));
     // A binding with Ctrl counts only with it held.
-    const smart = controls.binding(.smart_target);
-    keyboard.down[smart.key] = true;
-    try std.testing.expect(!controlActive(&keyboard, smart, false));
+    keyboard.down[controls.binding(.smart_target).key] = true;
+    try std.testing.expect(!devices.active(.smart_target, false));
     keyboard.down[scan.left_control] = true;
-    try std.testing.expect(controlActive(&keyboard, smart, false));
+    try std.testing.expect(devices.active(.smart_target, false));
+}
+
+/// A joystick device for the tests: it reports `state` and records the settings the game makes.
+const TestDevice = struct {
+    state: JoystickState = Joystick.idle,
+    capabilities: JoystickDevice.Capabilities,
+    ranges: std.EnumArray(Axis, ?[2]i32) = .initFill(null),
+    dead_zone: ?u16 = null,
+    unplugged: bool = false,
+
+    fn device(test_device: *TestDevice) JoystickDevice {
+        return .{ .context = test_device, .vtable = &.{
+            .capabilities = capabilities_,
+            .setRange = setRange,
+            .setDeadZone = setDeadZone,
+            .poll = poll,
+        } };
+    }
+
+    fn capabilities_(context: *anyopaque) JoystickDevice.Capabilities {
+        const test_device: *TestDevice = @ptrCast(@alignCast(context));
+        return test_device.capabilities;
+    }
+
+    fn setRange(context: *anyopaque, axis: Axis, min: i32, max: i32) void {
+        const test_device: *TestDevice = @ptrCast(@alignCast(context));
+        test_device.ranges.set(axis, .{ min, max });
+    }
+
+    fn setDeadZone(context: *anyopaque, zone: u16) void {
+        const test_device: *TestDevice = @ptrCast(@alignCast(context));
+        test_device.dead_zone = zone;
+    }
+
+    fn poll(context: *anyopaque, state: *JoystickState) error{Unplugged}!void {
+        const test_device: *TestDevice = @ptrCast(@alignCast(context));
+        if (test_device.unplugged) return error.Unplugged;
+        state.* = test_device.state;
+    }
+};
+
+/// A four-axis flight stick with twelve buttons and a hat, for the tests.
+fn testStick() TestDevice {
+    return .{ .capabilities = .{
+        .name = "Test Stick",
+        .axes = .initMany(&.{ .x, .y, .rz, .slider }),
+        .buttons = 12,
+        .hats = 1,
+    } };
+}
+
+test Joystick {
+    var stick = testStick();
+    var joystick: Joystick = .{};
+    joystick.open(stick.device(), default_dead_zone);
+    // The axes the game uses get their ranges and are marked; the dead zone is 10%.
+    try std.testing.expectEqual([2]i32{ -1000, 1000 }, stick.ranges.get(.x).?);
+    try std.testing.expectEqual([2]i32{ 0, 1000 }, stick.ranges.get(.slider).?);
+    try std.testing.expectEqual(null, stick.ranges.get(.z));
+    try std.testing.expect(joystick.axes.x and joystick.axes.rz and joystick.axes.slider and !joystick.axes.z);
+    try std.testing.expectEqual(1000, stick.dead_zone.?);
+    try std.testing.expectEqual(12, joystick.buttons);
+    try std.testing.expectEqualStrings("Test Stick", joystick.name);
+
+    // Reading copies the device's state and clears the latches of released buttons.
+    stick.state.x = 250;
+    stick.state.buttons[3] = 0x80;
+    joystick.latched[3] = true;
+    joystick.latched[4] = true;
+    joystick.read();
+    try std.testing.expectEqual(250, joystick.state.x);
+    try std.testing.expect(joystick.latched[3] and !joystick.latched[4]);
+    try std.testing.expect(joystick.down(3) and !joystick.down(4) and !joystick.down(200));
+
+    // Once disconnected, it reads as idle and is closed.
+    stick.unplugged = true;
+    joystick.read();
+    try std.testing.expectEqual(null, joystick.device);
+    try std.testing.expectEqual(0, joystick.state.x);
+    joystick.read();
+    try std.testing.expectEqual(0, joystick.state.x);
+}
+
+test "Devices.active with the joystick's buttons" {
+    var stick = testStick();
+    var devices: Devices = .{};
+    devices.joystick.open(stick.device(), default_dead_zone);
+    const fire = controls.binding(.fire_lasers).button.?;
+
+    // A held button counts every time; with `once`, only once per press.
+    stick.state.buttons[fire] = 0x80;
+    devices.read();
+    try std.testing.expect(devices.active(.fire_lasers, false));
+    try std.testing.expect(devices.active(.fire_lasers, true));
+    try std.testing.expect(!devices.active(.fire_lasers, true));
+    try std.testing.expect(devices.active(.fire_lasers, false));
+    devices.read();
+    try std.testing.expect(!devices.active(.fire_lasers, true));
+    stick.state.buttons[fire] = 0;
+    devices.read();
+    stick.state.buttons[fire] = 0x80;
+    devices.read();
+    try std.testing.expect(devices.active(.fire_lasers, true));
+
+    // The key still works too.
+    stick.state.buttons[fire] = 0;
+    devices.read();
+    devices.keyboard.down[controls.binding(.fire_lasers).key] = true;
+    try std.testing.expect(devices.active(.fire_lasers, false));
+}
+
+test defaultBindings {
+    const stick = defaultBindings(.joystick);
+    try std.testing.expectEqual(0, stick.get(.fire_lasers).button.?);
+    try std.testing.expectEqual(null, stick.get(.accelerate).button);
+    const pad = defaultBindings(.gamepad);
+    try std.testing.expectEqual(@intFromEnum(GamepadButton.right_trigger), pad.get(.fire_lasers).button.?);
+    try std.testing.expectEqual(@intFromEnum(GamepadButton.right_stick_up), pad.get(.accelerate).button.?);
+    // Gamepad bindings drop the joystick buttons but keep every key.
+    try std.testing.expectEqual(null, pad.get(.strafe_left).button);
+    for (std.enums.values(controls.Action)) |action| {
+        try std.testing.expectEqual(stick.get(action).key, pad.get(action).key);
+    }
+    // No two actions share a gamepad button.
+    var used: std.EnumSet(GamepadButton) = .initEmpty();
+    for (gamepad_buttons) |pair| {
+        try std.testing.expect(!used.contains(pair[1]));
+        used.insert(pair[1]);
+    }
 }
 
 test {
@@ -291,27 +706,27 @@ const throttle_step: f32 = 0.02;
 /// The share of the yaw added to the roll, which banks the ship into its turns (`0x004DC408`).
 const bank_share: f32 = 0.5;
 
-fn active(keyboard: *Keyboard, action: controls.Action, once: bool) bool {
-    return controlActive(keyboard, controls.binding(action), once);
-}
+/// The factor from joystick axis units to steering input (`0x004DC418`): -1000 to 1000 becomes -1
+/// to 1.
+const axis_scale: f32 = 0.001;
 
 /// `player_throttle_keys` (`0x004132C0`): ACCELERATE and DECELERATE step the throttle setting and
 /// the ship's throttle, and ZERO THROTTLE and FULL THROTTLE set both and stop MATCH SPEED. The
 /// ship's throttle then follows the setting, unless its afterburner is burning.
-pub fn playerThrottleKeys(player: *Player, keyboard: *Keyboard, object: *gameobj.GameObject) void {
-    if (active(keyboard, .accelerate, false)) {
+pub fn playerThrottleKeys(player: *Player, devices: *Devices, object: *gameobj.GameObject) void {
+    if (devices.active(.accelerate, false)) {
         player.throttle = @min(player.throttle + throttle_step, 1);
         object.throttle = @min(object.throttle + throttle_step, 1);
-    } else if (active(keyboard, .decelerate, false)) {
+    } else if (devices.active(.decelerate, false)) {
         player.throttle = @max(player.throttle - throttle_step, 0);
         object.throttle = @max(object.throttle - throttle_step, 0);
     }
-    if (active(keyboard, .zero_throttle, true)) {
+    if (devices.active(.zero_throttle, true)) {
         player.throttle = 0;
         object.throttle = 0;
         player.matching_speed = false;
     }
-    if (active(keyboard, .full_throttle, true)) {
+    if (devices.active(.full_throttle, true)) {
         player.throttle = 1;
         object.throttle = 1;
         player.matching_speed = false;
@@ -323,55 +738,98 @@ pub fn playerThrottleKeys(player: *Player, keyboard: *Keyboard, object: *gameobj
 /// steering inputs, its throttle and its two burns from the controls. It runs once a frame with the
 /// ship's orders and once again in each simulation step, before the objects move.
 ///
-/// Ported so far: the keyboard, which `control_mode` picks with 1. Not yet: the joystick and the
-/// mouse, matching a target's speed, and the weapons and the other actions it reads.
-pub fn playerControls(player: *Player, keyboard: *Keyboard, object: *gameobj.GameObject, view: camera.View) void {
-    // The arrow keys orbit the target and external views, so they do not turn the ship in those.
-    if (view == .target or view == .external) {
-        object.yaw_input = 0;
-        object.pitch_input = 0;
-    } else {
-        // Each pair steps its input while one of its keys is held, in the order the game reads
-        // them, and zeroes it while neither is.
-        object.yaw_input = if (active(keyboard, .rotate_clockwise, false))
-            object.yaw_input - steering_step
-        else if (active(keyboard, .rotate_anti_clockwise, false))
-            object.yaw_input + steering_step
-        else
-            0;
-        object.pitch_input = if (active(keyboard, .nose_up, false))
-            object.pitch_input + steering_step
-        else if (active(keyboard, .nose_down, false))
-            object.pitch_input - steering_step
-        else
-            0;
+/// With the joystick (`control_mode` 0), X yaws and Y pitches; the roll keys roll, and holding
+/// JOYSTICK ROLL makes X roll instead of yaw. With `TwistEnable` and a twist axis, the twist rolls.
+/// The throttle axis (Z, or else the first slider) sets the throttle directly; without one, the
+/// throttle keys change it. With the keyboard, the steering keys change the inputs step by step.
+/// In every mode, half the yaw is added to the roll so the ship banks into turns, and turning
+/// `JoystickInvert` off reverses pitch.
+///
+/// Not yet ported: the mouse (mouse mode uses the keys for now); matching a target's speed; the
+/// weapons and the other actions it reads; and the special cases for 7 or 9 in the player's object
+/// at `0x754` and for the flags at `0x0051CEF8`, `0x0051CEFC` and `0x0051CF04`.
+pub fn playerControls(player: *Player, devices: *Devices, object: *gameobj.GameObject, view: camera.View) void {
+    const pitch_sign: f32 = if (devices.settings.joystick_invert) 1 else -1;
+    switch (devices.settings.control_mode) {
+        .joystick => {
+            const joystick = &devices.joystick;
+            const state = joystick.state;
+            object.yaw_input = 0;
+            object.pitch_input = 0;
+            object.roll_input = 0;
+            const x = @as(f32, @floatFromInt(state.x)) * axis_scale;
+            const y = @as(f32, @floatFromInt(state.y)) * axis_scale;
+            if (devices.settings.twist_enabled and joystick.axes.rz) {
+                object.yaw_input = x;
+                object.pitch_input = y * pitch_sign;
+                object.roll_input = @as(f32, @floatFromInt(state.rz)) * axis_scale;
+            } else {
+                if (devices.active(.joystick_roll, false)) {
+                    object.roll_input = x;
+                } else {
+                    object.yaw_input = x;
+                    object.roll_input = rollKeys(devices);
+                }
+                object.pitch_input = y * pitch_sign;
+            }
+            const throttle: ?i32 = if (joystick.axes.z) state.z else if (joystick.axes.slider) state.sliders[0] else null;
+            if (throttle) |value| {
+                object.throttle = 1 - @as(f32, @floatFromInt(value)) * axis_scale;
+            } else {
+                playerThrottleKeys(player, devices, object);
+            }
+        },
+        .keyboard, .mouse, _ => {
+            // The arrow keys orbit the target and external views, so they do not turn the ship in
+            // those.
+            if (view == .target or view == .external) {
+                object.yaw_input = 0;
+                object.pitch_input = 0;
+            } else {
+                // Each pair steps its input while one of its keys is held, in the order the game
+                // reads them, and zeroes it while neither is.
+                object.yaw_input = if (devices.active(.rotate_clockwise, false))
+                    object.yaw_input - steering_step
+                else if (devices.active(.rotate_anti_clockwise, false))
+                    object.yaw_input + steering_step
+                else
+                    0;
+                object.pitch_input = if (devices.active(.nose_up, false))
+                    object.pitch_input + steering_step * pitch_sign
+                else if (devices.active(.nose_down, false))
+                    object.pitch_input - steering_step * pitch_sign
+                else
+                    0;
+            }
+            object.roll_input = rollKeys(devices);
+            playerThrottleKeys(player, devices, object);
+        },
     }
-    object.roll_input = if (active(keyboard, .roll_ship_clockwise, false))
-        1
-    else if (active(keyboard, .roll_ship_anti_clockwise, false))
-        -1
-    else
-        0;
-
-    playerThrottleKeys(player, keyboard, object);
     object.roll_input += object.yaw_input * bank_share;
 
-    object.lateral_input = if (active(keyboard, .strafe_left, false))
-        -1
-    else if (active(keyboard, .strafe_right, false))
-        1
-    else
-        0;
+    // If both strafe keys are held, STRAFE RIGHT wins, since the game checks it last.
+    object.lateral_input = 0;
+    if (devices.active(.strafe_left, false)) object.lateral_input = -1;
+    if (devices.active(.strafe_right, false)) object.lateral_input = 1;
+    object.throttle = std.math.clamp(object.throttle, 0, 1);
 
-    if (active(keyboard, .afterburner_toggle, true)) player.afterburner_toggled = !player.afterburner_toggled;
+    if (devices.active(.afterburner_toggle, true)) player.afterburner_toggled = !player.afterburner_toggled;
     // `object_orders` clears both before each update, so each lasts until the order runs again.
-    object.afterburner = active(keyboard, .afterburners, false) or player.afterburner_toggled;
-    object.reverse_thrust = active(keyboard, .reverse_thrust, false);
+    object.afterburner = devices.active(.afterburners, false) or player.afterburner_toggled;
+    object.reverse_thrust = devices.active(.reverse_thrust, false);
     // What `object_orders` does after the update: neither burns without fuel.
     if (object.afterburner_fuel == 0) {
         object.afterburner = false;
         object.reverse_thrust = false;
     }
+}
+
+/// The roll input from the roll keys: 1 for ROLL SHIP CLOCKWISE, -1 for ROLL SHIP ANTI-CLOCKWISE
+/// (clockwise wins if both are held), and 0 for neither.
+fn rollKeys(devices: *Devices) f32 {
+    if (devices.active(.roll_ship_clockwise, false)) return 1;
+    if (devices.active(.roll_ship_anti_clockwise, false)) return -1;
+    return 0;
 }
 
 // --- The player's devices ------------------------------------------------------------------
@@ -424,12 +882,12 @@ pub fn setSpectralShields(display: *hud.State, object: *gameobj.GameObject, on: 
 /// through the objectives once they are open; the shares the power keys give; SHIELD BALANCING,
 /// PRIMARY TARGET and the orders to the wingmen; Betty's word for a device; and the display's
 /// sounds. `view` is the camera's view and `game_ticks` the timer's.
-pub fn frameKeys(display: *hud.State, keyboard: *Keyboard, object: *gameobj.GameObject, view: camera.View, game_ticks: u32, multiplayer: bool) void {
+pub fn frameKeys(display: *hud.State, devices: *Devices, object: *gameobj.GameObject, view: camera.View, game_ticks: u32, multiplayer: bool) void {
     const windows = &display.windows;
-    if (active(keyboard, .toggle_blindfire, true) and display.blind_fire_fitted) {
+    if (devices.active(.toggle_blindfire, true) and display.blind_fire_fitted) {
         display.blind_fire = !display.blind_fire;
     }
-    if (active(keyboard, .comms_window, true)) {
+    if (devices.active(.comms_window, true)) {
         const comms = windows.status.getPtr(.comms);
         switch (comms.phase) {
             .shut => if (windows.open(.comms, multiplayer)) {
@@ -443,7 +901,7 @@ pub fn frameKeys(display: *hud.State, keyboard: *Keyboard, object: *gameobj.Game
         }
     }
     for ([_]controls.Action{ .wing_status_window, .wing_status_window_locked }) |action| {
-        if (!active(keyboard, action, true)) continue;
+        if (!devices.active(action, true)) continue;
         if (windows.up(.objectives)) windows.close(.objectives);
         if (windows.up(.wing_status)) {
             windows.close(.wing_status);
@@ -451,42 +909,42 @@ pub fn frameKeys(display: *hud.State, keyboard: *Keyboard, object: *gameobj.Game
             windows.status.getPtr(.wing_status).held = true;
         }
     }
-    if (active(keyboard, .gunnery_window, true)) _ = windows.open(.gunnery, multiplayer);
-    if (active(keyboard, .gunnery_window_locked, true)) {
+    if (devices.active(.gunnery_window, true)) _ = windows.open(.gunnery, multiplayer);
+    if (devices.active(.gunnery_window_locked, true)) {
         if (windows.status.get(.gunnery).phase == .open) {
             windows.close(.gunnery);
         } else if (windows.open(.gunnery, multiplayer)) {
             windows.status.getPtr(.gunnery).held = true;
         }
     }
-    if (active(keyboard, .synchronise_guns, true)) {
+    if (devices.active(.synchronise_guns, true)) {
         _ = windows.open(.gunnery, multiplayer);
         object.gun_mode.synchronised = !object.gun_mode.synchronised;
     }
-    if (active(keyboard, .ecm, true) and display.devices.get(.ecm).setting != .absent) {
+    if (devices.active(.ecm, true) and display.devices.get(.ecm).setting != .absent) {
         setEcm(display, object, !object.flags.ecm);
     }
     for ([_]controls.Action{ .damage_window, .damage_window_locked }) |action| {
-        if (!active(keyboard, action, true)) continue;
+        if (!devices.active(action, true)) continue;
         if (windows.up(.damage)) {
             windows.close(.damage);
         } else if (windows.open(.damage, multiplayer) and action == .damage_window_locked) {
             windows.status.getPtr(.damage).held = true;
         }
     }
-    if (active(keyboard, .objectives_window, true)) {
+    if (devices.active(.objectives_window, true)) {
         if (windows.up(.wing_status)) windows.close(.wing_status);
         if (windows.status.get(.objectives).phase != .open) _ = windows.open(.objectives, multiplayer);
     }
-    if (active(keyboard, .radar_ranges, true)) hud.nextRadarRange(display, view, game_ticks);
+    if (devices.active(.radar_ranges, true)) hud.nextRadarRange(display, view, game_ticks);
     if (windows.status.get(.comms).phase == .shut) {
         for ([_]controls.Action{ .full_power_to_gunnery, .full_power_to_engines, .full_power_to_shields, .equalize_power }) |action| {
-            if (active(keyboard, action, false)) _ = windows.open(.power, multiplayer);
+            if (devices.active(action, false)) _ = windows.open(.power, multiplayer);
         }
     }
-    display.power_held = active(keyboard, .powerball_window, false);
+    display.power_held = devices.active(.powerball_window, false);
     if (display.power_held) _ = windows.open(.power, multiplayer);
-    if (active(keyboard, .powerball_window_locked, true)) {
+    if (devices.active(.powerball_window_locked, true)) {
         if (windows.status.get(.power).phase == .open) {
             windows.close(.power);
         } else if (windows.open(.power, multiplayer)) {
@@ -494,7 +952,7 @@ pub fn frameKeys(display: *hud.State, keyboard: *Keyboard, object: *gameobj.Game
             display.power_held = true;
         }
     }
-    if (!multiplayer and active(keyboard, .spectral_shields, true) and
+    if (!multiplayer and devices.active(.spectral_shields, true) and
         display.devices.get(.spectral_shields).setting != .absent)
     {
         setSpectralShields(display, object, !object.flags.spectral_shields);
@@ -503,22 +961,23 @@ pub fn frameKeys(display: *hud.State, keyboard: *Keyboard, object: *gameobj.Game
 
 test frameKeys {
     var object: gameobj.GameObject = std.mem.zeroes(gameobj.GameObject);
-    var keyboard: Keyboard = .{};
+    var devices: Devices = .{};
+    const keyboard = &devices.keyboard;
     var display: hud.State = .{};
 
     // ECM turns the ECM on, and again off.
     const ecm = controls.binding(.ecm).key;
     keyboard.down[ecm] = true;
-    frameKeys(&display, &keyboard, &object, .cockpit, 0, false);
+    frameKeys(&display, &devices, &object, .cockpit, 0, false);
     try std.testing.expect(object.flags.ecm);
     try std.testing.expectEqual(.on, display.devices.get(.ecm).setting);
     keyboard.read();
-    frameKeys(&display, &keyboard, &object, .cockpit, 0, false);
+    frameKeys(&display, &devices, &object, .cockpit, 0, false);
     try std.testing.expect(object.flags.ecm);
     keyboard.down[ecm] = false;
     keyboard.read();
     keyboard.down[ecm] = true;
-    frameKeys(&display, &keyboard, &object, .cockpit, 0, false);
+    frameKeys(&display, &devices, &object, .cockpit, 0, false);
     try std.testing.expect(!object.flags.ecm);
     keyboard.down[ecm] = false;
 
@@ -526,28 +985,28 @@ test frameKeys {
     const shields = controls.binding(.spectral_shields).key;
     display.devices.getPtr(.spectral_shields).setting = .absent;
     keyboard.down[shields] = true;
-    frameKeys(&display, &keyboard, &object, .cockpit, 0, false);
+    frameKeys(&display, &devices, &object, .cockpit, 0, false);
     try std.testing.expect(!object.flags.spectral_shields);
     keyboard.down[shields] = false;
     keyboard.read();
     display.devices.getPtr(.spectral_shields).setting = .off;
     keyboard.down[shields] = true;
-    frameKeys(&display, &keyboard, &object, .cockpit, 0, true);
+    frameKeys(&display, &devices, &object, .cockpit, 0, true);
     try std.testing.expect(!object.flags.spectral_shields);
     keyboard.down[shields] = false;
     keyboard.read();
     keyboard.down[shields] = true;
-    frameKeys(&display, &keyboard, &object, .cockpit, 0, false);
+    frameKeys(&display, &devices, &object, .cockpit, 0, false);
     try std.testing.expect(object.flags.spectral_shields);
     try std.testing.expectEqual(.on, display.devices.get(.spectral_shields).setting);
 }
 
 test "the window keys" {
     var object: gameobj.GameObject = std.mem.zeroes(gameobj.GameObject);
-    var keyboard: Keyboard = .{};
+    var devices: Devices = .{};
     var display: hud.State = .{};
     const Press = struct {
-        keyboard: *Keyboard,
+        devices: *Devices,
         display: *hud.State,
         object: *gameobj.GameObject,
 
@@ -560,15 +1019,15 @@ test "the window keys" {
                 .control => scan.left_control,
                 else => null,
             };
-            press.keyboard.down[key] = true;
-            if (modifier) |held| press.keyboard.down[held] = true;
-            frameKeys(press.display, press.keyboard, press.object, .cockpit, 0, false);
-            press.keyboard.down[key] = false;
-            if (modifier) |held| press.keyboard.down[held] = false;
-            press.keyboard.read();
+            press.devices.keyboard.down[key] = true;
+            if (modifier) |held| press.devices.keyboard.down[held] = true;
+            frameKeys(press.display, press.devices, press.object, .cockpit, 0, false);
+            press.devices.keyboard.down[key] = false;
+            if (modifier) |held| press.devices.keyboard.down[held] = false;
+            press.devices.read();
         }
     };
-    const press: Press = .{ .keyboard = &keyboard, .display = &display, .object = &object };
+    const press: Press = .{ .devices = &devices, .display = &display, .object = &object };
     const windows = &display.windows;
 
     // DAMAGE WINDOW opens the damage window, and pressed while it is up closes it.
@@ -619,68 +1078,134 @@ test "the window keys" {
 test playerControls {
     const gameobj_test = gameobj;
     var object: gameobj_test.GameObject = std.mem.zeroes(gameobj_test.GameObject);
-    var keyboard: Keyboard = .{};
+    var devices: Devices = .{ .settings = .{ .control_mode = .keyboard } };
+    const keyboard = &devices.keyboard;
     var player: Player = .{};
     const nose_up = controls.binding(.nose_up).key;
     const accelerate = controls.binding(.accelerate).key;
 
     // A held key steps its input, and the fourth run has it past full deflection.
     keyboard.down[nose_up] = true;
-    for (0..4) |_| playerControls(&player, &keyboard, &object, .cockpit);
+    for (0..4) |_| playerControls(&player, &devices, &object, .cockpit);
     try std.testing.expectApproxEqAbs(1.2, object.pitch_input, 1e-6);
     // Released, the input falls back to nothing on the next run.
     keyboard.down[nose_up] = false;
-    playerControls(&player, &keyboard, &object, .cockpit);
+    playerControls(&player, &devices, &object, .cockpit);
     try std.testing.expectEqual(0, object.pitch_input);
 
     // The orbiting views take the arrow keys for themselves.
     keyboard.down[nose_up] = true;
-    playerControls(&player, &keyboard, &object, .external);
+    playerControls(&player, &devices, &object, .external);
     try std.testing.expectEqual(0, object.pitch_input);
     keyboard.down[nose_up] = false;
 
     // Half the yaw banks the ship into its turn.
     keyboard.down[controls.binding(.rotate_anti_clockwise).key] = true;
-    playerControls(&player, &keyboard, &object, .cockpit);
+    playerControls(&player, &devices, &object, .cockpit);
     try std.testing.expectApproxEqAbs(0.3, object.yaw_input, 1e-6);
     try std.testing.expectApproxEqAbs(0.15, object.roll_input, 1e-6);
     keyboard.down[controls.binding(.rotate_anti_clockwise).key] = false;
 
     // ACCELERATE steps the throttle, fifty runs from none to full.
     keyboard.down[accelerate] = true;
-    for (0..50) |_| playerControls(&player, &keyboard, &object, .cockpit);
+    for (0..50) |_| playerControls(&player, &devices, &object, .cockpit);
     try std.testing.expectApproxEqAbs(1, object.throttle, 1e-5);
     keyboard.down[accelerate] = false;
     // FULL THROTTLE and ZERO THROTTLE set it outright, once for each press.
     keyboard.down[controls.binding(.zero_throttle).key] = true;
-    playerControls(&player, &keyboard, &object, .cockpit);
+    playerControls(&player, &devices, &object, .cockpit);
     try std.testing.expectEqual(0, object.throttle);
+    keyboard.down[controls.binding(.zero_throttle).key] = false;
+
+    // With JoystickInvert off, the nose keys pitch the other way.
+    devices.settings.joystick_invert = false;
+    keyboard.down[nose_up] = true;
+    playerControls(&player, &devices, &object, .cockpit);
+    try std.testing.expectApproxEqAbs(-0.3, object.pitch_input, 1e-6);
+    keyboard.down[nose_up] = false;
+
+    // Both strafe keys held, STRAFE RIGHT wins.
+    keyboard.down[controls.binding(.strafe_left).key] = true;
+    keyboard.down[controls.binding(.strafe_right).key] = true;
+    playerControls(&player, &devices, &object, .cockpit);
+    try std.testing.expectEqual(1, object.lateral_input);
+}
+
+test "steering with the joystick" {
+    var object: gameobj.GameObject = std.mem.zeroes(gameobj.GameObject);
+    var stick = testStick();
+    var devices: Devices = .{};
+    devices.joystick.open(stick.device(), default_dead_zone);
+    var player: Player = .{};
+
+    // X yaws (and banks the ship by half as much), Y pitches, and the slider sets the throttle
+    // directly: 1000 is none and 0 is full.
+    stick.state = .{ .x = 500, .y = -250, .z = 0, .rx = 0, .ry = 0, .rz = 800, .sliders = .{ 250, 0 }, .pov = @splat(JoystickState.centred), .buttons = @splat(0) };
+    devices.read();
+    playerControls(&player, &devices, &object, .cockpit);
+    try std.testing.expectApproxEqAbs(0.5, object.yaw_input, 1e-6);
+    try std.testing.expectApproxEqAbs(-0.25, object.pitch_input, 1e-6);
+    try std.testing.expectApproxEqAbs(0.25, object.roll_input, 1e-6);
+    try std.testing.expectApproxEqAbs(0.75, object.throttle, 1e-6);
+
+    // Holding JOYSTICK ROLL makes X roll instead.
+    devices.keyboard.down[controls.binding(.joystick_roll).key] = true;
+    playerControls(&player, &devices, &object, .cockpit);
+    try std.testing.expectEqual(0, object.yaw_input);
+    try std.testing.expectApproxEqAbs(0.5, object.roll_input, 1e-6);
+    devices.keyboard.down[controls.binding(.joystick_roll).key] = false;
+
+    // With TwistEnable, the twist rolls, and X still yaws and banks.
+    devices.settings.twist_enabled = true;
+    playerControls(&player, &devices, &object, .cockpit);
+    try std.testing.expectApproxEqAbs(0.5, object.yaw_input, 1e-6);
+    try std.testing.expectApproxEqAbs(0.8 + 0.25, object.roll_input, 1e-6);
+    devices.settings.twist_enabled = false;
+
+    // Turning JoystickInvert off reverses pitch; in the orbiting views the stick still steers.
+    devices.settings.joystick_invert = false;
+    playerControls(&player, &devices, &object, .external);
+    try std.testing.expectApproxEqAbs(0.25, object.pitch_input, 1e-6);
+    try std.testing.expectApproxEqAbs(0.5, object.yaw_input, 1e-6);
+}
+
+test "a joystick without a throttle leaves the throttle to the keys" {
+    var object: gameobj.GameObject = std.mem.zeroes(gameobj.GameObject);
+    var stick: TestDevice = .{ .capabilities = .{ .name = "Two Axes", .axes = .initMany(&.{ .x, .y }), .buttons = 2, .hats = 0 } };
+    var devices: Devices = .{};
+    devices.joystick.open(stick.device(), default_dead_zone);
+    var player: Player = .{};
+    devices.read();
+    devices.keyboard.down[controls.binding(.accelerate).key] = true;
+    for (0..5) |_| playerControls(&player, &devices, &object, .cockpit);
+    try std.testing.expectApproxEqAbs(0.1, object.throttle, 1e-6);
 }
 
 test "the burns last while their keys are held, and stop without fuel" {
     var object: gameobj.GameObject = std.mem.zeroes(gameobj.GameObject);
-    var keyboard: Keyboard = .{};
+    var devices: Devices = .{ .settings = .{ .control_mode = .keyboard } };
+    const keyboard = &devices.keyboard;
     var player: Player = .{};
     object.afterburner_fuel = 100;
 
     keyboard.down[controls.binding(.afterburners).key] = true;
-    playerControls(&player, &keyboard, &object, .cockpit);
+    playerControls(&player, &devices, &object, .cockpit);
     try std.testing.expect(object.afterburner);
     keyboard.down[controls.binding(.afterburners).key] = false;
-    playerControls(&player, &keyboard, &object, .cockpit);
+    playerControls(&player, &devices, &object, .cockpit);
     try std.testing.expect(!object.afterburner);
 
     // The toggle holds it on until it is pressed again.
     keyboard.down[controls.binding(.afterburner_toggle).key] = true;
-    playerControls(&player, &keyboard, &object, .cockpit);
+    playerControls(&player, &devices, &object, .cockpit);
     try std.testing.expect(object.afterburner);
     keyboard.read();
-    playerControls(&player, &keyboard, &object, .cockpit);
+    playerControls(&player, &devices, &object, .cockpit);
     try std.testing.expect(object.afterburner);
 
     // Out of fuel, neither burn runs.
     object.afterburner_fuel = 0;
-    playerControls(&player, &keyboard, &object, .cockpit);
+    playerControls(&player, &devices, &object, .cockpit);
     try std.testing.expect(!object.afterburner);
     try std.testing.expect(!object.reverse_thrust);
 }

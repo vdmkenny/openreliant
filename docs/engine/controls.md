@@ -62,14 +62,28 @@ and `JoyConfig` sections of `starlancer.ini` in the game's directory. The settin
 |---|---|---|
 | `ForceFeedback` | 1 | Stored at `0x51DA4C`. **Unknown:** its use. |
 | `JoystickInvert` | 1 | `joystick_invert` (`0x51D610`). While it is 0, pitch is reversed, from the stick, the keys and the mouse. |
-| `HatEnable` | 1 | Stored at `0x52029C`. **Unknown:** its use. |
+| `HatEnable` | 1 | `hat_enabled` (`0x52029C`). While it is set, the hat looks around ([The hat](#the-hat)). |
 | `TwistEnable` | 0 | `twist_enabled` (`0x595D88`). While it is set, the joystick's twist rolls the ship. |
 | `Controller` | 0 | `control_mode` (`0x57E064`), the device the player steers with: 0 the joystick, 1 the keyboard, 2 the mouse. With no joystick, 0 becomes 1. |
 
-Each action also has an entry in each section, named as the action. In `KeyConfig` the value is a
-scan code in decimal, after `SHIFT `, `CONTROL ` or `ALT ` for a modifier, or `JOY BUTTON ` and a
-button number; in `JoyConfig` it is `JOY BUTTON ` and a button number. A missing entry leaves the
-binding the game starts with.
+Each action also has an entry in each section, named after the action. In `KeyConfig` the value is
+a scan code in decimal, optionally after `SHIFT `, `CONTROL ` or `ALT ` for a modifier, or
+`JOY BUTTON ` and a button number; in `JoyConfig` it is `JOY BUTTON ` and a button number. Button
+numbers start at 0. A missing entry keeps the default binding: `load_key_config` formats the current
+binding the way it writes it, and passes that as the default to `GetPrivateProfileStringA` for both
+sections.
+
+That has two bugs, which only show when the file is edited by hand, since the game always writes
+both sections:
+
+- When the `KeyConfig` entry has a modifier, the check for `JOY BUTTON ` in the `JoyConfig` value
+  starts after the modifier's length, so an action bound to a key with a modifier can never also
+  have a joystick button.
+- The `JoyConfig` default is the binding as it was before the `KeyConfig` entry was read, so a
+  `JOY BUTTON` in `KeyConfig` is overwritten by the old button when `JoyConfig` has no entry.
+
+**Improvement:** the port fixes both: it checks the `JoyConfig` value from its start, and uses the
+button from `KeyConfig` as the `JoyConfig` default.
 
 ## Whether an action is active
 
@@ -97,6 +111,14 @@ latch once the key is up, and a modifier's once both its keys are up.
 - **Without `once`**, the key counts while it is down and, with no modifier, while no modifier is
   latched, or with one, while either key of the modifier is down. Then it clears the key's latch
   and the modifier's.
+
+## The hat
+
+`frame_controls` reads the joystick's first hat while `hat_enabled` is set and the joystick has a
+hat. Held straight forward, left, right or back, the hat switches to the cockpit's front, left,
+right or rear view, every frame while it is held; diagonals do nothing. `hat_glancing`
+(`0x51CF8C`) records that the hat is in use, so that the view returns to the front once it is
+released. Camera keys pressed in the same frame take priority.
 
 ## Steering
 
@@ -167,18 +189,36 @@ the ship. **Unknown:** what sets that byte.
 ## Porting
 
 The bindings and `starlancer.ini` hold DirectInput scan codes, which follow the IBM PC's set 1
-scan codes, with the extended keys at `0x80` and up. A port that reads input some other way maps
-its key codes to them, gives the joystick's axes in the ranges above, and gives the mouse's
-movement since the previous step. This one maps SDL's scan codes
-([`platform/keyboard.zig`](../../src/platform/keyboard.zig)), and ports `key_pressed`,
-`read_keyboard`'s latches and `control_active` in [`input.zig`](../../src/engine/input.zig).
+scan codes, with the extended keys at `0x80` and up. The port maps SDL's scan codes to them
+([`platform/keyboard.zig`](../../src/platform/keyboard.zig)).
 
-`playerControls` and `playerThrottleKeys` there port the keyboard's half of the two routines above.
-`Player` holds what the game keeps in globals: `throttle_setting`, `matching_speed` and
-`afterburner_toggled`. The engine runs them where `simulation_step` does, once per step, before the
-objects move.
+[`input.zig`](../../src/engine/input.zig) ports the input code: `key_pressed` and
+`read_keyboard`'s latches (`Keyboard`), the joystick (`Joystick`: `joystick_found`,
+`joystick_object_found` and `read_joystick`), and `control_active` with both keys and buttons
+(`Devices.active`). The joystick is read through `JoystickDevice`, an interface with the calls the
+game makes on its DirectInput device: capabilities, axis ranges, dead zone and polling.
+[`platform/joystick.zig`](../../src/platform/joystick.zig) implements it for SDL's joysticks and
+gamepads ([Platform](../port/platform.md#joysticks-and-gamepads)). `Devices` holds what the game
+keeps in globals: the device states, the bindings and the settings.
 
-Not yet ported: the joystick and the mouse, matching a target's speed, and the weapons and other
-actions the routine reads. `object_orders` clears the two burns before each order update and, after
-it, when the ship is out of fuel or its engines are disabled; only the fuel check is ported, in
+`playerControls` and `playerThrottleKeys` port the joystick and keyboard parts of the two
+routines above. `Player` holds `throttle_setting`, `matching_speed` and `afterburner_toggled`. The
+engine runs them where `simulation_step` does, once per step, before the objects move.
+`Camera.frameControls` ports the hat. `load_key_config` is ported in
+[`game/interface.zig`](../../src/engine/game/interface.zig), with the fixes above;
+[`profile.zig`](../../src/engine/profile.zig) reads the file as `GetPrivateProfileIntA` and
+`GetPrivateProfileStringA` do.
+
+**Improvement:** the port reads `starlancer.ini` again whenever a controller is connected or
+disconnected, since the settings and bindings depend on the controller. A gamepad gets its own
+default bindings and has `TwistEnable` on by default. `DeadZone` in `JoyConfig` sets the dead zone,
+which the original fixes at a tenth. A joystick that is disconnected is closed and reads as
+centered, where the original tries to acquire it again.
+
+Not yet ported: the mouse ([issue 115](https://github.com/vdmkenny/openreliant/issues/115)), force
+feedback ([issue 83](https://github.com/vdmkenny/openreliant/issues/83)), matching a target's
+speed, the weapons and other actions `player_controls` reads, and the special cases for the byte
+at `0x529FB8`, the word at `0x754` of the player's object and the flags at `0x51CEF8`, `0x51CEFC`
+and `0x51CF04`. `object_orders` clears the two burns before each order update and, after it, when
+the ship is out of fuel or its engines are disabled; only the fuel check is ported, in
 `playerControls` itself, since nothing runs orders yet.

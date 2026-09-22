@@ -22,6 +22,8 @@ pub const Event = union(enum) {
     /// A key went down or up, by its DirectInput scan code (`keyboard.directInput`): the key's
     /// place on the keyboard, whatever it types. Keys DirectInput has no code for are left out.
     key: struct { scan: u8, down: bool },
+    /// A joystick or gamepad was plugged in or out (`joystick`).
+    controllers,
 };
 
 pub const Window = struct {
@@ -80,6 +82,7 @@ pub const Window = struct {
                     const scan = keyboard.directInput(event.key.scancode) orelse continue;
                     return .{ .key = .{ .scan = scan, .down = event.key.down } };
                 },
+                c.SDL_EVENT_JOYSTICK_ADDED, c.SDL_EVENT_JOYSTICK_REMOVED => return .controllers,
                 else => {},
             }
         }

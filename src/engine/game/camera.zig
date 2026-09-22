@@ -139,6 +139,19 @@ pub const camera_actions = [_]controls.Action{
     .flyby_camera,   .target_camera,    .external_camera,   .missile_camera,
 };
 
+/// The view the joystick's hat switches to (`frame_controls`) for each of its four straight
+/// directions, given in DirectInput's hundredths of a degree clockwise from forward: the cockpit's
+/// front, right, rear or left view. Diagonals and the center select nothing.
+pub fn hatView(pov: u32) ?View {
+    return switch (pov) {
+        0 => .cockpit,
+        9000 => .cockpit_right,
+        18000 => .cockpit_rear,
+        27000 => .cockpit_left,
+        else => null,
+    };
+}
+
 /// The view a camera key picks (`frame_controls`), or null for another action. The cockpit key
 /// picks the cockpit view, and, pressed in it, cycles the cockpit mode.
 pub fn keyView(action: controls.Action) ?View {
@@ -213,6 +226,9 @@ pub const Camera = struct {
     /// Where the cockpit's model stands this frame, in view 0 outside the chase mode; null in the
     /// rest.
     cockpit_place: ?Cockpit.Placed = null,
+    /// Set while the joystick's hat is held (`0x0051CF8C`), so that the view returns to the front
+    /// when it is released.
+    hat_glancing: bool = false,
 
     /// Bars grow this share of the screen a tick, times their speed.
     pub const bar_rate: f32 = 0.001;
@@ -265,10 +281,12 @@ pub const Camera = struct {
 
     /// The camera's part of `frame_controls` for a frame `ticks` hundredths of a second long: in
     /// the target and external views, the arrow keys steer the orbit, with Shift up and down to
-    /// zoom; then each camera key pressed picks its view, the last one in the game's order
-    /// winning, with `player` as the object. The keys are read as the game reads them, in its order,
-    /// since `key_pressed` frees latches. Not yet ported: the joystick's hat.
-    pub fn frameControls(camera: *Camera, keyboard: *input.Keyboard, player: u16, ticks: u32, now: u32) void {
+    /// zoom. With `HatEnable`, holding the hat in a straight direction switches to the matching
+    /// cockpit view, and releasing it returns to the front view. Then each camera key that was
+    /// pressed selects its view (the last one in the game's order wins), with `player` as the
+    /// object. The keys are read in the game's order, since `key_pressed` clears latches.
+    pub fn frameControls(camera: *Camera, devices: *input.Devices, player: u16, ticks: u32, now: u32) void {
+        const keyboard = &devices.keyboard;
         if (camera.view == .target or camera.view == .external) {
             const scan = input.scan;
             var keys: Orbit.Keys = .{};
@@ -289,8 +307,17 @@ pub const Camera = struct {
             camera.orbit.steer(keys, @floatFromInt(ticks));
         }
         var chosen: ?View = null;
+        const glancing = camera.hat_glancing;
+        camera.hat_glancing = false;
+        if (devices.settings.hat_enabled and devices.joystick.hats != 0) {
+            if (hatView(devices.joystick.state.pov[0])) |view| {
+                chosen = view;
+                camera.hat_glancing = true;
+            }
+        }
+        if (glancing and !camera.hat_glancing) chosen = .cockpit;
         for (camera_actions) |action| {
-            if (input.controlActive(keyboard, controls.binding(action), true)) chosen = camera.key(action);
+            if (devices.active(action, true)) chosen = camera.key(action);
         }
         if (chosen) |view| _ = camera.setView(view, player, false, false, now);
     }
@@ -851,25 +878,56 @@ test flyby {
 
 test "Camera.frameControls" {
     var camera: Camera = .{};
-    var keyboard: input.Keyboard = .{};
+    var devices: input.Devices = .{};
+    const keyboard = &devices.keyboard;
     // The external camera's key, 7, picks its view once for the press.
     keyboard.down[controls.binding(.external_camera).key] = true;
-    camera.frameControls(&keyboard, 0, 1, 100);
+    camera.frameControls(&devices, 0, 1, 100);
     try std.testing.expectEqual(View.external, camera.view);
     try std.testing.expectEqual(100, camera.switched);
     camera.switched = 0;
-    camera.frameControls(&keyboard, 0, 1, 200);
+    camera.frameControls(&devices, 0, 1, 200);
     try std.testing.expectEqual(0, camera.switched);
 
     // In it, the left arrow turns the orbit.
     keyboard.down[input.scan.left] = true;
-    camera.frameControls(&keyboard, 0, 10, 300);
+    camera.frameControls(&devices, 0, 10, 300);
     try std.testing.expect(camera.orbit.yaw_speed < 0);
 
     // The cockpit key, pressed in the cockpit view, cycles the cockpit mode.
     _ = camera.setView(.cockpit, 0, false, false, 0);
-    keyboard = .{};
+    keyboard.* = .{};
     keyboard.down[controls.binding(.cockpit_camera).key] = true;
-    camera.frameControls(&keyboard, 0, 1, 400);
+    camera.frameControls(&devices, 0, 1, 400);
     try std.testing.expectEqual(CockpitMode.cockpit, camera.cockpit_mode);
+}
+
+test "the hat switches views while it is held" {
+    var camera: Camera = .{};
+    var devices: input.Devices = .{};
+    devices.joystick.hats = 1;
+    const pov = &devices.joystick.state.pov[0];
+
+    // Holding the hat left selects the left view, again every frame.
+    pov.* = 27000;
+    camera.frameControls(&devices, 0, 1, 100);
+    try std.testing.expectEqual(View.cockpit_left, camera.view);
+    camera.frameControls(&devices, 0, 1, 200);
+    try std.testing.expectEqual(200, camera.switched);
+    // Releasing it returns to the front view; a diagonal selects nothing.
+    pov.* = input.JoystickState.centred;
+    camera.frameControls(&devices, 0, 1, 300);
+    try std.testing.expectEqual(View.cockpit, camera.view);
+    pov.* = 4500;
+    camera.frameControls(&devices, 0, 1, 400);
+    try std.testing.expectEqual(300, camera.switched);
+
+    // Without HatEnable, the hat does nothing.
+    pov.* = 18000;
+    devices.settings.hat_enabled = false;
+    camera.frameControls(&devices, 0, 1, 500);
+    try std.testing.expectEqual(View.cockpit, camera.view);
+    devices.settings.hat_enabled = true;
+    camera.frameControls(&devices, 0, 1, 600);
+    try std.testing.expectEqual(View.cockpit_rear, camera.view);
 }

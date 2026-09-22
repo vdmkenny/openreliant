@@ -6,6 +6,7 @@ of a legally owned copy. The repository holds none of the game's files.
 
 | Path | Contents |
 |---|---|
+| [`controllers.md`](controllers.md) | For players: joysticks and gamepads, their default controls, and setting them up. |
 | [`toolchain.md`](toolchain.md) | What `make setup` installs, and the Ghidra workflow. |
 | [`binary/executables.md`](binary/executables.md) | The shipped binaries and the middleware they are built on. |
 | [`binary/runtime.md`](binary/runtime.md) | The C runtime linked into the game: Visual C++ 6.0's `LIBCMT`. |
@@ -30,7 +31,7 @@ of a legally owned copy. The repository holds none of the game's files.
 | [`engine/hud.md`](engine/hud.md) | The head-up display: how it is reached, where an element stands, its text and its art. |
 | [`engine/orders.md`](engine/orders.md) | Orders: the table of what objects can be told to do, each object's stack, and how orders run. |
 | [`engine/maneuvers.md`](engine/maneuvers.md) | Combat maneuvers: the scripts Fight runs, their language, and how it chooses them. |
-| [`port/platform.md`](port/platform.md) | The platform: the `openreliant` executable on SDL3, how to build and run it on each system. |
+| [`port/platform.md`](port/platform.md) | The platform: the `openreliant` executable on SDL3, how to build and run it on each system, the installer, and joysticks and gamepads. |
 | [`port/renderer.md`](port/renderer.md) | The renderer: Surrender's pipeline and Direct3D driver as ported, the software reference device, improvements and what is not yet ported. |
 
 ## Conventions
