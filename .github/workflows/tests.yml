@@ -1,5 +1,5 @@
-# Builds the executables and runs the tests on Linux, macOS and Windows for every push and pull
-# request.
+# Builds the executables and runs the tests on Linux, macOS and Windows for every pull request and
+# every push to main.
 name: Tests
 
 on:
