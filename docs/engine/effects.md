@@ -371,6 +371,16 @@ for one in the world, so the sparks fly from near the world's origin.
 
 **Improvement:** the port throws them from where the shot struck.
 
+What a hit leaves where it struck (`shieldfx_create`, `0x004A0310`), which `node_add_effect`
+(`0x004992D0`) hangs from the part struck as a node of kind 6, is its sound
+([Sound](sound.md#where-the-sounds-come-from)) and, for a shot through to a hull, an emitter of an
+orange template (`shieldfx_init`, `0x0049FD20`) on the part's surface nearest the point
+(`mesh_nearest_surface`, `0x0049FEF0`), facing out from it. A shot on a component leaves a burst of
+20 of the same template's particles. Nothing sends the hull's emitter's particles out: `node_draw`
+updates a node of kind 6 through `0x00458AB0`, the one routine the build keeps of every routine that
+only returns 1, so it shows nothing. [`shieldfx.zig`](../../src/engine/game/shieldfx.zig) ports the
+sound.
+
 [`sparks.zig`](../../src/engine/game/sparks.zig) ports the sparks,
 [`guns.zig`](../../src/engine/game/guns.zig) the hull's, and [`shield.zig`](../../src/engine/game/shield.zig)
 a shield's ([Shields](#shields)). Not ported: the other callers, a shot striking a component

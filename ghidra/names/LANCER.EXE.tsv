@@ -923,6 +923,17 @@ address	kind	name	type	comment
 0050887c	data	shield_level_reaches_by_detail		The six reaches for each detail: from 1250 to 40000, 2500 to 80000, 10000 to 320000
 0058fb70	data	capshields		The capital shields showing, 50 of 0x3C bytes: the node, its copy, when it ends, when it last moved, eight hits, the next, a force field
 00593728	data	capshield_next	int	The capital shields' pool slot the next takes
+004a0310	function	shieldfx_create		What a hit leaves where it struck, 12 bytes, by kind: 2 a hull hit, an orange emitter facing out from the surface and ARMOUR01 at the point in the part's frame, or PLAYERHIT on the player's ship at most every 30 ticks; 3 a component hit, a burst of 20; 4 a grey emitter; 5 sound 71 and 0x00472780
+0049fef0	function	mesh_nearest_surface		The point of a node's mesh nearest a point in the world, by each front-facing polygon's nearest point (simplex_nearest_point), and the surface's normal there
+0049fd20	function	shieldfx_init	void (void)	Once: gunflare_sfxalpha1, and the orange and grey templates of what a hit leaves
+0049fea0	function	shieldfx_free		Frees what a hit left, and the emitter of kinds 2 to 4
+0049fec0	function	shieldfx_deinit	void (void)	Frees the two templates
+004992d0	function	node_add_effect		Hangs what a hit left from the node struck, as a node of kind 6 in a free child slot; for kind 3 it first clears nearby ones and the oldest past ten, and flares a shield generator's capital shield instead
+00593790	data	shieldfx_orange		The orange template of what a hit leaves: 100-tick particles growing from 50 to 100, fading from orange
+0059378c	data	shieldfx_grey		The grey template of what a hit leaves: 50-tick particles growing from 25 to 50
+00593794	data	player_hit_at	int	When a shot last sounded PLAYERHIT on the player's hull
+00593784	data	shieldfx_ready	byte	Set once shieldfx_init has run
+00593788	data	shieldfx_texture		gunflare_sfxalpha1
 004c1510	function	vec3_cosine	float __fastcall (Vec3 *a, Vec3 *b)	The cosine of the angle between two vectors
 00507140	data	sound3d_definitions	Sound3DDefinition[76]	The 3D sounds, closed by a record whose entry is -1
 005085b4	data	sound3d_class_rows	byte[96]	Each 3D voice's class, 32 to a row: for up to 14 voices, up to 30, and more

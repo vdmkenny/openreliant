@@ -34,6 +34,7 @@ pub const objects = @import("game/objects.zig");
 pub const particles = @import("game/particles.zig");
 pub const pilots = @import("game/pilots.zig");
 pub const shield = @import("game/shield.zig");
+pub const shieldfx = @import("game/shieldfx.zig");
 pub const shockwave = @import("game/shockwave.zig");
 pub const sparks = @import("game/sparks.zig");
 pub const srofiles = @import("game/srofiles.zig");
