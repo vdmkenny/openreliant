@@ -93,10 +93,12 @@ pub const State = struct {
     receives: Receives = .nothing,
 };
 
-/// Which shadows a draw's pixels take: none, or the world's, which the layer sets.
+/// Which shadows a draw's pixels take, which the layer sets: none, the world's cascades, or the
+/// cockpit's map (`srshadow`).
 pub const Receives = enum(u32) {
     nothing = 0,
     world = 1,
+    cockpit = 2,
 };
 
 pub const Device = struct {

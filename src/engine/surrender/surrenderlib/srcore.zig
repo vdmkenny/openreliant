@@ -142,16 +142,7 @@ pub fn render(arena: Allocator, context: *srapi.Context, scene: *Scene, driver: 
     const lights = try arena.dupe(srlight.Light, scene.lights.items);
     std.mem.reverse(srlight.Light, lights);
     try driver.vtable.lights(driver.ptr, lights);
-    if (driver.vtable.shadows) |take| {
-        if (context.shadows) |settings| {
-            const world = scene.layers.get(.world).items;
-            if (try srshadow.gather(arena, context.*, lights, world, scene.casters.items, settings)) |frame| {
-                const stored = try arena.create(srshadow.Frame);
-                stored.* = frame;
-                take(driver.ptr, stored);
-            }
-        }
-    }
+    try castShadows(arena, context.*, scene, lights, driver);
 
     var budget: srmesh.Budget = .{};
     for (std.enums.values(Layer)) |layer| {
@@ -188,6 +179,18 @@ pub fn render(arena: Allocator, context: *srapi.Context, scene: *Scene, driver: 
         try over.draw(over.context);
     }
     driver.vtable.end(driver.ptr);
+}
+
+/// The port's: hands the driver the frame's shadows, where its device draws them (`srshadow`).
+fn castShadows(arena: Allocator, context: srapi.Context, scene: *const Scene, lights: []const srlight.Light, driver: Driver) Allocator.Error!void {
+    const take = driver.vtable.shadows orelse return;
+    const settings = context.shadows orelse return;
+    const world = scene.layers.get(.world).items;
+    const overlay = scene.layers.get(.overlay).items;
+    const frame = try srshadow.gather(arena, context, lights, world, overlay, scene.casters.items, settings) orelse return;
+    const stored = try arena.create(srshadow.Frame);
+    stored.* = frame;
+    take(driver.ptr, stored);
 }
 
 test key {

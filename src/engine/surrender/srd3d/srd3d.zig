@@ -298,11 +298,13 @@ pub const Driver = struct {
         };
     }
 
-    /// The shadows a layer's pixels take: the world's take the world's, and the rest none.
+    /// The shadows a layer's pixels take: the world's the world's, the overlay's, which holds the
+    /// cockpit, the cockpit's, and the background's none.
     fn receives(layer: Layer) device.Receives {
         return switch (layer) {
+            .background => .nothing,
             .world => .world,
-            .background, .overlay => .nothing,
+            .overlay => .cockpit,
         };
     }
 

@@ -1,6 +1,6 @@
-//! The shadow maps (`srshadow`): a depth texture with a layer for each cascade, the frame's casters
-//! drawn into each before the frame itself, and what the device's shader looks them up with
-//! (`shaders/device.glsl`).
+//! The shadow maps (`srshadow`): a depth texture with a layer for each cascade and one for the
+//! cockpit, the frame's casters drawn into each before the frame itself, and what the device's
+//! shader looks them up with (`shaders/device.glsl`).
 //!
 //! **Improvement:** the original drew no shadows. `Quality.off`, which `Settings.original` sets,
 //! leaves them out.
@@ -53,29 +53,33 @@ pub const Quality = enum {
 
 /// What the device's shader reads of the frame's shadows, in std140's layout.
 pub const Uniforms = extern struct {
-    cascades: [srshadow.cascade_count]Cascade = @splat(.{}),
+    /// Each map's box: the cascades', then the cockpit's.
+    boxes: [srshadow.map_count]Box = @splat(.{}),
     /// The first: 1 where the frame has shadows, and 0 where it has none. The second: how far apart
-    /// the lookup's taps are, as a share of a map. The third: 1 for sixteen taps, 0 for four.
+    /// the lookup's taps are, as a share of a map. The third: 1 for sixteen taps, 0 for four. The
+    /// fourth: 1 where the cockpit has a map.
     settings: [4]f32 = @splat(0),
 
-    const Cascade = extern struct {
+    const Box = extern struct {
         rows: [3][4]f32 = @splat(@splat(0)),
-        /// The view depth it reaches to, and a texel's width in the world.
+        /// A cascade's view depth, which it reaches to, and a texel's width in the world.
         extent: [4]f32 = @splat(0),
     };
 
     fn of(frame: *const srshadow.Frame, quality: Quality) Uniforms {
         const step = quality.spacing() / @as(f32, @floatFromInt(quality.texels()));
-        var uniforms: Uniforms = .{ .settings = .{ 1, step, @floatFromInt(@intFromBool(quality.wide())), 0 } };
-        for (&uniforms.cascades, frame.cascades) |*taken, cascade| {
-            taken.* = .{ .rows = cascade.rows, .extent = .{ cascade.far, cascade.texel, 0, 0 } };
+        const wide: f32 = @floatFromInt(@intFromBool(quality.wide()));
+        var uniforms: Uniforms = .{ .settings = .{ 1, step, wide, @floatFromInt(@intFromBool(frame.cockpit != null)) } };
+        for (&uniforms.boxes, 0..) |*taken, map| {
+            const box = frame.box(map) orelse continue;
+            taken.* = .{ .rows = box.rows, .extent = .{ box.far, box.texel, 0, 0 } };
         }
         return uniforms;
     }
 
     comptime {
-        std.debug.assert(@sizeOf(Cascade) == 64);
-        std.debug.assert(@offsetOf(Uniforms, "settings") == srshadow.cascade_count * 64);
+        std.debug.assert(@sizeOf(Box) == 64);
+        std.debug.assert(@offsetOf(Uniforms, "settings") == srshadow.map_count * 64);
     }
 };
 
@@ -86,8 +90,8 @@ const bias_slope: f32 = 1.5;
 
 pub const Shadows = struct {
     quality: Quality,
-    /// A layer for each cascade: one texel across while there are no shadows, for the shader to
-    /// bind all the same.
+    /// A layer for each map: one texel across while there are no shadows, for the shader to bind
+    /// all the same.
     maps: *c.SDL_GPUTexture,
     /// Compares a depth with the map's, filtered between the four texels around it.
     sampler: *c.SDL_GPUSampler,
@@ -157,7 +161,7 @@ pub const Shadows = struct {
         info.usage = c.SDL_GPU_TEXTUREUSAGE_SAMPLER | c.SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET;
         info.width = across;
         info.height = across;
-        info.layer_count_or_depth = srshadow.cascade_count;
+        info.layer_count_or_depth = srshadow.map_count;
         info.num_levels = 1;
         return c.SDL_CreateGPUTexture(handle, &info) orelse gpu.fail("SDL_CreateGPUTexture");
     }
@@ -210,15 +214,16 @@ pub const Shadows = struct {
         try Geometry.upload(&shadows.geometry, handle, copy, std.mem.sliceAsBytes(frame.positions), std.mem.sliceAsBytes(frame.indices));
     }
 
-    /// Draws the casters into each cascade's map, each run into the cascades it reaches, before
+    /// Draws the casters into each map the frame has, each run into the maps it reaches, before
     /// the frame is drawn. A map with no caster is cleared all the same.
     pub fn draw(shadows: *Shadows, commands: *c.SDL_GPUCommandBuffer) error{Sdl}!void {
         const frame = shadows.frame orelse return;
         const pipeline = shadows.pipeline orelse return;
-        for (frame.cascades, 0..) |cascade, index| {
+        for (0..srshadow.map_count) |map| {
+            const box = frame.box(map) orelse continue;
             var depth = std.mem.zeroes(c.SDL_GPUDepthStencilTargetInfo);
             depth.texture = shadows.maps;
-            depth.layer = @intCast(index);
+            depth.layer = @intCast(map);
             depth.clear_depth = 1;
             depth.load_op = c.SDL_GPU_LOADOP_CLEAR;
             depth.store_op = c.SDL_GPU_STOREOP_STORE;
@@ -229,9 +234,9 @@ pub const Shadows = struct {
             const geometry = shadows.geometry orelse continue;
             c.SDL_BindGPUGraphicsPipeline(pass, pipeline);
             geometry.bind(pass);
-            c.SDL_PushGPUVertexUniformData(commands, 0, &cascade.rows, @sizeOf(@TypeOf(cascade.rows)));
+            c.SDL_PushGPUVertexUniformData(commands, 0, &box.rows, @sizeOf(@TypeOf(box.rows)));
             for (frame.runs) |run| {
-                if (run.cascades.isSet(index)) c.SDL_DrawGPUIndexedPrimitives(pass, run.count, 1, run.first, 0, 0);
+                if (run.maps.isSet(map)) c.SDL_DrawGPUIndexedPrimitives(pass, run.count, 1, run.first, 0, 0);
             }
         }
     }
@@ -243,7 +248,7 @@ pub const Shadows = struct {
 };
 
 test "Uniforms.of" {
-    var frame: srshadow.Frame = .{ .cascades = undefined, .positions = &.{}, .indices = &.{}, .runs = &.{} };
+    var frame: srshadow.Frame = .{ .cascades = undefined, .cockpit = null, .positions = &.{}, .indices = &.{}, .runs = &.{} };
     for (&frame.cascades, 0..) |*cascade, index| {
         const n: f32 = @floatFromInt(index);
         cascade.* = .{ .rows = @splat(@splat(n)), .far = 1000 * (n + 1), .texel = n + 0.5, .half = 1 };
@@ -251,6 +256,11 @@ test "Uniforms.of" {
     const uniforms: Uniforms = .of(&frame, .high);
     try std.testing.expectEqual([4]f32{ 1, 1.4 / 4096.0, 1, 0 }, uniforms.settings);
     try std.testing.expectEqual(0, Uniforms.of(&frame, .low).settings[2]);
-    try std.testing.expectEqual([4]f32{ 3000, 2.5, 0, 0 }, uniforms.cascades[2].extent);
-    try std.testing.expectEqual([4]f32{ 3, 3, 3, 3 }, uniforms.cascades[3].rows[1]);
+    try std.testing.expectEqual([4]f32{ 3000, 2.5, 0, 0 }, uniforms.boxes[2].extent);
+    try std.testing.expectEqual([4]f32{ 3, 3, 3, 3 }, uniforms.boxes[3].rows[1]);
+    // With a cockpit, its box follows the cascades'.
+    frame.cockpit = .{ .rows = @splat(@splat(9)), .texel = 0.01, .half = 20 };
+    const inside: Uniforms = .of(&frame, .high);
+    try std.testing.expectEqual(1, inside.settings[3]);
+    try std.testing.expectEqual([4]f32{ 0, 0.01, 0, 0 }, inside.boxes[srshadow.cockpit_map].extent);
 }
