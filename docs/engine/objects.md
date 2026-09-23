@@ -497,6 +497,23 @@ anything, one that only a player can hit from anyone else. One in the last state
 Armour below zero destroys the object (`object_destroyed`, `0x00401F30`), telling it that it may spin
 out, and that a player's pilot has no time to eject where the blow was over 1000.
 
+Outside multiplayer the game's difficulty (`0x00562F14`: 0 easy, 1 medium, 2 hard, which SET GAME
+DIFFICULTY starts at medium) scales damage (`damage_by_difficulty`, `0x00463D70`):
+
+| Difficulty | A shot on a hostile object | Anything on the player's ship |
+|---|---|---|
+| Easy | ×1.5 | ×0.375 |
+| Medium | ×1 | ×0.5 |
+| Hard | ×0.75 | ×0.75 |
+
+`object_damage` (`0x00463EE0`) scales what the shield takes, but reckons what passes through from
+the damage before the scaling. `object_armor_damage` scales its damage twice, once for
+`recent_damage` and that again for the armour, and `component_damage` (`0x004645C0`) once. So at
+medium a hit on the player's ship takes half off its shield and a quarter of what gets through off
+its armour. The game tells a shot by comparing the damage's kind with the player's slot, which is
+0, a shot's kind, in a single-player game. The port takes the difficulty from `--difficulty`,
+medium by default.
+
 - An AI ship's pilot ejects where the mission lets it, `0x74C` clear, and its roll at `0x70C` is
   below 40, or where the ship was told to eject before exploding. The ship spins on under Eject
   Spin (108).

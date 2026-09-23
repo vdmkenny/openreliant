@@ -56,6 +56,7 @@ improvements off, and an option after it turns one back on.
 |---|---|
 | `--ship <type>` | The ship type to fly, by its number in `shipstats.bin`; 0, the Predator, by default |
 | `--view <0\|1\|2>` | The view it starts in, as the game's settings keep it: 0 the cockpit, the default; 1 the chase view; 2 no cockpit |
+| `--difficulty <easy\|medium\|hard>` | The game's difficulty: how hard hits land on your ship, and shots on the enemy; medium by default, as in the game |
 | `--music <file>` | The piece of `music\` it plays, or `none`; `New_Mission01.wav` by default |
 
 **Display.**

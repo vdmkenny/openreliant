@@ -39,6 +39,7 @@ const Arg = enum {
     @"--original",
     @"--ship",
     @"--view",
+    @"--difficulty",
     @"--music",
     @"--fullscreen",
     @"--size",
@@ -102,6 +103,7 @@ const docs: std.enums.EnumArray(Arg, Doc) = .init(.{
     .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings and particles as few and plain as the original's, and the sound mixed plainly in stereo" },
     .@"--ship" = .{ .section = .sandbox, .value = "<type>", .text = "the ship type to fly, by its number in shipstats.bin; 0, the Predator, by default" },
     .@"--view" = .{ .section = .sandbox, .value = "<0|1|2>", .text = "the view it starts in, as the game's settings keep it: 0 the cockpit, the default; 1 the chase view; 2 no cockpit" },
+    .@"--difficulty" = .{ .section = .sandbox, .value = "<easy|medium|hard>", .text = "the game's difficulty: how hard hits land on your ship, and shots on the enemy; medium by default, as in the game" },
     .@"--music" = .{ .section = .sandbox, .value = "<file>", .text = "the piece from the game's music folder it plays, or none; New_Mission01.wav by default" },
     .@"--fullscreen" = .{ .section = .display, .text = "fill the display; Alt and Enter switch while playing" },
     .@"--size" = .{ .section = .display, .value = "<width>x<height>", .text = "draw frames of this size in pixels whatever the window's, which shows them scaled; for a screenshot larger than the display" },
@@ -191,6 +193,7 @@ const Options = struct {
     ship: usize = 0,
     /// The options' cockpit setting, the ini's `[Device] View`.
     cockpit: camera.CockpitSetting = .cockpit,
+    difficulty: game.collision.Difficulty = .medium,
     screenshot: ?[]const u8 = null,
     fullscreen: bool = false,
     software: bool = false,
@@ -270,6 +273,7 @@ const Options = struct {
                 if (setting > 2) return error.BadValue;
                 options.cockpit = @enumFromInt(setting);
             },
+            .@"--difficulty" => options.difficulty = std.meta.stringToEnum(game.collision.Difficulty, value) orelse return error.BadValue,
             .@"--music" => options.music = if (std.mem.eql(u8, value, "none")) null else value,
             .@"--fullscreen" => options.fullscreen = true,
             .@"--size" => options.settings.size = parseSize(value) orelse return error.BadValue,
@@ -554,11 +558,9 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     defer shockwaves.deinit(gpa);
     var sparks: game.sparks.Sparks = try .create(gpa, &textures);
     defer sparks.deinit();
-    try sandbox.start(.{
-        .world = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .shockwaves = &shockwaves, .sparks = &sparks },
-        .clock = &clock,
-        .devices = &devices,
-    }, @intCast(options.ship));
+    // What the objects run in, the camera's view brought up to date each frame.
+    var world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .difficulty = options.difficulty, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .shockwaves = &shockwaves, .sparks = &sparks };
+    try sandbox.start(.{ .world = world, .clock = &clock, .devices = &devices }, @intCast(options.ship));
     // The music, as a mission's script starts it (`cmd_PlayMusic`): from `music\`, for ever, at 80.
     if (options.music) |name| {
         const path = try std.fmt.allocPrint(arena, "music\\{s}", .{name});
@@ -622,7 +624,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         if (frames_left != null) clock.advanceBy(now / platform.window.tick_nanoseconds, 1) else clock.advanceToFine(now, platform.window.tick_nanoseconds);
         // While the communications window is open the keys 1 to 8 are its menu's.
         devices.keyboard.numbers_taken = display.state.windows.status.get(.comms).phase == .open;
-        const world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .shockwaves = &shockwaves, .sparks = &sparks };
+        world.view = view.view;
         const orders: game.aigeneric.Context = .{ .world = world, .clock = &clock, .devices = &devices };
         while (clock.nextTick(&devices, world)) |_| {}
         clock.frameBegin();
@@ -1302,6 +1304,11 @@ test Options {
     try std.testing.expectError(error.Usage, play(&.{ "--ship", "0x0E" }));
     try std.testing.expectError(error.Usage, play(&.{"--bogus"}));
     try std.testing.expectEqualStrings("shot.png", (try play(&.{ "--screenshot", "shot.png" })).screenshot.?);
+    // Medium, the game's own default, unless told otherwise.
+    try std.testing.expectEqual(.medium, (try play(&.{})).difficulty);
+    try std.testing.expectEqual(.hard, (try play(&.{ "--difficulty", "hard" })).difficulty);
+    try std.testing.expectEqual(.medium, (try play(&.{ "--original", "--difficulty", "medium" })).difficulty);
+    try std.testing.expectError(error.Usage, play(&.{ "--difficulty", "ace" }));
 
     // The improvements on by default; the original's look, and single settings after it.
     const plain = try play(&.{});

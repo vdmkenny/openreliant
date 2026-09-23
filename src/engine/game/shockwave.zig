@@ -435,15 +435,16 @@ test "a torpedo's shockwave" {
     slot.object.shields = .all(1000);
     mission.player.shield_reserves = .{ .fore = 100, .aft = 1000 };
 
-    // A fifth through its life it passes the player: each quadrant takes 240, the fore's reserve
-    // runs out and the shield takes what it held, and the aft's reserve holds.
+    // A fifth through its life it passes the player: each quadrant takes 240, which lands on the
+    // player's ship at half at medium difficulty; the fore's reserve runs out and the shield takes
+    // half what it held, and the aft's reserve holds.
     setOff(world, .{}, .{ .kind = .torpedo, .size = 6000, .life = 100, .owner = torpedo });
     mission.clock.frame_start = 20;
     built.waves.frame(world);
     const shields = &slot.object.shields;
-    try std.testing.expectApproxEqAbs(760, shields.at(.left).*, 1e-3);
-    try std.testing.expectApproxEqAbs(760, shields.at(.right).*, 1e-3);
-    try std.testing.expectApproxEqAbs(900, shields.at(.fore).*, 1e-3);
+    try std.testing.expectApproxEqAbs(880, shields.at(.left).*, 1e-3);
+    try std.testing.expectApproxEqAbs(880, shields.at(.right).*, 1e-3);
+    try std.testing.expectApproxEqAbs(950, shields.at(.fore).*, 1e-3);
     try std.testing.expectEqual(1000, shields.at(.aft).*);
     try std.testing.expectEqual(0, mission.player.shield_reserves.fore);
     try std.testing.expectApproxEqAbs(760, mission.player.shield_reserves.aft, 1e-3);
@@ -455,5 +456,5 @@ test "a torpedo's shockwave" {
     setOff(world, .{}, .{ .kind = .torpedo, .size = 6000, .life = 100, .owner = torpedo });
     mission.clock.frame_start = 40;
     built.waves.frame(world);
-    try std.testing.expectApproxEqAbs(760, shields.at(.left).*, 1e-3);
+    try std.testing.expectApproxEqAbs(880, shields.at(.left).*, 1e-3);
 }
