@@ -55,24 +55,26 @@ pub const Quality = enum {
 pub const Uniforms = extern struct {
     /// Each map's box: the cascades', then the cockpit's.
     boxes: [srshadow.map_count]Box = @splat(.{}),
-    /// The first: 1 where the frame has shadows, and 0 where it has none. The second: how far apart
-    /// the lookup's taps are, as a share of a map. The third: 1 for sixteen taps, 0 for four. The
-    /// fourth: 1 where the cockpit has a map.
+    /// The first: 1 where the frame has shadows, and 0 where it has none. The second: 1 for
+    /// sixteen taps, 0 for four. The third: 1 where the cockpit has a map.
     settings: [4]f32 = @splat(0),
 
     const Box = extern struct {
         rows: [3][4]f32 = @splat(@splat(0)),
-        /// A cascade's view depth, which it reaches to, and a texel's width in the world.
+        /// A cascade's view depth, which it reaches to; a texel's width in the world; how much of
+        /// the sun a full shadow takes away; and how far apart the lookup's taps are, as a share
+        /// of the map.
         extent: [4]f32 = @splat(0),
     };
 
     fn of(frame: *const srshadow.Frame, quality: Quality) Uniforms {
         const step = quality.spacing() / @as(f32, @floatFromInt(quality.texels()));
         const wide: f32 = @floatFromInt(@intFromBool(quality.wide()));
-        var uniforms: Uniforms = .{ .settings = .{ 1, step, wide, @floatFromInt(@intFromBool(frame.cockpit != null)) } };
+        var uniforms: Uniforms = .{ .settings = .{ 1, wide, @floatFromInt(@intFromBool(frame.cockpit != null)), 0 } };
         for (&uniforms.boxes, 0..) |*taken, map| {
             const box = frame.box(map) orelse continue;
-            taken.* = .{ .rows = box.rows, .extent = .{ box.far, box.texel, 0, 0 } };
+            const look: Look = if (map == srshadow.cockpit_map) .cockpit else .world;
+            taken.* = .{ .rows = box.rows, .extent = .{ box.far, box.texel, look.depth, step * look.spread } };
         }
         return uniforms;
     }
@@ -81,6 +83,20 @@ pub const Uniforms = extern struct {
         std.debug.assert(@sizeOf(Box) == 64);
         std.debug.assert(@offsetOf(Uniforms, "settings") == srshadow.map_count * 64);
     }
+};
+
+/// How dark and how soft a map's shadows are: how much of the sun a full shadow takes away, and how
+/// much wider than the quality's the lookup's taps spread.
+///
+/// **Improvement:** the cockpit's shadows are kept faint and soft, so that the struts' shadows
+/// sweep across the dashboard without blacking it out. The cockpit takes both key lights, and its
+/// map's texels are so fine that its shadows' edges would otherwise be razor sharp.
+const Look = struct {
+    depth: f32,
+    spread: f32,
+
+    const world: Look = .{ .depth = 1, .spread = 1 };
+    const cockpit: Look = .{ .depth = 0.4, .spread = 3 };
 };
 
 /// How the depth pass keeps a surface from shadowing itself: a little farther from the sun, and
@@ -254,13 +270,13 @@ test "Uniforms.of" {
         cascade.* = .{ .rows = @splat(@splat(n)), .far = 1000 * (n + 1), .texel = n + 0.5, .half = 1 };
     }
     const uniforms: Uniforms = .of(&frame, .high);
-    try std.testing.expectEqual([4]f32{ 1, 1.4 / 4096.0, 1, 0 }, uniforms.settings);
-    try std.testing.expectEqual(0, Uniforms.of(&frame, .low).settings[2]);
-    try std.testing.expectEqual([4]f32{ 3000, 2.5, 0, 0 }, uniforms.boxes[2].extent);
+    try std.testing.expectEqual([4]f32{ 1, 1, 0, 0 }, uniforms.settings);
+    try std.testing.expectEqual(0, Uniforms.of(&frame, .low).settings[1]);
+    try std.testing.expectEqual([4]f32{ 3000, 2.5, 1, 1.4 / 4096.0 }, uniforms.boxes[2].extent);
     try std.testing.expectEqual([4]f32{ 3, 3, 3, 3 }, uniforms.boxes[3].rows[1]);
-    // With a cockpit, its box follows the cascades'.
+    // With a cockpit, its box follows the cascades', its shadows fainter and softer.
     frame.cockpit = .{ .rows = @splat(@splat(9)), .texel = 0.01, .half = 20 };
     const inside: Uniforms = .of(&frame, .high);
-    try std.testing.expectEqual(1, inside.settings[3]);
-    try std.testing.expectEqual([4]f32{ 0, 0.01, 0, 0 }, inside.boxes[srshadow.cockpit_map].extent);
+    try std.testing.expectEqual(1, inside.settings[2]);
+    try std.testing.expectEqual([4]f32{ 0, 0.01, 0.4, 3 * 1.4 / 4096.0 }, inside.boxes[srshadow.cockpit_map].extent);
 }

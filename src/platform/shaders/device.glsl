@@ -98,7 +98,9 @@ layout(location = 0) out vec4 result;
 
 // A map's box along the sun (srshadow.zig): where a point of the camera's frame falls in the map,
 // each row dotted with the point and 1, across and up from -1 to 1 and its depth from the sun's
-// side from 0 to 1; a cascade's view depth, which it reaches to; and a texel's width in the world.
+// side from 0 to 1; then a cascade's view depth, which it reaches to, a texel's width in the world,
+// how much of the sun a full shadow takes away, and how far apart the lookup's taps are, as a share
+// of the map.
 struct Box {
     vec4 rows[3];
     vec4 extent;
@@ -109,8 +111,8 @@ const int cockpitMap = cascadeCount;
 
 layout(set = 3, binding = 2) uniform Shadows {
     Box boxes[cascadeCount + 1];
-    // x: 1 where the frame has shadows. y: how far apart the lookup's taps are, as a share of a
-    // map. z: 1 to look them up in sixteen taps rather than four. w: 1 where the cockpit has a map.
+    // x: 1 where the frame has shadows. y: 1 to look them up in sixteen taps rather than four. z: 1
+    // where the cockpit has a map.
     vec4 settings;
 } shadows;
 
@@ -118,32 +120,32 @@ layout(set = 3, binding = 2) uniform Shadows {
 // is looked up, so that a surface does not shade itself.
 const float normalOffset = 1.5;
 
-// How much of the sun reaches the pixel in map `map`, from 0 in shadow to 1: from a square of taps
-// around it, two or four across, each comparing the four texels around it. Outside the map it is
-// lit.
+// How much of the sun reaches the pixel in map `map`, from its box's depth of shadow to 1: from a
+// square of taps around it, two or four across, each comparing the four texels around it. Outside
+// the map it is lit.
 float lookUp(int map, vec3 n) {
     Box box = shadows.boxes[map];
     vec4 p = vec4(place + n * (box.extent.y * normalOffset), 1.0);
     vec3 at = vec3(dot(box.rows[0], p), dot(box.rows[1], p), dot(box.rows[2], p));
     if (any(greaterThan(abs(at.xy), vec2(1.0)))) return 1.0;
     vec2 uv = vec2(at.x, -at.y) * 0.5 + 0.5;
-    int across = shadows.settings.z > 0.0 ? 4 : 2;
+    int across = shadows.settings.y > 0.0 ? 4 : 2;
     float middle = float(across - 1) * 0.5;
     float sum = 0.0;
     for (int y = 0; y < across; y++) {
         for (int x = 0; x < across; x++) {
-            vec2 offset = (vec2(x, y) - middle) * shadows.settings.y;
+            vec2 offset = (vec2(x, y) - middle) * box.extent.w;
             sum += texture(shadowMaps, vec4(uv + offset, float(map), at.z));
         }
     }
-    return sum / float(across * across);
+    return 1.0 - box.extent.z * (1.0 - sum / float(across * across));
 }
 
 // How much of the sun reaches the pixel: the cockpit's in its own map, where there is one; the
 // world's in the first cascade that reaches as deep as it stands, fading to lit toward the last
 // cascade's end.
 float sunlit(vec3 n) {
-    if (shade == 2u) return shadows.settings.w > 0.0 ? lookUp(cockpitMap, n) : 1.0;
+    if (shade == 2u) return shadows.settings.z > 0.0 ? lookUp(cockpitMap, n) : 1.0;
     for (int i = 0; i < cascadeCount; i++) {
         float far = shadows.boxes[i].extent.x;
         if (place.z > far) continue;
