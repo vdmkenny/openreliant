@@ -219,15 +219,16 @@ pub const Scene = struct {
     random: *@import("../libcmt.zig").Rand,
 };
 
-/// What the game's code reaches the sound through: the sound, and the camera it is heard from,
-/// placed each frame (the game reads its camera's frame, `sr + 0x30`).
+/// What the game's code reaches the sound through: the sound, the camera it is heard from,
+/// placed each frame (the game reads its camera's frame, `sr + 0x30`), and the mission's clock.
 pub const Hearing = struct {
     sound: *Sound,
     camera: *const camera.Place,
+    clock: *const Clock,
 
-    /// The scene a 3D sound is placed in, for `world` at `clock`.
-    pub fn scene(hearing: Hearing, world: @import("gameobj.zig").World, clock: *const Clock) Scene {
-        return .{ .objects = world.objects, .camera = hearing.camera.*, .view = world.view, .clock = clock, .random = world.random };
+    /// The scene a 3D sound is placed in, for `world`.
+    pub fn scene(hearing: Hearing, world: @import("gameobj.zig").World) Scene {
+        return .{ .objects = world.objects, .camera = hearing.camera.*, .view = world.view, .clock = hearing.clock, .random = world.random };
     }
 };
 
@@ -259,6 +260,10 @@ pub const Sound = struct {
     effects: sound3d.Effects = .{},
     /// The live objects (`game_objects`), whose voices `end3D` lets go of.
     objects: ?*@import("create.zig").Objects = null,
+    /// `betty.fat` (`bank_betty`, `0x0056654C`): the cockpit's warnings.
+    betty: ?fat.Bank = null,
+    /// When the player's armour last warned (`0x00588334`, `main.armorWarning`).
+    armor_warned_at: i32 = 0,
 
     /// `sound_init` (`0x00481440`), as far as the port goes: up to 16 voices for the banks, each a
     /// sample of `driver`, and the timer that steps the fades. `driver` is null where the platform

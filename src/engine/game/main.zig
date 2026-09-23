@@ -508,10 +508,8 @@ test "the radar's backing stands where the radar does" {
 /// quarter of each side's; the cruise speed (`armor_speed_factor`), a quarter plus three quarters
 /// of the aft one's; and the shields' recharge (`shield_condition`), a quarter of each quadrant's.
 /// `create_object` runs it once the armour is full, and the damage as it wears. **Unverified:** it
-/// lies after `language.cpp`'s code, where `main.cpp`'s begins, next to `mission_frame`.
-///
-/// Not ported yet: for the player's ship, the warning it sounds at most every 500 ticks while a
-/// quadrant has lost its shield and half its armour (#49).
+/// lies after `language.cpp`'s code, where `main.cpp`'s begins, next to `mission_frame`. For the
+/// player's ship it goes on to the warning (`armorWarning`).
 pub fn armorConditions(object: *gameobj.GameObject, combat: *const create.ShipCombat) void {
     const full: f32 = @floatFromInt(combat.armor_class * 6 - 1);
     const fore = object.armor.fore / full;
@@ -520,6 +518,52 @@ pub fn armorConditions(object: *gameobj.GameObject, combat: *const create.ShipCo
     object.gun_condition = fore * 0.5 + sides;
     object.armor_speed_factor = aft * 0.75 + 0.25;
     object.shield_condition = fore * 0.25 + aft * 0.25 + sides;
+}
+
+/// The rest of `object_armor_conditions` (`0x00492370`), for the player's ship: once a quadrant has
+/// lost its shield and half its armour, the cockpit's warning, sound 1 of `betty.fat`, no more than
+/// once in 500 ticks.
+pub fn armorWarning(hearing: hog_snd.Hearing, object: *const gameobj.GameObject, combat: *const create.ShipCombat) void {
+    const sound = hearing.sound;
+    const frame_start = hearing.clock.frame_start;
+    if (frame_start - sound.armor_warned_at <= 500) return;
+    const half = @as(f32, @floatFromInt(combat.armor_class * 6 - 1)) * 0.5;
+    for (object.shields.values(), object.armor.values()) |shield, armor| {
+        if (shield > 0 or armor >= half) continue;
+        if (sound.betty) |bank| _ = sound.play(bank, 1, 127, 1, 64, 0);
+        sound.armor_warned_at = frame_start;
+        return;
+    }
+}
+
+test armorWarning {
+    const mss = @import("../mss.zig");
+    var driver: mss.Driver = .init(22050);
+    var sound: hog_snd.Sound = undefined;
+    sound.init(&driver, 2, null);
+    const bytes = comptime hog_snd.testing.bank(2);
+    sound.betty = try @import("../../formats/fat.zig").Bank.parse(&bytes);
+    var clock: Clock = .{ .frame_start = 1000 };
+    const view: camera.Place = .{ .position = @splat(0), .orientation = math.identity };
+    const hearing: hog_snd.Hearing = .{ .sound = &sound, .camera = &view, .clock = &clock };
+    const combat = std.mem.zeroInit(create.ShipCombat, .{ .armor_class = 5 });
+    var object = gameobj.testing.object();
+    object.shields = .all(10);
+    object.armor = .all(29);
+
+    // Whole, or with its shields up, no warning.
+    armorWarning(hearing, &object, &combat);
+    object.armor.left = 10;
+    armorWarning(hearing, &object, &combat);
+    try std.testing.expectEqual(0, sound.armor_warned_at);
+    // A quadrant with its shield gone and under half its armour warns, and not again for 500
+    // ticks.
+    object.shields.left = 0;
+    armorWarning(hearing, &object, &combat);
+    try std.testing.expectEqual(1000, sound.armor_warned_at);
+    clock.frame_start = 1400;
+    armorWarning(hearing, &object, &combat);
+    try std.testing.expectEqual(1000, sound.armor_warned_at);
 }
 
 test armorConditions {

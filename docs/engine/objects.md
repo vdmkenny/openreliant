@@ -480,12 +480,12 @@ its full armor, `6 * armor_class - 1`, the fore quadrant being the third and the
 the shields' (`0x664`), a quarter of each quadrant's; the guns' (`0x66C`), half the fore one's and
 a quarter of each side's; and the cruise speed's (`0x668`), a quarter plus three quarters of the
 aft one's. `create_object` runs it once the armor is full. For the player's ship it also sounds a
-warning, at most every 500 ticks, while a quadrant has lost its shield and half its armor.
+warning, sound 1 of `betty.fat`, at most every 500 ticks (`0x00588334`), while a quadrant has lost
+its shield and half its armor.
 
 [`gameobj.zig`](../../src/engine/game/gameobj.zig) ports the recharge as `rechargeShields`, which
 `simulationStep` runs, and [`main.zig`](../../src/engine/game/main.zig) the conditions as
-`armorConditions`. Not ported: the multiplayer case, and the warning
-([#49](https://github.com/vdmkenny/openreliant/issues/49)).
+`armorConditions` and the warning as `armorWarning`. Not ported: the multiplayer case.
 
 ## Components
 

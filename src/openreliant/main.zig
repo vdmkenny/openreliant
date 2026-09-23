@@ -363,6 +363,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     // `bank_stdsmp`, which the positional sounds of a frame play from, and `smp3d.fat`, which the
     // 3D sounds do.
     const stdsmp = try openreliant.fat.Bank.parse(try resources.readFile(arena, "stdsmp.fat"));
+    sound.betty = try openreliant.fat.Bank.parse(try resources.readFile(arena, "betty.fat"));
     sound.open3D(try openreliant.fat.Bank.parse(try resources.readFile(arena, "smp3d.fat")));
 
     // The camera as a mission's launch leaves it: in the cockpit mode the options pick.
@@ -371,7 +372,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     // The mission's clocks, which `mission_run` zeroes before it loops.
     var clock: game.main.Clock = .{};
     clock.start(platform.window.ticks());
-    const hearing: game.hog_snd.Hearing = .{ .sound = sound, .camera = &view.place };
+    const hearing: game.hog_snd.Hearing = .{ .sound = sound, .camera = &view.place, .clock = &clock };
     try sandbox.start(.{
         .world = .{ .objects = sandbox.objects, .player = &player, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing },
         .clock = &clock,
@@ -497,7 +498,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         sound.timerTick(clock.game_ticks);
         sound.updateMusic();
         sound.playBuffered(stdsmp);
-        sound.update3D(hearing.scene(world, &clock));
+        sound.update3D(hearing.scene(world));
 
         // The GPU draws at the display's own resolution; the software device at the window's size
         // in points, made again when it changes.
@@ -742,7 +743,7 @@ const Sandbox = struct {
         // The engine's sound, which a mission starts as the player's ship launches (`launch_run`).
         if (orders.world.hearing) |hearing| {
             const engine_sound = game.sound3d.engineSound(ship_type);
-            _ = game.sound3d.play(hearing.sound, hearing.scene(orders.world, orders.clock), null, null, index, engine_sound, 0, .player_engines);
+            _ = game.sound3d.play(hearing.sound, hearing.scene(orders.world), null, null, index, engine_sound, 0, .player_engines);
         }
         // The order a mission's start gives the player's ship, which its controls fly it by.
         _ = game.aigeneric.push(orders, index, .player_control, .none) catch |err| {

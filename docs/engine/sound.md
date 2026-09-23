@@ -177,6 +177,8 @@ the start. The stream's volume is `round(((Musicvolume × level) / 127) × Maste
 - A shot the step hears (`guns.heard`) plays its gun type's sound following it, on a voice of the
   player's guns for the player's shots, of the guaranteed ones for the Huge Guns'.
 - A flak shell plays `FLAK01` as it bursts.
+- The player's ship warns, sound 1 of `betty.fat`, once a quadrant has lost its shield and half its
+  armour ([Objects](objects.md)).
 - A Huge Gun's shot striking a component plays `EXPLOSION01` where it strikes.
 
 Not ported: the radio's speech and its double buffer; the CD's audio; the missiles' sounds

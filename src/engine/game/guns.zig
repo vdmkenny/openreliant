@@ -1035,20 +1035,20 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, gun: Fitted,
         const pitch = (draw(world.random) - 0.5) * flak_scatter;
         bullet.velocity = math.transform(math.fromAngles(pitch, yaw, roll), bullet.velocity);
     }
-    if (is_heard) shotSound(world, clock, @intCast(index), kind, record.sound, owner == all.player);
+    if (is_heard) shotSound(world, @intCast(index), kind, record.sound, owner == all.player);
     candidates(world, bullet, record, lifetime);
 }
 
 /// The sound a shot makes as it is fired (`bullet_fire`), its gun type's, following it: on a voice
 /// of the player's guns for the player's shots, and on a guaranteed one for the huge guns'.
-fn shotSound(world: gameobj.World, clock: *const Clock, index: u8, kind: GunType, sound: i32, player: bool) void {
+fn shotSound(world: gameobj.World, index: u8, kind: GunType, sound: i32, player: bool) void {
     const hearing = world.hearing orelse return;
     const which = std.enums.fromInt(sound3d.sounds.Sound, sound) orelse return;
     const class: sound3d.Class = switch (kind) {
         .allied_huge_gun, .coalition_huge_gun => .guaranteed,
         else => if (player) .player_guns else .not_reserved,
     };
-    _ = sound3d.play(hearing.sound, hearing.scene(world, clock), null, null, index, which, 1, class);
+    _ = sound3d.play(hearing.sound, hearing.scene(world), null, null, index, which, 1, class);
 }
 
 /// The objects `bullet_place` gives a new shot: those its path comes near enough to over its life,
@@ -1150,7 +1150,7 @@ pub fn bulletsFrame(world: gameobj.World, clock: *const Clock, fraction: f32) vo
         }
         // A flak shell bursts as it ends. Not ported: the burst itself (#41).
         if (bullet.kind == .turret_flak) if (world.hearing) |hearing| {
-            _ = sound3d.play(hearing.sound, hearing.scene(world, clock), null, null, @intCast(index), .flak01, 1, .explosions);
+            _ = sound3d.play(hearing.sound, hearing.scene(world), null, null, @intCast(index), .flak01, 1, .explosions);
         };
         bullets.release(@intCast(index));
     }
@@ -1414,7 +1414,7 @@ test "a heard shot sounds, following it" {
     sound.open3D(try @import("../../formats/fat.zig").Bank.parse(&bank));
     const listener: @import("camera.zig").Place = .{ .position = @splat(0), .orientation = math.identity };
     var world = ship.world();
-    world.hearing = .{ .sound = &sound, .camera = &listener };
+    world.hearing = .{ .sound = &sound, .camera = &listener, .clock = &ship.mission.clock };
 
     // Unheard, nothing plays; heard, the gun type's sound follows the shot.
     shoot(world, &ship.mission.clock, ship.index, ship.guns()[0], false);

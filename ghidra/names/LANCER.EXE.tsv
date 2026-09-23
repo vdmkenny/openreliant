@@ -165,7 +165,7 @@ address	kind	name	type	comment
 00565080	data	sound_voices	SoundVoice[16]	Voices, 0x20 bytes each
 005d6ca0	data	bank_stdsmp		stdsmp.fat
 00524748	data	bank_ldsmp		ldsmp.fat
-0056654c	data	bank_betty		betty.fat
+0056654c	data	bank_betty		betty.fat: the cockpit's warnings
 0058cb10	data	bank_smp3d		smp3d.fat
 00587ce0	data	game_objects	GameObject *[400]	The GO array: every live object, a mission ship's at its index among the ship records
 005883fa	data	player_index	short	Slot of the player's own object in game_objects
@@ -845,3 +845,4 @@ address	kind	name	type	comment
 005d55ec	data	volume_music	int	Musicvolume
 005d5e88	data	volume_speech	int	Speechvolume
 0048f160	function	sound_settings_save	void (void)	Writes Fxvolume, Musicvolume, Speechvolume and Mastervolume to [Sound] of the settings file
+00588334	data	armor_warned_at	int	The frame_start the player's armour last warned at: object_armor_conditions warns no more than once in 500 ticks

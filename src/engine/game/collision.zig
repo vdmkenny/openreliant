@@ -313,7 +313,10 @@ pub fn armorDamage(world: gameobj.World, index: u16, struck: Quadrant, value: f3
     if (object.invulnerable != .none) return;
 
     object.armor.at(struck).* -= value;
-    if (slot.combat) |combat| main.armorConditions(object, combat);
+    if (slot.combat) |combat| {
+        main.armorConditions(object, combat);
+        if (index == all.player) if (world.hearing) |hearing| main.armorWarning(hearing, object, combat);
+    }
     object.last_attacker = attacker;
 }
 
