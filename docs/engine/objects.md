@@ -50,6 +50,8 @@ again and again, and the game's loops never end; the port walks it once.
 | `0x634` | 2 | Where its lights stand in their [blinks](rendering.md#static-lights), in ticks added to the mission's clock: `rand()` over its largest value, times 100 and truncated, when allocated (`object_alloc`, `0x00475DD0`) |
 | `0x618` | 8 | The slots of two objects it passes through: the collision sweep tests no pair where either names the other. -1 when created |
 | `0x644` | 4 | Its side: 0 friendly, 1 hostile, 2 neutral. Its type's when created; `SetHostile` makes it hostile or friendly |
+| `0x658`, `0x65C` | 8 | Its [smoke](effects.md#smoke)'s template and emitter, or null for none |
+| `0x660` | 1 | Its smoke's level, 0 to 3, by its damage |
 | `0x664` | 4 | The shields' condition, how well they [recharge](#shields) as the armor wears: 1.0 when created |
 | `0x668` | 4 | The cruise speed's condition, which `object_cruise_speed` scales the speed by: 1.0 when created |
 | `0x66C` | 4 | The guns' condition: 1.0 when created. The guns recharge by it, and below 0.9 each shot goes off only as often as it plus a tenth (`guns_step`, `0x004770E0`) |

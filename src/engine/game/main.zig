@@ -4,9 +4,9 @@
 //! file's.
 //!
 //! Ported so far: the clocks and the pacing, how `mission_frame` frames the objects and puts the
-//! scene together and draws it, what the mission's start (`0x004934F0`) fits the player's ship
-//! with, and the armour's conditions (`0x00492370`). Not yet: the effects and the rest of what it
-//! adds to the scene.
+//! scene together and draws it, the damaged ships' smoke (`smoke`), what the mission's start
+//! (`0x004934F0`) fits the player's ship with, and the armour's conditions (`0x00492370`). Not yet:
+//! the rest of the effects and of what it adds to the scene.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -37,6 +37,8 @@ const nebula = @import("nebula.zig");
 const objects = @import("objects.zig");
 const srofiles = @import("srofiles.zig");
 const xtrabits = @import("xtrabits.zig");
+
+pub const smoke = @import("main/smoke.zig");
 
 // --- The clocks and the loop ---------------------------------------------------------------
 
@@ -193,10 +195,11 @@ pub const Frame = struct {
     backing: ?*RadarBacking = null,
     /// Whether DISPLAY KILLS is held, which leaves the backing out.
     kills_shown: bool = false,
-    /// The sparks and the particles, which go into the world's layer after the shots, the
-    /// explosions' bits, pieces and fireballs, and the shockwaves.
+    /// The sparks and the particles, the smoke's among them, which go into the world's layer
+    /// after the shots, the explosions' bits, pieces and fireballs, and the shockwaves.
     sparks: ?*sparks.Sparks = null,
     particles: ?*particles.Pool = null,
+    smoke: ?*smoke.Pools = null,
     /// How far past the frame's tick the effects are drawn, as a share of a tick
     /// (`objects.pastTick`).
     ahead: f32 = 0,
@@ -211,9 +214,10 @@ pub const Frame = struct {
 /// `mission_frame` (`0x004924B0`), as far as the objects go: every object's orders, which fly the
 /// ships and read the player's controls, then the frames they are drawn at, then the shots in
 /// flight (`guns.bulletsFrame`), then the sparks (`sparks.Sparks.frame`) and the particles
-/// (`particles.Pool.frame`), which `particles_frame` runs together, the explosions
-/// (`explode.Explosions.frame`) and the shockwaves (`shockwave.Shockwaves.frame`). A mission and the sandbox alike run this once a frame, before the
-/// camera's own frame and anything drawn.
+/// (`particles.Pool.frame`, `smoke.Pools.frame`), which `particles_frame` runs together, the
+/// damaged ships' smoke (`smoke.frame`), the explosions (`explode.Explosions.frame`) and the
+/// shockwaves (`shockwave.Shockwaves.frame`). A mission and the sandbox alike run this once a
+/// frame, before the camera's own frame and anything drawn.
 ///
 /// Not ported: the rest of the frame's work, which is the mission's events, its scripts and the
 /// missiles ([#30](https://github.com/vdmkenny/openreliant/issues/30),
@@ -224,6 +228,8 @@ pub fn missionFrame(orders: aigeneric.Context, fraction: f32) void {
     guns.bulletsFrame(orders.world, orders.clock, fraction);
     if (orders.world.sparks) |thrown| thrown.frame(orders.clock);
     if (orders.world.particles) |pool| pool.frame(orders.clock);
+    if (orders.world.smoke) |pools| pools.frame(orders.clock);
+    smoke.frame(orders.world);
     if (orders.world.explosions) |explosions| explosions.frame(orders.world);
     if (orders.world.shockwaves) |waves| waves.frame(orders.world);
 }
@@ -238,7 +244,7 @@ pub fn frameObjects(all: *create.Objects, fraction: f32) void {
     while (walk.next()) |index| {
         const slot = &all.slots[index];
         const object = &slot.object;
-        if (object.flags.stand_in or object.flags.disabled or object.flags.jumping) continue;
+        if (object.flags.outOfFrame()) continue;
         object.missile_homing = 0;
         objects.frameTree(&object.root, if (slot.model) |*model| model else null, &slot.drawn, fraction);
     }
@@ -265,6 +271,7 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     try guns.drawBullets(gpa, scene, &frame.objects.bullets, context.hardware);
     if (frame.sparks) |thrown| try thrown.draw(gpa, scene, frame.ahead);
     if (frame.particles) |pool| try pool.draw(gpa, scene, frame.ahead);
+    if (frame.smoke) |pools| try pools.draw(gpa, scene, frame.ahead);
     if (frame.explosions) |explosions| try explosions.draw(gpa, scene, frame.ahead);
     if (frame.shockwaves) |waves| try waves.draw(gpa, scene, frame.ahead);
     try frame.space.frame(gpa, scene, context, frame.view, frame.cockpit_mode);
@@ -288,15 +295,14 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
 /// throttle of its last update times the share of its engines left, and nothing at all while it is
 /// `hidden`, as the ship the camera sits in is.
 ///
-/// Not ported yet: the cloak; what else the pass draws for a few types, and the damage's smoke and
-/// its models (#41); the cutaway scenes' own rules, and the gate's tunnel, in which no object is
-/// drawn.
+/// Not ported yet: the cloak; what else the pass draws for a few types (#41); the cutaway scenes'
+/// own rules, and the gate's tunnel, in which no object is drawn. The pass's smoke is `smoke.frame`.
 pub fn drawObjects(gpa: Allocator, scene: *srcore.Scene, all: *create.Objects, attachments: objects.View) Allocator.Error!void {
     var walk = all.walk();
     while (walk.next()) |index| {
         const slot = &all.slots[index];
         const object = &slot.object;
-        if (object.flags.stand_in or object.flags.disabled or object.flags.jumping) continue;
+        if (object.flags.outOfFrame()) continue;
         if (object.flags.hidden) continue;
         const model = if (slot.model) |*model| model else continue;
         var view = attachments;
@@ -557,7 +563,7 @@ test "the radar's backing stands where the radar does" {
 /// lies after `language.cpp`'s code, where `main.cpp`'s begins, next to `mission_frame`. For the
 /// player's ship it goes on to the warning (`armorWarning`).
 pub fn armorConditions(object: *gameobj.GameObject, combat: *const create.ShipCombat) void {
-    const full: f32 = @floatFromInt(combat.armor_class * 6 - 1);
+    const full = combat.fullArmor() - 1;
     const fore = object.armor.fore / full;
     const aft = object.armor.aft / full;
     const sides = (object.armor.left / full) * 0.25 + (object.armor.right / full) * 0.25;
@@ -573,7 +579,7 @@ pub fn armorWarning(hearing: hog_snd.Hearing, object: *const gameobj.GameObject,
     const sound = hearing.sound;
     const frame_start = hearing.clock.frame_start;
     if (frame_start - sound.armor_warned_at <= 500) return;
-    const half = @as(f32, @floatFromInt(combat.armor_class * 6 - 1)) * 0.5;
+    const half = (combat.fullArmor() - 1) * 0.5;
     for (object.shields.values(), object.armor.values()) |held, armor| {
         if (held > 0 or armor >= half) continue;
         if (sound.betty) |bank| _ = sound.play(bank, 1, 127, 1, 64, 0);

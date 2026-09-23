@@ -121,6 +121,7 @@ pub const exported = [_]Export{
     .{ "ParticleTemplate", engine.game.particles.Template },
     .{ "ParticleKind", engine.game.particles.Template.Kind },
     .{ "ParticleCurve", engine.game.particles.Curve },
+    .{ "SmokeLevel", engine.game.main.smoke.Level },
 
     // Combat maneuvers.
     .{ "ManeuverOpcode", engine.game.aidefend.Opcode },

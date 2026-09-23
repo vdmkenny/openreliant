@@ -148,23 +148,37 @@ pub const Explosions = struct {
     /// has no model for is not thrown.
     pub fn throwBit(explosions: *Explosions, at: Vector, direction: Vector, how: Bit.Throw, clock: *const Clock, random: *libcmt.Rand) void {
         _ = random.rand();
-        const levels = explosions.debris.piece(random.fraction()).slice();
-        if (levels.len == 0) return;
-        const scale = (random.fraction() + 0.5) * how.size;
+        const piece = explosions.debris.pick(how.size, random) orelse return;
         const leaving = direction * @as(Vector, @splat((random.fraction() + 0.5) * Bit.speed));
         const stray = random.centredVector(@splat(Bit.stray));
         const velocity = math.transform(math.fromAngleVector(stray), leaving) * @as(Vector, @splat(how.speed));
+        explosions.addBit(piece, at, velocity, Bit.flight, clock, random);
+    }
+
+    /// `0x00471B20`, a stream's spark (`particles.Emitter.spark`): a small piece of debris thrown
+    /// out of `at` at `velocity` a second, in the place of the oldest bit, turning a random way each
+    /// frame, for -1 to 3 seconds. One whose flight is over before it starts is let go before it is
+    /// drawn, having still taken the oldest bit's place. A piece the game has no model for is not
+    /// thrown.
+    pub fn throwSpark(explosions: *Explosions, at: Vector, velocity: Vector, clock: *const Clock, random: *libcmt.Rand) void {
+        const piece = explosions.debris.pick(Bit.spark_size, random) orelse return;
+        explosions.addBit(piece, at, velocity, Bit.spark_flight, clock, random);
+    }
+
+    /// Puts `piece` in the place of the oldest bit, lit, at `at`, flying at `velocity` a second,
+    /// turning a random way each frame, for `flight`'s ticks from now.
+    fn addBit(explosions: *Explosions, piece: Debris.Picked, at: Vector, velocity: Vector, flight: Bit.Flight, clock: *const Clock, random: *libcmt.Rand) void {
         const spin = random.centredVector(@splat(Bit.tumble));
         explosions.bits.take(explosions.settings.detail.bits()).* = .{
             .born = clock.frame_start,
-            .life = Bit.flight + @as(i32, @intFromFloat(random.centred() * Bit.flight_spread)),
+            .life = flight.draw(random),
             .object = .{
                 .flags = .{ .lit = true },
                 .light_mask = explosions.settings.debris_lights.mask(objects.lightMask(false)),
                 .position = at,
-                .scale = scale,
-                .radius = levels[0].mesh.radius,
-                .levels = levels,
+                .scale = piece.scale,
+                .radius = piece.levels[0].mesh.radius,
+                .levels = piece.levels,
             },
             .at = at,
             .velocity = velocity,
@@ -291,6 +305,20 @@ pub const Debris = struct {
         return debris;
     }
 
+    /// A piece picked for a bit, and how large it is drawn.
+    const Picked = struct {
+        levels: []const srapiext.Level,
+        scale: f32,
+    };
+
+    /// A piece for a bit, by a draw (`piece`), drawn at half to one and a half times `size` by
+    /// another; null, drawing no more, where the game has no model for it.
+    fn pick(debris: *const Debris, size: f32, random: *libcmt.Rand) ?Picked {
+        const levels = debris.piece(random.fraction()).slice();
+        if (levels.len == 0) return null;
+        return .{ .levels = levels, .scale = (random.fraction() + 0.5) * size };
+    }
+
     /// The piece for a draw of `r`: the first below a quarter, the last below a half, and one of
     /// the rest above.
     fn piece(debris: *const Debris, r: f32) *const Levels {
@@ -326,10 +354,21 @@ pub const Bit = struct {
     const speed: f32 = 3000;
     const stray: f32 = 0.5;
     const tumble: f32 = 0.1;
-    /// How long it flies, in ticks, and how much more or less, half of it either way
-    /// (`0x004DC83C`).
-    const flight = 2000;
-    const flight_spread: f32 = 500;
+    /// How long it flies (`0x004DC83C`); and a spark's size, and how long it flies
+    /// (`0x004DC844`).
+    const flight: Flight = .{ .ticks = 2000, .spread = 500 };
+    const spark_size: f32 = 0.1;
+    const spark_flight: Flight = .{ .ticks = 100, .spread = 400 };
+
+    /// How long a bit flies, in ticks, and how much more or less, half of `spread` either way.
+    const Flight = struct {
+        ticks: i32,
+        spread: f32,
+
+        fn draw(how_long: Flight, random: *libcmt.Rand) i32 {
+            return how_long.ticks + @as(i32, @intFromFloat(random.centred() * how_long.spread));
+        }
+    };
     /// Its velocity is a second's, which is 100 ticks (`0x004DC518`).
     const per_tick: f32 = 0.01;
 
@@ -559,8 +598,7 @@ const Flames = struct {
 /// Sends `count` particles out of `emitter` at once, as the camera sees them.
 fn burstFrom(world: gameobj.World, emitter: *particles.Emitter, count: i32) void {
     const pool = world.particles orelse return;
-    const view = (world.camera orelse return).place;
-    pool.burst(emitter, null, count, view, world.clock, world.random);
+    pool.burst(emitter, null, count, world.sending() orelse return);
 }
 
 /// A burst of `flame` from a ship at `at`, moving at `velocity`, spreading out mostly across the
@@ -885,7 +923,7 @@ test blast {
     try mission.init(std.testing.allocator);
     defer mission.deinit();
     var image: @import("../surrender/surrenderlib/srtexture.zig").Image = undefined;
-    var pool: particles.Pool = try .init(std.testing.allocator, 1000, &image);
+    var pool: particles.Pool = try .init(std.testing.allocator, 1000, &image, .add);
     defer pool.deinit();
     var watching: @import("camera.zig").Camera = .{};
     var explosions: Explosions = try .init(std.testing.allocator, testing.images());
@@ -909,7 +947,7 @@ test blast {
     // The original thins them: all 400 of the flame, which thins slowly, and three quarters of the
     // sparkle, its half-size of 25 times 150 over the distance. The rounding is even.
     pool.reset();
-    pool.distant = .thinned;
+    pool.settings.distant = .thinned;
     blast(world, ship);
     try std.testing.expectEqual(400 + 112, testing.sent(&pool));
 }
@@ -964,6 +1002,57 @@ test Bit {
     for (0..Detail.low.bits() + 1) |_| explosions.throwBit(@splat(0), .{ 0, 0, 1 }, .{ .size = 1, .speed = 1 }, clock, &random);
     try std.testing.expectEqual(Detail.low.bits(), testing.flying(explosions));
     try std.testing.expectEqual(1, explosions.bits.next);
+}
+
+test "Explosions.throwSpark" {
+    const gpa = std.testing.allocator;
+    const mesh = try @import("../surrender/surrenderlib/srmesh.zig").testing.square(gpa);
+    defer mesh.deinit(gpa);
+    var stage: testing.Stage = undefined;
+    try stage.init();
+    defer stage.deinit();
+    const explosions = &stage.explosions;
+    explosions.debris = testing.debris(&mesh);
+    const clock = &stage.mission.clock;
+    clock.frame_start = 10;
+    var random: libcmt.Rand = .{};
+
+    // A spark is a small bit that flies as fast as it is thrown, for -1 to 3 seconds.
+    explosions.throwSpark(.{ 0, 0, 100 }, .{ 0, 0, 500 }, clock, &random);
+    const spark = &explosions.bits.slots[0].?;
+    try std.testing.expectEqual(Vector{ 0, 0, 500 }, spark.velocity);
+    try std.testing.expectEqual(Vector{ 0, 0, 100 }, spark.at);
+    try std.testing.expect(spark.object.scale >= 0.05 and spark.object.scale <= 0.15);
+    try std.testing.expect(spark.life >= -100 and spark.life <= 300);
+    try std.testing.expectEqual(10, spark.born);
+}
+
+test "a stream's sparks" {
+    const gpa = std.testing.allocator;
+    const mesh = try @import("../surrender/surrenderlib/srmesh.zig").testing.square(gpa);
+    defer mesh.deinit(gpa);
+    var stage: testing.Stage = undefined;
+    try stage.init();
+    defer stage.deinit();
+    const explosions = &stage.explosions;
+    explosions.debris = testing.debris(&mesh);
+    var image: srtexture.Image = undefined;
+    var pool: particles.Pool = try .init(gpa, 8, &image, .add);
+    defer pool.deinit();
+    const clock = &stage.mission.clock;
+    clock.frame_duration = 4;
+
+    // A template of sparks sends no particles, and a spark for each particle of the pool it
+    // passes, leaving at the emitter's speed, a second's, where the emitter stands.
+    const sparking: particles.Template = .{ .kind = .sparks, .life = 100, .rate = .through(100, 100, 100), .size = .through(1, 1, 1), .colour = @splat(.through(1, 1, 1)) };
+    var emitter: particles.Emitter = .{ .born = 0, .life = 100, .template = &sparking, .place = .{ .position = .{ 0, 0, 50 } }, .direction = .{ 0, 0, 1 }, .speed = 2 };
+    const sending: particles.Sending = .{ .view = .{}, .clock = clock, .random = &stage.mission.random, .explosions = explosions };
+    try std.testing.expect(pool.stream(&emitter, null, sending));
+    try std.testing.expectEqual(0, pool.used);
+    try std.testing.expectEqual(8, testing.flying(explosions));
+    const spark = explosions.bits.slots[0].?;
+    try std.testing.expectEqual(Vector{ 0, 0, 50 }, spark.at);
+    try std.testing.expectEqual(Vector{ 0, 0, 200 }, spark.velocity);
 }
 
 test Debris {

@@ -32,6 +32,7 @@ const motion = @import("motion.zig");
 const objects = @import("objects.zig");
 const pilots = @import("pilots.zig");
 const shield = @import("shield.zig");
+const smoke = @import("main/smoke.zig");
 const srofiles = @import("srofiles.zig");
 const xtrabits = @import("xtrabits.zig");
 
@@ -222,6 +223,17 @@ pub const ShipCombat = extern struct {
         _,
     };
 
+    /// Six times its `armor_class`: a quadrant's full armour, which the game measures the
+    /// armour's wear against. `create_object` starts each quadrant one below it.
+    pub fn fullArmor(combat: *const ShipCombat) f32 {
+        return @floatFromInt(combat.armor_class * 6);
+    }
+
+    /// Six times its `shield_power`: a quadrant's full shields, likewise.
+    pub fn fullShields(combat: *const ShipCombat) f32 {
+        return @floatFromInt(combat.shield_power * 6);
+    }
+
     comptime {
         assert(@offsetOf(ShipCombat, "shield_recharge") == 0x0C);
         assert(@offsetOf(ShipCombat, "gun_groups") == 0x1C);
@@ -336,6 +348,8 @@ pub const Slot = struct {
     /// Its shields' bubble (`GameObject.render`), which a ship that lists no components and is not
     /// debris has.
     shield: ?*shield.Bubble = null,
+    /// Its smoke, while its damage shows (`GameObject.smoke`).
+    smoke: ?smoke.Stream = null,
 
     /// Lets go of what the slot holds for its object: its model, its guns and its shield bubble
     /// (`object_free`).
@@ -547,7 +561,8 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.fought_by = 0;
     object.motion = .null;
     object.side = .neutral;
-    object._unknown_65c = 0;
+    object.smoke = .null;
+    slot.smoke = null;
     // Its armour whole.
     object.shield_condition = 1;
     object.armor_speed_factor = 1;
@@ -616,8 +631,8 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object._unknown_24 = 0;
     pilots.setPilot(object, if (combat.side == .hostile) coalition_pilot else 0);
     // Each quadrant's shields and armour full.
-    object.shields = .all(@as(f32, @floatFromInt(combat.shield_power * 6)) - 1);
-    object.armor = .all(@as(f32, @floatFromInt(combat.armor_class * 6)) - 1);
+    object.shields = .all(combat.fullShields() - 1);
+    object.armor = .all(combat.fullArmor() - 1);
     main.armorConditions(object, combat);
     if (!object.flags.components and combat.class != .debris) slot.shield = try shield.Bubble.create(all.gpa, object.radius, combat.side);
 

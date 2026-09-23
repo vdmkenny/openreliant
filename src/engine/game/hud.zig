@@ -2318,8 +2318,8 @@ test "the rings follow the shields and the armour" {
     const index = try mission.add(.sabre, @splat(0));
     const slot = mission.slot(index);
     const combat = slot.combat.?;
-    slot.object.shields = .all(@floatFromInt(combat.shield_power * 6));
-    slot.object.armor = .all(@floatFromInt(combat.armor_class * 6));
+    slot.object.shields = .all(combat.fullShields());
+    slot.object.armor = .all(combat.fullArmor());
     slot.object.armor.left = @floatFromInt(combat.armor_class * 2);
     var found = ShipStatus.rings(slot).?;
     try std.testing.expectEqual([4]i32{ 5, 5, 5, 5 }, found.shields);
