@@ -57,8 +57,9 @@ pub fn build(b: *std.Build) void {
     platform.addImport("al", openal_c.createModule());
     platform.linkLibrary(openal_library);
     if (macos_sdk) |sdk| {
-        platform.addSystemFrameworkPath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "System/Library/Frameworks" }) });
-        platform.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "usr/lib" }) });
+        // OpenAL Soft reads its configuration through CoreFoundation on a Mac.
+        addMacosSdk(b, openal_library.root_module, sdk);
+        addMacosSdk(b, platform, sdk);
     }
     // The installer unpacks the game's cabinet with libarchive, which deps/libarchive builds from
     // source for the target.
@@ -69,11 +70,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     archive_c.addIncludePath(archive_library.getEmittedIncludeTree());
-    if (macos_sdk) |sdk| {
-        archive_library.root_module.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "usr/include" }) });
-        archive_library.root_module.addSystemFrameworkPath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "System/Library/Frameworks" }) });
-        archive_library.root_module.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "usr/lib" }) });
-    }
+    if (macos_sdk) |sdk| addMacosSdk(b, archive_library.root_module, sdk);
     const openreliant = b.addExecutable(.{
         .name = "openreliant",
         .root_module = b.createModule(.{
@@ -170,4 +167,12 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(ghidragen_tests).step);
     test_step.dependOn(&b.addRunArtifact(openreliant_tests).step);
     test_step.dependOn(&b.addRunArtifact(platform_tests).step);
+}
+
+/// Gives `module` the macOS SDK's headers, frameworks and libraries at `sdk`, which a build for a
+/// Mac other than the host does not find by itself.
+fn addMacosSdk(b: *std.Build, module: *std.Build.Module, sdk: []const u8) void {
+    module.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "usr/include" }) });
+    module.addSystemFrameworkPath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "System/Library/Frameworks" }) });
+    module.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "usr/lib" }) });
 }
