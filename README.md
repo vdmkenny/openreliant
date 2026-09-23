@@ -47,7 +47,7 @@ armour. Shots still pass through capital ships.
 You hear it as the game sounds: your guns and theirs, your engine rising with the throttle and
 roaring on afterburner, fighters sweeping past, and the game's music. The sounds are placed around
 you, in surround where you have the speakers for it, with a light reverb and a compressor that
-keeps loud fights clean. On headphones, `--hrtf` places them more convincingly. `--music` picks
+keeps loud fights clean; on headphones they are placed for headphones. `--music` picks
 another piece from the game's `music` folder, or `none`; `--no-sound` turns it all off, and
 `--original` plays the sound plainly, as the original mixed it.
 

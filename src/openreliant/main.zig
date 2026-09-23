@@ -68,7 +68,9 @@ const usage =
     \\  --software                draw on the software device, the port's reference
     \\  --music <file>            the piece of music\\ the sandbox plays, or none; New_Mission01.wav
     \\                            by default
-    \\  --hrtf                    place the sounds for headphones
+    \\  --hrtf                    place the sounds for headphones, whatever the output; by
+    \\                            default they are while the output is headphones
+    \\  --no-hrtf                 place the sounds for speakers, whatever the output
     \\  --no-reverb               play the sounds around you without reverb
     \\  --no-compressor           leave the mix's loudness as it is, only keeping its peaks in
     \\                            check
@@ -99,7 +101,7 @@ const Options = struct {
 
     const default_music = "New_Mission01.wav";
 
-    const Flag = enum { @"--fullscreen", @"--original", @"--16-bit", @"--no-vsync", @"--no-bloom", @"--no-dither", @"--no-pixel-lighting", @"--no-smooth-motion", @"--few-shot-lights", @"--software", @"--hrtf", @"--no-reverb", @"--no-compressor", @"--no-sound" };
+    const Flag = enum { @"--fullscreen", @"--original", @"--16-bit", @"--no-vsync", @"--no-bloom", @"--no-dither", @"--no-pixel-lighting", @"--no-smooth-motion", @"--few-shot-lights", @"--software", @"--hrtf", @"--no-hrtf", @"--no-reverb", @"--no-compressor", @"--no-sound" };
     const Option = enum { @"--ship", @"--view", @"--screenshot", @"--size", @"--msaa", @"--filter", @"--fps", @"--music" };
 
     /// OpenAL Soft's settings, which a setting for it after `--original` plays with again.
@@ -131,7 +133,10 @@ const Options = struct {
                 .@"--few-shot-lights" => options.shot_lights = .latest_two,
                 .@"--software" => options.software = true,
                 .@"--hrtf" => if (options.openAl()) |settings| {
-                    settings.hrtf = true;
+                    settings.hrtf = .on;
+                },
+                .@"--no-hrtf" => if (options.openAl()) |settings| {
+                    settings.hrtf = .off;
                 },
                 .@"--no-reverb" => if (options.openAl()) |settings| {
                     settings.reverb = false;
@@ -445,12 +450,19 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     var frame_arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
     defer frame_arena.deinit();
 
+    // The window's activation, which a screenshot doesn't wait on.
+    var app: game.winmain.App = .{};
     while (true) {
         while (window.poll()) |event| switch (event) {
             .quit => return,
             .key => |key| devices.keyboard.down[key.scan] = key.down,
             .controllers => connectController(arena, &devices, &controller, settings_file),
+            .active => |active| app.active = active or frames_left != null,
         };
+        // While the window is inactive, the game and its sound are paused, as the message pump
+        // pauses them.
+        game.winmain.followActivation(&app, sound, &clock);
+        if (output) |open| open.update();
         // The timer's ticks since the last pass, then a game tick for each, as `mission_run` paces
         // them: the simulation steps on every fourth, reading the keyboard as it goes, and runs the
         // objects' updates. A screenshot takes one tick a frame so that the camera settles the same
@@ -522,10 +534,12 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         // The frame's sound, heard from where the camera now is: the fades `tick_timer` steps, the
         // music waiting its turn, the positional sounds gathered, and the 3D sounds placed again
         // (`mission_frame`).
-        sound.timerTick(clock.game_ticks);
-        sound.updateMusic();
-        sound.playBuffered(stdsmp);
-        sound.update3D(hearing.scene(world));
+        if (!app.paused) {
+            sound.timerTick(clock.game_ticks);
+            sound.updateMusic();
+            sound.playBuffered(stdsmp);
+            sound.update3D(hearing.scene(world));
+        }
 
         // The GPU draws at the display's own resolution; the software device at the window's size
         // in points, made again when it changes.
@@ -1124,7 +1138,9 @@ test Options {
     const original_sound = (try Options.parse(&.{"--original"})).sound.?;
     try std.testing.expect(original_sound.player == .software and original_sound.master == null);
     const headphones = (try Options.parse(&.{ "--original", "--hrtf", "--no-reverb" })).sound.?;
-    try std.testing.expect(headphones.player.openal.hrtf and !headphones.player.openal.reverb);
+    try std.testing.expect(headphones.player.openal.hrtf == .on and !headphones.player.openal.reverb);
+    try std.testing.expectEqual(.auto, (try Options.parse(&.{})).sound.?.player.openal.hrtf);
+    try std.testing.expectEqual(.off, (try Options.parse(&.{"--no-hrtf"})).sound.?.player.openal.hrtf);
     const uncompressed = (try Options.parse(&.{"--no-compressor"})).sound.?.master.?;
     try std.testing.expectEqual(1, uncompressed.ratio);
     try std.testing.expectEqualStrings(Options.default_music, (try Options.parse(&.{})).music.?);

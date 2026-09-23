@@ -5,10 +5,12 @@
 //! Miles (`engine.mss.Mixer`), in stereo. The master bus (`engine.mss.master`) comes last.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
 const c = @import("sdl");
 const mss = @import("openreliant").engine.mss;
+const macos = @import("macos.zig");
 
 pub const openal = @import("openal.zig");
 
@@ -45,6 +47,8 @@ pub const Output = struct {
     channels: u8,
     source: Source,
     master: ?mss.master.Master,
+    /// When `update` last looked at what the output is, in SDL's milliseconds.
+    looked_at: u64 = 0,
 
     const Source = union(enum) {
         openal: *openal.Renderer,
@@ -65,7 +69,7 @@ pub const Output = struct {
         errdefer gpa.destroy(output);
         output.* = .{ .gpa = gpa, .stream = undefined, .rate = rate, .channels = 2, .source = .{ .software = .init(rate) }, .master = null };
         switch (options.player) {
-            .openal => |settings| if (openal.Renderer.create(gpa, rate, @intCast(std.math.clamp(device.channels, 1, 8)), settings)) |renderer| {
+            .openal => |settings| if (openal.Renderer.create(gpa, rate, @intCast(std.math.clamp(device.channels, 1, 8)), settings, headphones())) |renderer| {
                 output.source = .{ .openal = renderer };
                 output.channels = renderer.channels;
             } else |err| log.warn("OpenAL Soft cannot start ({s}); the software mixer plays instead", .{@errorName(err)}),
@@ -95,6 +99,24 @@ pub const Output = struct {
         output.gpa.destroy(output);
     }
 
+    /// Once a frame: now and then, whether the output has changed between headphones and anything
+    /// else, for OpenAL's HRTF.
+    pub fn update(output: *Output) void {
+        const renderer = switch (output.source) {
+            .openal => |renderer| renderer,
+            .software => return,
+        };
+        if (renderer.settings.hrtf != .auto or renderer.channels != 2) return;
+        const now = c.SDL_GetTicks();
+        if (now -% output.looked_at < 1000) return;
+        output.looked_at = now;
+        const on = headphones();
+        if (on == renderer.hrtf) return;
+        _ = c.SDL_LockAudioStream(output.stream);
+        defer _ = c.SDL_UnlockAudioStream(output.stream);
+        renderer.followOutput(on);
+    }
+
     /// What the game calls.
     pub fn driver(output: *Output) mss.Driver {
         return switch (output.source) {
@@ -112,6 +134,32 @@ pub const Output = struct {
         if (output.master) |*bus| bus.process(samples);
     }
 };
+
+/// Whether the default playback device is a pair of headphones, as far as the system says: Core
+/// Audio on macOS, and everywhere the device's name.
+fn headphones() bool {
+    if (builtin.os.tag == .macos and macos.outputIsHeadphones()) return true;
+    const name = c.SDL_GetAudioDeviceName(c.SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK) orelse return false;
+    return namesHeadphones(std.mem.span(name));
+}
+
+/// Whether a device's name makes it headphones, as Windows names them ("Headphones (...)",
+/// "Headset Earphone (...)") and as the common models are named.
+fn namesHeadphones(name: []const u8) bool {
+    const words = [_][]const u8{ "headphone", "headset", "earphone", "airpods", "buds" };
+    for (words) |word| {
+        if (std.ascii.indexOfIgnoreCase(name, word) != null) return true;
+    }
+    return false;
+}
+
+test namesHeadphones {
+    try std.testing.expect(namesHeadphones("Headphones (WH-1000XM4 Stereo)"));
+    try std.testing.expect(namesHeadphones("AirPods Pro"));
+    try std.testing.expect(namesHeadphones("Galaxy Buds2"));
+    try std.testing.expect(!namesHeadphones("MacBook Pro Speakers"));
+    try std.testing.expect(!namesHeadphones("Speakers (Realtek(R) Audio)"));
+}
 
 /// The stream's own lock, which SDL holds while it asks for more.
 fn lockOf(stream: *c.SDL_AudioStream) mss.Lock {
@@ -177,7 +225,7 @@ test "feed from the software mixer" {
 }
 
 test "feed from OpenAL Soft through the master bus" {
-    const renderer = openal.Renderer.create(std.testing.allocator, 22050, 2, .{}) catch return error.SkipZigTest;
+    const renderer = openal.Renderer.create(std.testing.allocator, 22050, 2, .{}, false) catch return error.SkipZigTest;
     defer renderer.destroy();
     var output = try testOutput(.{ .openal = renderer }, 2, .{});
     defer c.SDL_DestroyAudioStream(output.stream);

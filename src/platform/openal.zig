@@ -22,14 +22,19 @@ const wave = openreliant.wave;
 const log = std.log.scoped(.openal);
 
 pub const Settings = struct {
-    /// Head-related transfer functions, for headphones, on a stereo device; UHJ otherwise.
-    hrtf: bool = false,
+    /// Head-related transfer functions, for headphones, on a stereo device; UHJ otherwise. `auto`
+    /// has them while the output is headphones.
+    hrtf: Hrtf = .auto,
     /// The reverb on the 3D sounds, and how much of it is heard.
     reverb: bool = true,
     reverb_level: f32 = 0.35,
     /// High frequencies fading with distance.
     air_absorption: bool = true,
+    /// On a device with a subwoofer, how much of the 3D sounds goes to it.
+    low_frequency_level: f32 = 0.5,
 };
+
+pub const Hrtf = enum { auto, on, off };
 
 pub const Error = error{OpenAl} || Allocator.Error;
 
@@ -86,9 +91,16 @@ pub const Renderer = struct {
     rate: u32,
     channels: u8,
     settings: Settings,
+    /// Whether HRTF is on.
+    hrtf: bool,
     resampler: ?c.ALint = null,
+    /// The reverb and its slot, and on a device with a subwoofer, the effect that feeds it, its slot
+    /// and the filter that takes the highs off what goes to it; 0 for none.
     effect: c.ALuint = 0,
     slot: c.ALuint = 0,
+    low_frequency_effect: c.ALuint = 0,
+    low_frequency_slot: c.ALuint = 0,
+    low_frequency_filter: c.ALuint = 0,
     samples: [mss.max_samples]Voice = @splat(.{}),
     samples_3d: [max_3d_samples]Voice = @splat(.{}),
     streams: [mss.max_streams]Stream = @splat(.{}),
@@ -96,8 +108,9 @@ pub const Renderer = struct {
     buffers: std.AutoHashMapUnmanaged(u64, Buffer) = .empty,
 
     /// A renderer at `rate`, into `channels` interleaved float channels: 2, 4, 6 for 5.1 or 8 for
-    /// 7.1; any other count renders stereo.
-    pub fn create(gpa: Allocator, rate: u32, channels: u8, settings: Settings) Error!*Renderer {
+    /// 7.1; any other count renders stereo. `headphones` says whether the output is, for HRTF's
+    /// `auto`.
+    pub fn create(gpa: Allocator, rate: u32, channels: u8, settings: Settings, headphones: bool) Error!*Renderer {
         const layout: struct { c.ALCint, u8 } = switch (channels) {
             4 => .{ c.ALC_QUAD_SOFT, 4 },
             6 => .{ c.ALC_5POINT1_SOFT, 6 },
@@ -106,27 +119,19 @@ pub const Renderer = struct {
         };
         const device = c.alcLoopbackOpenDeviceSOFT(null) orelse return fail("alcLoopbackOpenDeviceSOFT");
         errdefer _ = c.alcCloseDevice(device);
-        const stereo_mode: c.ALCint = if (settings.hrtf) c.ALC_STEREO_HRTF_SOFT else c.ALC_STEREO_UHJ_SOFT;
-        const attributes = [_]c.ALCint{
-            c.ALC_FORMAT_CHANNELS_SOFT, layout[0],
-            c.ALC_FORMAT_TYPE_SOFT,     c.ALC_FLOAT_SOFT,
-            c.ALC_FREQUENCY,            @intCast(rate),
-            // The platform's master bus limits the mix; OpenAL's own limiter would come first.
-            c.ALC_OUTPUT_LIMITER_SOFT,  c.ALC_FALSE,
-            c.ALC_HRTF_SOFT,            if (settings.hrtf) c.ALC_TRUE else c.ALC_FALSE,
-            c.ALC_OUTPUT_MODE_SOFT,     if (layout[1] == 2) stereo_mode else c.ALC_ANY_SOFT,
-            c.ALC_MONO_SOURCES,         128,
-            c.ALC_STEREO_SOURCES,       16,
-            c.ALC_MAX_AUXILIARY_SENDS,  1,
-            0,
+        const hrtf = switch (settings.hrtf) {
+            .on => true,
+            .off => false,
+            .auto => headphones,
         };
+        const attributes = deviceAttributes(layout[0], rate, hrtf);
         const context = c.alcCreateContext(device, &attributes) orelse return fail("alcCreateContext");
         errdefer c.alcDestroyContext(context);
         if (c.alcMakeContextCurrent(context) == c.ALC_FALSE) return fail("alcMakeContextCurrent");
 
         const renderer = try gpa.create(Renderer);
         errdefer gpa.destroy(renderer);
-        renderer.* = .{ .gpa = gpa, .device = device, .context = context, .rate = rate, .channels = layout[1], .settings = settings };
+        renderer.* = .{ .gpa = gpa, .device = device, .context = context, .rate = rate, .channels = layout[1], .settings = settings, .hrtf = hrtf };
 
         // The listener stands still at the origin, looking ahead: the game places every sound
         // from the camera.
@@ -140,6 +145,7 @@ pub const Renderer = struct {
         c.alListenerf(c.AL_METERS_PER_UNIT, 1);
         renderer.resampler = findResampler();
         if (settings.reverb) renderer.createReverb();
+        if (renderer.channels >= 6) renderer.createLowFrequency();
 
         for (&renderer.samples) |*voice| c.alGenSources(1, &voice.source);
         for (&renderer.samples_3d) |*voice| c.alGenSources(1, &voice.source);
@@ -159,8 +165,13 @@ pub const Renderer = struct {
         var buffers = renderer.buffers.valueIterator();
         while (buffers.next()) |buffer| c.alDeleteBuffers(1, &buffer.name);
         renderer.buffers.deinit(renderer.gpa);
-        if (renderer.slot != 0) c.alDeleteAuxiliaryEffectSlots(1, &renderer.slot);
-        if (renderer.effect != 0) c.alDeleteEffects(1, &renderer.effect);
+        for ([_]c.ALuint{ renderer.slot, renderer.low_frequency_slot }) |slot| {
+            if (slot != 0) c.alDeleteAuxiliaryEffectSlots(1, &slot);
+        }
+        for ([_]c.ALuint{ renderer.effect, renderer.low_frequency_effect }) |effect| {
+            if (effect != 0) c.alDeleteEffects(1, &effect);
+        }
+        if (renderer.low_frequency_filter != 0) c.alDeleteFilters(1, &renderer.low_frequency_filter);
         _ = c.alcMakeContextCurrent(null);
         c.alcDestroyContext(renderer.context);
         _ = c.alcCloseDevice(renderer.device);
@@ -172,6 +183,15 @@ pub const Renderer = struct {
         var mode: c.ALCint = 0;
         c.alcGetIntegerv(renderer.device, c.ALC_OUTPUT_MODE_SOFT, 1, &mode);
         return mode;
+    }
+
+    /// With HRTF's `auto`, turns it on or off as the output changes between headphones and
+    /// anything else. Nothing may render meanwhile.
+    pub fn followOutput(renderer: *Renderer, headphones: bool) void {
+        if (renderer.settings.hrtf != .auto or renderer.channels != 2 or renderer.hrtf == headphones) return;
+        renderer.hrtf = headphones;
+        const attributes = deviceAttributes(c.ALC_STEREO_SOFT, renderer.rate, headphones);
+        if (c.alcResetDeviceSOFT(renderer.device, &attributes) == c.ALC_FALSE) log.warn("OpenAL Soft kept its output mode", .{});
     }
 
     pub fn driver(renderer: *Renderer) mss.Driver {
@@ -221,6 +241,31 @@ pub const Renderer = struct {
             if (renderer.effect != 0) c.alDeleteEffects(1, &renderer.effect);
             renderer.slot = 0;
             renderer.effect = 0;
+        }
+    }
+
+    /// On a device with a subwoofer, the 3D sounds send to it too, through OpenAL Soft's
+    /// dedicated low-frequency effect, with their highs taken off; the receiver's crossover takes
+    /// the rest.
+    fn createLowFrequency(renderer: *Renderer) void {
+        c.alGenEffects(1, &renderer.low_frequency_effect);
+        c.alEffecti(renderer.low_frequency_effect, c.AL_EFFECT_TYPE, c.AL_EFFECT_DEDICATED_LOW_FREQUENCY_EFFECT);
+        c.alEffectf(renderer.low_frequency_effect, c.AL_DEDICATED_GAIN, 1);
+        c.alGenAuxiliaryEffectSlots(1, &renderer.low_frequency_slot);
+        c.alAuxiliaryEffectSloti(renderer.low_frequency_slot, c.AL_EFFECTSLOT_EFFECT, @intCast(renderer.low_frequency_effect));
+        c.alAuxiliaryEffectSlotf(renderer.low_frequency_slot, c.AL_EFFECTSLOT_GAIN, renderer.settings.low_frequency_level);
+        c.alGenFilters(1, &renderer.low_frequency_filter);
+        c.alFilteri(renderer.low_frequency_filter, c.AL_FILTER_TYPE, c.AL_FILTER_LOWPASS);
+        c.alFilterf(renderer.low_frequency_filter, c.AL_LOWPASS_GAIN, 1);
+        c.alFilterf(renderer.low_frequency_filter, c.AL_LOWPASS_GAINHF, c.AL_LOWPASS_MIN_GAINHF);
+        if (c.alGetError() != c.AL_NO_ERROR) {
+            log.warn("no subwoofer: EFX refused it", .{});
+            if (renderer.low_frequency_slot != 0) c.alDeleteAuxiliaryEffectSlots(1, &renderer.low_frequency_slot);
+            if (renderer.low_frequency_effect != 0) c.alDeleteEffects(1, &renderer.low_frequency_effect);
+            if (renderer.low_frequency_filter != 0) c.alDeleteFilters(1, &renderer.low_frequency_filter);
+            renderer.low_frequency_slot = 0;
+            renderer.low_frequency_effect = 0;
+            renderer.low_frequency_filter = 0;
         }
     }
 
@@ -418,6 +463,24 @@ pub const Renderer = struct {
         c.alSourcef(source, c.AL_CONE_OUTER_GAIN, gain(std.math.clamp(outer_volume, 0, 127)));
     }
 
+    /// **Improvement:** a large ship's sound spreads around the listener as it comes close, rather
+    /// than staying at a point (`AL_SOURCE_RADIUS`).
+    pub fn set3DSampleRadius(renderer: *Renderer, handle: mss.Sample3D, radius: f32) void {
+        c.alSourcef(renderer.sample3D(handle).source, c.AL_SOURCE_RADIUS, @max(radius, 0));
+    }
+
+    /// **Improvement:** the listener moves, so a sound's Doppler shift comes of how the two move
+    /// against each other. Its speed is held within half the speed of sound, as a sample's is along
+    /// the line to it.
+    pub fn set3DListenerVelocity(renderer: *Renderer, velocity: mss.Vector) void {
+        _ = renderer;
+        const speed = @sqrt(@reduce(.Add, velocity * velocity));
+        const most = speed_of_sound / velocity_scale / 2;
+        const held = if (speed > most) velocity * @as(mss.Vector, @splat(most / speed)) else velocity;
+        const moving = openAl(held) * @as(mss.Vector, @splat(velocity_scale));
+        c.alListener3f(c.AL_VELOCITY, moving[0], moving[1], moving[2]);
+    }
+
     pub fn start3DSample(renderer: *Renderer, handle: mss.Sample3D) void {
         startVoice(renderer.sample3D(handle));
     }
@@ -452,9 +515,13 @@ pub const Renderer = struct {
         c.alSourcef(source, c.AL_ROOM_ROLLOFF_FACTOR, 1);
         c.alSourcef(source, c.AL_CONE_INNER_ANGLE, 360);
         c.alSourcef(source, c.AL_CONE_OUTER_ANGLE, 360);
+        c.alSourcef(source, c.AL_SOURCE_RADIUS, 0);
         c.alSourcei(source, c.AL_SOURCE_SPATIALIZE_SOFT, c.AL_TRUE);
         c.alSourcef(source, c.AL_AIR_ABSORPTION_FACTOR, if (renderer.settings.air_absorption) 1 else 0);
-        c.alSource3i(source, c.AL_AUXILIARY_SEND_FILTER, if (renderer.slot != 0) @intCast(renderer.slot) else c.AL_EFFECTSLOT_NULL, 0, c.AL_FILTER_NULL);
+        c.alSource3i(source, c.AL_AUXILIARY_SEND_FILTER, @intCast(renderer.slot), 0, c.AL_FILTER_NULL);
+        if (renderer.low_frequency_slot != 0) {
+            c.alSource3i(source, c.AL_AUXILIARY_SEND_FILTER, @intCast(renderer.low_frequency_slot), 1, @intCast(renderer.low_frequency_filter));
+        }
         renderer.useResampler(source);
         c.alSourcef(source, c.AL_GAIN, gain(voice.volume));
     }
@@ -539,6 +606,25 @@ pub const Renderer = struct {
         if (renderer.resampler) |index| c.alSourcei(source, c.AL_SOURCE_RESAMPLER_SOFT, index);
     }
 };
+
+/// The loopback device's attributes: its channels, float samples at `rate`, and UHJ or HRTF on
+/// stereo.
+fn deviceAttributes(channels: c.ALCint, rate: u32, hrtf: bool) [19]c.ALCint {
+    const stereo_mode: c.ALCint = if (hrtf) c.ALC_STEREO_HRTF_SOFT else c.ALC_STEREO_UHJ_SOFT;
+    return .{
+        c.ALC_FORMAT_CHANNELS_SOFT, channels,
+        c.ALC_FORMAT_TYPE_SOFT,     c.ALC_FLOAT_SOFT,
+        c.ALC_FREQUENCY,            @intCast(rate),
+        // The platform's master bus limits the mix; OpenAL's own limiter would come first.
+        c.ALC_OUTPUT_LIMITER_SOFT,  c.ALC_FALSE,
+        c.ALC_HRTF_SOFT,            if (hrtf) c.ALC_TRUE else c.ALC_FALSE,
+        c.ALC_OUTPUT_MODE_SOFT,     if (channels == c.ALC_STEREO_SOFT) stereo_mode else c.ALC_ANY_SOFT,
+        c.ALC_MONO_SOURCES,         128,
+        c.ALC_STEREO_SOURCES,       16,
+        c.ALC_MAX_AUXILIARY_SENDS,  2,
+        0,
+    };
+}
 
 fn fail(what: []const u8) Error {
     log.err("{s} failed", .{what});
@@ -662,7 +748,7 @@ fn statusOf(source: c.ALuint) mss.Status {
 
 test Renderer {
     const gpa = std.testing.allocator;
-    const renderer = Renderer.create(gpa, 22050, 2, .{}) catch return error.SkipZigTest;
+    const renderer = Renderer.create(gpa, 22050, 2, .{}, false) catch return error.SkipZigTest;
     defer renderer.destroy();
     const driver = renderer.driver();
     try std.testing.expect(renderer.resampler != null);
@@ -705,7 +791,36 @@ test Renderer {
 }
 
 test "HRTF" {
-    const renderer = Renderer.create(std.testing.allocator, 44100, 2, .{ .hrtf = true }) catch return error.SkipZigTest;
+    const forced = Renderer.create(std.testing.allocator, 44100, 2, .{ .hrtf = .on }, false) catch return error.SkipZigTest;
+    forced.followOutput(false);
+    try std.testing.expectEqual(c.ALC_STEREO_HRTF_SOFT, forced.outputMode());
+    forced.destroy();
+
+    // On its own, it follows the output: HRTF for headphones, UHJ for anything else.
+    const auto = try Renderer.create(std.testing.allocator, 44100, 2, .{}, true);
+    defer auto.destroy();
+    try std.testing.expectEqual(c.ALC_STEREO_HRTF_SOFT, auto.outputMode());
+    auto.followOutput(false);
+    try std.testing.expectEqual(c.ALC_STEREO_UHJ_SOFT, auto.outputMode());
+}
+
+test "subwoofer" {
+    // On 5.1, a 3D sound ahead reaches the subwoofer too.
+    const renderer = Renderer.create(std.testing.allocator, 22050, 6, .{}, false) catch return error.SkipZigTest;
     defer renderer.destroy();
-    try std.testing.expectEqual(c.ALC_STEREO_HRTF_SOFT, renderer.outputMode());
+    try std.testing.expect(renderer.low_frequency_slot != 0);
+    const driver = renderer.driver();
+    const file = comptime openreliant.wave.testing.pcm(&std.mem.toBytes([_]i16{16384} ** 4096));
+    const placed = driver.allocate3DSample().?;
+    try std.testing.expect(driver.set3DSampleFile(placed, file));
+    driver.set3DPosition(placed, .{ 0, 0, 2 });
+    driver.set3DSampleDistances(placed, 100, 1);
+    driver.set3DSampleRadius(placed, 0.5);
+    driver.set3DListenerVelocity(.{ 0, 0, 0.01 });
+    driver.start3DSample(placed);
+    var out: [6 * 1024]f32 = undefined;
+    renderer.render(&out);
+    var low: f32 = 0;
+    for (0..1024) |frame| low += @abs(out[6 * frame + 3]);
+    try std.testing.expect(low > 0);
 }

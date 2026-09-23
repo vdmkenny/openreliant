@@ -570,6 +570,10 @@ pub const Sound = struct {
         const driver = sound.driver orelse return;
         if (sound.voice_3d_count == 0) return;
         sound3d.engineUpdate(sound, scene);
+        // Not the game's, which opens no listener: the listener moves with the player's ship, for
+        // the Doppler shifts. The software mixer's stays still.
+        const player = &scene.objects.slots[scene.objects.player].object;
+        driver.set3DListenerVelocity(miles(math.transformTransposed(scene.camera.orientation, vector(player.velocity)) * @as(Vector, @splat(velocity_scale))));
         const frame_start = scene.clock.frame_start;
         for (sound.voices_3d[0..sound.voice_3d_count], 0..) |*voice, index| {
             if (voice.owner == -1) continue;

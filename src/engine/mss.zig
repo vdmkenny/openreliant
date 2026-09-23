@@ -8,7 +8,8 @@
 //! has two. `Mixer` mixes in software, plainly, as Miles is taken to have mixed; the platform's
 //! OpenAL renderer places the sounds with OpenAL Soft. The platform plays either on a thread of its
 //! own, so the mixer holds the platform's `Lock` through each call; `Mixer.mix` expects its caller
-//! to hold it.
+//! to hold it. Two calls are not Miles's, the listener's velocity and a 3D sample's radius: they
+//! serve OpenAL's improvements, and the software mixer, the reference, leaves them out.
 //!
 //! Volumes and pans run from 0 to 127, a pan of 64 in the middle, as Miles's do. How Miles turned
 //! them into gains is not known here: the port takes a volume's share of 127 as its gain, and a pan
@@ -93,6 +94,8 @@ pub const Driver = struct {
         set3DVelocity: *const fn (*anyopaque, Sample3D, Vector) void,
         set3DSampleDistances: *const fn (*anyopaque, Sample3D, f32, f32) void,
         set3DSampleCone: *const fn (*anyopaque, Sample3D, f32, f32, i32) void,
+        set3DSampleRadius: *const fn (*anyopaque, Sample3D, f32) void,
+        set3DListenerVelocity: *const fn (*anyopaque, Vector) void,
         start3DSample: *const fn (*anyopaque, Sample3D) void,
         stop3DSample: *const fn (*anyopaque, Sample3D) void,
         resume3DSample: *const fn (*anyopaque, Sample3D) void,
@@ -234,6 +237,12 @@ pub const Driver = struct {
     }
     pub fn set3DSampleCone(driver: Driver, handle: Sample3D, inner: f32, outer: f32, outer_volume: i32) void {
         driver.vtable.set3DSampleCone(driver.context, handle, inner, outer, outer_volume);
+    }
+    pub fn set3DSampleRadius(driver: Driver, handle: Sample3D, radius: f32) void {
+        driver.vtable.set3DSampleRadius(driver.context, handle, radius);
+    }
+    pub fn set3DListenerVelocity(driver: Driver, velocity: Vector) void {
+        driver.vtable.set3DListenerVelocity(driver.context, velocity);
     }
     pub fn start3DSample(driver: Driver, handle: Sample3D) void {
         driver.vtable.start3DSample(driver.context, handle);
@@ -535,6 +544,21 @@ pub const Mixer = struct {
         placing.inner_angle = inner;
         placing.outer_angle = outer;
         placing.outer_volume = @floatFromInt(std.math.clamp(outer_volume, 0, 127));
+    }
+
+    /// Not Miles's: how far a 3D sample's sound spreads around where it is, in the same units as
+    /// its distances. The software mixer places every sound at a point, as the providers did.
+    pub fn set3DSampleRadius(mixer: *Mixer, handle: Sample3D, radius: f32) void {
+        _ = mixer;
+        _ = handle;
+        _ = radius;
+    }
+
+    /// Not a call the game makes: `AIL_set_3D_velocity_vector` on the provider's listener, a
+    /// millisecond's movement. The game opens no listener, so the software mixer's stays still.
+    pub fn set3DListenerVelocity(mixer: *Mixer, velocity: Vector) void {
+        _ = mixer;
+        _ = velocity;
     }
 
     pub fn start3DSample(mixer: *Mixer, handle: Sample3D) void {

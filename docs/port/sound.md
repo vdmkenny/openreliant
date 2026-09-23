@@ -38,7 +38,12 @@ port takes:
   of sound either way.
 
 The game sets EAX's room to the generic one, with an effect volume of 0, and each 3D sample's
-effects level to 0, so the original's reverb is silent.
+effects level to 0, so the original's reverb is silent. It opens no listener, so the listener
+stands still, and it places every sound at a point.
+
+Two calls are not Miles's: the listener's velocity, which the 3D update sets to the player's ship's
+each frame, and a 3D sample's radius, which a sound following an object takes from its model's
+radius. They serve OpenAL's improvements; the software mixer leaves them out.
 
 ## The software mixer
 
@@ -80,10 +85,22 @@ count but once loops it for ever.
 
 - Every source is resampled with the 23rd order band-limited sinc resampler, where the software
   mixer interpolates linearly, and every change of gain, pitch or place is smoothed.
-- On a stereo device the mix is encoded as UHJ, which carries where a sound is, front and back as
-  well as left and right, or with `--hrtf` rendered for headphones through a head-related transfer
-  function. A device with 4, 6 or 8 channels gets them all.
+- On headphones the mix is rendered through a head-related transfer function (HRTF), which places
+  a sound all around; on any other stereo device it is encoded as UHJ, which carries front and back
+  as well as left and right. The output counts as headphones where Core Audio says it is wired
+  headphones or a Bluetooth device, on macOS, or where its name says so, as Windows names them. The
+  output is looked at again every second, and HRTF turns on or off as it changes. `--hrtf` and
+  `--no-hrtf` have it whatever the output. A device with 4, 6 or 8 channels gets them all.
+- The listener moves with the player's ship, so a sound's Doppler shift comes of how the two move
+  against each other, and the player's own engine is not shifted. The listener's speed is held
+  within half the speed of sound.
+- A sound that follows an object spreads around the listener as it comes within the object's
+  model's radius (`AL_SOURCE_RADIUS`), so a capital ship close by fills the space rather than
+  sitting at a point.
 - The 3D sounds lose their high frequencies with distance (`AL_AIR_ABSORPTION_FACTOR`).
+- On a device with a subwoofer, 5.1 or 7.1, the 3D sounds send about half their level to it
+  through OpenAL Soft's dedicated low-frequency effect, with their highs taken off and falling off
+  with distance as the sound does; the receiver's crossover takes the rest.
 - The 3D sounds send to a reverb, the generic room of EFX's presets, the room the game asks EAX for,
   at a fairly low level, falling off with distance as the sound does. `--no-reverb` leaves it out.
 - A sample's pan keeps its power, as a 3D sample's does.
@@ -109,6 +126,10 @@ OpenAL Soft, in stereo with the software mixer. SDL asks for more from its own t
 renders it and the master bus passes it through. Where OpenAL Soft cannot start, the software mixer
 plays instead; where no device opens, the game runs silent.
 
+As the window goes inactive, the message pump's part in
+[`game/winmain.zig`](../../src/engine/game/winmain.zig) pauses the music, the 3D voices, the voices
+and the clock, and the frame's sound waits, until the window is active again ([Sound](../engine/sound.md#start-up)).
+
 `openreliant` sets the sound up as `WinMain` does, with 10 voices, the volumes of `[Sound]` in
 `starlancer.ini`, `bank_stdsmp` and `smp3d.fat`, and runs the frame's sound once the camera is
 placed. The fades step then too, where `tick_timer` steps them on a timer of its own every five
@@ -120,10 +141,11 @@ another or `none`; `--no-sound` runs silent ([Platform](platform.md#running)).
 
 - **Improvement:** `sound_pitch_factor` works a quarter tone's factor out, `2^(n/24)`, where the game
   looks it up in a table of rounded values.
-- OpenAL Soft's resampling, placing, air absorption and reverb, and the master bus, above.
+- OpenAL Soft's resampling, placing, moving listener, sizes, air absorption, subwoofer and reverb,
+  and the master bus, above.
 
-Further upgrades to how it sounds are gathered in
-[#162](https://github.com/vdmkenny/openreliant/issues/162).
+A reverb for each place, the hangar and the cockpit, is gathered in
+[#164](https://github.com/vdmkenny/openreliant/issues/164).
 
 ## Not ported
 

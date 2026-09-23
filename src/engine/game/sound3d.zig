@@ -183,6 +183,7 @@ pub fn play(sound: *Sound, scene: Scene, at: ?Vector, facing: ?Vector, owner: i3
     var position: Vector = @splat(0);
     var velocity: Vector = @splat(0);
     var direction: ?Vector = null;
+    var radius: f32 = 0;
     switch (definition.follows) {
         .shot => {
             if (owner < 0 or owner >= scene.objects.bullets.pool.len) return null;
@@ -203,6 +204,7 @@ pub fn play(sound: *Sound, scene: Scene, at: ?Vector, facing: ?Vector, owner: i3
             if (owner == scene.objects.player) position += math.transform(slot.drawn.orientation, .{ 0, 0, 200 });
             velocity = gameobj.vector(slot.object.velocity);
             direction = math.forward(slot.drawn.orientation);
+            if (slot.model) |model| radius = model.radius;
         },
     }
     const relative = (position - scene.camera.position) * @as(Vector, @splat(hog_snd.distance_scale));
@@ -237,6 +239,9 @@ pub fn play(sound: *Sound, scene: Scene, at: ?Vector, facing: ?Vector, owner: i3
     driver.set3DVelocity(voice.sample, hog_snd.miles(moving));
     driver.set3DSampleCone(voice.sample, definition.cone_inner, definition.cone_outer, @intFromFloat(@trunc(definition.cone_outer_volume)));
     driver.set3DSampleDistances(voice.sample, range, definition.min_distance * hog_snd.distance_scale);
+    // Not the game's: how far the sound of what it follows spreads, its model's radius, which the
+    // software mixer leaves out.
+    driver.set3DSampleRadius(voice.sample, radius * hog_snd.distance_scale);
     // Every sound plays at 22,050 Hz; the explosions somewhere between 18,050 and 25,050.
     const rate: u32 = switch (which) {
         .explosion01, .explosion02 => 18050 + @as(u32, @intFromFloat(@trunc(@as(f32, @floatFromInt(scene.random.rand())) * (1.0 / 32767.0) * 7000))),
