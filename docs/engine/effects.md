@@ -1,7 +1,7 @@
 # Effects
 
 What the game shows besides its objects and their shots: for now, the particles, fireballs,
-burning bits, break-up and shockwaves of an explosion. [Destruction](objects.md#destruction) covers when a ship blows up.
+burning bits, break-up and shockwaves of an explosion, and the sparks a hit throws. [Destruction](objects.md#destruction) covers when a ship blows up.
 
 ## Particles
 
@@ -65,8 +65,9 @@ tick, carrying a quarter, and the sparkle carrying half.
 
 [`particles.zig`](../../src/engine/game/particles.zig) ports the pool, templates, emitters and the
 frame; [`explode.zig`](../../src/engine/game/explode.zig) the two templates and the bursts. Not
-ported: the sparks (`particle_spark`, `0x0049C340`), which it hands to `explode.cpp`
-(`0x00471B20`), and what `particles_frame` runs first (`0x004A1BB0`).
+ported: the sparks a template of that kind sends (`particle_spark`, `0x0049C340`), which it hands
+to `explode.cpp` (`0x00471B20`) and which none of the templates here sends. `particles_frame` runs
+the [sparks](#sparks) first.
 
 ## Fireballs
 
@@ -230,3 +231,48 @@ a register.
 [`aiexplode.zig`](../../src/engine/game/aiexplode.zig) the blast's and the torpedo's. Not ported:
 kind 3's caller ([#41](https://github.com/vdmkenny/openreliant/issues/41)), and a missile's end,
 with what kinds 5 and 6 do ([#39](https://github.com/vdmkenny/openreliant/issues/39)).
+
+## Sparks
+
+`sparks.cpp` keeps the sparks a hit throws: small bolts that fly off, slow and fade. Each of five
+kinds (`spark_looks`, `0x00508A18`, 0x68 bytes each) has its size, its texture's span, a first and
+a last colour, a life in ticks and a drag, what is left of its speed after a tick:
+
+| Kind | Thrown by | Size | Colour | Life | Drag |
+|---|---|---|---|---|---|
+| 0 | An allied Huge Gun's shot striking a component | 90 by 90, 500 long | White to dark blue | 300 | 0.9999 |
+| 1 | A shot striking a component | 30 by 30, 140 long | White to black | 100 | 0.995 |
+| 2 | A shot striking a hull | 30 by 30, 90 long | White to black | 100 | 0.995 |
+| 3 | A shot striking a shield, and `0x004B02A0` | 20 by 20, 90 long | Blue to black | 100 | 0.995 |
+| 4 | A coalition Huge Gun's shot striking a component | 90 by 90, 500 long | Warm white to dark red | 300 | 0.9999 |
+
+`sparks_init` (`0x004A1AF0`), which `particles_init` runs, builds each kind's shape
+(`spark_shape_build`, `0x004A2040`). Kind 0 is a beam of three crossed quads over `alhuge`,
+reaching its length either way from its middle, drawn out to 1500000. The rest are a bolt of two
+quads crossed along its length over `lasers`, drawn out to 100000, then a single quad out to
+500000, whose material asks for generated texture coordinates though nothing makes any for it.
+Each is coloured by its own colours and added to what is behind it, and never culled. A kind also
+has three flags to turn, grow and fade late, which none sets.
+
+`sparks_spray` (`0x004A1ED0`) throws a number of sparks from a point, each along a direction
+turned by a random pitch and yaw within half a spread either way, at a speed and up to half a
+range more or less, drifting on with a carried velocity. Kinds 2 and 3 are not thrown more than
+20000 from the camera. Each goes into the next of 256 (`sparks`, `0x00593D90`) in place of what
+was there (`spark_add`, `0x004A1DB0`). `sparks_update` (`0x004A1BB0`) moves each on by its
+velocity and the carried one times the ticks since it last ran, slows it by the drag to the power
+of those ticks, colours it between its first and last colour by how far through its life it is,
+and frees it past its life.
+
+A shot striking a hull (`bullet_hull_hit`) throws 10 of kind 2 at 7.5 to 12.5 a tick within half
+a radian either way, out from the object's centre through where the shot entered the part's box,
+carrying a quarter of the object's velocity, unless the camera is in the object's cockpit. The
+game takes that point in the part's own frame, where `segment_meets_box` (`0x0049B6A0`) gives it,
+for one in the world, so the sparks fly from near the world's origin.
+
+**Improvement:** the port throws them from where the shot struck.
+
+[`sparks.zig`](../../src/engine/game/sparks.zig) ports the sparks, and
+[`guns.zig`](../../src/engine/game/guns.zig) the hull's. Not ported: the other callers, a shot
+striking a component ([#40](https://github.com/vdmkenny/openreliant/issues/40)), a shield
+([#133](https://github.com/vdmkenny/openreliant/issues/133)), and `0x004B02A0`
+([#41](https://github.com/vdmkenny/openreliant/issues/41)).

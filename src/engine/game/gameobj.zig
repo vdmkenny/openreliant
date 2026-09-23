@@ -908,6 +908,8 @@ pub const World = struct {
     particles: ?*@import("particles.zig").Pool = null,
     /// The shockwaves spreading (`shockwave.cpp`); null where none spread.
     shockwaves: ?*@import("shockwave.zig").Shockwaves = null,
+    /// The sparks flying (`sparks.cpp`); null where none are thrown.
+    sparks: ?*@import("sparks.zig").Sparks = null,
 };
 
 /// `simulation_step` (`0x004774D0`): the work of every fourth tick, so 25 times a second, which

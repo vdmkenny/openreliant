@@ -28,6 +28,7 @@ const guns = @import("guns.zig");
 const explode = @import("explode.zig");
 const particles = @import("particles.zig");
 const shockwave = @import("shockwave.zig");
+const sparks = @import("sparks.zig");
 const hog_snd = @import("hog_snd.zig");
 const hud = @import("hud.zig");
 const matmanager = @import("matmanager.zig");
@@ -184,8 +185,9 @@ pub const Frame = struct {
     backing: ?*RadarBacking = null,
     /// Whether DISPLAY KILLS is held, which leaves the backing out.
     kills_shown: bool = false,
-    /// The particles, which go into the world's layer after the shots, the explosions' bits and
-    /// fireballs, and the shockwaves.
+    /// The sparks and the particles, which go into the world's layer after the shots, the
+    /// explosions' bits, pieces and fireballs, and the shockwaves.
+    sparks: ?*sparks.Sparks = null,
     particles: ?*particles.Pool = null,
     explosions: ?*explode.Explosions = null,
     shockwaves: ?*shockwave.Shockwaves = null,
@@ -193,7 +195,8 @@ pub const Frame = struct {
 
 /// `mission_frame` (`0x004924B0`), as far as the objects go: every object's orders, which fly the
 /// ships and read the player's controls, then the frames they are drawn at, then the shots in
-/// flight (`guns.bulletsFrame`), then the particles (`particles.Pool.frame`), the explosions
+/// flight (`guns.bulletsFrame`), then the sparks (`sparks.Sparks.frame`) and the particles
+/// (`particles.Pool.frame`), which `particles_frame` runs together, the explosions
 /// (`explode.Explosions.frame`) and the shockwaves (`shockwave.Shockwaves.frame`). A mission and the sandbox alike run this once a frame, before the
 /// camera's own frame and anything drawn.
 ///
@@ -204,6 +207,7 @@ pub fn missionFrame(orders: aigeneric.Context, fraction: f32) void {
     aigeneric.ordersUpdate(orders);
     frameObjects(orders.world.objects, fraction);
     guns.bulletsFrame(orders.world, orders.clock, fraction);
+    if (orders.world.sparks) |thrown| thrown.frame(orders.clock);
     if (orders.world.particles) |pool| pool.frame(orders.clock);
     if (orders.world.explosions) |explosions| explosions.frame(orders.world);
     if (orders.world.shockwaves) |waves| waves.frame(orders.world);
@@ -236,6 +240,7 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     attachments.scale = context.projection.scale[0];
     try drawObjects(gpa, scene, frame.objects, attachments);
     try guns.drawBullets(gpa, scene, &frame.objects.bullets, context.hardware);
+    if (frame.sparks) |thrown| try thrown.draw(gpa, scene);
     if (frame.particles) |pool| try pool.draw(gpa, scene);
     if (frame.explosions) |explosions| try explosions.draw(gpa, scene);
     if (frame.shockwaves) |waves| try waves.draw(gpa, scene);

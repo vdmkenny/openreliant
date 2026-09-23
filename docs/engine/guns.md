@@ -103,9 +103,10 @@ segment first crosses the sphere of its radius:
   type's first damage, and the share that passes through to the armour is its second over its
   first. For the player's ship the [shield reserves](controls.md#the-shield-balance) take the hit
   first.
-- With the shield down the shot reaches the hull (`bullet_hull_hit`, `0x00479940`): the first of
+- With the shield down the shot reaches the hull (`bullet_hull_hit`, `0x00479940`): the last of
   the object's part nodes whose box the segment crosses decides that it hit, and the quadrant's
-  armour takes the type's second damage.
+  armour takes the type's second damage. It throws [sparks](effects.md#sparks) from where it
+  struck.
 - A ship with its spectral shields on takes nothing at all. The gun type they are tuned to is
   handed to the check and ignored, so every shot is turned.
 

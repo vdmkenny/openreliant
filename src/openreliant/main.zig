@@ -542,8 +542,10 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     defer particles.deinit();
     var shockwaves: game.shockwave.Shockwaves = try .create(gpa, &textures);
     defer shockwaves.deinit(gpa);
+    var sparks: game.sparks.Sparks = try .create(gpa, &textures);
+    defer sparks.deinit();
     try sandbox.start(.{
-        .world = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .shockwaves = &shockwaves },
+        .world = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .shockwaves = &shockwaves, .sparks = &sparks },
         .clock = &clock,
         .devices = &devices,
     }, @intCast(options.ship));
@@ -610,7 +612,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         if (frames_left != null) clock.advanceBy(now / platform.window.tick_nanoseconds, 1) else clock.advanceToFine(now, platform.window.tick_nanoseconds);
         // While the communications window is open the keys 1 to 8 are its menu's.
         devices.keyboard.numbers_taken = display.state.windows.status.get(.comms).phase == .open;
-        const world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .shockwaves = &shockwaves };
+        const world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .shockwaves = &shockwaves, .sparks = &sparks };
         const orders: game.aigeneric.Context = .{ .world = world, .clock = &clock, .devices = &devices };
         while (clock.nextTick(&devices, world)) |_| {}
         clock.frameBegin();
@@ -726,6 +728,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .backing = backing,
             .kills_shown = devices.active(.display_kills, false),
             .particles = &particles,
+            .sparks = &sparks,
             .explosions = &explosions,
             .shockwaves = &shockwaves,
             .attachments = .{
@@ -931,6 +934,7 @@ const Sandbox = struct {
         orders.world.player.ending = .playing;
         if (orders.world.explosions) |explosions| explosions.reset();
         if (orders.world.shockwaves) |waves| waves.reset();
+        if (orders.world.sparks) |thrown| thrown.reset();
         if (orders.world.particles) |pool| pool.reset();
         sandbox.objects.reset(sandbox.random);
         // The debris models, counted as used so the sweep below keeps them (`explosions_init`).
