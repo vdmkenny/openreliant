@@ -36,7 +36,7 @@ been found. An element whose code is not found yet is marked so.
 | Power distribution | left | P | the guns, the shields and the engines round a ball, each with its share of the power, a third each at first. P held with the stick moves power toward one; U, I and O give all of it to the guns, the engines or the shields, and `[` shares it out again | [Window](#the-windows) 7, [The power distribution](#the-power-distribution) |
 | Communications | top, left | C | the units in range, numbered, which the number keys call. Landing, rearming and a nanny ship are asked of the base ship | [Window](#the-windows) 11, which draws the radio's menu with `0x00453A70`. The frame is ported; what it shows is not |
 | Wing status | right | X | the wing's fighters in a grid, the player's wing first, each with a bar for its damage | [Window](#the-windows) 13. The frame is ported; what it shows is not |
-| Readouts | top, right of middle | | the seconds of afterburner fuel, a tally under a skull, and the countermeasures left | [The readouts](#the-readouts) |
+| Readouts | top, right of middle | | the seconds of afterburner fuel, the pilot's kills under a skull, and the countermeasures left | [The readouts](#the-readouts) |
 | Status lights | top, left of middle | | the systems that are on: match speed, blind fire, smart targeting, which makes any ship fired on the target, reverse thrust, the spectral shields and the cloak with a bar for the time left, the ECM | [The status lights](#the-status-lights) |
 | Clock | foot, middle, over the radar | | the time played | [`hud.zig`](../../src/engine/game/hud.zig) |
 
@@ -174,7 +174,7 @@ the shape. All three stand half of the way across, at offsets of `0x39`, `0x5F` 
 | Offset | Shape | Number | Shows |
 | --- | --- | --- | --- |
 | `0x39` | `0xCD`, a ship with its engines burning | `0x10` right | the seconds of afterburner fuel left: `afterburner_fuel`, which is in hundredths, over 100 |
-| `0x5F` | `0xD0`, a skull and crossbones, drawn 4 left | `0x0B` right | `skull_count` (`0x00562DF4`), the player's kills, which `kills_add` (`0x004B14F0`) counts as `explode_kill_credit` credits a kill. It is one of a run of tallies at `0x562DEC` to `0x562DF8` that a mission's start zeroes together and that is kept across a run. Not counted in the port yet ([#187](https://github.com/vdmkenny/openreliant/issues/187)) |
+| `0x5F` | `0xD0`, a skull and crossbones, drawn 4 left | `0x0B` right | `skull_count` (`0x00562DF4`), the pilot's kills over the campaign, which `kills_add` (`0x004B14F0`) counts as `explode_kill_credit` credits a kill: a hostile fighter, Kamov, Kurgan or Gurevich the player's ship struck last. The end of a mission the player comes through keeps it and promotes the pilot by it, at 0, 35, 72, 115, 150, 200, 255, 275 and 300 kills (`mission_end_record`, `0x00475A90`); the start of the next puts back what was kept, which undoes a failed attempt's kills. The end keeps them unless the player's ship was destroyed or the ejected pilot killed or captured (`mission_ending` 1 or 3). The kills of each mission are kept apart (`mission_kills`, `0x00562E64`). Each sandbox attempt ends and starts as a mission would |
 | `0x98` | `0xCF`, a coil, drawn `0x1A` left | 9 left | the object's countermeasures left (`+0x5EC`), 29 when it is created, which `object_spend_countermeasure` (`0x00462550`) takes one at a time. It is drawn unless `ShowHudIcon` flashes icon 3 and the flash is dark |
 
 The port draws all three ([`engine/game/hud.zig`](../../src/engine/game/hud.zig)).

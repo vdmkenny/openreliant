@@ -671,9 +671,6 @@ pub const Frame = struct {
     random: *libcmt.Rand,
     /// What the mission has ready for JUMP DRIVE.
     ready: *Readiness,
-    /// The player's kills, which the skull readout shows (`skull_count`, `0x00562DF4`). Nothing
-    /// counts them yet ([#187](https://github.com/vdmkenny/openreliant/issues/187)).
-    kills: i32 = 0,
     /// Whether the `Scanner` command has the player look for an object.
     scanning: bool = false,
     edge_line: EdgeLine,
@@ -757,8 +754,8 @@ pub const Readout = enum {
     /// The seconds of afterburner fuel left, `afterburner_fuel` being in hundredths, under a ship
     /// with its engines burning.
     fuel,
-    /// The player's kills, `skull_count` (`0x00562DF4`), which `kills_add` counts, under a skull
-    /// and crossbones.
+    /// The pilot's kills over the campaign, `skull_count` (`0x00562DF4`, `input.Player.Kills`),
+    /// under a skull and crossbones.
     skull,
     /// The countermeasures left, the object's `countermeasures`, under a coil. `ShowHudIcon` can
     /// flash it (`State.shows`).
@@ -1447,7 +1444,7 @@ pub const State = struct {
             if (!state.shows(readout, frame_duration)) continue;
             const value: i32 = switch (readout) {
                 .fuel => @divTrunc(live.afterburner_fuel, 100),
-                .skull => frame.kills,
+                .skull => frame.player.kills.count,
                 .coil => live.countermeasures,
             };
             try readout.draw(art, &resources.font, frame.gpa, frame.target, frame.screen, value, colour, scale);

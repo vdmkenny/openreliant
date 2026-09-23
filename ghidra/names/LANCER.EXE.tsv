@@ -391,7 +391,7 @@ address	kind	name	type	comment
 0055acfc	data	explode_marker_moving	bool	Set once explode_burst has placed explode_marker
 00463420	function	cloak_drop	ObjectRoutine	Drops an object's cloak: 0x00463470, the cloaked flag cleared and its record freed
 004c1070	function	vec3_lerp	void __fastcall (Vec3 *out, Vec3 *from, Vec3 *to, float share)	out = from + (to - from) * share
-00588394	data	mission_ending	byte	How the mission is ending: 0 while it goes on, 1 the player's ship destroyed, 8 the player ejecting; the debriefing names the ending by it
+00588394	data	mission_ending	byte	How the mission is ending: 0 while it goes on, 1 the player's ship destroyed or the ejected pilot killed, 2 the ejected pilot picked up by a nanny ship, 3 picked up by the enemy, 8 the player ejecting until the pod's time is up (order_eject settles it by the rescue odds); mission_end_record keeps the pilot's kills for every ending but 1 and 3; the debriefing names the ending by it
 004645c0	function	component_damage	void __fastcall (GameObject *object, ModelNode *node, float damage, int attacker, DamageKind kind)	Damages a component: lowers its node's armor, records the attacker in last_attacker, and marks the component's holder destroyed once the armor is below zero
 00463640	function	object_cloak	void __fastcall (int slot)	Cloaks an object: sets its cloaked flag, posts the Cloaked event and sets up the cloak state at +0x63C
 00401830	function	object_set_targetable	void __fastcall (int slot, bool targetable)	Sets or clears the object's targetable flag; it stays clear when the word at +0x24 of the combat stats is zero
@@ -585,7 +585,7 @@ address	kind	name	type	comment
 0054ea18	data	engine_glow_meshes	void *[8]	The engine glow mesh for each attachment id, which the glow reads at id clamped to 1 to 7; slot 0 is unused
 0054ea38	data	engine_glow_flares	void *[8][2]	The flare textures each glow wears, read at its attachment id clamped to 1 to 7: matflarea1 to matflarea7 for the nozzle quad, matflareb1 to matflareb7 for the blades; slot 0 is unused
 0054ea78	data	engine_glows_built	char	Set once engine_glows_build has made the glow meshes, so that it makes them only once
-00562df4	data	skull_count	int	The player's kills, which kills_add counts and the display's skull readout shows over the top of the screen. One of a run of tallies at 0x562DEC to 0x562DF8 that the mission's start zeroes together, and which is kept across a mission run
+00562df4	data	skull_count	int	The pilot's kills over the campaign, which kills_add counts and the display's skull readout shows. The end of a mission the player comes through keeps it in skull_count_kept and promotes the pilot by it (mission_end_record); WinMain puts it back from there before each single-player mission, undoing a failed attempt's kills; a new pilot starts it from 0 (0x004751B0)
 00412b20	function	player_jump	void (void)	JUMP DRIVE, while 0x00588394 is 0: when the mission has a jump or a warp ready (jump_ready, warp_ready), clears it and posts player_ready_to_jump or player_ready_to_warp
 00415370	function	player_ecm_set	void __fastcall (bool on)	Turns the player's ECM on or off, when the ship carries one (ecm_state not -1): object flag 0x4000000 and ecm_state
 004153e0	function	player_cloak_set	void __fastcall (bool on)	Cloaks or uncloaks the player's ship through object_set_cloak, outside a multiplayer game, when its model can cloak (header flag 2) and cloak_state is not -1
@@ -1037,4 +1037,12 @@ address	kind	name	type	comment
 0056992c	data	hud_display_component	short	The subtarget the target display last drew, -1 from window 3, which hud_window_close draws the closing form's picture for
 0057bdfc	data	hud_bar_pane	void *	A VFX pane the display cuts its bars into: the large target display's hull and subtarget armour bars
 00595490	data	hud_font	void **	blufont.fnt, opened (soft_blufont.fnt for the software renderer): the font of every line of the display's own text
-00475a90	function	pilot_rank_check	void (void)	Compares skull_count with the kills each rank needs, the table at 0x005009F4, against the pilot's rank at 0x00562DEC
+00475a90	function	mission_end_record	void (void)	As a mission ends, unless the player was destroyed or quit (mission_ending 1 or 3): promotes the pilot by skull_count against rank_kills, keeps the rank for the mission, moves mission_number on, and keeps the pilot's rank, medals and skull_count (0x00562D1C to 0x00562D24) for the next mission's start
+005009f4	data	rank_kills	short[9]	The kills each rank needs: 0, 35, 72, 115, 150, 200, 255, 275 and 300
+00562d24	data	skull_count_kept	int	skull_count as the last mission the player came through left it, which WinMain puts back before each single-player mission
+00562e64	data	mission_kills	short[28]	The pilot's kills in each mission of the campaign, by mission_number, which kills_add counts for the local player
+00529c6c	data	kill_credit_on	int	While set, explode_kill_credit credits kills and has their radio lines said. A mission's start sets it (0x004560F0), and the radio's states 0x14 and 0x15 set and clear it
+004934f0	function	mission_start	void (void)	A mission's start, the first of main.cpp's code: among much else it sets the rescue odds to always picked up and fits the player's ship with its devices and its cockpit
+0051cf98	data	rescue_odds_rescued	int	The weight of an ejected pilot being picked up by a nanny ship, which order_eject draws from: 100 from a mission's start, and SetRescueProbabilities' first argument
+0051cf90	data	rescue_odds_captured	int	The weight of an ejected pilot being picked up by the enemy: 0 from a mission's start, and SetRescueProbabilities' second argument
+0051cf9c	data	rescue_odds_killed	int	The weight of an ejected pilot being killed: 0 from a mission's start, and SetRescueProbabilities' third argument
