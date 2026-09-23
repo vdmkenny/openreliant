@@ -784,6 +784,8 @@ pub const World = struct {
     random: *libcmt.Rand,
     /// Whoever sets off the effects of the events the objects' tracks pass.
     events: ?Events = null,
+    /// The sound the objects are heard through, and where from; null where nothing is heard.
+    hearing: ?@import("hog_snd.zig").Hearing = null,
 };
 
 /// `simulation_step` (`0x004774D0`): the work of every fourth tick, so 25 times a second, which

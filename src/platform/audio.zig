@@ -62,16 +62,18 @@ fn release(context: ?*anyopaque) void {
     _ = c.SDL_UnlockAudioStream(@ptrCast(context));
 }
 
-/// SDL's call for `additional` more bytes: the driver's mix, a chunk at a time.
+/// SDL's call for `additional` more bytes: the driver's mix, a chunk at a time, up to a second's.
 fn feed(userdata: ?*anyopaque, stream: ?*c.SDL_AudioStream, additional: c_int, total: c_int) callconv(.c) void {
     _ = total;
     const driver: *mss.Driver = @ptrCast(@alignCast(userdata));
-    var frames: usize = @intCast(@divTrunc(@max(additional, 0) + @sizeOf([2]f32) - 1, @sizeOf([2]f32)));
+    const bytes: usize = @intCast(@max(additional, 0));
+    var frames: usize = @min(std.math.divCeil(usize, bytes, @sizeOf([2]f32)) catch 0, driver.rate);
     var buffer: [chunk][2]f32 = undefined;
     while (frames > 0) {
-        const count = @min(frames, chunk);
+        const count: usize = @min(frames, chunk);
         driver.mix(buffer[0..count]);
-        if (!c.SDL_PutAudioStreamData(stream, &buffer, @intCast(count * @sizeOf([2]f32)))) return;
+        const size: c_int = @intCast(count * @sizeOf([2]f32));
+        if (!c.SDL_PutAudioStreamData(stream, &buffer, size)) return;
         frames -= count;
     }
 }

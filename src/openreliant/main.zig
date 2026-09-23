@@ -65,6 +65,9 @@ const usage =
     \\  --fps <rate>              frames a second at most; without vsync, the display's rate by
     \\                            default; 0 for no limit
     \\  --software                draw on the software device, the port's reference
+    \\  --music <file>            the piece of music\\ the sandbox plays, or none; New_Mission01.wav
+    \\                            by default
+    \\  --no-sound                play without sound
     \\
 ;
 
@@ -84,9 +87,14 @@ const Options = struct {
     smooth_motion: bool = true,
     /// Which shots cast a light: every one, or the latest two of each side as the original does.
     shot_lights: game.guns.ShotLights = .every_shot,
+    sound: bool = true,
+    /// The piece of music the sandbox plays, from `music\`, or none.
+    music: ?[]const u8 = default_music,
 
-    const Flag = enum { @"--fullscreen", @"--original", @"--16-bit", @"--no-vsync", @"--no-bloom", @"--no-dither", @"--no-pixel-lighting", @"--no-smooth-motion", @"--few-shot-lights", @"--software" };
-    const Option = enum { @"--ship", @"--view", @"--screenshot", @"--size", @"--msaa", @"--filter", @"--fps" };
+    const default_music = "New_Mission01.wav";
+
+    const Flag = enum { @"--fullscreen", @"--original", @"--16-bit", @"--no-vsync", @"--no-bloom", @"--no-dither", @"--no-pixel-lighting", @"--no-smooth-motion", @"--few-shot-lights", @"--software", @"--no-sound" };
+    const Option = enum { @"--ship", @"--view", @"--screenshot", @"--size", @"--msaa", @"--filter", @"--fps", @"--music" };
 
     fn parse(args: []const [:0]const u8) error{Usage}!Options {
         var options: Options = .{};
@@ -108,6 +116,7 @@ const Options = struct {
                 .@"--no-smooth-motion" => options.smooth_motion = false,
                 .@"--few-shot-lights" => options.shot_lights = .latest_two,
                 .@"--software" => options.software = true,
+                .@"--no-sound" => options.sound = false,
             } else if (std.meta.stringToEnum(Option, arg)) |option| {
                 i += 1;
                 if (i == args.len) return error.Usage;
@@ -124,6 +133,7 @@ const Options = struct {
                         options.cockpit = @enumFromInt(setting);
                     },
                     .@"--screenshot" => options.screenshot = value,
+                    .@"--music" => options.music = if (std.mem.eql(u8, value, "none")) null else value,
                     .@"--size" => options.settings.size = parseSize(value) orelse return error.Usage,
                     .@"--msaa" => {
                         options.settings.samples = std.fmt.parseInt(u8, value, 10) catch return error.Usage;
@@ -335,17 +345,42 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     defer if (controller) |*open| open.close();
     connectController(arena, &devices, &controller, settings_file);
 
+    // Sound: the port's Miles, played through SDL3's audio, with the ten voices `WinMain` asks
+    // `sound_init` for, the volumes of `[Sound]`, and the 3D provider it opens; silent where
+    // there is no device, or with `--no-sound`.
+    const mixer = try arena.create(engine.mss.Driver);
+    mixer.* = .init(44100);
+    var output: ?platform.audio.Output = if (!options.sound) null else platform.audio.Output.open(mixer) catch |err| none: {
+        std.log.warn("playing without sound: {s}", .{@errorName(err)});
+        break :none null;
+    };
+    defer if (output) |*open| open.close();
+    const sound = try arena.create(game.hog_snd.Sound);
+    sound.init(if (output != null) mixer else null, 10, .{ .gpa = gpa, .io = io, .dir = directory });
+    defer sound.shutdown();
+    sound.volumes = soundVolumes(settings_file);
+    // `bank_stdsmp`, which the positional sounds of a frame play from, and `smp3d.fat`, which the
+    // 3D sounds do.
+    const stdsmp = try openreliant.fat.Bank.parse(try resources.readFile(arena, "stdsmp.fat"));
+    sound.open3D(try openreliant.fat.Bank.parse(try resources.readFile(arena, "smp3d.fat")));
+
     // The camera as a mission's launch leaves it: in the cockpit mode the options pick.
     var view: camera.Camera = .{ .cockpit_mode = options.cockpit.mode() };
     var last_view = view.view;
     // The mission's clocks, which `mission_run` zeroes before it loops.
     var clock: game.main.Clock = .{};
     clock.start(platform.window.ticks());
+    const hearing: game.hog_snd.Hearing = .{ .sound = sound, .camera = &view.place };
     try sandbox.start(.{
-        .world = .{ .objects = sandbox.objects, .player = &player, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random },
+        .world = .{ .objects = sandbox.objects, .player = &player, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing },
         .clock = &clock,
         .devices = &devices,
     }, @intCast(options.ship));
+    // The music, as a mission's script starts it (`cmd_PlayMusic`): from `music\`, for ever, at 80.
+    if (options.music) |name| {
+        const path = try std.fmt.allocPrint(arena, "music\\{s}", .{name});
+        sound.playMusic(path, 0, 80, true);
+    }
     _ = view.setView(startingView(sandbox.player(), view.cockpit_mode), sandbox.objects.player, false, false, 0);
     // A screenshot waits for the chase view to settle, a tick a frame, and for the second frame,
     // which draws the sun by how much of it the first found showing.
@@ -395,7 +430,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         if (frames_left != null) clock.advanceBy(now / platform.window.tick_nanoseconds, 1) else clock.advanceToFine(now, platform.window.tick_nanoseconds);
         // While the communications window is open the keys 1 to 8 are its menu's.
         devices.keyboard.numbers_taken = display.state.windows.status.get(.comms).phase == .open;
-        const world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random };
+        const world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing };
         const orders: game.aigeneric.Context = .{ .world = world, .clock = &clock, .devices = &devices };
         while (clock.nextTick(&devices, world)) |_| {}
         clock.frameBegin();
@@ -455,6 +490,13 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         }
         // From its cockpit, the ship is not drawn, as `camera_set_view` sees to.
         slot.object.flags.hidden = view.inside(sandbox.objects.player);
+        // The frame's sound, heard from where the camera now is: the fades `tick_timer` steps, the
+        // music waiting its turn, the positional sounds gathered, and the 3D sounds placed again
+        // (`mission_frame`).
+        sound.timerTick(clock.game_ticks);
+        sound.updateMusic();
+        sound.playBuffered(stdsmp);
+        sound.update3D(hearing.scene(world, &clock));
 
         // The GPU draws at the display's own resolution; the software device at the window's size
         // in points, made again when it changes.
@@ -511,6 +553,23 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         }
         if (options.frameRate(window)) |rate| pacer.wait(rate);
     }
+}
+
+/// The volumes `[Sound]` of the settings file holds, each from 0 to 127, and the defaults for any
+/// it lacks.
+fn soundVolumes(settings: engine.profile.Profile) game.hog_snd.Volumes {
+    const defaults: game.hog_snd.Volumes = .{};
+    const section = game.hog_snd.Volumes.section;
+    return .{
+        .master = volume(settings.int(section, "Mastervolume", @intCast(defaults.master))),
+        .effects = volume(settings.int(section, "Fxvolume", @intCast(defaults.effects))),
+        .music = volume(settings.int(section, "Musicvolume", @intCast(defaults.music))),
+        .speech = volume(settings.int(section, "Speechvolume", @intCast(defaults.speech))),
+    };
+}
+
+fn volume(setting: u32) i32 {
+    return @intCast(@min(setting, 127));
 }
 
 /// What the camera follows of the player's ship: where its root's frame has it drawn, its model's
@@ -675,9 +734,15 @@ const Sandbox = struct {
     /// The types no object uses any more are let go. Fails where the game has no model for the
     /// player's type.
     fn start(sandbox: *Sandbox, orders: game.aigeneric.Context, ship_type: u8) !void {
+        if (orders.world.hearing) |hearing| game.sound3d.endAll(hearing.sound);
         sandbox.objects.reset(sandbox.random);
         const index = try sandbox.create(ship_type, @splat(0));
         if (sandbox.objects.slots[index].model == null) return error.NoModel;
+        // The engine's sound, which a mission starts as the player's ship launches (`launch_run`).
+        if (orders.world.hearing) |hearing| {
+            const engine_sound = game.sound3d.engineSound(ship_type);
+            _ = game.sound3d.play(hearing.sound, hearing.scene(orders.world, orders.clock), null, null, index, engine_sound, 0, .player_engines);
+        }
         // The order a mission's start gives the player's ship, which its controls fly it by.
         _ = game.aigeneric.push(orders, index, .player_control, .none) catch |err| {
             std.log.warn("the player's controls are left out: {s}", .{@errorName(err)});
@@ -1021,6 +1086,12 @@ test Options {
     try std.testing.expectEqual(.latest_two, retro.shot_lights);
     try std.testing.expect(!(try Options.parse(&.{"--no-smooth-motion"})).smooth_motion);
     try std.testing.expectEqual(.latest_two, (try Options.parse(&.{"--few-shot-lights"})).shot_lights);
+    // Sound is on, with the first mission's music, unless told otherwise.
+    try std.testing.expect((try Options.parse(&.{})).sound);
+    try std.testing.expect(!(try Options.parse(&.{"--no-sound"})).sound);
+    try std.testing.expectEqualStrings(Options.default_music, (try Options.parse(&.{})).music.?);
+    try std.testing.expectEqualStrings("New_Sim01.wav", (try Options.parse(&.{ "--music", "New_Sim01.wav" })).music.?);
+    try std.testing.expectEqual(null, (try Options.parse(&.{ "--music", "none" })).music);
     try std.testing.expect((try Options.parse(&.{})).smooth_motion);
     try std.testing.expectEqual([2]u32{ 3840, 2160 }, (try Options.parse(&.{ "--size", "3840x2160" })).settings.size.?);
     for ([_][:0]const u8{ "3840", "0x100", "100x", "1x2x3", "99999x100" }) |bad| {

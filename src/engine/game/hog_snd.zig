@@ -219,6 +219,18 @@ pub const Scene = struct {
     random: *@import("../libcmt.zig").Rand,
 };
 
+/// What the game's code reaches the sound through: the sound, and the camera it is heard from,
+/// placed each frame (the game reads its camera's frame, `sr + 0x30`).
+pub const Hearing = struct {
+    sound: *Sound,
+    camera: *const camera.Place,
+
+    /// The scene a 3D sound is placed in, for `world` at `clock`.
+    pub fn scene(hearing: Hearing, world: @import("gameobj.zig").World, clock: *const Clock) Scene {
+        return .{ .objects = world.objects, .camera = hearing.camera.*, .view = world.view, .clock = clock, .random = world.random };
+    }
+};
+
 /// The game's sound: its globals, from `0x00563A18` to `0x00565690`.
 pub const Sound = struct {
     /// Miles's digital driver (`0x00563A1C`), or null with none at all: every call then does
