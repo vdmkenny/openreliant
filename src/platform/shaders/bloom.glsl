@@ -6,6 +6,9 @@
 // One shader for all three passes, which `frame.settings.x` picks. `make shaders` compiles the
 // vertex stage, with VERTEX defined, and the fragment stage, with FRAGMENT, as it does the device's.
 #version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "colour.glsl"
 
 #ifdef VERTEX
 
@@ -29,10 +32,14 @@ layout(set = 2, binding = 0) uniform sampler2D source;
 layout(set = 2, binding = 1) uniform sampler2D frame_image;
 
 layout(set = 3, binding = 0) uniform Frame {
-    // x: which pass, 0 to take the bright parts, 1 to blur, 2 to add the bloom back. yz: one texel
-    // of the image being read, along the axis a blur runs. w: the brightness a colour must pass to
-    // bloom, and, in the last pass, how much of the bloom is added.
+    // x: which pass, 0 to take the bright parts, 1 to blur, 2 to add the bloom back and finish the
+    // frame. yz: one texel of the image being read, along the axis a blur runs. w: the brightness a
+    // colour must pass to bloom, and, in the last pass, how much of the bloom is added.
     vec4 settings;
+    // x: 1 for a frame kept in floats, whose highlights, past 1 where glows are stacked, are eased
+    // rather than clipped, before they bloom and as the last pass finishes the frame. y: 1 for the
+    // last pass to dither it to eight bits a channel.
+    vec4 finish;
 } frame;
 
 layout(location = 0) in vec2 uv;
@@ -44,6 +51,8 @@ void main() {
     if (pass == 0) {
         // Only what stands above the threshold blooms, so that an ordinary lit hull does not.
         vec3 colour = texture(source, uv).rgb;
+        // A fireball's heart, many times past white, blooms as white does.
+        if (frame.finish.x > 0.0) colour = shouldered(colour);
         result = vec4(max(colour - vec3(frame.settings.w), vec3(0.0)), 1.0);
     } else if (pass == 1) {
         // Nine taps along one axis, weighted as a Gaussian; the two passes together blur both.
@@ -56,7 +65,10 @@ void main() {
         }
         result = vec4(colour, 1.0);
     } else {
-        result = vec4(texture(frame_image, uv).rgb + texture(source, uv).rgb * frame.settings.w, 1.0);
+        vec3 colour = texture(frame_image, uv).rgb + texture(source, uv).rgb * frame.settings.w;
+        if (frame.finish.x > 0.0) colour = shouldered(colour);
+        if (frame.finish.y > 0.0) colour = dithered(colour, ivec2(gl_FragCoord.xy), vec3(255.0));
+        result = vec4(colour, 1.0);
     }
 }
 

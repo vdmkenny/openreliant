@@ -3,6 +3,9 @@
 // defined, and the fragment stage, with FRAGMENT, into SPIR-V, and from that into Metal's
 // language. The platform layer embeds what it makes (src/platform/gpu.zig).
 #version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "colour.glsl"
 
 #ifdef VERTEX
 
@@ -65,7 +68,8 @@ layout(set = 2, binding = 1) uniform sampler2DArrayShadow shadowMaps;
 layout(set = 3, binding = 0) uniform Frame {
     // x: 1 to draw in 16-bit colour, dithered. y: 1 to magnify textures with a Catmull-Rom filter
     // rather than bilinearly. z: 1 to dither 32-bit colour as well, which costs nothing and keeps
-    // a dark gradient, such as the nebula or a light's falloff, from banding.
+    // a dark gradient, such as the nebula or a light's falloff, from banding. w: 1 to light in
+    // linear light: the colours are decoded, lit, and encoded again as they are written.
     vec4 settings;
 } frame;
 
@@ -164,16 +168,15 @@ float sunlit(vec3 n) {
     return 1.0;
 }
 
-// The vertices' colour with the directional and point lights added for this pixel, as the
-// pipeline adds them for each vertex (srmesh.zig), each channel then held to 1. A vertex that comes
-// lit already, as every one does in the original's look, takes its colour as it stands. A shadowed
-// light is scaled by how much of the sun reaches the pixel, looked up once, and only where such a
-// light faces it.
-vec4 lit(vec4 base) {
+// What the directional and point lights add to this pixel, as the pipeline adds them for each
+// vertex (srmesh.zig): nothing for a vertex that comes lit already, as every one does in the
+// original's look. A shadowed light is scaled by how much of the sun reaches the pixel, looked up
+// once, and only where such a light faces it.
+vec3 lights() {
     float length = length(facing);
-    if (mask == 0xFFFFFFFFu || length < 1e-6) return base;
+    if (mask == 0xFFFFFFFFu || length < 1e-6) return vec3(0.0);
     vec3 n = facing / length;
-    vec3 sum = base.rgb;
+    vec3 sum = vec3(0.0);
     bool shaded = shade != 0u && shadows.enabled != 0u;
     float sun = -1.0;
     for (uint i = 0u; i < lighting.count.x; i++) {
@@ -182,6 +185,10 @@ vec4 lit(vec4 base) {
         if (light.kind == 0u) {
             float amount = dot(n, light.vector.xyz);
             if (amount <= 0.0) continue;
+            // In linear light the key light falls off as light does. A fill light, the nebula's
+            // glow, falls off as the original's did, which its colour and strength were chosen
+            // for: otherwise the side of a ship away from the sun glows with it.
+            if (frame.settings.w > 0.0 && light.shadowed == 0u) amount = decoded(vec3(amount)).x;
             if (shaded && light.shadowed != 0u) {
                 if (sun < 0.0) sun = sunlit(n);
                 amount *= sun;
@@ -199,7 +206,7 @@ vec4 lit(vec4 base) {
         // (1 - r / reach)^2 times the cosine, as the pipeline works it out.
         sum += (1.0 / r + r / (reach * reach) - 2.0 / reach) * along * light.colour.rgb;
     }
-    return vec4(min(sum, vec3(1.0)), base.a);
+    return sum;
 }
 
 // A texture magnified with a Catmull-Rom filter, from nine bilinear taps: sharper than bilinear,
@@ -238,17 +245,25 @@ vec4 sampled() {
 }
 
 void main() {
-    // Direct3D 7's stages: the texture times the colour, or the colour alone.
-    vec4 shaded = lit(colour);
-    vec4 c = image < 0 ? shaded : sampled() * shaded;
+    vec4 texel = image < 0 ? vec4(1.0) : sampled();
+    vec3 added = lights();
+    vec4 c = vec4(0.0, 0.0, 0.0, texel.a * colour.a);
+    if (frame.settings.w > 0.0) {
+        // In linear light, from decoded textures: the lights times the texture, encoded again for
+        // the frame, which blends encoded as the game's effects were made to; and the vertex's own
+        // colour, its ambient and baked light, added as the original added it, whose neutral floor
+        // the lights' colours were chosen against.
+        c.rgb = min(encoded(texel.rgb * min(added, vec3(1.0))) + encoded(texel.rgb) * colour.rgb, vec3(1.0));
+    } else {
+        // Direct3D 7's stages: the texture times the colour, or the colour alone, the lights added
+        // for the pixel and each channel held to 1.
+        c.rgb = texel.rgb * min(colour.rgb + added, vec3(1.0));
+    }
     if (frame.settings.x > 0.0 || frame.settings.z > 0.0) {
-        // Over a 4 by 4 ordered dither, to the levels the frame is kept in: five bits of red and
-        // blue and six of green in 16-bit colour, eight bits a channel otherwise.
-        const float bayer[16] = float[](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
-        ivec2 cell = ivec2(gl_FragCoord.xy) & 3;
-        float threshold = (bayer[cell.y * 4 + cell.x] + 0.5) / 16.0;
+        // To the levels the frame is kept in: five bits of red and blue and six of green in 16-bit
+        // colour, eight bits a channel otherwise.
         vec3 levels = frame.settings.x > 0.0 ? vec3(31.0, 63.0, 31.0) : vec3(255.0);
-        c.rgb = floor(c.rgb * levels + threshold) / levels;
+        c.rgb = dithered(c.rgb, ivec2(gl_FragCoord.xy), levels);
     }
     result = c;
 }

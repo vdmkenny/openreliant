@@ -253,7 +253,8 @@ pub const Driver = struct {
                 .point => |point| .{ .point = .{
                     .position = context.view(point.position),
                     .reach = l.intensity * point.range,
-                    .colour = @as(math.Vector, l.colour) * @as(math.Vector, @splat(l.intensity)),
+                    .colour = l.colour,
+                    .intensity = l.intensity,
                 } },
             };
             try taken.append(driver.gpa, .{ .mask = l.mask, .kind = kind, .shadowed = l.shadowed });
@@ -823,14 +824,15 @@ test "a device that lights each pixel" {
     try srcore.render(arena, &context, &scene, driver.interface(), null);
     try std.testing.expect(context.pixel_lighting);
     // The directional light first, then the point light, in the camera's frame: the direction
-    // made as long as the intensity, the point's reach and colour scaled by it.
+    // made as long as the intensity, the point's reach scaled by it.
     try std.testing.expectEqual(2, recorder.given);
     try std.testing.expectEqual(0x01, recorder.lights[0].mask);
     try std.testing.expectEqual([3]f32{ 0, 0, -0.5 }, recorder.lights[0].kind.directional.toward);
     try std.testing.expectEqual(0x08, recorder.lights[1].mask);
     try std.testing.expectEqual(math.Vector{ -10, 0, 900 }, recorder.lights[1].kind.point.position);
     try std.testing.expectEqual(200, recorder.lights[1].kind.point.reach);
-    try std.testing.expectEqual([3]f32{ 2, 1, 0 }, recorder.lights[1].kind.point.colour);
+    try std.testing.expectEqual([3]f32{ 1, 0.5, 0 }, recorder.lights[1].kind.point.colour);
+    try std.testing.expectEqual(2, recorder.lights[1].kind.point.intensity);
     // The vertices come with the ambient light alone, their normals and their object's mask.
     try std.testing.expect(recorder.drawn > 0);
     for (recorder.vertices[0..recorder.drawn]) |v| {

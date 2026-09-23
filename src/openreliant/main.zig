@@ -51,6 +51,7 @@ const Arg = enum {
     @"--no-bloom",
     @"--no-dither",
     @"--no-pixel-lighting",
+    @"--gamma-space",
     @"--shadows",
     @"--no-cockpit-shadows",
     @"--no-smooth-motion",
@@ -61,6 +62,7 @@ const Arg = enum {
     @"--no-compressor",
     @"--no-sound",
     @"--screenshot",
+    @"--screenshot-ticks",
     @"--help",
 
     /// The value it takes, as the help page shows it, or null for none.
@@ -101,7 +103,7 @@ const Doc = struct {
 
 /// Every option's help, which the compiler holds to having one for each.
 const docs: std.enums.EnumArray(Arg, Doc) = .init(.{
-    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings and particles as few and plain as the original's, a damaged ship's smoke as even as the original's, the shields' bubbles as coarse as the original's, the marker for a target out of sight placed as the original misplaces it, and the sound mixed plainly in stereo" },
+    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, light worked out on encoded colours, no shadows, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings and particles as few and plain as the original's, a damaged ship's smoke as even as the original's, the shields' bubbles as coarse as the original's, the marker for a target out of sight placed as the original misplaces it, and the sound mixed plainly in stereo" },
     .@"--ship" = .{ .section = .sandbox, .value = "<type>", .text = "the ship type to fly, by its number in shipstats.bin; 0, the Predator, by default" },
     .@"--view" = .{ .section = .sandbox, .value = "<0|1|2>", .text = "the view it starts in, as the game's settings keep it: 0 the cockpit, the default; 1 the chase view; 2 no cockpit" },
     .@"--difficulty" = .{ .section = .sandbox, .value = "<easy|medium|hard>", .text = "the game's difficulty: how hard hits land on your ship, and shots on the enemy; medium by default, as in the game" },
@@ -117,6 +119,7 @@ const docs: std.enums.EnumArray(Arg, Doc) = .init(.{
     .@"--no-bloom" = .{ .section = .graphics, .text = "draw without the bloom around bright things" },
     .@"--no-dither" = .{ .section = .graphics, .text = "draw 32-bit colour without dithering" },
     .@"--no-pixel-lighting" = .{ .section = .graphics, .text = "light each vertex rather than each pixel, as the original does" },
+    .@"--gamma-space" = .{ .section = .graphics, .text = "light, blend and filter the encoded colours, as the original does, rather than in linear light" },
     .@"--no-cockpit-shadows" = .{ .section = .graphics, .text = "leave the shadows out of the cockpit, keeping them on the ships" },
     .@"--shadows" = .{ .section = .graphics, .value = "<off|low|high>", .text = "shadows from the sun: low is soft and light on older GPUs, high sharp and smooth; high by default, and none without lighting each pixel" },
     .@"--no-smooth-motion" = .{ .section = .graphics, .text = "move what moves on with the game's ticks, a hundred a second, as the original does, rather than on every frame" },
@@ -126,7 +129,8 @@ const docs: std.enums.EnumArray(Arg, Doc) = .init(.{
     .@"--no-reverb" = .{ .section = .sound, .text = "play the sounds around you and the cockpit's voice without reverb" },
     .@"--no-compressor" = .{ .section = .sound, .text = "leave the mix's loudness as it is, only keeping its peaks in check" },
     .@"--no-sound" = .{ .section = .sound, .text = "play without sound" },
-    .@"--screenshot" = .{ .section = .other, .value = "<file.png>", .text = "draw one frame, with the camera settled, to a PNG, and quit" },
+    .@"--screenshot" = .{ .section = .other, .value = "<file.png>", .text = "draw one frame, with the camera settled, to a PNG, and quit; the controls are not read, so that it comes out the same each time" },
+    .@"--screenshot-ticks" = .{ .section = .other, .value = "<ticks>", .text = "with --screenshot, how many game ticks to run first, one a frame, so that the scene plays out; 2 by default" },
     .@"--help" = .{ .section = .other, .alias = "-h", .text = "show this page" },
 });
 
@@ -198,6 +202,8 @@ const Options = struct {
     cockpit: camera.CockpitSetting = .cockpit,
     difficulty: game.collision.Difficulty = .medium,
     screenshot: ?[]const u8 = null,
+    /// The game ticks a screenshot runs before it is taken, one a frame.
+    screenshot_ticks: u32 = minimum_screenshot_ticks,
     fullscreen: bool = false,
     software: bool = false,
     settings: platform.gpu.Settings = .{},
@@ -306,6 +312,7 @@ const Options = struct {
             .@"--no-bloom" => options.settings.bloom = false,
             .@"--no-dither" => options.settings.dither = false,
             .@"--no-pixel-lighting" => options.settings.pixel_lighting = false,
+            .@"--gamma-space" => options.settings.linear_light = false,
             .@"--shadows" => options.settings.shadows = std.meta.stringToEnum(platform.gpu.Settings.Shadows, value) orelse return error.BadValue,
             .@"--no-cockpit-shadows" => options.settings.cockpit_shadows = false,
             .@"--no-smooth-motion" => options.smooth_motion = false,
@@ -330,6 +337,7 @@ const Options = struct {
             },
             .@"--no-sound" => options.sound = null,
             .@"--screenshot" => options.screenshot = value,
+            .@"--screenshot-ticks" => options.screenshot_ticks = @max(std.fmt.parseInt(u32, value, 10) catch return error.BadValue, minimum_screenshot_ticks),
             .@"--help" => {},
         }
     }
@@ -533,7 +541,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     _ = platform.joystick.addMappings(try std.fs.path.joinZ(arena, &.{ options.directory, mappings_name }));
     var controller: ?platform.joystick.Controller = null;
     defer if (controller) |*open| open.close();
-    connectController(arena, &devices, &controller, settings_file);
+    // A screenshot reads no controls, so that it comes out the same whatever is plugged in.
+    if (options.screenshot == null) connectController(arena, &devices, &controller, settings_file);
 
     // Sound: Miles's calls, played by OpenAL Soft or the port's own mixer through SDL3's audio,
     // with the ten voices `WinMain` asks `sound_init` for, the volumes of `[Sound]`, and the 3D
@@ -586,13 +595,13 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         sound.playMusic(path, 0, 80, true);
     }
     _ = view.setView(startingView(sandbox.player(), view.cockpit_mode), sandbox.objects.player, false, false, 0);
-    // A screenshot waits for the chase view to settle, a tick a frame, and for the second frame,
-    // which draws the sun by how much of it the first found showing.
+    // A screenshot waits for the chase view to settle, then runs its ticks, one a frame, at least
+    // until the second frame, which draws the sun by how much of it the first found showing.
     var frames_left: ?usize = null;
     if (options.screenshot != null) {
         const subject = playerSubject(sandbox.player());
         for (0..settling_frames) |_| _ = view.frame(.{ .object = subject, .player = subject, .ticks = 1 });
-        frames_left = 2;
+        frames_left = options.screenshot_ticks;
     }
 
     // The head-up display: what it draws with, and what draws it over the finished scene.
@@ -626,8 +635,10 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     while (true) {
         while (window.poll()) |event| switch (event) {
             .quit => return,
-            .key => |key| devices.keyboard.down[key.scan] = key.down,
-            .controllers => connectController(arena, &devices, &controller, settings_file),
+            .key => |key| if (options.screenshot == null) {
+                devices.keyboard.down[key.scan] = key.down;
+            },
+            .controllers => if (options.screenshot == null) connectController(arena, &devices, &controller, settings_file),
             .active => |active| app.active = active or frames_left != null,
         };
         // While the window is inactive, the game and its sound are paused, as the message pump
@@ -855,6 +866,7 @@ fn startingView(slot: *const game.create.Slot, mode: camera.CockpitMode) camera.
 
 /// Frames the chase view takes to settle, at a tick a frame.
 const settling_frames = 200;
+const minimum_screenshot_ticks = 2;
 
 fn save(io: Io, gpa: Allocator, path: []const u8, rgba: []const u8, size: [2]u32) !void {
     if (std.fs.path.dirname(path)) |dir| try Io.Dir.cwd().createDirPath(io, dir);
@@ -1301,6 +1313,8 @@ test Options {
     try std.testing.expectEqual(.off, retro.settings.shadows);
     try std.testing.expectEqual(.low, (try play(&.{ "--shadows", "low" })).settings.shadows);
     try std.testing.expect(!(try play(&.{"--no-cockpit-shadows"})).settings.cockpit_shadows);
+    try std.testing.expect(!(try play(&.{"--gamma-space"})).settings.linear_light);
+    try std.testing.expect(!retro.settings.linear_light);
     try std.testing.expectEqual(.original, retro.settings.filter);
     try std.testing.expectEqual(8, retro.settings.samples);
     try std.testing.expect(!retro.settings.vsync);
