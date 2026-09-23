@@ -299,7 +299,7 @@ pub fn armorDamage(world: gameobj.World, index: u16, struck: Quadrant, value: f3
     if (object.flags.jumping or object.flags.exploding) return;
     if (slot.combat) |combat| if (combat.class == .debris) return;
     if (counted(kind)) object.recent_damage += value;
-    if (object.invulnerable != 0) return;
+    if (object.invulnerable != .none) return;
 
     object.armor[@intFromEnum(struck)] -= value;
     if (slot.combat) |combat| main.armorConditions(object, combat);
@@ -353,8 +353,8 @@ pub fn componentDamage(world: gameobj.World, index: u16, component: *objects.Mod
     }
 
     var share = value;
-    if (object.invulnerable != 5 and object.flags.shield_generator and share < shielded_hit) share *= shielded_damage;
-    const protected = object.invulnerable == 2 or (object.invulnerable == 1 and attacker >= all.players);
+    if (object.invulnerable != ._unknown_5 and object.flags.shield_generator and share < shielded_hit) share *= shielded_damage;
+    const protected = object.invulnerable == .full or (object.invulnerable == .player_can_hit and attacker >= all.players);
 
     const left = struck.armor - share;
     if (left >= 0 or !protected) struck.armor = left;

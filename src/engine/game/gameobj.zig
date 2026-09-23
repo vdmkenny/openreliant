@@ -62,6 +62,26 @@ pub fn Side(comptime Tag: type) type {
     };
 }
 
+/// How far harm reaches an object (`GameObject.invulnerable`). The first four are the values
+/// `SetInvulnerability`'s catalogue entry lists; the game sets the last two itself. Any but `none`
+/// keeps its armour whole (`collision.armorDamage`).
+pub const Invulnerability = enum(u8) {
+    none = 0,
+    /// Only a player's ship can harm it: an ejected pilot, until it is picked up (`order_eject_spin`).
+    player_can_hit = 1,
+    /// Nothing harms it: what the Ripper has grabbed, and some types as they are created.
+    full = 2,
+    /// Its pilot ejects before it explodes.
+    eject_before_exploding = 3,
+    /// **Unknown.** Set as some types are created and as a deathmatch ship respawns. Shots pass its
+    /// shields to the hull (`guns.bulletHit`).
+    _unknown_4 = 4,
+    /// **Unknown.** Its shields are emptied each step (`rechargeShields`), shots pass them to the
+    /// hull, and a shield generator does not soften a component's hits.
+    _unknown_5 = 5,
+    _,
+};
+
 /// Components an object can list.
 pub const max_components = 60;
 
@@ -143,7 +163,7 @@ pub const GameObject = extern struct {
     nova_charge: f32,
     /// Which side of a gun group fires next, 0 or 1, while the ship fires one group out of step
     /// (`guns.step`).
-    gun_turn: u32,
+    gun_turn: guns.GroupSide,
     _unknown_150: i16,
     component_count: i16,
     _unknown_154: [0xF4]u8,
@@ -339,8 +359,8 @@ pub const GameObject = extern struct {
     /// Set once `create_object` has filled the slot; it stops with a fatal error if it is set
     /// already.
     created: bool,
-    /// Nonzero while it is invulnerable: `SetInvulnerability`.
-    invulnerable: u8,
+    /// How far harm reaches it (`SetInvulnerability`).
+    invulnerable: Invulnerability,
     _unknown_b96: u16,
 
     /// The names of the script commands that set a bit are the developers' own.
@@ -609,12 +629,12 @@ pub const ShieldReserves = struct {
 /// reserve go beyond it.
 ///
 /// An object whose components are listed recharges no shields here, and neither does one whose
-/// `+0x754` is 8. One whose `invulnerable` is 5 has its shields emptied instead. **Unknown:**
+/// `+0x754` is 8. One whose `invulnerable` is `_unknown_5` has its shields emptied instead. **Unknown:**
 /// what those values mean. Not ported: the case in a multiplayer game where the player's shields
 /// aren't recharged (`0x005D76F0` at 4 with `0x005DB538` naming the player).
 pub fn rechargeShields(object: *GameObject, combat: *const create.ShipCombat, reserves: ?ShieldReserves) void {
     if (object.flags.components) return;
-    if (object.invulnerable == 5) {
+    if (object.invulnerable == ._unknown_5) {
         object.shields = @splat(0);
         return;
     }
@@ -1146,8 +1166,8 @@ test rechargeShields {
     object.shields = .{ 47, 47, 45, 40 };
     rechargeShields(&object, &combat, .{ .aft = 9 });
     try std.testing.expectEqual(45, object.shields[2]);
-    // An object whose `invulnerable` is 5 loses its shields.
-    object.invulnerable = 5;
+    // An object whose `invulnerable` is `_unknown_5` loses its shields.
+    object.invulnerable = ._unknown_5;
     rechargeShields(&object, &combat, null);
     try std.testing.expectEqual([4]f32{ 0, 0, 0, 0 }, object.shields);
 }

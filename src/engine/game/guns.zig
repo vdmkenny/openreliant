@@ -115,8 +115,8 @@ pub const Stats = struct {
 
 /// One of an object's guns, as the game keeps it in the 0x60 bytes at `GameObject.guns`.
 pub const Fitted = struct {
-    /// The turret kind of the part it stands on (`+0x00`), or 0 for a gun that does not move.
-    turret: i32 = 0,
+    /// The turret kind of the part it stands on (`+0x00`).
+    turret: Turret = .fixed,
     /// The part it fires from (`+0x04`), and where on the part.
     part: *const objects.Model.Part,
     muzzle: shp.Attachment,
@@ -125,14 +125,46 @@ pub const Fitted = struct {
     /// The tick the trigger is held until (`+0x0C`): the gun fires while the frame begins before
     /// it (`fire`).
     firing_until: i32 = 0,
-    /// Which side of its group it is, 0 or 1 (`+0x14`), as `create_object` marks it from the
-    /// type's groups.
-    side: u8 = 0,
+    /// Which side of its group it is (`+0x14`), as `create_object` marks it from the type's
+    /// groups.
+    side: GroupSide = .first,
     /// The tick it may next fire (`+0x18`).
     next_shot: i32 = 0,
     /// The steps it has been firing, over the sound's period (`gun_stats.sound_periods`), which
     /// the game keeps in its own array at `GameObject+0x138`.
     sounded: i32 = 0,
+};
+
+/// What a gun stands on: the turret kind of its part (`ShpPart.turret_kind`, `+0xF4`), which the
+/// turret setups copy to `+0x00` of the gun's record. Turrets are not fitted yet
+/// ([#71](https://github.com/vdmkenny/openreliant/issues/71)).
+pub const Turret = enum(i32) {
+    /// **Unknown.** A part whose turret kind reads `0xFFFF`: the steps pass the gun over.
+    unset = -1,
+    /// A gun that does not move.
+    fixed = 0,
+    /// A turret the mission's `TurretSetTarget` aims. It is in no gun group, and FULL GUNS leaves
+    /// it out.
+    aimed = 1,
+    /// **Unknown.** A turret that fires the object's rounds and puffs particles at its muzzle.
+    _unknown_2 = 2,
+    /// **Unknown.** It is in no gun group.
+    _unknown_3 = 3,
+    _,
+};
+
+/// Which of its group's two guns a gun is, as `create_object` marks them (`+0x14`), and which
+/// fires next while a ship fires one group out of step (`GameObject.gun_turn`).
+pub const GroupSide = enum(u32) {
+    /// The group's first gun, the further to the left, or a gun alone in its group.
+    first = 0,
+    second = 1,
+    _,
+
+    /// The other gun of the pair.
+    pub fn other(side: GroupSide) GroupSide {
+        return if (side == .first) .second else .first;
+    }
 };
 
 /// `0x00479800` with `0x00479640`: the guns a model gives an object, one for each `gun_muzzle`
@@ -194,7 +226,7 @@ pub const Group = struct {
 
 /// The turret kinds `gun_groups_build` leaves out of the groups.
 fn grouped(gun: Fitted) bool {
-    return gun.turret != 1 and gun.turret != 3;
+    return gun.turret != .aimed and gun.turret != ._unknown_3;
 }
 
 /// `gun_groups_build` (`0x004667F0`): pairs a ship type's guns into groups, each gun with the gun
@@ -385,7 +417,7 @@ pub fn fire(object: *gameobj.GameObject, trigger: Trigger, ticks: i32) void {
         return;
     }
     for (trigger.fitted) |*gun| {
-        if (gun.turret == 1 or gun.turret == -1 or gun.type == charging_type) continue;
+        if (gun.turret == .aimed or gun.turret == .unset or gun.type == charging_type) continue;
         gun.firing_until = until;
     }
 }
@@ -404,7 +436,7 @@ pub fn fire(object: *gameobj.GameObject, trigger: Trigger, ticks: i32) void {
 /// An object whose components are listed steps no guns of its own, and one that is jumping fires
 /// none.
 ///
-/// Not ported: the particles a gun of turret kind 2 puffs.
+/// Not ported: the particles a turret of kind `_unknown_2` puffs.
 pub fn step(world: gameobj.World, clock: *const Clock, index: u16) void {
     const all = world.objects;
     const slot = &all.slots[index];
@@ -424,7 +456,7 @@ pub fn step(world: gameobj.World, clock: *const Clock, index: u16) void {
     var needed: f32 = 0;
     for (fitted) |gun| {
         const record = gun.type.stats(stats);
-        if (clock.frame_start <= gun.firing_until and gun.turret == 0 and
+        if (clock.frame_start <= gun.firing_until and gun.turret == .fixed and
             record.kind == .energy and gun.next_shot <= clock.frame_start)
         {
             needed += @floatFromInt(record.shot_energy);
@@ -440,10 +472,10 @@ pub fn step(world: gameobj.World, clock: *const Clock, index: u16) void {
         const record = gun.type.stats(stats);
         // The sound's turn comes round before the shot that would be heard (`heard`). Only type
         // 0, which no gun has, has a period of zero.
-        if (gun.turret != -1 and (record.kind == .energy or record.kind == .rounds)) {
+        if (gun.turret != .unset and (record.kind == .energy or record.kind == .rounds)) {
             gun.sounded = @rem(gun.sounded + 1, @max(1, gun_stats.sound_periods[gun.type.number()]));
         }
-        if (gun.turret == 0) {
+        if (gun.turret == .fixed) {
             if (gun.next_shot > clock.frame_start) continue;
             shot: {
                 switch (record.kind) {
@@ -471,7 +503,7 @@ pub fn step(world: gameobj.World, clock: *const Clock, index: u16) void {
                 }
             }
             gun.next_shot = clock.frame_start + refire(record, object.blind_fire_aim != 0);
-        } else if (gun.turret == 2 and gun.next_shot <= clock.frame_start and object.rounds > 0) {
+        } else if (gun.turret == ._unknown_2 and gun.next_shot <= clock.frame_start and object.rounds > 0) {
             gun.next_shot = clock.frame_start + refire(record, object.blind_fire_aim != 0);
             if (takesTurn(object, groups, gun.*)) |takes| {
                 if (!takes) continue;
@@ -482,7 +514,7 @@ pub fn step(world: gameobj.World, clock: *const Clock, index: u16) void {
             object.rounds -= 1;
         }
     }
-    if (alternated) object.gun_turn ^= 1;
+    if (alternated) object.gun_turn = object.gun_turn.other();
 }
 
 /// Whether a gun takes this shot, for a ship firing one group of guns out of step: the group's two
@@ -521,8 +553,8 @@ test fire {
     var object = gameobj.testing.object();
     var part: objects.Model.Part = undefined;
     var fitted = [_]Fitted{
-        .{ .part = &part, .muzzle = std.mem.zeroes(shp.Attachment), .type = .laser_cannon, .side = 0 },
-        .{ .part = &part, .muzzle = std.mem.zeroes(shp.Attachment), .type = .laser_cannon, .side = 1 },
+        .{ .part = &part, .muzzle = std.mem.zeroes(shp.Attachment), .type = .laser_cannon, .side = .first },
+        .{ .part = &part, .muzzle = std.mem.zeroes(shp.Attachment), .type = .laser_cannon, .side = .second },
         .{ .part = &part, .muzzle = std.mem.zeroes(shp.Attachment), .type = .pulse_cannon },
         .{ .part = &part, .muzzle = std.mem.zeroes(shp.Attachment), .type = charging_type },
     };
@@ -732,7 +764,7 @@ test "a group's two guns fire in turn while the ship fires out of step" {
     // The ship's turn is the first gun's side, so only that gun fires, and the turn passes.
     step(world, &ship.clock, ship.index);
     try std.testing.expectEqual(49, object.gun_charge);
-    try std.testing.expectEqual(1, object.gun_turn);
+    try std.testing.expectEqual(GroupSide.second, object.gun_turn);
 
     // The other gun fires next time round.
     object.gun_charge = 50;
@@ -740,7 +772,7 @@ test "a group's two guns fire in turn while the ship fires out of step" {
     ship.ready();
     step(world, &ship.clock, ship.index);
     try std.testing.expectEqual(49, object.gun_charge);
-    try std.testing.expectEqual(0, object.gun_turn);
+    try std.testing.expectEqual(GroupSide.first, object.gun_turn);
 }
 
 test "a ship aiming blind fires more slowly" {
@@ -1170,7 +1202,7 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
         const struck = collision.quadrant(object, math.transformTransposed(slot.drawn.orientation, point - slot.drawn.position));
 
         const huge = bullet.kind == .allied_huge_gun or bullet.kind == .coalition_huge_gun;
-        if (!huge and (object.shields[@intFromEnum(struck)] <= 0 or object.invulnerable == 4 or object.invulnerable == 5)) {
+        if (!huge and (object.shields[@intFromEnum(struck)] <= 0 or object.invulnerable == ._unknown_4 or object.invulnerable == ._unknown_5)) {
             hullHit(world, bullet, candidate.object, struck);
             return;
         }

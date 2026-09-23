@@ -489,7 +489,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.yaw_input = 0;
     object._unknown_74c = 0xFFFF;
     object.random_seed = random.rand();
-    object.invulnerable = 0;
+    object.invulnerable = .none;
     object.visibility = 1;
     object.engines = 0;
     object._unknown_6ac = -1;
@@ -514,7 +514,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.gun_condition = 1;
     object._unknown_750 = 0;
     object._unknown_b96 = 0xFFFF;
-    object.gun_turn = 0;
+    object.gun_turn = .first;
     object.blind_fire_aim = 0;
     object._unknown_678 = 0;
     object._unknown_710 = @splat(0);
@@ -609,8 +609,8 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     slot.gun_groups = &all.gun_groups[stats_type];
     for (all.gun_groups[stats_type][0..@intCast(tables.combat[stats_type].gun_groups)]) |group| {
         if (group.first < 0 or group.first >= slot.guns.len) continue;
-        slot.guns[@intCast(group.first)].side = 0;
-        if (group.second >= 0 and group.second < slot.guns.len) slot.guns[@intCast(group.second)].side = 1;
+        slot.guns[@intCast(group.first)].side = .first;
+        if (group.second >= 0 and group.second < slot.guns.len) slot.guns[@intCast(group.second)].side = .second;
     }
     // Its guns charged.
     object.gun_charge = combat.gun_energy;
@@ -1082,8 +1082,8 @@ test "an object is created with the guns its model holds" {
     try std.testing.expectEqual(&all.gun_groups[7], slot.gun_groups);
     try std.testing.expectEqual(0, slot.gun_groups[0].first);
     try std.testing.expectEqual(1, slot.gun_groups[0].second);
-    try std.testing.expectEqual(0, slot.guns[0].side);
-    try std.testing.expectEqual(1, slot.guns[1].side);
+    try std.testing.expectEqual(guns.GroupSide.first, slot.guns[0].side);
+    try std.testing.expectEqual(guns.GroupSide.second, slot.guns[1].side);
     // One group of guns fires them in step (`GunMode.created`).
     try std.testing.expect(slot.object.gun_mode.synchronised);
     try std.testing.expect(!slot.object.gun_mode.all);
