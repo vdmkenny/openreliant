@@ -42,6 +42,17 @@ pub fn build(b: *std.Build) void {
         },
     });
     platform.linkLibrary(sdl_library);
+    // The sound: OpenAL Soft in place of Miles's 3D providers, which deps/openal-soft builds from
+    // source for the target and the platform renders through its loopback device.
+    const openal_library = b.dependency("openal_soft", .{ .target = target, .optimize = optimize }).artifact("openal");
+    const openal_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/platform/openal.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    openal_c.addIncludePath(openal_library.getEmittedIncludeTree());
+    platform.addImport("al", openal_c.createModule());
+    platform.linkLibrary(openal_library);
     if (macos_sdk) |sdk| {
         platform.addSystemFrameworkPath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "System/Library/Frameworks" }) });
         platform.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "usr/lib" }) });
