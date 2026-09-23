@@ -257,6 +257,8 @@ pub const Sound = struct {
     burner_voice: ?u8 = null,
     /// The 3D sounds' own state.
     effects: sound3d.Effects = .{},
+    /// The live objects (`game_objects`), whose voices `end3D` lets go of.
+    objects: ?*@import("create.zig").Objects = null,
 
     /// `sound_init` (`0x00481440`), as far as the port goes: up to 16 voices for the banks, each a
     /// sample of `driver`, and the timer that steps the fades. `driver` is null where the platform
@@ -527,11 +529,16 @@ pub const Sound = struct {
         sound.burner_voice = null;
     }
 
-    /// `sound_3d_voice_end` (`0x00481AF0`): ends what a 3D voice plays and frees it.
+    /// `sound_3d_voice_end` (`0x00481AF0`): ends what a 3D voice plays and frees it, and the
+    /// object it followed has none. Not ported: a missile's, whose object the missiles' records
+    /// name (#39).
     pub fn end3D(sound: *Sound, v: u8) void {
         const driver = sound.driver orelse return;
         const voice = &sound.voices_3d[v];
         if (voice.owner == -1) return;
+        if (voice.follows == .object) if (sound.objects) |all| {
+            if (voice.owner < all.slots.len) all.slots[@intCast(voice.owner)].object.sound_voice = 0xFFFF;
+        };
         voice.priority = 0;
         voice._unknown_0c = 0;
         voice.owner = -1;

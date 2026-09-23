@@ -359,6 +359,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     sound.init(if (output != null) mixer else null, 10, .{ .gpa = gpa, .io = io, .dir = directory });
     defer sound.shutdown();
     sound.volumes = soundVolumes(settings_file);
+    sound.objects = sandbox.objects;
     // `bank_stdsmp`, which the positional sounds of a frame play from, and `smp3d.fat`, which the
     // 3D sounds do.
     const stdsmp = try openreliant.fat.Bank.parse(try resources.readFile(arena, "stdsmp.fat"));

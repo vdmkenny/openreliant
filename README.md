@@ -44,8 +44,12 @@ charge the power ball feeds, at the rate and cost their type has in the game's o
 fly, each gun type drawn as the game draws it, and a fighter you hit loses its shields and then its
 armour. Shots still pass through capital ships.
 
-Nothing can be destroyed yet, and there are no missiles, missions or sound. See the
-[milestones](../../milestones) for what's planned.
+You hear it as the game sounds: your guns and theirs, your engine rising with the throttle and
+roaring on afterburner, fighters sweeping past, and the game's music. `--music` picks another piece
+from the game's `music` folder, or `none`; `--no-sound` turns it all off.
+
+Nothing can be destroyed yet, and there are no missiles or missions. The radio's voices and the
+display's beeps are still silent. See the [milestones](../../milestones) for what's planned.
 
 ## Installing and playing
 

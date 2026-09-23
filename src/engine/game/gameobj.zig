@@ -423,7 +423,9 @@ pub const GameObject = extern struct {
     created: bool,
     /// How far harm reaches it (`SetInvulnerability`).
     invulnerable: Invulnerability,
-    _unknown_b96: u16,
+    /// The 3D voice following it, `0xFFFF` for none: `sound_3d_voice_end` sets it back, and the
+    /// missiles' code reads it (`0x00495CF0`).
+    sound_voice: u16,
 
     /// The names of the script commands that set a bit are the developers' own.
     pub const Flags = packed struct(u32) {
@@ -747,7 +749,7 @@ pub fn objectAlloc(object_type: u32, random: *libcmt.Rand) GameObject {
     object.power_up = .none;
     object._unknown_764 = -1;
     object.root.flags.component = true;
-    object._unknown_b96 = 0xFFFF;
+    object.sound_voice = 0xFFFF;
     object.blink_offset = blinkOffset(random);
     object.visibility = 1;
     return object;

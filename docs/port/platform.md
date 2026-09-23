@@ -11,6 +11,7 @@ game's own code, under [`src/engine/`](../../src/engine), reaches the platform o
 | [`platform/gpu.zig`](../../src/platform/gpu.zig) | Direct3D 7's device, `IDirect3DDevice7`, which the driver draws with ([Renderer](renderer.md#the-gpu-device)) |
 | [`platform/keyboard.zig`](../../src/platform/keyboard.zig) | DirectInput's keyboard: SDL's scan codes as DirectInput's (`DIK_*`) |
 | [`platform/joystick.zig`](../../src/platform/joystick.zig) | DirectInput's joystick: SDL's joysticks and gamepads as the device the game reads into `DIJOYSTATE` |
+| [`platform/audio.zig`](../../src/platform/audio.zig) | The wave-out device Miles played through; the port's Miles mixes for it ([Sound](sound.md)) |
 | [`platform/macos.zig`](../../src/platform/macos.zig) | Nothing: what macOS needs before SDL starts |
 | [`openreliant/main.zig`](../../src/openreliant/main.zig) | `WinMain`: opening the game's files and running the frame loop |
 | [`openreliant/install.zig`](../../src/openreliant/install.zig) | The installer on disc 1, `SETUP.EXE`: unpacking `LANCER.CAB` and copying the disc's `GAME/CAB` files |
@@ -52,6 +53,8 @@ files it says what it needs and exits.
 | `--no-vsync` | Draws without waiting for the display |
 | `--fps <rate>` | Frames a second at most; 0 for no limit |
 | `--software` | Draws on the software device, the port's reference, at the window's size in points |
+| `--music <file>` | The piece of `music\` the sandbox plays, or `none`; `New_Mission01.wav` by default |
+| `--no-sound` | Runs without sound |
 
 It runs a sandbox of its own, drawn through the ported pipeline and driver with the GPU
 ([Renderer](renderer.md)): the player's ship at the origin, facing along Z, the Reliant ahead of it

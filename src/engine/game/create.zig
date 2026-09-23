@@ -512,7 +512,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.armor_speed_factor = 1;
     object.gun_condition = 1;
     object._unknown_750 = 0;
-    object._unknown_b96 = 0xFFFF;
+    object.sound_voice = 0xFFFF;
     object.gun_turn = .first;
     object.blind_fire_aim = 0;
     object._unknown_678 = 0;

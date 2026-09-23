@@ -66,7 +66,8 @@ Then each gun whose trigger is held fires, once its refire interval has passed:
 - The interval begins again whether or not the shot went off, and a ship aiming blind takes 135
   ticks for every 100.
 - The player's shots are all heard; another ship's are heard one step in every
-  `gun_sound_periods` of its type.
+  `gun_sound_periods` of its type. A heard shot plays its gun type's 3D sound, which follows it
+  ([Sound](sound.md#where-the-sounds-come-from)).
 
 A ship that is jumping fires nothing, though its guns still recharge. Every shot that does go off
 is a bullet, below.
@@ -172,9 +173,8 @@ game's two sets differ in. `simulationStep` runs the step and moves the shots;
 [`guns/stats.zig`](../../src/engine/game/guns/stats.zig), which `make gun-tables` derives from the
 payload.
 
-Not ported: the Huge Guns' trails of particles, and the sparks and sounds an impact makes
-([#41](https://github.com/vdmkenny/openreliant/issues/41),
-[#47](https://github.com/vdmkenny/openreliant/issues/47)); the muzzle flashes
+Not ported: the Huge Guns' trails of particles, the sparks an impact makes and a flak shell's
+burst, which is only heard ([#41](https://github.com/vdmkenny/openreliant/issues/41)); the muzzle flashes
 ([#63](https://github.com/vdmkenny/openreliant/issues/63)); the parts of an object whose components
 are listed, so shots pass through a capital ship
 ([#153](https://github.com/vdmkenny/openreliant/issues/153)); the Nova Cannon's charge
