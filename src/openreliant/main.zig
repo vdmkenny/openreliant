@@ -290,9 +290,6 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
 
     // The engine glows every ship's thrusters burn, built once and shared by them all.
     const glows: game.environfx.Glows = try .create(arena, &textures);
-    // The shots' bolts, built once from the gun types' sizes, which the executable holds itself
-    // (`guns_init`).
-    const bolts = try game.guns.Bolts.create(arena, &textures, &game.guns.Stats.initial);
     // The radar's backing, which the cockpit's view draws under the radar.
     const backing = try game.main.RadarBacking.create(arena, &textures);
     // The display's shapes, whose global palette the ships' schematics are drawn with too.
@@ -303,7 +300,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     const tables = try arena.create(game.create.Stats);
     tables.* = .initial;
     tables.load(ship_stats);
-    var sandbox: Sandbox = try .init(gpa, tables, gun_stats, bolts, &rand, .{
+    var sandbox: Sandbox = try .init(gpa, tables, gun_stats, &rand, .{
         .gpa = gpa,
         .resources = &resources,
         .textures = &textures,
@@ -312,6 +309,9 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         .global_palette = global_palette,
     });
     defer sandbox.deinit();
+    // What the shots are drawn with, built once (`guns_init`); the Turret Flak's shell is a ship
+    // type's model, so it comes after the types' loader.
+    sandbox.objects.bullets.looks = try game.guns.Looks.create(arena, &textures, sandbox.types.interface());
     var player: engine.input.Player = .{};
     var devices: engine.input.Devices = .{};
     // The game's settings file, which `load_key_config` reads the input settings from. If it's
@@ -629,13 +629,12 @@ const Sandbox = struct {
     const wing_ahead: f32 = 20000;
     const wing_spacing: f32 = 3000;
 
-    fn init(gpa: Allocator, tables: *game.create.Stats, gun_stats: []align(1) const stats.Gun, bolts: *const game.guns.Bolts, random: *engine.libcmt.Rand, types: TypeCache) !Sandbox {
+    fn init(gpa: Allocator, tables: *game.create.Stats, gun_stats: []align(1) const stats.Gun, random: *engine.libcmt.Rand, types: TypeCache) !Sandbox {
         const cache = try gpa.create(TypeCache);
         errdefer gpa.destroy(cache);
         cache.* = types;
         const objects = try game.create.Objects.create(gpa, random);
         objects.gun_stats.load(gun_stats);
-        objects.bullets.bolts = bolts;
         return .{
             .gpa = gpa,
             .objects = objects,

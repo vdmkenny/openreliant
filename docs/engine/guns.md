@@ -112,24 +112,40 @@ Either way the shot is spent and the frame that follows lets it go.
 
 ### How a shot is drawn
 
-`guns_init` (`0x00478990`) builds each gun type's bolt once at start-up: a level set of two meshes,
-two quads crossed along the flight, one upright and one flat, for up to 15000 off, and the upright
-one alone up to 100000. A bolt is sized by its gun type's record: half its width at `+0x04`, half
-its height at `+0x08` and its length at `+0x0C`, from the muzzle on. It is drawn with the texture
-`gunflare\lasers` added to what stands behind it, unlit but for the Proton Cannon's, which takes
-colours of the shot's own.
+`guns_init` (`0x00478990`) builds the meshes the shots are drawn with once at start-up, twice over:
+a set for the player's side and one for the rest, the same but for the Turret Lasers' rings. Most
+are bolts: two quads crossed along the flight from the muzzle on, one upright and one flat, and far
+off the upright one alone, on the texture `gunflare\lasers` added to what stands behind them. Eight
+builders make them, differing only in the bolt's size, how far it is drawn, and the rings the
+Turret Lasers' bolt has across it.
 
-`bullet_build` (`0x0047D9A0`) gives a new shot a mesh object over its type's bolt, turned as the
-muzzle is, never culled, with texture coordinates of its own: the type's span across the texture
-(`0x00500FB0`, `0x00500FEC`, 32 texels out of 256 for most types) and along it the top half for any
-side but hostile and the bottom half for hostile, which is what gives a friendly shot and an enemy's
-their different colours. Other gun types are drawn with sprite sets, or several meshes and sprites
-hung off a frame.
+`bullet_build` (`0x0047D9A0`) gives each new shot up to eight pieces by its gun type: mesh objects,
+sprite sets, lights, and bare frames the rest hang off. A mesh takes its own texture coordinates:
+its gun type's span across the texture (`0x00500FB0`, `0x00500FEC`, 32 texels out of 256 for most
+types), and the top half of it for any side but hostile, the bottom half for hostile, which is what
+gives a friendly shot and an enemy's their different colours. The Pulse Cannon's and the Collapser
+Guns' flares have a texture for the player's side and one for the rest. Each frame `bullets_frame`
+does its type's own work on the pieces, then places them between the shot's last two places.
 
-Each frame `bullets_frame` places the shot as far through the step as the frame is, between its
-last place and its next, before it tests what the shot has struck. A Proton Cannon's shot fades as
-it flies: over its life its colours go from white to blue for a friendly shot and to nothing for any
-other.
+| Gun type | Drawn with |
+|---|---|
+| Laser Cannon | A bolt 60 across and 1200 long |
+| Pulse Cannon | A flare, and a smaller one that wheels round it from a random start |
+| Messon Blaster | Three thin bolts of different lengths, each at a random turn about the flight |
+| Proton Cannon | A bolt 100 across and 1400 long that fades, to blue for a friendly shot |
+| Gattling Lasers | Three Laser Cannon bolts about the flight, spinning |
+| Tachyon Cannon | A star of three blades and a square ahead of it, spinning and fading |
+| Neutron Particle Gun | A bolt 160 across and 1500 long, dim, turned at random each frame |
+| Collapser Guns | Two flares either side of the flight, spinning and fading |
+| Gattling Plasma Cannon | Four bolts of different lengths at random about the flight |
+| Vulcan Battery | Four short bolts in two pairs that wheel about the flight in opposite ways |
+| Nova Cannon | A bolt 360 across and 10000 long |
+| Turret Flak | The first part of the shell model, `shell.shp` |
+| Turret Lasers | A bolt 400 across and 2400 long, with two diamonds across it |
+| Allied and Coalition Huge Guns | Three squares crossed in the three planes, tumbling and fading, a glow, a light of their own and a trail of particles |
+
+The Nova Cannon's bolt is turned an eighth of a turn about the flight as it is built, and then
+given the muzzle's turn in place of it, so it is drawn unturned.
 
 On a hardware renderer (`sr + 0x1AC`) a shot also casts a point light from where it is drawn: blue
 (0, 0.5, 1), or orange (1, 0.5, 0) for a hostile ship's shot unless the player fired it, reaching
@@ -142,19 +158,22 @@ it for the frames just after it leaves the muzzle.
 
 [`guns.zig`](../../src/engine/game/guns.zig) holds the fitting (`fit`), the groups (`buildGroups`),
 the trigger (`fire`), the step (`step`), the shots (`shoot`, `moveBullets`, `bulletsFrame`) and how
-they are drawn (`Bolts`, `drawBullets`). `simulationStep` runs the step and moves the shots;
+they are drawn (`Looks`, `dress`, `animate`, `drawBullets`). The shapes come from one comptime
+table of recipes, which stands for the game's eleven shape builders and the generators they call.
+The port builds each shape once, and the Turret Lasers' two sets apart, since that is all the
+game's two sets differ in. `simulationStep` runs the step and moves the shots;
 `missionFrame` runs their frame pass; `drawFrame` adds them to the scene after the objects; and
 `playerControls` pulls the trigger from FIRE LASERS. `gun_stats` and the shots in flight live in
 `create.Objects`, and the executable's own half of each gun record is
 [`guns/stats.zig`](../../src/engine/game/guns/stats.zig), which `make gun-tables` derives from the
 payload.
 
-Not ported: how the shots of gun types other than 1 and 4 are drawn
-([#154](https://github.com/vdmkenny/openreliant/issues/154)); the parts of an object whose components
-are listed, so shots pass through a capital ship
-([#153](https://github.com/vdmkenny/openreliant/issues/153)); the sparks and sounds an impact makes
+Not ported: the Huge Guns' trails of particles, and the sparks and sounds an impact makes
 ([#41](https://github.com/vdmkenny/openreliant/issues/41),
-[#47](https://github.com/vdmkenny/openreliant/issues/47)); the Nova Cannon's charge
+[#47](https://github.com/vdmkenny/openreliant/issues/47)); the muzzle flashes
+([#63](https://github.com/vdmkenny/openreliant/issues/63)); the parts of an object whose components
+are listed, so shots pass through a capital ship
+([#153](https://github.com/vdmkenny/openreliant/issues/153)); the Nova Cannon's charge
 ([#150](https://github.com/vdmkenny/openreliant/issues/150)); turrets, their aiming and the guns
 they carry ([#71](https://github.com/vdmkenny/openreliant/issues/71)); and the gunnery keys that
 choose a group or fire them all ([#92](https://github.com/vdmkenny/openreliant/issues/92)).
