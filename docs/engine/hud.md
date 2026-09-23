@@ -400,20 +400,36 @@ interference; and in a multiplayer game the players' names and one more line of 
 
 ## The radar
 
-`hud_radar` (`0x00488BD0`) draws a dot for each object in range: targetable, and not exploding,
-disabled, ejected or a cloaked hostile; placed by its bearing and distance from the player at
-scales the range (`radar_range`, `0x0057BE00`, 0 to 2) picks, with a line up or down by its height
-in palette index `0x26` for a hostile and `0x62` otherwise, and a shape at its end, `0xE4` or
-`0xE5`, `0x130` for the target. Then it draws the rings, `hud_radar_rings` (`0x0057BC50`), one of
-shapes `0x161` to `0x16B` with the wedge of the view ahead, `0x42` left and `0x20` above a point
-placed half of the way across, at the foot of the screen, 1 right and 51 up. The clock stands 79
-above the radar's point.
+`hud_radar` (`0x00488BD0`) draws a contact for the display's nav point and for each object but
+the display's own ship that is targetable and not exploding, disabled, ejected or a cloaked
+hostile, within the reach of the range (`radar_range`, `0x0057BE00`, 0 to 2). It places each by
+the object's offset in the ship's frame, times the range's scale and 66 across, 43 ahead as up the
+screen, and 30 for the height, which lowers the dot for an object below the ship and raises it for
+one above; the dot stays off the screen's last row. A contact is its dot's shape, 2 right of the
+dot, and a line of pixels a pixel right of it to the rings' plane:
 
-| Range | Rings |
-| --- | --- |
-| 0, the closest | `0x161`, one ring |
-| 1 | `0x166`, two |
-| 2, the widest | `0x16B`, three |
+| Contact | Line | Shape |
+| --- | --- | --- |
+| the target of the player's current order | `0xFF` | `0x130` |
+| the object the radio's window names, while it is open | `0xFD` | `0xE6` |
+| a hostile object | `0x26` | `0xE5` |
+| any other | `0x62` | `0xE4` |
+| the nav point | a cross of four pixels round the dot, in the palette's nearest white | |
+
+It draws the contacts level with the plane or below it first, then the rings, `hud_radar_rings`
+(`0x0057BC50`), one of shapes `0x161` to `0x16B` with the wedge of the view ahead, `0x42` left and
+`0x20` above a point placed half of the way across, at the foot of the screen, 1 right and 51 up,
+then the contacts above it. The clock stands 79 above the radar's point.
+
+| Range | Reach (`0x00501CA8`) | A pixel is (`0x00501CB8`) | Rings |
+| --- | --- | --- | --- |
+| 0, the closest | 90000 | a 150000th | `0x161`, one ring |
+| 1 | 150000 | a 230000th | `0x166`, two |
+| 2, the widest | 230000 | a 330000th | `0x16B`, three |
+
+The game draws the nav point's cross before or after the rings by what an earlier frame left in
+its entry of the list (`radar_contacts`, `0x005667B8`), which it does not fill for the nav point;
+the port draws it after them.
 
 `hud_init` starts the radar on range 2. RADAR RANGES (`frame_controls`, `0x00414060`), in the view
 ahead from the cockpit with the rings still, moves it to the next range, round from 2 to 0, and
@@ -427,7 +443,8 @@ ticks.
 In the cockpit's view the radar stands on a dark backing, which `mission_frame` draws with the
 cockpit's model rather than `hud_radar` ([`rendering.md`](rendering.md#the-cockpit)).
 
-The port draws the rings and changes the range. Not yet ported: the dots, which the range scales.
+The port draws the rings, the contacts and changes the range. Not yet ported: the radio's
+object, which the radio's window names.
 
 ## The status lights
 
