@@ -326,6 +326,11 @@ pub const Slot = struct {
         gpa.free(slot.guns);
         slot.guns = &.{};
     }
+
+    /// Its guns and their groups, for firing them from `frame_start` (`guns.fire`).
+    pub fn trigger(slot: *const Slot, frame_start: i32) guns.Trigger {
+        return .{ .fitted = slot.guns, .groups = slot.gun_groups, .frame_start = frame_start };
+    }
 };
 
 /// `game_objects` (`0x00587CE0`), the GO array: 400 slots, none ever empty. As a mission starts
@@ -350,6 +355,9 @@ pub const Objects = struct {
     /// `gun_stats` (`0x00500CA4`): every gun type's figures, which `stats_load_guns` fills from
     /// `gunstats.bin`.
     gun_stats: guns.Stats = .initial,
+    /// `pilot_stats` (`0x0058A968`): every pilot, which `stats_load_pilots` fills from
+    /// `pilotstats.bin`.
+    pilots: pilots.Table = .{},
     /// The shots in flight (`0x00563148`), which the game keeps in `guns.cpp`'s own globals. The
     /// port keeps them here, beside the objects they fly among.
     bullets: guns.Bullets = .{},
@@ -358,6 +366,8 @@ pub const Objects = struct {
     /// `0x005185AC`: the tick at which `aigeneric.ordersUpdate` next clears what every object has
     /// lately taken.
     damage_cleared_at: u32 = 0,
+    /// The sphere the action keeps to.
+    action_sphere: aigeneric.ActionSphere = .default,
 
     /// Every slot standing in, as a mission's start leaves them (`reset`), made in `gpa`.
     pub fn create(gpa: Allocator, random: *libcmt.Rand) Allocator.Error!*Objects {
@@ -513,7 +523,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.last_attacker = -1;
     object._unknown_720 = -1;
     object._unknown_724 = -1;
-    object._unknown_6a8 = 0;
+    object.fought_by = 0;
     object.motion = .null;
     object.side = .neutral;
     object._unknown_65c = 0;
@@ -591,7 +601,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
 
     object.engines_intact = 1;
     object.passes_through = @splat(.none);
-    object._unknown_620 = -1;
+    object.fighting = -1;
     object.power_up = .none;
     object.afterburner_fuel = combat.afterburner_fuel * 100;
     object.countermeasures = gameobj.countermeasures_when_created;
@@ -729,7 +739,7 @@ pub const Sweep = struct {
         for (near.passes_through) |through| if (through.index() == second) return false;
         for (far.passes_through) |through| if (through.index() == first) return false;
         const reach = near.radius + far.radius;
-        const between = gameobj.vector(near.root.next_position) - gameobj.vector(far.root.next_position);
+        const between = near.nextPosition() - far.nextPosition();
         return math.lengthSquared(between) < reach * reach;
     }
 };

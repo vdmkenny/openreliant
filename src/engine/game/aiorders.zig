@@ -72,7 +72,7 @@ pub fn doNothing(ctx: Context, index: u16) void {
 /// on.
 pub fn flyInit(ctx: Context, index: u16) void {
     const slot = &ctx.world.objects.slots[index];
-    slot.state.fly.heading = gameobj.vec3(math.forward(slot.object.root.next_orientation));
+    slot.state.fly.heading = gameobj.vec3(slot.object.nextHeading());
 }
 
 /// `order_fly` (`0x0040AC20`): the update of Fly (6). It flies at the speed in the order's data, or
@@ -92,7 +92,7 @@ pub fn fly(ctx: Context, index: u16) void {
         object.throttle = speed / ai.cruiseSpeed(object, flight, ctx.world.view);
     } else {
         const ticks: f32 = @floatFromInt(ctx.clock.frame_duration);
-        const at = gameobj.vector(object.root.next_position) + heading * @as(Vector, @splat(speed * ticks * drift_per_tick));
+        const at = object.nextPosition() + heading * @as(Vector, @splat(speed * ticks * drift_per_tick));
         objects.setPosition(object, &slot.drawn, at);
         return;
     }
@@ -100,11 +100,11 @@ pub fn fly(ctx: Context, index: u16) void {
     const target = slot.orders[0].target.index;
     const flags: ai.Steering = .{ .avoid_near = true, .avoid_ahead = true, .roll_upright = true };
     const avoided = if (target < 0) steer: {
-        const at = gameobj.vector(object.root.next_position) + heading * @as(Vector, @splat(fly_ahead));
+        const at = object.nextPosition() + heading * @as(Vector, @splat(fly_ahead));
         break :steer ai.steer(slot, at, 1, 0, flags, ctx.clock.frame_duration);
     } else steer: {
-        const to = gameobj.vector(all.slots[@intCast(target)].object.root.next_position);
-        if (math.lengthSquared(to - gameobj.vector(object.root.next_position)) < fly_reach * fly_reach) {
+        const to = all.slots[@intCast(target)].object.nextPosition();
+        if (math.lengthSquared(to - object.nextPosition()) < fly_reach * fly_reach) {
             object.throttle = 0;
             object.yaw_input = 0;
             object.pitch_input = 0;
@@ -129,8 +129,8 @@ pub fn runAway(ctx: Context, index: u16) void {
         _ = aigeneric.pop(ctx, index);
         return;
     }
-    const from = gameobj.vector(slot.object.root.next_position);
-    const away = from - gameobj.vector(all.slots[@intCast(target)].object.root.next_position);
+    const from = slot.object.nextPosition();
+    const away = from - all.slots[@intCast(target)].object.nextPosition();
     const at = from + away * @as(Vector, @splat(run_away_ahead));
     _ = ai.steer(slot, at, 1, 0.1, .{ .avoid_near = true, .avoid_ahead = true }, ctx.clock.frame_duration);
     slot.object.throttle = run_away_throttle;
@@ -263,7 +263,7 @@ test "a ship under a Fly order closes on its target and stops there" {
     const target = try mission.addOther(.{ 8000, 0, 30000 });
     try std.testing.expect(try aigeneric.pushShip(ctx, index, .fly, target, -1));
     const slot = &all.slots[index];
-    const to = gameobj.vector(all.slots[target].object.root.next_position);
+    const to = all.slots[target].object.nextPosition();
     const start = math.distance(gameobj.vector(slot.object.root.position), to);
 
     // A frame of orders, then the step that moves what they steer, as the loop paces them.

@@ -78,6 +78,8 @@ pub const exported = [_]Export{
     .{ "GunKind", engine.game.guns.Kind },
     .{ "MissileStats", engine.game.missiles.Missile },
     .{ "PilotStats", engine.game.pilots.Pilot },
+    .{ "PilotTimings", engine.game.pilots.Pilot.Timings },
+    .{ "PilotRange", engine.game.pilots.Pilot.Range },
 
     // Sound.
     .{ "SoundVoice", engine.game.hog_snd.Voice },
@@ -123,6 +125,7 @@ pub const exported = [_]Export{
     .{ "ManeuverOpcode", engine.game.aidefend.Opcode },
     .{ "ManeuverMirror", engine.game.aidefend.Mirror },
     .{ "ManeuverCondition", engine.game.aidefend.Condition },
+    .{ "ManeuverNumber", engine.game.aidefend.maneuvers.Maneuver },
     .{ "ManeuverRecord", engine.game.aidefend.Maneuver },
     .{ "ManeuverScriptLine", engine.game.aidefend.ScriptLine },
     .{ "ManeuverHandler", engine.game.aidefend.Handler },

@@ -107,28 +107,33 @@ timer in the state, `min + random * (max - min)` ticks after `frame_start`, whic
 
 | Command | What it does |
 |---|---|
-| `SetYaw`, `SetPitch`, `SetRoll` | Sets the input to a random value in the range, times the pilot's `tier_c_values[0]`, negated when the maneuver mirrors that input. |
+| `SetYaw`, `SetPitch`, `SetRoll` | Sets the input to a random value in the range, times the pilot's turn limit, negated when the maneuver mirrors that input. |
 | `SetSpeed` | Sets the throttle to a random value in the range. |
 | `Wait` | Waits its ticks. |
 | `Goto`, `Else` | Go on after the line they hold (`maneuver_jump`, `0x00405B70`). |
-| `If Goingtocrash` | Runs the lines after it when the ship is on course to hit its target, and otherwise goes on after its `Else` or `Endif`. Against a target without components, "on course" is what `0x00401980` finds over 100 updates with a margin of 5000, 3500 or 2000 units by the pilot's value 3 (0, 1 or 2), and never for other values; against one with components, being within 50 times the cruise speed plus both radii of the target's part. |
-| `SetAfterburner(on)` | Keeps the afterburner lit through the maneuver, but only for a pilot whose `tier_c_values[0]` is 2, and only while a player's ship is within 50000 units. `off` puts it out. |
+| `If Goingtocrash` | Runs the lines after it when the ship is on course to hit its target, and otherwise goes on after its `Else` or `Endif`. Against a target without components, "on course" is what `ai_collision_course` (`0x00401980`) finds over 100 updates with a margin of 5000, 3500 or 2000 units by the pilot's skill (0, 1 or 2), and never for other skills; against one with components, being within 50 times the cruise speed plus both radii of the target's part. |
+| `SetAfterburner(on)` | Keeps the afterburner lit through the maneuver, but only for a pilot whose turn limit is exactly 2, and only while a player's ship is within 50000 units. No pilot preset's limit is above 1, so as the game ships it never lights. `off` puts it out. |
 | `Cloak(on)` | Cloaks the ship after 500 ticks, if its model can cloak. `off` uncloaks it at once. |
 | `Setmirror` | Picks at random which of the three inputs the `Set` commands mirror from here on, whatever the maneuver allows. |
 | `Runaway` | For its ticks, flies at a point a million units away from the target. |
 | `Outofactionsphere` | For its ticks, flies to the object at the action sphere's centre. |
-| `Attack` | For its ticks, steers at its aim point (see [each update](#each-update)) with the pilot's `tier_c_values` as limit and ease, at full throttle. Within 12000 units of the target, both radii aside, the throttle is instead the aim point's velocity along the ship's heading over its cruise speed, which is a quarter of the target's speed that way. When the target is behind where the ship will be in 20 updates, a pilot whose value 3 is 2 lights the afterburner. The throttle stays at least 0.5. |
+| `Attack` | For its ticks, steers at its aim point (see [each update](#each-update)) with the pilot's turn limit and ease, at full throttle. Within 12000 units of the target, both radii aside, the throttle is instead the aim point's velocity along the ship's nose over its cruise speed, which is a quarter of the target's speed that way. When the target is behind where the ship will be in 20 updates, a pilot of skill 2 lights the afterburner. The throttle stays at least 0.5. |
 | `Attackmassive` | Steers at its aim point at full throttle until it is within 50 times its cruise speed, plus both radii, of the target's part. |
 | `AttackMediumFighter` | For its ticks, flies at full throttle toward where the target will be, leading it by its velocity less a tenth of the ship's, over the time the ship needs to get there. Within 10000 units of a target that is not within 18 degrees of its nose, it flies straight on instead. |
 | `Avoid` | For its ticks, with the target ahead, pitches hard at half throttle, one way or the other by whether the target is above or below; with the target behind, flies on at full throttle. |
-| `NewAttackRun` | Picks a point on the target's part, then flies to one 50000 units out from it, or with `true` twice the target's radius for a target larger than 50000. It burns full throttle and afterburner while that point is ahead, half throttle while it is behind, and ends within 2000 units of it. `true` also clears the word at `0x620` of the ship. |
-| `RunToShip` | Flies to the friendly ship chosen for it, and ends within 5000 units of it, its radius aside. |
+| `NewAttackRun` | Takes the way out from the target's part that is clear of its hull (`ai_escape_direction`, `0x00402500`), or for a component the point the model gives it, then flies to a point 50000 units out that way from the part, or with `true` twice the target's radius for a target larger than 50000. The way out turns with the part of the target hanging from its root that the aimed part is, or hangs from. It burns full throttle and afterburner while the way out lies along its velocity, half throttle while it lies against it, and ends within 2000 units of the point. `true` also sets the ship's `fighting` to -1 at the start; the end sets it back to the target. |
+| `RunToShip` | Flies to the friendly ship chosen for it. By a ship with components it ends within 5000 units of the ship's edge; by one without, it matches the ship's speed along its nose and closes by the distance past 5000. |
 | `EndScript` | Ends the maneuver: it sets the maneuver's end to the tick before, so Fight chooses another. |
 
+`ai_escape_direction` sums, over each box of the collision trees of the parts hanging from the
+ship's root, taken as a sphere as wide as its half-size, a push away from the box for each whose
+edge is within 20000 units of the point, the harder the nearer, and normalizes the sum.
+
 The commands that fly to a point (`maneuver_steer_to_point`, `0x00405C60`) go at full throttle
-and steer with [`ai_steer`](orders.md#steering), flags `0xB`, unless there is something to avoid,
-when they steer with flags `0x3`. Once the point is within 26 degrees of the nose, the ship pitches
-at full rate until it is 45 degrees off, then steers at it again, so it weaves.
+and steer with [`ai_steer`](orders.md#steering) at the pilot's turn limit and no ease, flags `0xB`,
+unless there is something to avoid, when they steer at full limit with flags `0x3`. Once the point
+is within 26 degrees of the nose, the ship pitches at its full rate until it is 45 degrees off,
+then steers at it again, so it weaves.
 
 ## Choosing a maneuver
 
@@ -138,13 +143,17 @@ maneuver's time is up.
 
 - Against a target with components: "attack massive object", for 20000 ticks.
 - For a ship with components: "attack medium fighter", for 10000 ticks.
-- For a ship outside the action sphere, 220000 units around `action_sphere_center` (`0x515D78`),
-  whose target is not a player's and is either within 200000 units of it or outside the sphere as
-  well, with no player's ship within 100000 units: "out of action sphere", for 500 ticks.
+- For a ship outside the action sphere whose target is not a player's and is either within 200000
+  units of it or outside the sphere as well, with no player's ship within 100000 units: "out of
+  action sphere", for 500 ticks. The AI's first setup (`ai_first_setup`, `0x0040C9B0`) puts the
+  sphere around slot 0 with a radius of 220000 units; a mission's `SetActionCentre` (command
+  `0x25`) moves it (`action_sphere_center`, `0x515D78`, and `action_sphere_radius`, `0x515D74`),
+  back to 220000 for a radius of 0.
 - Otherwise, `fight_choose_by_position` (`0x0040A000`):
   - Farther from the target than `pursue_distances` (`0x4E193C`), 300000, 200000 or 100000 units by
-    the pilot's value 3, times the target's speed over its top speed but at least a quarter:
-    "attack pursue".
+    the pilot's skill, times the target's speed over its top speed but at least a quarter:
+    "attack pursue". The table holds three; for any other skill the game reads past it, far enough
+    that the ship never pursues.
   - With the target behind the ship, one time in ten, "run to ship" toward the nearest friendly ship with
     components and combat class 2 or 3, unless the ship is already within 50000 units of one, its
     radius aside (`fight_find_ship_to_run_to`, `0x00409F00`).
@@ -156,28 +165,71 @@ maneuver's time is up.
     when the target is ahead and the ship abeam of it, and otherwise one of "defend runaway", the
     three dodges and "loop the loop".
 
-Its length is what the choice gives, or a random number of ticks in the maneuver's range.
+Its length is what the choice gives, or `min + random % (max - min)` ticks from the maneuver's
+range, with the ship's own random number.
 
-When Fight starts the chosen maneuver it clears its state, puts the script before its first line,
-picks the inputs to mirror, and sets the tick it ends at.
+When Fight starts (`order_fight_init`, `0x0040A4D0`) it chooses the first maneuver, draws the wait
+for the first missile, sets the ship's `fighting` to the target, counts one more in the target's
+`fought_by`, and zeroes the ship's `recent_damage`. When it starts a chosen maneuver it clears its
+state, puts the script before its first line, picks the inputs to mirror, and sets the tick it
+ends at.
 
 ## Each update
 
 Fight's update (`order_fight`, `0x0040A5E0`) pops the order when its target is no longer valid,
 chooses a new maneuver when the last one's time is up and starts one chosen, and then:
 
-1. **Aims** (`fight_aim`, `0x00409BE0`). Every pilot's `tier_c_count` ticks it aims at the target,
-   or at the target's part, with a quarter of the target's velocity as the aim point's velocity
-   and some random spread, unless `0x00401280` answers yes. Each update the aim point moves by its
-   velocity times `frame_duration`, and `0x004096B0` fires at it.
-2. **Calls for help** (`fight_call_for_help`, `0x00409D10`). When the target is the player, the
+1. **Aims** (`fight_aim`, `0x00409BE0`). Every pilot's `aim_interval` ticks it aims afresh: ahead
+   of the target where `ai_lead_aim` (`0x00401280`) can lead it with the fastest of the guns it
+   fires together, and otherwise at the target, or at its part for a component. The aim point's
+   velocity is a quarter of the target's, turned by the target's per-update turn half
+   `aim_interval` times. Each update the aim point moves by that velocity times `frame_duration`.
+2. **Fires** (`fight_fire`, `0x004096B0`), unless the ship is cloaked. Once the pilot's `pause`
+   has passed since it last looked, it looks again: where the aim point is within `fire_spread`
+   times the target's radius (or its part's) of the line along the ship's nose, and the part is
+   within a quarter of a laser cannon's range (its speed times its lifetime), it fires for the
+   pilot's `burst` ticks. A friendly ship holds its fire while a player's ship is ahead of it
+   within 50000 units and within a tenth of that distance, plus the player's radius and 500
+   units, of the line along its nose. It then times its missiles, from the pilot's `missiles`
+   range, and its countermeasures, from its `countermeasures` range, which it spends while a
+   missile homes on it.
+3. **Calls for help** (`fight_call_for_help`, `0x00409D10`). When the target is the player, the
    player hit the ship last, its `recent_damage` has reached 1.2 times its armor class, and one of
    its armor values is below 3 times its armor class, about half what it starts with, it zeroes
-   `recent_damage` and pushes Fight,
-   aimed at the player, on the nearest ship of its side with combat class 1 whose order is Fight
-   or Mill, a Fight first.
-3. **Cloaks** (`fight_update_cloak`, `0x00409EC0`) as the maneuver's `Cloak` asked.
-4. Runs the maneuver.
+   `recent_damage` and pushes Fight, aimed at the player, on the nearest ship of its side with
+   combat class 1 whose order is Fight or Mill. The first milling ship in the slots takes over
+   from any fighting ship found before it, however near; from there the nearest wins.
+4. **Cloaks** (`fight_update_cloak`, `0x00409EC0`) as the maneuver's `Cloak` asked.
+5. Runs the maneuver.
 
-**Unknown:** what `0x00401280` and `0x004096B0` do exactly, and what the pilot's `tier_c_values`,
-`tier_c_count` and value 3 are called in the game.
+## The pilot
+
+The Fight order and its maneuvers read the ship's pilot, a record of `pilot_stats` that
+`pilotstats.bin`'s tiers fill ([`pilots.zig`](../../src/engine/game/pilots.zig)):
+
+| Field | Tier | What it does |
+|---|---|---|
+| `turn_limit` | C, first float | The most of each turning input `ai_steer` gives, and the scale of the inputs the `Set` commands give |
+| `turn_ease` | C, second float | How far `ai_steer` lets a turn swing |
+| `aim_interval` | C, the word | The ticks between aims |
+| `fire_spread` | B | How far off the nose line the aim point may be, in the target's radii, to fire |
+| `timings` | A | `burst` and `pause` for the guns, then the ranges for missiles and countermeasures |
+| `values[3]` | | Its skill, 0 to 2: how far off it pursues, the berth `If Goingtocrash` gives, and whether `Attack` lights the afterburner |
+
+**Unknown:** what the game calls these.
+
+## In the port
+
+The Fight order and every command run as described, with these left out: steering around what
+the ship could hit ([#140](https://github.com/vdmkenny/openreliant/issues/140)), the cloak
+([#89](https://github.com/vdmkenny/openreliant/issues/89)), the missiles and countermeasures
+([#39](https://github.com/vdmkenny/openreliant/issues/39)), the points a model gives its components
+([#40](https://github.com/vdmkenny/openreliant/issues/40)), multiplayer, where the host chooses the
+maneuvers ([#55](https://github.com/vdmkenny/openreliant/issues/55)), and the mission's
+`SetActionCentre` ([#36](https://github.com/vdmkenny/openreliant/issues/36)). With no missiles, no
+missile is ever ready, so the wait for the next is drawn afresh each update, as the game does for a
+ship with no missile racks.
+
+Where the game would stop or hang, the port goes on: a script that runs off its end ends the
+maneuver, a loop that starts 256 lines in one update without one waiting is left for the next
+update, and a range with no span gives its least rather than divide by zero.

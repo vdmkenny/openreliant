@@ -450,6 +450,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     const ship_stats = (try stats.File.parse(.ships, try directory.readFileAlloc(io, "shipstats.bin", arena, .limited(4 << 20)))).ships;
     // Every gun type's figures, which `stats_load_guns` reads.
     const gun_stats = (try stats.File.parse(.guns, try directory.readFileAlloc(io, "gunstats.bin", arena, .limited(4 << 20)))).guns;
+    const pilot_stats = (try stats.File.parse(.pilots, try directory.readFileAlloc(io, "pilotstats.bin", arena, .limited(4 << 20)))).pilots;
     // The strings `language_init` reads out of `language.dll` at start-up.
     const strings: game.language.Language = try .load(arena, try .parse(try directory.readFileAlloc(io, game.language.file_name, arena, .limited(16 << 20))));
 
@@ -487,7 +488,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     const tables = try arena.create(game.create.Stats);
     tables.* = .initial;
     tables.load(ship_stats);
-    var sandbox: Sandbox = try .init(gpa, tables, gun_stats, &rand, .{
+    var sandbox: Sandbox = try .init(gpa, tables, gun_stats, pilot_stats, &rand, .{
         .gpa = gpa,
         .resources = &resources,
         .textures = &textures,
@@ -895,19 +896,19 @@ const Sandbox = struct {
     const reliant_turn: f32 = 1.1;
     const reliant_speed: i32 = 10;
     /// A wing: four Sabres, `wing_ahead` in front of the player, beyond the Reliant, and
-    /// `wing_spacing` apart. A Sabre flies 300 a step, 7500 a second, so they take about 20
-    /// seconds to arrive; their models are drawn once they are within 25000, a fighter's last
+    /// `wing_spacing` apart. Their models are drawn once they are within 25000, a fighter's last
     /// level of detail.
     const wing_size = 4;
     const wing_ahead: f32 = 150000;
     const wing_spacing: f32 = 3000;
 
-    fn init(gpa: Allocator, tables: *game.create.Stats, gun_stats: []align(1) const stats.Gun, random: *engine.libcmt.Rand, types: TypeCache) !Sandbox {
+    fn init(gpa: Allocator, tables: *game.create.Stats, gun_stats: []align(1) const stats.Gun, pilot_stats: []align(1) const stats.Pilot, random: *engine.libcmt.Rand, types: TypeCache) !Sandbox {
         const cache = try gpa.create(TypeCache);
         errdefer gpa.destroy(cache);
         cache.* = types;
         const objects = try game.create.Objects.create(gpa, random);
         objects.gun_stats.load(gun_stats);
+        objects.pilots.load(pilot_stats);
         return .{
             .gpa = gpa,
             .objects = objects,
@@ -979,23 +980,22 @@ const Sandbox = struct {
     }
 
     /// A wing of fighters `wing_ahead` in front of the player, side by side and facing it, each
-    /// under a Fly order aimed at the player, which flies it in at full throttle and stops it once
-    /// it is there. A wing past the last slot is left out.
+    /// under a Fight order against the player. A wing past the last slot is left out.
     fn bringWing(sandbox: *Sandbox, orders: game.aigeneric.Context) void {
-        const root = sandbox.player().object.root;
-        const from = game.gameobj.vector(root.next_position);
-        const facing = math.product(root.next_orientation, math.rotation(.y, std.math.pi));
+        const ship = &sandbox.player().object;
+        const from = ship.nextPosition();
+        const facing = math.product(ship.root.next_orientation, math.rotation(.y, std.math.pi));
         for (0..wing_size) |place| {
             const across = (@as(f32, @floatFromInt(place)) - @as(f32, wing_size - 1) / 2) * wing_spacing;
-            const at = from + math.transform(root.next_orientation, .{ across, 0, wing_ahead });
+            const at = from + math.transform(ship.root.next_orientation, .{ across, 0, wing_ahead });
             const index = sandbox.create(.sabre, at) catch |err| {
                 std.log.warn("the wing is left out: {s}", .{@errorName(err)});
                 return;
             };
             const slot = &sandbox.objects.slots[index];
             game.objects.setOrientation(&slot.object, &slot.drawn, facing);
-            _ = game.aigeneric.pushShip(orders, index, .fly, sandbox.objects.player, -1) catch |err| {
-                std.log.warn("a Sabre flies nowhere: {s}", .{@errorName(err)});
+            _ = game.aigeneric.pushShip(orders, index, .fight, sandbox.objects.player, -1) catch |err| {
+                std.log.warn("a Sabre won't fight: {s}", .{@errorName(err)});
             };
         }
     }

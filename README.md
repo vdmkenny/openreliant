@@ -26,7 +26,8 @@ support or condone piracy.
 
 OpenReliant is in early development. Right now you can fly any ship from the game, with the
 keyboard, a joystick or a gamepad, in a sandbox with the game's starfield, nebula and sun: the
-Reliant crawls past, and a wing of Coalition fighters flies in at you under the game's own orders.
+Reliant crawls past, and a wing of Coalition fighters comes at you and fights with the game's own
+combat maneuvers. They pursue you, dodge, loop and break away, and fire when they have you lined up.
 The flight model, throttle, afterburner and camera views (keys 1 to 8) are ported, including the
 cockpit view with the ship's cockpit model. Press F2 and F3 to switch ships, and F4 for another
 wing.
@@ -43,9 +44,9 @@ Your ship carries the guns its model holds. Hold the fire key and they fire, dra
 charge the power ball feeds, at the rate and cost their type has in the game's own data. The shots
 fly, each gun type drawn as the game draws it, and a fighter you hit loses its shields and then its
 armour. Once its armour is gone it's destroyed: it spins out and blows up, bursts, or stops dead,
-with the game's explosion sounds, though the fireballs and flying wreckage aren't drawn yet. When
-yours goes, you eject and the camera watches your ship's end, and the sandbox starts again. Shots
-still pass through capital ships.
+with the game's fireballs, flying wreckage, shockwaves and explosion sounds. When yours goes, you
+eject and the camera watches your ship's end, and the sandbox starts again. Shots still pass through
+capital ships.
 
 You hear it as the game sounds: your guns and theirs, your engine rising with the throttle and
 roaring on afterburner, fighters sweeping past, and the game's music. The sounds are placed around

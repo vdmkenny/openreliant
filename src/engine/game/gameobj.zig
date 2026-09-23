@@ -182,6 +182,10 @@ pub const Type = enum(u32) {
     ripper = 0x1F,
     sabre = 0x2B,
     kamov = 0x2D,
+    /// Capital ships (`saladin.shp`, `kronstadt.shp`, `boridin.shp`).
+    saladin = 0x43,
+    kronstadt = 0x47,
+    boridin = 0x48,
     /// The Russian troop car (`rus_troopcar.shp`).
     troop_car = 0x49,
     torpedo = 0x4A,
@@ -227,6 +231,9 @@ pub const Type = enum(u32) {
             .{ .sabre, "rus_sabre.shp" },
             .{ .kamov, "rus_kamov.shp" },
             .{ .troop_car, "rus_troopcar.shp" },
+            .{ .saladin, "saladin.shp" },
+            .{ .kronstadt, "kronstadt.shp" },
+            .{ .boridin, "boridin.shp" },
             .{ .torpedo, "torpedo.shp" },
             .{ .russian_torpedo, "rus_torp.shp" },
             .{ .proximity_mine, "mine_prox.shp" },
@@ -260,6 +267,18 @@ pub const Type = enum(u32) {
 
     pub fn isAsteroid(object_type: Type) bool {
         return object_type.number() >= asteroids[0] and object_type.number() <= asteroids[1];
+    }
+
+    /// The child of the root the AI aims at on an object of this type, where it aims at a part
+    /// rather than the whole (`0x004018F0`): the Saladin's and the troop car's twenty-first, the
+    /// Kronstadt's eighteenth, the Boridin's twentieth.
+    pub fn aimedChild(object_type: Type) ?usize {
+        return switch (object_type) {
+            .saladin, .troop_car => 0x14,
+            .kronstadt => 0x11,
+            .boridin => 0x13,
+            else => null,
+        };
     }
 };
 
@@ -389,8 +408,10 @@ pub const GameObject = extern struct {
     /// The slots of two objects it passes through: the collision sweep of `objects_update` tests
     /// no pair where either names the other. Both are `none` when created.
     passes_through: [2]Slot,
-    /// **Unknown.** -1 when created.
-    _unknown_620: i32,
+    /// The slot of the ship Fight has it attack, or -1: Fight sets it as it starts
+    /// (`order_fight_init`), an attack run leaves it clear until it is done, and a new order clears
+    /// it. -1 when created.
+    fighting: i32,
     _unknown_624: u8,
     _unknown_625: [3]u8,
     _unknown_628: shp.Vec3,
@@ -462,8 +483,14 @@ pub const GameObject = extern struct {
     recent_damage: f32,
     /// The slot of the object that last damaged it, or -1.
     last_attacker: i32,
-    _unknown_698: [0x10]u8,
-    _unknown_6a8: u32,
+    _unknown_698: u32,
+    /// Fight's timers: until when it holds its fire, until when it holds its missiles, and until
+    /// when it holds its countermeasures, each from the pilot's `timings`.
+    fire_at: i32,
+    missile_at: i32,
+    countermeasure_at: i32,
+    /// How many Fight orders have taken it as their target.
+    fought_by: u32,
     /// **Unknown.** -1 when created.
     _unknown_6ac: i32,
     _unknown_6b0: u32,
@@ -601,7 +628,25 @@ pub const GameObject = extern struct {
         /// what an object of a type above 255 is given: it takes no part in collisions, never
         /// moves, and the loops over the objects pass it over.
         pub const standing_in: Flags = .{ .no_collisions = true, .unpowered = true, .frozen = true, .stand_in = true };
+
+        /// Whether the object is out of the action: exploding, its pilot ejected, or being sent
+        /// off (`_unknown_28`). It takes no orders then, and the AI passes over a player's ship
+        /// that is.
+        pub fn outOfAction(flags: Flags) bool {
+            return flags.exploding or flags.ejected or flags._unknown_28;
+        }
     };
+
+    /// Where it will stand at the next step (`root.next_position`), which the AI, the collisions
+    /// and the sounds go by.
+    pub fn nextPosition(object: *const GameObject) Vector {
+        return vector(object.root.next_position);
+    }
+
+    /// The way its nose will point at the next step.
+    pub fn nextHeading(object: *const GameObject) Vector {
+        return math.forward(object.root.next_orientation);
+    }
 
     comptime {
         assert(@bitOffsetOf(Flags, "components") == 1);
