@@ -1249,16 +1249,9 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
             var value = record.damage[0];
             // What the player has shifted fore or aft takes the hit before the quadrant does, and
             // a hit it swallows whole leaves the shields alone.
-            const reserve = if (candidate.object != all.player) null else world.player.shield_reserves.of(struck);
-            if (reserve) |shifted| {
-                if (shifted.* > 0) {
-                    shifted.* -= value;
-                    if (shifted.* > 0) {
-                        bullet.dies_at = spent;
-                        return;
-                    }
-                    shifted.* = 0;
-                }
+            if (candidate.object == all.player and world.player.shield_reserves.spare(struck, value)) {
+                bullet.dies_at = spent;
+                return;
             }
             if (candidate.object < all.players and fromTurret(bullet.kind)) value *= turret_damage_to_players;
             collision.damage(world, candidate.object, struck, value, record.damage[1] / record.damage[0], bullet.owner, .bullet);

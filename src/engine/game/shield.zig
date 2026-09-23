@@ -120,6 +120,9 @@ const fine_grid: Grid = .{ .around = 48, .down = 40 };
 const fine_level = level_count;
 const fine_reach: f32 = 0.5;
 
+/// Every level a bubble may be drawn at: the game's, then the finer one.
+const all_grids = grids ++ [1]Grid{fine_grid};
+
 /// How many hits a bubble keeps in the smooth style: more than a ripple lasts at any rate of fire,
 /// so none ends early.
 const recent_hits = 16;
@@ -249,9 +252,9 @@ const flicker_odds = 4;
 /// The bubbles' meshes, colours and textures (`0x0049EF10`), which every bubble shares.
 pub const Shields = struct {
     /// The game's levels, then the smooth style's finer one (`fine_level`).
-    meshes: [level_count + 1]srapiext.Mesh,
+    meshes: [all_grids.len]srapiext.Mesh,
     /// Each mesh as a single level of detail, which the bubbles drawn point at.
-    levels: [level_count + 1][1]srapiext.Level = undefined,
+    levels: [all_grids.len][1]srapiext.Level = undefined,
     style: Style,
     ramps: std.EnumArray(Tint, Ramp),
     /// How far from the camera each level is drawn out to.
@@ -266,10 +269,10 @@ pub const Shields = struct {
     pub fn create(gpa: Allocator, textures: *srtexture.Table, detail: Detail, hardware: bool, style: Style) (Allocator.Error || matmanager.Error)!Shields {
         const texture = try matmanager.textureRequire(textures, "shield128");
         const field = try matmanager.textureRequire(textures, "ffield");
-        var meshes: [level_count + 1]srapiext.Mesh = undefined;
+        var meshes: [all_grids.len]srapiext.Mesh = undefined;
         var built: usize = 0;
         errdefer for (meshes[0..built]) |mesh| mesh.deinit(gpa);
-        for (&meshes, grids ++ [1]Grid{fine_grid}) |*mesh, grid| {
+        for (&meshes, all_grids) |*mesh, grid| {
             mesh.* = try sphereMesh(gpa, grid, texture);
             built += 1;
         }
@@ -335,19 +338,32 @@ pub const Shields = struct {
             const since = look.frame_start -% struck;
             if (since < 0 or since > shown_for) continue;
             const level = shields.levelAt(math.distance(gameobj.vector(slot.object.root.position), look.camera)) orelse continue;
-            if (shields.style == .original) bubble.level = level;
+            const hits = try bubble.hitsFor(all.gpa, shields.style);
+            if (hits.* == .original) hits.original.level = level;
             if (index == all.player and look.inside) continue;
-            switch (shields.style) {
-                .original => {
+            const mesh = &shields.meshes[level];
+            const ramp = shields.ramps.getPtrConst(bubble.tint);
+            switch (hits.*) {
+                .original => |kept| {
+                    const vertices = mesh.positions.len;
                     if (!look.paused) {
-                        const ticks = if (bubble.updated) |updated| look.frame_start -% updated else 0;
-                        bubble.update(shields, ticks, look.frame_start, look.random);
-                        bubble.updated = look.frame_start;
+                        const ticks: f32 = @floatFromInt(if (kept.updated) |updated| look.frame_start -% updated else 0);
+                        if (!bubble.flickers(shields, mesh, look.frame_start, kept.colours[0..vertices], look.random)) kept.fade(ramp, vertices, ticks);
+                        kept.swirl(vertices, ticks);
+                        kept.updated = look.frame_start;
                     }
-                    bubble.object.own_uv = .{ &bubble.uv, null };
-                    bubble.object.baked = &bubble.colours;
+                    bubble.object.own_uv = .{ &kept.uv, null };
+                    bubble.object.baked = &kept.colours;
                 },
-                .smooth => try bubble.paint(shields, &shields.meshes[level], @as(f32, @floatFromInt(look.frame_start)) + look.ahead, arena),
+                .smooth => |*recent| {
+                    const now = @as(f32, @floatFromInt(look.frame_start)) + look.ahead;
+                    const colours = try arena.alloc([4]f32, mesh.positions.len);
+                    const uv = try arena.alloc([2]f32, mesh.positions.len);
+                    if (!bubble.flickers(shields, mesh, look.frame_start, colours, look.random)) recent.colour(ramp, mesh, now, colours);
+                    recent.swirl(mesh, now, uv);
+                    bubble.object.own_uv = .{ uv, null };
+                    bubble.object.baked = colours;
+                },
             }
             bubble.object.levels = &shields.levels[level];
             bubble.object.position = slot.drawn.position;
@@ -376,39 +392,20 @@ fn sphereMesh(gpa: Allocator, grid: Grid, image: *srtexture.Image) Allocator.Err
 /// A ship's shield bubble (`0x0049EF90`, 0x48 bytes), which `create_object` makes for a ship that
 /// lists no components and is not debris, and which hangs from the ship's frame.
 pub const Bubble = struct {
-    /// Its scene object (`+0x04`, `0x0049E370`), scaled to `bubble_scale` of the ship's radius,
-    /// coloured by `colours` and textured by `uv`.
+    /// Its scene object (`+0x04`, `0x0049E370`), scaled to `bubble_scale` of the ship's radius.
     object: srapiext.MeshObject,
-    /// When its colours last moved on (`+0x08`), or null before its first drawing, which moves
-    /// them by nothing. The game stamps it with the tick the bubble is made.
-    updated: ?i32 = null,
     /// When a shot or a knock last struck it (`+0x0C`), or null for never.
     struck: ?i32 = null,
-    /// Where its texture swirls about (`+0x10`).
-    centre: [2]f32 = start_centre,
-    /// What each of its last hits leaves at each vertex (`+0x18`), and which the next takes
-    /// (`+0x38`).
-    hits: [hit_slots][max_vertices]f32 = @splat(@splat(0)),
-    next: std.math.IntFittingRange(0, hit_slots - 1) = 0,
-    /// The level of detail it is drawn at (`+0x3C`).
-    level: usize = 0,
     tint: Tint,
     /// Until when it flickers as a force field (`+0x44`), or null.
     flicker_until: ?i32 = null,
-    /// Each vertex's texture coordinates (`+0x114` of the scene object), from where the finest
-    /// level's vertex stands across the sphere, and colour (`+0x110`).
-    uv: [max_vertices][2]f32,
-    colours: [max_vertices][4]f32 = @splat(@splat(0)),
-    /// In the smooth style, its recent hits, and which the next takes; and when it was first
-    /// drawn, from which its texture has swirled.
-    recent: [recent_hits]?Hit = @splat(null),
-    recent_next: std.math.IntFittingRange(0, recent_hits - 1) = 0,
-    born: ?f32 = null,
+    /// What its hits leave, kept as its style keeps them, from the first time it is struck or
+    /// drawn.
+    hits: ?Hits = null,
 
-    /// Where a hit struck, as a direction from the bubble's centre in the ship's frame, and when.
-    const Hit = struct {
-        direction: Vector,
-        at: f32,
+    pub const Hits = union(Style) {
+        original: *Kept,
+        smooth: Recent,
     };
 
     /// `0x0049EF90`: a bubble for a ship of `radius`, of the ship type's side.
@@ -423,73 +420,36 @@ pub const Bubble = struct {
                 .levels = &.{},
             },
             .tint = if (side == .friendly) .friendly else .other,
-            .uv = undefined,
         };
-        for (&bubble.uv, 0..) |*uv, index| {
-            const at = grids[0].vertex(index);
-            uv.* = .{ at[0], at[1] };
-        }
-        bubble.object.own_uv = .{ &bubble.uv, null };
-        bubble.object.baked = &bubble.colours;
         return bubble;
     }
 
     /// `0x0049F070`.
     pub fn destroy(bubble: *Bubble, gpa: Allocator) void {
+        if (bubble.hits) |hits| switch (hits) {
+            .original => |kept| gpa.destroy(kept),
+            .smooth => {},
+        };
         gpa.destroy(bubble);
     }
 
-    /// The vertex part of `0x0049F1E0`: a hit at `at` on a bubble standing at `place` round a ship
-    /// at `centre`, into the next of its hits, by how far round from the point struck each vertex
-    /// of `mesh` lies.
-    fn strike(bubble: *Bubble, mesh: *const srapiext.Mesh, place: math.Place, centre: Vector, at: Vector, now: i32) void {
-        bubble.struck = now;
-        const toward = at - centre;
-        const strengths = bubble.hits[bubble.next][0..mesh.positions.len];
-        for (mesh.positions, strengths) |position, *strength| {
-            const out = math.transform(place.orientation, position * @as(Vector, @splat(bubble.object.scale))) + place.position - centre;
-            strength.* = strengthAt(angleBetween(toward, out)) orelse continue;
-        }
-        bubble.next +%= 1;
-    }
-
-    /// The smooth style's hit at `at` on a bubble standing at `place`, at tick `now`.
-    fn remember(bubble: *Bubble, place: math.Place, at: Vector, now: i32) void {
-        bubble.struck = now;
-        bubble.recent[bubble.recent_next] = .{
-            .direction = math.normalize(math.transformTransposed(place.orientation, at - place.position)),
-            .at = @floatFromInt(now),
+    /// Its hits, made in `style` where it has none yet.
+    fn hitsFor(bubble: *Bubble, gpa: Allocator, style: Style) Allocator.Error!*Hits {
+        if (bubble.hits == null) bubble.hits = switch (style) {
+            .original => .{ .original = try Kept.create(gpa) },
+            .smooth => .{ .smooth = .{} },
         };
-        bubble.recent_next +%= 1;
+        return &bubble.hits.?;
     }
 
-    /// The smooth style's colours and texture coordinates for the bubble drawn on `mesh` at `now`,
-    /// in ticks and a share of one: each vertex's colour from what each recent hit leaves there by
-    /// then, and its coordinates its own, swirled about the centre as it has turned since the
-    /// bubble was first drawn.
-    fn paint(bubble: *Bubble, shields: *const Shields, mesh: *const srapiext.Mesh, now: f32, arena: Allocator) Allocator.Error!void {
-        const colours = try arena.alloc([4]f32, mesh.positions.len);
-        const uv = try arena.alloc([2]f32, mesh.positions.len);
-        const born = bubble.born orelse now;
-        bubble.born = born;
-        const age = now - born;
-        const centre = turned(start_centre, age * centre_turn_per_tick);
-        const ramp = shields.ramps.getPtrConst(bubble.tint);
-        for (mesh.positions, colours, uv) |position, *colour, *coordinates| {
-            var sum: Colour = @splat(0);
-            for (bubble.recent) |maybe| {
-                const hit = maybe orelse continue;
-                const strength = strengthAt(angleBetween(position, hit.direction)) orelse continue;
-                sum += rampAt(ramp, strength - (now - hit.at) * fade_per_tick);
-            }
-            colour.* = vertexColour(sum);
-            const off = [2]f32{ position[0] - centre[0], position[1] - centre[1] };
-            const reach = off[0] * off[0] + off[1] * off[1];
-            const swirled = turned(off, if (reach > 0) age * swirl_per_tick / reach else 0);
-            coordinates.* = .{ swirled[0] + centre[0], swirled[1] + centre[1] };
+    /// The bubble struck at `at`, standing at `place` round a ship at `centre`, at tick `now`
+    /// (`0x0049F1E0`).
+    fn strike(bubble: *Bubble, gpa: Allocator, shields: *const Shields, place: math.Place, centre: Vector, at: Vector, now: i32) Allocator.Error!void {
+        switch ((try bubble.hitsFor(gpa, shields.style)).*) {
+            .original => |kept| kept.strike(&shields.meshes[kept.level], place, bubble.object.scale, centre, at),
+            .smooth => |*recent| recent.remember(place, at, now),
         }
-        bubble.object.own_uv = .{ uv, null };
-        bubble.object.baked = colours;
+        bubble.struck = now;
     }
 
     /// Flickers the bubble as a force field for `flicker_for` ticks, as a shockwave of kind 6 does
@@ -499,55 +459,158 @@ pub const Bubble = struct {
         bubble.struck = now;
     }
 
-    /// `0x0049E7D0`: the bubble's colours and texture moved on by `ticks`, on its level of
-    /// detail. Each vertex's colour is the sum of what each of its hits' strengths, faded, shows in
-    /// its tint's ramp. While it flickers as a force field it is drawn over `ffield` instead, grey
-    /// at random on one frame in `flicker_odds` and dark on the rest, and its hits wait. Either way
-    /// the texture swirls: each vertex's coordinates turn about `centre`, the faster the nearer
-    /// they are, and `centre` turns about the texture's corner.
-    ///
-    /// The game leaves `centre` off the coordinates it turns, so the texture wanders further each
-    /// time; the port does the same. A flicker's texture is set on the level's mesh, which every
-    /// bubble at that level shares, as the game sets it.
-    fn update(bubble: *Bubble, shields: *Shields, ticks: i32, now: i32, random: ?*libcmt.Rand) void {
-        const mesh = &shields.meshes[bubble.level];
-        const vertices = mesh.positions.len;
-        const elapsed: f32 = @floatFromInt(ticks);
-        if (bubble.flicker_until) |until| {
-            const over = until < now;
-            mesh.surfaces[0].textures[0] = .{ .image = if (over) shields.texture else shields.field };
-            if (over) bubble.flicker_until = null;
-            const numbers = random orelse {
-                @memset(bubble.colours[0..vertices], @splat(0));
-                return;
-            };
-            const lit = numbers.rand() % flicker_odds == 0;
-            for (bubble.colours[0..vertices]) |*colour| {
-                const grey = @as(f32, @floatFromInt(numbers.rand())) / std.math.maxInt(u15);
-                colour.* = if (lit) .{ grey, grey, grey, 0 } else @splat(0);
-            }
-        } else {
-            const ramp = shields.ramps.getPtrConst(bubble.tint);
-            for (bubble.colours[0..vertices], 0..) |*colour, vertex| {
-                var sum: Colour = @splat(0);
-                for (&bubble.hits) |*hits| {
-                    hits[vertex] = @max(hits[vertex] - elapsed * fade_per_tick, 0);
-                    sum += rampAt(ramp, hits[vertex]);
-                }
-                colour.* = vertexColour(sum);
-            }
+    /// Whether the bubble flickers as a force field at `now`, which holds its hits (`0x0049E7D0`):
+    /// then `mesh` is drawn over `ffield` until `flicker_until`, and `colours` are a random grey on
+    /// one frame in `flicker_odds` and dark on the rest. The texture is set on the level's mesh,
+    /// which every bubble at that level shares, as the game sets it.
+    fn flickers(bubble: *Bubble, shields: *const Shields, mesh: *srapiext.Mesh, now: i32, colours: [][4]f32, random: ?*libcmt.Rand) bool {
+        const until = bubble.flicker_until orelse return false;
+        const over = until < now;
+        mesh.surfaces[0].textures[0] = .{ .image = if (over) shields.texture else shields.field };
+        if (over) bubble.flicker_until = null;
+        const numbers = random orelse {
+            @memset(colours, @splat(0));
+            return true;
+        };
+        const lit = numbers.rand() % flicker_odds == 0;
+        for (colours) |*colour| {
+            const grey = @as(f32, @floatFromInt(numbers.rand())) / std.math.maxInt(u15);
+            colour.* = if (lit) .{ grey, grey, grey, 0 } else @splat(0);
         }
-        const swirl = elapsed * swirl_per_tick;
-        for (bubble.uv[0..vertices]) |*uv| {
-            const off = [2]f32{ uv[0] - bubble.centre[0], uv[1] - bubble.centre[1] };
-            const reach = off[0] * off[0] + off[1] * off[1];
-            // A vertex dead on the centre would turn by an infinite angle; the port leaves it.
-            const angle = if (reach > 0) swirl / reach else 0;
-            uv.* = turned(off, angle);
-        }
-        bubble.centre = turned(bubble.centre, elapsed * centre_turn_per_tick);
+        return true;
     }
 };
+
+/// What the game keeps of a bubble's hits (`0x0049EF90`): a strength for each vertex of the level
+/// it was struck at, the texture's swirl, and the scene object's colours (`+0x110`) and texture
+/// coordinates (`+0x114`).
+pub const Kept = struct {
+    /// When its colours last moved on (`+0x08`), or null before the bubble is first drawn, which
+    /// moves them by nothing. The game stamps it with the tick the bubble is made.
+    updated: ?i32 = null,
+    /// Where its texture swirls about (`+0x10`).
+    centre: [2]f32 = start_centre,
+    /// What each of its last hits leaves at each vertex (`+0x18`), and which the next takes
+    /// (`+0x38`).
+    strengths: [hit_slots][max_vertices]f32 = @splat(@splat(0)),
+    next: std.math.IntFittingRange(0, hit_slots - 1) = 0,
+    /// The level of detail it is drawn at (`+0x3C`).
+    level: usize = 0,
+    /// Each vertex's texture coordinates, from where the finest level's vertex stands across the
+    /// sphere, which every level reads by its own vertices' numbers; and colour.
+    uv: [max_vertices][2]f32 = finest_uv,
+    colours: [max_vertices][4]f32 = @splat(@splat(0)),
+
+    const finest_uv = uv: {
+        @setEvalBranchQuota(10_000);
+        var uv: [max_vertices][2]f32 = undefined;
+        for (&uv, 0..) |*coordinates, index| {
+            const at = grids[0].vertex(index);
+            coordinates.* = .{ at[0], at[1] };
+        }
+        break :uv uv;
+    };
+
+    fn create(gpa: Allocator) Allocator.Error!*Kept {
+        const kept = try gpa.create(Kept);
+        kept.* = .{};
+        return kept;
+    }
+
+    /// The vertex part of `0x0049F1E0`: a hit at `at` on a bubble of `scale` standing at `place`
+    /// round a ship at `centre`, into the next of its hits, by how far round from the point struck
+    /// each vertex of `mesh` lies.
+    fn strike(kept: *Kept, mesh: *const srapiext.Mesh, place: math.Place, scale: f32, centre: Vector, at: Vector) void {
+        const toward = at - centre;
+        const strengths = kept.strengths[kept.next][0..mesh.positions.len];
+        for (mesh.positions, strengths) |position, *strength| {
+            const out = math.transform(place.orientation, position * @as(Vector, @splat(scale))) + place.position - centre;
+            strength.* = strengthAt(angleBetween(toward, out)) orelse continue;
+        }
+        kept.next +%= 1;
+    }
+
+    /// The colours part of `0x0049E7D0`: each of the first `vertices` colours the sum of what its
+    /// hits' strengths, faded by `ticks`, show in `ramp`.
+    fn fade(kept: *Kept, ramp: *const Ramp, vertices: usize, ticks: f32) void {
+        for (kept.colours[0..vertices], 0..) |*colour, vertex| {
+            var sum: Colour = @splat(0);
+            for (&kept.strengths) |*strengths| {
+                strengths[vertex] = @max(strengths[vertex] - ticks * fade_per_tick, 0);
+                sum += rampAt(ramp, strengths[vertex]);
+            }
+            colour.* = vertexColour(sum);
+        }
+    }
+
+    /// The texture part of `0x0049E7D0`: each of the first `vertices` coordinates turned about
+    /// `centre` by `ticks`, the faster the nearer they are, and `centre` turned about the
+    /// texture's corner. The game leaves `centre` off the coordinates it turns, so the texture
+    /// wanders further each time; this does the same.
+    fn swirl(kept: *Kept, vertices: usize, ticks: f32) void {
+        for (kept.uv[0..vertices]) |*uv| uv.* = swirled(uv.*, kept.centre, ticks * swirl_per_tick);
+        kept.centre = turned(kept.centre, ticks * centre_turn_per_tick);
+    }
+};
+
+/// What the smooth style keeps of a bubble's hits: where each recent one struck and when, and when
+/// the bubble was first drawn, from which its texture has swirled.
+pub const Recent = struct {
+    hits: [recent_hits]?Hit = @splat(null),
+    next: std.math.IntFittingRange(0, recent_hits - 1) = 0,
+    born: ?f32 = null,
+
+    /// Where a hit struck, as a direction from the bubble's centre in the ship's frame, and when.
+    const Hit = struct {
+        direction: Vector,
+        at: f32,
+    };
+
+    /// A hit at `at` on a bubble standing at `place`, at tick `now`.
+    fn remember(recent: *Recent, place: math.Place, at: Vector, now: i32) void {
+        recent.hits[recent.next] = .{
+            .direction = math.normalize(math.transformTransposed(place.orientation, at - place.position)),
+            .at = @floatFromInt(now),
+        };
+        recent.next +%= 1;
+    }
+
+    /// Each of `mesh`'s vertices' colour at `now`, in ticks and a share of one, from what each
+    /// recent hit leaves there by then, in `ramp`.
+    fn colour(recent: *const Recent, ramp: *const Ramp, mesh: *const srapiext.Mesh, now: f32, colours: [][4]f32) void {
+        for (mesh.positions, colours) |position, *vertex| {
+            var sum: Colour = @splat(0);
+            for (recent.hits) |maybe| {
+                const hit = maybe orelse continue;
+                const strength = strengthAt(angleBetween(position, hit.direction)) orelse continue;
+                sum += rampAt(ramp, strength - (now - hit.at) * fade_per_tick);
+            }
+            vertex.* = vertexColour(sum);
+        }
+    }
+
+    /// Each of `mesh`'s vertices' texture coordinates at `now`: its own, swirled about the centre
+    /// as it has turned since the bubble was first drawn.
+    fn swirl(recent: *Recent, mesh: *const srapiext.Mesh, now: f32, uv: [][2]f32) void {
+        const born = recent.born orelse now;
+        recent.born = born;
+        const age = now - born;
+        const centre = turned(start_centre, age * centre_turn_per_tick);
+        for (mesh.positions, uv) |position, *coordinates| {
+            const off = swirled(.{ position[0], position[1] }, centre, age * swirl_per_tick);
+            coordinates.* = .{ off[0] + centre[0], off[1] + centre[1] };
+        }
+    }
+};
+
+/// Where `point` stands from `centre`, turned by `amount` over the square of how far that is: the
+/// swirl, faster the nearer the centre. A point dead on the centre would turn by an infinite
+/// angle; it is left.
+fn swirled(point: [2]f32, centre: [2]f32, amount: f32) [2]f32 {
+    const off = [2]f32{ point[0] - centre[0], point[1] - centre[1] };
+    const reach = off[0] * off[0] + off[1] * off[1];
+    return turned(off, if (reach > 0) amount / reach else 0);
+}
 
 /// `point` turned by `angle` about the origin.
 fn turned(point: [2]f32, angle: f32) [2]f32 {
@@ -585,11 +648,8 @@ pub fn flare(world: gameobj.World, index: u16, at: Vector) void {
         sparks.spray(world, .shield, at, at - slot.drawn.position, carried, shield_sparks);
     }
     const shared = world.shields orelse return;
-    const now = world.clock.frame_start;
-    switch (shared.style) {
-        .original => bubble.strike(&shared.meshes[bubble.level], slot.drawn, gameobj.vector(object.root.position), at, now),
-        .smooth => bubble.remember(slot.drawn, at, now),
-    }
+    // The game makes a bubble's hits with the bubble; where the port can't, it shows nothing.
+    bubble.strike(world.objects.gpa, shared, slot.drawn, gameobj.vector(object.root.position), at, world.clock.frame_start) catch {};
 }
 
 test {
@@ -622,7 +682,7 @@ test Grid {
 
     // Each level is a closed sphere of a unit radius: every corner a vertex of it, no triangle
     // folded flat, and every edge shared by two triangles.
-    for (built.shields.meshes, grids ++ [1]Grid{fine_grid}) |mesh, grid| {
+    for (built.shields.meshes, all_grids) |mesh, grid| {
         try std.testing.expectEqual(grid.vertices(), mesh.positions.len);
         for (mesh.positions) |position| try std.testing.expectApproxEqAbs(1, math.length(position), 1e-5);
         try std.testing.expectApproxEqAbs(1, mesh.radius, 1e-5);
@@ -670,41 +730,46 @@ test "a hit ripples out from where it struck" {
     const gpa = std.testing.allocator;
     var built: testing.Built = try .init(gpa);
     defer built.deinit(gpa);
+    const shields = &built.shields;
     const bubble = try Bubble.create(gpa, 100, .friendly);
     defer bubble.destroy(gpa);
-    const mesh = &built.shields.meshes[0];
+    const mesh = &shields.meshes[0];
+    const vertices = mesh.positions.len;
+    const ramp = shields.ramps.getPtrConst(.friendly);
     const grid = grids[0];
     const pole = 0;
     const near = grid.ring(4, 0);
     const equator = grid.ring(7, 0);
 
     // Struck on its pole: half a strength there, more further round, and nothing past 1.4 radians.
-    bubble.strike(mesh, .{}, @splat(0), .{ 0, 0, 500 }, 10);
+    try bubble.strike(gpa, shields, .{}, @splat(0), .{ 0, 0, 500 }, 10);
     try std.testing.expectEqual(10, bubble.struck);
-    try std.testing.expectEqual(1, bubble.next);
-    try std.testing.expectApproxEqAbs(0.5, bubble.hits[0][pole], 1e-5);
-    try std.testing.expectApproxEqAbs(0.5 + 4 * std.math.pi / 14.0 / 1.2, bubble.hits[0][near], 1e-5);
-    try std.testing.expectEqual(0, bubble.hits[0][equator]);
+    const kept = bubble.hits.?.original;
+    try std.testing.expectEqual(1, kept.next);
+    try std.testing.expectApproxEqAbs(0.5, kept.strengths[0][pole], 1e-5);
+    try std.testing.expectApproxEqAbs(0.5 + 4 * std.math.pi / 14.0 / 1.2, kept.strengths[0][near], 1e-5);
+    try std.testing.expectEqual(0, kept.strengths[0][equator]);
 
     // At first the pole glows and the ring four bands round, past one, is dark.
-    bubble.update(&built.shields, 0, 10, null);
-    try std.testing.expect(bubble.colours[pole][2] > 0);
-    try std.testing.expectEqual(0, bubble.colours[near][2]);
+    kept.fade(ramp, vertices, 0);
+    try std.testing.expect(kept.colours[pole][2] > 0);
+    try std.testing.expectEqual(0, kept.colours[near][2]);
     // Twenty ticks on, the glow has moved out to it, and the pole is dark.
-    const before = bubble.uv[near];
-    bubble.update(&built.shields, 20, 30, null);
-    try std.testing.expectEqual(0, bubble.colours[pole][2]);
-    try std.testing.expect(bubble.colours[near][2] > 0);
+    const before = kept.uv[near];
+    kept.fade(ramp, vertices, 20);
+    kept.swirl(vertices, 20);
+    try std.testing.expectEqual(0, kept.colours[pole][2]);
+    try std.testing.expect(kept.colours[near][2] > 0);
     // Meanwhile the texture has swirled.
-    try std.testing.expect(!std.meta.eql(before, bubble.uv[near]));
+    try std.testing.expect(!std.meta.eql(before, kept.uv[near]));
 
     // A flicker as a force field swaps the texture while it lasts, and back after.
     bubble.flicker(30);
-    bubble.update(&built.shields, 10, 40, null);
-    try std.testing.expectEqual(built.shields.field, mesh.surfaces[0].textures[0].image);
-    bubble.update(&built.shields, 100, 140, null);
-    try std.testing.expectEqual(built.shields.texture, mesh.surfaces[0].textures[0].image);
-    try std.testing.expectEqual(null, bubble.flicker_until);
+    try std.testing.expect(bubble.flickers(shields, mesh, 40, kept.colours[0..vertices], null));
+    try std.testing.expectEqual(shields.field, mesh.surfaces[0].textures[0].image);
+    try std.testing.expect(bubble.flickers(shields, mesh, 140, kept.colours[0..vertices], null));
+    try std.testing.expectEqual(shields.texture, mesh.surfaces[0].textures[0].image);
+    try std.testing.expect(!bubble.flickers(shields, mesh, 150, kept.colours[0..vertices], null));
 }
 
 test flare {
@@ -765,7 +830,7 @@ test "Shields.draw" {
     try std.testing.expectEqual(1, scene.layers.get(.world).items.len);
     try std.testing.expectEqual(&mission.slot(other).shield.?.object, scene.layers.get(.world).items[0].mesh);
     // A thousand away is the finest level's reach.
-    try std.testing.expectEqual(0, mission.slot(other).shield.?.level);
+    try std.testing.expectEqual(0, mission.slot(other).shield.?.hits.?.original.level);
 
     // From outside, both; past a hundred ticks, neither.
     scene.clear();
@@ -795,35 +860,38 @@ test "the smooth style" {
     const bubble = try Bubble.create(gpa, 100, .friendly);
     defer bubble.destroy(gpa);
     const mesh = &shields.meshes[fine_level];
+    const ramp = shields.ramps.getPtrConst(.friendly);
+    const colours = try arena.alloc([4]f32, mesh.positions.len);
+    const uv = try arena.alloc([2]f32, mesh.positions.len);
     const pole = 0;
     const near = fine_grid.ring(14, 0);
     const angle = 14 * std.math.pi / @as(f32, fine_grid.down);
 
     // A hit on its pole, remembered as where it struck and when.
-    bubble.remember(.{}, .{ 0, 0, 500 }, 10);
+    try bubble.strike(gpa, shields, .{}, @splat(0), .{ 0, 0, 500 }, 10);
     try std.testing.expectEqual(10, bubble.struck);
-    try bubble.paint(shields, mesh, 10, arena);
-    const first = bubble.object.baked.?;
-    try std.testing.expect(first[pole][2] > 0);
-    try std.testing.expectEqual(0, first[near][2]);
+    const recent = &bubble.hits.?.smooth;
+    recent.colour(ramp, mesh, 10, colours);
+    try std.testing.expect(colours[pole][2] > 0);
+    try std.testing.expectEqual(0, colours[near][2]);
     // Its texture coordinates start as the vertices' own.
-    try std.testing.expectEqual([2]f32{ mesh.positions[near][0], mesh.positions[near][1] }, bubble.object.own_uv[0].?[near]);
+    recent.swirl(mesh, 10, uv);
+    try std.testing.expectEqual([2]f32{ mesh.positions[near][0], mesh.positions[near][1] }, uv[near]);
 
     // As it fades the glow moves out, and it fades between the ticks too.
     const ticks = (struck_strength + angle / strength_spread - 0.6) / fade_per_tick;
-    try bubble.paint(shields, mesh, 10 + ticks, arena);
-    try std.testing.expectEqual(0, bubble.object.baked.?[pole][2]);
-    const out = bubble.object.baked.?[near][2];
+    recent.colour(ramp, mesh, 10 + ticks, colours);
+    try std.testing.expectEqual(0, colours[pole][2]);
+    const out = colours[near][2];
     try std.testing.expect(out > 0);
-    try bubble.paint(shields, mesh, 10 + ticks + 0.5, arena);
-    try std.testing.expect(bubble.object.baked.?[near][2] != out);
+    recent.colour(ramp, mesh, 10 + ticks + 0.5, colours);
+    try std.testing.expect(colours[near][2] != out);
 
     // The texture swirls about its centre, each vertex's coordinates keeping their distance from it.
-    const age = 10 + ticks + 0.5 - 10;
+    const age = ticks + 0.5;
+    recent.swirl(mesh, 10 + age, uv);
     const centre = turned(start_centre, age * centre_turn_per_tick);
-    const coordinates = bubble.object.own_uv[0].?[near];
     const from = [2]f32{ mesh.positions[near][0] - centre[0], mesh.positions[near][1] - centre[1] };
-    const now = [2]f32{ coordinates[0] - centre[0], coordinates[1] - centre[1] };
+    const now = [2]f32{ uv[near][0] - centre[0], uv[near][1] - centre[1] };
     try std.testing.expectApproxEqAbs(from[0] * from[0] + from[1] * from[1], now[0] * now[0] + now[1] * now[1], 1e-4);
 }
-

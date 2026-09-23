@@ -274,12 +274,7 @@ const Flare = enum { before, after };
 fn knockDamage(world: gameobj.World, index: u16, struck: Quadrant, value: f32, drain: f32, attacker: u16, contact: Vector, flare: Flare) void {
     const all = world.objects;
     const object = &all.slots[index].object;
-    const reserve = if (index == all.player) world.player.shield_reserves.of(struck) else null;
-    if (reserve) |shifted| if (shifted.* > 0) {
-        shifted.* -= drain;
-        if (shifted.* > 0) return;
-        shifted.* = 0;
-    };
+    if (index == all.player and world.player.shield_reserves.spare(struck, drain)) return;
     if (object.shields.get(struck) < 0) return armorDamage(world, index, struck, value, attacker, .collision);
     if (flare == .before) shield.flare(world, index, contact);
     damage(world, index, struck, value, 1, attacker, .collision);

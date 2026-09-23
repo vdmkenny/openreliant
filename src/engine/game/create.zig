@@ -31,7 +31,7 @@ const main = @import("main.zig");
 const motion = @import("motion.zig");
 const objects = @import("objects.zig");
 const pilots = @import("pilots.zig");
-const shield_fx = @import("shield.zig");
+const shield = @import("shield.zig");
 const srofiles = @import("srofiles.zig");
 const xtrabits = @import("xtrabits.zig");
 
@@ -322,7 +322,7 @@ pub const Slot = struct {
     components: [gameobj.max_components]?*objects.Model.Part = @splat(null),
     /// Its shields' bubble (`GameObject.render`), which a ship that lists no components and is not
     /// debris has.
-    shield: ?*shield_fx.Bubble = null,
+    shield: ?*shield.Bubble = null,
 
     /// Lets go of what the slot holds for its object: its model, its guns and its shield bubble
     /// (`object_free`).
@@ -485,11 +485,12 @@ const flagged_kind: shp.Attachment.Kind = @enumFromInt(6);
 /// last ship type are stand-ins for markers and nav points: `Flags.standing_in` and a sphere of
 /// `stand_in_radius`, and nothing else. Any other is set up at rest, undamaged and flying itself
 /// forward (`motion.Motion.forward`), on its type's side, with its model's parts playing their
-/// `startup` tracks (`startUp`) and linked (`gameobj.linkParts`). A type that is another under a
+/// `startup` tracks (`startUp`) and linked (`gameobj.linkParts`). A ship that lists no components
+/// and is not debris gets its shields' bubble (`shield.Bubble`). A type that is another under a
 /// second number takes the other's stats (`donor`), and its number once it is made.
 ///
 /// Not ported: the tier, which chooses the guns (#131); the guns and their groups, the loadout and
-/// its pods (#131, #38, #39); the components (#40); the shield's effect (#133); what it does for
+/// its pods (#131, #38, #39); the components (#40); what it does for
 /// capital ships, planets, gates and other single types; for a player's slot, the ship the player
 /// chose and its `t_` twin from the 14th mission on; and what differs in a multiplayer game.
 pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, ship_type: gameobj.Type, at: Vector, random: *libcmt.Rand) Error!u16 {
@@ -605,7 +606,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.shields = .all(@as(f32, @floatFromInt(combat.shield_power * 6)) - 1);
     object.armor = .all(@as(f32, @floatFromInt(combat.armor_class * 6)) - 1);
     main.armorConditions(object, combat);
-    if (!object.flags.components and combat.class != .debris) slot.shield = try shield_fx.Bubble.create(all.gpa, object.radius, combat.side);
+    if (!object.flags.components and combat.class != .debris) slot.shield = try shield.Bubble.create(all.gpa, object.radius, combat.side);
 
     object.engines_intact = 1;
     object.passes_through = @splat(.none);
