@@ -64,8 +64,10 @@ the game makes.
 [OpenAL Soft](https://github.com/kcat/openal-soft), which renders into memory through its loopback
 device; the platform's audio stream pulls from it, so none of OpenAL's own device backends are
 built. [`deps/openal-soft`](../../deps/openal-soft/build.zig) builds it from source for the target,
-as a static library with its default HRTF data embedded. OpenAL Soft takes calls from any thread,
-so there is no lock.
+as a static library with its default HRTF data embedded, and always optimized, whatever the game's
+own build: its mixer runs in the audio stream's callback and must keep up with the device, which
+an unoptimized build does not under HRTF with many voices playing. OpenAL Soft takes calls from any
+thread, so there is no lock.
 
 Each sample, 3D sample and stream is an OpenAL source. A bank's sound is decoded into a buffer the
 first time it is played and kept, by a hash of its file; a stream decodes its piece into a buffer
