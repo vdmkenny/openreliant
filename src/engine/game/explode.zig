@@ -2,10 +2,11 @@
 //! ([`aiexplode.zig`](aiexplode.zig)) runs the ship down to it; here are the blast that ends it
 //! and what the explosions leave for the frames after.
 //!
-//! Ported so far: the final blasts' sound, and the point the camera watches a break-up from.
-//! **Not ported:** what they show, the fireballs (`0x0046BD00`), the burning bits
-//! (`0x004717D0`), the particles and the shockwave, and the break-up that cuts a ship's parts into
-//! pieces that fly apart (`0x0046C550`, `0x0046BF20`)
+//! Ported so far: the final blasts' sound and their bursts of flame and sparkle
+//! ([`particles.zig`](particles.zig)), and the point the camera watches a break-up from.
+//! **Not ported:** the rest of what they show, the fireballs (`0x0046BD00`), the burning bits
+//! (`0x004717D0`) and the shockwave, and the break-up that cuts a ship's parts into pieces that fly
+//! apart (`0x0046C550`, `0x0046BF20`)
 //! ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
 
 const std = @import("std");
@@ -13,6 +14,7 @@ const std = @import("std");
 const math = @import("../surrender/math.zig");
 const Vector = math.Vector;
 const gameobj = @import("gameobj.zig");
+const particles = @import("particles.zig");
 const sound3d = @import("sound3d.zig");
 
 /// What the explosions leave for the frames after them.
@@ -54,25 +56,99 @@ pub fn sound(world: gameobj.World, at: Vector, class: sound3d.Class) void {
     _ = sound3d.play(hearing.sound, hearing.scene(world), at, null, -1, .explosion01, 1, class);
 }
 
-/// `0x0046C980`: a ship's blast at the end of its Explode order, which is heard on a sure voice
-/// close to the camera.
+/// The flame a blast bursts into (`0x00553348`): five to six seconds of it, growing from nothing
+/// to a half-size of 400 as it goes from yellowish white through orange to nothing. It thins
+/// quickly with distance.
+pub const flame: particles.Template = .{
+    .life = 500,
+    .life_spread = 100,
+    .size = .through(0, 100, 400),
+    .red = .through(1, 0.75, 0),
+    .green = .through(1, 0.25, 0),
+    .blue = .through(0, 0, 0),
+    .distance = 0.05,
+};
+
+/// The sparkle a blast leaves (`0x0055334C`): specks of white, 25 across either way, that last one
+/// to six seconds and fade out.
+pub const sparkle: particles.Template = .{
+    .life = 100,
+    .life_spread = 500,
+    .size = .through(0, 25, 25),
+    .red = .through(1, 1, 0),
+    .green = .through(1, 1, 0),
+    .blue = .through(1, 1, 0),
+};
+
+/// How a blast's flame leaves it: how fast, a tick, and how much of the ship's velocity, a
+/// quarter of which is a tick's, it carries on with; `carried_random` more at random.
+const Flames = struct {
+    speed: f32,
+    speed_range: f32,
+    carried: f32,
+    carried_random: f32 = 0,
+    count: i32,
+};
+
+/// A burst of `flame` from a ship at `at`, spreading out mostly across the view: the emitter
+/// stands turned 60 degrees back and a random way about the camera's forward axis, from the
+/// camera's orientation.
+fn flames(world: gameobj.World, at: Vector, velocity: Vector, how: Flames) void {
+    const pool = world.particles orelse return;
+    const view = (world.camera orelse return).place;
+    var emitter: particles.Emitter = .init(&flame, world.clock);
+    emitter.position = at;
+    emitter.orientation = math.product(math.fromAngles(-std.math.pi / 3.0, 0, world.random.fraction() * std.math.tau), view.orientation);
+    emitter.spread = .{ 1, 1, 0.2 };
+    emitter.speed = how.speed;
+    emitter.speed_range = how.speed_range;
+    const carried = if (how.carried_random > 0) world.random.fraction() * how.carried_random + how.carried else how.carried;
+    emitter.inherited = velocity * @as(Vector, @splat(carried));
+    pool.burst(&emitter, null, how.count, view, world.clock, world.random);
+}
+
+/// A burst of 150 of `sparkle` from a ship at `at`, drifting every way, carrying `carried` of the
+/// ship's velocity.
+fn sparkles(world: gameobj.World, at: Vector, velocity: Vector, carried: f32) void {
+    const pool = world.particles orelse return;
+    const view = (world.camera orelse return).place;
+    var emitter: particles.Emitter = .init(&sparkle, world.clock);
+    emitter.position = at;
+    emitter.spread = .{ 1, 1, 1 };
+    emitter.speed_range = 7;
+    emitter.inherited = velocity * @as(Vector, @splat(carried));
+    pool.burst(&emitter, null, 150, view, world.clock, world.random);
+}
+
+/// `0x0046C980`: a ship's blast at the end of its Explode order: a burst of flame, fast and wide,
+/// and one of sparkle, and the sound, heard on a sure voice close to the camera.
+///
+/// Not ported: the cloak dropped, the break-up, the burning bits, the shockwave one blast in four,
+/// and the fireball.
 pub fn blast(world: gameobj.World, index: u16) void {
-    const at = world.objects.slots[index].drawn.position;
+    const slot = &world.objects.slots[index];
+    const at = slot.drawn.position;
+    const velocity = gameobj.vector(slot.object.velocity);
+    flames(world, at, velocity, .{ .speed = 200, .speed_range = 300, .carried = 0.25, .carried_random = 0.25, .count = 400 });
+    sparkles(world, at, velocity, 0.25);
     sound(world, at, soundClass(world, at) orelse return);
 }
 
-/// `0x00471DB0`: the blast of a ship that bursts, heard among the explosions. The player's leaves
-/// the marker the camera watches, drifting on at the ship's speed. **Unverified:** it lies after
-/// this file's known code.
+/// `0x00471DB0`: the blast of a ship that bursts: a slower burst of flame and one of sparkle, heard
+/// among the explosions. The player's leaves the marker the camera watches, drifting on at the
+/// ship's speed. **Unverified:** it lies after this file's known code.
+///
+/// Not ported: the cloak dropped, the break-up, the burning bits, and the 18 fireballs about it.
 pub fn burst(world: gameobj.World, index: u16) void {
     const slot = &world.objects.slots[index];
+    const at = slot.drawn.position;
+    const velocity = gameobj.vector(slot.object.velocity);
     if (index == world.objects.player) if (world.explosions) |explosions| {
-        explosions.marker = .{
-            .position = slot.drawn.position,
-            .drift = gameobj.vector(slot.object.velocity) * @as(Vector, @splat(0.25)),
-        };
+        explosions.marker = .{ .position = at, .drift = velocity * @as(Vector, @splat(0.25)) };
     };
-    sound(world, slot.drawn.position, .explosions);
+    flames(world, at, velocity, .{ .speed = 20, .speed_range = 5, .carried = 0.25, .count = 200 });
+    sparkles(world, at, velocity, 0.5);
+    sound(world, at, .explosions);
 }
 
 test Explosions {
@@ -100,4 +176,30 @@ test burst {
     try std.testing.expectEqual(null, explosions.marker);
     burst(world, player);
     try std.testing.expectEqual(Vector{ 0, 0, 10 }, explosions.marker.?.drift);
+}
+
+test blast {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    var image: @import("../surrender/surrenderlib/srtexture.zig").Image = undefined;
+    var pool: particles.Pool = try .init(std.testing.allocator, 1000, &image);
+    defer pool.deinit();
+    var watching: @import("camera.zig").Camera = .{};
+    var world = mission.world();
+    world.particles = &pool;
+    world.camera = &watching;
+    mission.clock.frame_start = 10;
+    _ = try mission.add(.predator, @splat(0));
+    const ship = try mission.add(.sabre, @splat(0));
+    mission.objects.slots[ship].drawn.position = .{ 0, 0, 5000 };
+
+    // In view 5000 off, all 400 of the flame, which thins slowly, and three quarters of the 150
+    // of the sparkle: its half-size of 25 times 150, over the distance. The rounding is even.
+    blast(world, ship);
+    var sent: usize = 0;
+    for (pool.particles) |particle| {
+        if (particle.template != null) sent += 1;
+    }
+    try std.testing.expectEqual(400 + 112, sent);
 }

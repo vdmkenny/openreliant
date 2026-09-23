@@ -791,9 +791,25 @@ address	kind	name	type	comment
 0044f000	function	mesh_build_square	void * __fastcall (char two_sided, uint flags, float width, float height)	A rectangle facing along Z, width by height, as two triangles, or four where two_sided, over the whole of its texture
 004ae190	function	ship_type_first_levels	void * __fastcall (int type)	Loads a ship type's model where none of its objects has yet, counts one more object of it, and returns its first part's levels
 004c4b70	function	levels_copy	void * __fastcall (void *levels)	A copy of a level set, 0x54 bytes, with a copy of each of its meshes
-0049c5d0	function	particle_template_create	void * __fastcall (void *texture)	A particle template, 0x50 bytes, over a texture, whose curves the callers set with particle_curve_set
+0049c5d0	function	particle_template_create	void * __fastcall (void *pool)	A particle template, 0x50 bytes, of a pool: kind (+0), life and its spread (+4, +8), then curves over a particle's life set with particle_curve_set, the rate an emitter streams at (+0xC), the half-size (+0x18) and the red, green and blue (+0x24, +0x30, +0x3C); the pool (+0x48) and how far a burst thins with distance (+0x4C), 1
 0049c180	function	particle_curve_set	void __thiscall (float *curve, float start, float middle, float end)	Sets a curve over a particle's life to the quadratic through start, middle and end at its beginning, halfway and its end
-0049c600	function	particle_emitter_create	void * __fastcall (void *template)	A particle emitter, 0xFC bytes, of a template, born now, unturned; the caller hangs it off a frame and aims it
+0049c600	function	particle_emitter_create	void * __fastcall (void *template)	A particle emitter, 0xFC bytes, of a template, born now: its life and birth (+0, +4), a frame of its own (+8), unturned, which a caller may hang off another; then the particles' direction and spread (+0xBC, +0xC8), speed and its range (+0xD4, +0xD8), what they inherit (+0xDC), the texture's span (+0xE8) and the template (+0xF8)
+0049bf60	function	particles_init		Makes particle_pools and in it particle_pool, of 1000 over gunflare\partic4, and sets up 0x00593D88
+0049bfb0	function	particles_reset		Frees every particle of every pool, as a mission starts or ends
+0049c010	function	particles_shutdown		Frees the pools
+0049c050	function	particle_pool_create	void * __fastcall (int count, void *texture, byte coordinates, byte lit, byte blend)	A pool of count particles in particle_pools, 0x10 bytes: the count, the particles (0x18 bytes each: birth, life, velocity, template), a sprite set of as many over the texture, the sprites showing all of it, and how many are used
+0049c140	function	particle_pool_free		Frees a pool's particles and sprite set
+0049c1c0	function	particle_emit	void __fastcall (void *emitter, int index)	Particle index born from an emitter, now: its life with a random spread, a velocity along the emitter's direction, strayed by its spread, at a random speed, turned into the world, plus what it inherits; its sprite where the emitter stands, showing the emitter's span
+0049c340	function	particle_spark	void __fastcall (void *emitter)	A spark from an emitter, at a particle's velocity times 100 (0x00471B20)
+0049c450	function	particle_burst	void __fastcall (void *emitter, int count)	Count particles from an emitter at once, into the free ones: half as many behind the camera, and fewer with distance by the template's half-size halfway through, times 150, over the distance times the template's +0x4C
+0049c680	function	particle_stream	int __fastcall (void *emitter)	What an emitter sends out over the frame, by its template's rate curve in hundredths, a roll a tick, thinned as a burst is; 0 once the emitter's life is over
+0049c8e0	function	particles_frame		Once a frame, after the shots: each particle alive moves on by its velocity and takes its half-size and colour from its template's curves; the rest are hidden; each pool's set is drawn up to its last particle alive
+0058a948	data	particle_pools		Ten pools, 0x10 bytes each, of which the game fills one, particle_pool
+0058a94c	data	particle_pool		The pool every particle template draws from
+0058a950	data	particles_ready	bool	Set once particles_init has run
+00553348	data	explode_flame_template	void *	The flame a blast bursts into: 500 ticks and up to 100 more, half-size 0 to 100 to 400, from yellowish white through orange to nothing
+0055334c	data	explode_sparkle_template	void *	The sparkle a blast leaves: 100 ticks and up to 500 more, half-size 0 to 25, white fading out
+0046b240	function	explosions_init		Sets the explosions up: the debris and effect tables cleared, the particle templates the explosions use, and the frame explode_marker
 005635e0	data	bolt_levels	void *[15][4]	Each gun type's bolts for the player's side, four slots a type less one, which guns_init builds and bullet_build draws the shots with
 00563010	data	bolt_levels_other	void *[15][4]	Each gun type's bolts for the other sides, as bolt_levels; the same meshes but for the Turret Lasers' rings
 00563108	data	muzzle_flash_meshes	void *[15]	Each gun type's muzzle flash mesh, by type less one

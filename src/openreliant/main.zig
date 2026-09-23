@@ -531,10 +531,12 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     var clock: game.main.Clock = .{};
     clock.start(platform.window.ticks());
     const hearing: game.hog_snd.Hearing = .{ .sound = sound, .camera = &view.place, .clock = &clock };
-    // What the explosions leave for the frames after them.
+    // What the explosions leave for the frames after them, and the particles they send out.
     var explosions: game.explode.Explosions = .{};
+    var particles: game.particles.Pool = try .load(gpa, &textures);
+    defer particles.deinit();
     try sandbox.start(.{
-        .world = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing, .camera = &view, .explosions = &explosions },
+        .world = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles },
         .clock = &clock,
         .devices = &devices,
     }, @intCast(options.ship));
@@ -601,7 +603,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         if (frames_left != null) clock.advanceBy(now / platform.window.tick_nanoseconds, 1) else clock.advanceToFine(now, platform.window.tick_nanoseconds);
         // While the communications window is open the keys 1 to 8 are its menu's.
         devices.keyboard.numbers_taken = display.state.windows.status.get(.comms).phase == .open;
-        const world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing, .camera = &view, .explosions = &explosions };
+        const world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles };
         const orders: game.aigeneric.Context = .{ .world = world, .clock = &clock, .devices = &devices };
         while (clock.nextTick(&devices, world)) |_| {}
         clock.frameBegin();
@@ -717,6 +719,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .cockpit = if (sandbox.cockpit) |*cockpit| &cockpit.model else null,
             .backing = backing,
             .kills_shown = devices.active(.display_kills, false),
+            .particles = &particles,
             .attachments = .{
                 .camera = view.place.position,
                 .frame_start = clock.frame_start,
@@ -919,6 +922,7 @@ const Sandbox = struct {
         if (orders.world.hearing) |hearing| game.sound3d.endAll(hearing.sound);
         orders.world.player.ending = .playing;
         if (orders.world.explosions) |explosions| explosions.* = .{};
+        if (orders.world.particles) |pool| pool.reset();
         sandbox.objects.reset(sandbox.random);
         const index = try sandbox.create(@enumFromInt(ship_type), @splat(0));
         if (sandbox.objects.slots[index].model == null) return error.NoModel;

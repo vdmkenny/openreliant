@@ -27,6 +27,7 @@ of a legally owned copy. The repository holds none of the game's files.
 | [`engine/rendering.md`](engine/rendering.md) | Rendering: layers, depth, shading modes as materials, lighting, blending, highlights. |
 | [`engine/objects.md`](engine/objects.md) | Live objects: the object array, model hierarchies, components, the flight model. |
 | [`engine/guns.md`](engine/guns.md) | Guns: the guns a model holds, their groups, the trigger and the step that fires them. |
+| [`engine/effects.md`](engine/effects.md) | Effects: the particles explosions send out. |
 | [`engine/sound.md`](engine/sound.md) | Sound: the banks' sounds on their voices, the 3D effects, the player's engine, and the music. |
 | [`engine/loop.md`](engine/loop.md) | The game loop: the 100 Hz tick, the 25 Hz simulation step, collisions. |
 | [`engine/controls.md`](engine/controls.md) | Player input: devices, bindings, settings, steering and throttle. |

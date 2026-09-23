@@ -862,6 +862,8 @@ pub const World = struct {
     /// What the explosions leave for the frames after them (`explode.cpp`); null where nothing
     /// explodes.
     explosions: ?*@import("explode.zig").Explosions = null,
+    /// The pool particles come from; null where none are sent out.
+    particles: ?*@import("particles.zig").Pool = null,
 };
 
 /// `simulation_step` (`0x004774D0`): the work of every fourth tick, so 25 times a second, which

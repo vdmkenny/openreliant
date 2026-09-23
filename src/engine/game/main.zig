@@ -25,6 +25,7 @@ const aigeneric = @import("aigeneric.zig");
 const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
 const guns = @import("guns.zig");
+const particles = @import("particles.zig");
 const hog_snd = @import("hog_snd.zig");
 const hud = @import("hud.zig");
 const matmanager = @import("matmanager.zig");
@@ -181,12 +182,14 @@ pub const Frame = struct {
     backing: ?*RadarBacking = null,
     /// Whether DISPLAY KILLS is held, which leaves the backing out.
     kills_shown: bool = false,
+    /// The particles, which go into the world's layer after the shots.
+    particles: ?*particles.Pool = null,
 };
 
 /// `mission_frame` (`0x004924B0`), as far as the objects go: every object's orders, which fly the
-/// ships and read the player's controls, then the frames they are drawn at, and then the shots in
-/// flight (`guns.bulletsFrame`). A mission and the sandbox alike run this once a frame, before the
-/// camera's own frame and anything drawn.
+/// ships and read the player's controls, then the frames they are drawn at, then the shots in
+/// flight (`guns.bulletsFrame`), and then the particles (`particles.Pool.frame`). A mission and the
+/// sandbox alike run this once a frame, before the camera's own frame and anything drawn.
 ///
 /// Not ported: the rest of the frame's work, which is the mission's events, its scripts and the
 /// missiles ([#30](https://github.com/vdmkenny/openreliant/issues/30),
@@ -195,6 +198,7 @@ pub fn missionFrame(orders: aigeneric.Context, fraction: f32) void {
     aigeneric.ordersUpdate(orders);
     frameObjects(orders.world.objects, fraction);
     guns.bulletsFrame(orders.world, orders.clock, fraction);
+    if (orders.world.particles) |pool| pool.frame(orders.clock);
 }
 
 /// `mission_frame`'s pass over the objects before the camera's frame: each live object, save
@@ -224,6 +228,7 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     attachments.scale = context.projection.scale[0];
     try drawObjects(gpa, scene, frame.objects, attachments);
     try guns.drawBullets(gpa, scene, &frame.objects.bullets, context.hardware);
+    if (frame.particles) |pool| try pool.draw(gpa, scene);
     try frame.space.frame(gpa, scene, context, frame.view, frame.cockpit_mode);
     if (context.hardware) try frame.sky.frame(gpa, scene, context);
     if (frame.view == .cockpit and frame.cockpit_mode == .cockpit and context.hardware) {
