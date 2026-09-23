@@ -1459,7 +1459,7 @@ pub const State = struct {
             .full_charge = combat.gun_energy,
             .nova = if (novaShown(slot)) live.nova_charge else null,
         }, colour, scale);
-        try drawRadar(art, frame.gpa, frame.target, frame.screen, state.radar_rings, colour, scale);
+        try drawRadar(art, frame.gpa, frame.target, frame.screen, state, frame.all, colour, scale);
         stepRadarZoom(state, frame.clock.game_ticks);
         const aims = try drawReticle(state, art, frame.gpa, frame.target, frame.screen, frame.mode, lead, blindFire(state, slot), frame_duration, colour, scale);
         live.blind_fire_aim = @intFromBool(aims);
@@ -2872,8 +2872,9 @@ fn drawOffScreen(
 
 /// The radar (`hud_radar`, `0x00488BD0`): its rings, the shape `hud_init` starts on and the
 /// range key steps through, stand from a point placed half of the way across, at the foot of the
-/// screen, 1 right and 51 up. Not yet ported: the dots for the objects in range, with their
-/// lines up or down to the rings, and the rings' change of range.
+/// screen, 1 right and 51 up, with a contact for each object in range (`Contacts`). Not yet
+/// ported: the contact for the object the radio's window names (line `0xFD`, shape `0xE6`,
+/// [#99](https://github.com/vdmkenny/openreliant/issues/99)).
 pub const Radar = struct {
     pub const offset: [2]i32 = .{ 1, -51 };
     pub const across: f32 = 0.5;
@@ -2889,6 +2890,105 @@ pub const Radar = struct {
     pub const range_rings = [3]u16{ 0x161, 0x166, 0x16B };
     /// The ticks `hud_radar_zoom` keeps its next step ahead of `game_ticks`.
     pub const zoom_ticks: u32 = 50;
+
+    /// How far each range reaches (`0x00501CA8`), and the share of a unit of the world a display
+    /// pixel stands for at it (`0x00501CB8`), 0 the closest. The ranges' scales run wider than
+    /// their reach.
+    pub const Range = struct { reach: f32, per_unit: f32 };
+    pub const ranges = [3]Range{
+        .{ .reach = 90_000, .per_unit = 1.0 / 150_000.0 },
+        .{ .reach = 150_000, .per_unit = 1.0 / 230_000.0 },
+        .{ .reach = 230_000, .per_unit = 1.0 / 330_000.0 },
+    };
+    /// What the scale is multiplied by across, ahead and for the height (`0x004DC924`,
+    /// `0x004DC920`, `0x004DC584`).
+    pub const spread: [3]f32 = .{ 66, 43, 30 };
+
+    /// What the radar shows an object as: its line's palette entry and the shape at its dot, for
+    /// the player's target (`0xFF`, `0x130`), a hostile ship (`0x26`, `0xE5`) and the rest
+    /// (`0x62`, `0xE4`); or, for the display's nav point, a cross of four pixels.
+    pub const Look = enum {
+        other,
+        hostile,
+        target,
+        nav_point,
+
+        pub fn line(look: Look) u8 {
+            return switch (look) {
+                .target => 0xFF,
+                .hostile => 0x26,
+                .other, .nav_point => 0x62,
+            };
+        }
+
+        pub fn shape(look: Look) u16 {
+            return switch (look) {
+                .target => 0x130,
+                .hostile => 0xE5,
+                .other, .nav_point => 0xE4,
+            };
+        }
+    };
+
+    /// An object on the radar: where its dot stands from the radar's point, in the display's own
+    /// pixels, across and up the screen as far as it lies ahead, and lowered by its height; how far
+    /// it stands below the rings' plane, which its line runs up to it from the dot, or down from
+    /// the dot for one above it; and how it shows.
+    pub const Contact = struct {
+        at: [2]i32,
+        height: i32,
+        look: Look,
+    };
+
+    /// The objects `hud_radar` shows, in their slots' order: the display's nav point, and every
+    /// object but the display's own ship that is targetable and neither exploding, disabled,
+    /// ejected nor a cloaked hostile; each within the range's reach of the display's ship.
+    pub const Contacts = struct {
+        all: *const create.Objects,
+        range: Range,
+        at: usize = 0,
+
+        pub fn of(all: *const create.Objects, range: u2) Contacts {
+            return .{ .all = all, .range = ranges[range] };
+        }
+
+        pub fn next(it: *Contacts) ?Contact {
+            const all = it.all;
+            const own = &all.slots[all.player];
+            while (it.at < all.count) {
+                const index = it.at;
+                it.at += 1;
+                const slot = &all.slots[index];
+                const nav_point = index == own.object.nav_point;
+                if (!nav_point and !shown(all, index)) continue;
+                const apart = slot.drawn.position - own.drawn.position;
+                if (!(math.length(apart) < it.range.reach)) continue;
+                const seen = math.transformTransposed(own.drawn.orientation, apart);
+                const height = round(seen[1] * (it.range.per_unit * spread[2]));
+                const at: [2]i32 = .{
+                    round(seen[0] * (it.range.per_unit * spread[0])),
+                    round(-seen[2] * (it.range.per_unit * spread[1])) + height,
+                };
+                const look: Look = if (nav_point)
+                    .nav_point
+                else if (index == all.slots[all.player].orders[0].target.index)
+                    .target
+                else if (slot.object.side == .hostile)
+                    .hostile
+                else
+                    .other;
+                return .{ .at = at, .height = height, .look = look };
+            }
+            return null;
+        }
+
+        fn shown(all: *const create.Objects, index: usize) bool {
+            if (index == all.player) return false;
+            const flags = all.slots[index].object.flags;
+            if (!flags.targetable or flags.exploding or flags.disabled or flags.ejected) return false;
+            return !(flags.cloaked and all.slots[index].object.side == .hostile);
+        }
+    };
 
     /// The rings moving to a new range's: the shape they stop at (`radar_zoom_rings`,
     /// `0x005799B4`), whether they step down toward it (`radar_zoom_down`, `0x005656AC`), and the
@@ -2932,12 +3032,62 @@ pub fn drawRadar(
     gpa: Allocator,
     target: device.Device,
     screen: [2]u32,
-    rings: u16,
+    state: *const State,
+    all: *const create.Objects,
     colour: [4]f32,
     scale: f32,
 ) (spr.Error || Allocator.Error)!void {
     const point = place(screen, Radar.offset, Radar.across, Radar.down, scale);
-    try drawShape(art, gpa, target, rings, scaled(point, Radar.rings_offset, scale), colour, scale);
+    try drawContacts(art, gpa, target, screen, point, all, state.radar_range, .below, colour, scale);
+    try drawShape(art, gpa, target, state.radar_rings, scaled(point, Radar.rings_offset, scale), colour, scale);
+    try drawContacts(art, gpa, target, screen, point, all, state.radar_range, .above, colour, scale);
+}
+
+/// Which of the rings' two sides of contacts `hud_radar` draws: those level with the plane or
+/// below it before the rings, those above it after them.
+const Plane = enum { below, above };
+
+/// The contacts on one side of the rings' plane: each line a pixel right of the dot, from the dot
+/// to the plane, and the dot's shape 2 right of it, the dot kept off the screen's last row. The
+/// nav point is a cross of four pixels round its dot in the display's white, which the port draws
+/// over the rings; the game draws it before or after them by whatever an earlier frame left in its
+/// entry of the list.
+fn drawContacts(
+    art: *Art,
+    gpa: Allocator,
+    target: device.Device,
+    screen: [2]u32,
+    point: [2]i32,
+    all: *const create.Objects,
+    range: u2,
+    plane: Plane,
+    colour: [4]f32,
+    scale: f32,
+) (spr.Error || Allocator.Error)!void {
+    const bottom = @as(i32, @intCast(screen[1])) - 2;
+    var contacts: Radar.Contacts = .of(all, range);
+    while (contacts.next()) |contact| {
+        const side: Plane = if (contact.look == .nav_point or contact.height < 0) .above else .below;
+        if (side != plane) continue;
+        var dot = scaled(point, contact.at, scale);
+        dot[1] = std.math.clamp(dot[1], 0, bottom);
+        if (contact.look == .nav_point) {
+            const white: [4]f32 = .{ 1, 1, 1, colour[3] };
+            for ([4][2]i32{ .{ 0, -1 }, .{ 0, 1 }, .{ -1, 0 }, .{ 1, 0 } }) |by| {
+                const pixel = pointOf(scaled(dot, by, scale));
+                drawLine(target, pixel, pixel, white, scale);
+            }
+            continue;
+        }
+        if (contact.height != 0) {
+            // The line's far end, a pixel short of the plane.
+            const toward: i32 = if (contact.height > 0) -1 else 1;
+            const reach = (@as(i32, @intCast(@abs(contact.height))) - 1) * toward;
+            const column = scaled(dot, .{ 1, 0 }, scale);
+            drawLine(target, pointOf(column), pointOf(scaled(column, .{ 0, reach }, scale)), art.paletteColour(contact.look.line()), scale);
+        }
+        try drawShape(art, gpa, target, contact.look.shape(), scaled(dot, .{ 2, 0 }, scale), colour, scale);
+    }
 }
 
 test leadLine {
@@ -3017,6 +3167,50 @@ test "a target out of sight gets an arrow and a marker" {
     chase.mode = .chase;
     _ = try drawTarget(&t.state, &art, &fonts, gpa, into, chase, .from_tip, .{ 1, 1, 1, 1 }, 1);
     try std.testing.expectEqual(0, counter.lines);
+}
+
+test "the radar's contacts" {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const player = try mission.add(.predator, @splat(0));
+    try std.testing.expect(try aigeneric.push(mission.orders(), player, .player_control, .none));
+    // Ahead and a little below, the target; to the right and above, a hostile ship; a friend;
+    // and a hostile ship out of reach of the widest range.
+    const target = try mission.add(.sabre, .{ 0, 11000, 99000 });
+    const hostile = try mission.add(.sabre, .{ 33000, -22000, 0 });
+    const friend = try mission.add(.predator, .{ 0, 0, -66000 });
+    _ = try mission.add(.sabre, .{ 0, 0, 300000 });
+    for ([_]u16{ target, hostile, friend, 4 }) |index| mission.slot(index).object.flags.targetable = true;
+    mission.slot(player).orders[0].target = .{ .kind = .ship, .index = @intCast(target), .component = -1 };
+
+    var contacts: Radar.Contacts = .of(all, 2);
+    const ahead = contacts.next().?;
+    try std.testing.expectEqual(Radar.Look.target, ahead.look);
+    // Ahead is up the screen: 99000 over 330000 of 43 pixels, lowered by its height, 1 below.
+    try std.testing.expectEqual(1, ahead.height);
+    try std.testing.expectEqual([2]i32{ 0, -13 + 1 }, ahead.at);
+    const right = contacts.next().?;
+    try std.testing.expectEqual(Radar.Look.hostile, right.look);
+    try std.testing.expectEqual(-2, right.height);
+    try std.testing.expectEqual(7, right.at[0]);
+    const behind = contacts.next().?;
+    try std.testing.expectEqual(Radar.Look.other, behind.look);
+    try std.testing.expectEqual(9, behind.at[1]);
+    try std.testing.expectEqual(null, contacts.next());
+
+    // The closest range reaches less far, past the target, and draws closer at its own scale.
+    contacts = .of(all, 0);
+    try std.testing.expectEqual(Radar.Contact{ .at = .{ 15, -4 }, .height = -4, .look = .hostile }, contacts.next().?);
+    try std.testing.expectEqual(Radar.Look.other, contacts.next().?.look);
+    try std.testing.expectEqual(null, contacts.next());
+    // A cloaked hostile, or anything exploding, is not shown.
+    mission.slot(target).object.flags.cloaked = true;
+    mission.slot(friend).object.flags.exploding = true;
+    contacts = .of(all, 2);
+    try std.testing.expectEqual(Radar.Look.hostile, contacts.next().?.look);
+    try std.testing.expectEqual(null, contacts.next());
 }
 
 test nextRadarRange {
