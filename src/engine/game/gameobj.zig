@@ -185,15 +185,28 @@ pub const Type = enum(u32) {
     /// The Russian troop car (`rus_troopcar.shp`).
     troop_car = 0x49,
     torpedo = 0x4A,
+    /// An escape pod (`uly_escape.shp`).
+    escape_pod = 0x4D,
+    /// The first of ten pieces of debris an explosion throws out (`deb_1.shp` to `deb_10.shp`).
+    debris = 0x4E,
+    /// The first of four bodies an explosion throws out (`rus_man1.shp` to `rus_man4.shp`).
+    crewman = 0x58,
     /// The Russian torpedo (`rus_torp.shp`).
     russian_torpedo = 0x5C,
     /// The proximity mine (`mine_prox.shp`).
     proximity_mine = 0x6F,
     satellite = 0x71,
+    /// Another escape pod (`ber_escape.shp`).
+    other_escape_pod = 0x90,
     /// The Turret Flak's shell (`shell.shp`).
     shell = 0xB1,
+    /// The first of five chunks of rock (`rockchunk00.SHP` to `rockchunk04.SHP`).
+    rock_chunk = 0xB2,
     /// The limpet pod, which rides on a hull.
     limpet_pod = 0xBC,
+    /// Escape pods again, of the same models as `escape_pod` and `other_escape_pod`.
+    late_escape_pod = 0xDF,
+    other_late_escape_pod = 0xE0,
     /// The markers `backdrop_place` reads a mission's sun and nebula from.
     sun_marker = 0x3DC,
     nebula_marker = 0x3DD,
@@ -218,6 +231,16 @@ pub const Type = enum(u32) {
             .{ .russian_torpedo, "rus_torp.shp" },
             .{ .proximity_mine, "mine_prox.shp" },
             .{ .satellite, "stork_sat.shp" },
+            .{ .escape_pod, "uly_escape.shp" },
+            .{ .other_escape_pod, "ber_escape.shp" },
+            .{ .late_escape_pod, "uly_escape.shp" },
+            .{ .other_late_escape_pod, "ber_escape.shp" },
+            .{ .debris, "deb_1.shp" },
+            .{ @enumFromInt(Type.debris.number() + 9), "deb_10.shp" },
+            .{ .crewman, "rus_man1.shp" },
+            .{ @enumFromInt(Type.crewman.number() + 3), "rus_man4.shp" },
+            .{ .rock_chunk, "rockchunk00.SHP" },
+            .{ @enumFromInt(Type.rock_chunk.number() + 4), "rockchunk04.SHP" },
             .{ .shell, "shell.shp" },
             .{ .limpet_pod, "limpet_pod.shp" },
             .{ @enumFromInt(asteroids[0]), "ast_1.shp" },

@@ -143,13 +143,9 @@ pub const Emitter = struct {
     }
 
     /// A particle's velocity from it: along `direction`, strayed by `spread`, at a speed from
-    /// `speed`, turned into the world, plus what it inherits. The game draws the third axis's
-    /// first.
+    /// `speed`, turned into the world, plus what it inherits.
     fn velocity(emitter: *const Emitter, random: *libcmt.Rand) Vector {
-        const z = random.centred() * emitter.spread[2] + emitter.direction[2];
-        const y = random.centred() * emitter.spread[1] + emitter.direction[1];
-        const x = random.centred() * emitter.spread[0] + emitter.direction[0];
-        var v: Vector = .{ x, y, z };
+        var v = random.centredVector(emitter.spread) + emitter.direction;
         const length = math.length(v);
         if (length > 0) v *= @splat((random.fraction() * emitter.speed_range + emitter.speed) / length);
         return math.transform(emitter.world.orientation, v) + emitter.inherited;

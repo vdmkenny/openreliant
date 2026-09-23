@@ -1,7 +1,7 @@
 # Effects
 
-What the game shows besides its objects and their shots: for now, the particles and fireballs of
-an explosion. [Destruction](objects.md#destruction) covers when a ship blows up.
+What the game shows besides its objects and their shots: for now, the particles, fireballs and
+burning bits of an explosion. [Destruction](objects.md#destruction) covers when a ship blows up.
 
 ## Particles
 
@@ -65,8 +65,8 @@ tick, carrying a quarter, and the sparkle carrying half.
 
 [`particles.zig`](../../src/engine/game/particles.zig) ports the pool, templates, emitters and the
 frame; [`explode.zig`](../../src/engine/game/explode.zig) the two templates and the bursts. Not
-ported: the sparks (`particle_spark`, `0x0049C340`), which are the explosions' burning bits, and what
-`particles_frame` runs first (`0x004A1BB0`).
+ported: the sparks (`particle_spark`, `0x0049C340`), which it hands to `explode.cpp`
+(`0x00471B20`), and what `particles_frame` runs first (`0x004A1BB0`).
 
 ## Fireballs
 
@@ -98,3 +98,34 @@ once a frame and frees it once it is done.
 `Fireball`, and [`aiexplode.zig`](../../src/engine/game/aiexplode.zig) the spin-out's, the halt's
 and the torpedo's. Not ported: a special fireball's own texture (`0x00562CCC`), which none of these
 sets off, and the rest of `explosions_update`.
+
+## Burning bits
+
+`explosion_bit` (`0x004717D0`) throws a small lit mesh out of an explosion into the next of
+`explosion_bits` (`0x005538C8`), in place of whatever flew there. The options' detail sets how many
+fly at once: 100, 300 or 500 at low, medium and high. The port starts at high.
+
+A bit is a piece of debris, one of the ten models of types `0x4E` to `0x57`, which
+`explosions_init` loads through `ship_type_first_levels` (`0x004AE190`) and draws half as far again
+before a coarser level. The piece goes by one number `r` from 0 to 1: the first below a quarter, the
+last below a half, and above that the second to the tenth, `1 + (r - 0.5) × 16`. Its scale is half
+to one and a half times the throw's size. It leaves along its direction at 1500 to 4500 a second,
+strayed up to a quarter of a radian about each axis, times the throw's speed; it turns up to 0.05
+radians a frame about each axis; and it flies for 1750 to 2250 ticks. `explosions_update` moves each
+bit on by its velocity times the ticks since the last frame, over 100, turns it once, and lets it go
+once its life is over.
+
+| Who | Bits | Direction | Size | Speed |
+|---|---|---|---|---|
+| A blast | 25 | Every way | 0.4 | 0.2 |
+| A blast of an escape pod, a proximity mine or a ship its pilot left | 5 | Every way | 0.2 | 0.1 |
+| A burst | 25 | Every way | 0.2 | 0.2 |
+| A spin-out, each frame while fewer ticks are left than ten times its trail, from 50 | 1 | Backwards, from within 250 of the ship each way | 0.1 | 1 |
+
+A ship with flag 24 set leaves only every other bit of its trail. The game can also throw a body
+(types `0x58` to `0x5B`) by a chance, or a rock chunk (types `0xB2` to `0xB6`), which none of these
+asks for.
+
+[`explode.zig`](../../src/engine/game/explode.zig) ports the bits as `Explosions.throwBit` and
+`Bit`, and [`aiexplode.zig`](../../src/engine/game/aiexplode.zig) the spin-out's trail. The port
+throws debris only, and leaves a piece out where the game has no model for it.

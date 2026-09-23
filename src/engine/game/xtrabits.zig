@@ -11,6 +11,7 @@ const srlight = @import("../surrender/surrenderlib/srlight.zig");
 const srstars = @import("../surrender/surrenderlib/srstars.zig");
 const libcmt = @import("../libcmt.zig");
 const GameObject = @import("gameobj.zig").GameObject;
+const create = @import("create.zig");
 
 /// A scene object of any kind `scene_add` takes.
 pub const Object = union(enum) {
@@ -86,6 +87,33 @@ pub fn objectRandom15(object: *GameObject) u15 {
 /// `deathmatch.cpp`'s.
 pub fn objectRandom(object: *GameObject) f32 {
     return @as(f32, @floatFromInt(objectRandom15(object))) / 32767;
+}
+
+/// `ship_type_first_levels` (`0x004AE190`): a ship type's model, loaded where none of its objects
+/// has yet, one more object of it counted, and its first part's levels of detail. Null where the
+/// game has no model for it. **Unverified:** it lies after this file's known code.
+pub fn firstLevels(all: *create.Objects, types: create.Types, ship_type: u8) ?[]const srapiext.Level {
+    const loaded = all.useType(types, ship_type) orelse return null;
+    const parts = loaded.loaded.parts;
+    return if (parts.len > 0) parts[0].levels else null;
+}
+
+test firstLevels {
+    var random: libcmt.Rand = .{};
+    const all = try create.Objects.create(std.testing.allocator, &random);
+    defer all.destroy();
+
+    // A type without a model has no levels, but is counted as used all the same.
+    try std.testing.expectEqual(null, firstLevels(all, create.testing.no_models, 0x4E));
+    try std.testing.expectEqual(1, all.types[0x4E].objects);
+
+    // One with a model gives its first part's.
+    var model: create.testing.Model = undefined;
+    try model.init(std.testing.allocator);
+    defer model.deinit(std.testing.allocator);
+    const levels = firstLevels(all, model.types(), 0x4F).?;
+    try std.testing.expectEqual(&model.mesh, levels[0].mesh);
+    try std.testing.expectEqual(1, all.types[0x4F].objects);
 }
 
 test objectRandom {

@@ -924,6 +924,8 @@ const Sandbox = struct {
         if (orders.world.explosions) |explosions| explosions.reset();
         if (orders.world.particles) |pool| pool.reset();
         sandbox.objects.reset(sandbox.random);
+        // The debris models, counted as used so the sweep below keeps them (`explosions_init`).
+        if (orders.world.explosions) |explosions| explosions.debris = .load(sandbox.objects, sandbox.types.interface());
         const index = try sandbox.create(@enumFromInt(ship_type), @splat(0));
         if (sandbox.objects.slots[index].model == null) return error.NoModel;
         // The engine's sound, which a mission starts as the player's ship launches (`launch_run`).

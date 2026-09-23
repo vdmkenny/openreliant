@@ -515,7 +515,7 @@ within 20000 of the camera, sound 11 on a sure voice, and goes in one of three s
 
 | Style | Init | What it does |
 |---|---|---|
-| 0, spin out | `0x00408BC0` | Unpowered, it drifts on, turning by a random spin a step, up to ±0.025 about its first two axes and ±0.15 about its third, which shrinks to nothing as its end comes: 200 to 399 ticks on. A torpedo, or a ship that may not spin, stops dead instead and blows up at once. |
+| 0, spin out | `0x00408BC0` | Unpowered, it drifts on, turning by a random spin a step, up to ±0.025 about its first two axes and ±0.15 about its third, which shrinks to nothing as its end comes: 200 to 399 ticks on. Near its end it trails burning bits. A torpedo, or a ship that may not spin, stops dead instead and blows up at once. |
 | 1, burst | `0x004090F0` | Unpowered, no longer turning, it bursts at once. |
 | 2, halt | `0x00408D20` | It stops dead and blows up at once. |
 
@@ -535,9 +535,9 @@ watching where it burst (view `0x1B`), and a halt from behind. `mission_ending` 
 [`explode.zig`](../../src/engine/game/explode.zig) the blasts, and
 [`create.zig`](../../src/engine/game/create.zig) `object_retire` as `retire`.
 
-The blasts' particles and fireballs are in [Effects](effects.md). Not ported
-([#41](https://github.com/vdmkenny/openreliant/issues/41)): the other effects, the burning bits and
-shockwaves, and the break-up (`explode_break_up`, `0x0046C550`), which
+The blasts' particles, fireballs and burning bits are in [Effects](effects.md). Not ported
+([#41](https://github.com/vdmkenny/openreliant/issues/41)): the other effects, the shockwaves, and
+the break-up (`explode_break_up`, `0x0046C550`), which
 cuts each part's mesh into up to 2ⁿ pieces along random planes through its centre (`model_slice`,
 `0x0046BF20`) and sends every third off as debris with a smoke trail; the other modes; Eject Spin
 and the other ejection orders ([#30](https://github.com/vdmkenny/openreliant/issues/30)); and what
