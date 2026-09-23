@@ -170,11 +170,6 @@ pub fn flaresShown(view: camera.View, cockpit_mode: camera.CockpitMode, visibili
     return view != .cockpit or (cockpit_mode == .chase and visibility > 0);
 }
 
-/// Object types that `backdrop_place` reads a mission's markers from: the sun's aims the key light
-/// and the sun, the nebula's the fill light and the nebula.
-pub const sun_marker_type = 0x3DC;
-pub const nebula_marker_type = 0x3DD;
-
 /// The sun's sprite sets (`sun_sprites`, `0x00595A04`): `sunlayer1`, `sunlayer3`, the six flares,
 /// then `sunlayer2`.
 pub const sun_sprite_count = 9;

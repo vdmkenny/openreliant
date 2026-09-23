@@ -373,7 +373,7 @@ pub const Objects = struct {
     }
 
     /// `objects_reset` (`0x00466630`), as a mission starts: every slot gets a new stand-in, of
-    /// `gameobj.stand_in_type` and flagged `stand_in` (`object_alloc`), no slot is handed out, and
+    /// `gameobj.Type.stand_in` and flagged `stand_in` (`object_alloc`), no slot is handed out, and
     /// no ship type has objects or a model loaded. The port lets go of the objects' nodes as well,
     /// which the game frees as the mission before ends.
     ///
@@ -381,7 +381,7 @@ pub const Objects = struct {
     pub fn reset(all: *Objects, random: *libcmt.Rand) void {
         for (&all.slots) |*slot| {
             slot.release(all.gpa);
-            var object = gameobj.objectAlloc(gameobj.stand_in_type, random);
+            var object = gameobj.objectAlloc(.stand_in, random);
             object.flags.stand_in = true;
             slot.* = .{ .object = object };
         }
@@ -398,7 +398,7 @@ pub const Objects = struct {
     pub fn resetSlot(all: *Objects, index: u16, random: *libcmt.Rand) void {
         const slot = &all.slots[index];
         slot.release(all.gpa);
-        var object = gameobj.objectAlloc(gameobj.stand_in_type, random);
+        var object = gameobj.objectAlloc(.stand_in, random);
         object.flags = .standing_in;
         slot.* = .{ .object = object };
     }
@@ -465,7 +465,7 @@ const flagged_kind: shp.Attachment.Kind = @enumFromInt(6);
 /// its pods (#131, #38, #39); the components (#40); the shield's effect (#133); what it does for
 /// capital ships, planets, gates and other single types; for a player's slot, the ship the player
 /// chose and its `t_` twin from the 14th mission on; and what differs in a multiplayer game.
-pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, ship_type: u32, at: Vector, random: *libcmt.Rand) Error!u16 {
+pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, ship_type: gameobj.Type, at: Vector, random: *libcmt.Rand) Error!u16 {
     const index = wanted orelse all.count;
     if (index >= gameobj.max_objects) return error.Overrun;
     const slot = &all.slots[index];
@@ -518,7 +518,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object._unknown_678 = 0;
     object._unknown_710 = @splat(0);
 
-    const stats_type = std.math.cast(u8, ship_type) orelse {
+    const stats_type = std.math.cast(u8, ship_type.number()) orelse {
         object.type_data = .null;
         object.pilot_record = .null;
         object._unknown_628 = .{ .x = 0, .y = 0, .z = 0 };
@@ -616,7 +616,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.rounds = combat.rounds;
     object.gun_mode = .created(combat.gun_groups);
     ai.setTargetable(object, combat, true);
-    object.type = becomes;
+    object.type = @enumFromInt(becomes);
     return index;
 }
 
@@ -634,7 +634,7 @@ pub fn objectsUpdate(world: gameobj.World) void {
     while (walk.next()) |index| {
         const slot = &all.slots[index];
         const object = &slot.object;
-        if (object.type >= ship_type_count or object.flags.stand_in or object.flags.disabled) continue;
+        if (!object.type.hasStats() or object.flags.stand_in or object.flags.disabled) continue;
         // A frozen object stays where it is, and is still there to be run into.
         if (!object.flags.frozen) {
             if (slot.flight) |flight| {
@@ -902,7 +902,7 @@ test "a mission starts with every slot standing in" {
     try std.testing.expectEqual(0, all.count);
     for (all.slots) |slot| {
         try std.testing.expect(slot.object.flags.stand_in and !slot.object.created);
-        try std.testing.expectEqual(gameobj.stand_in_type, slot.object.type);
+        try std.testing.expectEqual(gameobj.Type.stand_in, slot.object.type);
     }
     // With nothing handed out, the loops walk the cutaway slot alone.
     var walk = all.walk();
@@ -1002,7 +1002,7 @@ test createObject {
     mission.tables.combat[0x2B].side = .hostile;
 
     // The player first, in the next slot, at rest where it is put and facing along Z.
-    const player = try createObject(all, &mission.tables, model.types(), null, 0, .{ 0, 0, 500 }, &mission.random);
+    const player = try createObject(all, &mission.tables, model.types(), null, .predator, .{ 0, 0, 500 }, &mission.random);
     try std.testing.expectEqual(0, player);
     try std.testing.expectEqual(1, all.count);
     const made = &all.slots[player];
@@ -1029,17 +1029,17 @@ test createObject {
     try std.testing.expect(!object.flags.ecm);
 
     // A Coalition fighter: hostile, flown by the Coalition's pilot, with its ECM on.
-    const enemy = try createObject(all, &mission.tables, model.types(), null, 0x2B, .{ 0, 0, 0 }, &mission.random);
+    const enemy = try createObject(all, &mission.tables, model.types(), null, .sabre, .{ 0, 0, 0 }, &mission.random);
     try std.testing.expectEqual(.hostile, all.slots[enemy].object.side);
     try std.testing.expectEqual(coalition_pilot, all.slots[enemy].object.pilot);
     try std.testing.expect(all.slots[enemy].object.flags.ecm);
 
     // A slot filled once is not filled again, and nothing lies past the last.
-    try std.testing.expectError(error.CreatedTwice, createObject(all, &mission.tables, model.types(), player, 0, @splat(0), &mission.random));
-    try std.testing.expectError(error.Overrun, createObject(all, &mission.tables, model.types(), gameobj.max_objects, 0, @splat(0), &mission.random));
+    try std.testing.expectError(error.CreatedTwice, createObject(all, &mission.tables, model.types(), player, .predator, @splat(0), &mission.random));
+    try std.testing.expectError(error.Overrun, createObject(all, &mission.tables, model.types(), gameobj.max_objects, .predator, @splat(0), &mission.random));
 
     // Above the last ship type, a stand-in for a marker, at a slot of its own.
-    const marker = try createObject(all, &mission.tables, model.types(), 20, 1000, @splat(0), &mission.random);
+    const marker = try createObject(all, &mission.tables, model.types(), 20, @enumFromInt(1000), @splat(0), &mission.random);
     try std.testing.expectEqual(20, marker);
     try std.testing.expectEqual(2, all.count);
     const stand_in = all.slots[marker];
@@ -1052,7 +1052,7 @@ test createObject {
     all.resetSlot(player, &mission.random);
     try std.testing.expectEqual(GameObject.Flags.standing_in, all.slots[player].object.flags);
     try std.testing.expectEqual(null, all.slots[player].model);
-    _ = try createObject(all, &mission.tables, model.types(), player, 0, @splat(0), &mission.random);
+    _ = try createObject(all, &mission.tables, model.types(), player, .predator, @splat(0), &mission.random);
 }
 
 test "an object is created with the guns its model holds" {
@@ -1073,7 +1073,7 @@ test "an object is created with the guns its model holds" {
     }
     model.data[0].attachments = &muzzles;
 
-    const index = try createObject(all, &mission.tables, model.types(), null, 7, @splat(0), &mission.random);
+    const index = try createObject(all, &mission.tables, model.types(), null, @enumFromInt(7), @splat(0), &mission.random);
     const slot = &all.slots[index];
     // The guns are fitted after the count is cleared, so the object holds them all.
     try std.testing.expectEqual(2, slot.object.gun_count);
@@ -1100,9 +1100,9 @@ test "a type under another number takes its stats, then its number" {
     mission.tables.combat[0x21].shield_power = 30;
     mission.tables.combat[0xE5].name = 1123;
     mission.tables.combat[0xE5].gun_groups = 2;
-    const index = try mission.add(0xE5, @splat(0));
+    const index = try mission.add(@enumFromInt(0xE5), @splat(0));
     const slot = all.slots[index];
-    try std.testing.expectEqual(0x21, slot.object.type);
+    try std.testing.expectEqual(0x21, slot.object.type.number());
     try std.testing.expectEqual(55, slot.flight.?.max_speed);
     try std.testing.expectEqual(30, slot.combat.?.shield_power);
     // Its own name and guns stay.
@@ -1118,7 +1118,7 @@ test "a type with no model still flies" {
     try mission.init(std.testing.allocator);
     defer mission.deinit();
     const all = mission.objects;
-    const index = try mission.add(3, @splat(0));
+    const index = try mission.add(@enumFromInt(3), @splat(0));
     try std.testing.expectEqual(null, all.slots[index].model);
     all.slots[index].object.throttle = 1;
     all.slots[index].object.rotation = math.identity;
@@ -1132,7 +1132,7 @@ test objectsUpdate {
     try mission.init(std.testing.allocator);
     defer mission.deinit();
     const all = mission.objects;
-    for (0..3) |_| _ = try mission.add(0, @splat(0));
+    for (0..3) |_| _ = try mission.add(.predator, @splat(0));
     all.slots[1].object.flags.disabled = true;
     all.slots[2].object.flags.frozen = true;
     // Each drifting, with no motion of its own.
@@ -1158,7 +1158,7 @@ test "the sweep pushes apart the objects that meet" {
     // nowhere.
     const places = [_]math.Vector{ .{ -200, 0, 0 }, .{ 200, 0, 0 }, .{ 20000, 0, 0 } };
     for (places) |at| {
-        const index = try mission.add(0, at);
+        const index = try mission.add(.predator, at);
         all.slots[index].object.radius = 1000;
         all.slots[index].motion = null;
     }

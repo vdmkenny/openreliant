@@ -457,7 +457,7 @@ test "a player's ship refuses the orders that are not its own" {
     try mission.init(std.testing.allocator);
     defer mission.deinit();
     const ctx = mission.orders();
-    const index = try mission.add(0, @splat(0));
+    const index = try mission.add(.predator, @splat(0));
     const none: Target = .none;
     try std.testing.expectEqual(0, index);
 
@@ -569,7 +569,7 @@ test ordersUpdate {
     const ctx = mission.orders();
     const none: Target = .none;
     // The player's slot comes first, then three ships that all turn on the spot.
-    for (0..4) |_| _ = try mission.add(0, @splat(0));
+    for (0..4) |_| _ = try mission.add(.predator, @splat(0));
     for (1..4) |index| _ = try push(ctx, @intCast(index), .slow_rotate, none);
 
     all.slots[2].object.flags.disabled = true;

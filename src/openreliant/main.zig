@@ -754,7 +754,7 @@ fn playerSubject(slot: *const game.create.Slot) camera.Subject {
         // The chase view sits farther back the more throttle the ship carries and swings against
         // its rates of turn, so it lags a turn rather than riding rigidly behind the ship.
         .motion = .{
-            .ship_type = @intCast(live.type),
+            .ship_type = live.type,
             .throttle = live.throttle,
             .afterburner = live.afterburner,
             .pitch_rate = live.pitch_rate,
@@ -852,7 +852,6 @@ const Sandbox = struct {
 
     /// The Reliant, which the sandbox starts ahead of the player and turned across its way. It flies its heading at `reliant_speed`, a tenth of the 100 its type cruises at,
     /// which carries it slowly across the player's way.
-    const reliant_type = 0x0C;
     const reliant_at: math.Vector = .{ 6000, -9000, 48000 };
     const reliant_turn: f32 = 1.1;
     const reliant_speed: i32 = 10;
@@ -860,7 +859,6 @@ const Sandbox = struct {
     /// `wing_spacing` apart. A Sabre flies 300 a step, 7500 a second, so they take about 20
     /// seconds to arrive; their models are drawn once they are within 25000, a fighter's last
     /// level of detail.
-    const wing_type = 0x2B;
     const wing_size = 4;
     const wing_ahead: f32 = 150000;
     const wing_spacing: f32 = 3000;
@@ -905,18 +903,18 @@ const Sandbox = struct {
     fn start(sandbox: *Sandbox, orders: game.aigeneric.Context, ship_type: u8) !void {
         if (orders.world.hearing) |hearing| game.sound3d.endAll(hearing.sound);
         sandbox.objects.reset(sandbox.random);
-        const index = try sandbox.create(ship_type, @splat(0));
+        const index = try sandbox.create(@enumFromInt(ship_type), @splat(0));
         if (sandbox.objects.slots[index].model == null) return error.NoModel;
         // The engine's sound, which a mission starts as the player's ship launches (`launch_run`).
         if (orders.world.hearing) |hearing| {
-            const engine_sound = game.sound3d.engineSound(ship_type);
+            const engine_sound = game.sound3d.engineSound(@enumFromInt(ship_type));
             _ = game.sound3d.play(hearing.sound, hearing.scene(orders.world), null, null, index, engine_sound, 0, .player_engines);
         }
         // The order a mission's start gives the player's ship, which its controls fly it by.
         _ = game.aigeneric.push(orders, index, .player_control, .none) catch |err| {
             std.log.warn("the player's controls are left out: {s}", .{@errorName(err)});
         };
-        if (sandbox.create(reliant_type, reliant_at)) |reliant| {
+        if (sandbox.create(.reliant, reliant_at)) |reliant| {
             const slot = &sandbox.objects.slots[reliant];
             game.objects.setOrientation(&slot.object, &slot.drawn, math.rotation(.y, reliant_turn));
             // Fly with nothing to fly to holds the heading it starts on, at the speed in its data.
@@ -930,7 +928,7 @@ const Sandbox = struct {
         sandbox.player_type = ship_type;
     }
 
-    fn create(sandbox: *Sandbox, ship_type: u32, at: math.Vector) game.create.Error!u16 {
+    fn create(sandbox: *Sandbox, ship_type: game.gameobj.Type, at: math.Vector) game.create.Error!u16 {
         return game.create.createObject(sandbox.objects, sandbox.tables, sandbox.types.interface(), null, ship_type, at, sandbox.random);
     }
 
@@ -944,7 +942,7 @@ const Sandbox = struct {
         for (0..wing_size) |place| {
             const across = (@as(f32, @floatFromInt(place)) - @as(f32, wing_size - 1) / 2) * wing_spacing;
             const at = from + math.transform(root.next_orientation, .{ across, 0, wing_ahead });
-            const index = sandbox.create(wing_type, at) catch |err| {
+            const index = sandbox.create(.sabre, at) catch |err| {
                 std.log.warn("the wing is left out: {s}", .{@errorName(err)});
                 return;
             };

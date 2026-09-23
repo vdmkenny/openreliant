@@ -20,24 +20,11 @@ const objects = @import("objects.zig");
 /// step does not find them overlapping again.
 pub const push_apart: f32 = 1.1;
 
-/// The satellite, two of which never collide whatever their class.
-const satellite_type: u32 = 0x71;
-
-/// The limpet pod, which rides on a hull and so is never tested against its parts.
-const limpet_pod_type: u32 = 0xBC;
-
-comptime {
-    // The numbers are the game's own, so the models they stand for say which types they are.
-    const types = create.models.ship_types;
-    std.debug.assert(std.mem.eql(u8, types[satellite_type].model.?, "stork_sat.shp"));
-    std.debug.assert(std.mem.eql(u8, types[limpet_pod_type].model.?, "limpet_pod.shp"));
-}
-
 /// `objects_collide` (`0x00466170`): what two objects whose spheres overlap do about it, and
 /// whether they were moved, which has `objects_update` look again.
 ///
 /// Two of one type never collide while a torpedo is one of them, nor do two torpedoes, two pieces
-/// of debris or two of `satellite_type`. A torpedo or a mine goes off instead of being pushed
+/// of debris or two satellites. A torpedo or a mine goes off instead of being pushed
 /// (`explode.cpp`), and a ship that meets something which lists components is tested against its
 /// parts. Anything else is pushed apart along the line between the two, each to `push_apart` of its
 /// radius from the point between them, after both have moved again.
@@ -70,9 +57,10 @@ pub fn collide(world: gameobj.World, first: u16, second: u16, pass: u8) bool {
     const lists_components = all.slots[near].object.flags.components or all.slots[far].object.flags.components;
     if (lists_components) return parts(world, near, far, pass);
 
-    // Two torpedoes and two pieces of debris pass through each other, as do two of `satellite_type`.
+    // Two torpedoes and two pieces of debris pass through each other, as do two satellites.
     if (classes[0] == classes[1] and (classes[0] == .torpedo or classes[0] == .debris)) return false;
-    if (all.slots[near].object.type == satellite_type and all.slots[far].object.type == satellite_type) return false;
+    // Two satellites never collide, whatever their class.
+    if (all.slots[near].object.type == .satellite and all.slots[far].object.type == .satellite) return false;
 
     // A mine goes off against a fighter, and a torpedo against whatever it met.
     if (classes[0] == .mine or classes[1] == .mine) return false;
@@ -174,12 +162,9 @@ fn shoveAt(world: gameobj.World, first: u16, second: u16, normal: Vector, levers
 fn shoved(all: *const create.Objects, index: u16) bool {
     const slot = &all.slots[index];
     if (slot.object.flags.attached or slot.object.mass <= 0) return false;
-    if (slot.object.type != ripper_type) return true;
+    if (slot.object.type != .ripper) return true;
     return slot.object.order_count == 0 or slot.orders[0].order != .ripper_grabs_target_object;
 }
-
-/// The Ripper, which is not shoved while it is carrying something.
-const ripper_type: u32 = 0x1F;
 
 /// Both objects shove each other, move again, and are then set apart along the line between them
 /// where they still overlap. The move applies the knocks the shove handed them, which is why it
@@ -390,11 +375,11 @@ fn counted(kind: Kind) bool {
 
 /// `0x00465C50`: a ship that meets an object listing components is tested against that object's
 /// parts, not its sphere. The two are moved apart and tested again, up to nine times. Two objects
-/// that both list components pass through each other, as does anything meeting `limpet_pod_type`.
+/// that both list components pass through each other, as does anything meeting the limpet pod.
 fn parts(world: gameobj.World, first: u16, second: u16, pass: u8) bool {
     const all = world.objects;
     if (all.slots[first].object.flags.components and all.slots[second].object.flags.components) return false;
-    if (all.slots[first].object.type == limpet_pod_type or all.slots[second].object.type == limpet_pod_type) return false;
+    if (all.slots[first].object.type == .limpet_pod or all.slots[second].object.type == .limpet_pod) return false;
     const hull = if (all.slots[first].object.flags.components) first else second;
     const ship = if (hull == first) second else first;
 
@@ -452,7 +437,7 @@ fn hullHit(world: gameobj.World, ship: u16, hull: u16, pass: u8) bool {
 const testing = struct {
     /// An object at `at`, with a radius of its own and nothing flying it.
     fn ship(mission: *gameobj.testing.Mission, at: Vector, radius: f32) !u16 {
-        const index = try mission.add(0, at);
+        const index = try mission.add(.predator, at);
         mission.slot(index).object.radius = radius;
         mission.slot(index).motion = null;
         return index;
@@ -536,7 +521,7 @@ test "a ship that meets a hull is shoved off the face it hit" {
     // The inverse inertia of a body of this mass, about 6 / (mass * size squared), which is what
     // `recentre` works out from a model's parts.
     const hull_turn: math.Matrix = @splat(0);
-    const hull = try create.createObject(all, &mission.tables, model.types(), null, 0, @splat(0), &mission.random);
+    const hull = try create.createObject(all, &mission.tables, model.types(), null, .predator, @splat(0), &mission.random);
     all.slots[hull].object.flags.components = true;
     all.slots[hull].object.mass = 100000;
     all.slots[hull].object.angular_response = hull_turn;
@@ -545,7 +530,7 @@ test "a ship that meets a hull is shoved off the face it hit" {
     all.slots[hull].object.angular_response[8] = 6e-9;
     all.slots[hull].motion = null;
     // The ship meets the face off to one side, so the hit has a lever on the hull.
-    const ship = try mission.add(0, .{ 60, 0, -60 });
+    const ship = try mission.add(.predator, .{ 60, 0, -60 });
     all.slots[ship].object.radius = 100;
     all.slots[ship].object.mass = 1000;
     all.slots[ship].object.angular_response = .{ 6e-7, 0, 0, 0, 6e-7, 0, 0, 0, 6e-7 };
@@ -635,7 +620,7 @@ test componentDamage {
     model.data[0].part.component_armor = 100;
     const world = mission.world();
 
-    const index = try create.createObject(all, &mission.tables, model.types(), null, 0, @splat(0), &mission.random);
+    const index = try create.createObject(all, &mission.tables, model.types(), null, .predator, @splat(0), &mission.random);
     const part = &all.slots[index].model.?.parts[0];
     try std.testing.expectEqual(100, part.armor);
 
@@ -681,7 +666,7 @@ test "what never collides" {
 
     // A torpedo of another type goes off against it instead of pushing it.
     mission.tables.combat[1].class = .fighter;
-    all.slots[far].object.type = 1;
+    all.slots[far].object.type = @enumFromInt(1);
     all.slots[far].combat = &mission.tables.combat[1];
     try std.testing.expect(collide(world, near, far, 0));
     try std.testing.expectEqual(0, all.slots[near].object.root.position.x);

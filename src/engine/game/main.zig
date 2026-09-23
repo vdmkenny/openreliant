@@ -265,7 +265,7 @@ test "the objects are framed and drawn, save those left out" {
     var tables = create.testing.tables();
     for (0..4) |place| {
         const at: math.Vector = .{ @floatFromInt(place * 100), 0, 0 };
-        _ = try create.createObject(all, &tables, model.types(), null, 0, at, &random);
+        _ = try create.createObject(all, &tables, model.types(), null, .predator, at, &random);
     }
     // The first is the ship the camera sits in, the second is disabled and the third jumping.
     all.slots[0].object.flags.hidden = true;
@@ -664,7 +664,7 @@ test missionFrame {
     try mission.init(std.testing.allocator);
     defer mission.deinit();
     // The player's slot, then a ship that turns on the spot under an order of its own.
-    for (0..2) |_| _ = try mission.add(0, @splat(0));
+    for (0..2) |_| _ = try mission.add(.predator, @splat(0));
     const orders = mission.orders();
     try std.testing.expect(try aigeneric.push(orders, 1, .slow_rotate, .{ .kind = .ship, .index = -1, .component = -1 }));
 

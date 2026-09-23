@@ -333,7 +333,7 @@ test steer {
     try mission.init(std.testing.allocator);
     defer mission.deinit();
     const all = mission.objects;
-    const index = try mission.add(0, @splat(0));
+    const index = try mission.add(.predator, @splat(0));
     const slot = &all.slots[index];
 
     // Dead ahead, nothing turns.
@@ -370,7 +370,7 @@ test "a ship steered at a point comes round to face it" {
     try mission.init(std.testing.allocator);
     defer mission.deinit();
     const all = mission.objects;
-    const index = try mission.add(0, @splat(0));
+    const index = try mission.add(.predator, @splat(0));
     const slot = &all.slots[index];
     const at: Vector = .{ 20000, 6000, 10000 };
 
@@ -399,7 +399,7 @@ test "a slow frame halves the small turns" {
     try mission.init(std.testing.allocator);
     defer mission.deinit();
     const all = mission.objects;
-    const index = try mission.add(0, @splat(0));
+    const index = try mission.add(.predator, @splat(0));
     const slot = &all.slots[index];
 
     _ = steer(slot, .{ 200, 0, 4000 }, 1, 0, .{}, slow_frame);
