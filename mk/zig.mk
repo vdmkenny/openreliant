@@ -36,10 +36,13 @@ GLSLC      ?= glslc
 .PHONY: shaders
 shaders: $(SHADERS) ## Compile the game's shader for Vulkan and Metal (needs glslc)
 
-$(SHADER_DIR)/%.vert.spv: $(SHADER_DIR)/%.glsl
+# What they share of colour, which they include.
+SHADER_COMMON := $(SHADER_DIR)/colour.glsl
+
+$(SHADER_DIR)/%.vert.spv: $(SHADER_DIR)/%.glsl $(SHADER_COMMON)
 	$(GLSLC) -fshader-stage=vertex -DVERTEX -O $< -o $@
 
-$(SHADER_DIR)/%.frag.spv: $(SHADER_DIR)/%.glsl
+$(SHADER_DIR)/%.frag.spv: $(SHADER_DIR)/%.glsl $(SHADER_COMMON)
 	$(GLSLC) -fshader-stage=fragment -DFRAGMENT -O $< -o $@
 
 $(SHADER_DIR)/%.msl: $(SHADER_DIR)/%.spv | $(SPIRV_CROSS)

@@ -54,10 +54,9 @@ pub const Light = struct {
         /// `colour` times the dot product of the pixel's normal with `toward`, where that is
         /// positive. `toward` points at the light and is as long as its intensity.
         directional: struct { toward: [3]f32, colour: [3]f32 },
-        /// `colour`, the light's times its intensity, times `(1 - r / reach)²` and the cosine of
-        /// the angle between the normal and the light, for a pixel `r` from `position` and within
-        /// `reach`.
-        point: struct { position: [3]f32, reach: f32, colour: [3]f32 },
+        /// `colour` times `intensity`, times `(1 - r / reach)²` and the cosine of the angle
+        /// between the normal and the light, for a pixel `r` from `position` and within `reach`.
+        point: struct { position: [3]f32, reach: f32, colour: [3]f32, intensity: f32 },
     };
 };
 

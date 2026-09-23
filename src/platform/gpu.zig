@@ -53,6 +53,12 @@ pub const Settings = struct {
     /// Lights each pixel with the game's own directional and point lights, rather than each
     /// vertex, so that hulls of few polygons shade smoothly. The original lit each vertex.
     pixel_lighting: bool = true,
+    /// Lights and filters in linear light, where the original lit the encoded colours: textures and
+    /// colours are decoded, lit, and encoded again as each pixel is written. What is blended, the
+    /// game's effects among it, is blended encoded, as it was made to be, into a frame of floats
+    /// that eases what is stacked past white rather than clipping it. 16-bit colour keeps the
+    /// original's way.
+    linear_light: bool = true,
     /// Shadows from the key lights (`gpu/shadows.zig`), where each pixel is lit. The original drew
     /// none.
     shadows: Shadows = .high,
@@ -81,6 +87,7 @@ pub const Settings = struct {
         .bloom = false,
         .dither = false,
         .pixel_lighting = false,
+        .linear_light = false,
         .shadows = .off,
     };
 };
@@ -131,20 +138,21 @@ const Lighting = extern struct {
         const Kind = enum(u32) { directional = 0, point = 1 };
     };
 
-    /// Takes as many of `list` as the shader does, from the first, and returns how many.
-    fn take(lighting: *Lighting, list: []const device.Light) usize {
+    /// Takes as many of `list` as the shader does, from the first, and returns how many: their
+    /// colours in linear light, where it is `linear`.
+    fn take(lighting: *Lighting, list: []const device.Light, linear: bool) usize {
         const count = @min(list.len, max_lights);
         for (list[0..count], lighting.lights[0..count]) |light, *taken| {
             taken.* = switch (light.kind) {
                 .directional => |directional| .{
-                    .colour = .{ directional.colour[0], directional.colour[1], directional.colour[2], 0 },
+                    .colour = colourOf(directional.colour, 1, linear),
                     .vector = .{ directional.toward[0], directional.toward[1], directional.toward[2], 0 },
                     .mask = light.mask,
                     .kind = .directional,
                     .shadowed = @intFromBool(light.shadowed),
                 },
                 .point => |point| .{
-                    .colour = .{ point.colour[0], point.colour[1], point.colour[2], 0 },
+                    .colour = colourOf(point.colour, point.intensity, linear),
                     .vector = .{ point.position[0], point.position[1], point.position[2], point.reach },
                     .mask = light.mask,
                     .kind = .point,
@@ -153,6 +161,13 @@ const Lighting = extern struct {
         }
         lighting.count[0] = @intCast(count);
         return count;
+    }
+
+    /// A light's colour times `intensity`, decoded into linear light first where `linear`.
+    fn colourOf(colour: [3]f32, intensity: f32, linear: bool) [4]f32 {
+        var taken: [4]f32 = @splat(0);
+        for (taken[0..3], colour) |*channel, given| channel.* = (if (linear) decoded(given) else given) * intensity;
+        return taken;
     }
 
     comptime {
@@ -221,17 +236,29 @@ pub const Gpu = struct {
     window: *c.SDL_Window,
     settings: Settings,
     samples: c.SDL_GPUSampleCount,
+    /// Lights in linear light, into a frame of floats (`Settings.linear_light`).
+    linear: bool,
+    /// What the scene is drawn into: floats where it lights in linear light, the display's own
+    /// format otherwise.
     colour_format: c.SDL_GPUTextureFormat,
+    /// What the finished frame is kept in, encoded for the display, which the display is drawn over.
+    finish_format: c.SDL_GPUTextureFormat,
+    /// What the textures are kept in: sRGB in linear light, so that sampling decodes them.
+    texture_format: c.SDL_GPUTextureFormat,
     depth_format: c.SDL_GPUTextureFormat,
     vertex_shader: *c.SDL_GPUShader,
     fragment_shader: *c.SDL_GPUShader,
     sampler: *c.SDL_GPUSampler,
-    /// What the bloom passes read with: no wrapping, so a blur does not pull in the far edge.
+    /// What the screen's passes read with: no wrapping, so a blur does not pull in the far edge.
     screen_sampler: *c.SDL_GPUSampler,
-    bloom_vertex_shader: ?*c.SDL_GPUShader = null,
-    bloom_fragment_shader: ?*c.SDL_GPUShader = null,
-    /// Draws each bloom pass, all of them into targets of the frame's own format.
+    /// The screen's passes (`shaders/bloom.glsl`): the bloom's, and the last, which finishes the
+    /// frame, adding the bloom back and easing a frame of floats into the display's.
+    screen_vertex_shader: ?*c.SDL_GPUShader = null,
+    screen_fragment_shader: ?*c.SDL_GPUShader = null,
+    /// Draws the bloom's passes, into targets of the scene's format.
     bloom_pipeline: ?*c.SDL_GPUGraphicsPipeline = null,
+    /// Draws the last pass, into the finished frame.
+    finish_pipeline: ?*c.SDL_GPUGraphicsPipeline = null,
     pipelines: std.AutoHashMapUnmanaged(PipelineKey, *c.SDL_GPUGraphicsPipeline) = .empty,
     arrays: std.ArrayList(Array) = .empty,
     uploads: std.ArrayList(Upload) = .empty,
@@ -330,7 +357,9 @@ pub const Gpu = struct {
             c.SDL_GPU_TEXTURETYPE_2D,
             c.SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | c.SDL_GPU_TEXTUREUSAGE_SAMPLER,
         );
-        const colour_format: c.SDL_GPUTextureFormat = if (sixteen) c.SDL_GPU_TEXTUREFORMAT_B5G6R5_UNORM else c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        const finish_format: c.SDL_GPUTextureFormat = if (sixteen) c.SDL_GPU_TEXTUREFORMAT_B5G6R5_UNORM else c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        const linear = settings.linear_light and !settings.sixteen_bit;
+        const colour_format = if (linear) floatFormat(handle) else finish_format;
         const depth_format: c.SDL_GPUTextureFormat = if (settings.sixteen_bit)
             c.SDL_GPU_TEXTUREFORMAT_D16_UNORM
         else if (c.SDL_GPUTextureSupportsFormat(handle, c.SDL_GPU_TEXTUREFORMAT_D32_FLOAT, c.SDL_GPU_TEXTURETYPE_2D, c.SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET))
@@ -371,7 +400,10 @@ pub const Gpu = struct {
             .window = window,
             .settings = settings,
             .samples = samples,
+            .linear = linear,
             .colour_format = colour_format,
+            .finish_format = finish_format,
+            .texture_format = if (linear) c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB else c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
             .depth_format = depth_format,
             .vertex_shader = vertex_shader,
             .fragment_shader = fragment_shader,
@@ -379,8 +411,16 @@ pub const Gpu = struct {
             .shadows = shadows,
         };
         gpu.blank = try gpu.place(&blank_levels);
-        if (settings.bloom) try gpu.startBloom(spirv);
+        if (settings.bloom or linear) try gpu.startScreen(spirv);
         return gpu;
+    }
+
+    /// Floats for a frame that keeps what is stacked past white: 32 bits a pixel where the GPU
+    /// draws into them, 64 otherwise.
+    fn floatFormat(handle: *c.SDL_GPUDevice) c.SDL_GPUTextureFormat {
+        const usage = c.SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | c.SDL_GPU_TEXTUREUSAGE_SAMPLER;
+        const packed_floats = c.SDL_GPUTextureSupportsFormat(handle, c.SDL_GPU_TEXTUREFORMAT_R11G11B10_UFLOAT, c.SDL_GPU_TEXTURETYPE_2D, usage);
+        return if (packed_floats) c.SDL_GPU_TEXTUREFORMAT_R11G11B10_UFLOAT else c.SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
     }
 
     pub fn deinit(gpu: *Gpu) void {
@@ -398,28 +438,30 @@ pub const Gpu = struct {
         gpu.shadows.deinit(gpu.handle);
         gpu.releaseTargets();
         if (gpu.bloom_pipeline) |p| c.SDL_ReleaseGPUGraphicsPipeline(gpu.handle, p);
-        if (gpu.bloom_vertex_shader) |shader_| c.SDL_ReleaseGPUShader(gpu.handle, shader_);
-        if (gpu.bloom_fragment_shader) |shader_| c.SDL_ReleaseGPUShader(gpu.handle, shader_);
+        if (gpu.finish_pipeline) |p| c.SDL_ReleaseGPUGraphicsPipeline(gpu.handle, p);
+        if (gpu.screen_vertex_shader) |shader_| c.SDL_ReleaseGPUShader(gpu.handle, shader_);
+        if (gpu.screen_fragment_shader) |shader_| c.SDL_ReleaseGPUShader(gpu.handle, shader_);
         c.SDL_ReleaseGPUSampler(gpu.handle, gpu.screen_sampler);
         c.SDL_ReleaseGPUSampler(gpu.handle, gpu.sampler);
         c.SDL_ReleaseGPUShader(gpu.handle, gpu.vertex_shader);
         c.SDL_ReleaseGPUShader(gpu.handle, gpu.fragment_shader);
     }
 
-    /// The shaders and pipelines the bloom passes draw with: a triangle over the whole screen, so
-    /// there is nothing to bind but what it reads.
-    fn startBloom(gpu: *Gpu, spirv: bool) Error!void {
-        gpu.bloom_vertex_shader = try shader(gpu.handle, spirv, c.SDL_GPU_SHADERSTAGE_VERTEX, if (spirv) shaders.bloom_vertex_spirv else shaders.bloom_vertex_msl, 0, 1);
-        gpu.bloom_fragment_shader = try shader(gpu.handle, spirv, c.SDL_GPU_SHADERSTAGE_FRAGMENT, if (spirv) shaders.bloom_fragment_spirv else shaders.bloom_fragment_msl, 2, 1);
-        gpu.bloom_pipeline = try gpu.screenPipeline(gpu.colour_format);
+    /// The shaders and pipelines the screen's passes draw with: a triangle over the whole screen,
+    /// so there is nothing to bind but what it reads.
+    fn startScreen(gpu: *Gpu, spirv: bool) Error!void {
+        gpu.screen_vertex_shader = try shader(gpu.handle, spirv, c.SDL_GPU_SHADERSTAGE_VERTEX, if (spirv) shaders.bloom_vertex_spirv else shaders.bloom_vertex_msl, 0, 1);
+        gpu.screen_fragment_shader = try shader(gpu.handle, spirv, c.SDL_GPU_SHADERSTAGE_FRAGMENT, if (spirv) shaders.bloom_fragment_spirv else shaders.bloom_fragment_msl, 2, 1);
+        if (gpu.settings.bloom) gpu.bloom_pipeline = try gpu.screenPipeline(gpu.colour_format);
+        gpu.finish_pipeline = try gpu.screenPipeline(gpu.finish_format);
     }
 
     fn screenPipeline(gpu: *Gpu, format: c.SDL_GPUTextureFormat) error{Sdl}!*c.SDL_GPUGraphicsPipeline {
         var colour = std.mem.zeroes(c.SDL_GPUColorTargetDescription);
         colour.format = format;
         var info = std.mem.zeroes(c.SDL_GPUGraphicsPipelineCreateInfo);
-        info.vertex_shader = gpu.bloom_vertex_shader;
-        info.fragment_shader = gpu.bloom_fragment_shader;
+        info.vertex_shader = gpu.screen_vertex_shader;
+        info.fragment_shader = gpu.screen_fragment_shader;
         info.primitive_type = c.SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
         info.rasterizer_state.fill_mode = c.SDL_GPU_FILLMODE_FILL;
         info.rasterizer_state.cull_mode = c.SDL_GPU_CULLMODE_NONE;
@@ -428,16 +470,25 @@ pub const Gpu = struct {
         return c.SDL_CreateGPUGraphicsPipeline(gpu.handle, &info) orelse fail("SDL_CreateGPUGraphicsPipeline");
     }
 
-    /// One pass of the bloom: draws the screen-wide triangle into `target`, reading `source` and,
-    /// for the last pass, the frame itself.
-    fn bloomPass(
+    /// What the screen's passes read, in std140's layout (`shaders/bloom.glsl`).
+    const ScreenUniforms = extern struct {
+        /// Which pass, a texel along a blur's axis, and the threshold or the bloom's strength.
+        settings: [4]f32,
+        /// 1 for a frame of floats, whose highlights are eased before they bloom and as the last
+        /// pass finishes it; and 1 for the last pass to dither.
+        finish: [4]f32 = @splat(0),
+    };
+
+    /// One of the screen's passes: draws the screen-wide triangle into `target`, reading `source`
+    /// and, for the last pass, the frame itself.
+    fn screenPass(
         gpu: *Gpu,
         commands: *c.SDL_GPUCommandBuffer,
         into: *c.SDL_GPUTexture,
         pipeline_: *c.SDL_GPUGraphicsPipeline,
         source: *c.SDL_GPUTexture,
         frame_image: *c.SDL_GPUTexture,
-        settings: [4]f32,
+        uniforms: ScreenUniforms,
     ) error{Sdl}!void {
         var colour = std.mem.zeroes(c.SDL_GPUColorTargetInfo);
         colour.texture = into;
@@ -451,7 +502,7 @@ pub const Gpu = struct {
             .{ .texture = frame_image, .sampler = gpu.screen_sampler },
         };
         c.SDL_BindGPUFragmentSamplers(pass, 0, &bindings, bindings.len);
-        c.SDL_PushGPUFragmentUniformData(commands, 0, &settings, @sizeOf(@TypeOf(settings)));
+        c.SDL_PushGPUFragmentUniformData(commands, 0, &uniforms, @sizeOf(ScreenUniforms));
         c.SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
     }
 
@@ -486,7 +537,7 @@ pub const Gpu = struct {
         const gpu = from(ptr);
         gpu.lighting.count[0] = 0;
         if (!gpu.settings.pixel_lighting) return 0;
-        return gpu.lighting.take(list);
+        return gpu.lighting.take(list, gpu.linear);
     }
 
     /// What follows is drawn over the finished frame rather than into it, so that the bloom, which
@@ -604,7 +655,7 @@ pub const Gpu = struct {
     fn arrayTexture(gpu: *Gpu, shape: Shape, layers: u32) error{Sdl}!*c.SDL_GPUTexture {
         var info = std.mem.zeroes(c.SDL_GPUTextureCreateInfo);
         info.type = c.SDL_GPU_TEXTURETYPE_2D_ARRAY;
-        info.format = c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        info.format = gpu.texture_format;
         info.usage = c.SDL_GPU_TEXTUREUSAGE_SAMPLER;
         info.width = shape.width;
         info.height = shape.height;
@@ -648,10 +699,9 @@ pub const Gpu = struct {
         if (!c.SDL_SubmitGPUCommandBuffer(commands)) return fail("SDL_SubmitGPUCommandBuffer");
     }
 
-    /// Puts the finished frame on the screen: through the bloom, which takes its bright parts,
-    /// blurs them along each axis in turn and adds them back, or straight there without it.
+    /// Puts the finished frame on the screen, with the display drawn over it.
     fn present(gpu: *Gpu, commands: *c.SDL_GPUCommandBuffer, targets: Targets, swapchain: *c.SDL_GPUTexture, width: u32, height: u32) Error!void {
-        try gpu.compose(commands, targets);
+        try gpu.finish(commands, targets);
         try gpu.drawOverlay(commands, targets);
         var blit = std.mem.zeroes(c.SDL_GPUBlitInfo);
         blit.source = .{ .texture = targets.finished(), .w = targets.width, .h = targets.height };
@@ -661,19 +711,23 @@ pub const Gpu = struct {
         c.SDL_BlitGPUTexture(commands, &blit);
     }
 
-    /// Adds the frame's bloom back into it, leaving what is shown in `composed`: its bright parts
-    /// are taken into a half-size target, blurred along each axis in turn, and added back.
-    fn compose(gpu: *Gpu, commands: *c.SDL_GPUCommandBuffer, targets: Targets) error{Sdl}!void {
-        const bloom = targets.bloom orelse return;
+    /// Finishes the frame into `composed`, where it has one: its bright parts taken into a
+    /// half-size target, blurred along each axis in turn and added back, where it blooms; and, for
+    /// a frame of floats, what stands past white eased into it, and dithered.
+    fn finish(gpu: *Gpu, commands: *c.SDL_GPUCommandBuffer, targets: Targets) error{Sdl}!void {
         const composed = targets.composed orelse return;
-        const pipeline_ = gpu.bloom_pipeline orelse return;
+        const last = gpu.finish_pipeline orelse return;
         const frame_image = targets.frame();
+        const finishing = [4]f32{ @floatFromInt(@intFromBool(gpu.linear)), @floatFromInt(@intFromBool(gpu.linear and gpu.settings.dither)), 0, 0 };
+        const bloom = targets.bloom orelse
+            return gpu.screenPass(commands, composed, last, frame_image, frame_image, .{ .settings = .{ 2, 0, 0, 0 }, .finish = finishing });
+        const blur = gpu.bloom_pipeline.?;
         const across = 1 / @as(f32, @floatFromInt(targets.bloom_width));
         const down = 1 / @as(f32, @floatFromInt(targets.bloom_height));
-        try gpu.bloomPass(commands, bloom[0], pipeline_, frame_image, frame_image, .{ 0, 0, 0, bloom_threshold });
-        try gpu.bloomPass(commands, bloom[1], pipeline_, bloom[0], frame_image, .{ 1, across, 0, 0 });
-        try gpu.bloomPass(commands, bloom[0], pipeline_, bloom[1], frame_image, .{ 1, 0, down, 0 });
-        try gpu.bloomPass(commands, composed, pipeline_, bloom[0], frame_image, .{ 2, 0, 0, bloom_strength });
+        try gpu.screenPass(commands, bloom[0], blur, frame_image, frame_image, .{ .settings = .{ 0, 0, 0, bloom_threshold }, .finish = finishing });
+        try gpu.screenPass(commands, bloom[1], blur, bloom[0], frame_image, .{ .settings = .{ 1, across, 0, 0 } });
+        try gpu.screenPass(commands, bloom[0], blur, bloom[1], frame_image, .{ .settings = .{ 1, 0, down, 0 } });
+        try gpu.screenPass(commands, composed, last, bloom[0], frame_image, .{ .settings = .{ 2, 0, 0, bloom_strength }, .finish = finishing });
     }
 
     /// The frame's copy pass, the shadows' passes and the frame's render pass.
@@ -707,19 +761,25 @@ pub const Gpu = struct {
         depth.stencil_store_op = c.SDL_GPU_STOREOP_DONT_CARE;
         const pass = c.SDL_BeginGPURenderPass(commands, &colour, 1, &depth) orelse return fail("SDL_BeginGPURenderPass");
         defer c.SDL_EndGPURenderPass(pass);
-        gpu.drawRuns(commands, pass, size, gpu.runs.items[0 .. gpu.overlay_from orelse gpu.runs.items.len]);
+        gpu.drawRuns(commands, pass, size, gpu.runs.items[0 .. gpu.overlay_from orelse gpu.runs.items.len], .scene);
     }
+
+    /// What a pass of the device's shader draws into: the scene, in floats where the device lights
+    /// in linear light, or the finished frame, which the display is drawn over.
+    const Into = enum { scene, finished };
 
     /// Draws `runs` in `pass`, into a frame `size` pixels across and down: each with its pipeline
     /// and its texture array, the shadows' maps beside it.
-    fn drawRuns(gpu: *Gpu, commands: *c.SDL_GPUCommandBuffer, pass: *c.SDL_GPURenderPass, size: [2]u32, runs: []const Run) void {
+    fn drawRuns(gpu: *Gpu, commands: *c.SDL_GPUCommandBuffer, pass: *c.SDL_GPURenderPass, size: [2]u32, runs: []const Run, into: Into) void {
         const target_size = [4]f32{ @floatFromInt(size[0]), @floatFromInt(size[1]), 0, 0 };
         c.SDL_PushGPUVertexUniformData(commands, 0, &target_size, @sizeOf(@TypeOf(target_size)));
+        // A frame of floats is dithered once it is finished.
+        const floats = gpu.linear and into == .scene;
         const frame_settings = [4]f32{
-            @floatFromInt(@intFromBool(gpu.settings.sixteen_bit)),
+            @floatFromInt(@intFromBool(!floats and gpu.settings.sixteen_bit)),
             @floatFromInt(@intFromBool(gpu.settings.filter == .crisp)),
-            @floatFromInt(@intFromBool(gpu.settings.dither)),
-            0,
+            @floatFromInt(@intFromBool(!floats and gpu.settings.dither)),
+            @floatFromInt(@intFromBool(gpu.linear)),
         };
         c.SDL_PushGPUFragmentUniformData(commands, 0, &frame_settings, @sizeOf(@TypeOf(frame_settings)));
         c.SDL_PushGPUFragmentUniformData(commands, 1, &gpu.lighting, @sizeOf(Lighting));
@@ -749,7 +809,7 @@ pub const Gpu = struct {
         colour.store_op = c.SDL_GPU_STOREOP_STORE;
         const pass = c.SDL_BeginGPURenderPass(commands, &colour, 1, null) orelse return fail("SDL_BeginGPURenderPass");
         defer c.SDL_EndGPURenderPass(pass);
-        gpu.drawRuns(commands, pass, .{ targets.width, targets.height }, runs);
+        gpu.drawRuns(commands, pass, .{ targets.width, targets.height }, runs, .finished);
     }
 
     /// Sends the frame's new textures, its vertices and indices, and the shadows' casters to the
@@ -828,15 +888,13 @@ pub const Gpu = struct {
         errdefer c.SDL_ReleaseGPUTexture(gpu.handle, depth);
         const half = [2]u32{ @max(size[0] / 2, 1), @max(size[1] / 2, 1) };
         var bloom: ?[2]*c.SDL_GPUTexture = null;
-        var composed: ?*c.SDL_GPUTexture = null;
+        errdefer if (bloom) |made| for (made) |texture| c.SDL_ReleaseGPUTexture(gpu.handle, texture);
         if (gpu.bloom_pipeline != null) {
             const first = try gpu.target(half, gpu.colour_format, finished, one);
             errdefer c.SDL_ReleaseGPUTexture(gpu.handle, first);
-            const second = try gpu.target(half, gpu.colour_format, finished, one);
-            errdefer c.SDL_ReleaseGPUTexture(gpu.handle, second);
-            bloom = .{ first, second };
-            composed = try gpu.target(size, gpu.colour_format, finished, one);
+            bloom = .{ first, try gpu.target(half, gpu.colour_format, finished, one) };
         }
+        const composed = if (gpu.finish_pipeline != null) try gpu.target(size, gpu.finish_format, finished, one) else null;
         gpu.targets = .{
             .width = size[0],
             .height = size[1],
@@ -891,7 +949,8 @@ pub const Gpu = struct {
         };
         const buffer: c.SDL_GPUVertexBufferDescription = .{ .slot = 0, .pitch = @sizeOf(Vertex), .input_rate = c.SDL_GPU_VERTEXINPUTRATE_VERTEX };
         var colour = std.mem.zeroes(c.SDL_GPUColorTargetDescription);
-        colour.format = gpu.colour_format;
+        // What is drawn over the finished frame goes into its format.
+        colour.format = if (key.multisampled) gpu.colour_format else gpu.finish_format;
         // The original's back buffer kept no alpha, and blending reads only the source's: alpha
         // stays as cleared, opaque.
         colour.blend_state.enable_color_write_mask = true;
@@ -1043,6 +1102,11 @@ pub fn shader(handle: *c.SDL_GPUDevice, spirv: bool, stage: c.SDL_GPUShaderStage
     return c.SDL_CreateGPUShader(handle, &info) orelse fail("SDL_CreateGPUShader");
 }
 
+/// A colour's channel, sRGB-encoded, in linear light (`shaders/colour.glsl`'s `decoded`).
+fn decoded(channel: f32) f32 {
+    return if (channel <= 0.04045) channel / 12.92 else std.math.pow(f32, (channel + 0.055) / 1.055, 2.4);
+}
+
 /// A white texel, which runs with no texture bind.
 const blank_levels = [1]srtexture.Level{.{ .width = 1, .height = 1, .rgba = &.{ 0xFF, 0xFF, 0xFF, 0xFF } }};
 
@@ -1082,20 +1146,43 @@ test "Lighting.take" {
     var lighting: Lighting = .{};
     const list = [_]device.Light{
         .{ .mask = 0x08, .kind = .{ .directional = .{ .toward = .{ 0, 0, -0.5 }, .colour = .{ 1, 0.9, 0.8 } } } },
-        .{ .mask = 0x01, .kind = .{ .point = .{ .position = .{ 3, 4, 50 }, .reach = 200, .colour = .{ 0.5, 0.5, 1 } } } },
+        .{ .mask = 0x01, .kind = .{ .point = .{ .position = .{ 3, 4, 50 }, .reach = 200, .colour = .{ 0.25, 0.25, 0.5 }, .intensity = 2 } } },
     };
-    try std.testing.expectEqual(2, lighting.take(&list));
+    try std.testing.expectEqual(2, lighting.take(&list, false));
     try std.testing.expectEqual(2, lighting.count[0]);
     try std.testing.expectEqual(Lighting.Light{ .colour = .{ 1, 0.9, 0.8, 0 }, .vector = .{ 0, 0, -0.5, 0 }, .mask = 0x08, .kind = .directional }, lighting.lights[0]);
     try std.testing.expectEqual(Lighting.Light{ .colour = .{ 0.5, 0.5, 1, 0 }, .vector = .{ 3, 4, 50, 200 }, .mask = 0x01, .kind = .point }, lighting.lights[1]);
     // Past the shader's room it takes the first, and the driver lights the vertices with the rest.
     const many: [max_lights + 1]device.Light = @splat(list[0]);
-    try std.testing.expectEqual(max_lights, lighting.take(&many));
+    try std.testing.expectEqual(max_lights, lighting.take(&many, false));
     try std.testing.expectEqual(max_lights, lighting.count[0]);
 }
 
 test {
     _ = shadow;
+}
+
+test decoded {
+    try std.testing.expectEqual(0, decoded(0));
+    try std.testing.expectApproxEqAbs(1, decoded(1), 1e-6);
+    // Half the encoding is a fifth of the light.
+    try std.testing.expectApproxEqAbs(0.214, decoded(0.5), 1e-3);
+    // The dark end is a straight line.
+    try std.testing.expectApproxEqAbs(0.02 / 12.92, decoded(0.02), 1e-7);
+}
+
+test "Lighting.take in linear light" {
+    var lighting: Lighting = .{};
+    const list = [_]device.Light{
+        .{ .mask = 0x01, .kind = .{ .directional = .{ .toward = .{ 0, 0, -1 }, .colour = .{ 1, 0.5, 0 } } }, .shadowed = true },
+        .{ .mask = 0x02, .kind = .{ .point = .{ .position = @splat(0), .reach = 10, .colour = .{ 0.5, 0.5, 0.5 }, .intensity = 2 } } },
+    };
+    try std.testing.expectEqual(2, lighting.take(&list, true));
+    // Each colour decoded, and a point light's intensity applied after: the light, not the
+    // encoding, doubled.
+    try std.testing.expectApproxEqAbs(decoded(0.5), lighting.lights[0].colour[1], 1e-6);
+    try std.testing.expectApproxEqAbs(2 * decoded(0.5), lighting.lights[1].colour[0], 1e-6);
+    try std.testing.expectEqual(1, lighting.lights[0].shadowed);
 }
 
 test Slot {
