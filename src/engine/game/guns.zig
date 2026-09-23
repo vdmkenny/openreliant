@@ -1807,14 +1807,13 @@ fn meshMaterial(lit: bool) srapiext.Material {
 }
 
 /// A mesh of `faces`, each a fan of `n` corners by their index into `corners`, with the texture
-/// coordinates of each index in turn, if it has its own. `mesh_create` makes the game's; the port
-/// leaves out what nothing reads here, the normals and the planes, since every shot is never
-/// culled and lit by nothing but its own colours.
+/// coordinates of each index in turn, if it has its own. Its normals and planes stay zero, as
+/// nothing reads them here: every shot is never culled and lit by nothing but its own colours.
 ///
 /// `mesh_create` gives the mesh's one run of polygons as many as it has vertices, so the game walks
 /// empty polygons after the real ones, which draw nothing; the port's run holds the real ones.
 fn meshOf(
-    comptime n: usize,
+    comptime n: u16,
     gpa: Allocator,
     corners: []const Vector,
     faces: []const [n]u16,
@@ -1822,45 +1821,13 @@ fn meshOf(
     material: srapiext.Material,
     image: *srtexture.Image,
 ) Allocator.Error!srapiext.Mesh {
-    const index_count = faces.len * n;
-    const positions = try gpa.dupe(Vector, corners);
-    errdefer gpa.free(positions);
-    const normals = try gpa.alloc(Vector, corners.len);
-    errdefer gpa.free(normals);
-    @memset(normals, @splat(0));
-    const polygons = try gpa.alloc(srapiext.Polygon, faces.len);
-    errdefer gpa.free(polygons);
-    const indices = try gpa.alloc(u16, index_count);
-    errdefer gpa.free(indices);
-    var at: usize = 0;
-    for (polygons, faces) |*polygon, face| {
-        polygon.* = .{ .kind = .triangle, .continues = 0, .first = @intCast(at), .count = n };
-        indices[at..][0..n].* = face;
-        at += n;
-    }
-    const coordinates: ?[][2]f32 = if (uv) |given| try gpa.dupe([2]f32, given) else null;
-    errdefer if (coordinates) |c| gpa.free(c);
-    const planes = try gpa.alloc(srapiext.Plane, faces.len);
-    errdefer gpa.free(planes);
-    @memset(planes, .{ .normal = @splat(0), .distance = 0 });
-    const biases = try gpa.alloc(f32, faces.len);
-    errdefer gpa.free(biases);
-    @memset(biases, 0);
-    const surfaces = try gpa.alloc(srapiext.Surface, 1);
-    errdefer gpa.free(surfaces);
-    surfaces[0] = .{ .polygons = @intCast(faces.len), .material = material, .textures = .{ .{ .image = image }, .none } };
-    var mesh: srapiext.Mesh = .{
-        .positions = positions,
-        .normals = normals,
-        .polygons = polygons,
-        .indices = indices,
-        .uv = .{ coordinates, null },
-        .planes = planes,
-        .biases = biases,
-        .surfaces = surfaces,
-        .bounds = undefined,
-        .radius = undefined,
-    };
+    var mesh: srapiext.Mesh = try .create(gpa, .{ .polygons = faces.len, .vertices = corners.len, .indices = faces.len * n });
+    errdefer mesh.deinit(gpa);
+    @memcpy(mesh.positions, corners);
+    mesh.numberPolygons(n);
+    for (faces, 0..) |face, i| mesh.indices[i * n ..][0..n].* = face;
+    if (uv) |given| @memcpy(try mesh.addCoordinates(gpa), given);
+    mesh.surfaces[0] = .{ .polygons = @intCast(faces.len), .material = material, .textures = .{ .{ .image = image }, .none } };
     srapi.findBoundingBox(&mesh);
     return mesh;
 }
