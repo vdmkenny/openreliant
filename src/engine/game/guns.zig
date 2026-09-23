@@ -463,8 +463,7 @@ fn takesTurn(object: *const gameobj.GameObject, groups: *const [max_groups]Group
 /// only as often as its condition allows.
 fn fires(world: gameobj.World, object: *const gameobj.GameObject) bool {
     if (object.gun_condition >= steady_condition) return true;
-    const draw = @as(f32, @floatFromInt(world.random.rand())) * (1.0 / @as(f32, libcmt.Rand.max));
-    return draw <= object.gun_condition + condition_margin;
+    return draw(world.random) <= object.gun_condition + condition_margin;
 }
 
 /// The ticks between a gun's shots: a ship aiming blind fires a third again as slowly.
@@ -886,17 +885,32 @@ const hostile_shot_light: [3]f32 = .{ 1, 0.5, 0 };
 ///
 /// It casts a light while it is one of the latest two of its ring (`Bullets.Ring`).
 ///
+/// A few gun types have rules of their own: two Turret Flak shots in five are Turret Lasers shots,
+/// and a Turret Flak shot lives a random share of its type's life, from a fifth to all of it, and
+/// scatters up to `flak_scatter` about each axis; a Huge Gun's shot is given the objects its path
+/// comes within `hugeReach` of as well.
+///
 /// Not ported: how the other gun types' shots are drawn
 /// ([#154](https://github.com/vdmkenny/openreliant/issues/154)); its sound ([#47](https://github.com/vdmkenny/openreliant/issues/47)), the force feedback a
-/// player's shot gives ([#83](https://github.com/vdmkenny/openreliant/issues/83)), the aim a ship
-/// firing blind takes at its target, and the scatter of gun type 12.
+/// player's shot gives ([#83](https://github.com/vdmkenny/openreliant/issues/83)), and the aim a
+/// ship firing blind takes at its target.
 pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, gun: Fitted) void {
     const all = world.objects;
     const slot = &all.slots[owner];
     const model = if (slot.model) |*live| live else return;
-    const record = world.objects.gun_stats.types[gun.type];
     const index = all.bullets.free() orelse return;
     const bullet = &all.bullets.pool[index];
+
+    // The shot's own type, which is its gun's but for a Turret Flak's two times in five
+    // (`bullet_fire`); its figures follow it.
+    var kind: u4 = @intCast(gun.type - 1);
+    if (kind == turret_flak and @rem(world.random.rand(), 5) < 2) kind = turret_lasers;
+    const record = all.gun_stats.types[@as(u8, kind) + 1];
+    var lifetime = record.lifetime;
+    if (kind == turret_flak) {
+        const share = draw(world.random) * flak_life_share + flak_life_least;
+        lifetime = std.math.lossyCast(i32, share * @as(f32, @floatFromInt(lifetime)));
+    }
 
     // The muzzle stands where the step is taking the ship, on the part that carries it.
     model.place(gameobj.vector(slot.object.root.next_position), slot.object.root.next_orientation);
@@ -904,19 +918,27 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, gun: Fitted)
     const at = math.transform(part.orientation, gameobj.vector(gun.muzzle.position)) + part.position;
     const turn = math.product(part.orientation, gun.muzzle.orientation);
 
+    var velocity = math.transform(turn, .{ 0, 0, record.speed });
+    if (kind == turret_flak) {
+        // Drawn roll, yaw and pitch in that order, each a share of `flak_scatter` either way.
+        const roll = (draw(world.random) - 0.5) * flak_scatter;
+        const yaw = (draw(world.random) - 0.5) * flak_scatter;
+        const pitch = (draw(world.random) - 0.5) * flak_scatter;
+        velocity = math.transform(math.fromAngles(pitch, yaw, roll), velocity);
+    }
     bullet.* = .{
         .live = true,
-        .kind = @intCast(gun.type - 1),
-        .dies_at = clock.mission_ticks + record.lifetime,
+        .kind = kind,
+        .dies_at = clock.mission_ticks + lifetime,
         .fired_at = clock.mission_ticks,
         .last = at,
         .at = at,
-        .velocity = math.transform(turn, .{ 0, 0, record.speed }),
+        .velocity = velocity,
         .owner = owner,
         .side = slot.object.side,
         .place = at,
     };
-    candidates(world, bullet, record);
+    candidates(world, bullet, record, lifetime);
 
     // The light it casts, which the oldest shot of its ring gives up (`bullet_place`).
     const player = owner == all.player;
@@ -950,11 +972,11 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, gun: Fitted)
 ///
 /// Not ported: the parts, which `object_hit_test` picks for an object whose components are listed
 /// ([#40](https://github.com/vdmkenny/openreliant/issues/40)); such an object is taken whole here.
-fn candidates(world: gameobj.World, bullet: *Bullet, record: Gun) void {
+fn candidates(world: gameobj.World, bullet: *Bullet, record: Gun, lifetime: i32) void {
     const all = world.objects;
     if (record.speed <= 0) return;
     const along = 1 / (record.speed * record.speed);
-    const life: f32 = @floatFromInt(record.lifetime);
+    const life: f32 = @floatFromInt(lifetime);
     var walk = all.walk();
     while (walk.next()) |index| {
         if (bullet.candidate_count == max_candidates) return;
@@ -966,7 +988,7 @@ fn candidates(world: gameobj.World, bullet: *Bullet, record: Gun) void {
         const when = std.math.clamp(math.dot(to, bullet.velocity) * along, 0, life);
         const nearest = bullet.velocity * @as(Vector, @splat(when));
         const moving = if (slot.flight) |flight| ai.cruiseSpeed(object, flight, world.view) else 0;
-        const reach = moving * when + object.radius;
+        const reach = moving * when + object.radius + hugeReach(bullet.kind);
         if (math.lengthSquared(nearest - to) >= reach * reach) continue;
         bullet.candidates[bullet.candidate_count] = .{ .object = index };
         bullet.candidate_count += 1;
@@ -976,10 +998,39 @@ fn candidates(world: gameobj.World, bullet: *Bullet, record: Gun) void {
 /// What a turret's shot does to a player's ship, over what it does to any other (`0x004DC59C`).
 const turret_damage_to_players: f32 = 2.5;
 
-/// Whether the shot came from a turret's gun, which hits a player's ship harder. A shot keeps its
-/// type less one, so these are types 12 and 13, the two the turrets fire.
+/// Whether the shot came from a turret's gun, which hits a player's ship harder.
 fn fromTurret(kind: u4) bool {
-    return kind == 11 or kind == 12;
+    return kind == turret_flak or kind == turret_lasers;
+}
+
+/// The gun types that have rules of their own, less one as a shot keeps them.
+const turret_flak: u4 = 11;
+const turret_lasers: u4 = 12;
+const allied_huge_gun: u4 = 13;
+const coalition_huge_gun: u4 = 14;
+
+/// How much farther a Huge Gun's shot reaches than the objects it may hit stand
+/// (`0x004DC758`, `0x004DC508`, and written into `bullet_hit`).
+fn hugeReach(kind: u4) f32 {
+    return switch (kind) {
+        allied_huge_gun => 1200,
+        coalition_huge_gun => 3000,
+        else => 0,
+    };
+}
+
+/// The least share of its life a Turret Flak shot lives (`0x004DC3F8`), and how much more it may
+/// (`0x004DC410`).
+const flak_life_least: f32 = 0.2;
+const flak_life_share: f32 = 0.8;
+
+/// How far a Turret Flak shot's flight scatters about each axis, in radians, from half of it one
+/// way to half the other (`0x004DC880`).
+const flak_scatter: f32 = 0.12;
+
+/// A number from the runtime's, over its largest.
+fn draw(random: *libcmt.Rand) f32 {
+    return @as(f32, @floatFromInt(random.rand())) * (1.0 / @as(f32, libcmt.Rand.max));
 }
 
 /// `0x0047A4E0`, which `simulation_step` runs after the objects move: every shot flies on by its
@@ -1030,10 +1081,11 @@ pub fn bulletsFrame(world: gameobj.World, clock: *const Clock, fraction: f32) vo
 /// `0x00479B40`: what a shot strikes between where it stood last frame and where it stands now. It
 /// tests only the objects it was given when it was fired, and drops any it has already flown past.
 ///
-/// An object is struck where the segment first crosses the sphere of its radius. With a shield up
-/// in that quadrant the shot spends itself on the shield (`object_damage` with the type's first
-/// damage, and its second over its first as the share that passes through); with the shield down
-/// the shot reaches the hull (`hullHit`). What the player has shifted fore or aft takes the hit
+/// An object is struck where the segment first crosses the sphere of its radius, widened for a Huge
+/// Gun's shot (`hugeReach`). With a shield up in that quadrant the shot spends itself on the shield
+/// (`object_damage` with the type's first damage, and its second over its first as the share that
+/// passes through); with the shield down the shot reaches the hull (`hullHit`), though a Huge Gun's
+/// always goes through the shields. What the player has shifted fore or aft takes the hit
 /// before the quadrant does, and a turret's shot hurts a player's ship more. A ship with its
 /// spectral shields on takes nothing at all: the gun type they are tuned to is handed to the check
 /// and ignored, so every shot is turned.
@@ -1061,7 +1113,7 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
         const to = slot.drawn.position - bullet.last;
         const when = std.math.clamp(math.dot(span, to) * along, 0, 1);
         const nearest = span * @as(Vector, @splat(when));
-        const reach = object.radius;
+        const reach = object.radius + hugeReach(bullet.kind);
         if (math.lengthSquared(nearest - to) > reach * reach) {
             // Once the shot is past an object it is dropped from the list.
             if (when == 0) {
@@ -1086,7 +1138,8 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
         const point = bullet.last + span * @as(Vector, @splat((-b - root) / (a + a)));
         const struck = collision.quadrant(object, math.transformTransposed(slot.drawn.orientation, point - slot.drawn.position));
 
-        if (object.shields[@intFromEnum(struck)] <= 0 or object.invulnerable == 4 or object.invulnerable == 5) {
+        const huge = bullet.kind == allied_huge_gun or bullet.kind == coalition_huge_gun;
+        if (!huge and (object.shields[@intFromEnum(struck)] <= 0 or object.invulnerable == 4 or object.invulnerable == 5)) {
             hullHit(world, bullet, candidate.object, struck);
             return;
         }
@@ -1297,6 +1350,69 @@ test "only the latest two shots of a ring cast a light" {
     try std.testing.expectEqual(null, bullets.player_lights.held[0]);
     try std.testing.expectEqual(1, bullets.player_lights.held[1]);
     try std.testing.expect(!bullets.pool[2].live);
+}
+
+test "a Turret Flak shot bursts at a random range, scatters, and is at times a laser's" {
+    const gpa = std.testing.allocator;
+    var ship: testing.Ship = undefined;
+    try ship.init(gpa);
+    defer ship.deinit(gpa);
+    const world = ship.world();
+    const types = &world.objects.gun_stats.types;
+    types[turret_flak + 1].lifetime = 100;
+    types[turret_flak + 1].speed = 500;
+    types[turret_lasers + 1].lifetime = 100;
+    types[turret_lasers + 1].speed = 500;
+    var gun = ship.guns()[0];
+    gun.type = turret_flak + 1;
+
+    var flak: usize = 0;
+    var lasers: usize = 0;
+    for (0..40) |_| {
+        shoot(world, &ship.clock, ship.index, gun);
+        const bullet = &world.objects.bullets.pool[0];
+        if (bullet.kind == turret_lasers) {
+            // A laser's shot flies straight, for its type's whole life.
+            lasers += 1;
+            try std.testing.expectEqual(@as(Vector, .{ 0, 0, 500 }), bullet.velocity);
+            try std.testing.expectEqual(ship.clock.mission_ticks + 100, bullet.dies_at);
+        } else {
+            flak += 1;
+            const life = bullet.dies_at - ship.clock.mission_ticks;
+            try std.testing.expect(life >= 20 and life <= 100);
+            try std.testing.expect(!@reduce(.And, bullet.velocity == @as(Vector, .{ 0, 0, 500 })));
+            try std.testing.expectApproxEqAbs(500, math.length(bullet.velocity), 0.01);
+        }
+        world.objects.bullets.release(0);
+    }
+    try std.testing.expect(flak > 0 and lasers > 0);
+}
+
+test "a Huge Gun's shot reaches farther, and always through the shields" {
+    const gpa = std.testing.allocator;
+    var ship: testing.Ship = undefined;
+    try ship.init(gpa);
+    defer ship.deinit(gpa);
+    const world = ship.world();
+    world.objects.gun_stats.types[coalition_huge_gun + 1] = world.objects.gun_stats.types[testing.gun_type];
+    var gun = ship.guns()[0];
+    gun.type = coalition_huge_gun + 1;
+
+    // A ship off to the side of the shot's path by more than its radius, but within 3000.
+    const target = try create.createObject(ship.all, &ship.tables, ship.model.types(), null, 9, .{ 1500, 0, 500 }, &ship.random);
+    const slot = &ship.all.slots[target];
+    slot.drawn = .{ .position = .{ 1500, 0, 500 }, .orientation = math.identity };
+    slot.object.shields = @splat(0);
+    shoot(world, &ship.clock, ship.index, gun);
+    const bullet = &world.objects.bullets.pool[0];
+    try std.testing.expectEqual(1, bullet.candidate_count);
+    bullet.last = .{ 0, 0, 0 };
+    bullet.at = .{ 0, 0, 1000 };
+    bulletsFrame(world, &ship.clock, 0);
+    // It struck the ship with its shields down and still took the shield's way: the first damage,
+    // then the share of it that passes to the armour. A hull hit would have counted the second
+    // damage alone, 4.
+    try std.testing.expectEqual(10 + 4, slot.object.recent_damage);
 }
 
 test crossesBox {

@@ -79,6 +79,12 @@ the muzzle node where the step is taking it, flying along that node's nose at th
 and lives for the type's ticks, which is what gives the gun its range. A ship aiming blind aims at
 its target instead of its nose, and gun type 12 scatters.
 
+A few gun types have rules of their own. Two Turret Flak shots in five are Turret Lasers shots
+instead (`bullet_fire`), and a Turret Flak shot lives a random share of its life, from a fifth of
+it to all of it, and scatters up to 0.06 radians either way about each axis. The two Huge Guns reach
+1200 and 3000 farther than the objects they strike stand, and their shots always go through the
+shields, even where they are down.
+
 The shot is then given the objects it may reach: each object whose radius, widened by how far it
 could move meanwhile, its path comes within over its whole life, up to 20 of them. An object whose
 components are listed is listed component by component instead. Nothing else is ever tested, so a
