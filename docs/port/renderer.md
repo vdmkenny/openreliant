@@ -95,10 +95,16 @@ Deliberate differences from the original, each marked **Improvement** where it i
   uniform data SDL's Vulkan device binds: the directional lights first, then the point lights
   nearest the camera. The pipeline adds any others to each vertex, as the original adds them all.
   The software device lights each vertex. `--no-pixel-lighting` turns it off.
+- Every shot a gun fires casts its light, where the original lit only the latest two of the
+  player's shots and the latest two of everyone else's, so that sustained fire lights the hulls it
+  passes ([Guns](../engine/guns.md#how-a-shot-is-drawn)). The shader's 64 nearest point lights
+  take them per pixel and the pipeline adds any past that to each vertex. `--few-shot-lights`
+  restores the original's two.
 - It draws in 32-bit colour, where the original drew in 16 bits, and dithers that too, which costs
   nothing and keeps a dark gradient, such as the nebula or a light's falloff, from banding. `--original` restores the
   original's look: 16-bit colour, dithered, into a 16-bit buffer where the GPU has one, with a
-  16-bit depth buffer, one sample a pixel, bilinear filtering and lighting each vertex.
+  16-bit depth buffer, one sample a pixel, bilinear filtering, lighting each vertex and lights
+  from the latest shots only.
 
 ## Scene objects of kinds 5 and 6
 

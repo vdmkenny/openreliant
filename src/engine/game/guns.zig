@@ -859,8 +859,10 @@ pub const Bullets = struct {
     /// What the shots are drawn with, where the caller has built it; without, they fly unseen and
     /// draw none of the numbers their looks would.
     looks: ?*const Looks = null,
-    /// The shots that cast a light: the player's latest two (`0x0056317C`), and the latest two of
-    /// everyone else's (`0x00563168`).
+    /// Which shots cast a light.
+    shot_lights: ShotLights = .latest_two,
+    /// The shots that cast a light under `latest_two`: the player's latest two (`0x0056317C`), and
+    /// the latest two of everyone else's (`0x00563168`).
     player_lights: Ring = .{},
     other_lights: Ring = .{},
 
@@ -898,6 +900,17 @@ pub const Bullets = struct {
     }
 };
 
+/// Which shots cast a light.
+pub const ShotLights = enum {
+    /// The latest two of the player's shots and the latest two of everyone else's, as the game
+    /// lights them (`bullet_place`), which a hardware renderer of its day could hold.
+    latest_two,
+    /// **Improvement:** every shot, so that sustained fire lights the hulls it passes. The GPU
+    /// device lights each pixel with the 64 point lights nearest the camera and the pipeline adds
+    /// the rest to each vertex, so a frame full of shots still lights them all.
+    every_shot,
+};
+
 /// How many shots of a ring cast a light at once.
 const lights_kept = 2;
 
@@ -920,7 +933,8 @@ const hostile_shot_light: [3]f32 = .{ 1, 0.5, 0 };
 ///
 /// The shot is drawn with its type's bolt where the port has one (`Bolts`).
 ///
-/// It casts a light while it is one of the latest two of its ring (`Bullets.Ring`).
+/// It casts a light while it is one of the latest two of its ring (`Bullets.Ring`), or for its
+/// whole flight under `ShotLights.every_shot`.
 ///
 /// A few gun types have rules of their own: two Turret Flak shots in five are Turret Lasers shots,
 /// and a Turret Flak shot lives a random share of its type's life, from a fifth to all of it, and
@@ -965,7 +979,10 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, gun: Fitted)
 
     // The light it casts, which the oldest shot of its ring gives up.
     const player = owner == all.player;
-    (if (player) &all.bullets.player_lights else &all.bullets.other_lights).take(&all.bullets.pool, index);
+    switch (all.bullets.shot_lights) {
+        .latest_two => (if (player) &all.bullets.player_lights else &all.bullets.other_lights).take(&all.bullets.pool, index),
+        .every_shot => {},
+    }
     bullet.light = .{
         .mask = 0,
         .intensity = 1,
@@ -1364,6 +1381,19 @@ test "only the latest two shots of a ring cast a light" {
     try std.testing.expectEqual(null, bullets.player_lights.held[0]);
     try std.testing.expectEqual(1, bullets.player_lights.held[1]);
     try std.testing.expect(!bullets.pool[2].live);
+}
+
+test "every shot casts a light where the port lets them" {
+    const gpa = std.testing.allocator;
+    var ship: testing.Ship = undefined;
+    try ship.init(gpa);
+    defer ship.deinit(gpa);
+    const world = ship.world();
+    world.objects.bullets.shot_lights = .every_shot;
+    for (0..3) |_| shoot(world, &ship.clock, ship.index, ship.guns()[0]);
+    for (world.objects.bullets.pool[0..3]) |bullet| try std.testing.expect(bullet.light != null);
+    // The rings are left alone.
+    try std.testing.expectEqual(null, world.objects.bullets.player_lights.held[0]);
 }
 
 test "a Turret Flak shot bursts at a random range, scatters, and is at times a laser's" {

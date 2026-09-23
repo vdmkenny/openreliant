@@ -154,6 +154,10 @@ latest two of everyone else's (`0x00563168`): a new shot's light puts out the li
 of its two. A shot flies past that reach within a step, so its light shows on the hull that fired
 it for the frames just after it leaves the muzzle.
 
+**Improvement:** the port lets every shot cast its light (`ShotLights.every_shot`), so that
+sustained fire lights the hulls it passes; `--original` and `--few-shot-lights` keep the game's two
+([Renderer](../port/renderer.md#improvements)).
+
 ## The port
 
 [`guns.zig`](../../src/engine/game/guns.zig) holds the fitting (`fit`), the groups (`buildGroups`),
