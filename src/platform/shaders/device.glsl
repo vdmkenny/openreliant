@@ -106,8 +106,8 @@ const int cascadeCount = 4;
 
 layout(set = 3, binding = 2) uniform Shadows {
     Cascade cascades[cascadeCount];
-    // x: 1 where the frame has shadows. y: one over the maps' texels across. z: 1 to look them up
-    // in sixteen taps rather than four.
+    // x: 1 where the frame has shadows. y: how far apart the lookup's taps are, as a share of a
+    // map. z: 1 to look them up in sixteen taps rather than four.
     vec4 settings;
 } shadows;
 

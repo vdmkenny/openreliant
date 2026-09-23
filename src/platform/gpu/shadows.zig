@@ -41,13 +41,21 @@ pub const Quality = enum {
     fn wide(quality: Quality) bool {
         return quality == .high;
     }
+
+    /// How far apart the lookup's taps are, in texels: the wider, the softer the shadows' edges.
+    fn spacing(quality: Quality) f32 {
+        return switch (quality) {
+            .off, .low => 1,
+            .high => 1.4,
+        };
+    }
 };
 
 /// What the device's shader reads of the frame's shadows, in std140's layout.
 pub const Uniforms = extern struct {
     cascades: [srshadow.cascade_count]Cascade = @splat(.{}),
-    /// The first: 1 where the frame has shadows, and 0 where it has none. The second: one over the
-    /// maps' texels across. The third: 1 for sixteen taps, 0 for four.
+    /// The first: 1 where the frame has shadows, and 0 where it has none. The second: how far apart
+    /// the lookup's taps are, as a share of a map. The third: 1 for sixteen taps, 0 for four.
     settings: [4]f32 = @splat(0),
 
     const Cascade = extern struct {
@@ -57,8 +65,8 @@ pub const Uniforms = extern struct {
     };
 
     fn of(frame: *const srshadow.Frame, quality: Quality) Uniforms {
-        const texel = 1 / @as(f32, @floatFromInt(quality.texels()));
-        var uniforms: Uniforms = .{ .settings = .{ 1, texel, @floatFromInt(@intFromBool(quality.wide())), 0 } };
+        const step = quality.spacing() / @as(f32, @floatFromInt(quality.texels()));
+        var uniforms: Uniforms = .{ .settings = .{ 1, step, @floatFromInt(@intFromBool(quality.wide())), 0 } };
         for (&uniforms.cascades, frame.cascades) |*taken, cascade| {
             taken.* = .{ .rows = cascade.rows, .extent = .{ cascade.far, cascade.texel, 0, 0 } };
         }
@@ -241,7 +249,7 @@ test "Uniforms.of" {
         cascade.* = .{ .rows = @splat(@splat(n)), .far = 1000 * (n + 1), .texel = n + 0.5, .half = 1 };
     }
     const uniforms: Uniforms = .of(&frame, .high);
-    try std.testing.expectEqual([4]f32{ 1, 1.0 / 4096.0, 1, 0 }, uniforms.settings);
+    try std.testing.expectEqual([4]f32{ 1, 1.4 / 4096.0, 1, 0 }, uniforms.settings);
     try std.testing.expectEqual(0, Uniforms.of(&frame, .low).settings[2]);
     try std.testing.expectEqual([4]f32{ 3000, 2.5, 0, 0 }, uniforms.cascades[2].extent);
     try std.testing.expectEqual([4]f32{ 3, 3, 3, 3 }, uniforms.cascades[3].rows[1]);
