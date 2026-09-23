@@ -1189,11 +1189,12 @@ pub fn bulletsFrame(world: gameobj.World, clock: *const Clock, fraction: f32) vo
 /// always goes through the shields. What the player has shifted fore or aft takes the hit
 /// before the quadrant does, and a turret's shot hurts a player's ship more. A ship with its
 /// spectral shields on takes nothing at all: the gun type they are tuned to is handed to the check
-/// and ignored, so every shot is turned.
+/// and ignored, so every shot is turned. Whatever becomes of a shot spent on a shield, the shield
+/// flares where it struck (`shield.flare`).
 ///
 /// Not ported: the parts of an object whose components are listed, which the game tests node by
-/// node ([#40](https://github.com/vdmkenny/openreliant/issues/40)); the cloak a hit reveals; the
-/// shield's flash.
+/// node ([#40](https://github.com/vdmkenny/openreliant/issues/40)); the cloak a hit reveals
+/// ([#89](https://github.com/vdmkenny/openreliant/issues/89)).
 fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
     const all = world.objects;
     const span = bullet.at - bullet.last;
@@ -1244,6 +1245,7 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
             hullHit(world, bullet, candidate.object, struck);
             return;
         }
+        defer shield.flare(world, candidate.object, point);
         if (!object.flags.spectral_shields and record.damage[0] > 0) {
             var value = record.damage[0];
             // What the player has shifted fore or aft takes the hit before the quadrant does, and
@@ -2445,6 +2447,7 @@ test {
 const Allocator = std.mem.Allocator;
 const ai = @import("ai.zig");
 const collision = @import("collision.zig");
+const shield = @import("shield.zig");
 const sparks = @import("sparks.zig");
 const create = @import("create.zig");
 const ShipTypes = create.Types;

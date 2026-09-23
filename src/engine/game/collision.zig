@@ -15,6 +15,7 @@ const gameobj = @import("gameobj.zig");
 const main = @import("main.zig");
 const motion = @import("motion.zig");
 const objects = @import("objects.zig");
+const shield = @import("shield.zig");
 
 /// How far apart a collision sets two objects, as a share of each one's radius from the point
 /// between them (`0x004DC7C0` and `0x004DC7C4`): a tenth further than touching, so that the next
@@ -240,9 +241,9 @@ const attached_damage: f32 = 0.02;
 /// What a player's ship does to a friendly one (`0x004DC3D4`).
 const friendly_damage: f32 = 0.25;
 
-/// `0x00465CA0`: the damage two objects do each other as they meet. It follows the impulse the
-/// shove handed them, over the lighter of the two masses, and lands on the quadrant each was struck
-/// in: the shields take it first, and what passes through wears the armour.
+/// `collision_damage` (`0x00465CA0`): the damage two objects do each other as they meet. It
+/// follows the impulse the shove handed them, over the lighter of the two masses, and lands on the
+/// quadrant each was struck in (`knockDamage`). The Ripper takes none.
 fn impact(world: gameobj.World, first: u16, second: u16, impulse: Vector, contact: Vector) void {
     const all = world.objects;
     const near = &all.slots[first].object;
@@ -250,14 +251,39 @@ fn impact(world: gameobj.World, first: u16, second: u16, impulse: Vector, contac
     var value = math.length(impulse) * damage_share / @min(near.mass, far.mass);
     if (near.flags.attached or far.flags.attached) value *= attached_damage;
 
-    for ([_]u16{ first, second }, [_]u16{ second, first }) |index, other| {
+    for ([_]u16{ first, second }, [_]u16{ second, first }, [_]Flare{ .before, .after }) |index, other, flare| {
         const object = &all.slots[index].object;
+        if (object.type == .ripper) continue;
         const struck = quadrant(object, math.transformTransposed(object.root.orientation, contact - gameobj.vector(object.root.position)));
         var share = value;
         // A player's ship is gentler with its own side.
         if (other == all.player and object.side == .friendly and index >= all.players) share *= friendly_damage;
-        damage(world, index, struck, share, 1, other, .collision);
+        knockDamage(world, index, struck, share, share, other, contact, flare);
     }
+}
+
+/// When a knock's shield flares, as `shield.flare` checks the shields left: the game flares the
+/// first of two objects that meet before its damage, and the second, and a ship meeting a hull,
+/// after.
+const Flare = enum { before, after };
+
+/// What a knock does to one object (`collision_damage`, `collision_test_hull`): the player's shield
+/// reserve in the quadrant struck is drawn by `drain` first, and while it holds, that is all. A
+/// shield that is down leaves the armour to take `value`; one that is up takes it
+/// (`object_damage`), and flares at `contact`.
+fn knockDamage(world: gameobj.World, index: u16, struck: Quadrant, value: f32, drain: f32, attacker: u16, contact: Vector, flare: Flare) void {
+    const all = world.objects;
+    const object = &all.slots[index].object;
+    const reserve = if (index == all.player) world.player.shield_reserves.of(struck) else null;
+    if (reserve) |shifted| if (shifted.* > 0) {
+        shifted.* -= drain;
+        if (shifted.* > 0) return;
+        shifted.* = 0;
+    };
+    if (object.shields.get(struck) < 0) return armorDamage(world, index, struck, value, attacker, .collision);
+    if (flare == .before) shield.flare(world, index, contact);
+    damage(world, index, struck, value, 1, attacker, .collision);
+    if (flare == .after) shield.flare(world, index, contact);
 }
 
 /// The game's difficulty (`0x00562F14`), which SET GAME DIFFICULTY starts at medium and steps
@@ -323,12 +349,12 @@ pub fn damage(world: gameobj.World, index: u16, struck: Quadrant, value: f32, fa
     if (object.flags.jumping) return;
     if (slot.combat) |combat| if (combat.class == .debris) return;
 
-    const shield = object.shields.at(struck);
-    const through = @max(value - shield.*, 0);
+    const held = object.shields.at(struck);
+    const through = @max(value - held.*, 0);
     const scaled = byDifficulty(world, index, kind, value);
     if (counted(kind)) object.recent_damage += scaled;
-    if (shield.* >= 0 and object.invulnerable != ._unknown_4) shield.* -= scaled;
-    if (shield.* < 0) armorDamage(world, index, struck, through * factor, attacker, kind);
+    if (held.* >= 0 and object.invulnerable != ._unknown_4) held.* -= scaled;
+    if (held.* < 0) armorDamage(world, index, struck, through * factor, attacker, kind);
     object.last_attacker = attacker;
 }
 
@@ -471,13 +497,17 @@ fn parts(world: gameobj.World, first: u16, second: u16, pass: u8) bool {
 /// How many times a pair is tested against a hull before the sweep gives up on it.
 const hull_passes = 9;
 
-/// `0x00465380`, as far as the shove goes: the nearest face of the hull to the ship's sphere. The
+/// `collision_test_hull` (`0x00465380`): the nearest face of the hull to the ship's sphere. The
 /// ship is shoved at its own centre and the hull at the face, so the hull turns about the hit and
-/// the ship does not.
+/// the ship does not. The ship takes the damage on the quadrant it was struck in
+/// (`knockDamage`); its shield reserve is drawn by twice that, as the game halves the damage only
+/// once it has drawn the reserve.
 ///
-/// Not ported: the damage the hit does, and what it destroys
-/// ([#42](https://github.com/vdmkenny/openreliant/issues/42)). The game also tests the player's
-/// ship against each part's trigger polygons first, which one shipped model carries.
+/// Not ported: what the hit destroys ([#42](https://github.com/vdmkenny/openreliant/issues/42)), the
+/// damage the hull's own part takes ([#40](https://github.com/vdmkenny/openreliant/issues/40)), and a
+/// force field the ship hits flaring ([#179](https://github.com/vdmkenny/openreliant/issues/179)).
+/// The game also tests the player's ship against each part's trigger polygons first, which one
+/// shipped model carries.
 fn hullHit(world: gameobj.World, ship: u16, hull: u16, pass: u8) bool {
     const all = world.objects;
     const model = if (all.slots[hull].model) |*live| live else return false;
@@ -498,12 +528,10 @@ fn hullHit(world: gameobj.World, ship: u16, hull: u16, pass: u8) bool {
     const lever = math.transformTransposed(object.root.orientation, contact - gameobj.vector(object.root.position));
     const impulse = shoveAt(world, ship, hull, -normal, .{ @splat(0), lever }, pass) orelse return true;
 
-    // The ship takes the damage on the quadrant it was struck in. What the hull's own part takes
-    // waits on the components (#40).
     const hit = &all.slots[ship].object;
     const value = math.length(impulse) * damage_share / hit.mass;
     const struck = quadrant(hit, math.transformTransposed(hit.root.orientation, contact - gameobj.vector(hit.root.position)));
-    damage(world, ship, struck, value, 1, hull, .collision);
+    knockDamage(world, ship, struck, value, value * 2, hull, contact, .after);
     return true;
 }
 
@@ -669,6 +697,41 @@ test damage {
     object.flags.jumping = true;
     damage(world, index, .fore, 100, 1, 1, .collision);
     try std.testing.expectEqual(left, object.armor.fore);
+}
+
+test knockDamage {
+    const gpa = std.testing.allocator;
+    var built: shield.testing.Built = try .init(gpa);
+    defer built.deinit(gpa);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(gpa);
+    defer mission.deinit();
+    var world = mission.world();
+    world.shields = &built.shields;
+    const player = try testing.ship(&mission, @splat(0), 100);
+    const other = try testing.ship(&mission, .{ 0, 0, 1000 }, 100);
+    const object = &mission.slot(player).object;
+    const bubble = mission.slot(player).shield.?;
+    object.shields = .all(50);
+    object.armor = .all(50);
+    mission.player.shield_reserves = .{ .fore = 20, .aft = 0 };
+
+    // The fore reserve takes the knock while it holds, and nothing else happens.
+    knockDamage(world, player, .fore, 10, 10, other, .{ 0, 0, 100 }, .after);
+    try std.testing.expectEqual(10, mission.player.shield_reserves.fore);
+    try std.testing.expectEqual(50, object.shields.fore);
+    try std.testing.expectEqual(null, bubble.struck);
+    // Once it runs out, the shield takes the whole knock, halved at medium, and flares.
+    knockDamage(world, player, .fore, 30, 30, other, .{ 0, 0, 100 }, .after);
+    try std.testing.expectEqual(0, mission.player.shield_reserves.fore);
+    try std.testing.expectEqual(35, object.shields.fore);
+    try std.testing.expectEqual(mission.clock.frame_start, bubble.struck);
+    // With the shield down the armour takes it, twice halved, and nothing flares.
+    bubble.struck = null;
+    object.shields.aft = -1;
+    knockDamage(world, player, .aft, 40, 40, other, .{ 0, 0, -100 }, .after);
+    try std.testing.expectEqual(40, object.armor.aft);
+    try std.testing.expectEqual(null, bubble.struck);
 }
 
 test armorDamage {

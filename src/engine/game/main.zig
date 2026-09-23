@@ -27,6 +27,7 @@ const gameobj = @import("gameobj.zig");
 const guns = @import("guns.zig");
 const explode = @import("explode.zig");
 const particles = @import("particles.zig");
+const shield = @import("shield.zig");
 const shockwave = @import("shockwave.zig");
 const sparks = @import("sparks.zig");
 const hog_snd = @import("hog_snd.zig");
@@ -194,6 +195,10 @@ pub const Frame = struct {
     ahead: f32 = 0,
     explosions: ?*explode.Explosions = null,
     shockwaves: ?*shockwave.Shockwaves = null,
+    /// The shields' bubbles, which go into the world's layer after the objects.
+    shields: ?*shield.Shields = null,
+    /// Whether the game is paused, which holds the bubbles' colours still.
+    paused: bool = false,
 };
 
 /// `mission_frame` (`0x004924B0`), as far as the objects go: every object's orders, which fly the
@@ -242,6 +247,13 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     var attachments = frame.attachments;
     attachments.scale = context.projection.scale[0];
     try drawObjects(gpa, scene, frame.objects, attachments);
+    if (frame.shields) |bubbles| try bubbles.draw(gpa, scene, frame.objects, .{
+        .camera = attachments.camera,
+        .inside = camera.inCockpit(frame.view, frame.cockpit_mode),
+        .frame_start = attachments.frame_start,
+        .paused = frame.paused,
+        .random = attachments.random,
+    });
     try guns.drawBullets(gpa, scene, &frame.objects.bullets, context.hardware);
     if (frame.sparks) |thrown| try thrown.draw(gpa, scene, frame.ahead);
     if (frame.particles) |pool| try pool.draw(gpa, scene, frame.ahead);
@@ -554,8 +566,8 @@ pub fn armorWarning(hearing: hog_snd.Hearing, object: *const gameobj.GameObject,
     const frame_start = hearing.clock.frame_start;
     if (frame_start - sound.armor_warned_at <= 500) return;
     const half = @as(f32, @floatFromInt(combat.armor_class * 6 - 1)) * 0.5;
-    for (object.shields.values(), object.armor.values()) |shield, armor| {
-        if (shield > 0 or armor >= half) continue;
+    for (object.shields.values(), object.armor.values()) |held, armor| {
+        if (held > 0 or armor >= half) continue;
         if (sound.betty) |bank| _ = sound.play(bank, 1, 127, 1, 64, 0);
         sound.armor_warned_at = frame_start;
         return;

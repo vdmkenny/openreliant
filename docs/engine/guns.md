@@ -110,7 +110,9 @@ segment first crosses the sphere of its radius:
 - A ship with its spectral shields on takes nothing at all. The gun type they are tuned to is
   handed to the check and ignored, so every shot is turned.
 
-Either way the shot is spent and the frame that follows lets it go.
+Either way the shot is spent and the frame that follows lets it go. A shot spent on a shield,
+whatever became of it, makes the shield [flare](effects.md#shields) where it struck, unless the
+ship is cloaked.
 
 ### How a shot is drawn
 

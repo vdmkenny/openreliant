@@ -31,6 +31,7 @@ const main = @import("main.zig");
 const motion = @import("motion.zig");
 const objects = @import("objects.zig");
 const pilots = @import("pilots.zig");
+const shield_fx = @import("shield.zig");
 const srofiles = @import("srofiles.zig");
 const xtrabits = @import("xtrabits.zig");
 
@@ -319,12 +320,18 @@ pub const Slot = struct {
     /// The parts of its model that count as components, `GameObject.component_count` of them, the
     /// models mounted on it among them (`GameObject.components`, which holds their nodes).
     components: [gameobj.max_components]?*objects.Model.Part = @splat(null),
+    /// Its shields' bubble (`GameObject.render`), which a ship that lists no components and is not
+    /// debris has.
+    shield: ?*shield_fx.Bubble = null,
 
-    /// Lets go of what the slot holds for its object: its model and its guns.
+    /// Lets go of what the slot holds for its object: its model, its guns and its shield bubble
+    /// (`object_free`).
     pub fn release(slot: *Slot, gpa: Allocator) void {
         if (slot.model) |model| model.deinit(gpa);
         gpa.free(slot.guns);
         slot.guns = &.{};
+        if (slot.shield) |bubble| bubble.destroy(gpa);
+        slot.shield = null;
     }
 
     /// Its guns and their groups, for firing them from `frame_start` (`guns.fire`).
@@ -598,6 +605,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.shields = .all(@as(f32, @floatFromInt(combat.shield_power * 6)) - 1);
     object.armor = .all(@as(f32, @floatFromInt(combat.armor_class * 6)) - 1);
     main.armorConditions(object, combat);
+    if (!object.flags.components and combat.class != .debris) slot.shield = try shield_fx.Bubble.create(all.gpa, object.radius, combat.side);
 
     object.engines_intact = 1;
     object.passes_through = @splat(.none);

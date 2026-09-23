@@ -558,8 +558,10 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     defer shockwaves.deinit(gpa);
     var sparks: game.sparks.Sparks = try .create(gpa, &textures);
     defer sparks.deinit();
+    var shields: game.shield.Shields = try .create(gpa, &textures, explosions.settings.detail, context.hardware);
+    defer shields.deinit(gpa);
     // What the objects run in, the camera's view brought up to date each frame.
-    var world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .difficulty = options.difficulty, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .shockwaves = &shockwaves, .sparks = &sparks };
+    var world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .difficulty = options.difficulty, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .shockwaves = &shockwaves, .sparks = &sparks, .shields = &shields };
     try sandbox.start(.{ .world = world, .clock = &clock, .devices = &devices }, @intCast(options.ship));
     // The music, as a mission's script starts it (`cmd_PlayMusic`): from `music\`, for ever, at 80.
     if (options.music) |name| {
@@ -744,6 +746,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .ahead = game.objects.pastTick(&clock, options.smooth_motion),
             .explosions = &explosions,
             .shockwaves = &shockwaves,
+            .shields = &shields,
+            .paused = app.paused,
             .attachments = .{
                 .camera = view.place.position,
                 .frame_start = clock.frame_start,

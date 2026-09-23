@@ -1,7 +1,8 @@
 # Effects
 
 What the game shows besides its objects and their shots: for now, the particles, fireballs,
-burning bits, break-up and shockwaves of an explosion, and the sparks a hit throws. [Destruction](objects.md#destruction) covers when a ship blows up.
+burning bits, break-up and shockwaves of an explosion, a ship's shields flaring as they are struck,
+and the sparks a hit throws. [Destruction](objects.md#destruction) covers when a ship blows up.
 
 ## Drawn between the ticks
 
@@ -237,7 +238,7 @@ far it has now, it acts on by its kind:
 | 3 | `rng_01` | `0x00472AB0`, a pair | Nothing |
 | 4 | `rng_06` | Nothing | Nothing |
 | 5 | `rng_06` | A missile's end (`0x00495870`), for missile type 2: 50000 across over 500 ticks | Ships of other sides are pushed away (order `0x72`) |
-| 6 | `rng_01` | A missile's end, for missile type 7, likewise | Each quadrant of ships of other sides takes 50 more than its shield holds |
+| 6 | `rng_01` | A missile's end, for missile type 7, likewise | Each quadrant of ships of other sides takes 50 more than its shield holds, and their [shield bubbles](#shields) flicker for 100 ticks |
 | 7 | none, unseen | Nothing | The player takes damage by the owner's type |
 | 8 | `rng_01` | A halting torpedo, 6000 across over 100 ticks | The view shakes as for kind 0, and the player takes damage |
 
@@ -257,6 +258,67 @@ a register.
 [`aiexplode.zig`](../../src/engine/game/aiexplode.zig) the blast's and the torpedo's. Not ported:
 kind 3's caller ([#41](https://github.com/vdmkenny/openreliant/issues/41)), and a missile's end,
 with what kinds 5 and 6 do ([#39](https://github.com/vdmkenny/openreliant/issues/39)).
+
+## Shields
+
+`shield.cpp` shows a ship's shields as they are struck: a bubble round the ship that ripples out
+from the point struck. `create_object` gives one (`shield_bubble_create`, `0x0049EF90`, 0x48 bytes)
+to every ship that lists no components and is not debris. It is a sphere 1.1 times the ship's
+radius, hanging from the ship's frame, over `shield128`, coloured by its vertices and added to what
+is behind it, and never culled. Its tint is the ship type's side: friendly, or any other.
+
+`shields_init` (`0x0049EF10`) builds six levels of the sphere (`sphere_mesh_create`,
+`0x0049E3D0`), finest first: 16 slices round by 14 bands down, then 12 by 10, 10 by 8, 8 by 6, 6 by
+4 and 4 by 4, each a fan round each pole and two triangles to a slice between. Each level is drawn
+out to a distance from the camera the options' detail gives:
+
+| Detail | Reaches |
+|---|---|
+| Low | 1250, 2500, 5000, 10000, 20000, 40000 |
+| Medium | 2500, 5000, 10000, 20000, 40000, 80000 |
+| High | 10000, 20000, 40000, 80000, 160000, 320000 |
+
+It also fills two ramps of 1024 colours, one a tint, by a strength from nothing up to one: a
+friendly ship's runs from dark at 1 up to a cyan of 0.7 green and full blue at 0.6, down through a
+dim blue of 0.3 at 0.4 to dark below 0.35, each stretch eased by a cosine (`cosine_ease`,
+`0x004268C0`), and is grey without a hardware renderer. The other sides' swaps the green and the
+blue, at 0.8. Both are 0.07 as bright.
+
+A shot spent on a shield, whatever becomes of it, and a knock that reaches a shield flare it
+(`shield_flare`, `0x0049F1E0`), while any of the ship's shields holds anything and the ship is not
+cloaked. Ten sparks of kind 3 fly off the point struck, unless the camera is in the ship's cockpit.
+The bubble keeps its last eight hits, a strength for each vertex: the next hit gives each vertex
+within 1.4 radians of the point struck, seen from the ship's centre, half a strength and one more
+for each 1.2 radians off it, up to 2. A vertex shows only while its strength is between nothing and
+one, and each fades by 0.025 a tick, so the colour ripples out from the point struck over about
+two thirds of a second.
+
+Once a frame, `shield_bubbles_draw` (`0x0049F0A0`) draws each bubble struck in the last 100 ticks at
+the level its ship's distance from the camera gives, save the player's while the camera is in its
+cockpit. As it is drawn (`shield_bubble_drawn`, `0x0049F450`), unless the game is paused, the bubble
+moves on by the ticks since it last did (`shield_bubble_update`, `0x0049E7D0`): each vertex's colour
+is the sum of its hits' faded strengths through its ramp, and its texture swirls, each vertex's
+coordinates turning about a centre that starts at (0.3, 0.3), by 0.00001 a tick over the square of
+how far they are from it, while the centre turns about the texture's corner by 0.0001 a tick. The
+game leaves the centre off the coordinates it turns, so the texture wanders.
+
+A shockwave of kind 6 makes a bubble flicker as a force field for 100 ticks: drawn over `ffield`,
+set on the level's mesh that every bubble at that level shares, it is lit a random grey one frame
+in four and dark on the rest, and its hits wait.
+
+**Improvements:** the sparks fly out from the ship's centre through the point struck, where the
+game takes the point itself as their direction, so they fly toward the world's origin; and a
+bubble past the last level's reach is left out, where the game stops the pass there, leaving out
+the bubbles in the slots after it. The port moves a bubble's colours on as it goes into the scene
+rather than as the renderer draws it, so one out of view still fades.
+
+[`shield.zig`](../../src/engine/game/shield.zig) ports the bubbles, and
+[`guns.zig`](../../src/engine/game/guns.zig) and
+[`collision.zig`](../../src/engine/game/collision.zig) the shots and knocks that flare them. Not
+ported: kind 6's shockwave ([#39](https://github.com/vdmkenny/openreliant/issues/39)); a cloaked
+ship's shimmer where it is struck ([#89](https://github.com/vdmkenny/openreliant/issues/89)); and
+the shields of ships that list components, which flare on the part struck, with their force
+fields ([#179](https://github.com/vdmkenny/openreliant/issues/179)).
 
 ## Sparks
 
@@ -297,8 +359,8 @@ for one in the world, so the sparks fly from near the world's origin.
 
 **Improvement:** the port throws them from where the shot struck.
 
-[`sparks.zig`](../../src/engine/game/sparks.zig) ports the sparks, and
-[`guns.zig`](../../src/engine/game/guns.zig) the hull's. Not ported: the other callers, a shot
-striking a component ([#40](https://github.com/vdmkenny/openreliant/issues/40)), a shield
-([#133](https://github.com/vdmkenny/openreliant/issues/133)), and `0x004B02A0`
+[`sparks.zig`](../../src/engine/game/sparks.zig) ports the sparks,
+[`guns.zig`](../../src/engine/game/guns.zig) the hull's, and [`shield.zig`](../../src/engine/game/shield.zig)
+a shield's ([Shields](#shields)). Not ported: the other callers, a shot striking a component
+([#40](https://github.com/vdmkenny/openreliant/issues/40)), and `0x004B02A0`
 ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
