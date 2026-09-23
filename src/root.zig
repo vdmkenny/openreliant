@@ -19,6 +19,7 @@ pub const spr = @import("formats/spr.zig");
 pub const stats = @import("formats/stats.zig");
 pub const tcache = @import("formats/tcache.zig");
 pub const tga = @import("formats/tga.zig");
+pub const wave = @import("formats/wave.zig");
 
 /// Windows executables: the game binary and its libraries.
 pub const pe = @import("formats/pe.zig");
