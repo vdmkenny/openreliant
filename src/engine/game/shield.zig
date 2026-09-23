@@ -212,6 +212,25 @@ const hit_reach: f32 = 1.4;
 const max_strength: f32 = 2;
 const fade_per_tick: f32 = 0.025;
 
+/// What a hit leaves at a vertex `angle` radians round from the point struck, or null past
+/// `hit_reach`.
+fn strengthAt(angle: f32) ?f32 {
+    if (!(angle <= hit_reach)) return null;
+    return @min(struck_strength + angle / strength_spread, max_strength);
+}
+
+/// The angle between two directions. The game's is not a number where rounding puts the cosine
+/// past one; the port holds it to one.
+fn angleBetween(a: Vector, b: Vector) f32 {
+    return std.math.acos(std.math.clamp(math.dot(a, b) / (math.length(a) * math.length(b)), -1, 1));
+}
+
+/// A vertex's colour from the sum of what its hits show, each channel held to one.
+fn vertexColour(sum: Colour) [4]f32 {
+    const held = @min(sum, @as(Colour, @splat(1)));
+    return .{ held[0], held[1], held[2], 0 };
+}
+
 /// How long after its last hit a bubble is drawn (`0x004DC440`).
 const shown_for = 100;
 
@@ -429,12 +448,7 @@ pub const Bubble = struct {
         const strengths = bubble.hits[bubble.next][0..mesh.positions.len];
         for (mesh.positions, strengths) |position, *strength| {
             const out = math.transform(place.orientation, position * @as(Vector, @splat(bubble.object.scale))) + place.position - centre;
-            // The game's angle is not a number where rounding puts the cosine past one; the
-            // port holds it to one.
-            const cosine = std.math.clamp(math.dot(toward, out) / (math.length(toward) * math.length(out)), -1, 1);
-            const angle = @abs(std.math.acos(cosine));
-            if (!(angle <= hit_reach)) continue;
-            strength.* = @min(struck_strength + angle / strength_spread, max_strength);
+            strength.* = strengthAt(angleBetween(toward, out)) orelse continue;
         }
         bubble.next +%= 1;
     }
@@ -465,12 +479,10 @@ pub const Bubble = struct {
             var sum: Colour = @splat(0);
             for (bubble.recent) |maybe| {
                 const hit = maybe orelse continue;
-                const angle = std.math.acos(std.math.clamp(math.dot(position, hit.direction), -1, 1));
-                if (!(angle <= hit_reach)) continue;
-                const strength = @min(struck_strength + angle / strength_spread, max_strength) - (now - hit.at) * fade_per_tick;
-                sum += rampAt(ramp, strength);
+                const strength = strengthAt(angleBetween(position, hit.direction)) orelse continue;
+                sum += rampAt(ramp, strength - (now - hit.at) * fade_per_tick);
             }
-            colour.* = .{ @min(sum[0], 1), @min(sum[1], 1), @min(sum[2], 1), 0 };
+            colour.* = vertexColour(sum);
             const off = [2]f32{ position[0] - centre[0], position[1] - centre[1] };
             const reach = off[0] * off[0] + off[1] * off[1];
             const swirled = turned(off, if (reach > 0) age * swirl_per_tick / reach else 0);
@@ -522,7 +534,7 @@ pub const Bubble = struct {
                     hits[vertex] = @max(hits[vertex] - elapsed * fade_per_tick, 0);
                     sum += rampAt(ramp, hits[vertex]);
                 }
-                colour.* = .{ @min(sum[0], 1), @min(sum[1], 1), @min(sum[2], 1), colour[3] };
+                colour.* = vertexColour(sum);
             }
         }
         const swirl = elapsed * swirl_per_tick;
