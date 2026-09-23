@@ -176,11 +176,27 @@ pub const Pool = struct {
     sprites: []srapiext.Sprite,
     /// Drawn with as many of `sprites` as `used`.
     set: srapiext.SpriteSet,
+    /// Whether what goes out far from the camera is thinned.
+    distant: Distant = .whole,
     /// One past the last particle alive at the last frame (`+0x0C`), up to which the frame looks.
     used: u32 = 0,
 
-    /// The size of the game's pool.
-    pub const size = 1000;
+    /// How a burst or a stream far from the camera is sent, and the room the pool has for it.
+    ///
+    /// **Improvement:** `whole` sends all of it, into a pool of 4000, where the game thins bursts
+    /// and streams by their distance to spare the fill rate of its day, over a pool of 1000; the
+    /// half behind the camera is left out either way. `--original` restores the game's.
+    pub const Distant = enum {
+        thinned,
+        whole,
+
+        pub fn size(distant: Distant) usize {
+            return switch (distant) {
+                .thinned => 1000,
+                .whole => 4000,
+            };
+        }
+    };
     pub const image_name = "gunflare\\partic4";
 
     /// `particles_init` (`0x0049BF60`) and `particle_pool_create` (`0x0049C050`): the pool of
@@ -198,9 +214,11 @@ pub const Pool = struct {
         return .{ .gpa = gpa, .particles = particles, .sprites = sprites, .set = set };
     }
 
-    /// The game's pool, over the texture it requires.
-    pub fn load(gpa: Allocator, textures: *srtexture.Table) (Allocator.Error || matmanager.Error)!Pool {
-        return .init(gpa, size, try matmanager.textureRequire(textures, image_name));
+    /// The game's pool, over the texture it requires, sized for how it sends what is far off.
+    pub fn load(gpa: Allocator, textures: *srtexture.Table, distant: Distant) (Allocator.Error || matmanager.Error)!Pool {
+        var pool: Pool = try .init(gpa, distant.size(), try matmanager.textureRequire(textures, image_name));
+        pool.distant = distant;
+        return pool;
     }
 
     /// `particles_shutdown` (`0x0049C010`) and `particle_pool_free` (`0x0049C140`).
@@ -243,7 +261,8 @@ pub const Pool = struct {
         emitter.stand(parent);
         const template = emitter.template;
         const offset = emitter.world.position - view.position;
-        var left = template.thinned(count, offset, view, if (template.distance > 0) math.length(offset) * template.distance else null);
+        const thinned = pool.distant == .thinned and template.distance > 0;
+        var left = template.thinned(count, offset, view, if (thinned) math.length(offset) * template.distance else null);
         for (pool.particles, 0..) |particle, index| {
             if (left < 1) return;
             if (particle.end() < clock.frame_start) {
@@ -269,7 +288,7 @@ pub const Pool = struct {
         }
         if (rolled == 0) return true;
         const offset = emitter.world.position - view.position;
-        var left = template.thinned(rolled, offset, view, math.length(offset));
+        var left = template.thinned(rolled, offset, view, if (pool.distant == .thinned) math.length(offset) else null);
         emitter.stand(parent);
         const ticks: Vector = @splat(@floatFromInt(clock.frame_duration));
         for (pool.particles, 0..) |particle, index| {

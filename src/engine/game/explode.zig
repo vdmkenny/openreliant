@@ -45,14 +45,13 @@ pub const Explosions = struct {
     moved_at: i32 = 0,
     /// The pieces the ships' break-ups send flying (`0x0055AE88`).
     pieces: breakup.Pieces,
-    /// The fireballs going off (`explosion_fireballs`, `0x00553398`).
-    fireballs: [max_fireballs]?Fireball = @splat(null),
+    /// The fireballs going off (`explosion_fireballs`, `0x00553398`), in as many slots as the
+    /// settings give them.
+    fireballs: [Fireballs.fuller.slots()]?Fireball = @splat(null),
     /// The point view `0x1B` watches (`0x0055AD0C`), which the player's ship's break-up leaves where
     /// the ship blew up; null until it has.
     marker: ?Marker = null,
 
-    /// The fireballs the game keeps room for; one more is not set off.
-    pub const max_fireballs = 30;
     pub const max_bits = Detail.high.bits();
 
     pub const Marker = struct {
@@ -170,11 +169,12 @@ pub const Explosions = struct {
         };
     }
 
-    /// `explosion_fireball` (`0x0046BD00`): sets a fireball off at `at`, into the first free slot,
-    /// and not at all where there is none.
+    /// `explosion_fireball` (`0x0046BD00`): sets a fireball off at `at`, into the first free of
+    /// the slots the settings give, and not at all where there is none.
     pub fn setOff(explosions: *Explosions, at: Vector, spec: Fireball.Spec, clock: *const Clock, random: *libcmt.Rand) void {
-        const slot = table.firstFree(Fireball, &explosions.fireballs) orelse return;
-        slot.* = .init(explosions.images, at, spec, clock, random);
+        const style = explosions.settings.fireballs;
+        const slot = table.firstFree(Fireball, explosions.fireballs[0..style.slots()]) orelse return;
+        slot.* = .init(explosions.images, at, spec, style, clock, random);
     }
 };
 
@@ -183,6 +183,34 @@ pub const Settings = struct {
     /// The options' detail (`0x005D54E0`), which the port starts at high.
     detail: Detail = .high,
     debris_lights: DebrisLights = .like_ships,
+    fireballs: Fireballs = .fuller,
+};
+
+/// How many fireballs go off at once, and how they light what is around them.
+///
+/// **Improvement:** `fuller` gives them room for 128, where the game keeps 30 and a burst takes 18,
+/// so a second burst close after a first loses fireballs. A fireball's light moves with it as it
+/// drifts, where the game leaves the light where the fireball went off, and starts 50% brighter, at
+/// 15 where the game's starts at 10, so it also reaches 50% farther. `--original` restores the
+/// game's.
+pub const Fireballs = enum {
+    original,
+    fuller,
+
+    pub fn slots(style: Fireballs) usize {
+        return switch (style) {
+            .original => 30,
+            .fuller => 128,
+        };
+    }
+
+    /// A fireball's light as it goes off (the game's is `0x004DC520`).
+    fn peak(style: Fireballs) f32 {
+        return switch (style) {
+            .original => 10,
+            .fuller => 15,
+        };
+    }
 };
 
 /// Which of the backdrop's lights reach an explosion's debris: its bits and a ship's pieces.
@@ -326,6 +354,8 @@ pub const Fireball = struct {
     lit: bool,
     /// Whether it showed at the last frame: past its wait, and not yet done.
     showing: bool = false,
+    /// How its light burns and moves.
+    style: Fireballs,
 
     /// How it plays, and whether it is mirrored (`+0x1C`): a word the game builds from its kind
     /// and two random bits.
@@ -353,9 +383,9 @@ pub const Fireball = struct {
 
     pub const Kind = enum { bang, sheet };
 
-    /// The light's intensity as it goes off, fading to nothing as it plays, and its colour; it
-    /// reaches out by the square root of its size times `light_reach` (`0x004DC48C`).
-    const light_intensity: f32 = 10;
+    /// The light's colour, and how far it reaches: its intensity times the square root of its size
+    /// times `light_reach` (`0x004DC48C`). Its intensity fades from the style's peak to nothing as
+    /// it plays.
     const light_colour = [3]f32{ 1, 0.5, 0.1 };
     const light_reach: f32 = 50;
 
@@ -364,7 +394,7 @@ pub const Fireball = struct {
     const sheet_step: f32 = 82.0 / 256.0;
     const sheet_cell: f32 = 81.0 / 256.0;
 
-    fn init(images: Explosions.Images, at: Vector, spec: Spec, clock: *const Clock, random: *libcmt.Rand) Fireball {
+    fn init(images: Explosions.Images, at: Vector, spec: Spec, style: Fireballs, clock: *const Clock, random: *libcmt.Rand) Fireball {
         var set: srapiext.SpriteSet = .{ .sprites = &.{} };
         set.surface.material.lit[0] = spec.lit;
         set.surface.material.blend[0] = .premultiplied;
@@ -379,7 +409,7 @@ pub const Fireball = struct {
             .set = set,
             .light = if (spec.light) .{
                 .mask = 0,
-                .intensity = light_intensity,
+                .intensity = style.peak(),
                 .colour = light_colour,
                 .kind = .{ .point = .{ .position = at, .range = @sqrt(spec.size) * light_reach } },
             } else null,
@@ -389,6 +419,7 @@ pub const Fireball = struct {
             .delay = spec.delay,
             .look = .{ .mirror_u = mirrors & 1 != 0, .mirror_v = mirrors & 2 != 0, .bang = spec.kind == .bang },
             .lit = spec.lit,
+            .style = style,
         };
     }
 
@@ -414,7 +445,11 @@ pub const Fireball = struct {
         sprite.offset += fireball.velocity * @as(Vector, @splat(@floatFromInt(clock.frame_duration)));
         const played = @as(f32, @floatFromInt(age)) / @as(f32, @floatFromInt(fireball.life));
         if (fireball.lit) sprite.colour = @splat(played);
-        if (fireball.light) |*light| light.intensity = light_intensity - @as(f32, @floatFromInt(age)) * light_intensity / @as(f32, @floatFromInt(fireball.life));
+        if (fireball.light) |*light| {
+            const peak = fireball.style.peak();
+            light.intensity = peak - @as(f32, @floatFromInt(age)) * peak / @as(f32, @floatFromInt(fireball.life));
+            if (fireball.style == .fuller) light.kind.point.position = sprite.offset;
+        }
         fireball.showing = true;
         return true;
     }
@@ -654,6 +689,13 @@ pub const testing = struct {
         return .{ .pieces = @splat(.of(&levels, Debris.stretch)) };
     }
 
+    /// How many of the pool's particles are in use.
+    fn sent(pool: *const particles.Pool) usize {
+        var count: usize = 0;
+        for (pool.particles) |particle| count += @intFromBool(particle.template != null);
+        return count;
+    }
+
     fn flying(explosions: *const Explosions) usize {
         var count: usize = 0;
         for (explosions.bits.slots) |slot| count += @intFromBool(slot != null);
@@ -713,14 +755,24 @@ test Fireball {
     explosions.frame(stage.world());
     try std.testing.expect(!bang.showing);
 
-    // Halfway through its life, the bang's middle frame, drifted on, its light half faded.
+    // Halfway through its life, the bang's middle frame, drifted on, its light half faded and
+    // drifting with it.
     clock.frame_start = 10 + 75;
     clock.frame_duration = 20;
     explosions.frame(stage.world());
     try std.testing.expect(bang.showing);
     try std.testing.expectEqual(&testing.bang[8], bang.set.surface.textures[0].image);
     try std.testing.expectEqual(Vector{ 20, 0, 100 }, bang.sprite[0].offset);
-    try std.testing.expectApproxEqAbs(5, bang.light.?.intensity, 1e-6);
+    try std.testing.expectApproxEqAbs(Fireballs.fuller.peak() / 2, bang.light.?.intensity, 1e-6);
+    try std.testing.expectEqual([3]f32{ 20, 0, 100 }, bang.light.?.kind.point.position);
+
+    // The original's is dimmer, and stays where it went off.
+    bang.style = .original;
+    explosions.frame(stage.world());
+    try std.testing.expectApproxEqAbs(Fireballs.original.peak() / 2, bang.light.?.intensity, 1e-6);
+    bang.light.?.kind.point.position = .{ 0, 0, 100 };
+    explosions.frame(stage.world());
+    try std.testing.expectEqual([3]f32{ 0, 0, 100 }, bang.light.?.kind.point.position);
 
     // The sheet steps through its cells, mirrored as its look says.
     explosions.setOff(@splat(0), .{ .kind = .sheet, .size = 10, .life = 90 }, clock, &random);
@@ -763,6 +815,15 @@ test burst {
     try std.testing.expectEqual(null, explosions.fireballs[burst_fireballs]);
     burst(world, player);
     try std.testing.expectEqual(Vector{ 0, 0, 10 }, explosions.marker.?.drift);
+
+    // Both bursts' fireballs have room; the original's 30 leave part of the second's out.
+    for (explosions.fireballs[0 .. 2 * burst_fireballs]) |slot| try std.testing.expect(slot != null);
+    explosions.fireballs = @splat(null);
+    explosions.settings.fireballs = .original;
+    burst(world, other);
+    burst(world, player);
+    for (explosions.fireballs[0..Fireballs.original.slots()]) |slot| try std.testing.expect(slot != null);
+    try std.testing.expectEqual(null, explosions.fireballs[Fireballs.original.slots()]);
 }
 
 test blast {
@@ -784,17 +845,19 @@ test blast {
     const ship = try mission.add(.sabre, @splat(0));
     mission.objects.slots[ship].drawn.position = .{ 0, 0, 5000 };
 
-    // In view 5000 off, all 400 of the flame, which thins slowly, and three quarters of the 150
-    // of the sparkle: its half-size of 25 times 150, over the distance. The rounding is even.
+    // In view 5000 off, all 400 of the flame and all 150 of the sparkle.
     blast(world, ship);
-    var sent: usize = 0;
-    for (pool.particles) |particle| {
-        if (particle.template != null) sent += 1;
-    }
-    try std.testing.expectEqual(400 + 112, sent);
+    try std.testing.expectEqual(400 + 150, testing.sent(&pool));
     // And one lit fireball of the ship's size.
     try std.testing.expect(explosions.fireballs[0].?.light != null);
     try std.testing.expectEqual(null, explosions.fireballs[1]);
+
+    // The original thins them: all 400 of the flame, which thins slowly, and three quarters of the
+    // sparkle, its half-size of 25 times 150 over the distance. The rounding is even.
+    pool.reset();
+    pool.distant = .thinned;
+    blast(world, ship);
+    try std.testing.expectEqual(400 + 112, testing.sent(&pool));
 }
 
 test Bit {
