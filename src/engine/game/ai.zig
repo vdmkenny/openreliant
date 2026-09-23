@@ -147,7 +147,7 @@ const escape_reach: f32 = 20000;
 /// normalized.
 pub fn escapeDirection(slot: *const create.Slot, from: Vector) Vector {
     var away: Vector = @splat(0);
-    const model = &(slot.model orelse return math.normalize(away));
+    const model = if (slot.model) |*model| model else return math.normalize(away);
     const source = (slot.type orelse return math.normalize(away)).model;
     const count = @min(model.parts.len, source.parts.len);
     for (model.parts[0..count], source.parts[0..count]) |part, data| {
@@ -180,12 +180,12 @@ pub fn collisionCourse(world: gameobj.World, index: u16, target: u16, steps: f32
     if (struck.object.flags.components) return false;
     const ship_flight = ship.flight orelse return false;
     const struck_flight = struck.flight orelse return false;
-    var apart = gameobj.vector(ship.object.root.next_position) - gameobj.vector(struck.object.root.next_position);
+    var apart = ship.object.nextPosition() - struck.object.nextPosition();
     const speeds = cruiseSpeed(&struck.object, struck_flight, world.view) + cruiseSpeed(&ship.object, ship_flight, world.view);
     const reach = speeds * steps + struck.object.radius + ship.object.radius + margin;
     if (math.lengthSquared(apart) > reach * reach) return false;
     const closing = gameobj.vector(struck.object.velocity) * @as(Vector, @splat(crash_target_share)) + gameobj.vector(ship.object.velocity);
-    if (math.dot(math.forward(ship.object.root.next_orientation), apart) > 0) return false;
+    if (math.dot(ship.object.nextHeading(), apart) > 0) return false;
     const along = math.dot(apart, closing);
     if (-along < 0) return false;
     const rate = math.dot(closing, closing);
@@ -484,8 +484,8 @@ pub fn rollUpright(object: *GameObject, at: Vector) void {
 /// steering turns by. It rolls only while `at` is within `ahead_cosine` of dead ahead, so a ship
 /// levels off once it is flying at what it steers by rather than while it is still coming round.
 fn rollToward(object: *GameObject, at: Vector, axis: Vector) void {
-    const toward = at - gameobj.vector(object.root.next_position);
-    if (math.dot(toward, math.forward(object.root.next_orientation)) <= math.length(toward) * ahead_cosine) return;
+    const toward = at - object.nextPosition();
+    if (math.dot(toward, object.nextHeading()) <= math.length(toward) * ahead_cosine) return;
     const up = math.transformTransposed(object.root.next_orientation, axis);
     const roll = (-std.math.atan2(up[0], up[1]) - object.roll_rate * rate_damping) * input_per_radian;
     object.roll_input = std.math.clamp(roll, -1, 1);

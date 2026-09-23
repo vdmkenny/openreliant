@@ -130,12 +130,17 @@ pub const Fighter = struct {
 
     /// Where the ship will be at the next step, which the fighting goes by.
     pub fn position(fighter: Fighter) Vector {
-        return gameobj.vector(fighter.ship().root.next_position);
+        return fighter.ship().nextPosition();
     }
 
     /// Where the ship's nose will point at the next step.
     pub fn heading(fighter: Fighter) Vector {
-        return math.forward(fighter.ship().root.next_orientation);
+        return fighter.ship().nextHeading();
+    }
+
+    /// The square of how far `object` will be from the ship at the next step.
+    pub fn apartSquared(fighter: Fighter, object: *const gameobj.GameObject) f32 {
+        return math.lengthSquared(object.nextPosition() - fighter.position());
     }
 
     pub fn entry(fighter: Fighter) *aigeneric.Entry {
@@ -152,7 +157,13 @@ pub const Fighter = struct {
     }
 
     pub fn enemyPosition(fighter: Fighter) Vector {
-        return gameobj.vector(fighter.enemy().object.root.next_position);
+        return fighter.enemy().object.nextPosition();
+    }
+
+    /// Where the object at the action sphere's centre will be.
+    pub fn sphereCentre(fighter: Fighter) Vector {
+        const all = fighter.objects();
+        return all.slots[all.action_sphere.centre].object.nextPosition();
     }
 
     /// The part of the target it aims at (`0x004018F0`).
@@ -190,15 +201,33 @@ pub const Fighter = struct {
         return if (span == 0) least else least + @rem(drawn, span);
     }
 
-    /// Whether a player's ship still in the action (`GameObject.Flags.outOfAction`) is within
-    /// `reach` of the ship.
-    pub fn playerWithin(fighter: Fighter, reach: f32) bool {
+    /// The players' ships still in the action (`GameObject.Flags.outOfAction`).
+    pub fn players(fighter: Fighter) Players {
         const all = fighter.objects();
-        for (all.slots[0..all.players]) |*player| {
-            if (player.object.flags.outOfAction()) continue;
-            if (math.lengthSquared(gameobj.vector(player.object.root.next_position) - fighter.position()) < reach * reach) return true;
+        return .{ .slots = all.slots[0..all.players] };
+    }
+
+    /// Whether a player's ship still in the action is within `reach` of the ship.
+    pub fn playerWithin(fighter: Fighter, reach: f32) bool {
+        var each = fighter.players();
+        while (each.next()) |player| {
+            if (fighter.apartSquared(player) < reach * reach) return true;
         }
         return false;
+    }
+};
+
+/// An iterator over the players' ships still in the action (`Fighter.players`).
+pub const Players = struct {
+    slots: []create.Slot,
+
+    pub fn next(each: *Players) ?*gameobj.GameObject {
+        while (each.slots.len > 0) {
+            const object = &each.slots[0].object;
+            each.slots = each.slots[1..];
+            if (!object.flags.outOfAction()) return object;
+        }
+        return null;
     }
 };
 
@@ -311,9 +340,8 @@ const player_near: f32 = 100000;
 fn outOfSphere(fighter: Fighter) ?Choice {
     const all = fighter.objects();
     if (fighter.target().index < all.players) return null;
-    const sphere = all.action_sphere;
-    const centre = gameobj.vector(all.slots[sphere.centre].object.root.next_position);
-    const reach = sphere.radius * sphere.radius;
+    const centre = fighter.sphereCentre();
+    const reach = all.action_sphere.radius * all.action_sphere.radius;
     if (math.lengthSquared(fighter.position() - centre) < reach) return null;
     const enemy = fighter.enemyPosition();
     if (math.lengthSquared(fighter.position() - enemy) > far_enemy * far_enemy and math.lengthSquared(enemy - centre) < reach) return null;
@@ -363,7 +391,7 @@ fn byPosition(fighter: Fighter) Choice {
     const pace = @max(enemy.object.speed / top, least_pace);
     if (apart > pace * pursuit(fighter.pilot.skill())) return .{ .maneuver = .attack_pursue };
     const where = bearing(math.dot(toward, fighter.heading()) / apart, behind_cosine);
-    const seen = bearing(-math.dot(toward, math.forward(enemy.object.root.next_orientation)) / apart, seen_behind_cosine);
+    const seen = bearing(-math.dot(toward, enemy.object.nextHeading()) / apart, seen_behind_cosine);
     if (where == .behind and fighter.random15() % run_odds == 0) {
         if (shipToRunTo(fighter)) |friend| return .{ .maneuver = .run_to_ship, .ship = friend };
     }
@@ -382,8 +410,25 @@ fn bearing(cosine: f32, behind: f32) Bearing {
     return if (cosine <= behind) .behind else .abeam;
 }
 
-/// Further than anything is from anything, as the searches start (`9e10`, a square).
-const far_away: f32 = 9e10;
+/// The nearest of the ships a search is offered, as the game's searches keep it: from further than
+/// anything is from anything (`9e10`, a square), each nearer one in turn.
+const Nearest = struct {
+    index: ?u16 = null,
+    apart: f32 = 9e10,
+
+    fn offer(nearest: *Nearest, index: usize, apart: f32) void {
+        if (apart < nearest.apart) nearest.take(index, apart);
+    }
+
+    fn take(nearest: *Nearest, index: usize, apart: f32) void {
+        nearest.* = .{ .index = @intCast(index), .apart = apart };
+    }
+};
+
+/// Whether an object is somewhere a search looks: not a stand-in, exploding or disabled.
+fn searchable(flags: gameobj.GameObject.Flags) bool {
+    return !(flags.stand_in or flags.exploding or flags.disabled);
+}
 
 /// How near the edge of a friendly capital ship counts as having run to it already
 /// (`0x004DC494`).
@@ -393,23 +438,18 @@ const run_to_berth: f32 = 50000;
 /// components on the ship's side, to run to. None where the ship is already near one.
 fn shipToRunTo(fighter: Fighter) ?u16 {
     const all = fighter.objects();
-    var nearest: ?u16 = null;
-    var best = far_away;
+    var nearest: Nearest = .{};
     for (all.slots[0..all.count], 0..) |*slot, index| {
-        const flags = slot.object.flags;
-        if (flags.stand_in or flags.exploding or flags.disabled or !flags.components) continue;
+        if (!searchable(slot.object.flags) or !slot.object.flags.components) continue;
         if (slot.object.side != fighter.ship().side) continue;
         const combat = slot.combat orelse continue;
         if (combat.class != .capital and combat.class != .support) continue;
-        const apart = math.lengthSquared(gameobj.vector(slot.object.root.next_position) - fighter.position());
+        const apart = fighter.apartSquared(&slot.object);
         const berth = slot.object.radius + run_to_berth;
         if (apart < berth * berth) return null;
-        if (apart < best) {
-            best = apart;
-            nearest = @intCast(index);
-        }
+        nearest.offer(index, apart);
     }
-    return nearest;
+    return nearest.index;
 }
 
 /// The share of the target's velocity the aim drifts by (`fight_aim`).
@@ -477,7 +517,7 @@ fn fire(fighter: Fighter) void {
             math.distance(fighter.position(), aimed.position) < range and
             !(ship.side == .friendly and playerInLine(fighter)))
         {
-            guns.fire(ship, .{ .fitted = fighter.slot.guns, .groups = fighter.slot.gun_groups, .frame_start = fighter.now() }, timings.burst);
+            guns.fire(ship, fighter.slot.trigger(fighter.now()), timings.burst);
         }
         ship.fire_at = @as(i32, timings.pause) + fighter.now();
     }
@@ -488,15 +528,14 @@ fn fire(fighter: Fighter) void {
 
 /// Whether a player's ship still in the action is in the way of the ship's guns.
 fn playerInLine(fighter: Fighter) bool {
-    const all = fighter.objects();
     const nose = fighter.heading();
-    for (all.slots[0..all.players]) |*player| {
-        if (player.object.flags.outOfAction()) continue;
-        const toward = gameobj.vector(player.object.root.next_position) - fighter.position();
+    var each = fighter.players();
+    while (each.next()) |player| {
+        const toward = player.nextPosition() - fighter.position();
         const along = math.dot(nose, toward);
         if (!(along >= 0 and along <= in_line_reach)) continue;
         const off = math.distance(toward, nose * @as(Vector, @splat(along)));
-        if (off < along * in_line_spread + player.object.radius + in_line_margin) return true;
+        if (off < along * in_line_spread + player.radius + in_line_margin) return true;
     }
     return false;
 }
@@ -536,42 +575,47 @@ fn callForHelp(fighter: Fighter) void {
 /// over from any fighting one found before it, however near; from there the nearest wins.
 fn wingman(fighter: Fighter) ?u16 {
     const all = fighter.objects();
-    const ship = fighter.ship();
-    var nearest: ?u16 = null;
-    var best = far_away;
+    var nearest: Nearest = .{};
     var milling = false;
     for (all.slots[0..all.count], 0..) |*slot, index| {
         if (index == fighter.index) continue;
-        const flags = slot.object.flags;
-        if (flags.stand_in or flags.exploding or flags.disabled or flags.do_not_disturb) continue;
-        if (slot.object.side != ship.side) continue;
+        if (!searchable(slot.object.flags) or slot.object.flags.do_not_disturb) continue;
+        if (slot.object.side != fighter.ship().side) continue;
         const combat = slot.combat orelse continue;
         if (combat.class != .fighter or slot.object.order_count == 0) continue;
         const order = slot.orders[0].order;
         if (order != .fight and order != .mill) continue;
-        const apart = math.lengthSquared(gameobj.vector(ship.root.next_position) - gameobj.vector(slot.object.root.next_position));
+        const apart = fighter.apartSquared(&slot.object);
         if (order == .mill and !milling) {
             milling = true;
-        } else if (!(apart < best)) continue;
-        best = apart;
-        nearest = @intCast(index);
+            nearest.take(index, apart);
+        } else nearest.offer(index, apart);
     }
-    return nearest;
+    return nearest.index;
 }
 
 test {
     std.testing.refAllDecls(@This());
 }
 
-/// The player's Predator, and a Sabre `apart` ahead of it, facing away, under a Fight order against
-/// it that has started.
+/// Fixtures for the tests here and in `aidefend.zig`.
+pub const testing = struct {
+    /// The player's Predator, and a Sabre `apart` ahead of it, facing away, under a Fight order
+    /// against it that has yet to start.
+    pub fn fighter(mission: *gameobj.testing.Mission, apart: f32) !Fighter {
+        const ctx = mission.orders();
+        const player = try mission.add(.predator, @splat(0));
+        const index = try mission.add(.sabre, .{ 0, 0, apart });
+        try std.testing.expect(try aigeneric.pushShip(ctx, index, .fight, player, -1));
+        return .of(ctx, index);
+    }
+};
+
+/// `testing.fighter`, with the order started.
 fn testFight(mission: *gameobj.testing.Mission, apart: f32) !Fighter {
-    const ctx = mission.orders();
-    const player = try mission.add(.predator, @splat(0));
-    const index = try mission.add(.sabre, .{ 0, 0, apart });
-    try std.testing.expect(try aigeneric.pushShip(ctx, index, .fight, player, -1));
-    aigeneric.objectOrders(ctx, index);
-    return .of(ctx, index);
+    const fighter = try testing.fighter(mission, apart);
+    aigeneric.objectOrders(fighter.ctx, fighter.index);
+    return fighter;
 }
 
 test init {

@@ -1010,7 +1010,7 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, gun: Fitted,
     const record = kind.stats(&all.gun_stats);
 
     // The muzzle stands where the step is taking the ship, on the part that carries it.
-    model.place(gameobj.vector(slot.object.root.next_position), slot.object.root.next_orientation);
+    model.place(slot.object.nextPosition(), slot.object.root.next_orientation);
     const part = gun.part.object;
     const muzzle = (math.Place{ .position = gameobj.vector(gun.muzzle.position), .orientation = gun.muzzle.orientation })
         .within(.{ .position = part.position, .orientation = part.orientation });
@@ -1092,7 +1092,7 @@ fn candidates(world: gameobj.World, bullet: *Bullet, record: Gun, lifetime: i32)
         const object = &slot.object;
         if (!object.type.hasStats() or object.flags.no_collisions) continue;
         if (index == bullet.owner) continue;
-        const to = gameobj.vector(object.root.next_position) - bullet.at;
+        const to = object.nextPosition() - bullet.at;
         const when = std.math.clamp(math.dot(to, bullet.velocity) * along, 0, life);
         const nearest = bullet.velocity * @as(Vector, @splat(when));
         const moving = if (slot.flight) |flight| ai.cruiseSpeed(object, flight, world.view) else 0;

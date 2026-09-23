@@ -326,6 +326,11 @@ pub const Slot = struct {
         gpa.free(slot.guns);
         slot.guns = &.{};
     }
+
+    /// Its guns and their groups, for firing them from `frame_start` (`guns.fire`).
+    pub fn trigger(slot: *const Slot, frame_start: i32) guns.Trigger {
+        return .{ .fitted = slot.guns, .groups = slot.gun_groups, .frame_start = frame_start };
+    }
 };
 
 /// `game_objects` (`0x00587CE0`), the GO array: 400 slots, none ever empty. As a mission starts
@@ -734,7 +739,7 @@ pub const Sweep = struct {
         for (near.passes_through) |through| if (through.index() == second) return false;
         for (far.passes_through) |through| if (through.index() == first) return false;
         const reach = near.radius + far.radius;
-        const between = gameobj.vector(near.root.next_position) - gameobj.vector(far.root.next_position);
+        const between = near.nextPosition() - far.nextPosition();
         return math.lengthSquared(between) < reach * reach;
     }
 };

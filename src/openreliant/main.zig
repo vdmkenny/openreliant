@@ -982,12 +982,12 @@ const Sandbox = struct {
     /// A wing of fighters `wing_ahead` in front of the player, side by side and facing it, each
     /// under a Fight order against the player. A wing past the last slot is left out.
     fn bringWing(sandbox: *Sandbox, orders: game.aigeneric.Context) void {
-        const root = sandbox.player().object.root;
-        const from = game.gameobj.vector(root.next_position);
-        const facing = math.product(root.next_orientation, math.rotation(.y, std.math.pi));
+        const ship = &sandbox.player().object;
+        const from = ship.nextPosition();
+        const facing = math.product(ship.root.next_orientation, math.rotation(.y, std.math.pi));
         for (0..wing_size) |place| {
             const across = (@as(f32, @floatFromInt(place)) - @as(f32, wing_size - 1) / 2) * wing_spacing;
-            const at = from + math.transform(root.next_orientation, .{ across, 0, wing_ahead });
+            const at = from + math.transform(ship.root.next_orientation, .{ across, 0, wing_ahead });
             const index = sandbox.create(.sabre, at) catch |err| {
                 std.log.warn("the wing is left out: {s}", .{@errorName(err)});
                 return;

@@ -120,8 +120,8 @@ fn shoveAt(world: gameobj.World, first: u16, second: u16, normal: Vector, levers
         math.transform(far.root.orientation, levers[1]) + gameobj.vector(far.root.position),
     };
     const next: [2]Vector = .{
-        math.transform(near.root.next_orientation, levers[0]) + gameobj.vector(near.root.next_position),
-        math.transform(far.root.next_orientation, levers[1]) + gameobj.vector(far.root.next_position),
+        math.transform(near.root.next_orientation, levers[0]) + near.nextPosition(),
+        math.transform(far.root.next_orientation, levers[1]) + far.nextPosition(),
     };
     var closing = (next[0] - now[0]) - (next[1] - now[1]);
     if (math.lengthSquared(closing) == 0 and far.flags.components) {
@@ -180,8 +180,8 @@ fn push(world: gameobj.World, first: u16, second: u16, pass: u8) bool {
     }
     const near = &all.slots[first];
     const far = &all.slots[second];
-    const here = gameobj.vector(near.object.root.next_position);
-    const there = gameobj.vector(far.object.root.next_position);
+    const here = near.object.nextPosition();
+    const there = far.object.nextPosition();
     const reach = near.object.radius + far.object.radius;
     if (math.lengthSquared(here - there) >= reach * reach) return true;
 
@@ -427,8 +427,8 @@ fn hullHit(world: gameobj.World, ship: u16, hull: u16, pass: u8) bool {
     const object = &all.slots[hull].object;
 
     // The hull stands where this step is taking it, as the ship's sphere does.
-    model.place(gameobj.vector(object.root.next_position), object.root.next_orientation);
-    const at = gameobj.vector(all.slots[ship].object.root.next_position);
+    model.place(object.nextPosition(), object.root.next_orientation);
+    const at = all.slots[ship].object.nextPosition();
     const found = objects.hitSphere(model, source, at, all.slots[ship].object.radius) orelse return false;
 
     const part = model.parts[found.part].object;

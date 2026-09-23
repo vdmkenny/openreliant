@@ -200,7 +200,7 @@ pub fn play(sound: *Sound, scene: Scene, at: ?Vector, facing: ?Vector, owner: i3
         .object => {
             if (owner < 0 or owner >= scene.objects.slots.len) return null;
             const slot = &scene.objects.slots[@intCast(owner)];
-            position = gameobj.vector(slot.object.root.next_position);
+            position = slot.object.nextPosition();
             if (owner == scene.objects.player) position += math.transform(slot.drawn.orientation, .{ 0, 0, 200 });
             velocity = gameobj.vector(slot.object.velocity);
             direction = math.forward(slot.drawn.orientation);

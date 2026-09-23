@@ -637,6 +637,17 @@ pub const GameObject = extern struct {
         }
     };
 
+    /// Where it will stand at the next step (`root.next_position`), which the AI, the collisions
+    /// and the sounds go by.
+    pub fn nextPosition(object: *const GameObject) Vector {
+        return vector(object.root.next_position);
+    }
+
+    /// The way its nose will point at the next step.
+    pub fn nextHeading(object: *const GameObject) Vector {
+        return math.forward(object.root.next_orientation);
+    }
+
     comptime {
         assert(@bitOffsetOf(Flags, "components") == 1);
         assert(@bitOffsetOf(Flags, "unpowered") == 3);

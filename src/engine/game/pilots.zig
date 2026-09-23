@@ -111,7 +111,8 @@ pub const Table = struct {
     pub const count = 194;
 
     pub fn load(table: *Table, records: []align(1) const stats.Pilot) void {
-        for (table.pilots[0..@min(records.len, count)], records[0..@min(records.len, count)]) |*pilot, record| pilot.* = .of(record);
+        const loaded = @min(records.len, count);
+        for (table.pilots[0..loaded], records[0..loaded]) |*pilot, record| pilot.* = .of(record);
     }
 
     /// The pilot numbered `pilot`, or the defaults for a number past the table.

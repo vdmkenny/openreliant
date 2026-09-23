@@ -13,7 +13,6 @@ const Vector = math.Vector;
 const ai = @import("ai.zig");
 const aifight = @import("aifight.zig");
 const Fighter = aifight.Fighter;
-const aigeneric = @import("aigeneric.zig");
 const gameobj = @import("gameobj.zig");
 
 pub const maneuvers = @import("aidefend/maneuvers.zig");
@@ -183,10 +182,7 @@ fn runScript(fighter: Fighter, program: []const script.Instruction) void {
     while (!state.waiting) : (started += 1) {
         if (started == most_lines) return;
         state.line +%= 1;
-        if (state.line >= program.len) {
-            state.maneuver_end = fighter.now() - 1;
-            return;
-        }
+        if (state.line >= program.len) return endManeuver(fighter);
         state.waiting = start(fighter, program[state.line]);
     }
     state.waiting = update(fighter, program[state.line]);
@@ -220,8 +216,7 @@ fn start(fighter: Fighter, instruction: script.Instruction) bool {
         },
         .out_of_action_sphere => |ticks| {
             startTimer(fighter, ticks);
-            const all = fighter.objects();
-            flyTo(fighter, gameobj.vector(all.slots[all.action_sphere.centre].object.root.next_position));
+            flyTo(fighter, fighter.sphereCentre());
             return true;
         },
         .set_mirror => state.mirror = Mirror.all.pick(fighter.random15()),
@@ -238,7 +233,7 @@ fn start(fighter: Fighter, instruction: script.Instruction) bool {
             return true;
         },
         .run_to_ship => {
-            flyTo(fighter, gameobj.vector(fighter.objects().slots[state.ship].object.root.next_position));
+            flyTo(fighter, friend(fighter).nextPosition());
             return true;
         },
         .end_script => return true,
@@ -259,7 +254,7 @@ fn update(fighter: Fighter, instruction: script.Instruction) bool {
         .new_attack_run => |far| attackRun(fighter, far),
         .run_to_ship => runToShip(fighter),
         .end_script => {
-            fighter.state.maneuver_end = fighter.now() - 1;
+            endManeuver(fighter);
             return true;
         },
         .set_yaw, .set_pitch, .set_roll, .set_speed, .goto, .label, .set_afterburner, .set_mirror, .@"if", .@"else", .endif, .cloak => false,
@@ -273,6 +268,11 @@ fn startTimer(fighter: Fighter, ticks: script.Ticks) void {
     fighter.state.timer = @as(i32, ticks.min) + fighter.now() + math.round(fighter.random() * spread);
 }
 
+/// Ends the maneuver, its end the tick before, so Fight chooses another.
+fn endManeuver(fighter: Fighter) void {
+    fighter.state.maneuver_end = fighter.now() - 1;
+}
+
 fn timeUp(fighter: Fighter) bool {
     return fighter.state.timer < fighter.now();
 }
@@ -283,19 +283,17 @@ const Axis = enum {
     pitch,
     roll,
 
+    /// The object's input for the axis (`yaw_input` and so on).
     fn input(axis: Axis, object: *gameobj.GameObject) *f32 {
         return switch (axis) {
-            .yaw => &object.yaw_input,
-            .pitch => &object.pitch_input,
-            .roll => &object.roll_input,
+            inline else => |named| &@field(object, @tagName(named) ++ "_input"),
         };
     }
 
+    /// Whether the maneuver mirrors the axis.
     fn mirrored(axis: Axis, mirror: Mirror) bool {
         return switch (axis) {
-            .yaw => mirror.yaw,
-            .pitch => mirror.pitch,
-            .roll => mirror.roll,
+            inline else => |named| @field(mirror, @tagName(named)),
         };
     }
 };
@@ -366,7 +364,7 @@ fn attack(fighter: Fighter) bool {
     } else {
         ship.throttle = 1;
     }
-    if (ship.throttle < least_throttle) ship.throttle = least_throttle;
+    ship.throttle = @max(ship.throttle, least_throttle);
     return true;
 }
 
@@ -467,15 +465,20 @@ fn attackRun(fighter: Fighter, far: bool) bool {
 /// By a ship with components it is done within `run_to_reach` of the ship's edge; by one without,
 /// it matches the ship's speed along its own nose and closes by the distance past `run_to_reach`.
 fn runToShip(fighter: Fighter) bool {
-    const friend = &fighter.objects().slots[fighter.state.ship].object;
-    fighter.state.point = friend.root.next_position;
+    const to = friend(fighter);
+    fighter.state.point = to.root.next_position;
     steerToPoint(fighter);
-    const apart = math.distance(gameobj.vector(fighter.state.point), fighter.position());
-    if (friend.flags.components) return apart >= friend.radius + run_to_reach;
+    const apart = math.distance(to.nextPosition(), fighter.position());
+    if (to.flags.components) return apart >= to.radius + run_to_reach;
     const ship = fighter.ship();
-    ship.throttle = math.dot(fighter.heading(), gameobj.vector(friend.velocity)) / fighter.cruise() + (apart - run_to_reach) * run_to_closing;
-    if (ship.throttle < least_throttle) ship.throttle = least_throttle;
+    const pace = math.dot(fighter.heading(), gameobj.vector(to.velocity)) / fighter.cruise();
+    ship.throttle = @max(pace + (apart - run_to_reach) * run_to_closing, least_throttle);
     return true;
+}
+
+/// The friendly ship `RunToShip` flies to.
+fn friend(fighter: Fighter) *gameobj.GameObject {
+    return &fighter.objects().slots[fighter.state.ship].object;
 }
 
 /// `If Goingtocrash` (`maneuver_if_start`, `0x00406170`): against a target without components, on
@@ -535,15 +538,6 @@ test {
     std.testing.refAllDecls(@This());
 }
 
-/// A Sabre under a Fight order against the player's Predator, `apart` ahead of it.
-fn testFighter(mission: *gameobj.testing.Mission, apart: f32) !Fighter {
-    const ctx = mission.orders();
-    const player = try mission.add(.predator, @splat(0));
-    const index = try mission.add(.sabre, .{ 0, 0, apart });
-    try std.testing.expect(try aigeneric.pushShip(ctx, index, .fight, player, -1));
-    return .of(ctx, index);
-}
-
 test Mirror {
     try std.testing.expectEqual(Mirror{ .yaw = true, .roll = true }, Mirror.all.pick(0b101));
     // Only what the maneuver allows is mirrored, whatever the number.
@@ -555,7 +549,7 @@ test run {
     var mission: gameobj.testing.Mission = undefined;
     try mission.init(std.testing.allocator);
     defer mission.deinit();
-    const fighter = try testFighter(&mission, 50000);
+    const fighter = try aifight.testing.fighter(&mission, 50000);
     const state = fighter.state;
     const ship = fighter.ship();
     state.maneuver = .loop_the_loop;
@@ -587,7 +581,7 @@ test "a script that ends or never waits" {
     var mission: gameobj.testing.Mission = undefined;
     try mission.init(std.testing.allocator);
     defer mission.deinit();
-    const fighter = try testFighter(&mission, 50000);
+    const fighter = try aifight.testing.fighter(&mission, 50000);
     const state = fighter.state;
     mission.clock.frame_start = 100;
 
@@ -607,7 +601,7 @@ test steerToPoint {
     var mission: gameobj.testing.Mission = undefined;
     try mission.init(std.testing.allocator);
     defer mission.deinit();
-    const fighter = try testFighter(&mission, 50000);
+    const fighter = try aifight.testing.fighter(&mission, 50000);
     const state = fighter.state;
     const ship = fighter.ship();
 
@@ -630,7 +624,7 @@ test avoid {
     var mission: gameobj.testing.Mission = undefined;
     try mission.init(std.testing.allocator);
     defer mission.deinit();
-    const fighter = try testFighter(&mission, 50000);
+    const fighter = try aifight.testing.fighter(&mission, 50000);
     const ship = fighter.ship();
     fighter.state.timer = 10;
 
