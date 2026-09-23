@@ -17,9 +17,12 @@ const srlight = @import("srlight.zig");
 
 pub const cascade_count = 4;
 
-/// How far from the camera each cascade reaches, in view depth: the first from the near plane.
-/// Past the last, nothing is shadowed.
-pub const reaches = [cascade_count]f32{ 1500, 6000, 20000, 60000 };
+/// How a device draws shadows: its maps' texels across, and how far from the camera each cascade
+/// reaches in view depth, the first from the near plane. Past the last, nothing is shadowed.
+pub const Settings = struct {
+    texels: u32,
+    reaches: [cascade_count]f32,
+};
 
 /// The frame's shadows as a device takes them, in the camera's frame.
 pub const Frame = struct {
@@ -82,10 +85,10 @@ fn axes(toward: Vector) [3]Vector {
     return .{ across, up, away };
 }
 
-/// The cascades for maps `size` texels across, lit along `toward` in the world: each the box along
-/// the sun around the sphere that holds its slice of the view, its centre moved to a whole texel
-/// of the world so that the shadows stay still as the camera moves.
-pub fn fit(context: srapi.Context, toward: Vector, size: u32) [cascade_count]Cascade {
+/// The cascades `settings` ask for, lit along `toward` in the world: each the box along the sun
+/// around the sphere that holds its slice of the view, its centre moved to a whole texel of the
+/// world so that the shadows stay still as the camera moves.
+pub fn fit(context: srapi.Context, toward: Vector, settings: Settings) [cascade_count]Cascade {
     const bounds = context.projection.bounds;
     const world_axes = axes(toward);
     // The axes in the camera's frame, which the rows are made of.
@@ -93,9 +96,9 @@ pub fn fit(context: srapi.Context, toward: Vector, size: u32) [cascade_count]Cas
     for (world_axes, &turned) |axis, *in_view| in_view.* = context.turn(axis);
     var cascades: [cascade_count]Cascade = undefined;
     var near = context.projection.near;
-    for (reaches, &cascades) |far, *cascade| {
+    for (settings.reaches, &cascades) |far, *cascade| {
         const sphere = sliceSphere(bounds, near, far);
-        const texel = 2 * sphere.radius / @as(f32, @floatFromInt(size));
+        const texel = 2 * sphere.radius / @as(f32, @floatFromInt(settings.texels));
         const centre_world = math.transform(context.camera.orientation, sphere.centre) + context.camera.position;
         var offsets: [3]f32 = undefined;
         for (world_axes, &offsets, 0..) |axis, *offset, index| {
@@ -163,19 +166,19 @@ pub fn casts(object: *const srapiext.MeshObject) bool {
     return !object.flags.hidden and object.scale != 0 and object.flags.lit and object.levels.len > 0;
 }
 
-/// The frame's shadows: the cascades for maps `size` texels across, along the first light of
-/// `lights` that casts shadows, and the triangles of each caster of the world's layer and of
-/// `extra` that can reach one of them. Null where no light casts shadows.
+/// The frame's shadows: the cascades `settings` ask for, along the first light of `lights` that
+/// casts shadows, and the triangles of each caster of the world's layer and of `extra` that can
+/// reach one of them. Null where no light casts shadows.
 pub fn gather(
     arena: Allocator,
     context: srapi.Context,
     lights: []const srlight.Light,
     world: []const srcore.Object,
     extra: []const *srapiext.MeshObject,
-    size: u32,
+    settings: Settings,
 ) Allocator.Error!?Frame {
     const toward = sunward(lights) orelse return null;
-    var casters: Casters = .{ .arena = arena, .context = context, .cascades = fit(context, toward, size) };
+    var casters: Casters = .{ .arena = arena, .context = context, .cascades = fit(context, toward, settings) };
     for (world) |object| switch (object) {
         .mesh => |mesh| try casters.add(mesh),
         .sprites, .stars => {},
@@ -259,6 +262,8 @@ const testing = struct {
 
     const sun = math.normalize(.{ 1, -2, 0.5 });
 
+    const settings: Settings = .{ .texels = 2048, .reaches = .{ 1500, 6000, 20000, 60000 } };
+
     fn keyLight(shadowed: bool) srlight.Light {
         return .{ .mask = 1, .intensity = 1, .colour = @splat(1), .kind = .{ .directional = sun }, .shadowed = shadowed };
     }
@@ -266,9 +271,9 @@ const testing = struct {
 
 test fit {
     const context = testing.context();
-    const cascades = fit(context, testing.sun, 2048);
+    const cascades = fit(context, testing.sun, testing.settings);
     var near = context.projection.near;
-    for (cascades, reaches) |cascade, far| {
+    for (cascades, testing.settings.reaches) |cascade, far| {
         // The middle of its slice of the view lies in its map, and a point toward the sun nearer
         // the sun's side.
         const middle: Vector = .{ 0, 0, (near + far) / 2 };
@@ -287,12 +292,12 @@ test fit {
 test "the maps' texels follow the world, not the camera" {
     var context = testing.context();
     const point: Vector = .{ 300, 200, 900 };
-    const size = 2048;
-    const before = fit(context, testing.sun, size)[0].place(context.view(point));
+    const before = fit(context, testing.sun, testing.settings)[0].place(context.view(point));
     // However the camera moves, a point of the world moves across the map by whole texels.
     context.camera.position += .{ 7.3, -2.1, 11.9 };
-    const after = fit(context, testing.sun, size)[0].place(context.view(point));
-    const texels = (after - before) * @as(Vector, @splat(size / 2));
+    const after = fit(context, testing.sun, testing.settings)[0].place(context.view(point));
+    const half: f32 = @floatFromInt(testing.settings.texels / 2);
+    const texels = (after - before) * @as(Vector, @splat(half));
     for ([2]f32{ texels[0], texels[1] }) |moved| try std.testing.expectApproxEqAbs(@round(moved), moved, 1e-2);
 }
 
@@ -323,12 +328,12 @@ test gather {
     const world = [_]srcore.Object{ .{ .mesh = &ahead }, .{ .mesh = &hidden }, .{ .mesh = &unlit }, .{ .mesh = &far_off } };
 
     // Without a light that casts shadows, there are none.
-    try std.testing.expectEqual(null, try gather(arena, context, &.{testing.keyLight(false)}, &world, &.{}, 1024));
+    try std.testing.expectEqual(null, try gather(arena, context, &.{testing.keyLight(false)}, &world, &.{}, testing.settings));
 
     // A lit mesh in reach casts its two triangles, in the camera's frame; the hidden, the unlit
     // and the one out of reach cast nothing; one cast without being drawn casts as well.
     const lights = [_]srlight.Light{testing.keyLight(true)};
-    const frame = (try gather(arena, context, &lights, &world, &.{&extra}, 1024)).?;
+    const frame = (try gather(arena, context, &lights, &world, &.{&extra}, testing.settings)).?;
     try std.testing.expectEqual(8, frame.positions.len);
     try std.testing.expectEqual(12, frame.indices.len);
     try std.testing.expectEqual([3]f32{ -100, -100, 1000 }, frame.positions[0]);
@@ -342,6 +347,6 @@ test gather {
 
     // A blended surface casts nothing.
     square.surfaces[0].material.blend[0] = .add;
-    const blended = (try gather(arena, context, &lights, &world, &.{}, 1024)).?;
+    const blended = (try gather(arena, context, &lights, &world, &.{}, testing.settings)).?;
     try std.testing.expectEqual(0, blended.indices.len);
 }

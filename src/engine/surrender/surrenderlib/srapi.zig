@@ -5,6 +5,7 @@ const std = @import("std");
 
 const math = @import("../math.zig");
 const srapiext = @import("srapiext.zig");
+const srshadow = @import("srshadow.zig");
 const Vector = math.Vector;
 
 /// The projection `sr_set_projection` (`0x004C3A60`) sets from a viewport, its edges as fractions
@@ -169,9 +170,9 @@ pub const Context = struct {
     /// lights (`device.Device.lights`). The pipeline then leaves them out of the vertices' colours
     /// and hands the device the vertices' normals instead.
     pixel_lighting: bool = false,
-    /// The port's: how many texels across the device's shadow maps are, for a frame it draws
-    /// shadows in, and 0 for none (`srshadow`). The driver sets it with the lights.
-    shadow_size: u32 = 0,
+    /// The port's: how the device draws the frame's shadows, or null for none (`srshadow`). The
+    /// driver sets it with the lights.
+    shadows: ?srshadow.Settings = null,
 
     /// A point of the world in the camera's frame.
     pub fn view(context: Context, point: Vector) Vector {

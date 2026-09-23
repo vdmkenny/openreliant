@@ -262,7 +262,7 @@ pub const Driver = struct {
         for (wanted.items[0..count]) |w| list[w.index].per_pixel = true;
         context.pixel_lighting = count > 0;
         // Shadows darken what the device adds to each pixel alone.
-        context.shadow_size = if (context.pixel_lighting) driver.target.shadowSize() else 0;
+        context.shadows = if (context.pixel_lighting) driver.target.shadowSettings() else null;
     }
 
     /// A light the device may add to each pixel, and how far it stands from the camera, squared;

@@ -97,8 +97,8 @@ pub const Driver = struct {
         begin: *const fn (*anyopaque, *srapi.Context) void,
         /// The port's: the frame's lights, for a device that lights each pixel. The driver marks
         /// the lights the device adds to each pixel (`srlight.Light.per_pixel`), and sets
-        /// `srapi.Context.pixel_lighting` if there are any, and `shadow_size` for a device that
-        /// draws shadows.
+        /// `srapi.Context.pixel_lighting` if there are any, and `shadows` for a device that draws
+        /// them.
         lights: *const fn (*anyopaque, []srlight.Light) Allocator.Error!void,
         /// The port's: the frame's shadows, after the lights, for a device that draws them.
         shadows: ?*const fn (*anyopaque, *const srshadow.Frame) void = null,
@@ -143,9 +143,9 @@ pub fn render(arena: Allocator, context: *srapi.Context, scene: *Scene, driver: 
     std.mem.reverse(srlight.Light, lights);
     try driver.vtable.lights(driver.ptr, lights);
     if (driver.vtable.shadows) |take| {
-        if (context.shadow_size > 0) {
+        if (context.shadows) |settings| {
             const world = scene.layers.get(.world).items;
-            if (try srshadow.gather(arena, context.*, lights, world, scene.casters.items, context.shadow_size)) |frame| {
+            if (try srshadow.gather(arena, context.*, lights, world, scene.casters.items, settings)) |frame| {
                 const stored = try arena.create(srshadow.Frame);
                 stored.* = frame;
                 take(driver.ptr, stored);

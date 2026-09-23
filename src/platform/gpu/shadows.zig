@@ -16,18 +16,25 @@ const Geometry = @import("geometry.zig").Geometry;
 /// How the shadows are drawn, or not at all.
 pub const Quality = enum {
     off,
-    /// Maps 1024 texels across, looked up in four filtered taps: soft, and light on older GPUs.
+    /// Maps 1024 texels across, looked up in four filtered taps, reaching 60,000 from the camera:
+    /// soft, and light on older GPUs.
     low,
-    /// Maps 4096 texels across, looked up in sixteen: sharp near the camera, with smooth edges.
+    /// Maps 4096 texels across, looked up in sixteen, reaching 120,000: sharp near the camera, with
+    /// smooth edges, and far out.
     high,
+
+    /// The maps' size and the cascades' reaches, or null for none.
+    pub fn settings(quality: Quality) ?srshadow.Settings {
+        return switch (quality) {
+            .off => null,
+            .low => .{ .texels = 1024, .reaches = .{ 1500, 6000, 20000, 60000 } },
+            .high => .{ .texels = 4096, .reaches = .{ 2500, 10000, 35000, 120000 } },
+        };
+    }
 
     /// How many texels across each cascade's map is, or 0 for none.
     pub fn texels(quality: Quality) u32 {
-        return switch (quality) {
-            .off => 0,
-            .low => 1024,
-            .high => 4096,
-        };
+        return if (quality.settings()) |found| found.texels else 0;
     }
 
     /// Whether the lookup takes sixteen taps rather than four.

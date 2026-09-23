@@ -119,9 +119,9 @@ pub const Device = struct {
         /// the vertices with the rest. A device without it lights nothing itself, and the
         /// driver's vertices come lit, as Direct3D 7's did.
         lights: ?*const fn (*anyopaque, []const Light) usize = null,
-        /// The port's: how many texels across its shadow maps are, or 0 where it draws no
-        /// shadows. A device without it draws none.
-        shadow_size: ?*const fn (*anyopaque) u32 = null,
+        /// The port's: how it draws shadows, or null where it draws none. A device without it
+        /// draws none.
+        shadow_settings: ?*const fn (*anyopaque) ?srshadow.Settings = null,
         /// The port's: the frame's shadows, after its lights, which last until the scene ends.
         shadows: ?*const fn (*anyopaque, *const srshadow.Frame) void = null,
     };
@@ -149,10 +149,10 @@ pub const Device = struct {
         return take(device.ptr, list);
     }
 
-    /// How many texels across the device's shadow maps are, or 0 where it draws no shadows.
-    pub fn shadowSize(device: Device) u32 {
-        const size = device.vtable.shadow_size orelse return 0;
-        return size(device.ptr);
+    /// How the device draws shadows, or null where it draws none.
+    pub fn shadowSettings(device: Device) ?srshadow.Settings {
+        const settings = device.vtable.shadow_settings orelse return null;
+        return settings(device.ptr);
     }
 
     /// Hands the device the frame's shadows.

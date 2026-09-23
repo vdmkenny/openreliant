@@ -471,12 +471,12 @@ pub const Gpu = struct {
         .draw = draw,
         .overlay = overlay,
         .lights = lights,
-        .shadow_size = shadowSize,
+        .shadow_settings = shadowSettings,
         .shadows = takeShadows,
     };
 
-    fn shadowSize(ptr: *anyopaque) u32 {
-        return from(ptr).shadows.texels();
+    fn shadowSettings(ptr: *anyopaque) ?srshadow.Settings {
+        return from(ptr).shadows.quality.settings();
     }
 
     fn takeShadows(ptr: *anyopaque, frame: *const srshadow.Frame) void {
