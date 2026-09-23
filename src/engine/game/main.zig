@@ -614,106 +614,78 @@ test fitDevices {
     try std.testing.expectEqual(null, playerShip(0x0D));
 }
 
-/// A mission with nothing in it but stand-ins, for the tests of the pacing.
-const TestWorld = struct {
-    random: libcmt.Rand = .{},
-    objects: *create.Objects = undefined,
-    player: input.Player = .{},
-    shake: f32 = 0,
-
-    fn init(world: *TestWorld) !void {
-        world.* = .{};
-        world.objects = try .create(std.testing.allocator, &world.random);
-    }
-
-    fn deinit(world: *TestWorld) void {
-        world.objects.destroy();
-    }
-
-    fn get(world: *TestWorld) gameobj.World {
-        return .{ .objects = world.objects, .player = &world.player, .view = .cockpit, .shake = &world.shake, .random = &world.random };
-    }
-
-    /// What the orders of its objects run against.
-    fn orders(world: *TestWorld, clock: *const Clock) aigeneric.Context {
-        return .{ .world = world.get(), .clock = clock };
-    }
-};
-
 test missionFrame {
-    var clock: Clock = .{};
-    var world: TestWorld = undefined;
-    try world.init();
-    defer world.deinit();
-    var tables = create.testing.tables();
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
     // The player's slot, then a ship that turns on the spot under an order of its own.
-    for (0..2) |_| _ = try create.createObject(world.objects, &tables, create.testing.no_models, null, 0, @splat(0), &world.random);
-    const orders = world.orders(&clock);
+    for (0..2) |_| _ = try mission.add(0, @splat(0));
+    const orders = mission.orders();
     try std.testing.expect(try aigeneric.push(orders, 1, .slow_rotate, .{ .kind = .ship, .index = -1, .component = -1 }));
 
     missionFrame(orders, 0);
     // The frame ran the ship's order, and framed every object where it is drawn.
-    try std.testing.expect(world.objects.slots[1].object.yaw_input > 0);
-    try std.testing.expect(!world.objects.slots[1].object.root.flags.unframed);
+    try std.testing.expect(mission.objects.slots[1].object.yaw_input > 0);
+    try std.testing.expect(!mission.objects.slots[1].object.root.flags.unframed);
 }
 
 test "the simulation steps on every fourth tick" {
     var clock: Clock = .{};
     var devices: input.Devices = .{};
-    var world: TestWorld = undefined;
-    try world.init();
-    defer world.deinit();
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
     // A second of the timer: 100 ticks, 100 game ticks, 25 steps.
     clock.advanceTimer(100);
     try std.testing.expectEqual(100, clock.game_ticks);
-    try std.testing.expectEqual(25, clock.runTicks(&devices, world.get()));
+    try std.testing.expectEqual(25, clock.runTicks(&devices, mission.world()));
     try std.testing.expectEqual(100, clock.mission_ticks);
     // The ticks already run are not run again.
-    try std.testing.expectEqual(0, clock.runTicks(&devices, world.get()));
+    try std.testing.expectEqual(0, clock.runTicks(&devices, mission.world()));
 }
 
 test "a paused game stops its clocks but not the timer" {
     var clock: Clock = .{};
     var devices: input.Devices = .{};
-    var world: TestWorld = undefined;
-    try world.init();
-    defer world.deinit();
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
     clock.advanceTimer(8);
-    _ = clock.runTicks(&devices, world.get());
+    _ = clock.runTicks(&devices, mission.world());
     clock.paused = true;
     clock.advanceTimer(100);
     // The timer counts the paused ticks; the mission's clocks do not move.
     try std.testing.expectEqual(108, clock.timer_ticks);
     try std.testing.expectEqual(8, clock.game_ticks);
     try std.testing.expectEqual(8, clock.mission_ticks);
-    try std.testing.expectEqual(0, clock.runTicks(&devices, world.get()));
+    try std.testing.expectEqual(0, clock.runTicks(&devices, mission.world()));
     // Paused ticks are counted only for the game ticks the loop asks for.
     clock.paused = false;
     clock.advanceTimer(4);
-    try std.testing.expectEqual(1, clock.runTicks(&devices, world.get()));
+    try std.testing.expectEqual(1, clock.runTicks(&devices, mission.world()));
     try std.testing.expectEqual(12, clock.mission_ticks);
 }
 
 test "the step reads the keyboard, and the latches it clears" {
     var clock: Clock = .{};
     var devices: input.Devices = .{};
-    var world: TestWorld = undefined;
-    try world.init();
-    defer world.deinit();
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
     const keyboard = &devices.keyboard;
     keyboard.down[scan_test_key] = true;
     keyboard.latched[scan_test_key] = true;
     // Three ticks do no work, so the latch stands; the fourth reads and keeps it while held.
     clock.advanceTimer(3);
-    _ = clock.runTicks(&devices, world.get());
+    _ = clock.runTicks(&devices, mission.world());
     try std.testing.expect(keyboard.latched[scan_test_key]);
     clock.advanceTimer(1);
-    try std.testing.expectEqual(1, clock.runTicks(&devices, world.get()));
+    try std.testing.expectEqual(1, clock.runTicks(&devices, mission.world()));
     try std.testing.expect(keyboard.latched[scan_test_key]);
     // Released, the next read clears it.
     keyboard.down[scan_test_key] = false;
     clock.advanceTimer(4);
-    _ = clock.runTicks(&devices, world.get());
+    _ = clock.runTicks(&devices, mission.world());
     try std.testing.expect(!keyboard.latched[scan_test_key]);
 }
 
@@ -736,11 +708,11 @@ test "play time rolls a second over after 101 ticks" {
 test "a frame measures the ticks since the last one" {
     var clock: Clock = .{};
     var devices: input.Devices = .{};
-    var world: TestWorld = undefined;
-    try world.init();
-    defer world.deinit();
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
     clock.advanceTimer(10);
-    _ = clock.runTicks(&devices, world.get());
+    _ = clock.runTicks(&devices, mission.world());
     clock.frameBegin();
     try std.testing.expectEqual(10, clock.frame_duration);
     try std.testing.expectEqual(10, clock.frame_start);
@@ -748,7 +720,7 @@ test "a frame measures the ticks since the last one" {
     clock.frameBegin();
     try std.testing.expectEqual(0, clock.frame_duration);
     clock.advanceTimer(3);
-    _ = clock.runTicks(&devices, world.get());
+    _ = clock.runTicks(&devices, mission.world());
     clock.frameReset();
     try std.testing.expectEqual(13, clock.frame_start);
     try std.testing.expectEqual(0, clock.frame_duration);
@@ -757,9 +729,9 @@ test "a frame measures the ticks since the last one" {
 test "the clocks keep to the platform's count however the frames fall" {
     var clock: Clock = .{};
     var devices: input.Devices = .{};
-    var world: TestWorld = undefined;
-    try world.init();
-    defer world.deinit();
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
     const began: u64 = 12_345;
     clock.start(began);
     // Frames of uneven length: several shorter than a tick, one spanning many, one long stall.
@@ -769,7 +741,7 @@ test "the clocks keep to the platform's count however the frames fall" {
     for (frames) |frame| {
         now += frame;
         clock.advanceTo(now);
-        steps += clock.runTicks(&devices, world.get());
+        steps += clock.runTicks(&devices, mission.world());
     }
     // Every hundredth between the first count and the last is a tick, and every fourth a step.
     const elapsed: u32 = @intCast(now - began);
@@ -784,9 +756,9 @@ test "the clocks keep to the platform's count however the frames fall" {
 
 test "the frame rate is decoupled from the tick rate" {
     var devices: input.Devices = .{};
-    var world: TestWorld = undefined;
-    try world.init();
-    defer world.deinit();
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
     // The same second of play, drawn at three very different frame rates.
     const rates = [_]u64{ 4, 60, 240 };
     for (rates) |frames| {
@@ -797,7 +769,7 @@ test "the frame rate is decoupled from the tick rate" {
         for (1..frames + 1) |frame| {
             // Frame `frame` of `frames` ends this far into the second, in hundredths.
             clock.advanceTo(1_000 + @as(u64, @intCast(frame)) * 100 / frames);
-            steps += clock.runTicks(&devices, world.get());
+            steps += clock.runTicks(&devices, mission.world());
             clock.frameBegin();
             drawn += 1;
         }
@@ -812,20 +784,20 @@ test "the frame rate is decoupled from the tick rate" {
 test "a frame faster than the tick runs none, and a slow one runs the lot" {
     var clock: Clock = .{};
     var devices: input.Devices = .{};
-    var world: TestWorld = undefined;
-    try world.init();
-    defer world.deinit();
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
     clock.start(0);
     // Four frames inside one hundredth: no tick falls in them, so the simulation stands still.
     for (0..4) |_| {
         clock.advanceTo(0);
-        try std.testing.expectEqual(0, clock.runTicks(&devices, world.get()));
+        try std.testing.expectEqual(0, clock.runTicks(&devices, mission.world()));
         clock.frameBegin();
         try std.testing.expectEqual(0, clock.frame_duration);
     }
     // One frame that took a quarter of a second catches up all 25 ticks at once.
     clock.advanceTo(25);
-    try std.testing.expectEqual(6, clock.runTicks(&devices, world.get()));
+    try std.testing.expectEqual(6, clock.runTicks(&devices, mission.world()));
     clock.frameBegin();
     try std.testing.expectEqual(25, clock.frame_duration);
 }

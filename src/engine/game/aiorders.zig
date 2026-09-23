@@ -16,9 +16,6 @@ const aigeneric = @import("aigeneric.zig");
 const Context = aigeneric.Context;
 const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
-const input = @import("../input.zig");
-const libcmt = @import("../libcmt.zig");
-const main = @import("main.zig");
 const objects = @import("objects.zig");
 const xtrabits = @import("xtrabits.zig");
 
@@ -192,33 +189,13 @@ pub fn matchSpeed(ctx: Context, index: u16) void {
     slot.object.throttle = speed / ai.cruiseSpeed(&slot.object, flight, ctx.world.view);
 }
 
-const testing = struct {
-    /// A world of objects with no models, and the clock and view the orders run against.
-    fn world(all: *create.Objects, clock: *const main.Clock, player: *input.Player, shake: *f32, random: *libcmt.Rand) Context {
-        return .{
-            .world = .{ .objects = all, .player = player, .view = .chase, .shake = shake, .random = random },
-            .clock = clock,
-        };
-    }
-
-    /// A ship that is nobody's, at `at`: the player holds the first slot, and takes only the
-    /// orders marked as its own, so the ships a test orders about come after it.
-    fn ship(all: *create.Objects, tables: *create.Stats, random: *libcmt.Rand, at: Vector) !u16 {
-        if (all.count == 0) _ = try create.createObject(all, tables, create.testing.no_models, null, 0, @splat(0), random);
-        return create.createObject(all, tables, create.testing.no_models, null, 0, at, random);
-    }
-};
-
 test doNothing {
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    const index = try create.createObject(all, &tables, create.testing.no_models, null, 0, @splat(0), &random);
-    var clock: main.Clock = .{};
-    var player: input.Player = .{};
-    var shake: f32 = 0;
-    const ctx = testing.world(all, &clock, &player, &shake, &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const index = try mission.add(0, @splat(0));
+    const ctx = mission.orders();
 
     all.slots[index].object.throttle = 1;
     all.slots[index].object.yaw_input = 1;
@@ -228,17 +205,14 @@ test doNothing {
 }
 
 test fly {
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    var clock: main.Clock = .{};
-    var player: input.Player = .{};
-    var shake: f32 = 0;
-    const ctx = testing.world(all, &clock, &player, &shake, &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const ctx = mission.orders();
 
-    const index = try testing.ship(all, &tables, &random, @splat(0));
-    const other = try testing.ship(all, &tables, &random, .{ 0, 0, 30000 });
+    const index = try mission.addOther(@splat(0));
+    const other = try mission.addOther(.{ 0, 0, 30000 });
     try std.testing.expect(try aigeneric.pushShip(ctx, index, .fly, other, -1));
 
     // Starting it keeps the heading, and with no speed of its own it flies at full throttle.
@@ -261,16 +235,13 @@ test fly {
 }
 
 test "Fly without a target holds the heading it started on" {
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    var clock: main.Clock = .{};
-    var player: input.Player = .{};
-    var shake: f32 = 0;
-    const ctx = testing.world(all, &clock, &player, &shake, &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const ctx = mission.orders();
 
-    const index = try testing.ship(all, &tables, &random, @splat(0));
+    const index = try mission.addOther(@splat(0));
     const slot = &all.slots[index];
     objects.setOrientation(&slot.object, &slot.drawn, math.rotation(.y, std.math.pi / 2.0));
     try std.testing.expect(try aigeneric.push(ctx, index, .fly, .{ .kind = .ship, .index = -1, .component = -1 }));
@@ -282,17 +253,14 @@ test "Fly without a target holds the heading it started on" {
 }
 
 test "a ship under a Fly order closes on its target and stops there" {
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    var clock: main.Clock = .{};
-    var player: input.Player = .{};
-    var shake: f32 = 0;
-    const ctx = testing.world(all, &clock, &player, &shake, &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const ctx = mission.orders();
 
-    const index = try testing.ship(all, &tables, &random, @splat(0));
-    const target = try testing.ship(all, &tables, &random, .{ 8000, 0, 30000 });
+    const index = try mission.addOther(@splat(0));
+    const target = try mission.addOther(.{ 8000, 0, 30000 });
     try std.testing.expect(try aigeneric.pushShip(ctx, index, .fly, target, -1));
     const slot = &all.slots[index];
     const to = gameobj.vector(all.slots[target].object.root.next_position);
@@ -300,7 +268,7 @@ test "a ship under a Fly order closes on its target and stops there" {
 
     // A frame of orders, then the step that moves what they steer, as the loop paces them.
     for (0..2000) |_| {
-        clock.frame_duration = 4;
+        mission.clock.frame_duration = 4;
         aigeneric.ordersUpdate(ctx);
         create.objectsUpdate(ctx.world);
         for (all.slots[0..all.count]) |*live| {
@@ -319,17 +287,14 @@ test "a ship under a Fly order closes on its target and stops there" {
 }
 
 test matchSpeed {
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    var clock: main.Clock = .{};
-    var player: input.Player = .{};
-    var shake: f32 = 0;
-    const ctx = testing.world(all, &clock, &player, &shake, &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const ctx = mission.orders();
 
-    const index = try testing.ship(all, &tables, &random, @splat(0));
-    const other = try testing.ship(all, &tables, &random, .{ 0, 0, 5000 });
+    const index = try mission.addOther(@splat(0));
+    const other = try mission.addOther(.{ 0, 0, 5000 });
     all.slots[other].object.flags.targetable = true;
     all.slots[other].object.speed = 160;
     try std.testing.expect(try aigeneric.pushShip(ctx, index, .match_speed, other, -1));
@@ -344,16 +309,13 @@ test matchSpeed {
 }
 
 test randomSpinInit {
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    var clock: main.Clock = .{};
-    var player: input.Player = .{};
-    var shake: f32 = 0;
-    const ctx = testing.world(all, &clock, &player, &shake, &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const ctx = mission.orders();
 
-    const index = try testing.ship(all, &tables, &random, @splat(0));
+    const index = try mission.addOther(@splat(0));
     const object = &all.slots[index].object;
     object.throttle = 1;
     randomSpinInit(ctx, index, .fast);
@@ -367,17 +329,14 @@ test randomSpinInit {
 }
 
 test runAway {
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    var clock: main.Clock = .{};
-    var player: input.Player = .{};
-    var shake: f32 = 0;
-    const ctx = testing.world(all, &clock, &player, &shake, &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const ctx = mission.orders();
 
-    const index = try testing.ship(all, &tables, &random, @splat(0));
-    const other = try testing.ship(all, &tables, &random, .{ 0, 0, 5000 });
+    const index = try mission.addOther(@splat(0));
+    const other = try mission.addOther(.{ 0, 0, 5000 });
     try std.testing.expect(try aigeneric.pushShip(ctx, index, .run_away, other, -1));
 
     // The target lies ahead, so it turns away from it and flies at half throttle.
@@ -386,7 +345,7 @@ test runAway {
     try std.testing.expect(@abs(all.slots[index].object.yaw_input) > 0 or @abs(all.slots[index].object.roll_input) > 0);
 
     // A slot that has gone back to standing in is nothing to run from.
-    all.resetSlot(other, &random);
+    all.resetSlot(other, &mission.random);
     aigeneric.objectOrders(ctx, index);
     try std.testing.expectEqual(0, all.slots[index].object.order_count);
 }

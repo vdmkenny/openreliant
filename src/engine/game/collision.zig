@@ -434,37 +434,25 @@ fn hullHit(world: gameobj.World, ship: u16, hull: u16, pass: u8) bool {
 }
 
 const testing = struct {
-    const libcmt = @import("../libcmt.zig");
-    const input = @import("../input.zig");
-
-    /// A world of objects with no models, at rest.
-    fn world(all: *create.Objects, player: *input.Player, shake: *f32, random: *libcmt.Rand) gameobj.World {
-        return .{ .objects = all, .player = player, .view = .chase, .shake = shake, .random = random };
-    }
-
-    /// An object of `ship_type` at `at`, with a radius of its own and nothing flying it.
-    fn ship(all: *create.Objects, tables: *create.Stats, random: *libcmt.Rand, at: Vector, radius: f32) !u16 {
-        const index = try create.createObject(all, tables, create.testing.no_models, null, 0, at, random);
-        all.slots[index].object.radius = radius;
-        all.slots[index].motion = null;
+    /// An object at `at`, with a radius of its own and nothing flying it.
+    fn ship(mission: *gameobj.testing.Mission, at: Vector, radius: f32) !u16 {
+        const index = try mission.add(0, at);
+        mission.slot(index).object.radius = radius;
+        mission.slot(index).motion = null;
         return index;
     }
 };
 
 test collide {
-    const libcmt = @import("../libcmt.zig");
-    const input = @import("../input.zig");
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    var player: input.Player = .{};
-    var shake: f32 = 0;
-    const world = testing.world(all, &player, &shake, &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const world = mission.world();
 
     // Two ships of 1000 units, 400 apart: each ends 1100 from the point between them.
-    const near = try testing.ship(all, &tables, &random, .{ -200, 0, 0 }, 1000);
-    const far = try testing.ship(all, &tables, &random, .{ 200, 0, 0 }, 1000);
+    const near = try testing.ship(&mission, .{ -200, 0, 0 }, 1000);
+    const far = try testing.ship(&mission, .{ 200, 0, 0 }, 1000);
     try std.testing.expect(collide(world, near, far, 0));
     try std.testing.expectApproxEqAbs(-1100, all.slots[near].object.root.position.x, 0.01);
     try std.testing.expectApproxEqAbs(1100, all.slots[far].object.root.position.x, 0.01);
@@ -478,19 +466,15 @@ test collide {
 }
 
 test "a collision shoves both ships" {
-    const libcmt = @import("../libcmt.zig");
-    const input = @import("../input.zig");
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    var player: input.Player = .{};
-    var shake: f32 = 0;
-    const world = testing.world(all, &player, &shake, &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const world = mission.world();
 
     // Two ships of the same mass, the first flying into the second.
-    const near = try testing.ship(all, &tables, &random, .{ -900, 0, 0 }, 1000);
-    const far = try testing.ship(all, &tables, &random, .{ 900, 0, 0 }, 1000);
+    const near = try testing.ship(&mission, .{ -900, 0, 0 }, 1000);
+    const far = try testing.ship(&mission, .{ 900, 0, 0 }, 1000);
     for ([_]u16{ near, far }) |index| {
         all.slots[index].object.mass = 1000;
         all.slots[index].object.angular_response = math.identity;
@@ -521,26 +505,22 @@ test "a collision shoves both ships" {
 }
 
 test "a ship that meets a hull is shoved off the face it hit" {
-    const libcmt = @import("../libcmt.zig");
-    const input = @import("../input.zig");
     const gpa = std.testing.allocator;
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(gpa, &random);
-    defer all.destroy();
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(gpa);
+    defer mission.deinit();
+    const all = mission.objects;
     var model: create.testing.Model = undefined;
     try model.init(gpa);
     defer model.deinit(gpa);
     model.withHull();
-    var tables = create.testing.tables();
-    var player: input.Player = .{};
-    var shake: f32 = 0;
-    const world = testing.world(all, &player, &shake, &random);
+    const world = mission.world();
 
     // A hull of one square part, and a ship flying into its face.
     // The inverse inertia of a body of this mass, about 6 / (mass * size squared), which is what
     // `recentre` works out from a model's parts.
     const hull_turn: math.Matrix = @splat(0);
-    const hull = try create.createObject(all, &tables, model.types(), null, 0, @splat(0), &random);
+    const hull = try create.createObject(all, &mission.tables, model.types(), null, 0, @splat(0), &mission.random);
     all.slots[hull].object.flags.components = true;
     all.slots[hull].object.mass = 100000;
     all.slots[hull].object.angular_response = hull_turn;
@@ -549,7 +529,7 @@ test "a ship that meets a hull is shoved off the face it hit" {
     all.slots[hull].object.angular_response[8] = 6e-9;
     all.slots[hull].motion = null;
     // The ship meets the face off to one side, so the hit has a lever on the hull.
-    const ship = try create.createObject(all, &tables, create.testing.no_models, null, 0, .{ 60, 0, -60 }, &random);
+    const ship = try mission.add(0, .{ 60, 0, -60 });
     all.slots[ship].object.radius = 100;
     all.slots[ship].object.mass = 1000;
     all.slots[ship].object.angular_response = .{ 6e-7, 0, 0, 0, 6e-7, 0, 0, 0, 6e-7 };
@@ -576,16 +556,12 @@ test "a ship that meets a hull is shoved off the face it hit" {
 }
 
 test damage {
-    const libcmt = @import("../libcmt.zig");
-    const input = @import("../input.zig");
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    var player: input.Player = .{};
-    var shake: f32 = 0;
-    const world = testing.world(all, &player, &shake, &random);
-    const index = try testing.ship(all, &tables, &random, @splat(0), 1000);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const world = mission.world();
+    const index = try testing.ship(&mission, @splat(0), 1000);
     const object = &all.slots[index].object;
     object.shields = .{ 10, 10, 10, 10 };
     object.armor = .{ 20, 20, 20, 20 };
@@ -610,10 +586,10 @@ test damage {
 
     // Debris takes none, and neither does a ship that is jumping.
     const left = object.armor[2];
-    tables.combat[0].class = .debris;
+    mission.tables.combat[0].class = .debris;
     damage(world, index, .fore, 100, 1, 1, .collision);
     try std.testing.expectEqual(left, object.armor[2]);
-    tables.combat[0].class = .fighter;
+    mission.tables.combat[0].class = .fighter;
     object.flags.jumping = true;
     damage(world, index, .fore, 100, 1, 1, .collision);
     try std.testing.expectEqual(left, object.armor[2]);
@@ -631,23 +607,19 @@ test quadrant {
 }
 
 test componentDamage {
-    const libcmt = @import("../libcmt.zig");
-    const input = @import("../input.zig");
     const gpa = std.testing.allocator;
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(gpa, &random);
-    defer all.destroy();
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(gpa);
+    defer mission.deinit();
+    const all = mission.objects;
     var model: create.testing.Model = undefined;
     try model.init(gpa);
     defer model.deinit(gpa);
     model.data[0].part.flags.component = true;
     model.data[0].part.component_armor = 100;
-    var tables = create.testing.tables();
-    var player: input.Player = .{};
-    var shake: f32 = 0;
-    const world = testing.world(all, &player, &shake, &random);
+    const world = mission.world();
 
-    const index = try create.createObject(all, &tables, model.types(), null, 0, @splat(0), &random);
+    const index = try create.createObject(all, &mission.tables, model.types(), null, 0, @splat(0), &mission.random);
     const part = &all.slots[index].model.?.parts[0];
     try std.testing.expectEqual(100, part.armor);
 
@@ -675,36 +647,32 @@ test componentDamage {
 }
 
 test "what never collides" {
-    const libcmt = @import("../libcmt.zig");
-    const input = @import("../input.zig");
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    var player: input.Player = .{};
-    var shake: f32 = 0;
-    const world = testing.world(all, &player, &shake, &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const world = mission.world();
 
     // The test's stats make every type a fighter; two pieces of debris pass through each other.
-    const near = try testing.ship(all, &tables, &random, @splat(0), 1000);
-    const far = try testing.ship(all, &tables, &random, .{ 100, 0, 0 }, 1000);
-    tables.combat[0].class = .debris;
+    const near = try testing.ship(&mission, @splat(0), 1000);
+    const far = try testing.ship(&mission, .{ 100, 0, 0 }, 1000);
+    mission.tables.combat[0].class = .debris;
     try std.testing.expect(!collide(world, near, far, 0));
 
     // So do a torpedo and another object of its own type.
-    tables.combat[0].class = .torpedo;
+    mission.tables.combat[0].class = .torpedo;
     try std.testing.expect(!collide(world, near, far, 0));
 
     // A torpedo of another type goes off against it instead of pushing it.
-    tables.combat[1].class = .fighter;
+    mission.tables.combat[1].class = .fighter;
     all.slots[far].object.type = 1;
-    all.slots[far].combat = &tables.combat[1];
+    all.slots[far].combat = &mission.tables.combat[1];
     try std.testing.expect(collide(world, near, far, 0));
     try std.testing.expectEqual(0, all.slots[near].object.root.position.x);
 
     // An object that lists components is met by its parts, which aren't ported, so nothing comes
     // of it.
-    tables.combat[0].class = .fighter;
+    mission.tables.combat[0].class = .fighter;
     all.slots[far].object.flags.components = true;
     try std.testing.expect(!collide(world, near, far, 0));
     try std.testing.expectEqual(0, all.slots[near].object.root.position.x);

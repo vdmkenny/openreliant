@@ -592,29 +592,22 @@ const testing = struct {
     const ship_type: u32 = 7;
 
     const Ship = struct {
-        all: *create.Objects,
-        tables: create.Stats,
+        mission: gameobj.testing.Mission,
         model: create.testing.Model,
         muzzles: [2]shp.Attachment,
-        random: libcmt.Rand,
-        controls: input.Player,
-        shake: f32,
-        clock: Clock,
         index: u16,
 
         /// Fills in every field, so a field added here has to be filled in too.
         fn init(ship: *Ship, gpa: Allocator) !void {
             ship.* = .{
-                .all = try .create(gpa, &ship.random),
-                .tables = create.testing.tables(),
+                .mission = undefined,
                 .model = undefined,
                 .muzzles = @splat(std.mem.zeroes(shp.Attachment)),
-                .random = .{},
-                .controls = .{},
-                .shake = 0,
-                .clock = .{ .frame_start = 700, .mission_ticks = 700 },
                 .index = 0,
             };
+            try ship.mission.init(gpa);
+            errdefer ship.mission.deinit();
+            ship.mission.clock = .{ .frame_start = 700, .mission_ticks = 700 };
             try ship.model.init(gpa);
             for (&ship.muzzles, [_]f32{ -100, 100 }) |*muzzle, x| {
                 muzzle.kind = .gun_muzzle;
@@ -623,37 +616,44 @@ const testing = struct {
                 muzzle.orientation = math.identity;
             }
             ship.model.data[0].attachments = &ship.muzzles;
-            ship.all.gun_stats.types[gun_type.number()].shot_energy = 2;
-            ship.all.gun_stats.types[gun_type.number()].refire_interval = 20;
-            ship.all.gun_stats.types[gun_type.number()].speed = 500;
-            ship.all.gun_stats.types[gun_type.number()].lifetime = 100;
-            ship.all.gun_stats.types[gun_type.number()].damage = .{ 10, 4 };
-            ship.index = try create.createObject(ship.all, &ship.tables, ship.model.types(), null, ship_type, @splat(0), &ship.random);
+            const stats = &ship.mission.objects.gun_stats.types[gun_type.number()];
+            stats.shot_energy = 2;
+            stats.refire_interval = 20;
+            stats.speed = 500;
+            stats.lifetime = 100;
+            stats.damage = .{ 10, 4 };
+            ship.index = try ship.add(ship_type, @splat(0));
             // Its guns hold 100 and charge fully in four seconds, so a step gives them one.
-            ship.tables.combat[ship_type].gun_recharge = 4;
+            ship.mission.tables.combat[ship_type].gun_recharge = 4;
             ship.object().gun_charge = 50;
         }
 
         fn deinit(ship: *Ship, gpa: Allocator) void {
-            ship.all.destroy();
+            ship.mission.deinit();
             ship.model.deinit(gpa);
         }
 
+        /// An object of type `of` at `at`, of the same model.
+        fn add(ship: *Ship, of: u32, at: Vector) !u16 {
+            const mission = &ship.mission;
+            return create.createObject(mission.objects, &mission.tables, ship.model.types(), null, of, at, &mission.random);
+        }
+
         fn world(ship: *Ship) gameobj.World {
-            return .{ .objects = ship.all, .player = &ship.controls, .view = .chase, .shake = &ship.shake, .random = &ship.random };
+            return ship.mission.world();
         }
 
         fn object(ship: *Ship) *gameobj.GameObject {
-            return &ship.all.slots[ship.index].object;
+            return &ship.mission.objects.slots[ship.index].object;
         }
 
         fn guns(ship: *Ship) []Fitted {
-            return ship.all.slots[ship.index].guns;
+            return ship.mission.objects.slots[ship.index].guns;
         }
 
         /// Holds both guns' triggers for the frame.
         fn hold(ship: *Ship) void {
-            for (ship.guns()) |*gun| gun.firing_until = ship.clock.frame_start + 1;
+            for (ship.guns()) |*gun| gun.firing_until = ship.mission.clock.frame_start + 1;
         }
 
         /// Lets both guns fire again at once.
@@ -674,24 +674,24 @@ test step {
 
     // A step recharges the guns by the ship's energy over the seconds it takes, and no further
     // than full.
-    step(world, &ship.clock, ship.index);
+    step(world, &ship.mission.clock, ship.index);
     try std.testing.expectEqual(51, object.gun_charge);
     object.gun_charge = 100;
-    step(world, &ship.clock, ship.index);
+    step(world, &ship.mission.clock, ship.index);
     try std.testing.expectEqual(100, object.gun_charge);
 
     // With the trigger held both guns fire, each drawing its shot's energy, and neither fires
     // again until its interval has passed.
     object.gun_charge = 50;
     ship.hold();
-    step(world, &ship.clock, ship.index);
+    step(world, &ship.mission.clock, ship.index);
     try std.testing.expectEqual(47, object.gun_charge);
-    for (ship.guns()) |gun| try std.testing.expectEqual(ship.clock.frame_start + 20, gun.next_shot);
+    for (ship.guns()) |gun| try std.testing.expectEqual(ship.mission.clock.frame_start + 20, gun.next_shot);
     // Each shot left the muzzle.
     try std.testing.expectEqual(2, flying(world));
 
     // Held again before the interval has passed, nothing is drawn.
-    step(world, &ship.clock, ship.index);
+    step(world, &ship.mission.clock, ship.index);
     try std.testing.expectEqual(48, object.gun_charge);
     try std.testing.expectEqual(2, flying(world));
 
@@ -700,9 +700,9 @@ test step {
     object.gun_charge = 3;
     ship.hold();
     ship.ready();
-    step(world, &ship.clock, ship.index);
+    step(world, &ship.mission.clock, ship.index);
     try std.testing.expectEqual(4, object.gun_charge);
-    for (ship.guns()) |gun| try std.testing.expectEqual(ship.clock.frame_start + 20, gun.next_shot);
+    for (ship.guns()) |gun| try std.testing.expectEqual(ship.mission.clock.frame_start + 20, gun.next_shot);
     try std.testing.expectEqual(2, flying(world));
 
     // A gun that fires rounds takes one instead of the charge.
@@ -714,7 +714,7 @@ test step {
     for (ship.guns()) |*gun| gun.type = rounds;
     ship.hold();
     ship.ready();
-    step(world, &ship.clock, ship.index);
+    step(world, &ship.mission.clock, ship.index);
     try std.testing.expectEqual(0, object.rounds);
     try std.testing.expectEqual(51, object.gun_charge);
 
@@ -724,7 +724,7 @@ test step {
     object.flags.jumping = true;
     ship.hold();
     ship.ready();
-    step(world, &ship.clock, ship.index);
+    step(world, &ship.mission.clock, ship.index);
     try std.testing.expectEqual(51, object.gun_charge);
     for (ship.guns()) |gun| try std.testing.expectEqual(0, gun.next_shot);
 
@@ -734,11 +734,11 @@ test step {
     for (ship.guns()) |*gun| gun.firing_until = 0;
     object.gun_charge = 50;
     object.flags.components = true;
-    step(world, &ship.clock, ship.index);
+    step(world, &ship.mission.clock, ship.index);
     try std.testing.expectEqual(50, object.gun_charge);
     object.flags.components = false;
     object.nova_charge = 0.5;
-    step(world, &ship.clock, ship.index);
+    step(world, &ship.mission.clock, ship.index);
     try std.testing.expectEqual(50, object.gun_charge);
 }
 
@@ -762,7 +762,7 @@ test "a group's two guns fire in turn while the ship fires out of step" {
     ship.hold();
 
     // The ship's turn is the first gun's side, so only that gun fires, and the turn passes.
-    step(world, &ship.clock, ship.index);
+    step(world, &ship.mission.clock, ship.index);
     try std.testing.expectEqual(49, object.gun_charge);
     try std.testing.expectEqual(GroupSide.second, object.gun_turn);
 
@@ -770,7 +770,7 @@ test "a group's two guns fire in turn while the ship fires out of step" {
     object.gun_charge = 50;
     ship.hold();
     ship.ready();
-    step(world, &ship.clock, ship.index);
+    step(world, &ship.mission.clock, ship.index);
     try std.testing.expectEqual(49, object.gun_charge);
     try std.testing.expectEqual(GroupSide.first, object.gun_turn);
 }
@@ -782,8 +782,8 @@ test "a ship aiming blind fires more slowly" {
     defer ship.deinit(gpa);
     ship.object().blind_fire_aim = 1;
     ship.hold();
-    step(ship.world(), &ship.clock, ship.index);
-    for (ship.guns()) |gun| try std.testing.expectEqual(ship.clock.frame_start + 27, gun.next_shot);
+    step(ship.world(), &ship.mission.clock, ship.index);
+    for (ship.guns()) |gun| try std.testing.expectEqual(ship.mission.clock.frame_start + 27, gun.next_shot);
 }
 
 test fires {
@@ -795,9 +795,9 @@ test fires {
     const object = ship.object();
 
     // Guns in good condition always fire, and draw no number to decide it.
-    const before = ship.random;
+    const before = ship.mission.random;
     for (0..8) |_| try std.testing.expect(fires(world, object));
-    try std.testing.expectEqual(before, ship.random);
+    try std.testing.expectEqual(before, ship.mission.random);
 
     // Half wrecked guns fire some of the time.
     object.gun_condition = 0.5;
@@ -816,7 +816,7 @@ test heard {
     var gun = ship.guns()[0];
     gun.sounded = 2;
     // Every one of the player's shots is heard; another ship's only as its count comes round.
-    try std.testing.expect(heard(ship.world(), ship.all.player, gun));
+    try std.testing.expect(heard(ship.world(), ship.mission.objects.player, gun));
     try std.testing.expect(!heard(ship.world(), ship.index + 1, gun));
 }
 
@@ -1291,15 +1291,15 @@ test shoot {
     defer ship.deinit(gpa);
     const world = ship.world();
 
-    shoot(world, &ship.clock, ship.index, ship.guns()[0]);
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0]);
     try std.testing.expectEqual(1, flying(world));
     const bullet = &world.objects.bullets.pool[0];
     // It leaves the muzzle, a hundred to the left of the ship's nose, flying along that nose at
     // the type's speed, and lives for the type's ticks.
     try std.testing.expectEqual(@as(Vector, .{ -100, 0, 0 }), bullet.at);
     try std.testing.expectEqual(@as(Vector, .{ 0, 0, 500 }), bullet.velocity);
-    try std.testing.expectEqual(ship.clock.mission_ticks + 100, bullet.dies_at);
-    try std.testing.expectEqual(ship.clock.mission_ticks, bullet.fired_at);
+    try std.testing.expectEqual(ship.mission.clock.mission_ticks + 100, bullet.dies_at);
+    try std.testing.expectEqual(ship.mission.clock.mission_ticks, bullet.fired_at);
     try std.testing.expectEqual(ship.index, bullet.owner);
     // The record keeps the type less one, as the game does.
     try std.testing.expectEqual(testing.gun_type, bullet.kind);
@@ -1310,7 +1310,7 @@ test shoot {
 
     // Nothing is fired once every record is in flight.
     for (&world.objects.bullets.pool) |*record| record.live = true;
-    shoot(world, &ship.clock, ship.index, ship.guns()[0]);
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0]);
     try std.testing.expectEqual(max_bullets, flying(world));
 }
 
@@ -1322,20 +1322,20 @@ test bulletsFrame {
     const world = ship.world();
 
     // A ship of the same model, 500 ahead of the one that fires.
-    const target = try create.createObject(ship.all, &ship.tables, ship.model.types(), null, 9, .{ 0, 0, 500 }, &ship.random);
-    const slot = &ship.all.slots[target];
+    const target = try ship.add(9, .{ 0, 0, 500 });
+    const slot = &ship.mission.objects.slots[target];
     slot.drawn = .{ .position = .{ 0, 0, 500 }, .orientation = math.identity };
     const struck = &slot.object;
 
     // A shot whose path crosses the ship: its shields take the type's first damage, and it is
     // spent.
-    shoot(world, &ship.clock, ship.index, ship.guns()[0]);
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0]);
     const bullet = &world.objects.bullets.pool[0];
     try std.testing.expectEqual(1, bullet.candidate_count);
     try std.testing.expectEqual(target, bullet.candidates[0].object);
     bullet.last = .{ 0, 0, 0 };
     bullet.at = .{ 0, 0, 600 };
-    bulletsFrame(world, &ship.clock, 0);
+    bulletsFrame(world, &ship.mission.clock, 0);
     try std.testing.expectEqual(10, struck.recent_damage);
     try std.testing.expectEqual(0, flying(world));
 
@@ -1343,20 +1343,20 @@ test bulletsFrame {
     struck.shields = @splat(0);
     struck.recent_damage = 0;
     const armor = struck.armor;
-    shoot(world, &ship.clock, ship.index, ship.guns()[0]);
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0]);
     const next = &world.objects.bullets.pool[0];
     next.last = .{ 0, 0, 0 };
     next.at = .{ 0, 0, 600 };
-    bulletsFrame(world, &ship.clock, 0);
+    bulletsFrame(world, &ship.mission.clock, 0);
     try std.testing.expectEqual(4, struck.recent_damage);
     try std.testing.expect(@reduce(.Add, @as(@Vector(4, f32), armor)) > @reduce(.Add, @as(@Vector(4, f32), struck.armor)));
     try std.testing.expectEqual(0, flying(world));
 
     // A shot that reaches the end of its life is let go.
-    shoot(world, &ship.clock, ship.index, ship.guns()[0]);
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0]);
     try std.testing.expectEqual(1, flying(world));
-    ship.clock.frame_start += 1000;
-    bulletsFrame(world, &ship.clock, 0);
+    ship.mission.clock.frame_start += 1000;
+    bulletsFrame(world, &ship.mission.clock, 0);
     try std.testing.expectEqual(0, flying(world));
 }
 
@@ -1367,21 +1367,21 @@ test "the player's shifted shields take a hit before the quadrant does" {
     defer ship.deinit(gpa);
     const world = ship.world();
     // The ship that fires is the player's, so the target here is another slot shooting back.
-    const shooter = try create.createObject(ship.all, &ship.tables, ship.model.types(), null, 9, .{ 0, 0, 500 }, &ship.random);
-    const player = &ship.all.slots[ship.all.player];
+    const shooter = try ship.add(9, .{ 0, 0, 500 });
+    const player = &ship.mission.objects.slots[ship.mission.objects.player];
     player.drawn = .{ .position = @splat(0), .orientation = math.identity };
-    ship.controls.shield_reserves = .{ .fore = 25, .aft = 0 };
+    ship.mission.player.shield_reserves = .{ .fore = 25, .aft = 0 };
 
     // A shot into the player's fore quadrant comes off the reserve, and the shields are untouched.
-    shoot(world, &ship.clock, shooter, ship.all.slots[shooter].guns[0]);
+    shoot(world, &ship.mission.clock, shooter, ship.mission.objects.slots[shooter].guns[0]);
     const bullet = &world.objects.bullets.pool[0];
     bullet.last = .{ 0, 0, 500 };
     bullet.at = .{ 0, 0, -100 };
-    bullet.candidates[0] = .{ .object = ship.all.player };
+    bullet.candidates[0] = .{ .object = ship.mission.objects.player };
     bullet.candidate_count = 1;
     const shields = player.object.shields;
-    bulletsFrame(world, &ship.clock, 0);
-    try std.testing.expectEqual(15, ship.controls.shield_reserves.fore);
+    bulletsFrame(world, &ship.mission.clock, 0);
+    try std.testing.expectEqual(15, ship.mission.player.shield_reserves.fore);
     try std.testing.expectEqual(shields, player.object.shields);
 }
 
@@ -1393,18 +1393,18 @@ test "only the latest two shots of a ring cast a light" {
     const world = ship.world();
     const bullets = &world.objects.bullets;
     // The player's ship is the first slot, and a hostile ship fires too.
-    const other = try create.createObject(ship.all, &ship.tables, ship.model.types(), null, 9, .{ 0, 0, 5000 }, &ship.random);
-    ship.all.slots[other].object.side = .hostile;
+    const other = try ship.add(9, .{ 0, 0, 5000 });
+    ship.mission.objects.slots[other].object.side = .hostile;
 
     // The player's third shot puts out the first one's light.
-    for (0..3) |_| shoot(world, &ship.clock, ship.index, ship.guns()[0]);
+    for (0..3) |_| shoot(world, &ship.mission.clock, ship.index, ship.guns()[0]);
     try std.testing.expectEqual(null, bullets.pool[0].light);
     try std.testing.expect(bullets.pool[1].light != null);
     try std.testing.expect(bullets.pool[2].light != null);
     try std.testing.expectEqual(shot_light, bullets.pool[2].light.?.colour);
 
     // Another ship's shots keep a ring of their own, and a hostile ship's are orange.
-    shoot(world, &ship.clock, other, ship.all.slots[other].guns[0]);
+    shoot(world, &ship.mission.clock, other, ship.mission.objects.slots[other].guns[0]);
     try std.testing.expectEqual(hostile_shot_light, bullets.pool[3].light.?.colour);
     try std.testing.expect(bullets.pool[1].light != null);
 
@@ -1422,7 +1422,7 @@ test "every shot casts a light where the port lets them" {
     defer ship.deinit(gpa);
     const world = ship.world();
     world.objects.bullets.shot_lights = .every_shot;
-    for (0..3) |_| shoot(world, &ship.clock, ship.index, ship.guns()[0]);
+    for (0..3) |_| shoot(world, &ship.mission.clock, ship.index, ship.guns()[0]);
     for (world.objects.bullets.pool[0..3]) |bullet| try std.testing.expect(bullet.light != null);
     // The rings are left alone.
     try std.testing.expectEqual(null, world.objects.bullets.player_lights.held[0]);
@@ -1445,16 +1445,16 @@ test "a Turret Flak shot bursts at a random range, scatters, and is at times a l
     var flak: usize = 0;
     var lasers: usize = 0;
     for (0..40) |_| {
-        shoot(world, &ship.clock, ship.index, gun);
+        shoot(world, &ship.mission.clock, ship.index, gun);
         const bullet = &world.objects.bullets.pool[0];
         if (bullet.kind == .turret_lasers) {
             // A laser's shot flies straight, for its type's whole life.
             lasers += 1;
             try std.testing.expectEqual(@as(Vector, .{ 0, 0, 500 }), bullet.velocity);
-            try std.testing.expectEqual(ship.clock.mission_ticks + 100, bullet.dies_at);
+            try std.testing.expectEqual(ship.mission.clock.mission_ticks + 100, bullet.dies_at);
         } else {
             flak += 1;
-            const life = bullet.dies_at - ship.clock.mission_ticks;
+            const life = bullet.dies_at - ship.mission.clock.mission_ticks;
             try std.testing.expect(life >= 20 and life <= 100);
             try std.testing.expect(!@reduce(.And, bullet.velocity == @as(Vector, .{ 0, 0, 500 })));
             try std.testing.expectApproxEqAbs(500, math.length(bullet.velocity), 0.01);
@@ -1475,16 +1475,16 @@ test "a Huge Gun's shot reaches farther, and always through the shields" {
     gun.type = .coalition_huge_gun;
 
     // A ship off to the side of the shot's path by more than its radius, but within 3000.
-    const target = try create.createObject(ship.all, &ship.tables, ship.model.types(), null, 9, .{ 1500, 0, 500 }, &ship.random);
-    const slot = &ship.all.slots[target];
+    const target = try ship.add(9, .{ 1500, 0, 500 });
+    const slot = &ship.mission.objects.slots[target];
     slot.drawn = .{ .position = .{ 1500, 0, 500 }, .orientation = math.identity };
     slot.object.shields = @splat(0);
-    shoot(world, &ship.clock, ship.index, gun);
+    shoot(world, &ship.mission.clock, ship.index, gun);
     const bullet = &world.objects.bullets.pool[0];
     try std.testing.expectEqual(1, bullet.candidate_count);
     bullet.last = .{ 0, 0, 0 };
     bullet.at = .{ 0, 0, 1000 };
-    bulletsFrame(world, &ship.clock, 0);
+    bulletsFrame(world, &ship.mission.clock, 0);
     // It struck the ship with its shields down and still took the shield's way: the first damage,
     // then the share of it that passes to the armour. A hull hit would have counted the second
     // damage alone, 4.

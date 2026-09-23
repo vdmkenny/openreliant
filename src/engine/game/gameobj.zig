@@ -1094,6 +1094,62 @@ pub const testing = struct {
         made.engines_intact = 1;
         return made;
     }
+
+    /// A mission with nothing in it but what a test puts there: objects with no models, the stats
+    /// they are made from, and what their world points at. It stays where `init` fills it in, as
+    /// the world points into it.
+    pub const Mission = struct {
+        random: libcmt.Rand,
+        objects: *create.Objects,
+        tables: create.Stats,
+        player: input.Player,
+        shake: f32,
+        clock: Clock,
+        view: camera.View,
+
+        /// Fills in every field, so a field added here has to be filled in too.
+        pub fn init(mission: *Mission, gpa: std.mem.Allocator) !void {
+            mission.* = .{
+                .random = .{},
+                .objects = undefined,
+                .tables = create.testing.tables(),
+                .player = .{},
+                .shake = 0,
+                .clock = .{},
+                .view = .chase,
+            };
+            mission.objects = try .create(gpa, &mission.random);
+        }
+
+        pub fn deinit(mission: *Mission) void {
+            mission.objects.destroy();
+        }
+
+        pub fn world(mission: *Mission) World {
+            return .{ .objects = mission.objects, .player = &mission.player, .view = mission.view, .shake = &mission.shake, .random = &mission.random };
+        }
+
+        /// What the objects' orders run against.
+        pub fn orders(mission: *Mission) aigeneric.Context {
+            return .{ .world = mission.world(), .clock = &mission.clock };
+        }
+
+        /// An object of `ship_type` at `at`, in the next slot.
+        pub fn add(mission: *Mission, ship_type: u32, at: Vector) !u16 {
+            return create.createObject(mission.objects, &mission.tables, create.testing.no_models, null, ship_type, at, &mission.random);
+        }
+
+        /// A ship that is nobody's, at `at`, which takes the orders the player's refuses: the
+        /// player holds the first slot, so the ship comes after it.
+        pub fn addOther(mission: *Mission, at: Vector) !u16 {
+            if (mission.objects.count == 0) _ = try mission.add(0, @splat(0));
+            return mission.add(0, at);
+        }
+
+        pub fn slot(mission: *Mission, index: u16) *create.Slot {
+            return &mission.objects.slots[index];
+        }
+    };
 };
 
 test "a knock pushes and turns an object" {
@@ -1174,26 +1230,22 @@ test rechargeShields {
 
 test "a step updates and moves every live object" {
     const gpa = std.testing.allocator;
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(gpa, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    const player = try create.createObject(all, &tables, create.testing.no_models, null, 0, @splat(0), &random);
-    const other = try create.createObject(all, &tables, create.testing.no_models, null, 0x2B, .{ 0, 0, 1000 }, &random);
-    const off = try create.createObject(all, &tables, create.testing.no_models, null, 0x2B, .{ 0, 0, 2000 }, &random);
+    var mission: testing.Mission = undefined;
+    try mission.init(gpa);
+    defer mission.deinit();
+    const all = mission.objects;
+    const player = try mission.add(0, @splat(0));
+    const other = try mission.add(0x2B, .{ 0, 0, 1000 });
+    const off = try mission.add(0x2B, .{ 0, 0, 2000 });
     all.slots[other].object.throttle = 1;
     all.slots[off].object.throttle = 1;
     all.slots[off].object.flags.disabled = true;
     // Its shields down, the player's recharge.
     all.slots[player].object.shields = @splat(0);
-    var controls: input.Player = .{};
     var devices: input.Devices = .{};
-    var shake: f32 = 0;
-    var clock: Clock = .{};
-    const world: World = .{ .objects = all, .player = &controls, .view = .chase, .shake = &shake, .random = &random };
     var steps: usize = 0;
     for (0..ticks_per_step * 10) |_| {
-        if (gameTick(&clock, &devices, world)) steps += 1;
+        if (gameTick(&mission.clock, &devices, mission.world())) steps += 1;
     }
     try std.testing.expectEqual(10, steps);
     // The other ship has flown on along its nose, its committed place a step behind.

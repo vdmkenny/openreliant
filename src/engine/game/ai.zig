@@ -15,7 +15,6 @@ const math = @import("../surrender/math.zig");
 const Vector = math.Vector;
 const motion = @import("motion.zig");
 const aigeneric = @import("aigeneric.zig");
-const libcmt = @import("../libcmt.zig");
 const GameObject = gameobj.GameObject;
 
 pub const orders = @import("ai/orders.zig");
@@ -330,11 +329,11 @@ comptime {
 }
 
 test steer {
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    const index = try create.createObject(all, &tables, create.testing.no_models, null, 0, @splat(0), &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const index = try mission.add(0, @splat(0));
     const slot = &all.slots[index];
 
     // Dead ahead, nothing turns.
@@ -367,11 +366,11 @@ test steer {
 }
 
 test "a ship steered at a point comes round to face it" {
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    const index = try create.createObject(all, &tables, create.testing.no_models, null, 0, @splat(0), &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const index = try mission.add(0, @splat(0));
     const slot = &all.slots[index];
     const at: Vector = .{ 20000, 6000, 10000 };
 
@@ -396,11 +395,11 @@ test "a ship steered at a point comes round to face it" {
 }
 
 test "a slow frame halves the small turns" {
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    const index = try create.createObject(all, &tables, create.testing.no_models, null, 0, @splat(0), &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const index = try mission.add(0, @splat(0));
     const slot = &all.slots[index];
 
     _ = steer(slot, .{ 200, 0, 4000 }, 1, 0, .{}, slow_frame);
