@@ -5,8 +5,9 @@ display and the text. Its code lies between `hog_SND.CPP`'s and `hudmovie.cpp`'s
 only `hud_init` asserts, so the source map places that stretch alone.
 
 The port draws the readouts, the clock, the status lights with the devices' charges, the jump
-prompt, the player's target, the eject marker, the scanner, the ship status indicator's schematic
-and shields, the targeting cluster, the radar's rings and the windows' frames
+prompt, the player's target, the eject marker, the scanner, the ship status indicator, the
+targeting cluster, the radar's rings, the windows' frames and what the power distribution and the
+target display show
 ([`engine/game/hud.zig`](../../src/engine/game/hud.zig),
 [`engine/game/hud/windows.zig`](../../src/engine/game/hud/windows.zig)), reaching them as the
 engine does, through the overlay `srcore.render` runs after a frame's layers and before the scene
@@ -24,10 +25,10 @@ been found. An element whose code is not found yet is marked so.
 | Directional calipers | the display's edges | | the direction and range of a target out of sight | `hud_target`: a marker where a line toward the target leaves the screen, with the range ([The target](#the-target)) |
 | Missile lock ring | round the target | | a ring that closes in round the target and turns white once a missile has locked, with a tone | `hud_missile_lock` (`0x00491520`), whose count dims the target's brackets as a lock builds. Not ported ([#39](https://github.com/vdmkenny/openreliant/issues/39)) |
 | Jump icon | above the middle | J | the prompt to press JUMP DRIVE, once the mission has a jump ready | [The jump prompt](#the-jump-prompt-the-eject-marker-and-the-scanner) |
-| Target display | foot, right | | the target's image with its shields and armour in a ring, its name, its type, its range and its speed; a larger form for a big target, with its current subtarget and a bar for each | [Windows](#the-windows) 3 and 8. Window 3, the small form, draws `hud_ship_status` in its second mode for the target, its range and its speed; window 8 the target's own picture, its name, its subtarget, its range and its speed. Their frames are ported; what they show is not |
+| Target display | foot, right | | the target's image with its shields and armour in a ring, its name, its type, its range and its speed; a larger form for a big target, with its current subtarget and a bar for each | [Windows](#the-windows) 3 and 8, [The target display](#the-target-display) |
 | Subtarget | on the target's model | S, SHIFT+S | the parts of the subtarget picked out in red | `hud_subtarget` (`0x0048CC30`), which walks the target's assembly by `link_id` |
 | Radar | foot, middle | V | three rings with the ship at their middle and a wedge for its view ahead; each object a dot, red for hostile, green for friendly, blue for one calling on the radio, on a line up or down from the rings by its height. V narrows and widens its range, the middle ring filling the display at the narrowest | `hud_radar` (`0x00488BD0`), [The radar](#the-radar). The rings and V's ranges are ported; the dots are not |
-| Ship status | foot, left of middle | always shown | the ship's image in two rings of segments, forward, aft and the two sides: shields outside, armour inside. A shield dims as it wears; an armour segment goes as it is lost. Shifting power fore or aft doubles the shields there | `hud_ship_status` (`0x00489350`). For the player's own ship, what [SHIELD BALANCING](controls.md#the-shield-balance) shifted beyond the fore and aft shields shows as a second arc outside each: shapes `0xB2` less the level at `(-0x1A, -0x24)` from the point for the fore reserve, and `0xB7` less the level at `(-0x26, 0x1D)` for the aft one, the level worked out as for a shield. The schematic, the shields and the shifted shields are ported; the armour, which follows at `0x00489957`, is not ([#103](https://github.com/vdmkenny/openreliant/issues/103)) |
+| Ship status | foot, left of middle | always shown | the ship's image in two rings of segments, forward, aft and the two sides: shields outside, armour inside. A shield dims as it wears; an armour segment goes as it is lost. Shifting power fore or aft doubles the shields there | `hud_ship_status` (`0x00489350`). For the player's own ship, what [SHIELD BALANCING](controls.md#the-shield-balance) shifted beyond the fore and aft shields shows as a second arc outside each: shapes `0xB2` less the level at `(-0x1A, -0x24)` from the point for the fore reserve, and `0xB7` less the level at `(-0x26, 0x1D)` for the aft one, the level worked out as for a shield. [The ship status indicator](#the-ship-status-indicator) |
 | Missile display | top, middle | M | the missile's name, the ship's missiles in a ring, how many of the chosen one are left, and the one armed at six o'clock. Comma and full stop turn the ring | [Window](#the-windows) 2: the ring from the table at `0x00501CC8`, ten entries of five halfwords. The frame is ported; what it shows is not |
 | Mission objectives | right | B | the mission's goals, the current one first; B pages through them | [Window](#the-windows) 10: the mission's objectives from the table at `0x00504120`, ten a mission. The frame is ported; what it shows is not |
 | Gunnery display | foot, left | G | the gun's name, the ship as a wire frame with the gun lit, the rounds left for a gun that fires them, and whether the guns fire together or in turn. G picks the next gun, F fires them all, CTRL and G switches the two ways of firing them all | [Window](#the-windows) 1: the ship's wire frame is the shape `0x005883C0` names. The frame is ported; what it shows is not |
@@ -103,6 +104,10 @@ first seventeen entries as levels of coverage, `FONT.FNT` and `ITACSML.FNT` amon
 with no palette, as `SMLFONT.FNT`, draws with VFX's global palette, which `hud_draw` makes of the
 display's set: its glyphs are all index `0xF7`, a pale tan there.
 
+Every line of the display's own text is in `blufont.fnt` (`0x00595490`), orange despite its
+name, which `0x004A2AF0` opens for the hardware renderers (`soft_blufont.fnt` for the software
+one). The target's ranges are the exception ([The target](#the-target)).
+
 `hud_text` hands `VFX_string_draw` a remap table as well, 256 bytes that the glyph's bytes go
 through. `0x004A2AF0` builds them once, with the fonts it opens: most are each index itself, but
 index 0, which is `0xFF`, and a few change an index or a range of them.
@@ -169,7 +174,7 @@ the shape. All three stand half of the way across, at offsets of `0x39`, `0x5F` 
 | Offset | Shape | Number | Shows |
 | --- | --- | --- | --- |
 | `0x39` | `0xCD`, a ship with its engines burning | `0x10` right | the seconds of afterburner fuel left: `afterburner_fuel`, which is in hundredths, over 100 |
-| `0x5F` | `0xD0`, a skull and crossbones, drawn 4 left | `0x0B` right | `skull_count` (`0x00562DF4`), one of a run of tallies at `0x562DEC` to `0x562DF8` that a mission's start zeroes together and that is kept across a run. **Unknown** what it counts; it reads 0 in a fresh mission, and the game binds a DISPLAY KILLS key |
+| `0x5F` | `0xD0`, a skull and crossbones, drawn 4 left | `0x0B` right | `skull_count` (`0x00562DF4`), the player's kills, which `kills_add` (`0x004B14F0`) counts as `explode_kill_credit` credits a kill. It is one of a run of tallies at `0x562DEC` to `0x562DF8` that a mission's start zeroes together and that is kept across a run. Not counted in the port yet ([#187](https://github.com/vdmkenny/openreliant/issues/187)) |
 | `0x98` | `0xCF`, a coil, drawn `0x1A` left | 9 left | the object's countermeasures left (`+0x5EC`), 29 when it is created, which `object_spend_countermeasure` (`0x00462550`) takes one at a time. It is drawn unless `ShowHudIcon` flashes icon 3 and the flash is dark |
 
 The port draws all three ([`engine/game/hud.zig`](../../src/engine/game/hud.zig)).
@@ -321,6 +326,77 @@ names; the pointer to the nav point; the players' names over their ships in a mu
 and what `hud_target_keys` does while the radio's window is open, or while `0x00529FB8` is set,
 which leaves out every key after the search under the reticle. The display's sounds for the keys
 are [#101](https://github.com/vdmkenny/openreliant/issues/101).
+
+## The ship status indicator
+
+`hud_ship_status` (`0x00489350`) draws a ship's schematic, its type's own sprite's first shape
+(`type_data`), with the quadrants hits have worn flashing on it, and round it the ship's shields and
+armour as two rings of four arcs, the shields outside. Each arc is five shapes, drawn by its level:
+the shields' `0x99` to `0xAC`, the armour's `0x85` to `0x98`. A level is the quadrant's shield over
+the ship's `shield_power`, or its armour over its `armor_class`, cut down to a whole number, less
+one; an arc of 0 or less is left out. An invulnerable ship's armour levels are each
+`(2 * level + 6) / 3`, which leaves at least two arcs of it. A comms relay and a deathmatch beacon
+have no rings.
+
+`object_armor_damage` marks the quadrant each hit on the armour wears: `ship_status_hits`
+(`0x00563160`) for the player's own ship, `target_status_hits` (`0x005635D4`) for the target of its
+current order. The indicator draws a marked quadrant once, as shape 1 to 4 of the schematic, and
+clears the mark.
+
+| Mode | Draws | From |
+| --- | --- | --- |
+| 0 | the player's own ship: the schematic; the hits, for a type of the target display's small form; the shields, what [SHIELD BALANCING](controls.md#the-shield-balance) shifted beyond the fore and aft shields (shapes `0xB2` and `0xB7` less the level, at `(-0x1A, -0x24)` and `(-0x26, 0x1D)`), then the armour | 0.3 of the way across the screen, at the foot, 2 right and 44 up; the schematic and the hits at `(-0x22, -0x1B)` from there |
+| 1 | the target, in the target display's small form: for a type of the small form, the schematic and the hits, mirrored across unless the type is hostile, where a comms relay or a deathmatch beacon leaves out the hits; the shields and the armour mirrored across, the left arcs the player's right ones and on the left | `(-4, -0x2C)` from window 3's place; the schematic at `(-0x1C, -0x1A)` and the hits at `(-0x1E, -0x1B)` from there |
+
+In mode 1 a stand-in target closes window 3. **Not ported:** in mission 25, a Kamov's schematic
+drawn mirrored in mode 0.
+
+## The target display
+
+Windows 3 and 8 are the target display's small and large forms (`hud_window_draw`'s cases for
+them, at `0x00487B72` and `0x004875C0`), which a change of target brings up
+([The target](#the-target)). Each draws nothing but its frame while there is no target to draw.
+All of their text is in the display's font.
+
+| Form | Draws, from the window's place |
+| --- | --- |
+| Small, window 3 | the target's ship status, mode 1, at `(-4, -0x2C)`; its type's name at `(0x37, -0x43)`; its pilot's name, for a named pilot, at `(0x37, -0x37)`; its range, `%dk`, at `(0x37, -0x2B)`; its speed, `%d kps`, at `(0x37, -0x1F)`; all left-aligned. A cloaked hostile target closes it |
+| Large, window 8 | the type's own picture, its sprite's first shape, at `(-0xD0, -0x80)`; its name, right-aligned at `(-2, -0x9D)`; the subtarget; the hull's bar; the range and the speed, right-aligned at `(-3, -0x1D)` and `(-3, -0x11)` |
+
+The large form's subtarget is the component the player's current order names, for any type but
+a proximity mine or a black box, where the target lists it and its part's class has an icon: the
+class's name at `(-0x78, -0x33)`, its icon at `(-0xBA, -0x34)`, and for a part with armour a bar,
+shape `0xDE` at `(-0xC6, -0x32)`, darkened from the top by shape `0xDB` over as many of its 38 rows
+as the part's armour has lost of its first, rounded.
+
+| Class | Icon | Name |
+| --- | --- | --- |
+| 3, 9 | `0x18C` | Laser Turret |
+| 5 | `0x18A` | Engine |
+| 6 | `0x192` | Shield Generator |
+| 7 | `0x189` | Comms Transmitter |
+| 8 | `0x18B` | Gravity Drive |
+| 10 | `0x18D` | Missile Turret |
+| 11 | `0x18E` | Power Core |
+| 12 to 14 | `0x18F` to `0x191` | Satellite Dish, Service Door, Shaft |
+| 15 to 22 | `0x193` to `0x19A` | Surface Building, Twin Power Cores, Vent Hatch, Ion Cannon, Armored Plate, Cap Gun, Warp Projector, Fuel Pod |
+
+The hull's bar, shape `0xDC` with its top at `(-6, -0x7E)`, 98 rows, is lit from the foot as far as
+the first part hanging from the ship's root that is hull and has armour keeps its armour; for a
+torpedo, as far as its weakest armour quadrant is from six times its armour class. Shape `0xDB`
+darkens the rest from the top, its pane's top row `-0x75`, or `-0x78` for a torpedo. Each bar is
+cut to a pane four pixels wide (`hud_bar_pane`, `0x0057BDFC`). A ship with neither has no bar.
+
+As a form closes, `hud_window_close` draws what it shows once more into `hud_window_picture`
+(`0x00566600`), for the target and subtarget it last drew (`hud_display_target`, `0x0057BF40`, and
+`hud_display_component`, `0x0056992C`), and the window closes with that.
+
+**Improvement:** the game keeps one picture for both forms and draws it as the form starts closing,
+with the display's new target for the range, the name and the rest. The port keeps what each form
+last showed and closes it with that.
+
+**Not ported:** the pilot's name, which a mission gives (`GameObject.pilot_record`); the display's
+interference; and in a multiplayer game the players' names and one more line of the small form.
 
 ## The radar
 
@@ -624,13 +700,11 @@ the instruments and the windows.
 
 ## What is not known yet
 
-- What the skull readout counts. Its shape, its place and the tally it reads are known; the tally
-  has no name.
 - What sets byte `0x2F` of a fight state, which lights the enemy lock warning.
 - The names of the display's elements, which `hud_init` copies from `0x00515D70`.
 - What windows 5, 6, 9, 12 and 14 are for, which no key opens and a mission's script may, and
   what window 14 shows.
-- What the rest of `hud_draw` draws: the target display and the armour.
+- What the rest of `hud_draw` draws: what the other windows show.
 - Why blind fire leaves the Nova Cannon alone.
 - What sets `0x0057BF34`, whose string view `0xD` shows, and `0x00529FB8`, which shows a line at
   the foot in every view.

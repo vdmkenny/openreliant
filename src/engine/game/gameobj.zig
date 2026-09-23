@@ -202,7 +202,11 @@ pub const Type = enum(u32) {
     russian_torpedo = 0x5C,
     /// The proximity mine (`mine_prox.shp`).
     proximity_mine = 0x6F,
+    /// A black box (`black_box.shp`).
+    black_box = 0x70,
     satellite = 0x71,
+    /// A deathmatch beacon (`DMBeacon.shp`).
+    dm_beacon = 0x8E,
     /// Another escape pod (`ber_escape.shp`).
     other_escape_pod = 0x90,
     /// The Turret Flak's shell (`shell.shp`).
@@ -211,6 +215,8 @@ pub const Type = enum(u32) {
     rock_chunk = 0xB2,
     /// The limpet pod, which rides on a hull.
     limpet_pod = 0xBC,
+    /// A comms relay (`comms relay.shp`).
+    comms_relay = 0xD7,
     /// Escape pods again, of the same models as `escape_pod` and `other_escape_pod`.
     late_escape_pod = 0xDF,
     other_late_escape_pod = 0xE0,
@@ -245,6 +251,9 @@ pub const Type = enum(u32) {
             .{ .torpedo, "torpedo.shp" },
             .{ .russian_torpedo, "rus_torp.shp" },
             .{ .proximity_mine, "mine_prox.shp" },
+            .{ .black_box, "black_box.shp" },
+            .{ .dm_beacon, "DMBeacon.shp" },
+            .{ .comms_relay, "comms relay.shp" },
             .{ .satellite, "stork_sat.shp" },
             .{ .escape_pod, "uly_escape.shp" },
             .{ .other_escape_pod, "ber_escape.shp" },

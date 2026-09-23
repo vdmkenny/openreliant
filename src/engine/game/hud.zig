@@ -5,10 +5,11 @@
 //! Ported so far: `hud_draw`'s order (`draw`), where an element stands, its text, the readouts,
 //! the clock, the status lights with the devices' charges, the jump prompt, the player's target
 //! with the keys that pick it (`targetKeys`, `drawTarget`), the eject marker, the scanner, the
-//! ship status indicator's shields, the targeting cluster, the radar's rings and ranges, the
-//! windows, their frames and how they open and close ([`hud/windows.zig`](hud/windows.zig)), and
-//! what window 7, the power distribution, shows ([`hud/power.zig`](hud/power.zig)). Not yet: the
-//! rest of `hud_draw`, whose other elements [`hud.md`](../../../docs/engine/hud.md) lists, and
+//! ship status indicator in both its modes, the targeting cluster, the radar's rings and ranges,
+//! the windows, their frames and how they open and close ([`hud/windows.zig`](hud/windows.zig)),
+//! and what window 7, the power distribution ([`hud/power.zig`](hud/power.zig)), and windows 3
+//! and 8, the target display ([`hud/target_display.zig`](hud/target_display.zig)), show. Not yet:
+//! the rest of `hud_draw`, whose other elements [`hud.md`](../../../docs/engine/hud.md) lists, and
 //! what the other windows show.
 //!
 //! **Improvement.** The game draws the display with the processor, whichever renderer is running:
@@ -45,15 +46,18 @@ const xtrabits = @import("xtrabits.zig");
 const guns = @import("guns.zig");
 const objects = @import("objects.zig");
 const libcmt = @import("../libcmt.zig");
+const collision = @import("collision.zig");
 const Clock = @import("main.zig").Clock;
 const Vector = math.Vector;
 
 pub const windows = @import("hud/windows.zig");
 pub const power = @import("hud/power.zig");
+pub const target_display = @import("hud/target_display.zig");
 
 test {
     _ = windows;
     _ = power;
+    _ = target_display;
 }
 
 /// What `hud_place` takes off the screen's size before working a place out, and what it adds back
@@ -112,7 +116,7 @@ pub fn gridPlace(screen: [2]u32, index: i32, scale: f32) [2]i32 {
 }
 
 /// A float turned into an integer as `sr_round` (`0x004C3330`) does.
-const round = math.round;
+pub const round = math.round;
 
 /// A point of the screen in pixels, unrounded.
 pub const Point = @Vector(2, f32);
@@ -608,15 +612,17 @@ test drawText {
 /// What `hud_init` loads for the display to draw with.
 pub const Resources = struct {
     art: Art,
-    /// `font.fnt`, which the readouts, the clock, the cluster's figures and the windows are
-    /// written in.
+    /// `blufont.fnt` (`0x00595490`), which every line of the display's own text is written in:
+    /// the readouts, the clock, the cluster's figures, the view's name and the windows. `0x004A2AF0`
+    /// opens it for the hardware renderers, and `soft_blufont.fnt`, the same letters, for the
+    /// software one; the port draws the hardware display.
     font: Opened,
     /// The fonts the target's ranges are written in.
     target_fonts: TargetFonts,
     /// The power ball's tables, and the image it is drawn into.
     ball: *power.Ball,
 
-    pub const font_name = "FONT.FNT";
+    pub const font_name = "BLUFONT.FNT";
 
     /// Loads what the display draws with from the resources' archive: `shapes`, the display's
     /// set, with its global palette; the fonts, which `0x004A2AF0` opens; and the power ball,
@@ -665,10 +671,9 @@ pub const Frame = struct {
     random: *libcmt.Rand,
     /// What the mission has ready for JUMP DRIVE.
     ready: *Readiness,
-    /// The player's ship's schematic, where its type has one.
-    schematic: ?Schematic,
-    /// The tally the skull readout shows (`0x00562DF4`), which the front end sets.
-    tally: i32 = 0,
+    /// The player's kills, which the skull readout shows (`skull_count`, `0x00562DF4`). Nothing
+    /// counts them yet ([#187](https://github.com/vdmkenny/openreliant/issues/187)).
+    kills: i32 = 0,
     /// Whether the `Scanner` command has the player look for an object.
     scanning: bool = false,
     edge_line: EdgeLine,
@@ -706,14 +711,17 @@ pub fn draw(state: *State, resources: *Resources, frame: Frame) (spr.Error || Al
     }
     try drawViewName(&resources.font, frame.gpa, frame.target, frame.screen, frame.last_view, frame.strings.*, colour, scale);
     if (ahead) try state.drawInstruments(resources, frame, lead, colour, scale);
-    const contents: windows.Contents = .{ .power = .{
-        .ball = resources.ball,
-        .object = live,
-        .hit_shake = frame.hit_shake,
-        .random = frame.random,
-        .font = &resources.font,
-        .strings = frame.strings,
-    } };
+    const contents: windows.Contents = .{
+        .power = .{
+            .ball = resources.ball,
+            .object = live,
+            .hit_shake = frame.hit_shake,
+            .random = frame.random,
+            .font = &resources.font,
+            .strings = frame.strings,
+        },
+        .target_display = .{ .state = state, .all = frame.all, .strings = frame.strings, .font = &resources.font },
+    };
     try state.windows.frame(art, frame.gpa, frame.target, frame.screen, frame.last_view, frame_duration, contents, colour, scale);
 }
 
@@ -749,8 +757,8 @@ pub const Readout = enum {
     /// The seconds of afterburner fuel left, `afterburner_fuel` being in hundredths, under a ship
     /// with its engines burning.
     fuel,
-    /// **Unknown** what it counts: the word at `0x00562DF4`, which the front end sets, under a
-    /// skull and crossbones.
+    /// The player's kills, `skull_count` (`0x00562DF4`), which `kills_add` counts, under a skull
+    /// and crossbones.
     skull,
     /// The countermeasures left, the object's `countermeasures`, under a coil. `ShowHudIcon` can
     /// flash it (`State.shows`).
@@ -1215,6 +1223,13 @@ pub const State = struct {
     /// The object the display draws as the target (`0x00569940`): the shown one, while the player
     /// can aim at it.
     target: ?u16 = null,
+    /// What each form of the target display last showed, which it closes with.
+    target_pictures: target_display.Pictures = .{},
+    /// The quadrants of the player's ship, and of its target, whose armour hits have worn since
+    /// the ship status indicator last drew each (`ship_status_hits`, `0x00563160`, and
+    /// `target_status_hits`, `0x005635D4`).
+    ship_hits: Hits = .initEmpty(),
+    target_hits: Hits = .initEmpty(),
     /// The object that stood under the reticle as the targeting keys were last read
     /// (`0x00566664`), which TARGET UNDER RETICULE takes.
     under_reticle: ?u16 = null,
@@ -1432,13 +1447,13 @@ pub const State = struct {
             if (!state.shows(readout, frame_duration)) continue;
             const value: i32 = switch (readout) {
                 .fuel => @divTrunc(live.afterburner_fuel, 100),
-                .skull => frame.tally,
+                .skull => frame.kills,
                 .coil => live.countermeasures,
             };
             try readout.draw(art, &resources.font, frame.gpa, frame.target, frame.screen, value, colour, scale);
         }
-        if (frame.schematic) |schematic| try ShipStatus.drawSchematic(schematic.art, schematic.gpa, frame.target, frame.screen, colour, scale);
-        try ShipStatus.draw(art, frame.gpa, frame.target, frame.screen, live.shields, combat.shield_power, frame.player.shield_reserves, colour, scale);
+        const status = ShipStatus.ofPlayer(slot, &state.ship_hits, frame.player.shield_reserves);
+        try ShipStatus.draw(status, .player, art, frame.gpa, frame.target, place(frame.screen, ShipStatus.offset, ShipStatus.across, ShipStatus.down, scale), scale, null, colour);
         try drawCluster(art, &resources.font, frame.gpa, frame.target, frame.screen, .{
             .throttle = live.throttle,
             .speed = live.speed,
@@ -1519,6 +1534,18 @@ pub fn drawLine(target: device.Device, from: Point, to: Point, colour: [4]f32, w
         .depth = srd3d.depth(.overlay, .alpha),
         .blend = srd3d.factors(.alpha),
     }, .fan, &corners, null);
+}
+
+/// How far the object at `index` is from the player's ship, in whole kilometres of a thousand of
+/// its units, the distance rounded first: the range the target is shown with.
+pub fn kilometres(all: *const create.Objects, index: u16) i32 {
+    const apart = math.distance(all.slots[all.player].drawn.position, all.slots[index].drawn.position);
+    return @divTrunc(round(apart), 1000);
+}
+
+/// A range as the display writes it, `%dk`.
+pub fn rangeText(buffer: *[16]u8, km: i32) []const u8 {
+    return std.fmt.bufPrint(buffer, "{d}k", .{km}) catch "";
 }
 
 /// The missile lock's count while no lock builds (`State.lock`), and how much shorter each unit
@@ -2049,30 +2076,73 @@ test "the scanner moves on once 25 ticks have passed" {
     try std.testing.expectEqual(3, state.scannerFrame(state.scanner_next + 1));
 }
 
-/// The ship status indicator (`hud_ship_status`, `0x00489350`): the ship's own schematic, and its
-/// shields as four arcs around it. `hud_draw` places it 0.3 of the way across, at the foot of the
-/// screen, 2 right and 44 up.
+/// The quadrants of a ship whose armour hits have worn since the ship status indicator last drew
+/// it (`object_armor_damage`): `ship_status_hits` (`0x00563160`) for the player's own ship and
+/// `target_status_hits` (`0x005635D4`) for its target.
+pub const Hits = std.EnumSet(collision.Quadrant);
+
+/// The ship status indicator (`hud_ship_status`, `0x00489350`): a ship's schematic, with the
+/// quadrants hits have worn flashing on it, and round it its shields and its armour as two rings of
+/// four arcs, the shields outside. Mode 0 draws the player's own ship, which `hud_draw` places 0.3
+/// of the way across, at the foot of the screen, 2 right and 44 up; mode 1 the target, in the
+/// target display's small form ([`hud/target_display.zig`](hud/target_display.zig)), turned to
+/// face the player: its arcs mirrored across, left for right.
 pub const ShipStatus = struct {
     pub const offset: [2]i32 = .{ 2, -44 };
     pub const across: f32 = 0.3;
     pub const down: f32 = 1;
 
-    /// Where the schematic hangs from the indicator's point: shape 0 of the ship type's own sprite,
-    /// its `type_data`, which for a ship is its schematic.
-    pub const schematic_offset: [2]i32 = .{ -0x22, -0x1B };
+    /// Whose ship `hud_ship_status` draws, its mode.
+    pub const Mode = enum(u1) { player = 0, target = 1 };
 
-    /// One arc of the ring: where it hangs from the point, and the shape a level of 0 would be,
-    /// each level above it drawing the shape one before. Five shapes an arc.
+    /// One arc of a ring: where it hangs from the point, and the shape a level of 0 would be, each
+    /// level above it drawing the shape one before. Five shapes an arc.
     pub const Arc = struct { offset: [2]i32, base: u16 };
 
-    /// The arcs in the order of the object's `shields`, as `hud_draw`'s call draws them: the first
-    /// at the left, then the right, the top and the foot.
-    pub const arcs = [4]Arc{
-        .{ .offset = .{ -0x2D, -0x14 }, .base = 0xAD },
-        .{ .offset = .{ 0x1F, -0x14 }, .base = 0xA3 },
-        .{ .offset = .{ -0x17, -0x1F }, .base = 0x9E },
-        .{ .offset = .{ -0x22, 0x19 }, .base = 0xA8 },
+    /// Where a mode draws each part from the indicator's point: the schematic, the hits on it, and
+    /// the shields' and the armour's arcs, each in the order of the quadrants (`collision.Quadrant`):
+    /// left, right, fore and aft.
+    pub const Layout = struct {
+        schematic: [2]i32,
+        hits: [2]i32,
+        shields: [4]Arc,
+        armor: [4]Arc,
     };
+
+    pub const layouts: std.EnumArray(Mode, Layout) = .init(.{
+        .player = .{
+            .schematic = .{ -0x22, -0x1B },
+            .hits = .{ -0x22, -0x1B },
+            .shields = .{
+                .{ .offset = .{ -0x2D, -0x14 }, .base = 0xAD },
+                .{ .offset = .{ 0x1F, -0x14 }, .base = 0xA3 },
+                .{ .offset = .{ -0x17, -0x1F }, .base = 0x9E },
+                .{ .offset = .{ -0x22, 0x19 }, .base = 0xA8 },
+            },
+            .armor = .{
+                .{ .offset = .{ -0x27, -0x12 }, .base = 0x99 },
+                .{ .offset = .{ 0x1B, -0x12 }, .base = 0x8F },
+                .{ .offset = .{ -0x15, -0x1C }, .base = 0x8A },
+                .{ .offset = .{ -0x1D, 0x16 }, .base = 0x94 },
+            },
+        },
+        .target = .{
+            .schematic = .{ -0x1C, -0x1A },
+            .hits = .{ -0x1E, -0x1B },
+            .shields = .{
+                .{ .offset = .{ -0x26, -0x14 }, .base = 0xA3 },
+                .{ .offset = .{ 0x23, -0x14 }, .base = 0xAD },
+                .{ .offset = .{ -0x18, -0x1F }, .base = 0x9E },
+                .{ .offset = .{ -0x13, 0x19 }, .base = 0xA8 },
+            },
+            .armor = .{
+                .{ .offset = .{ -0x20, -0x12 }, .base = 0x8F },
+                .{ .offset = .{ 0x1F, -0x12 }, .base = 0x99 },
+                .{ .offset = .{ -0x15, -0x1C }, .base = 0x8A },
+                .{ .offset = .{ -0xF, 0x16 }, .base = 0x94 },
+            },
+        },
+    });
 
     /// The arcs for what SHIELD BALANCING has shifted beyond the fore and aft shields
     /// (`gameobj.ShieldReserves`), outside the top arc and the foot arc. `hud_ship_status` draws
@@ -2082,55 +2152,126 @@ pub const ShipStatus = struct {
         pub const aft: Arc = .{ .offset = .{ -0x26, 0x1D }, .base = 0xB7 };
     };
 
-    /// How much of an arc is drawn: the quadrant's shield over the ship's shield power, cut down to
-    /// a whole number as the runtime's `__ftol` does, less one. An arc of 0 or less is not drawn.
-    /// A ship with no shield power has no arcs; the game divides by it regardless.
-    pub fn level(shield: f32, shield_power: i32) i32 {
-        if (shield_power == 0) return 0;
-        const share = shield / @as(f32, @floatFromInt(shield_power));
+    /// What `hud_ship_status` draws of a ship, worked out from it whole, so that the target display
+    /// can close with it.
+    pub const Shown = struct {
+        /// The ship's schematic, where its type has one and the mode draws it.
+        schematic: ?Schematic = null,
+        /// Whether the schematic and the hits on it are drawn mirrored across.
+        mirrored: bool = false,
+        /// The quadrants that flash on the schematic, shapes 1 to 4 of it.
+        hits: Hits = .initEmpty(),
+        /// The arcs' levels, or null for a type with none.
+        rings: ?Rings = null,
+        /// For the player's own ship, the levels of what SHIELD BALANCING shifted fore and aft.
+        reserves: ?[2]i32 = null,
+    };
+
+    /// The levels of the arcs of the two rings, in the quadrants' order.
+    pub const Rings = struct {
+        shields: [4]i32,
+        armor: [4]i32,
+    };
+
+    /// How much of an arc is drawn: the quadrant's value over the ship's shield power, for a
+    /// shield, or its armour class, for the armour, cut down to a whole number as the runtime's
+    /// `__ftol` does, less one. An arc of 0 or less is not drawn. A ship with none of either has no
+    /// arcs of it; the game divides by nothing regardless.
+    pub fn level(value: f32, per_arc: i32) i32 {
+        if (per_arc == 0) return 0;
+        const share = value / @as(f32, @floatFromInt(per_arc));
         return @as(i32, @intFromFloat(std.math.clamp(@trunc(share), -1e9, 1e9))) - 1;
     }
 
-    /// Draws the ship's schematic, the first thing `hud_ship_status` draws. The schematic is the
-    /// ship's own, so it comes with an allocator of its own.
-    pub fn drawSchematic(
-        schematic: *Art,
-        gpa: Allocator,
-        target: device.Device,
-        screen: [2]u32,
-        colour: [4]f32,
-        scale: f32,
-    ) (spr.Error || Allocator.Error)!void {
-        const point = place(screen, offset, across, down, scale);
-        try drawShape(schematic, gpa, target, 0, scaled(point, schematic_offset, scale), colour, scale);
+    /// The rings of the ship of `slot`, or null for a comms relay or a deathmatch beacon, which have
+    /// none. The armour of an invulnerable ship shows at least two arcs of its five, each level
+    /// `(2 * level + 6) / 3`.
+    pub fn rings(slot: *const create.Slot) ?Rings {
+        const object = &slot.object;
+        if (object.type == .comms_relay or object.type == .dm_beacon) return null;
+        const combat = slot.combat orelse return null;
+        var found: Rings = undefined;
+        const invulnerable = object.invulnerable == .full or object.invulnerable == .player_can_hit;
+        for (&found.shields, &found.armor, object.shields.values(), object.armor.values()) |*shield, *armor, has, left| {
+            shield.* = level(has, combat.shield_power);
+            armor.* = level(left, combat.armor_class);
+            if (invulnerable) armor.* = @divTrunc(2 * armor.* + 6, 3);
+        }
+        return found;
     }
 
-    /// Draws the shields of a ship of `shields` and `shield_power` round its schematic, and for the
-    /// player's ship the shields shifted fore and aft beyond them, `reserves`.
+    /// Mode 0 for the player's ship of `slot`: its schematic, the hits taken out of `hits` for a
+    /// type the target display shows in its small form, its rings, and what SHIELD BALANCING has
+    /// shifted. **Not ported:** in mission 25, a Kamov's schematic drawn mirrored.
+    pub fn ofPlayer(slot: *const create.Slot, hits: *Hits, reserves: gameobj.ShieldReserves) Shown {
+        var shown: Shown = .{ .rings = rings(slot) };
+        if (slot.combat) |combat| if (shown.rings) |_| {
+            shown.reserves = .{ level(reserves.fore, combat.shield_power), level(reserves.aft, combat.shield_power) };
+        };
+        const loaded = slot.type orelse return shown;
+        shown.schematic = loaded.schematic orelse return shown;
+        const small = if (slot.combat) |combat| combat.display == .small else false;
+        if (small) shown.hits = take(hits);
+        return shown;
+    }
+
+    /// Mode 1 for the target of `slot`: for a type the target display shows in its small form, its
+    /// schematic, turned to face the player unless the type is hostile, and the hits taken out of
+    /// `hits`, which a comms relay or a deathmatch beacon turned about leaves; then its rings.
+    pub fn ofTarget(slot: *const create.Slot, hits: *Hits) Shown {
+        var shown: Shown = .{ .rings = rings(slot) };
+        const combat = slot.combat orelse return shown;
+        if (combat.display != .small) return shown;
+        const loaded = slot.type orelse return shown;
+        shown.schematic = loaded.schematic orelse return shown;
+        shown.mirrored = combat.side != .hostile;
+        if (!shown.mirrored or shown.rings != null) shown.hits = take(hits);
+        return shown;
+    }
+
+    fn take(hits: *Hits) Hits {
+        defer hits.* = .initEmpty();
+        return hits.*;
+    }
+
+    /// Draws what `shown` holds in `mode`, from `point`, `size` times the display's own size and
+    /// cut to `clip`.
     pub fn draw(
+        shown: Shown,
+        mode: Mode,
         art: *Art,
         gpa: Allocator,
         target: device.Device,
-        screen: [2]u32,
-        shields: gameobj.Quadrants,
-        shield_power: i32,
-        reserves: ?gameobj.ShieldReserves,
+        point: [2]i32,
+        size: f32,
+        clip: ?Clip,
         colour: [4]f32,
-        scale: f32,
     ) (spr.Error || Allocator.Error)!void {
-        const point = place(screen, offset, across, down, scale);
-        for (arcs, shields.values()) |arc, shield| try drawArc(art, gpa, target, arc, level(shield, shield_power), point, colour, scale);
-        const shifted = reserves orelse return;
-        try drawArc(art, gpa, target, reserve_arcs.fore, level(shifted.fore, shield_power), point, colour, scale);
-        try drawArc(art, gpa, target, reserve_arcs.aft, level(shifted.aft, shield_power), point, colour, scale);
+        const layout = layouts.get(mode);
+        if (shown.schematic) |schematic| {
+            const how: Draw = .{ .mirror = .{ .across = shown.mirrored }, .clip = clip };
+            try drawShapeWith(schematic.art, schematic.gpa, target, 0, scaled(point, layout.schematic, size), colour, size, how);
+            var hits = shown.hits.iterator();
+            while (hits.next()) |quadrant| {
+                try drawShapeWith(schematic.art, schematic.gpa, target, @as(usize, @intFromEnum(quadrant)) + 1, scaled(point, layout.hits, size), colour, size, how);
+            }
+        }
+        const found = shown.rings orelse return;
+        const how: Draw = .{ .mirror = .{ .across = mode == .target }, .clip = clip };
+        for (layout.shields, found.shields) |arc, drawn| try drawArc(art, gpa, target, arc, drawn, point, colour, size, how);
+        if (shown.reserves) |shifted| {
+            try drawArc(art, gpa, target, reserve_arcs.fore, shifted[0], point, colour, size, how);
+            try drawArc(art, gpa, target, reserve_arcs.aft, shifted[1], point, colour, size, how);
+        }
+        for (layout.armor, found.armor) |arc, drawn| try drawArc(art, gpa, target, arc, drawn, point, colour, size, how);
     }
 
     /// An arc drawn `drawn` shapes from its base, if any of it is.
-    fn drawArc(art: *Art, gpa: Allocator, target: device.Device, arc: Arc, drawn: i32, point: [2]i32, colour: [4]f32, scale: f32) (spr.Error || Allocator.Error)!void {
+    fn drawArc(art: *Art, gpa: Allocator, target: device.Device, arc: Arc, drawn: i32, point: [2]i32, colour: [4]f32, size: f32, how: Draw) (spr.Error || Allocator.Error)!void {
         if (drawn <= 0) return;
         const shape = @as(i32, arc.base) - drawn;
         if (shape < 0) return;
-        try drawShape(art, gpa, target, @intCast(shape), scaled(point, arc.offset, scale), colour, scale);
+        try drawShapeWith(art, gpa, target, @intCast(shape), scaled(point, arc.offset, size), colour, size, how);
     }
 };
 
@@ -2145,23 +2286,65 @@ test ShipStatus {
     try std.testing.expectEqual(1, ShipStatus.level(2.99 * 3, 3));
     try std.testing.expectEqual(0, ShipStatus.level(10, 0));
 
-    // Each arc's five shapes follow on from the last's, the first arc's from 0x99.
-    var shapes: [4 * 5]u16 = undefined;
-    var at: usize = 0;
-    for (ShipStatus.arcs) |arc| {
-        for (1..6) |l| {
-            shapes[at] = arc.base - @as(u16, @intCast(l));
-            at += 1;
+    // In both modes, the armour's arcs are shapes 0x85 to 0x98 and the shields' 0x99 to 0xAC,
+    // five an arc, each arc's following on from the last's.
+    for (std.enums.values(ShipStatus.Mode)) |mode| {
+        const layout = ShipStatus.layouts.get(mode);
+        var shapes: [8 * 5]u16 = undefined;
+        var at: usize = 0;
+        for (layout.armor ++ layout.shields) |arc| {
+            for (1..6) |l| {
+                shapes[at] = arc.base - @as(u16, @intCast(l));
+                at += 1;
+            }
         }
+        std.mem.sort(u16, &shapes, {}, std.sort.asc(u16));
+        for (shapes, 0..) |shape, i| try std.testing.expectEqual(0x85 + i, shape);
     }
-    std.mem.sort(u16, &shapes, {}, std.sort.asc(u16));
-    for (shapes, 0..) |shape, i| try std.testing.expectEqual(0x99 + i, shape);
+    // The target faces the player: its left arcs are the player's right ones, on its left.
+    const player = ShipStatus.layouts.get(.player);
+    const target = ShipStatus.layouts.get(.target);
+    try std.testing.expectEqual(player.shields[1].base, target.shields[0].base);
+    try std.testing.expect(target.shields[0].offset[0] < 0 and target.armor[0].offset[0] < 0);
 
     // The shifted shields' arcs follow on from those: a full reserve, five times the shield
     // power, draws four of the five, 0xAE to 0xB1 fore and 0xB3 to 0xB6 aft.
     try std.testing.expectEqual(4, ShipStatus.level(5 * 3, 3));
     try std.testing.expectEqual(0xAE, ShipStatus.reserve_arcs.fore.base - 4);
     try std.testing.expectEqual(0xB3, ShipStatus.reserve_arcs.aft.base - 4);
+}
+
+test "the rings follow the shields and the armour" {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const index = try mission.add(.sabre, @splat(0));
+    const slot = mission.slot(index);
+    const combat = slot.combat.?;
+    slot.object.shields = .all(@floatFromInt(combat.shield_power * 6));
+    slot.object.armor = .all(@floatFromInt(combat.armor_class * 6));
+    slot.object.armor.left = @floatFromInt(combat.armor_class * 2);
+    var found = ShipStatus.rings(slot).?;
+    try std.testing.expectEqual([4]i32{ 5, 5, 5, 5 }, found.shields);
+    try std.testing.expectEqual([4]i32{ 1, 5, 5, 5 }, found.armor);
+    // Invulnerable, its armour shows at least two arcs.
+    slot.object.armor.left = 0;
+    slot.object.invulnerable = .full;
+    found = ShipStatus.rings(slot).?;
+    try std.testing.expectEqual(1, found.armor[0]);
+    try std.testing.expectEqual(5, found.armor[1]);
+    // A comms relay has no rings.
+    slot.object.type = .comms_relay;
+    try std.testing.expectEqual(null, ShipStatus.rings(slot));
+
+    // Mode 1 takes the hits and leaves none behind, for a hostile target of the small form.
+    slot.object.type = .sabre;
+    var hits: Hits = .initEmpty();
+    hits.insert(.fore);
+    const without = ShipStatus.ofTarget(slot, &hits);
+    // With no schematic, the hits stay for the next time.
+    try std.testing.expectEqual(null, without.schematic);
+    try std.testing.expect(hits.contains(.fore));
 }
 
 // --- The targeting cluster -------------------------------------------------------------------
@@ -2553,8 +2736,7 @@ pub fn drawTarget(
     const struck = &all.slots[index];
     const hostile = struck.object.side == .hostile;
     var buffer: [16]u8 = undefined;
-    const apart = round(math.distance(ship.drawn.position, struck.drawn.position));
-    const range = std.fmt.bufPrint(&buffer, "{d}k", .{@divTrunc(apart, 1000)}) catch return null;
+    const range = rangeText(&buffer, kilometres(all, index));
 
     const part = ai.targetPart(all, state.shown);
     const node: math.Place = if (part) |found| .{ .position = found.object.position, .orientation = found.object.orientation } else struck.drawn;

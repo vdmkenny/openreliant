@@ -1098,19 +1098,17 @@ const TypeCache = struct {
             };
             break :found try .init(gpa, try spr.Sprite.parse(bytes), cache.global_palette);
         } else null;
-        cached.type = .{ .model = model, .loaded = loaded, .effects = .{
-            .light_sprites = cache.light_sprites,
-            .glows = cache.glows,
-            .mounts = cached.library.mounts(),
-        } };
+        cached.type = .{
+            .model = model,
+            .loaded = loaded,
+            .effects = .{
+                .light_sprites = cache.light_sprites,
+                .glows = cache.glows,
+                .mounts = cached.library.mounts(),
+            },
+            .schematic = if (cached.schematic) |*art| .{ .art = art, .gpa = gpa } else null,
+        };
         return cached;
-    }
-
-    /// The schematic of `ship_type`, where it is loaded and the game has one.
-    fn schematic(cache: *TypeCache, ship_type: u8) ?game.hud.Schematic {
-        const cached = cache.loaded[ship_type] orelse return null;
-        if (cached.schematic) |*art| return .{ .art = art, .gpa = cached.arena.allocator() };
-        return null;
     }
 
     /// Lets go of each type no object is of any more.
@@ -1139,6 +1137,9 @@ const restart_after = 500;
 /// where a start puts it, since a ship of another size wants another view to be seen in.
 fn settleStart(display: *Display, sandbox: *Sandbox, view: *camera.Camera, at: u32) void {
     game.main.fitDevices(&display.state, sandbox.player_type, sandbox.canCloak());
+    // The start let go of the types no object is of any more, whose schematics what the target
+    // display last showed may hold.
+    display.state.target_pictures = .{};
     _ = view.setView(startingView(sandbox.player(), view.cockpit_mode), sandbox.objects.player, false, true, at);
 }
 
@@ -1195,7 +1196,6 @@ const Display = struct {
             .hit_shake = display.view.hit_shake,
             .random = display.random,
             .ready = &display.ready,
-            .schematic = sandbox.types.schematic(sandbox.player_type),
             .edge_line = display.edge_line,
         }) catch |err| switch (err) {
             error.OutOfMemory => |out| return out,

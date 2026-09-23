@@ -7,9 +7,10 @@
 //! each on once a frame and draws it with `hud_window_draw` (`0x00486830`): sliding and shrinking
 //! into place as it opens, the reverse as it closes, and in place while it is open.
 //!
-//! Ported so far: the windows' phases and times, their frames and how they open and close. Not
-//! yet: what each window shows inside its frame, which [`hud.md`](../../../../docs/engine/hud.md)
-//! lists with the state each reads; the display's sounds for a window opening and closing
+//! Ported so far: the windows' phases and times, their frames and how they open and close, and
+//! what windows 3, 7 and 8 show ([`target_display.zig`](target_display.zig),
+//! [`power.zig`](power.zig)). Not yet: what the other windows show, which
+//! [`hud.md`](../../../../docs/engine/hud.md) lists with the state each reads; the display's sounds for a window opening and closing
 //! (`hud_beep` 1 and 2); and, in mission 25 before `0x00587CDC` is set, the gunnery, missile and
 //! wing status windows standing still and unseen.
 
@@ -250,7 +251,7 @@ pub const Windows = struct {
         for (std.enums.values(Window)) |window| {
             const shown = windows.step(window, frame_duration) orelse continue;
             if (!hud.instrumented(last_view)) continue;
-            try draw(art, gpa, target, screen, window, shown, contents, colour, scale);
+            try draw(art, gpa, target, screen, window, shown, windows.status.get(window).phase, contents, colour, scale);
         }
     }
 };
@@ -289,6 +290,46 @@ pub fn bufferClip(window: Window, at: [2]i32, size: f32) hud.Clip {
 pub const Contents = struct {
     /// Window 7's.
     power: ?hud.power.Shown = null,
+    /// Windows 3 and 8's, the target display's two forms.
+    target_display: ?hud.target_display.Scene = null,
+};
+
+/// Where a window's contents are drawn: the window's place on the screen, how many times their
+/// own size, and what they are cut to while the window opens or closes.
+pub const Inside = struct {
+    at: [2]i32,
+    size: f32,
+    clip: ?hud.Clip,
+
+    /// The point `offset` of the display's own pixels from the window's place.
+    pub fn place(inside: Inside, offset: [2]i32) [2]i32 {
+        var point: [2]i32 = undefined;
+        for (&point, inside.at, offset) |*out, from, by| out.* = from + round(@as(f32, @floatFromInt(by)) * inside.size);
+        return point;
+    }
+
+    /// A VFX pane from the window's place, its left, top, right and bottom edges in the display's
+    /// own pixels and inclusive, as the part of the screen it covers, cut to the window's own.
+    pub fn pane(inside: Inside, edges: [4]i32) hud.Clip {
+        const edge = struct {
+            fn of(from: i32, pixels: i32, by: f32) f32 {
+                return @as(f32, @floatFromInt(from)) + @as(f32, @floatFromInt(pixels)) * by;
+            }
+        }.of;
+        const own: hud.Clip = .{
+            .left = edge(inside.at[0], edges[0], inside.size),
+            .top = edge(inside.at[1], edges[1], inside.size),
+            .right = edge(inside.at[0], edges[2] + 1, inside.size),
+            .bottom = edge(inside.at[1], edges[3] + 1, inside.size),
+        };
+        const outer = inside.clip orelse return own;
+        return .{
+            .left = @max(own.left, outer.left),
+            .top = @max(own.top, outer.top),
+            .right = @min(own.right, outer.right),
+            .bottom = @min(own.bottom, outer.bottom),
+        };
+    }
 };
 
 /// `hud_window_draw` (`0x00486830`): in the view ahead, each piece of the window's frame, from
@@ -300,6 +341,7 @@ fn draw(
     screen: [2]u32,
     window: Window,
     shown: Shown,
+    phase: Phase,
     contents: Contents,
     colour: [4]f32,
     scale: f32,
@@ -314,9 +356,12 @@ fn draw(
         };
         try hud.drawShapeWith(art, gpa, target, piece.shape, from, colour, size, .{ .mirror = piece.mirror, .clip = clip });
     }
+    const inside: Inside = .{ .at = at, .size = size, .clip = clip };
     switch (window) {
-        .power => if (contents.power) |power| try hud.power.draw(power, art, gpa, target, at, size, clip, colour),
-        else => {},
+        .power => if (contents.power) |power| try hud.power.draw(power, art, gpa, target, inside, colour),
+        else => if (hud.target_display.Form.of(window)) |form| if (contents.target_display) |scene| {
+            try scene.draw(form, phase == .closing, art, gpa, target, inside, colour);
+        },
     }
 }
 
@@ -378,6 +423,17 @@ test "a multiplayer game refuses three windows" {
     try std.testing.expect(!windows.open(._unknown_9, true));
     try std.testing.expect(windows.open(.comms, true));
     try std.testing.expect(!windows.up(.missiles));
+}
+
+test Inside {
+    const inside: Inside = .{ .at = .{ 100, 200 }, .size = 2, .clip = .{ .left = 0, .top = 0, .right = 150, .bottom = 1000 } };
+    try std.testing.expectEqual([2]i32{ 90, 220 }, inside.place(.{ -5, 10 }));
+    // A pane's right and bottom edges are its last pixel's, so it reaches one pixel past them, and
+    // what the window is cut to cuts it too.
+    const pane = inside.pane(.{ -7, -10, -3, 20 });
+    try std.testing.expectEqual(hud.Clip{ .left = 86, .top = 180, .right = 96, .bottom = 242 }, pane);
+    const cut = inside.pane(.{ 20, 0, 40, 1 });
+    try std.testing.expectEqual(150, cut.right);
 }
 
 test bufferClip {
