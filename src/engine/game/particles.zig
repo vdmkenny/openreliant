@@ -1,13 +1,11 @@
 //! `C:\lancer\game\particles.cpp`: particles, sprites that fly off an emitter and change size and
 //! colour over their life. A template says how its particles live, and an emitter sends them out
-//! of it, all at once (`Pool.burst`) or over its own life (`Pool.stream`). Every particle comes
-//! from one pool of a thousand, drawn as one set of sprites over `gunflare\partic4`, added and
-//! coloured by each sprite's colour.
+//! of it, all at once (`Pool.burst`) or over its own life (`Pool.stream`). A particle comes from its
+//! template's pool, drawn as one set of sprites over the pool's texture, coloured by each sprite's
+//! colour. A template of kind `sometimes_sparks` or `sparks` sends sparks as well, which are
+//! `explode.cpp`'s small bits of debris (`explode.Explosions.throwSpark`).
 //!
-//! **Not ported:** the sparks a template of kind `sometimes_sparks` or `sparks` sends out
-//! (`particle_spark`, `0x0049C340`), which are `explode.cpp`'s burning bits
-//! ([#41](https://github.com/vdmkenny/openreliant/issues/41)); and what `particles_frame` runs first
-//! (`0x004A1BB0`).
+//! **Not ported:** what `particles_frame` runs first (`0x004A1BB0`).
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -23,6 +21,7 @@ const srapiext = @import("../surrender/surrenderlib/srapiext.zig");
 const srcore = @import("../surrender/surrenderlib/srcore.zig");
 const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
 const libcmt = @import("../libcmt.zig");
+const explode = @import("explode.zig");
 const matmanager = @import("matmanager.zig");
 const xtrabits = @import("xtrabits.zig");
 const Clock = @import("main.zig").Clock;
@@ -56,7 +55,7 @@ pub const Template = extern struct {
     /// A particle's half-size, and its red, green and blue, over its life.
     size: Curve,
     colour: [3]Curve,
-    /// The pool it draws from, which is the game's one.
+    /// The pool it draws from. The port hands a burst or a stream its pool instead.
     pool: Pointer(anyopaque) = .null,
     /// How much a burst thins with distance; none at zero.
     distance: f32 = 1,
@@ -142,14 +141,38 @@ pub const Emitter = struct {
         emitter.world = if (parent) |from| emitter.place.within(from) else emitter.place;
     }
 
-    /// A particle's velocity from it: along `direction`, strayed by `spread`, at a speed from
-    /// `speed`, turned into the world, plus what it inherits.
-    fn velocity(emitter: *const Emitter, random: *libcmt.Rand) Vector {
+    /// How fast something leaves it: along `direction`, strayed by `spread`, at a speed from
+    /// `speed`, turned into the world.
+    fn leaving(emitter: *const Emitter, random: *libcmt.Rand) Vector {
         var v = random.centredVector(emitter.spread) + emitter.direction;
         const length = math.length(v);
         if (length > 0) v *= @splat((random.fraction() * emitter.speed_range + emitter.speed) / length);
-        return math.transform(emitter.world.orientation, v) + emitter.inherited;
+        return math.transform(emitter.world.orientation, v);
     }
+
+    /// A particle's velocity from it: how fast it leaves, plus what it inherits.
+    fn velocity(emitter: *const Emitter, random: *libcmt.Rand) Vector {
+        return emitter.leaving(random) + emitter.inherited;
+    }
+
+    /// `particle_spark` (`0x0049C340`): a spark from where it stands, as fast as a particle leaves
+    /// but inheriting nothing, its velocity a second's.
+    fn spark(emitter: *const Emitter, explosions: *explode.Explosions, clock: *const Clock, random: *libcmt.Rand) void {
+        const velocity_per_second = emitter.leaving(random) * @as(Vector, @splat(ticks_per_second));
+        explosions.throwSpark(emitter.world.position, velocity_per_second, clock, random);
+    }
+
+    /// A spark's velocity is a second's, which is 100 ticks.
+    const ticks_per_second: f32 = 100;
+};
+
+/// What a burst or a stream is sent out with: the camera's place, which thins it, the clock and the
+/// numbers, and the explosions its sparks go to, which are left out where there are none.
+pub const Sending = struct {
+    view: Place,
+    clock: *const Clock,
+    random: *libcmt.Rand,
+    explosions: ?*explode.Explosions = null,
 };
 
 /// A particle's record (0x18 bytes); its sprite is the one of the same index.
@@ -171,8 +194,9 @@ pub const Particle = struct {
     }
 };
 
-/// The one pool the game's particles come from (`particle_pool`, `0x0058A94C`), the only one of the
-/// ten `particle_pools` (`0x0058A948`) the game fills.
+/// A pool particles come from: one of the ten `particle_pools` (`0x0058A948`). The explosions'
+/// particles come from the game's own (`particle_pool`, `0x0058A94C`), and each level of a damaged
+/// ship's smoke has one (`smoke.Pools`).
 pub const Pool = struct {
     gpa: Allocator,
     particles: []Particle,
@@ -200,26 +224,36 @@ pub const Pool = struct {
             };
         }
     };
-    pub const image_name = "gunflare\\partic4";
+    /// How a pool's sprites are drawn: the texture they show, and how they combine with what is
+    /// drawn (`particle_pool_create`'s texture and last argument).
+    pub const Look = struct {
+        image: []const u8,
+        blend: srapiext.Material.Blend,
 
-    /// `particles_init` (`0x0049BF60`) and `particle_pool_create` (`0x0049C050`): the pool of
-    /// `count` particles over `image`, their sprites showing the whole texture, added and coloured
-    /// by each sprite's colour.
-    pub fn init(gpa: Allocator, count: usize, image: *srtexture.Image) Allocator.Error!Pool {
+        /// The game's own pool's: `gunflare\partic4`, added (`particles_init`, `0x0049BF60`).
+        pub const standard: Look = .{ .image = "gunflare\\partic4", .blend = .add };
+    };
+
+    /// `particle_pool_create` (`0x0049C050`): the pool of `count` particles over `image`, their
+    /// sprites showing the whole texture, coloured by each sprite's colour and combined with what
+    /// is drawn by `blend`. The game can make a pool whose sprites are not coloured, which none of
+    /// the ported ones is.
+    pub fn init(gpa: Allocator, count: usize, image: *srtexture.Image, blend: srapiext.Material.Blend) Allocator.Error!Pool {
         const particles = try gpa.alloc(Particle, count);
         errdefer gpa.free(particles);
         const sprites = try gpa.alloc(srapiext.Sprite, count);
         @memset(particles, .{});
         @memset(sprites, .{});
         var set: srapiext.SpriteSet = .{ .sprites = sprites[0..0] };
-        set.surface.material.lit[0] = true;
+        set.surface.material = .onePass(.{ .coordinates = .mesh, .lit = true, .blend = blend });
         set.surface.textures = .{ .{ .image = image }, .none };
         return .{ .gpa = gpa, .particles = particles, .sprites = sprites, .set = set };
     }
 
-    /// The game's pool, over the texture it requires, sized for how it sends what is far off.
-    pub fn load(gpa: Allocator, textures: *srtexture.Table, distant: Distant) (Allocator.Error || matmanager.Error)!Pool {
-        var pool: Pool = try .init(gpa, distant.size(), try matmanager.textureRequire(textures, image_name));
+    /// A pool that looks as `look` says, over the texture it requires, sized for how it sends what
+    /// is far off.
+    pub fn load(gpa: Allocator, textures: *srtexture.Table, look: Look, distant: Distant) (Allocator.Error || matmanager.Error)!Pool {
+        var pool: Pool = try .init(gpa, distant.size(), try matmanager.textureRequire(textures, look.image), look.blend);
         pool.distant = distant;
         return pool;
     }
@@ -261,16 +295,16 @@ pub const Pool = struct {
 
     /// `particle_burst` (`0x0049C450`): `count` particles from `emitter` at once, into the free
     /// ones, where `parent` puts it, thinned by the emitter's distance times its template's.
-    pub fn burst(pool: *Pool, emitter: *Emitter, parent: ?Place, count: i32, view: Place, clock: *const Clock, random: *libcmt.Rand) void {
+    pub fn burst(pool: *Pool, emitter: *Emitter, parent: ?Place, count: i32, sending: Sending) void {
         emitter.stand(parent);
         const template = emitter.template;
-        const offset = emitter.world.position - view.position;
+        const offset = emitter.world.position - sending.view.position;
         const thinned = pool.distant == .thinned and template.distance > 0;
-        var left = template.thinned(count, offset, view, if (thinned) math.length(offset) * template.distance else null);
+        var left = template.thinned(count, offset, sending.view, if (thinned) math.length(offset) * template.distance else null);
         for (pool.particles, 0..) |particle, index| {
             if (left < 1) return;
-            if (particle.end() < clock.frame_start) {
-                pool.emit(emitter, index, clock, random);
+            if (particle.end() < sending.clock.frame_start) {
+                pool.emit(emitter, index, sending.clock, sending.random);
                 left -= 1;
             }
         }
@@ -278,9 +312,12 @@ pub const Pool = struct {
 
     /// `particle_stream` (`0x0049C680`): what `emitter` sends out over the frame, by its template's
     /// rate at this point in its life, a roll a tick, each particle moved on as if it had left at
-    /// the frame's start. Thinned by its distance alone, from where it stood last. Whether the
-    /// emitter still lives.
-    pub fn stream(pool: *Pool, emitter: *Emitter, parent: ?Place, view: Place, clock: *const Clock, random: *libcmt.Rand) bool {
+    /// the frame's start. Thinned by its distance alone, from where it stood last. The template's
+    /// kind rolls for each particle of the pool it passes, free or not, and a spark it rolls is
+    /// thrown on top of the particles sent. Whether the emitter still lives.
+    pub fn stream(pool: *Pool, emitter: *Emitter, parent: ?Place, sending: Sending) bool {
+        const clock = sending.clock;
+        const random = sending.random;
         const now = clock.frame_start;
         if (emitter.life + emitter.born <= now) return false;
         const template = emitter.template;
@@ -291,8 +328,8 @@ pub const Pool = struct {
             if (random.fraction() < chance) rolled += 1;
         }
         if (rolled == 0) return true;
-        const offset = emitter.world.position - view.position;
-        var left = template.thinned(rolled, offset, view, if (pool.distant == .thinned) math.length(offset) else null);
+        const offset = emitter.world.position - sending.view.position;
+        var left = template.thinned(rolled, offset, sending.view, if (pool.distant == .thinned) math.length(offset) else null);
         emitter.stand(parent);
         const ticks: Vector = @splat(@floatFromInt(clock.frame_duration));
         for (pool.particles, 0..) |particle, index| {
@@ -305,7 +342,7 @@ pub const Pool = struct {
                     pool.particles[index].at += pool.particles[index].velocity * ticks;
                     left -= 1;
                 },
-                .spark => {},
+                .spark => if (sending.explosions) |explosions| emitter.spark(explosions, clock, random),
             }
         }
         return true;
@@ -379,7 +416,7 @@ const testing = struct {
 
     fn pool() !Pool {
         var image: srtexture.Image = undefined;
-        return .init(std.testing.allocator, 8, &image);
+        return .init(std.testing.allocator, 8, &image, .add);
     }
 };
 
@@ -397,11 +434,11 @@ test "Pool.burst" {
         .speed = 5,
         .inherited = .{ 0, 0, 1 },
     };
-    const view: Place = .{};
+    const sending: Sending = .{ .view = .{}, .clock = &clock, .random = &random };
 
     // Ahead of the camera, the whole burst, each particle leaving where the emitter stands at its
     // speed plus what it inherits.
-    pool.burst(&emitter, null, 3, view, &clock, &random);
+    pool.burst(&emitter, null, 3, sending);
     try std.testing.expectEqual(3, pool.used);
     try std.testing.expectEqual(Vector{ 0, 0, 1000 }, pool.particles[0].at);
     const own = pool.particles[0].velocity - emitter.inherited;
@@ -409,13 +446,13 @@ test "Pool.burst" {
 
     // Behind it, half; and never past the pool.
     emitter.place.position = .{ 0, 0, -1000 };
-    pool.burst(&emitter, null, 20, view, &clock, &random);
+    pool.burst(&emitter, null, 20, sending);
     try std.testing.expectEqual(8, pool.used);
 
     // Hung from a parent, it stands where the parent puts it.
     pool.reset();
     emitter.place.position = .{ 0, 0, 10 };
-    pool.burst(&emitter, .{ .position = .{ 100, 0, 0 } }, 1, view, &clock, &random);
+    pool.burst(&emitter, .{ .position = .{ 100, 0, 0 } }, 1, sending);
     try std.testing.expectEqual(Vector{ 100, 0, 10 }, pool.particles[0].at);
 }
 
@@ -427,7 +464,7 @@ test "Pool.frame" {
     clock.frame_start = 1;
     var random: libcmt.Rand = .{};
     var emitter: Emitter = .{ .born = clock.frame_start, .template = &testing.template };
-    pool.burst(&emitter, null, 2, .{ .position = .{ 0, 0, -10 } }, &clock, &random);
+    pool.burst(&emitter, null, 2, .{ .view = .{ .position = .{ 0, 0, -10 } }, .clock = &clock, .random = &random });
     pool.particles[0].velocity = .{ 1, 0, 0 };
 
     // Halfway through its life, a particle has moved on by its velocity, and takes the curves'
@@ -463,14 +500,14 @@ test "Pool.stream" {
     streaming.rate = .through(100, 100, 100);
     var emitter: Emitter = .{ .born = clock.frame_start, .life = 100, .template = &streaming, .place = .{ .position = .{ 0, 0, 1 } } };
     emitter.world = emitter.place;
-    const view: Place = .{};
+    const sending: Sending = .{ .view = .{}, .clock = &clock, .random = &random };
 
     // At a particle a tick for four ticks, four particles.
     clock.frame_duration = 4;
-    try std.testing.expect(pool.stream(&emitter, null, view, &clock, &random));
+    try std.testing.expect(pool.stream(&emitter, null, sending));
     try std.testing.expectEqual(4, pool.used);
 
     // Once its life is over, it sends nothing and says so.
     clock.frame_start = 100;
-    try std.testing.expect(!pool.stream(&emitter, null, view, &clock, &random));
+    try std.testing.expect(!pool.stream(&emitter, null, sending));
 }

@@ -265,7 +265,7 @@ fn hull(slot: *const create.Slot) ?Bar {
     if (combat.class == .torpedo) {
         var weakest: f32 = 1e6;
         for (slot.object.armor.values()) |left| weakest = @min(weakest, left);
-        const full: f32 = @floatFromInt(combat.armor_class * 6);
+        const full = combat.fullArmor();
         const share = if (full > 0) weakest / full else 0;
         return .{ .unlit = unlitRows(share, hull_bar.rows), .top = hull_bar.dark_top - 3 };
     }
@@ -425,7 +425,7 @@ test "a torpedo's bar is its weakest armour" {
     _ = try mission.add(.predator, @splat(0));
     const index = try mission.add(.torpedo, .{ 0, 0, 1000 });
     const slot = mission.slot(index);
-    const full: f32 = @floatFromInt(slot.combat.?.armor_class * 6);
+    const full = slot.combat.?.fullArmor();
     slot.object.armor = .all(full);
     slot.object.armor.aft = full / 2;
     const bar = hull(slot).?;

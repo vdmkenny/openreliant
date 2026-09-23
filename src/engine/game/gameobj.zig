@@ -463,9 +463,12 @@ pub const GameObject = extern struct {
     /// Until when a shockwave that harms what it passes leaves it alone, having harmed it
     /// (`shockwave.Shockwave.harmPlayer`).
     shockwave_until: i32,
-    _unknown_658: [4]u8,
-    _unknown_65c: u32,
-    _unknown_660: u8,
+    /// Its smoke's template, which its level picks (`0x00494400`), and its smoke's emitter, or
+    /// null for none. The port keeps its smoke in its slot (`create.Slot.smoke`).
+    smoke_template: Pointer(@import("particles.zig").Template),
+    smoke: Pointer(anyopaque),
+    /// How damaged it shows itself to be, by its smoke (`smoke.Level.of`).
+    smoke_level: @import("main/smoke.zig").Level,
     _unknown_661: [3]u8,
     /// How well its shields recharge as its armour wears: a quarter of each quadrant's armour over
     /// its full armour, added up (`armorConditions`). 1 when created. The damage display's shield
@@ -633,7 +636,8 @@ pub const GameObject = extern struct {
         /// Set while the Dock and Ripper orders hold it to another object; their ends clear it.
         attached: bool = false,
         _unknown_23: bool = false,
-        /// **Unknown.** `mission_frame` lets the object's smoke (`+0x65C`) go while it is set.
+        /// **Unknown.** `mission_frame` lets the object's smoke go while it is set
+        /// (`smoke.frame`).
         _unknown_24: bool = false,
         /// **Unknown.** Set by `create_object` on an object whose model has an attachment of
         /// kind 6.
@@ -660,6 +664,12 @@ pub const GameObject = extern struct {
         /// that is.
         pub fn outOfAction(flags: Flags) bool {
             return flags.exploding or flags.ejected or flags._unknown_28;
+        }
+
+        /// Whether `mission_frame`'s passes over the objects pass it over: a stand-in, or a
+        /// disabled or jumping object.
+        pub fn outOfFrame(flags: Flags) bool {
+            return flags.stand_in or flags.disabled or flags.jumping;
         }
     };
 
@@ -722,7 +732,8 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "passes_through") == 0x618);
         assert(@offsetOf(GameObject, "_unknown_624") == 0x624);
         assert(@offsetOf(GameObject, "_unknown_628") == 0x628);
-        assert(@offsetOf(GameObject, "_unknown_65c") == 0x65C);
+        assert(@offsetOf(GameObject, "smoke") == 0x65C);
+        assert(@offsetOf(GameObject, "smoke_level") == 0x660);
         assert(@offsetOf(GameObject, "gun_condition") == 0x66C);
         assert(@offsetOf(GameObject, "_unknown_678") == 0x678);
         assert(@offsetOf(GameObject, "_unknown_6ac") == 0x6AC);
@@ -907,7 +918,7 @@ pub fn rechargeShields(object: *GameObject, combat: *const create.ShipCombat, re
         return;
     }
     if (object.power_up == .no_shield_recharge) return;
-    const full = @as(f32, @floatFromInt(combat.shield_power * 6)) - 1;
+    const full = combat.fullShields() - 1;
     const rate = full * object.shield_factor * object.shield_condition / (combat.shield_recharge * recharge_steps);
     for (std.enums.values(collision.Quadrant)) |quadrant| {
         const shield = object.shields.at(quadrant);
@@ -1008,6 +1019,15 @@ pub const World = struct {
     /// The head-up display's state (`hud.cpp`'s globals), which smart targeting and the target
     /// display answer the player's hits through; null where there is none.
     display: ?*@import("hud.zig").State = null,
+    /// The pools a damaged ship's smoke comes from; null where none is sent out.
+    smoke: ?*@import("main/smoke.zig").Pools = null,
+
+    /// What particles are sent out with, as the camera sees them, their sparks going to the
+    /// explosions; null where nothing is seen.
+    pub fn sending(world: World) ?@import("particles.zig").Sending {
+        const seen = world.camera orelse return null;
+        return .{ .view = seen.place, .clock = world.clock, .random = world.random, .explosions = world.explosions };
+    }
 };
 
 /// `simulation_step` (`0x004774D0`): the work of every fourth tick, so 25 times a second, which

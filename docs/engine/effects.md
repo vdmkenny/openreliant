@@ -1,8 +1,9 @@
 # Effects
 
 What the game shows besides its objects and their shots: for now, the particles, fireballs,
-burning bits, break-up and shockwaves of an explosion, a ship's shields flaring as they are struck,
-and the sparks a hit throws. [Destruction](objects.md#destruction) covers when a ship blows up.
+burning bits, break-up and shockwaves of an explosion, the smoke a damaged ship trails, a ship's
+shields flaring as they are struck, and the sparks a hit throws.
+[Destruction](objects.md#destruction) covers when a ship blows up.
 
 ## Drawn between the ticks
 
@@ -18,12 +19,14 @@ the ticks. `--no-smooth-motion` and `--original` draw them where the ticks leave
 ## Particles
 
 `particles.cpp` keeps particles: sprites that fly off an emitter and change size and colour over
-their life. `particles_init` (`0x0049BF60`) makes the only pool the game fills (`particle_pool`,
-`0x0058A94C`) of the ten `particle_pools` (`0x0058A948`) has room for: 1000 particles over
-`gunflare\partic4`, drawn as one set of sprites that take their own texture coordinates, are
-coloured by their own colour and add to what is behind them. A particle is a record of 0x18 bytes,
-its birth and life in ticks, its velocity a tick and its template, and the sprite of the same index.
-It is free once its birth plus its life is before the frame.
+their life. A particle comes from one of the ten `particle_pools` (`0x0058A948`), which
+`particle_pool_create` (`0x0049C050`) fills: a number of particles over a texture, drawn as one set
+of sprites that take their own texture coordinates, are coloured by their own colour and combine
+with what is behind them as the pool says. `particles_init` (`0x0049BF60`) makes the explosions'
+pool (`particle_pool`, `0x0058A94C`), 1000 particles over `gunflare\partic4` that add to what is
+behind them, and the mission's start makes three for the [smoke](#smoke). A particle is a record of
+0x18 bytes, its birth and life in ticks, its velocity a tick and its template, and the sprite of the
+same index. It is free once its birth plus its life is before the frame.
 
 A template (`particle_template_create`, `0x0049C5D0`, 0x50 bytes) says how its particles live:
 
@@ -57,15 +60,21 @@ velocity they inherit (`0xDC`); and the span of the texture they show (`0xE8`).
 - `particle_stream` (`0x0049C680`) sends particles out over the emitter's own life: each tick of the
   frame, one goes with the chance the template's rate gives at that point, thinned as a burst is but
   by the distance alone, and each moves on at once as if it had left at the frame's start. It
-  returns 0 once the emitter's life is over.
+  returns 0 once the emitter's life is over. It walks the pool until it has sent them all, the
+  template's kind rolling at each particle it passes, free or not; a spark it rolls is thrown on top
+  of them.
+- `particle_spark` (`0x0049C340`) throws a spark: its velocity is a particle's but inheriting
+  nothing, times 100 to make it a second's, and `explosion_spark` (`0x00471B20`) throws it as a
+  [burning bit](#burning-bits) where the emitter stands.
 
 **Improvement:** a burst and a stream are not thinned by their distance, so an explosion far off
 is as full as one close by, and the pool has room for 4000 to hold them. The half behind the camera
 is still left out. `--original` restores the thinning and the pool of 1000.
 
-`particles_frame` (`0x0049C8E0`), once a frame after the shots, moves each particle alive on by its
-velocity times the frame's ticks, sets its sprite's half-size and colour from its template's curves,
-and hides the rest; the set is drawn up to its last particle alive, in the world's layer.
+`particles_frame` (`0x0049C8E0`), once a frame after the shots, moves each particle alive in each
+pool on by its velocity times the frame's ticks, sets its sprite's half-size and colour from its
+template's curves, and hides the rest; each pool's set is drawn up to its last particle alive, in
+the world's layer.
 
 An explosion's blast (`explode_blast`, `0x0046C980`) bursts into two templates that `explosions_init`
 (`0x0046B240`) makes:
@@ -79,11 +88,9 @@ Both carry some of the ship's velocity on: a quarter of it to half for the flame
 sparkle. A ship that bursts (`explode_burst`, `0x00471DB0`) sends 200 of the flame at 20 to 25 a
 tick, carrying a quarter, and the sparkle carrying half.
 
-[`particles.zig`](../../src/engine/game/particles.zig) ports the pool, templates, emitters and the
-frame; [`explode.zig`](../../src/engine/game/explode.zig) the two templates and the bursts. Not
-ported: the sparks a template of that kind sends (`particle_spark`, `0x0049C340`), which it hands
-to `explode.cpp` (`0x00471B20`) and which none of the templates here sends. `particles_frame` runs
-the [sparks](#sparks) first.
+[`particles.zig`](../../src/engine/game/particles.zig) ports the pools, templates, emitters, the
+sparks they send and the frame; [`explode.zig`](../../src/engine/game/explode.zig) the two templates
+and the bursts. `particles_frame` runs the [sparks](#sparks) first.
 
 ## Fireballs
 
@@ -146,7 +153,14 @@ once its life is over.
 | A burst | 25 | Every way | 0.2 | 0.2 |
 | A spin-out, each frame while fewer ticks are left than ten times its trail, from 50 | 1 | Backwards, from within 250 of the ship each way | 0.1 | 1 |
 
-A ship with flag 24 set leaves only every other bit of its trail. The game can also throw a body
+A ship with flag 24 set leaves only every other bit of its trail.
+
+A stream's spark (`explosion_spark`, `0x00471B20`) is a bit as well: a piece picked the same way,
+at 0.1 of the size, flying at the velocity it is given, turning as a bit does, for -100 to 300
+ticks. One whose flight is over before it starts is let go before it is drawn, having still taken
+the oldest bit's place.
+
+The game can also throw a body
 (types `0x58` to `0x5B`) by a chance, or a rock chunk (types `0xB2` to `0xB6`), which none of these
 asks for.
 
@@ -156,8 +170,9 @@ both key lights and both fill lights, where a ship's part takes one of each pair
 **Improvement:** a bit takes the lights a ship's part takes (`objects.lightMask`), so it is not
 washed out. `--original` restores every light, for the bits and the break-up's pieces alike.
 
-[`explode.zig`](../../src/engine/game/explode.zig) ports the bits as `Explosions.throwBit` and
-`Bit`, and [`aiexplode.zig`](../../src/engine/game/aiexplode.zig) the spin-out's trail. The port
+[`explode.zig`](../../src/engine/game/explode.zig) ports the bits as `Explosions.throwBit`,
+`Explosions.throwSpark` and `Bit`, and [`aiexplode.zig`](../../src/engine/game/aiexplode.zig) the
+spin-out's trail. The port
 throws debris only, and leaves a piece out where the game has no model for it.
 
 ## Break-up
@@ -208,6 +223,49 @@ corners, and carries the baked colours and both sets of texture coordinates, so 
 its part did. A piece takes the part's light mask; `--original` restores every light.
 
 [`explode/breakup.zig`](../../src/engine/game/explode/breakup.zig) ports the break-up.
+
+## Smoke
+
+A damaged ship trails smoke from its engines, and a badly damaged one throws out small fireballs as
+well. `mission_frame` works it out in its pass over the objects, after the particles' frame and the
+camera's. An object with flag 24 has its smoke let go and its level set back to 0 first; then each
+one the pass draws, save stand-ins and disabled and jumping ones, sends its smoke out and has its
+level followed.
+
+**The level** (`+0x660`), for an object with stats other than the Ripper, goes by the weakest
+quadrant of its armour against six times its type's `armor_class`:
+
+| Level | Armour | Template | Half-size | Colour | Life |
+|---|---|---|---|---|---|
+| 0 | 0.9 or more | none | | | |
+| 1 | Below 0.9 | Particles over `gunflare\partic4`, added | 37.5, 150, 300 | 0.3, 0.15, 0 grey | 70 to 79 |
+| 2 | Below 0.7 | Particles over `gunflare\partic4`, added | 62.5, 250, 500 | 0.5, 0.25, 0 grey | 100 to 109 |
+| 3 | Below 0.5 | Particles over `gunflare\partic7`, over what is behind by its alpha, and a spark one time in 200 | 75, 300, 600 | 0.5, 0.25, 0 grey | 100 to 109 |
+
+While the weakest quadrant of its shields holds more than 0.9 of six times its type's
+`shield_power`, smoke already showing thins to level 1 and none starts. The game reads the
+shields' aft quadrant twice and their right one not at all.
+
+**When the level changes**, the smoke starts again (`smoke_start`, `0x00494400`) from the first
+part of the model, in its order, with an engine glow, and the first glow on it: the emitter hangs
+from the part's frame where the glow stands, turned as it is, its Z axis turned back where the
+glow's plume burns the other way (a negative length, `+0x50`). It streams along its Z axis at 30 to
+36 a tick for 999999 ticks, strayed up to 0.15 either way across at level 1 and 0.25 above. A model
+without a glow keeps what smoke it has. `mission_start` makes the three templates and their pools of
+1000 (`smoke_template_create`, `0x004946B0`, into `smoke_templates` at `0x00587CB4`), and
+`mission_end` (`0x004942B0`) lets them go.
+
+**Each frame** with smoke, its template's rate is set through 50, 0 and 0, and its emitter's birth
+to the frame's start, so it streams half a particle a tick; its particles carry a quarter of the
+ship's velocity, which is a step's. At level 3, one frame in ten (`rand() % 10`), a fireball, the
+bang, goes off where the glow stands, reckoned from the ship's root rather than the glow's part: 0.1
+to 0.3 of the ship's radius across, for 90 ticks, drifting with the smoke.
+
+The port reckons which particles are behind the camera by the camera's last frame, as it frames the
+camera after the objects; the game frames the camera first.
+
+[`main/smoke.zig`](../../src/engine/game/main/smoke.zig) ports the smoke: the levels as `Level`, the
+pools as `Pools`, a ship's smoke as `Stream`, which its slot holds, and the pass as `frame`.
 
 ## Shockwaves
 

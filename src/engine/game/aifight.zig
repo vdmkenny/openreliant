@@ -559,7 +559,7 @@ fn callForHelp(fighter: Fighter) void {
     const ship = fighter.ship();
     if (fighter.target().index != all.player) return;
     const combat = fighter.slot.combat orelse return;
-    const worth: f32 = @floatFromInt(combat.armor_class * 6);
+    const worth = combat.fullArmor();
     if (ship.recent_damage < worth * help_damage) return;
     if (ship.last_attacker != all.player) return;
     for (ship.armor.values()) |armor| {

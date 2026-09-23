@@ -813,12 +813,12 @@ address	kind	name	type	comment
 0049c050	function	particle_pool_create	void * __fastcall (int count, void *texture, byte coordinates, byte lit, byte blend)	A pool of count particles in particle_pools, 0x10 bytes: the count, the particles (0x18 bytes each: birth, life, velocity, template), a sprite set of as many over the texture, the sprites showing all of it, and how many are used
 0049c140	function	particle_pool_free		Frees a pool's particles and sprite set
 0049c1c0	function	particle_emit	void __fastcall (void *emitter, int index)	Particle index born from an emitter, now: its life with a random spread, a velocity along the emitter's direction, strayed by its spread, at a random speed, turned into the world, plus what it inherits; its sprite where the emitter stands, showing the emitter's span
-0049c340	function	particle_spark	void __fastcall (void *emitter)	A spark from an emitter, at a particle's velocity times 100 (0x00471B20)
+0049c340	function	particle_spark	void __fastcall (void *emitter)	A spark from an emitter, as fast as a particle leaves it but inheriting nothing, its velocity times 100 a second's: explosion_spark
 0049c450	function	particle_burst	void __fastcall (void *emitter, int count)	Count particles from an emitter at once, into the free ones: half as many behind the camera, and fewer with distance by the template's half-size halfway through, times 150, over the distance times the template's +0x4C
 0049c680	function	particle_stream	int __fastcall (void *emitter)	What an emitter sends out over the frame, by its template's rate curve in hundredths, a roll a tick, thinned as a burst is; 0 once the emitter's life is over
 0049c8e0	function	particles_frame		Once a frame, after the shots: first the sparks (sparks_update); then each particle alive moves on by its velocity and takes its half-size and colour from its template's curves; the rest are hidden; each pool's set is drawn up to its last particle alive
-0058a948	data	particle_pools		Ten pools, 0x10 bytes each, of which the game fills one, particle_pool
-0058a94c	data	particle_pool		The pool every particle template draws from
+0058a948	data	particle_pools		Ten pools, 0x10 bytes each: particle_pool, the damaged ships' smoke's three (smoke_pool_light and the next two) and two others
+0058a94c	data	particle_pool		The explosions' pool, of 1000 over gunflare\partic4, added
 0058a950	data	particles_ready	bool	Set once particles_init has run
 00553348	data	explode_flame_template	ParticleTemplate *	The flame a blast bursts into: 500 ticks and up to 100 more, half-size 0 to 100 to 400, from yellowish white through orange to nothing
 0055334c	data	explode_sparkle_template	ParticleTemplate *	The sparkle a blast leaves: 100 ticks and up to 500 more, half-size 0 to 25, white fading out
@@ -1052,3 +1052,11 @@ address	kind	name	type	comment
 00501cb8	data	radar_scale	float[3]	The share of a unit of the world a radar pixel stands for at each range: a 150000th, a 230000th and a 330000th
 0057bdf4	data	comms_object	int	The object the radio's window names, whose corners hud_comms_marker marks and whose radar contact shows in palette entry 0xFD with shape 0xE6
 004cb910	function	SR_CCB_quantize_color	byte __thiscall (void *ccb, float red, float green, float blue)	The palette entry of a colour table (CCB) nearest a colour of three levels from 0 to 1
+00471b20	function	explosion_spark	void __fastcall (Vec3 *at, Vec3 *velocity, float size)	Throws a small piece of debris into the next of explosion_bits, picked as explosion_bit picks one: at, flying at velocity a second, half to one and a half times size across, tumbling up to 0.05 a frame about each axis, for -100 to 300 ticks. particle_spark's, at size 0.1
+004942b0	function	mission_end	void (void)	A mission's end: among much else it frees the smoke's templates and pools (smoke_templates), the debris models, the radar's backing, the samples, the speech and the cockpit object, and ends the sounds and the music
+00494400	function	smoke_start	void __fastcall (GameObject *object, ShpPart *part, int child, int attachment, int level)	Starts an object's smoke again for level (smoke), from the engine glow attachment on part, the root's child: frees the old emitter, and for levels 1 to 3 hangs one from the child's frame where the attachment stands, turned as it is, its Z axis turned back where the attachment's length (+0x50) is negative, streaming along Z at 30 to 36 a tick, strayed 0.15 either way across at level 1 and 0.25 above, for 999999 ticks
+004946b0	function	smoke_template_create	ParticleTemplate * __fastcall (int level)	The smoke's template for level 1 to 3 and its pool of 1000: over gunflare\partic4, added, at 1 and 2, and gunflare\partic7, premultiplied, at 3, with sparks one time in 200; living 70 to 79 ticks at 1 and 100 to 109 above; mission_start makes the three into smoke_templates
+00587cb4	data	smoke_templates	ParticleTemplate *[3]	The smoke's templates for levels 1 to 3 (smoke_template_create); smoke_start reads the level's from four bytes before, so level 0 reads paused_ticks, and makes no emitter for it
+00588708	data	smoke_pool_light	void *	The pool of the smoke's level 1 (smoke_template_create); smoke_pool_heavy and smoke_pool_burning follow
+0058870c	data	smoke_pool_heavy	void *	The pool of the smoke's level 2
+00588710	data	smoke_pool_burning	void *	The pool of the smoke's level 3

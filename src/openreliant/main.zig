@@ -557,8 +557,11 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     defer explosions.deinit();
     explosions.settings.debris_lights = options.debris_lights;
     explosions.settings.fireballs = options.fireballs;
-    var particles: game.particles.Pool = try .load(gpa, &textures, options.distant);
+    var particles: game.particles.Pool = try .load(gpa, &textures, .standard, options.distant);
     defer particles.deinit();
+    // The damaged ships' smoke, from pools of its own.
+    var smoke: game.main.smoke.Pools = try .load(gpa, &textures, options.distant);
+    defer smoke.deinit();
     var shockwaves: game.shockwave.Shockwaves = try .create(gpa, &textures, options.rings);
     defer shockwaves.deinit(gpa);
     var sparks: game.sparks.Sparks = try .create(gpa, &textures);
@@ -566,7 +569,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     var shields: game.shield.Shields = try .create(gpa, &textures, explosions.settings.detail, context.hardware, options.shields);
     defer shields.deinit(gpa);
     // What the objects run in, the camera's view brought up to date each frame.
-    var world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .difficulty = options.difficulty, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .shockwaves = &shockwaves, .sparks = &sparks, .shields = &shields };
+    var world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .difficulty = options.difficulty, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .smoke = &smoke, .shockwaves = &shockwaves, .sparks = &sparks, .shields = &shields };
     try sandbox.start(.{ .world = world, .clock = &clock, .devices = &devices }, @intCast(options.ship));
     // The music, as a mission's script starts it (`cmd_PlayMusic`): from `music\`, for ever, at 80.
     if (options.music) |name| {
@@ -760,6 +763,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .backing = backing,
             .kills_shown = devices.active(.display_kills, false),
             .particles = &particles,
+            .smoke = &smoke,
             .sparks = &sparks,
             .ahead = game.objects.pastTick(&clock, options.smooth_motion),
             .explosions = &explosions,
@@ -974,6 +978,7 @@ const Sandbox = struct {
         if (orders.world.shockwaves) |waves| waves.reset();
         if (orders.world.sparks) |thrown| thrown.reset();
         if (orders.world.particles) |pool| pool.reset();
+        if (orders.world.smoke) |pools| pools.reset();
         sandbox.objects.reset(sandbox.random);
         // The debris models, counted as used so the sweep below keeps them (`explosions_init`).
         if (orders.world.explosions) |explosions| explosions.debris = .load(sandbox.objects, sandbox.types.interface());

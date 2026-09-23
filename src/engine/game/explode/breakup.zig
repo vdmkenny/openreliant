@@ -377,8 +377,7 @@ pub const Pieces = struct {
 /// Streams `trail`'s smoke from `from`, as the camera sees it.
 fn stream(world: gameobj.World, trail: *particles.Emitter, from: math.Place) void {
     const pool = world.particles orelse return;
-    const view = (world.camera orelse return).place;
-    _ = pool.stream(trail, from, view, world.clock, world.random);
+    _ = pool.stream(trail, from, world.sending() orelse return);
 }
 
 /// How the pieces of a first cut fly: every third, from the first, whole, away from the ship at
