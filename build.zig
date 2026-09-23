@@ -43,8 +43,11 @@ pub fn build(b: *std.Build) void {
     });
     platform.linkLibrary(sdl_library);
     // The sound: OpenAL Soft in place of Miles's 3D providers, which deps/openal-soft builds from
-    // source for the target and the platform renders through its loopback device.
-    const openal_library = b.dependency("openal_soft", .{ .target = target, .optimize = optimize }).artifact("openal");
+    // source for the target and the platform renders through its loopback device. It is built
+    // optimized whatever the game's own mode: its mixer runs in the audio device's callback and has
+    // to keep up with it, and unoptimized, HRTF over a burst of gunfire's voices falls behind and
+    // the sound stutters.
+    const openal_library = b.dependency("openal_soft", .{ .target = target, .optimize = .ReleaseFast }).artifact("openal");
     const openal_c = b.addTranslateC(.{
         .root_source_file = b.path("src/platform/openal.h"),
         .target = target,
