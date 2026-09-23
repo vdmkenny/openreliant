@@ -608,15 +608,17 @@ test drawText {
 /// What `hud_init` loads for the display to draw with.
 pub const Resources = struct {
     art: Art,
-    /// `font.fnt`, which the readouts, the clock, the cluster's figures and the windows are
-    /// written in.
+    /// `blufont.fnt` (`0x00595490`), which every line of the display's own text is written in:
+    /// the readouts, the clock, the cluster's figures, the view's name and the windows. `0x004A2AF0`
+    /// opens it for the hardware renderers, and `soft_blufont.fnt`, the same letters, for the
+    /// software one; the port draws the hardware display.
     font: Opened,
     /// The fonts the target's ranges are written in.
     target_fonts: TargetFonts,
     /// The power ball's tables, and the image it is drawn into.
     ball: *power.Ball,
 
-    pub const font_name = "FONT.FNT";
+    pub const font_name = "BLUFONT.FNT";
 
     /// Loads what the display draws with from the resources' archive: `shapes`, the display's
     /// set, with its global palette; the fonts, which `0x004A2AF0` opens; and the power ball,

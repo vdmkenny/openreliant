@@ -103,6 +103,10 @@ first seventeen entries as levels of coverage, `FONT.FNT` and `ITACSML.FNT` amon
 with no palette, as `SMLFONT.FNT`, draws with VFX's global palette, which `hud_draw` makes of the
 display's set: its glyphs are all index `0xF7`, a pale tan there.
 
+Every line of the display's own text is in `blufont.fnt` (`0x00595490`), orange despite its
+name, which `0x004A2AF0` opens for the hardware renderers (`soft_blufont.fnt` for the software
+one). The target's ranges are the exception ([The target](#the-target)).
+
 `hud_text` hands `VFX_string_draw` a remap table as well, 256 bytes that the glyph's bytes go
 through. `0x004A2AF0` builds them once, with the fonts it opens: most are each index itself, but
 index 0, which is `0xFF`, and a few change an index or a range of them.
