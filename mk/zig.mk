@@ -26,11 +26,11 @@ play: | $(GAME_DIR)/.stamp-install ## Build OpenReliant optimized and run it on 
 	$(ZIG) build -Doptimize=ReleaseFast $(GAME_TARGET)
 	$(ROOT)/zig-out/bin/openreliant $(INSTALL_DIR)
 
-# The game's one shader, for each GPU interface SDL runs on: SPIR-V for Vulkan, and Metal's
+# The game's shaders, for each GPU interface SDL runs on: SPIR-V for Vulkan, and Metal's
 # language from that. The outputs are committed, so building needs neither tool; regenerating needs
 # glslc (from shaderc) on the PATH, and SPIRV-Cross, which this builds.
 SHADER_DIR := $(ROOT)/src/platform/shaders
-SHADERS    := $(foreach name,device bloom,$(foreach stage,vert frag,$(SHADER_DIR)/$(name).$(stage).spv $(SHADER_DIR)/$(name).$(stage).msl))
+SHADERS    := $(foreach name,device bloom shadow,$(foreach stage,vert frag,$(SHADER_DIR)/$(name).$(stage).spv $(SHADER_DIR)/$(name).$(stage).msl))
 GLSLC      ?= glslc
 
 .PHONY: shaders

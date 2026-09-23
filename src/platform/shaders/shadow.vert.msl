@@ -1,0 +1,28 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct _29
+{
+    float4 _m0[3];
+};
+
+struct main0_out
+{
+    float4 gl_Position [[position]];
+};
+
+struct main0_in
+{
+    float3 m_12 [[attribute(0)]];
+};
+
+vertex main0_out main0(main0_in in [[stage_in]], constant _29& _31 [[buffer(0)]])
+{
+    main0_out out = {};
+    float4 _18 = float4(in.m_12, 1.0);
+    out.gl_Position = float4(dot(_31._m0[0], _18), dot(_31._m0[1], _18), dot(_31._m0[2], _18), 1.0);
+    return out;
+}
+

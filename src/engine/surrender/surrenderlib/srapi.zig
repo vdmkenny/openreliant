@@ -169,6 +169,9 @@ pub const Context = struct {
     /// lights (`device.Device.lights`). The pipeline then leaves them out of the vertices' colours
     /// and hands the device the vertices' normals instead.
     pixel_lighting: bool = false,
+    /// The port's: how many texels across the device's shadow maps are, for a frame it draws
+    /// shadows in, and 0 for none (`srshadow`). The driver sets it with the lights.
+    shadow_size: u32 = 0,
 
     /// A point of the world in the camera's frame.
     pub fn view(context: Context, point: Vector) Vector {

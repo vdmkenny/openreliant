@@ -7,6 +7,7 @@ const std = @import("std");
 
 const math = @import("../math.zig");
 const srd3d = @import("srd3d.zig");
+const srshadow = @import("../surrenderlib/srshadow.zig");
 const srtexture = @import("../surrenderlib/srtexture.zig");
 
 /// A vertex as the driver hands it over (`D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_SPECULAR |
@@ -46,6 +47,8 @@ pub const no_lights: u32 = std.math.maxInt(u32);
 pub const Light = struct {
     mask: u32,
     kind: Kind,
+    /// Kept off what a caster shades from it, for a device that draws shadows.
+    shadowed: bool = false,
 
     pub const Kind = union(enum) {
         /// `colour` times the dot product of the pixel's normal with `toward`, where that is
@@ -85,6 +88,15 @@ pub const State = struct {
     texture: ?*srtexture.Image,
     depth: srd3d.Depth,
     blend: ?srd3d.Factors,
+    /// The port's: the shadows the draw's lit pixels are looked up in, for a device that draws
+    /// them.
+    receives: Receives = .nothing,
+};
+
+/// Which shadows a draw's pixels take: none, or the world's, which the layer sets.
+pub const Receives = enum(u32) {
+    nothing = 0,
+    world = 1,
 };
 
 pub const Device = struct {
@@ -107,6 +119,11 @@ pub const Device = struct {
         /// the vertices with the rest. A device without it lights nothing itself, and the
         /// driver's vertices come lit, as Direct3D 7's did.
         lights: ?*const fn (*anyopaque, []const Light) usize = null,
+        /// The port's: how many texels across its shadow maps are, or 0 where it draws no
+        /// shadows. A device without it draws none.
+        shadow_size: ?*const fn (*anyopaque) u32 = null,
+        /// The port's: the frame's shadows, after its lights, which last until the scene ends.
+        shadows: ?*const fn (*anyopaque, *const srshadow.Frame) void = null,
     };
 
     pub fn begin(device: Device) void {
@@ -130,6 +147,18 @@ pub const Device = struct {
     pub fn lights(device: Device, list: []const Light) usize {
         const take = device.vtable.lights orelse return 0;
         return take(device.ptr, list);
+    }
+
+    /// How many texels across the device's shadow maps are, or 0 where it draws no shadows.
+    pub fn shadowSize(device: Device) u32 {
+        const size = device.vtable.shadow_size orelse return 0;
+        return size(device.ptr);
+    }
+
+    /// Hands the device the frame's shadows.
+    pub fn shadows(device: Device, frame: *const srshadow.Frame) void {
+        const take = device.vtable.shadows orelse return;
+        take(device.ptr, frame);
     }
 };
 

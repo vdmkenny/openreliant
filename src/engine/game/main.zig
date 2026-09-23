@@ -178,6 +178,9 @@ pub const Clock = struct {
 pub const Frame = struct {
     /// The live objects, each drawn by its model's nodes.
     objects: *create.Objects,
+    /// The object the camera sits in (`camera.Camera.inside`), which is not drawn but still casts
+    /// its shadow.
+    seat: ?u16 = null,
     space: *backdrop.Backdrop,
     sky: *nebula.Sky,
     view: camera.View,
@@ -259,7 +262,7 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     // caller does not have to hand it over with the rest.
     var attachments = frame.attachments;
     attachments.scale = context.projection.scale[0];
-    try drawObjects(gpa, scene, frame.objects, attachments);
+    try drawObjects(gpa, scene, frame.objects, attachments, frame.seat);
     if (frame.shields) |bubbles| try bubbles.draw(gpa, arena, scene, frame.objects, .{
         .camera = attachments.camera,
         .inside = camera.inCockpit(frame.view, frame.cockpit_mode),
@@ -293,18 +296,22 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
 /// and jumping ones, is drawn with `object_draw` (`objects.Model.draw`), with its own offset into
 /// its lights' blinks, its lights unless `lights_disabled`, its engine glows burning by the
 /// throttle of its last update times the share of its engines left, and nothing at all while it is
-/// `hidden`, as the ship the camera sits in is.
+/// `hidden`, as the ship the camera sits in is. That ship, `seat`, still casts its shadow
+/// (`objects.Model.castShadows`).
 ///
 /// Not ported yet: the cloak; what else the pass draws for a few types (#41); the cutaway scenes'
 /// own rules, and the gate's tunnel, in which no object is drawn. The pass's smoke is `smoke.frame`.
-pub fn drawObjects(gpa: Allocator, scene: *srcore.Scene, all: *create.Objects, attachments: objects.View) Allocator.Error!void {
+pub fn drawObjects(gpa: Allocator, scene: *srcore.Scene, all: *create.Objects, attachments: objects.View, seat: ?u16) Allocator.Error!void {
     var walk = all.walk();
     while (walk.next()) |index| {
         const slot = &all.slots[index];
         const object = &slot.object;
         if (object.flags.outOfFrame()) continue;
-        if (object.flags.hidden) continue;
         const model = if (slot.model) |*model| model else continue;
+        if (object.flags.hidden) {
+            if (index == seat) try model.castShadows(gpa, scene);
+            continue;
+        }
         var view = attachments;
         view.blink_offset = object.blink_offset;
         view.lights = !object.flags.lights_disabled;
@@ -337,10 +344,13 @@ test "the objects are framed and drawn, save those left out" {
     try std.testing.expectEqual(0, all.slots[3].object.missile_homing);
     var scene: srcore.Scene = .{};
     defer scene.deinit(gpa);
-    try drawObjects(gpa, &scene, all, .{});
-    // Only the fourth is drawn: its one part.
+    try drawObjects(gpa, &scene, all, .{}, 0);
+    // Only the fourth is drawn: its one part. The first, which the camera sits in, casts its
+    // shadow without being drawn.
     try std.testing.expectEqual(1, scene.layers.get(.world).items.len);
     try std.testing.expectEqual(math.Vector{ 300, 0, 0 }, scene.layers.get(.world).items[0].mesh.position);
+    try std.testing.expectEqual(1, scene.casters.items.len);
+    try std.testing.expectEqual(math.Vector{ 0, 0, 0 }, scene.casters.items[0].position);
 }
 
 // --- The cockpit ----------------------------------------------------------------------------

@@ -1,0 +1,241 @@
+//! The shadow maps (`srshadow`): a depth texture with a layer for each cascade, the frame's casters
+//! drawn into each before the frame itself, and what the device's shader looks them up with
+//! (`shaders/device.glsl`).
+//!
+//! **Improvement:** the original drew no shadows. `Quality.off`, which `Settings.original` sets,
+//! leaves them out.
+
+const std = @import("std");
+const c = @import("sdl");
+
+const openreliant = @import("openreliant");
+const srshadow = openreliant.engine.surrender.surrenderlib.srshadow;
+const gpu = @import("../gpu.zig");
+const Geometry = @import("geometry.zig").Geometry;
+
+/// How the shadows are drawn, or not at all.
+pub const Quality = enum {
+    off,
+    /// Maps 1024 texels across, looked up in four filtered taps: soft, and light on older GPUs.
+    low,
+    /// Maps 4096 texels across, looked up in sixteen: sharp near the camera, with smooth edges.
+    high,
+
+    /// How many texels across each cascade's map is, or 0 for none.
+    pub fn texels(quality: Quality) u32 {
+        return switch (quality) {
+            .off => 0,
+            .low => 1024,
+            .high => 4096,
+        };
+    }
+
+    /// Whether the lookup takes sixteen taps rather than four.
+    fn wide(quality: Quality) bool {
+        return quality == .high;
+    }
+};
+
+/// What the device's shader reads of the frame's shadows, in std140's layout.
+pub const Uniforms = extern struct {
+    cascades: [srshadow.cascade_count]Cascade = @splat(.{}),
+    /// The first: 1 where the frame has shadows, and 0 where it has none. The second: one over the
+    /// maps' texels across. The third: 1 for sixteen taps, 0 for four.
+    settings: [4]f32 = @splat(0),
+
+    const Cascade = extern struct {
+        rows: [3][4]f32 = @splat(@splat(0)),
+        /// The view depth it reaches to, and a texel's width in the world.
+        extent: [4]f32 = @splat(0),
+    };
+
+    fn of(frame: *const srshadow.Frame, quality: Quality) Uniforms {
+        const texel = 1 / @as(f32, @floatFromInt(quality.texels()));
+        var uniforms: Uniforms = .{ .settings = .{ 1, texel, @floatFromInt(@intFromBool(quality.wide())), 0 } };
+        for (&uniforms.cascades, frame.cascades) |*taken, cascade| {
+            taken.* = .{ .rows = cascade.rows, .extent = .{ cascade.far, cascade.texel, 0, 0 } };
+        }
+        return uniforms;
+    }
+
+    comptime {
+        std.debug.assert(@sizeOf(Cascade) == 64);
+        std.debug.assert(@offsetOf(Uniforms, "settings") == srshadow.cascade_count * 64);
+    }
+};
+
+/// How the depth pass keeps a surface from shadowing itself: a little farther from the sun, and
+/// more where it slopes away from it.
+const bias_constant: f32 = 1;
+const bias_slope: f32 = 1.5;
+
+pub const Shadows = struct {
+    quality: Quality,
+    /// A layer for each cascade: one texel across while there are no shadows, for the shader to
+    /// bind all the same.
+    maps: *c.SDL_GPUTexture,
+    /// Compares a depth with the map's, filtered between the four texels around it.
+    sampler: *c.SDL_GPUSampler,
+    vertex_shader: ?*c.SDL_GPUShader = null,
+    fragment_shader: ?*c.SDL_GPUShader = null,
+    pipeline: ?*c.SDL_GPUGraphicsPipeline = null,
+    geometry: ?Geometry = null,
+    /// The frame's, until it is drawn.
+    frame: ?*const srshadow.Frame = null,
+    uniforms: Uniforms = .{},
+
+    const Vertex = [3]f32;
+
+    pub fn init(handle: *c.SDL_GPUDevice, spirv: bool, quality: Quality) gpu.Error!Shadows {
+        const format = depthFormat(handle);
+        const maps = try mapsTexture(handle, format, @max(quality.texels(), 1));
+        errdefer c.SDL_ReleaseGPUTexture(handle, maps);
+        var sampler_info = std.mem.zeroes(c.SDL_GPUSamplerCreateInfo);
+        sampler_info.min_filter = c.SDL_GPU_FILTER_LINEAR;
+        sampler_info.mag_filter = c.SDL_GPU_FILTER_LINEAR;
+        sampler_info.mipmap_mode = c.SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
+        sampler_info.address_mode_u = c.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+        sampler_info.address_mode_v = c.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+        sampler_info.address_mode_w = c.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+        sampler_info.enable_compare = true;
+        // Lit where the pixel lies no farther from the sun than what the map holds.
+        sampler_info.compare_op = c.SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
+        const sampler = c.SDL_CreateGPUSampler(handle, &sampler_info) orelse return gpu.fail("SDL_CreateGPUSampler");
+        errdefer c.SDL_ReleaseGPUSampler(handle, sampler);
+        var shadows: Shadows = .{ .quality = quality, .maps = maps, .sampler = sampler };
+        if (quality != .off) {
+            errdefer shadows.deinit(handle);
+            shadows.vertex_shader = try gpu.shader(handle, spirv, c.SDL_GPU_SHADERSTAGE_VERTEX, if (spirv) code.vertex_spirv else code.vertex_msl, 0, 1);
+            shadows.fragment_shader = try gpu.shader(handle, spirv, c.SDL_GPU_SHADERSTAGE_FRAGMENT, if (spirv) code.fragment_spirv else code.fragment_msl, 0, 0);
+            shadows.pipeline = try shadows.depthPipeline(handle, format);
+        }
+        return shadows;
+    }
+
+    const code = struct {
+        const vertex_spirv = @embedFile("../shaders/shadow.vert.spv");
+        const vertex_msl = @embedFile("../shaders/shadow.vert.msl");
+        const fragment_spirv = @embedFile("../shaders/shadow.frag.spv");
+        const fragment_msl = @embedFile("../shaders/shadow.frag.msl");
+    };
+
+    pub fn deinit(shadows: *Shadows, handle: *c.SDL_GPUDevice) void {
+        Geometry.release(&shadows.geometry, handle);
+        if (shadows.pipeline) |made| c.SDL_ReleaseGPUGraphicsPipeline(handle, made);
+        if (shadows.vertex_shader) |made| c.SDL_ReleaseGPUShader(handle, made);
+        if (shadows.fragment_shader) |made| c.SDL_ReleaseGPUShader(handle, made);
+        c.SDL_ReleaseGPUSampler(handle, shadows.sampler);
+        c.SDL_ReleaseGPUTexture(handle, shadows.maps);
+    }
+
+    /// 32-bit depth where the GPU samples it, 16-bit otherwise.
+    fn depthFormat(handle: *c.SDL_GPUDevice) c.SDL_GPUTextureFormat {
+        const usage = c.SDL_GPU_TEXTUREUSAGE_SAMPLER | c.SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET;
+        const wide = c.SDL_GPUTextureSupportsFormat(handle, c.SDL_GPU_TEXTUREFORMAT_D32_FLOAT, c.SDL_GPU_TEXTURETYPE_2D_ARRAY, usage);
+        return if (wide) c.SDL_GPU_TEXTUREFORMAT_D32_FLOAT else c.SDL_GPU_TEXTUREFORMAT_D16_UNORM;
+    }
+
+    fn mapsTexture(handle: *c.SDL_GPUDevice, format: c.SDL_GPUTextureFormat, across: u32) error{Sdl}!*c.SDL_GPUTexture {
+        var info = std.mem.zeroes(c.SDL_GPUTextureCreateInfo);
+        info.type = c.SDL_GPU_TEXTURETYPE_2D_ARRAY;
+        info.format = format;
+        info.usage = c.SDL_GPU_TEXTUREUSAGE_SAMPLER | c.SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET;
+        info.width = across;
+        info.height = across;
+        info.layer_count_or_depth = srshadow.cascade_count;
+        info.num_levels = 1;
+        return c.SDL_CreateGPUTexture(handle, &info) orelse gpu.fail("SDL_CreateGPUTexture");
+    }
+
+    /// Draws the casters' depth alone, both faces, with the bias against self-shadowing. What lies
+    /// nearer the sun than the box is held at its near side rather than cut off, so that it still
+    /// casts.
+    fn depthPipeline(shadows: Shadows, handle: *c.SDL_GPUDevice, format: c.SDL_GPUTextureFormat) error{Sdl}!*c.SDL_GPUGraphicsPipeline {
+        const attribute: c.SDL_GPUVertexAttribute = .{ .location = 0, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, .offset = 0 };
+        const buffer: c.SDL_GPUVertexBufferDescription = .{ .slot = 0, .pitch = @sizeOf(Vertex), .input_rate = c.SDL_GPU_VERTEXINPUTRATE_VERTEX };
+        var info = std.mem.zeroes(c.SDL_GPUGraphicsPipelineCreateInfo);
+        info.vertex_shader = shadows.vertex_shader;
+        info.fragment_shader = shadows.fragment_shader;
+        info.vertex_input_state = .{ .vertex_buffer_descriptions = &buffer, .num_vertex_buffers = 1, .vertex_attributes = &attribute, .num_vertex_attributes = 1 };
+        info.primitive_type = c.SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        info.rasterizer_state.fill_mode = c.SDL_GPU_FILLMODE_FILL;
+        info.rasterizer_state.cull_mode = c.SDL_GPU_CULLMODE_NONE;
+        info.rasterizer_state.enable_depth_bias = true;
+        info.rasterizer_state.depth_bias_constant_factor = bias_constant;
+        info.rasterizer_state.depth_bias_slope_factor = bias_slope;
+        info.rasterizer_state.enable_depth_clip = false;
+        info.depth_stencil_state.enable_depth_test = true;
+        info.depth_stencil_state.enable_depth_write = true;
+        info.depth_stencil_state.compare_op = c.SDL_GPU_COMPAREOP_LESS;
+        info.target_info = .{ .num_color_targets = 0, .depth_stencil_format = format, .has_depth_stencil_target = true };
+        return c.SDL_CreateGPUGraphicsPipeline(handle, &info) orelse gpu.fail("SDL_CreateGPUGraphicsPipeline");
+    }
+
+    /// How many texels across the maps are, or 0 without shadows.
+    pub fn texels(shadows: Shadows) u32 {
+        return shadows.quality.texels();
+    }
+
+    /// Takes the frame's shadows, which last until it is drawn.
+    pub fn take(shadows: *Shadows, frame: *const srshadow.Frame) void {
+        if (shadows.quality == .off) return;
+        shadows.frame = frame;
+        shadows.uniforms = .of(frame, shadows.quality);
+    }
+
+    /// Forgets the last frame's shadows, as a frame begins.
+    pub fn clear(shadows: *Shadows) void {
+        shadows.frame = null;
+        shadows.uniforms.settings[0] = 0;
+    }
+
+    /// Sends the casters up with the frame's other uploads.
+    pub fn upload(shadows: *Shadows, handle: *c.SDL_GPUDevice, copy: *c.SDL_GPUCopyPass) gpu.Error!void {
+        const frame = shadows.frame orelse return;
+        try Geometry.upload(&shadows.geometry, handle, copy, std.mem.sliceAsBytes(frame.positions), std.mem.sliceAsBytes(frame.indices));
+    }
+
+    /// Draws the casters into each cascade's map, each run into the cascades it reaches, before
+    /// the frame is drawn. A map with no caster is cleared all the same.
+    pub fn draw(shadows: *Shadows, commands: *c.SDL_GPUCommandBuffer) error{Sdl}!void {
+        const frame = shadows.frame orelse return;
+        const pipeline = shadows.pipeline orelse return;
+        for (frame.cascades, 0..) |cascade, index| {
+            var depth = std.mem.zeroes(c.SDL_GPUDepthStencilTargetInfo);
+            depth.texture = shadows.maps;
+            depth.layer = @intCast(index);
+            depth.clear_depth = 1;
+            depth.load_op = c.SDL_GPU_LOADOP_CLEAR;
+            depth.store_op = c.SDL_GPU_STOREOP_STORE;
+            depth.stencil_load_op = c.SDL_GPU_LOADOP_DONT_CARE;
+            depth.stencil_store_op = c.SDL_GPU_STOREOP_DONT_CARE;
+            const pass = c.SDL_BeginGPURenderPass(commands, null, 0, &depth) orelse return gpu.fail("SDL_BeginGPURenderPass");
+            defer c.SDL_EndGPURenderPass(pass);
+            const geometry = shadows.geometry orelse continue;
+            c.SDL_BindGPUGraphicsPipeline(pass, pipeline);
+            geometry.bind(pass);
+            c.SDL_PushGPUVertexUniformData(commands, 0, &cascade.rows, @sizeOf(@TypeOf(cascade.rows)));
+            for (frame.runs) |run| {
+                if (run.cascades.isSet(index)) c.SDL_DrawGPUIndexedPrimitives(pass, run.count, 1, run.first, 0, 0);
+            }
+        }
+    }
+
+    /// The maps as the device's shader samples them.
+    pub fn binding(shadows: Shadows) c.SDL_GPUTextureSamplerBinding {
+        return .{ .texture = shadows.maps, .sampler = shadows.sampler };
+    }
+};
+
+test "Uniforms.of" {
+    var frame: srshadow.Frame = .{ .cascades = undefined, .positions = &.{}, .indices = &.{}, .runs = &.{} };
+    for (&frame.cascades, 0..) |*cascade, index| {
+        const n: f32 = @floatFromInt(index);
+        cascade.* = .{ .rows = @splat(@splat(n)), .far = 1000 * (n + 1), .texel = n + 0.5, .half = 1 };
+    }
+    const uniforms: Uniforms = .of(&frame, .high);
+    try std.testing.expectEqual([4]f32{ 1, 1.0 / 4096.0, 1, 0 }, uniforms.settings);
+    try std.testing.expectEqual(0, Uniforms.of(&frame, .low).settings[2]);
+    try std.testing.expectEqual([4]f32{ 3000, 2.5, 0, 0 }, uniforms.cascades[2].extent);
+    try std.testing.expectEqual([4]f32{ 3, 3, 3, 3 }, uniforms.cascades[3].rows[1]);
+}

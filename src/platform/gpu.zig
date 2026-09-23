@@ -20,13 +20,16 @@ const c = @import("sdl");
 const openreliant = @import("openreliant");
 const device = openreliant.engine.surrender.srd3d.device;
 const srd3d = openreliant.engine.surrender.srd3d.srd3d;
+const srshadow = openreliant.engine.surrender.surrenderlib.srshadow;
 const srtexture = openreliant.engine.surrender.surrenderlib.srtexture;
+const Geometry = @import("gpu/geometry.zig").Geometry;
+const shadow = @import("gpu/shadows.zig");
 
 const log = std.log.scoped(.gpu);
 
 pub const Error = error{ Sdl, OutOfMemory };
 
-fn fail(what: []const u8) error{Sdl} {
+pub fn fail(what: []const u8) error{Sdl} {
     log.err("{s}: {s}", .{ what, c.SDL_GetError() });
     return error.Sdl;
 }
@@ -50,9 +53,14 @@ pub const Settings = struct {
     /// Lights each pixel with the game's own directional and point lights, rather than each
     /// vertex, so that hulls of few polygons shade smoothly. The original lit each vertex.
     pixel_lighting: bool = true,
+    /// Shadows from the key lights (`gpu/shadows.zig`), where each pixel is lit. The original drew
+    /// none.
+    shadows: Shadows = .high,
     /// The frames' size in pixels whatever the window's, which shows them scaled to fit; null for
     /// the window's own, at the display's density.
     size: ?[2]u32 = null,
+
+    pub const Shadows = shadow.Quality;
 
     pub const Filter = enum {
         /// As the original: bilinear, from the nearest level.
@@ -71,6 +79,7 @@ pub const Settings = struct {
         .bloom = false,
         .dither = false,
         .pixel_lighting = false,
+        .shadows = .off,
     };
 };
 
@@ -88,9 +97,11 @@ const Vertex = extern struct {
     view: [3]f32,
     normal: [3]f32,
     light_mask: u32,
+    /// The shadows its pixels take (`device.Receives`).
+    receives: device.Receives,
 
     comptime {
-        std.debug.assert(@sizeOf(Vertex) == 60);
+        std.debug.assert(@sizeOf(Vertex) == 64);
     }
 };
 
@@ -111,7 +122,9 @@ const Lighting = extern struct {
         vector: [4]f32 = @splat(0),
         mask: u32 = 0,
         kind: Kind = .directional,
-        unused: [2]u32 = @splat(0),
+        /// 1 where a caster shades what it lights.
+        shadowed: u32 = 0,
+        unused: u32 = 0,
 
         const Kind = enum(u32) { directional = 0, point = 1 };
     };
@@ -126,6 +139,7 @@ const Lighting = extern struct {
                     .vector = .{ directional.toward[0], directional.toward[1], directional.toward[2], 0 },
                     .mask = light.mask,
                     .kind = .directional,
+                    .shadowed = @intFromBool(light.shadowed),
                 },
                 .point => |point| .{
                     .colour = .{ point.colour[0], point.colour[1], point.colour[2], 0 },
@@ -226,20 +240,13 @@ pub const Gpu = struct {
     runs: std.ArrayList(Run) = .empty,
     /// Where the runs drawn over the finished frame begin; null while the frame holds none.
     overlay_from: ?u32 = null,
-    buffers: ?Buffers = null,
+    geometry: ?Geometry = null,
     targets: ?Targets = null,
     /// Set when a draw was lost for want of memory: the frame is not shown.
     failed: bool = false,
     /// The frame's lights, for lighting each pixel.
     lighting: Lighting = .{},
-
-    const Buffers = struct {
-        vertices: *c.SDL_GPUBuffer,
-        indices: *c.SDL_GPUBuffer,
-        /// Both, vertices first and indices from `size` on.
-        transfer: *c.SDL_GPUTransferBuffer,
-        size: u32,
-    };
+    shadows: shadow.Shadows,
 
     const Targets = struct {
         width: u32,
@@ -286,16 +293,17 @@ pub const Gpu = struct {
 
     /// One GPU device a run: the textures' slots it keeps in their images are its own.
     pub fn init(gpa: Allocator, handle: *c.SDL_GPUDevice, window: *c.SDL_Window, settings: Settings) Error!Gpu {
-        const formats = c.SDL_GetGPUShaderFormats(handle);
-        const spirv = formats & c.SDL_GPU_SHADERFORMAT_SPIRV != 0;
-        if (!spirv and formats & c.SDL_GPU_SHADERFORMAT_MSL == 0) {
+        const spirv = takesSpirv(handle);
+        if (!spirv and c.SDL_GetGPUShaderFormats(handle) & c.SDL_GPU_SHADERFORMAT_MSL == 0) {
             log.err("the GPU takes neither SPIR-V nor Metal's shaders", .{});
             return error.Sdl;
         }
         const vertex_shader = try shader(handle, spirv, c.SDL_GPU_SHADERSTAGE_VERTEX, if (spirv) shaders.vertex_spirv else shaders.vertex_msl, 0, 1);
         errdefer c.SDL_ReleaseGPUShader(handle, vertex_shader);
-        const fragment_shader = try shader(handle, spirv, c.SDL_GPU_SHADERSTAGE_FRAGMENT, if (spirv) shaders.fragment_spirv else shaders.fragment_msl, 1, 2);
+        const fragment_shader = try shader(handle, spirv, c.SDL_GPU_SHADERSTAGE_FRAGMENT, if (spirv) shaders.fragment_spirv else shaders.fragment_msl, 2, 3);
         errdefer c.SDL_ReleaseGPUShader(handle, fragment_shader);
+        var shadows = try makeShadows(handle, settings);
+        errdefer shadows.deinit(handle);
 
         const modern = settings.filter != .original;
         var sampler_info = std.mem.zeroes(c.SDL_GPUSamplerCreateInfo);
@@ -364,10 +372,21 @@ pub const Gpu = struct {
             .vertex_shader = vertex_shader,
             .fragment_shader = fragment_shader,
             .sampler = sampler,
+            .shadows = shadows,
         };
         gpu.blank = try gpu.place(&blank_levels);
         if (settings.bloom) try gpu.startBloom(spirv);
         return gpu;
+    }
+
+    /// Whether the GPU takes SPIR-V, where it doesn't take Metal's language.
+    fn takesSpirv(handle: *c.SDL_GPUDevice) bool {
+        return c.SDL_GetGPUShaderFormats(handle) & c.SDL_GPU_SHADERFORMAT_SPIRV != 0;
+    }
+
+    /// The shadows the settings ask for, which need each pixel lit.
+    fn makeShadows(handle: *c.SDL_GPUDevice, settings: Settings) Error!shadow.Shadows {
+        return .init(handle, takesSpirv(handle), if (settings.pixel_lighting) settings.shadows else .off);
     }
 
     pub fn deinit(gpu: *Gpu) void {
@@ -381,7 +400,8 @@ pub const Gpu = struct {
         gpu.vertices.deinit(gpu.gpa);
         gpu.indices.deinit(gpu.gpa);
         gpu.runs.deinit(gpu.gpa);
-        gpu.releaseBuffers();
+        Geometry.release(&gpu.geometry, gpu.handle);
+        gpu.shadows.deinit(gpu.handle);
         gpu.releaseTargets();
         if (gpu.bloom_pipeline) |p| c.SDL_ReleaseGPUGraphicsPipeline(gpu.handle, p);
         if (gpu.bloom_vertex_shader) |shader_| c.SDL_ReleaseGPUShader(gpu.handle, shader_);
@@ -445,7 +465,23 @@ pub const Gpu = struct {
         return .{ .ptr = gpu, .vtable = &vtable };
     }
 
-    const vtable: device.Device.VTable = .{ .begin = begin, .end = end, .draw = draw, .overlay = overlay, .lights = lights };
+    const vtable: device.Device.VTable = .{
+        .begin = begin,
+        .end = end,
+        .draw = draw,
+        .overlay = overlay,
+        .lights = lights,
+        .shadow_size = shadowSize,
+        .shadows = takeShadows,
+    };
+
+    fn shadowSize(ptr: *anyopaque) u32 {
+        return from(ptr).shadows.texels();
+    }
+
+    fn takeShadows(ptr: *anyopaque, frame: *const srshadow.Frame) void {
+        from(ptr).shadows.take(frame);
+    }
 
     /// Takes the frame's lights, as many as the shader does, for it to light each pixel with,
     /// unless the settings say otherwise.
@@ -484,6 +520,7 @@ pub const Gpu = struct {
         gpu.runs.clearRetainingCapacity();
         gpu.overlay_from = null;
         gpu.failed = false;
+        gpu.shadows.clear();
     }
 
     fn draw(ptr: *anyopaque, state: device.State, primitive: device.Primitive, vertices: []const device.Vertex, indices: ?[]const u16) void {
@@ -508,6 +545,7 @@ pub const Gpu = struct {
             .view = v.view,
             .normal = v.normal,
             .light_mask = v.light_mask,
+            .receives = state.receives,
         });
         const first: u32 = @intCast(gpu.indices.items.len);
         try appendList(gpu.gpa, &gpu.indices, primitive, base, vertices.len, indices);
@@ -641,12 +679,13 @@ pub const Gpu = struct {
         try gpu.bloomPass(commands, composed, pipeline_, bloom[0], frame_image, .{ 2, 0, 0, bloom_strength });
     }
 
-    /// The frame's copy pass and render pass.
+    /// The frame's copy pass, the shadows' passes and the frame's render pass.
     fn encode(gpu: *Gpu, commands: *c.SDL_GPUCommandBuffer, size: [2]u32, targets: Targets) Error!void {
         const copy = c.SDL_BeginGPUCopyPass(commands) orelse return fail("SDL_BeginGPUCopyPass");
         const copied = gpu.upload(copy);
         c.SDL_EndGPUCopyPass(copy);
         try copied;
+        try gpu.shadows.draw(commands);
 
         // Every pipeline the frame needs, before the pass.
         for (gpu.runs.items) |run| _ = try gpu.pipeline(run.key);
@@ -671,6 +710,12 @@ pub const Gpu = struct {
         depth.stencil_store_op = c.SDL_GPU_STOREOP_DONT_CARE;
         const pass = c.SDL_BeginGPURenderPass(commands, &colour, 1, &depth) orelse return fail("SDL_BeginGPURenderPass");
         defer c.SDL_EndGPURenderPass(pass);
+        gpu.drawRuns(commands, pass, size, gpu.runs.items[0 .. gpu.overlay_from orelse gpu.runs.items.len]);
+    }
+
+    /// Draws `runs` in `pass`, into a frame `size` pixels across and down: each with its pipeline
+    /// and its texture array, the shadows' maps beside it.
+    fn drawRuns(gpu: *Gpu, commands: *c.SDL_GPUCommandBuffer, pass: *c.SDL_GPURenderPass, size: [2]u32, runs: []const Run) void {
         const target_size = [4]f32{ @floatFromInt(size[0]), @floatFromInt(size[1]), 0, 0 };
         c.SDL_PushGPUVertexUniformData(commands, 0, &target_size, @sizeOf(@TypeOf(target_size)));
         const frame_settings = [4]f32{
@@ -681,13 +726,14 @@ pub const Gpu = struct {
         };
         c.SDL_PushGPUFragmentUniformData(commands, 0, &frame_settings, @sizeOf(@TypeOf(frame_settings)));
         c.SDL_PushGPUFragmentUniformData(commands, 1, &gpu.lighting, @sizeOf(Lighting));
-        const buffers = gpu.buffers orelse return;
-        c.SDL_BindGPUVertexBuffers(pass, 0, &c.SDL_GPUBufferBinding{ .buffer = buffers.vertices, .offset = 0 }, 1);
-        c.SDL_BindGPUIndexBuffer(pass, &c.SDL_GPUBufferBinding{ .buffer = buffers.indices, .offset = 0 }, c.SDL_GPU_INDEXELEMENTSIZE_32BIT);
-        for (gpu.runs.items[0 .. gpu.overlay_from orelse gpu.runs.items.len]) |run| {
+        c.SDL_PushGPUFragmentUniformData(commands, 2, &gpu.shadows.uniforms, @sizeOf(shadow.Uniforms));
+        const geometry = gpu.geometry orelse return;
+        geometry.bind(pass);
+        for (runs) |run| {
             c.SDL_BindGPUGraphicsPipeline(pass, gpu.pipelines.get(run.key).?);
             const array = gpu.arrays.items[run.array orelse gpu.blank.array];
-            c.SDL_BindGPUFragmentSamplers(pass, 0, &c.SDL_GPUTextureSamplerBinding{ .texture = array.texture, .sampler = gpu.sampler }, 1);
+            const bindings = [_]c.SDL_GPUTextureSamplerBinding{ .{ .texture = array.texture, .sampler = gpu.sampler }, gpu.shadows.binding() };
+            c.SDL_BindGPUFragmentSamplers(pass, 0, &bindings, bindings.len);
             c.SDL_DrawGPUIndexedPrimitives(pass, run.count, 1, run.first, 0, 0);
         }
     }
@@ -698,7 +744,6 @@ pub const Gpu = struct {
         const first = gpu.overlay_from orelse return;
         const runs = gpu.runs.items[@min(first, gpu.runs.items.len)..];
         if (runs.len == 0) return;
-        const buffers = gpu.buffers orelse return;
         for (runs) |run| _ = try gpu.pipeline(run.key);
 
         var colour = std.mem.zeroes(c.SDL_GPUColorTargetInfo);
@@ -707,30 +752,15 @@ pub const Gpu = struct {
         colour.store_op = c.SDL_GPU_STOREOP_STORE;
         const pass = c.SDL_BeginGPURenderPass(commands, &colour, 1, null) orelse return fail("SDL_BeginGPURenderPass");
         defer c.SDL_EndGPURenderPass(pass);
-        const target_size = [4]f32{ @floatFromInt(targets.width), @floatFromInt(targets.height), 0, 0 };
-        c.SDL_PushGPUVertexUniformData(commands, 0, &target_size, @sizeOf(@TypeOf(target_size)));
-        const frame_settings = [4]f32{
-            @floatFromInt(@intFromBool(gpu.settings.sixteen_bit)),
-            @floatFromInt(@intFromBool(gpu.settings.filter == .crisp)),
-            @floatFromInt(@intFromBool(gpu.settings.dither)),
-            0,
-        };
-        c.SDL_PushGPUFragmentUniformData(commands, 0, &frame_settings, @sizeOf(@TypeOf(frame_settings)));
-        c.SDL_PushGPUFragmentUniformData(commands, 1, &gpu.lighting, @sizeOf(Lighting));
-        c.SDL_BindGPUVertexBuffers(pass, 0, &c.SDL_GPUBufferBinding{ .buffer = buffers.vertices, .offset = 0 }, 1);
-        c.SDL_BindGPUIndexBuffer(pass, &c.SDL_GPUBufferBinding{ .buffer = buffers.indices, .offset = 0 }, c.SDL_GPU_INDEXELEMENTSIZE_32BIT);
-        for (runs) |run| {
-            c.SDL_BindGPUGraphicsPipeline(pass, gpu.pipelines.get(run.key).?);
-            const array = gpu.arrays.items[run.array orelse gpu.blank.array];
-            c.SDL_BindGPUFragmentSamplers(pass, 0, &c.SDL_GPUTextureSamplerBinding{ .texture = array.texture, .sampler = gpu.sampler }, 1);
-            c.SDL_DrawGPUIndexedPrimitives(pass, run.count, 1, run.first, 0, 0);
-        }
+        gpu.drawRuns(commands, pass, .{ targets.width, targets.height }, runs);
     }
 
-    /// Sends the frame's new textures and its vertices and indices to the GPU.
+    /// Sends the frame's new textures, its vertices and indices, and the shadows' casters to the
+    /// GPU.
     fn upload(gpu: *Gpu, copy: *c.SDL_GPUCopyPass) Error!void {
         try gpu.uploadTextures(copy);
-        try gpu.uploadGeometry(copy);
+        try Geometry.upload(&gpu.geometry, gpu.handle, copy, std.mem.sliceAsBytes(gpu.vertices.items), std.mem.sliceAsBytes(gpu.indices.items));
+        try gpu.shadows.upload(gpu.handle, copy);
     }
 
     /// Puts the textures placed this frame in their layers, every level, first making larger any
@@ -782,41 +812,6 @@ pub const Gpu = struct {
             }
         }
         c.SDL_UnmapGPUTransferBuffer(gpu.handle, transfer);
-    }
-
-    /// Puts the frame's vertices and indices in the GPU's buffers, larger ones when the frame has
-    /// outgrown them.
-    fn uploadGeometry(gpu: *Gpu, copy: *c.SDL_GPUCopyPass) Error!void {
-        const vertex_bytes = std.math.cast(u32, gpu.vertices.items.len * @sizeOf(Vertex)) orelse return error.OutOfMemory;
-        const index_bytes = std.math.cast(u32, gpu.indices.items.len * @sizeOf(u32)) orelse return error.OutOfMemory;
-        if (index_bytes == 0) return;
-        const needed = @max(vertex_bytes, index_bytes);
-        if (gpu.buffers == null or gpu.buffers.?.size < needed) {
-            gpu.releaseBuffers();
-            const size = std.math.ceilPowerOfTwo(u32, @max(needed, 64 * 1024)) catch return error.OutOfMemory;
-            const transfer_size = std.math.mul(u32, size, 2) catch return error.OutOfMemory;
-            const vertices = c.SDL_CreateGPUBuffer(gpu.handle, &.{ .usage = c.SDL_GPU_BUFFERUSAGE_VERTEX, .size = size }) orelse return fail("SDL_CreateGPUBuffer");
-            errdefer c.SDL_ReleaseGPUBuffer(gpu.handle, vertices);
-            const indices = c.SDL_CreateGPUBuffer(gpu.handle, &.{ .usage = c.SDL_GPU_BUFFERUSAGE_INDEX, .size = size }) orelse return fail("SDL_CreateGPUBuffer");
-            errdefer c.SDL_ReleaseGPUBuffer(gpu.handle, indices);
-            const transfer = c.SDL_CreateGPUTransferBuffer(gpu.handle, &.{ .usage = c.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, .size = transfer_size }) orelse return fail("SDL_CreateGPUTransferBuffer");
-            gpu.buffers = .{ .vertices = vertices, .indices = indices, .transfer = transfer, .size = size };
-        }
-        const buffers = gpu.buffers.?;
-        const mapped: [*]u8 = @ptrCast(c.SDL_MapGPUTransferBuffer(gpu.handle, buffers.transfer, true) orelse return fail("SDL_MapGPUTransferBuffer"));
-        @memcpy(mapped[0..vertex_bytes], std.mem.sliceAsBytes(gpu.vertices.items));
-        @memcpy(mapped[buffers.size..][0..index_bytes], std.mem.sliceAsBytes(gpu.indices.items));
-        c.SDL_UnmapGPUTransferBuffer(gpu.handle, buffers.transfer);
-        c.SDL_UploadToGPUBuffer(copy, &.{ .transfer_buffer = buffers.transfer, .offset = 0 }, &.{ .buffer = buffers.vertices, .size = vertex_bytes }, true);
-        c.SDL_UploadToGPUBuffer(copy, &.{ .transfer_buffer = buffers.transfer, .offset = buffers.size }, &.{ .buffer = buffers.indices, .size = index_bytes }, true);
-    }
-
-    fn releaseBuffers(gpu: *Gpu) void {
-        const buffers = gpu.buffers orelse return;
-        c.SDL_ReleaseGPUBuffer(gpu.handle, buffers.vertices);
-        c.SDL_ReleaseGPUBuffer(gpu.handle, buffers.indices);
-        c.SDL_ReleaseGPUTransferBuffer(gpu.handle, buffers.transfer);
-        gpu.buffers = null;
     }
 
     /// The frame's colour and depth targets for `size`, made again when it changes.
@@ -895,6 +890,7 @@ pub const Gpu = struct {
             .{ .location = 4, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, .offset = @offsetOf(Vertex, "view") },
             .{ .location = 5, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, .offset = @offsetOf(Vertex, "normal") },
             .{ .location = 6, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_UINT, .offset = @offsetOf(Vertex, "light_mask") },
+            .{ .location = 7, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_UINT, .offset = @offsetOf(Vertex, "receives") },
         };
         const buffer: c.SDL_GPUVertexBufferDescription = .{ .slot = 0, .pitch = @sizeOf(Vertex), .input_rate = c.SDL_GPU_VERTEXINPUTRATE_VERTEX };
         var colour = std.mem.zeroes(c.SDL_GPUColorTargetDescription);
@@ -1038,7 +1034,7 @@ fn blendFactor(factor: srd3d.BlendFactor) c.SDL_GPUBlendFactor {
     };
 }
 
-fn shader(handle: *c.SDL_GPUDevice, spirv: bool, stage: c.SDL_GPUShaderStage, code: []const u8, samplers: u32, uniforms: u32) error{Sdl}!*c.SDL_GPUShader {
+pub fn shader(handle: *c.SDL_GPUDevice, spirv: bool, stage: c.SDL_GPUShaderStage, code: []const u8, samplers: u32, uniforms: u32) error{Sdl}!*c.SDL_GPUShader {
     var info = std.mem.zeroes(c.SDL_GPUShaderCreateInfo);
     info.code_size = code.len;
     info.code = code.ptr;
@@ -1099,6 +1095,10 @@ test "Lighting.take" {
     const many: [max_lights + 1]device.Light = @splat(list[0]);
     try std.testing.expectEqual(max_lights, lighting.take(&many));
     try std.testing.expectEqual(max_lights, lighting.count[0]);
+}
+
+test {
+    _ = shadow;
 }
 
 test Slot {
