@@ -16,6 +16,8 @@ const main = @import("main.zig");
 const motion = @import("motion.zig");
 const objects = @import("objects.zig");
 const shield = @import("shield.zig");
+const hud = @import("hud.zig");
+const input = @import("../input.zig");
 
 /// How far apart a collision sets two objects, as a share of each one's radius from the point
 /// between them (`0x004DC7C0` and `0x004DC7C4`): a tenth further than touching, so that the next
@@ -335,8 +337,10 @@ pub fn byDifficulty(world: gameobj.World, index: u16, kind: Kind, value: f32) f3
 /// kinds 0, 1 and 5 counts toward what the object has taken lately, which is what sends a ship after
 /// its attacker.
 ///
-/// Not ported: the head-up display's answer to a hit, the score a player's hit is worth, and what
-/// multiplayer makes of it.
+/// With smart targeting on, a blow the player's ship deals, but by colliding, makes what it
+/// struck the player's target (`input.setPlayerTarget`).
+///
+/// Not ported: the score a player's hit is worth, and what multiplayer makes of it.
 pub fn damage(world: gameobj.World, index: u16, struck: Quadrant, value: f32, factor: f32, attacker: u16, kind: Kind) void {
     const all = world.objects;
     const slot = &all.slots[index];
@@ -351,6 +355,15 @@ pub fn damage(world: gameobj.World, index: u16, struck: Quadrant, value: f32, fa
     if (held.* >= 0 and object.invulnerable != ._unknown_4) held.* -= scaled;
     if (held.* < 0) armorDamage(world, index, struck, through * factor, attacker, kind);
     object.last_attacker = attacker;
+    if (smartTargeting(world, attacker, kind)) |display| input.setPlayerTarget(display, all, @intCast(index), -1, false);
+}
+
+/// The display, while smart targeting is on and the blow is the player's ship's but for a
+/// collision; null otherwise.
+fn smartTargeting(world: gameobj.World, attacker: u16, kind: Kind) ?*hud.State {
+    const display = world.display orelse return null;
+    if (attacker != world.objects.player or !display.smart_targeting or kind == .collision) return null;
+    return display;
 }
 
 /// `object_armor_damage` (`0x004641F0`): damage to an object's armour, once its shields are down.
@@ -361,10 +374,13 @@ pub fn damage(world: gameobj.World, index: u16, struck: Quadrant, value: f32, fa
 /// spare, and one in its last state (`Invulnerability._unknown_4`) not at all. The armour's
 /// conditions follow it (`object_armor_conditions`), and armour below zero destroys the object
 /// (`ai.objectDestroyed`), which may spin out; a blow heavier than `heavy_blow` leaves the player
-/// no time to eject.
+/// no time to eject. Smart targeting makes what the player's ship struck, but by colliding, the
+/// target of its current order, and a hit on that target brings up its form of the target
+/// display.
 ///
-/// Not ported: the display's interference, and what the player's hits on a friend tell the
-/// mission.
+/// Not ported: the display's interference, the quadrant a hit on the player's ship or its target
+/// flashes on the display (`0x00563160`, `0x005635D4`), and what the player's hits on a friend
+/// tell the mission.
 pub fn armorDamage(world: gameobj.World, index: u16, struck: Quadrant, value: f32, attacker: u16, kind: Kind) void {
     const all = world.objects;
     const slot = &all.slots[index];
@@ -393,6 +409,11 @@ pub fn armorDamage(world: gameobj.World, index: u16, struck: Quadrant, value: f3
     }
     object.last_attacker = attacker;
     if (armor.* < 0) ai.objectDestroyed(.{ .world = world, .clock = world.clock }, index, true, taken > heavy_blow);
+    const current = &all.slots[all.player].orders[0].target;
+    if (smartTargeting(world, attacker, kind) != null) current.index = @intCast(index);
+    if (world.display) |display| if (current.index == index) {
+        _ = display.bringUp(hud.targetWindow(slot), false);
+    };
 }
 
 /// A blow to the armour heavier than this leaves the player's ship no time to eject (`0x004DC44C`).
@@ -420,6 +441,10 @@ const shielded_hit: f32 = 1000;
 /// to an assembly, such as a
 /// turret and its barrels, the damage goes to the part of it that still has armour, and a component
 /// whose armour runs out marks the part it hangs from as destroyed.
+///
+/// With smart targeting on, the player's hit on a hostile ship makes the component struck, if it
+/// is one the ship lists, the player's target and subtarget, or else the ship alone, unless it is
+/// already the target of the player's current order.
 ///
 /// Not ported: the invulnerability a component may carry, the score a player's hit is worth, and
 /// what multiplayer makes of it.
@@ -456,6 +481,17 @@ pub fn componentDamage(world: gameobj.World, index: u16, component: *objects.Mod
     object.last_attacker = attacker;
     if (struck.armor < 0) {
         if (struck.parent) |holder| model.parts[holder].destroyed = true else model.destroyed = true;
+    }
+    const display = smartTargeting(world, attacker, kind) orelse return;
+    if (object.side != .hostile) return;
+    const count: usize = @intCast(@max(object.component_count, 0));
+    const listed = for (slot.components[0..count], 0..) |part, n| {
+        if (part == struck) break n;
+    } else null;
+    if (listed) |n| {
+        input.setPlayerTarget(display, all, @intCast(index), @intCast(n), false);
+    } else if (all.slots[all.player].orders[0].target.index != index) {
+        input.setPlayerTarget(display, all, @intCast(index), -1, false);
     }
 }
 
@@ -692,6 +728,37 @@ test damage {
     object.flags.jumping = true;
     damage(world, index, .fore, 100, 1, 1, .collision);
     try std.testing.expectEqual(left, object.armor.fore);
+}
+
+test "smart targeting takes what the player's ship hits" {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const player = try mission.add(.predator, @splat(0));
+    try std.testing.expect(try @import("aigeneric.zig").push(mission.orders(), player, .player_control, .none));
+    const index = try testing.ship(&mission, .{ 0, 0, 1000 }, 1000);
+    const object = &all.slots[index].object;
+    object.flags.targetable = true;
+    object.shields = .all(100);
+    var display: hud.State = .{};
+    var world = mission.world();
+    world.display = &display;
+    const target = &all.slots[player].orders[0].target;
+
+    // Off, a shot takes nothing.
+    damage(world, index, .fore, 1, 1, player, .bullet);
+    try std.testing.expectEqual(-1, target.index);
+    // On, a collision takes nothing either, and another's shot nothing.
+    display.smart_targeting = true;
+    damage(world, index, .fore, 1, 1, player, .collision);
+    damage(world, index, .fore, 1, 1, index, .bullet);
+    try std.testing.expectEqual(-1, target.index);
+    // The player's shot makes it the target, and brings up the target display.
+    damage(world, index, .fore, 1, 1, player, .bullet);
+    try std.testing.expectEqual(@as(i32, index), target.index);
+    try std.testing.expectEqual(index, display.target.?);
+    try std.testing.expect(display.windows.up(.target));
 }
 
 test knockDamage {

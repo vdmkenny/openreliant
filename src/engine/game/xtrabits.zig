@@ -1,6 +1,7 @@
 //! `C:\lancer\game\xtrabits.cpp`: odds and ends of the game's frame. `scene_add` (`0x004ADB30`)
-//! puts an object in the scene for the frame, and `object_random15` (`0x004ADCE0`) draws an
-//! object's own random numbers.
+//! puts an object in the scene for the frame, `object_random15` (`0x004ADCE0`) draws an object's
+//! own random numbers, and `0x004AAFC0` clips a line to a pane. **Unverified:** that the last is
+//! this file's: it lies between the message pump and the first code the file's assertions place.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -133,4 +134,69 @@ test objectRandom15 {
     object.random_seed = 1;
     try std.testing.expectEqual(41, objectRandom15(&object));
     try std.testing.expectEqual(1 *% 214013 +% 2531011, object.random_seed);
+}
+
+/// Which edges of a pane a point lies beyond, as `0x004AAFC0` codes them.
+const Outcode = packed struct(u4) {
+    below: bool = false,
+    above: bool = false,
+    right: bool = false,
+    left: bool = false,
+
+    fn of(point: [2]i32, last: [2]i32) Outcode {
+        return .{ .below = point[1] > last[1], .above = point[1] < 0, .right = point[0] > last[0], .left = point[0] < 0 };
+    }
+
+    fn outside(code: Outcode) bool {
+        return @as(u4, @bitCast(code)) != 0;
+    }
+};
+
+/// `0x004AAFC0`: clips the line from `from` to `to` to a pane at the screen's corner whose last
+/// pixel is `last`, as the display's pane is, cutting an end outside back to the edge it crosses
+/// by whole-number sums, then keeps both ends on the screen. Returns whether any of the line is
+/// on the pane; a line wholly off it is left as it was.
+pub fn clipLine(last: [2]i32, from: *[2]i32, to: *[2]i32) bool {
+    var codes: [2]Outcode = .{ .of(from.*, last), .of(to.*, last) };
+    while (codes[0].outside() or codes[1].outside()) {
+        if (@as(u4, @bitCast(codes[0])) & @as(u4, @bitCast(codes[1])) != 0) return false;
+        const end = if (codes[0].outside()) from else to;
+        const out = if (codes[0].outside()) codes[0] else codes[1];
+        const a = from.*;
+        const b = to.*;
+        var cut: [2]i32 = undefined;
+        if (out.below or out.above) {
+            cut[1] = if (out.below) last[1] else 0;
+            cut[0] = @divTrunc((cut[1] - a[1]) * (b[0] - a[0]), b[1] - a[1]) + a[0];
+        } else {
+            cut[0] = if (out.right) last[0] else 0;
+            cut[1] = @divTrunc((cut[0] - a[0]) * (b[1] - a[1]), b[0] - a[0]) + a[1];
+        }
+        end.* = cut;
+        codes = .{ .of(from.*, last), .of(to.*, last) };
+    }
+    for ([2]*[2]i32{ from, to }) |point| {
+        for (point, last) |*c, most| c.* = std.math.clamp(c.*, 0, most);
+    }
+    return true;
+}
+
+test clipLine {
+    const last: [2]i32 = .{ 639, 479 };
+    // A line from the middle out past the right edge stops on it, at the height it crosses at.
+    var from: [2]i32 = .{ 320, 240 };
+    var to: [2]i32 = .{ 959, 240 };
+    try std.testing.expect(clipLine(last, &from, &to));
+    try std.testing.expectEqual([2]i32{ 639, 240 }, to);
+    try std.testing.expectEqual([2]i32{ 320, 240 }, from);
+    // Out past a corner, it stops on the edge it crosses first.
+    to = .{ 1000, 1000 };
+    try std.testing.expect(clipLine(last, &from, &to));
+    try std.testing.expectEqual(479, to[1]);
+    try std.testing.expectEqual(@divTrunc((479 - 240) * (1000 - 320), 1000 - 240) + 320, to[0]);
+    // A line wholly beyond one edge is left as it was.
+    from = .{ -10, 5 };
+    to = .{ -20, 50 };
+    try std.testing.expect(!clipLine(last, &from, &to));
+    try std.testing.expectEqual([2]i32{ -20, 50 }, to);
 }

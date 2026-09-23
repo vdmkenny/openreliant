@@ -995,7 +995,8 @@ const hostile_shot_light: [3]f32 = .{ 1, 0.5, 0 };
 /// Not ported: how the other gun types' shots are drawn
 /// ([#154](https://github.com/vdmkenny/openreliant/issues/154)); its sound ([#47](https://github.com/vdmkenny/openreliant/issues/47)), the force feedback a
 /// player's shot gives ([#83](https://github.com/vdmkenny/openreliant/issues/83)), and the aim a
-/// ship firing blind takes at its target.
+/// ship firing blind takes at its target
+/// ([#183](https://github.com/vdmkenny/openreliant/issues/183)).
 pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, gun: Fitted, is_heard: bool) void {
     const all = world.objects;
     const slot = &all.slots[owner];

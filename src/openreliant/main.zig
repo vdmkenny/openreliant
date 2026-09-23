@@ -20,7 +20,6 @@ const shp = openreliant.shp;
 const stats = openreliant.stats;
 const tcache = openreliant.tcache;
 const tga = openreliant.tga;
-const fnt = openreliant.fnt;
 const spr = openreliant.spr;
 const engine = openreliant.engine;
 const math = engine.surrender.math;
@@ -100,7 +99,7 @@ const Doc = struct {
 
 /// Every option's help, which the compiler holds to having one for each.
 const docs: std.enums.EnumArray(Arg, Doc) = .init(.{
-    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings and particles as few and plain as the original's, the shields' bubbles as coarse as the original's, and the sound mixed plainly in stereo" },
+    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings and particles as few and plain as the original's, the shields' bubbles as coarse as the original's, the marker for a target out of sight placed as the original misplaces it, and the sound mixed plainly in stereo" },
     .@"--ship" = .{ .section = .sandbox, .value = "<type>", .text = "the ship type to fly, by its number in shipstats.bin; 0, the Predator, by default" },
     .@"--view" = .{ .section = .sandbox, .value = "<0|1|2>", .text = "the view it starts in, as the game's settings keep it: 0 the cockpit, the default; 1 the chase view; 2 no cockpit" },
     .@"--difficulty" = .{ .section = .sandbox, .value = "<easy|medium|hard>", .text = "the game's difficulty: how hard hits land on your ship, and shots on the enemy; medium by default, as in the game" },
@@ -214,6 +213,8 @@ const Options = struct {
     distant: game.particles.Pool.Distant = .whole,
     /// How the shields' bubbles are drawn.
     shields: game.shield.Style = .smooth,
+    /// Where the line starts that places the marker for a target out of sight.
+    edge_line: game.hud.EdgeLine = .from_tip,
     /// How the sound plays, or null for none.
     sound: ?platform.audio.Options = .{},
     /// The piece of music the sandbox plays, from `music\`, or none.
@@ -263,6 +264,7 @@ const Options = struct {
                 options.rings = .octagon;
                 options.distant = .thinned;
                 options.shields = .original;
+                options.edge_line = .original;
                 if (options.sound) |*sound| sound.* = .{ .player = .software, .master = null };
             },
             .@"--ship" => {
@@ -581,12 +583,10 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         frames_left = 2;
     }
 
-    // The head-up display: its shapes, its font, the power ball `hud_init` works out, and what
-    // draws it over the finished scene.
+    // The head-up display: what it draws with, and what draws it over the finished scene.
     var display: Display = .{
-        .art = try .init(arena, shapes, global_palette),
-        .font = .open(try fnt.Font.parse(try resources.readFile(arena, hud_font))),
-        .ball = try .create(arena, try tga.decode(arena, try resources.readFile(arena, game.hud.power.picture_name))),
+        .resources = try .load(arena, resources, shapes),
+        .edge_line = options.edge_line,
         .gpa = arena,
         .target = undefined,
         .screen = .{ 0, 0 },
@@ -599,6 +599,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     };
     // What the mission's start fits the player's ship with, once `hud_init` has set the display up.
     game.main.fitDevices(&display.state, sandbox.player_type, sandbox.canCloak());
+    world.display = &display.state;
 
     var scene: srcore.Scene = .{};
     defer scene.deinit(arena);
@@ -677,7 +678,15 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         view.frameControls(&devices, sandbox.objects.player, ticks, at);
         const slot = sandbox.player();
         // After the camera's keys, `frame_controls` reads the targeting keys, then its own.
-        game.hud.targetKeys(&display.state, &devices, false);
+        game.hud.targetKeys(&display.state, .{
+            .devices = &devices,
+            .player = &player,
+            .all = sandbox.objects,
+            .sight = display.sight,
+            .last_view = last_view,
+            .scale = game.hud.scaleFor(display.screen),
+            .multiplayer = false,
+        });
         engine.input.frameKeys(&display.state, &player, &devices, &slot.object, view.view, display.clock.game_ticks, false);
         // What moves the cockpit's model: the ship's rates of turn over its full ones, and its
         // speed over its cruise speed.
@@ -731,6 +740,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         _ = frame_arena.reset(.retain_capacity);
         display.target = screen.interface();
         display.screen = size;
+        display.sight = .{ .place = view.place, .projection = context.projection };
         display.last_view = last_view;
         display.cockpit_mode = view.cockpit_mode;
         try game.main.drawFrame(arena, frame_arena.allocator(), &scene, &context, .{
@@ -1096,6 +1106,13 @@ const TypeCache = struct {
         return cached;
     }
 
+    /// The schematic of `ship_type`, where it is loaded and the game has one.
+    fn schematic(cache: *TypeCache, ship_type: u8) ?game.hud.Schematic {
+        const cached = cache.loaded[ship_type] orelse return null;
+        if (cached.schematic) |*art| return .{ .art = art, .gpa = cached.arena.allocator() };
+        return null;
+    }
+
     /// Lets go of each type no object is of any more.
     fn sweep(cache: *TypeCache, uses: *const [game.create.ship_type_count]game.create.TypeUse) void {
         for (&cache.loaded, uses) |*held, use| {
@@ -1115,11 +1132,6 @@ const TypeCache = struct {
     }
 };
 
-/// The font the display's readouts are drawn with.
-const hud_font = "FONT.FNT";
-
-/// What draws the head-up display over the finished scene. `srcore.render` reaches it where
-/// Surrender reaches `hud_draw`, through the overlay it is handed.
 /// How long the camera watches the player's ship's end before the sandbox starts again, in ticks.
 const restart_after = 500;
 
@@ -1130,11 +1142,10 @@ fn settleStart(display: *Display, sandbox: *Sandbox, view: *camera.Camera, at: u
     _ = view.setView(startingView(sandbox.player(), view.cockpit_mode), sandbox.objects.player, false, true, at);
 }
 
+/// What draws the head-up display over the finished scene: `hud_draw`, given the sandbox's game.
+/// `srcore.render` reaches it where Surrender reaches `hud_draw`, through the overlay it is handed.
 const Display = struct {
-    art: game.hud.Art,
-    font: game.hud.Opened,
-    /// The power ball's tables, and the image it is drawn into.
-    ball: *game.hud.power.Ball,
+    resources: game.hud.Resources,
     gpa: Allocator,
     /// Filled in each frame, before the scene is drawn.
     target: srd3d.device.Device,
@@ -1143,6 +1154,11 @@ const Display = struct {
     last_view: camera.View = .cockpit,
     /// What the cockpit view shows, which leaves the reticle out of the chase view.
     cockpit_mode: camera.CockpitMode = .cockpit,
+    /// The scene as it is drawn, which the targeting keys find the object under the reticle by
+    /// and the target is drawn over; null until the first frame.
+    sight: ?game.hud.Sight = null,
+    /// Where the line starts that places the marker for a target out of sight.
+    edge_line: game.hud.EdgeLine,
     /// The sandbox, whose player's ship the display shows.
     sandbox: *Sandbox,
     clock: *const game.main.Clock,
@@ -1164,92 +1180,28 @@ const Display = struct {
 
     fn draw(context: *anyopaque) Allocator.Error!void {
         const display: *Display = @ptrCast(@alignCast(context));
-        display.drawShapes() catch |err| switch (err) {
+        const sandbox = display.sandbox;
+        game.hud.draw(&display.state, &display.resources, .{
+            .gpa = display.gpa,
+            .target = display.target,
+            .screen = display.screen,
+            .sight = display.sight,
+            .all = sandbox.objects,
+            .player = display.player,
+            .clock = display.clock,
+            .last_view = display.last_view,
+            .mode = display.cockpit_mode,
+            .strings = display.strings,
+            .hit_shake = display.view.hit_shake,
+            .random = display.random,
+            .ready = &display.ready,
+            .schematic = sandbox.types.schematic(sandbox.player_type),
+            .edge_line = display.edge_line,
+        }) catch |err| switch (err) {
             error.OutOfMemory => |out| return out,
             // A shape the file does not hold draws nothing, as it does in the game.
             else => {},
         };
-    }
-
-    /// What `hud_draw` draws, in its order.
-    fn drawShapes(display: *Display) (spr.Error || Allocator.Error)!void {
-        const frame_duration = display.clock.frame_duration;
-        const live = &display.sandbox.player().object;
-        const white: [4]f32 = .{ 1, 1, 1, 1 };
-        const scale = game.hud.scaleFor(display.screen);
-        const state = &display.state;
-        const instrumented = game.hud.instrumented(display.last_view);
-        // The devices' charges run in every view.
-        state.runCharges(live, frame_duration, false);
-        if (instrumented) {
-            try state.drawJumpPrompt(&display.ready, &display.art, display.gpa, display.target, display.screen, frame_duration, white, scale);
-            // The sandbox runs no mission, so nothing is scanned for.
-            try state.drawEjectMarker(&display.art, display.gpa, display.target, display.screen, frame_duration, white, scale);
-            try state.drawScanner(false, display.clock.game_ticks, &display.art, display.gpa, display.target, display.screen, white, scale);
-            const lit = state.lit(live, display.player.matching_speed, false, frame_duration);
-            try state.drawLights(&display.art, display.gpa, display.target, display.screen, lit, frame_duration, white, scale);
-        }
-        // The other views are named instead.
-        try game.hud.drawViewName(&display.font, display.gpa, display.target, display.screen, display.last_view, display.strings.*, white, scale);
-        if (instrumented) try display.drawInstruments(white, scale);
-        // The windows move on in every view, after the instruments.
-        const contents: game.hud.windows.Contents = .{ .power = .{
-            .ball = display.ball,
-            .object = live,
-            .hit_shake = display.view.hit_shake,
-            .random = display.random,
-            .font = &display.font,
-            .strings = display.strings,
-        } };
-        try state.windows.frame(&display.art, display.gpa, display.target, display.screen, display.last_view, frame_duration, contents, white, scale);
-    }
-
-    /// What `hud_draw` draws only in the view ahead from the cockpit.
-    fn drawInstruments(display: *Display, white: [4]f32, scale: f32) (spr.Error || Allocator.Error)!void {
-        const frame_duration = display.clock.frame_duration;
-        const slot = display.sandbox.player();
-        const live = &slot.object;
-        const flight = slot.flight orelse return;
-        const combat = slot.combat orelse return;
-        const state = &display.state;
-        for ([_]game.hud.Readout{ .fuel, .skull, .coil }) |readout| {
-            if (!state.shows(readout, frame_duration)) continue;
-            const value: i32 = switch (readout) {
-                .fuel => @divTrunc(live.afterburner_fuel, 100),
-                // The tally a mission's start zeroes; the sandbox runs no mission, so it stays 0.
-                .skull => 0,
-                .coil => live.countermeasures,
-            };
-            try readout.draw(&display.art, &display.font, display.gpa, display.target, display.screen, value, white, scale);
-        }
-        if (display.sandbox.types.loaded[display.sandbox.player_type]) |cached| if (cached.schematic) |*schematic| {
-            try game.hud.ShipStatus.drawSchematic(schematic, cached.arena.allocator(), display.target, display.screen, white, scale);
-        };
-        try game.hud.ShipStatus.draw(&display.art, display.gpa, display.target, display.screen, live.shields, combat.shield_power, display.player.shield_reserves, white, scale);
-        try game.hud.drawCluster(&display.art, &display.font, display.gpa, display.target, display.screen, .{
-            .throttle = live.throttle,
-            .speed = live.speed,
-            .max_speed = flight.max_speed,
-            .charge = live.gun_charge,
-            .full_charge = combat.gun_energy,
-        }, white, scale);
-        try game.hud.drawRadar(&display.art, display.gpa, display.target, display.screen, state.radar_rings, white, scale);
-        game.hud.stepRadarZoom(state, display.clock.game_ticks);
-        // The sandbox has no target, so blind fire has nothing to aim at. It aims only while the
-        // ship fires one group of guns rather than every group at once.
-        const blind_fire: game.hud.BlindFire = if (state.blind_fire_fitted and state.blind_fire and !live.gun_mode.all) .on else .off;
-        const aims = try game.hud.drawReticle(state, &display.art, display.gpa, display.target, display.screen, display.cockpit_mode, null, blind_fire, frame_duration, white, scale);
-        live.blind_fire_aim = @intFromBool(aims);
-        try game.hud.drawClock(
-            &display.font,
-            display.gpa,
-            display.target,
-            display.screen,
-            display.clock.play.minutes,
-            display.clock.play.seconds,
-            white,
-            scale,
-        );
     }
 };
 

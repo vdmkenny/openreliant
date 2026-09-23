@@ -162,13 +162,18 @@ pub const Windows = struct {
     pub fn open(windows: *Windows, window: Window, multiplayer: bool) bool {
         if (multiplayer and (window == .missiles or window == ._unknown_9 or window == .objectives)) return false;
         const status = windows.status.getPtr(window);
-        status.left = layouts.get(window).stay;
+        windows.renew(window);
         if (status.phase == .shut) {
             status.phase = .opening;
             status.progress = 0;
             status.held = false;
         }
         return true;
+    }
+
+    /// Gives `window` its full time to stay again, whatever its phase.
+    pub fn renew(windows: *Windows, window: Window) void {
+        windows.status.getPtr(window).left = layouts.get(window).stay;
     }
 
     /// `hud_window_close` (`0x0048B590`): starts `window` closing if it is open or opening, from

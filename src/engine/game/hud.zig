@@ -2,13 +2,14 @@
 //! draws it once a frame; `mission_run` puts it in `sr + 0x88` and Surrender calls it while it
 //! renders. [`hud.md`](../../../docs/engine/hud.md) describes the file.
 //!
-//! Ported so far: where an element stands, its text, the readouts, the clock, the status lights
-//! with the devices' charges, the jump prompt, the eject marker, the scanner, the ship status
-//! indicator's shields, the targeting cluster, the radar's rings and ranges, the windows, their
-//! frames and how they open and close ([`hud/windows.zig`](hud/windows.zig)), and what window 7,
-//! the power distribution, shows ([`hud/power.zig`](hud/power.zig)). Not yet: the rest of
-//! `hud_draw`, whose other elements [`hud.md`](../../../docs/engine/hud.md) lists, and what the
-//! other windows show.
+//! Ported so far: `hud_draw`'s order (`draw`), where an element stands, its text, the readouts,
+//! the clock, the status lights with the devices' charges, the jump prompt, the player's target
+//! with the keys that pick it (`targetKeys`, `drawTarget`), the eject marker, the scanner, the
+//! ship status indicator's shields, the targeting cluster, the radar's rings and ranges, the
+//! windows, their frames and how they open and close ([`hud/windows.zig`](hud/windows.zig)), and
+//! what window 7, the power distribution, shows ([`hud/power.zig`](hud/power.zig)). Not yet: the
+//! rest of `hud_draw`, whose other elements [`hud.md`](../../../docs/engine/hud.md) lists, and
+//! what the other windows show.
 //!
 //! **Improvement.** The game draws the display with the processor, whichever renderer is running:
 //! `hud_text` hands its line to `VFX_string_draw`, out of `vfx.dll`, which blits each glyph into a
@@ -27,6 +28,8 @@ const Allocator = std.mem.Allocator;
 const fnt = @import("../../formats/fnt.zig");
 const math = @import("../surrender/math.zig");
 const spr = @import("../../formats/spr.zig");
+const tga = @import("../../formats/tga.zig");
+const bigfile = @import("bigfile.zig");
 const camera = @import("camera.zig");
 const gameobj = @import("gameobj.zig");
 const input = @import("../input.zig");
@@ -34,6 +37,15 @@ const language = @import("language.zig");
 const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
 const srd3d = @import("../surrender/srd3d/srd3d.zig");
 const device = @import("../surrender/srd3d/device.zig");
+const srapi = @import("../surrender/surrenderlib/srapi.zig");
+const ai = @import("ai.zig");
+const aigeneric = @import("aigeneric.zig");
+const create = @import("create.zig");
+const xtrabits = @import("xtrabits.zig");
+const guns = @import("guns.zig");
+const libcmt = @import("../libcmt.zig");
+const Clock = @import("main.zig").Clock;
+const Vector = math.Vector;
 
 pub const windows = @import("hud/windows.zig");
 pub const power = @import("hud/power.zig");
@@ -101,6 +113,19 @@ pub fn gridPlace(screen: [2]u32, index: i32, scale: f32) [2]i32 {
 /// A float turned into an integer as `sr_round` (`0x004C3330`) does.
 const round = math.round;
 
+/// A point of the screen in pixels, unrounded.
+pub const Point = @Vector(2, f32);
+
+/// `point` in whole pixels.
+fn pointOf(point: [2]i32) Point {
+    return .{ @floatFromInt(point[0]), @floatFromInt(point[1]) };
+}
+
+/// `point` rounded to whole pixels as `sr_round` rounds.
+fn whole(point: Point) Point {
+    return .{ math.roundEven(point[0]), math.roundEven(point[1]) };
+}
+
 /// The character codes `font_open` caches the widths of. A glyph of a higher code is never drawn.
 pub const cached_codes = fnt.engine_limit;
 
@@ -109,12 +134,17 @@ pub const cached_codes = fnt.engine_limit;
 pub const Opened = struct {
     font: fnt.Font,
     widths: [cached_codes]u16,
+    /// What a font with no palette of its own, as `smlfont.fnt`, is drawn with: VFX's global
+    /// palette, which `hud_draw` makes of the display's set. Its bytes index the palette of the
+    /// pane it is drawn into.
+    global: ?*const [spr.palette_size]u8,
     /// What the GPU draws each code with, made as each is first drawn.
     images: [cached_codes]?srtexture.Image = @splat(null),
 
-    /// Takes the widths out of `font`, as `font_open` does with `VFX_character_width`.
-    pub fn open(font: fnt.Font) Opened {
-        var opened: Opened = .{ .font = font, .widths = @splat(0) };
+    /// Takes the widths out of `font`, as `font_open` does with `VFX_character_width`, and keeps
+    /// `global` for a font with no palette.
+    pub fn open(font: fnt.Font, global: ?*const [spr.palette_size]u8) Opened {
+        var opened: Opened = .{ .font = font, .widths = @splat(0), .global = global };
         const codes = @min(font.header.count, cached_codes);
         for (0..codes) |code| {
             const glyph = font.glyph(code) orelse continue;
@@ -197,6 +227,17 @@ pub const Art = struct {
             gpa.free(made.levels);
         };
         gpa.free(art.images);
+    }
+
+    /// Entry `index` of the palette every shape is drawn with, the colour `VFX_line_draw` draws a
+    /// line of that index in; white for a set with none.
+    pub fn paletteColour(art: Art, index: u8) [4]f32 {
+        const palette = art.global orelse return .{ 1, 1, 1, 1 };
+        var colour: [4]f32 = .{ 0, 0, 0, 1 };
+        for (colour[0..3], palette[@as(usize, index) * 3 ..][0..3]) |*channel, level| {
+            channel.* = @as(f32, @floatFromInt(expand(level))) / 255;
+        }
+        return colour;
     }
 
     fn shape(art: Art, index: usize) ?spr.Shape {
@@ -337,12 +378,12 @@ pub fn drawImage(target: device.Device, image: *srtexture.Image, corner: [2]f32,
     }, .fan, &corners, null);
 }
 
-/// A glyph as the GPU draws it: the font's palette looked up for each of its bytes, with index 0
-/// left clear. Made the first time the glyph is drawn and kept for the rest of the run.
+/// A glyph as the GPU draws it: the font's palette, or the global one, looked up for each of its
+/// bytes, with index 0 left clear. Made the first time the glyph is drawn and kept for the rest of the run.
 fn glyphImage(opened: *Opened, gpa: Allocator, code: u8) Allocator.Error!?*srtexture.Image {
     if (opened.images[code]) |*made| return made;
     const glyph = opened.font.glyph(code) orelse return null;
-    const palette = opened.font.palette orelse return null;
+    const palette = opened.font.palette orelse opened.global orelse return null;
     if (glyph.width == 0 or opened.font.header.height == 0) return null;
 
     const rgba = try gpa.alloc(u8, glyph.pixels.len * 4);
@@ -469,7 +510,7 @@ test gridPlace {
 
 test Opened {
     const font = try fnt.Font.parse(comptime fnt.testing.font(false));
-    const opened: Opened = .open(font);
+    const opened: Opened = .open(font, null);
 
     // Every code the font draws has its width cached, and the rest count as nothing.
     var drawn: usize = 0;
@@ -493,7 +534,7 @@ test Opened {
 }
 
 test textLeft {
-    const opened: Opened = .open(try fnt.Font.parse(comptime fnt.testing.font(false)));
+    const opened: Opened = .open(try fnt.Font.parse(comptime fnt.testing.font(false)), null);
     const code: u8 = @intCast(for (0..cached_codes) |c| {
         if (opened.widths[c] > 0) break c;
     } else unreachable);
@@ -509,7 +550,7 @@ test textLeft {
 
 test drawText {
     const gpa = std.testing.allocator;
-    var opened: Opened = .open(try fnt.Font.parse(comptime fnt.testing.font(true)));
+    var opened: Opened = .open(try fnt.Font.parse(comptime fnt.testing.font(true)), null);
     defer opened.deinit(gpa);
 
     // A device that keeps what it was asked to draw.
@@ -521,14 +562,14 @@ test drawText {
         fn begin(_: *anyopaque) void {}
         fn end(_: *anyopaque) void {}
         fn mark(_: *anyopaque) void {}
-        fn draw(context: *anyopaque, state: device.State, primitive: device.Primitive, vertices: []const device.Vertex, indices: ?[]const u16) void {
+        fn record(context: *anyopaque, state: device.State, primitive: device.Primitive, vertices: []const device.Vertex, indices: ?[]const u16) void {
             const self: *@This() = @ptrCast(@alignCast(context));
             std.debug.assert(primitive == .fan and indices == null and vertices.len == 4);
             self.drawn.append(self.gpa, vertices[0..4].*) catch unreachable;
             self.states.append(self.gpa, state) catch unreachable;
         }
         fn interface(self: *@This()) device.Device {
-            return .{ .ptr = self, .vtable = &.{ .begin = begin, .end = end, .draw = draw, .overlay = mark } };
+            return .{ .ptr = self, .vtable = &.{ .begin = begin, .end = end, .draw = record, .overlay = mark } };
         }
     };
     var recorder: Recorder = .{ .gpa = gpa };
@@ -561,6 +602,148 @@ test drawText {
     _ = try drawText(&opened, gpa, recorder.interface(), .{ 0, 0 }, text[0..1], .{ 1, 1, 1, 1 }, .left, 2);
     try std.testing.expectEqual(width * 2, recorder.drawn.items[0][2].x);
     try std.testing.expectEqual(height * 2, recorder.drawn.items[0][2].y);
+}
+
+/// What `hud_init` loads for the display to draw with.
+pub const Resources = struct {
+    art: Art,
+    /// `font.fnt`, which the readouts, the clock, the cluster's figures and the windows are
+    /// written in.
+    font: Opened,
+    /// The fonts the target's ranges are written in.
+    target_fonts: struct { small: Opened, new: Opened },
+    /// The power ball's tables, and the image it is drawn into.
+    ball: *power.Ball,
+
+    pub const font_name = "FONT.FNT";
+
+    /// Loads what the display draws with from the resources' archive: `shapes`, the display's
+    /// set, with its global palette; the fonts, which `0x004A2AF0` opens; and the power ball,
+    /// which `hud_init` works out.
+    pub fn load(gpa: Allocator, archive: bigfile.Hog, shapes: spr.Sprite) !Resources {
+        const global = globalPalette(shapes);
+        return .{
+            .art = try .init(gpa, shapes, global),
+            .font = try openFont(gpa, archive, font_name, global),
+            .target_fonts = .{
+                .small = try openFont(gpa, archive, TargetFonts.small_name, global),
+                .new = try openFont(gpa, archive, TargetFonts.new_name, global),
+            },
+            .ball = try .create(gpa, try tga.decode(gpa, try archive.readFile(gpa, power.picture_name))),
+        };
+    }
+
+    fn openFont(gpa: Allocator, archive: bigfile.Hog, name: []const u8, global: ?*const [spr.palette_size]u8) !Opened {
+        return .open(try fnt.Font.parse(try archive.readFile(gpa, name)), global);
+    }
+
+    fn targetFonts(resources: *Resources) TargetFonts {
+        return .{ .small = &resources.target_fonts.small, .new = &resources.target_fonts.new };
+    }
+};
+
+/// A ship's schematic, the ship status indicator's picture of it, and what its images are made in.
+pub const Schematic = struct {
+    art: *Art,
+    gpa: Allocator,
+};
+
+/// What `hud_draw` reads of the game for a frame.
+pub const Frame = struct {
+    gpa: Allocator,
+    target: device.Device,
+    screen: [2]u32,
+    /// The scene as it is drawn this frame; null before the first.
+    sight: ?Sight,
+    all: *create.Objects,
+    player: *const input.Player,
+    clock: *const Clock,
+    /// Last frame's view (`camera_view_last`), and the cockpit's mode.
+    last_view: camera.View,
+    mode: camera.CockpitMode,
+    strings: *const language.Language,
+    /// The camera's shake, which shakes the power ball too, and the C runtime's `rand`, which the
+    /// ball draws from.
+    hit_shake: f32,
+    random: *libcmt.Rand,
+    /// What the mission has ready for JUMP DRIVE.
+    ready: *Readiness,
+    /// The player's ship's schematic, where its type has one.
+    schematic: ?Schematic,
+    /// The tally the skull readout shows (`0x00562DF4`), which the front end sets.
+    tally: i32 = 0,
+    /// Whether the `Scanner` command has the player look for an object.
+    scanning: bool = false,
+    edge_line: EdgeLine,
+    multiplayer: bool = false,
+};
+
+/// `hud_draw` (`0x004843B0`): the display for a frame, in its order. First it takes the player's
+/// target and runs the devices' charges, in every view. In the view ahead from the cockpit it
+/// then draws the jump prompt, the target, the eject marker, the scanner and the status lights;
+/// in the others the view's name. Then, in the view ahead, the instruments: the readouts, the
+/// ship status indicator, the targeting cluster, the radar, the reticle and the clock. Last, in
+/// every view, the windows move on, and in the view ahead are drawn.
+pub fn draw(state: *State, resources: *Resources, frame: Frame) (spr.Error || Allocator.Error)!void {
+    const slot = &frame.all.slots[frame.all.player];
+    const live = &slot.object;
+    const frame_duration = frame.clock.frame_duration;
+    const scale = scaleFor(frame.screen);
+    const colour: [4]f32 = .{ 1, 1, 1, 1 };
+    const art = &resources.art;
+    const ahead = instrumented(frame.last_view);
+    state.followTarget(frame.all, frame.multiplayer);
+    state.runCharges(live, frame_duration, frame.multiplayer);
+    // Where the lead cursor stands, which the reticle closes on.
+    var lead: ?[2]i32 = null;
+    if (ahead) {
+        try state.drawJumpPrompt(frame.ready, art, frame.gpa, frame.target, frame.screen, frame_duration, colour, scale);
+        if (frame.sight) |sight| {
+            const scene: TargetScene = .{ .sight = sight, .all = frame.all, .mode = frame.mode };
+            lead = try drawTarget(state, art, resources.targetFonts(), frame.gpa, frame.target, scene, frame.edge_line, colour, scale);
+        }
+        try state.drawEjectMarker(art, frame.gpa, frame.target, frame.screen, frame_duration, colour, scale);
+        try state.drawScanner(frame.scanning, frame.clock.game_ticks, art, frame.gpa, frame.target, frame.screen, colour, scale);
+        const lit = state.lit(live, frame.player.matching_speed, frame.multiplayer, frame_duration);
+        try state.drawLights(art, frame.gpa, frame.target, frame.screen, lit, frame_duration, colour, scale);
+    }
+    try drawViewName(&resources.font, frame.gpa, frame.target, frame.screen, frame.last_view, frame.strings.*, colour, scale);
+    if (ahead) try state.drawInstruments(resources, frame, lead, colour, scale);
+    const contents: windows.Contents = .{ .power = .{
+        .ball = resources.ball,
+        .object = live,
+        .hit_shake = frame.hit_shake,
+        .random = frame.random,
+        .font = &resources.font,
+        .strings = frame.strings,
+    } };
+    try state.windows.frame(art, frame.gpa, frame.target, frame.screen, frame.last_view, frame_duration, contents, colour, scale);
+}
+
+/// The first gun of the group the ship has chosen (`GunMode.group`), which blind fire and the
+/// charge arc look at, or null for none.
+fn groupLead(slot: *const create.Slot) ?guns.GunType {
+    const first = slot.gun_groups[slot.object.gun_mode.group].first;
+    if (first < 0 or first >= slot.guns.len) return null;
+    return slot.guns[@intCast(first)].type;
+}
+
+/// What blind fire does for the ship of `slot` this frame: nothing where it is not carried or not
+/// on, or where every group of guns fires on a ship of more than one; and no aiming where the
+/// chosen group is led by a Nova Cannon.
+pub fn blindFire(state: *const State, slot: *const create.Slot) BlindFire {
+    if (!state.blind_fire_fitted or !state.blind_fire) return .off;
+    const groups = if (slot.combat) |combat| combat.gun_groups else 0;
+    if (slot.object.gun_mode.all and groups != 1) return .off;
+    return if (groupLead(slot) == .nova_cannon) .excluded else .on;
+}
+
+/// Whether the charge arc shows the Nova Cannon's charge: on a Phoenix firing one group, which the
+/// cannon leads.
+pub fn novaShown(slot: *const create.Slot) bool {
+    const object = &slot.object;
+    if (object.type != .phoenix and object.type != .t_phoenix) return false;
+    return !object.gun_mode.all and groupLead(slot) == .nova_cannon;
 }
 
 /// The readouts `hud_draw` puts in a row across the top of the screen, each a shape with a number
@@ -1028,6 +1211,22 @@ pub const State = struct {
     radar_zoom: ?Radar.Zoom = null,
     /// The display's windows (`0x00501D30`).
     windows: windows.Windows = .{},
+    /// The player's target as the display has it (`0x005799E8`, an order's entry of which only
+    /// the target's index and component are set): the target of the player's Player Control
+    /// order, which `followTarget` and `targetChanged` copy.
+    shown: aigeneric.Target = .none,
+    /// The object the display draws as the target (`0x00569940`): the shown one, while the player
+    /// can aim at it.
+    target: ?u16 = null,
+    /// The object that stood under the reticle as the targeting keys were last read
+    /// (`0x00566664`), which TARGET UNDER RETICULE takes.
+    under_reticle: ?u16 = null,
+    /// The missile lock's count (`0x0057DFBC`): 100 while no lock is building, down to 0 as one
+    /// does, and back up as it is lost. The target's brackets are drawn at its hundredths of their
+    /// brightness, and the lead cursor's line is shorter by `lock_shortening` for each short of
+    /// 100. The missiles, which count it, are not ported yet
+    /// ([#39](https://github.com/vdmkenny/openreliant/issues/39)).
+    lock: i32 = lock_none,
 
     /// `hud_draw`'s work on the devices' charges for a frame, which it does in every view: a
     /// device that runs dry is turned off.
@@ -1059,6 +1258,54 @@ pub const State = struct {
         found.spectral_shields = state.devices.get(.spectral_shields).setting == .on;
         found.reverse_thrust = object.reverse_thrust;
         return found;
+    }
+
+    /// What `hud_draw` does first each frame: shows the target of the player's orders, the Player
+    /// Control order's below the current one or else the current one's.
+    pub fn followTarget(state: *State, all: *const create.Objects, multiplayer: bool) void {
+        const slot = &all.slots[all.player];
+        const count: usize = @intCast(@max(slot.object.order_count, 1));
+        var entry = slot.orders[0];
+        for (slot.orders[1..count]) |deeper| {
+            if (deeper.order == .player_control) {
+                entry = deeper;
+                break;
+            }
+        }
+        state.show(all, entry.target, multiplayer);
+    }
+
+    /// `0x0048C580`: follows a change of the player's target. The display shows the target of the
+    /// player's Player Control order, and brings up the form of the target display that shows it,
+    /// held open, closing the other; with no target it closes both.
+    pub fn targetChanged(state: *State, all: *create.Objects, multiplayer: bool) void {
+        const entry = ai.playerControlEntry(all) orelse return;
+        state.show(all, entry.target, multiplayer);
+        if (entry.target.index < 0) {
+            state.windows.close(.target);
+            state.windows.close(.big_target);
+            return;
+        }
+        const window = targetWindow(&all.slots[@intCast(entry.target.index)]);
+        if (state.bringUp(window, multiplayer)) state.windows.status.getPtr(window).held = true;
+    }
+
+    /// Shows `target`'s index and component, and draws its object while the player can aim at it,
+    /// a friendly one cloaked too outside a multiplayer game.
+    fn show(state: *State, all: *const create.Objects, target: aigeneric.Target, multiplayer: bool) void {
+        state.shown.index = target.index;
+        state.shown.component = target.component;
+        const index = state.shown.index;
+        const friendly = index >= 0 and index < all.slots.len and all.slots[@intCast(index)].object.side == .friendly;
+        const allowed: gameobj.GameObject.Flags = .{ .cloaked = friendly and !multiplayer };
+        state.target = if (ai.targetValid(all, state.shown, allowed)) @intCast(index) else null;
+    }
+
+    /// Opens `window`, one of the target display's forms, closing the other if it is up. Returns
+    /// whether `window` is up.
+    pub fn bringUp(state: *State, window: windows.Window, multiplayer: bool) bool {
+        state.windows.close(if (window == .target) .big_target else .target);
+        return state.windows.open(window, multiplayer);
     }
 
     /// Whether `hud_draw` draws `readout` in a frame of `frame_duration`: the countermeasures only
@@ -1176,6 +1423,40 @@ pub const State = struct {
         try drawShape(art, gpa, target, scanner_shape + state.scannerFrame(game_ticks), at, colour, scale);
     }
 
+    /// What `hud_draw` draws only in the view ahead from the cockpit, after the view's name.
+    fn drawInstruments(state: *State, resources: *Resources, frame: Frame, lead: ?[2]i32, colour: [4]f32, scale: f32) (spr.Error || Allocator.Error)!void {
+        const frame_duration = frame.clock.frame_duration;
+        const slot = &frame.all.slots[frame.all.player];
+        const live = &slot.object;
+        const flight = slot.flight orelse return;
+        const combat = slot.combat orelse return;
+        const art = &resources.art;
+        for (std.enums.values(Readout)) |readout| {
+            if (!state.shows(readout, frame_duration)) continue;
+            const value: i32 = switch (readout) {
+                .fuel => @divTrunc(live.afterburner_fuel, 100),
+                .skull => frame.tally,
+                .coil => live.countermeasures,
+            };
+            try readout.draw(art, &resources.font, frame.gpa, frame.target, frame.screen, value, colour, scale);
+        }
+        if (frame.schematic) |schematic| try ShipStatus.drawSchematic(schematic.art, schematic.gpa, frame.target, frame.screen, colour, scale);
+        try ShipStatus.draw(art, frame.gpa, frame.target, frame.screen, live.shields, combat.shield_power, frame.player.shield_reserves, colour, scale);
+        try drawCluster(art, &resources.font, frame.gpa, frame.target, frame.screen, .{
+            .throttle = live.throttle,
+            .speed = live.speed,
+            .max_speed = flight.max_speed,
+            .charge = live.gun_charge,
+            .full_charge = combat.gun_energy,
+            .nova = if (novaShown(slot)) live.nova_charge else null,
+        }, colour, scale);
+        try drawRadar(art, frame.gpa, frame.target, frame.screen, state.radar_rings, colour, scale);
+        stepRadarZoom(state, frame.clock.game_ticks);
+        const aims = try drawReticle(state, art, frame.gpa, frame.target, frame.screen, frame.mode, lead, blindFire(state, slot), frame_duration, colour, scale);
+        live.blind_fire_aim = @intFromBool(aims);
+        try drawClock(&resources.font, frame.gpa, frame.target, frame.screen, frame.clock.play.minutes, frame.clock.play.seconds, colour, scale);
+    }
+
     /// The scanner's frame at `game_ticks`: the next, going round, once `game_ticks` is past the
     /// tick it waits for, which is then 25 on.
     pub fn scannerFrame(state: *State, game_ticks: u32) u8 {
@@ -1208,20 +1489,34 @@ pub const scanner_shape: u16 = 0xD1;
 pub const scanner_frames = 5;
 pub const scanner_step = 25;
 
+/// How far apart two points of the screen are.
+fn distance(a: Point, b: Point) f32 {
+    return @sqrt(@reduce(.Add, (b - a) * (b - a)));
+}
+
 /// A charge's bar: a line of the display's pixels `down` below the light's point, from one right
-/// of it to `length` further, both ends drawn as `VFX_line_draw` draws them.
+/// of it to `length` further.
 fn drawBar(target: device.Device, at: [2]i32, down: i32, length: i32, scale: f32) void {
     const left = @as(f32, @floatFromInt(at[0])) + scale;
     const top = @as(f32, @floatFromInt(at[1])) + @as(f32, @floatFromInt(down)) * scale;
-    const right = left + @as(f32, @floatFromInt(length + 1)) * scale;
-    const bottom = top + scale;
-    const tint = device.pack(bar_colour);
-    const corners = [4]device.Vertex{
-        .{ .x = left, .y = top, .z = 1, .rhw = 1, .diffuse = tint },
-        .{ .x = right, .y = top, .z = 1, .rhw = 1, .diffuse = tint },
-        .{ .x = right, .y = bottom, .z = 1, .rhw = 1, .diffuse = tint },
-        .{ .x = left, .y = bottom, .z = 1, .rhw = 1, .diffuse = tint },
-    };
+    drawLine(target, .{ left, top }, .{ left + @as(f32, @floatFromInt(length)) * scale, top }, bar_colour, scale);
+}
+
+/// Draws a line from the pixel at `from` to the pixel at `to`, both ends included, as
+/// `VFX_line_draw` draws one, its pixels `width` across for a display drawn larger.
+pub fn drawLine(target: device.Device, from: Point, to: Point, colour: [4]f32, width: f32) void {
+    const half: Point = @splat(width / 2);
+    // The line runs between the pixels' middles, and reaches half a pixel past each.
+    const start = from + half;
+    const end = to + half;
+    const length = distance(start, end);
+    const along: Point = if (length > 0) (end - start) / @as(Point, @splat(length)) * half else .{ half[0], 0 };
+    const across: Point = .{ -along[1], along[0] };
+    const tint = device.pack(colour);
+    var corners: [4]device.Vertex = undefined;
+    for (&corners, [4]Point{ start - along - across, end + along - across, end + along + across, start - along + across }) |*corner, at| {
+        corner.* = .{ .x = at[0], .y = at[1], .z = 1, .rhw = 1, .diffuse = tint };
+    }
     target.draw(.{
         .texture = null,
         .depth = srd3d.depth(.overlay, .alpha),
@@ -1229,19 +1524,159 @@ fn drawBar(target: device.Device, at: [2]i32, down: i32, length: i32, scale: f32
     }, .fan, &corners, null);
 }
 
-/// The keys of `hud_target_keys` (`0x0048B6B0`) ported: SMART TARGET, which flips smart
-/// targeting, then MISSILE WINDOW, which opens the missile window held and, pressed again once it
-/// is open, closes it, and outside a multiplayer game the keys that turn the missile ring, which
-/// open it held too. `frame_controls` runs the routine for the targeting and missile keys, before
-/// its own. Not yet ported: the targeting keys, turning the ring, and the display's sounds.
-pub fn targetKeys(state: *State, devices: *input.Devices, multiplayer: bool) void {
+/// The missile lock's count while no lock builds (`State.lock`), and how much shorter each unit
+/// short of it makes the lead cursor's line, in the display's pixels (`0x004DC928`).
+pub const lock_none: i32 = 100;
+pub const lock_shortening: f32 = 0.28;
+
+/// How far MATCH SPEED follows a target (`0x00501CB4`), and the targeting keys reach from the
+/// player's ship: twice as far.
+pub const pick_range: f32 = 330_000;
+pub const pick_reach: f32 = 2 * pick_range;
+
+/// The form of the target display that shows the object of `slot`: the large one where its
+/// type's combat stats ask for it, the small one otherwise and for an object without them.
+pub fn targetWindow(slot: *const create.Slot) windows.Window {
+    const combat = slot.combat orelse return .target;
+    return if (combat.display == .large) .big_target else .target;
+}
+
+/// The camera and its projection, as Surrender last drew the scene with them (`sr + 0x30`, and
+/// the screen's size and projection from `sr + 0x1666`): what the display finds where objects
+/// stand on the screen by.
+pub const Sight = struct {
+    place: math.Place,
+    projection: srapi.Projection,
+
+    /// A point of the world in the camera's frame.
+    pub fn view(sight: Sight, point: Vector) Vector {
+        return math.transformTransposed(sight.place.orientation, point - sight.place.position);
+    }
+
+    /// Where a point in the camera's frame falls on the screen, rounded to a pixel.
+    pub fn pixel(sight: Sight, point: Vector) [2]i32 {
+        const at = sight.projection.project(point);
+        return .{ round(at[0]), round(at[1]) };
+    }
+
+    /// The screen's last pixel across and down.
+    pub fn last(sight: Sight) [2]i32 {
+        const screen = sight.projection.screen;
+        return .{ @as(i32, @intCast(screen[0])) - 1, @as(i32, @intCast(screen[1])) - 1 };
+    }
+
+    /// Whether a pixel is on the screen.
+    pub fn onScreen(sight: Sight, at: [2]i32) bool {
+        const edge = sight.last();
+        return at[0] >= 0 and at[0] <= edge[0] and at[1] >= 0 and at[1] <= edge[1];
+    }
+
+    /// The middle of the screen, half its size rounded.
+    pub fn middle(sight: Sight) [2]i32 {
+        const screen = sight.projection.screen;
+        return .{ round(@as(f32, @floatFromInt(screen[0])) * 0.5), round(@as(f32, @floatFromInt(screen[1])) * 0.5) };
+    }
+};
+
+/// How near the middle of the screen, either way, an object stands for `hud_target_keys` to take
+/// it as under the reticle, in the display's own pixels.
+pub const reticle_reach: i32 = 0x20;
+
+/// The first object other than the player's ship that stands in front of the camera within
+/// `reticle_reach` of the middle of the screen, drawn `scale` times its size.
+pub fn underReticle(all: *const create.Objects, sight: Sight, scale: f32) ?u16 {
+    const middle = sight.middle();
+    const reach = round(@as(f32, @floatFromInt(reticle_reach)) * scale);
+    for (all.slots[0..all.count], 0..) |*slot, index| {
+        if (index == all.player or slot.object.type.number() >= 0x100) continue;
+        const seen = sight.view(slot.drawn.position);
+        if (!(seen[2] > 0)) continue;
+        const at = sight.pixel(seen);
+        if (@abs(at[0] - middle[0]) < reach and @abs(at[1] - middle[1]) < reach) return @intCast(index);
+    }
+    return null;
+}
+
+/// What the targeting keys read and change besides the display's own state.
+pub const Keys = struct {
+    devices: *input.Devices,
+    player: *input.Player,
+    all: *create.Objects,
+    /// The scene as it was last drawn, which finds the object under the reticle; null before the
+    /// first frame.
+    sight: ?Sight,
+    /// Last frame's view (`camera_view_last`).
+    last_view: camera.View,
+    /// How much larger than its own art the display is drawn (`scaleFor`).
+    scale: f32,
+    multiplayer: bool,
+};
+
+/// `hud_target_keys` (`0x0048B6B0`), which `frame_controls` runs after the camera's keys. It
+/// first finds the object under the reticle, then reads, in its order:
+///
+/// - TARGET TORPEDO steps the player's target to the next hostile Russian torpedo, Kamov or
+///   Scimitar within `pick_reach`, and leaves it be if there is none.
+/// - TARGET NEAREST ENEMY and TARGET NEAREST FRIENDLY, from the cockpit ahead or the chase view
+///   while the player's order is Player Control, take the nearest hostile ship neither exploding
+///   nor cloaked, or friendly ship not exploding, within `pick_reach`.
+/// - SMART TARGET flips smart targeting.
+/// - The next and previous enemy and friendly target keys, while the player's order is Player
+///   Control, first bring up the target display for a target the player can aim at if neither
+///   of its forms is up; otherwise they step the target (`input.cycleTarget`).
+/// - The next and previous subtarget keys step the target's component
+///   (`input.cycleSubtarget`).
+/// - TARGET UNDER RETICULE takes the object under the reticle as the target of the player's
+///   current order, and brings up its form of the target display.
+/// - MISSILE WINDOW opens the missile window held and, pressed again once it is open, closes it;
+///   outside a multiplayer game the keys that turn the missile ring open it held too.
+///
+/// All but the nearest and the subtarget keys, and SMART TARGET, stop MATCH SPEED; PREVIOUS
+/// FRIENDLY TARGET does not. Not yet ported: turning the missile ring, the display's sounds
+/// ([#101](https://github.com/vdmkenny/openreliant/issues/101)), the radio's menu while its window
+/// is open, and what the game does while `0x00529FB8` is set, which leaves out every key after
+/// the search under the reticle.
+pub fn targetKeys(state: *State, keys: Keys) void {
+    const all = keys.all;
+    const devices = keys.devices;
+    state.under_reticle = if (keys.sight) |sight| underReticle(all, sight, keys.scale) else null;
+
+    if (devices.active(.target_torpedo, true)) {
+        if (ai.playerControlEntry(all)) |entry| {
+            if (input.seekTarget(all, &entry.target, .next, .torpedo)) state.targetChanged(all, keys.multiplayer);
+        }
+    }
+    const current = &all.slots[all.player].orders[0];
+    const controlled = current.order == .player_control;
+    const looking = keys.last_view == .cockpit or keys.last_view == .chase;
+    for (nearest_keys) |key| {
+        if (!devices.active(key.action, true) or !looking or !controlled) continue;
+        if (nearest(all, key.side)) |index| input.setPlayerTarget(state, all, @intCast(index), -1, keys.multiplayer);
+    }
     if (devices.active(.smart_target, true)) {
         state.smart_targeting = !state.smart_targeting;
     }
+    for (step_keys) |key| {
+        if (!devices.active(key.action, true) or !controlled) continue;
+        if (key.stops_matching) keys.player.matching_speed = false;
+        switch (key.steps) {
+            .target => |among| pickTarget(state, all, key.step, among, key.holds, keys.multiplayer),
+            .subtarget => input.cycleSubtarget(state, all, key.step, keys.multiplayer),
+        }
+    }
+    if (devices.active(.target_under_reticule, true)) {
+        const found: aigeneric.Target = .{ .kind = .ship, .index = if (state.under_reticle) |index| @intCast(index) else -1, .component = -1 };
+        if (ai.targetValid(all, found, .{}) and controlled) {
+            current.target.index = found.index;
+            current.target.component = -1;
+            _ = state.bringUp(targetWindow(&all.slots[@intCast(found.index)]), keys.multiplayer);
+        }
+    }
+
     const missiles = state.windows.status.getPtr(.missiles);
     if (devices.active(.missile_window, true)) {
         switch (missiles.phase) {
-            .shut => if (state.windows.open(.missiles, multiplayer)) {
+            .shut => if (state.windows.open(.missiles, keys.multiplayer)) {
                 missiles.held = true;
             },
             .open => {
@@ -1251,11 +1686,230 @@ pub fn targetKeys(state: *State, devices: *input.Devices, multiplayer: bool) voi
             .opening, .closing => {},
         }
     }
-    if (multiplayer) return;
+    if (keys.multiplayer) return;
     for ([_]input.controls.Action{ .rotate_missiles_clockwise, .rotate_missiles_anticlockwise }) |action| {
         if (!devices.active(action, true)) continue;
-        if (state.windows.open(.missiles, multiplayer)) missiles.held = true;
+        if (state.windows.open(.missiles, keys.multiplayer)) missiles.held = true;
     }
+}
+
+/// The nearest target keys, and the side each looks for.
+const nearest_keys = [_]struct { action: input.controls.Action, side: gameobj.Side(i32) }{
+    .{ .action = .target_nearest_enemy, .side = .hostile },
+    .{ .action = .target_nearest_friendly, .side = .friendly },
+};
+
+/// The keys that step the target or its component, in the order `hud_target_keys` reads them:
+/// which way each steps, and what through.
+const step_keys = [_]StepKey{
+    .{ .action = .next_enemy_target, .step = .next, .steps = .{ .target = .hostile }, .holds = true },
+    .{ .action = .previous_enemy_target, .step = .previous, .steps = .{ .target = .hostile } },
+    .{ .action = .next_subtarget, .step = .next, .steps = .subtarget },
+    .{ .action = .previous_subtarget, .step = .previous, .steps = .subtarget },
+    .{ .action = .next_friendly_target, .step = .next, .steps = .{ .target = .friendly } },
+    .{ .action = .previous_friendly_target, .step = .previous, .steps = .{ .target = .friendly }, .stops_matching = false },
+};
+
+const StepKey = struct {
+    action: input.controls.Action,
+    step: input.Step,
+    steps: union(enum) { target: input.Among, subtarget },
+    /// Whether the target display it brings up is held open.
+    holds: bool = false,
+    /// Whether it stops MATCH SPEED.
+    stops_matching: bool = true,
+};
+
+/// A next or previous target key: with neither form of the target display up and a target the
+/// player can aim at, it brings up the target's form, held open for NEXT ENEMY TARGET alone;
+/// otherwise it steps the target.
+fn pickTarget(state: *State, all: *create.Objects, step: input.Step, among: input.Among, hold: bool, multiplayer: bool) void {
+    const current = all.slots[all.player].orders[0].target;
+    const shut = state.windows.status.get(.target).phase == .shut and state.windows.status.get(.big_target).phase == .shut;
+    if (shut and ai.targetValid(all, current, .{})) {
+        const window = targetWindow(&all.slots[@intCast(current.index)]);
+        if (state.windows.open(window, multiplayer) and hold) state.windows.status.getPtr(window).held = true;
+        return;
+    }
+    _ = input.cycleTarget(state, all, step, among, multiplayer);
+}
+
+/// The nearest ship to the player's on `side` within `pick_reach`, for the nearest target keys:
+/// neither exploding nor, for a hostile one, cloaked.
+fn nearest(all: *const create.Objects, side: gameobj.Side(i32)) ?usize {
+    const from = all.slots[all.player].drawn.position;
+    var best = pick_reach;
+    var found: ?usize = null;
+    for (all.slots[0..all.count], 0..) |*slot, index| {
+        const object = &slot.object;
+        if (index == all.player or object.type == .stand_in or object.side != side) continue;
+        if (object.flags.exploding or (side == .hostile and object.flags.cloaked)) continue;
+        const apart = math.distance(from, slot.drawn.position);
+        if (apart < best) {
+            best = apart;
+            found = index;
+        }
+    }
+    return found;
+}
+
+/// A mission of a player on Player Control, for the targeting's tests.
+const TargetingTest = struct {
+    mission: gameobj.testing.Mission,
+    devices: input.Devices = .{},
+    state: State = .{},
+
+    fn init(test_: *TargetingTest) !void {
+        test_.* = .{ .mission = undefined };
+        try test_.mission.init(std.testing.allocator);
+        const player = try test_.mission.add(.predator, @splat(0));
+        try std.testing.expect(try aigeneric.push(test_.mission.orders(), player, .player_control, .none));
+    }
+
+    fn deinit(test_: *TargetingTest) void {
+        test_.mission.deinit();
+    }
+
+    /// A ship of `ship_type` at `at` that the player can aim at.
+    fn add(test_: *TargetingTest, ship_type: gameobj.Type, at: Vector) !u16 {
+        const index = try test_.mission.add(ship_type, at);
+        test_.mission.slot(index).object.flags.targetable = true;
+        return index;
+    }
+
+    fn keys(test_: *TargetingTest, sight: ?Sight) Keys {
+        return .{
+            .devices = &test_.devices,
+            .player = &test_.mission.player,
+            .all = test_.mission.objects,
+            .sight = sight,
+            .last_view = .cockpit,
+            .scale = 1,
+            .multiplayer = false,
+        };
+    }
+
+    /// Presses `action`'s key, with its modifier, for one reading of the targeting keys.
+    fn tap(test_: *TargetingTest, action: input.controls.Action, sight: ?Sight) void {
+        const keyboard = &test_.devices.keyboard;
+        const bound = input.controls.binding(action);
+        const modifier: ?u8 = switch (bound.modifier) {
+            .shift => input.scan.left_shift,
+            .control => input.scan.left_control,
+            .alt => input.scan.left_alt,
+            else => null,
+        };
+        keyboard.down[bound.key] = true;
+        if (modifier) |held| keyboard.down[held] = true;
+        targetKeys(&test_.state, test_.keys(sight));
+        keyboard.down[bound.key] = false;
+        if (modifier) |held| keyboard.down[held] = false;
+        keyboard.read();
+    }
+
+    fn phase(test_: *TargetingTest, window: windows.Window) windows.Phase {
+        return test_.state.windows.status.get(window).phase;
+    }
+};
+
+/// A camera at the origin looking along Z at a screen of 640 by 480.
+fn testSight() Sight {
+    return .{ .place = .{}, .projection = .init(640, 480, .{ 0, 0, 1, 1 }, .{ 1, 1 }) };
+}
+
+test "the display follows the player's target" {
+    var t: TargetingTest = undefined;
+    try t.init();
+    defer t.deinit();
+    const all = t.mission.objects;
+    const sabre = try t.add(.sabre, .{ 0, 0, 5000 });
+    const reliant = try t.add(.reliant, .{ 0, 0, 90000 });
+
+    // With no target, nothing is drawn.
+    t.state.followTarget(all, false);
+    try std.testing.expectEqual(null, t.state.target);
+
+    // A fighter comes up in the target display's small form, held open.
+    input.setPlayerTarget(&t.state, all, @intCast(sabre), -1, false);
+    try std.testing.expectEqual(sabre, t.state.target.?);
+    try std.testing.expectEqual(.opening, t.phase(.target));
+    try std.testing.expect(t.state.windows.status.get(.target).held);
+
+    // A capital ship in the large one, which closes the small.
+    input.setPlayerTarget(&t.state, all, @intCast(reliant), -1, false);
+    try std.testing.expectEqual(.closing, t.phase(.target));
+    try std.testing.expectEqual(.opening, t.phase(.big_target));
+
+    // A friendly ship cloaked is drawn, outside a multiplayer game.
+    all.slots[reliant].object.flags.cloaked = true;
+    t.state.followTarget(all, false);
+    try std.testing.expectEqual(reliant, t.state.target.?);
+    t.state.followTarget(all, true);
+    try std.testing.expectEqual(null, t.state.target);
+
+    // One the player can no longer aim at is still shown, but not drawn; none closes the display.
+    all.slots[reliant].object.flags.cloaked = false;
+    all.slots[reliant].object.flags.exploding = true;
+    t.state.followTarget(all, false);
+    try std.testing.expectEqual(@as(i32, reliant), t.state.shown.index);
+    try std.testing.expectEqual(null, t.state.target);
+    input.setPlayerTarget(&t.state, all, -1, -1, false);
+    try std.testing.expectEqual(.closing, t.phase(.big_target));
+}
+
+test targetKeys {
+    var t: TargetingTest = undefined;
+    try t.init();
+    defer t.deinit();
+    const all = t.mission.objects;
+    const near = try t.add(.sabre, .{ 3000, 0, 5000 });
+    const ahead = try t.add(.sabre, .{ 0, 0, 20000 });
+    const friend = try t.add(.reliant, .{ 0, 40000, 0 });
+    _ = try t.add(.sabre, .{ 0, 0, 700000 });
+    const bomber = try t.add(.kamov, .{ 0, 0, -50000 });
+    const current = &all.slots[all.player].orders[0].target;
+
+    // The nearest enemy, from the cockpit.
+    t.tap(.target_nearest_enemy, null);
+    try std.testing.expectEqual(@as(i32, near), current.index);
+    try std.testing.expectEqual(.opening, t.phase(.target));
+
+    // With the display up, the next enemy target steps on, past the friend, the Kamov and the
+    // Sabre out of reach, and round; and stops MATCH SPEED.
+    t.mission.player.matching_speed = true;
+    t.tap(.next_enemy_target, null);
+    try std.testing.expectEqual(@as(i32, ahead), current.index);
+    try std.testing.expect(!t.mission.player.matching_speed);
+    t.tap(.next_enemy_target, null);
+    try std.testing.expectEqual(@as(i32, bomber), current.index);
+    t.tap(.previous_enemy_target, null);
+    try std.testing.expectEqual(@as(i32, ahead), current.index);
+
+    // With it shut, the key brings it up rather than stepping.
+    t.state.windows = .{};
+    t.tap(.next_enemy_target, null);
+    try std.testing.expectEqual(@as(i32, ahead), current.index);
+    try std.testing.expectEqual(.opening, t.phase(.target));
+
+    // The nearest friend comes up in the large form.
+    t.tap(.target_nearest_friendly, null);
+    try std.testing.expectEqual(@as(i32, friend), current.index);
+    try std.testing.expectEqual(.opening, t.phase(.big_target));
+
+    // TARGET TORPEDO finds the Kamov.
+    t.tap(.target_torpedo, null);
+    try std.testing.expectEqual(@as(i32, bomber), current.index);
+
+    // The Sabre dead ahead stands under the reticle; the near one stands off to the side.
+    t.tap(.target_under_reticule, testSight());
+    try std.testing.expectEqual(ahead, t.state.under_reticle.?);
+    try std.testing.expectEqual(@as(i32, ahead), current.index);
+
+    // Stepping from a lone target that the player cannot aim at leaves none.
+    for ([_]u16{ near, ahead, bomber }) |index| all.slots[index].object.flags.exploding = true;
+    t.tap(.next_enemy_target, null);
+    try std.testing.expectEqual(-1, current.index);
+    try std.testing.expectEqual(null, t.state.target);
 }
 
 test Flash {
@@ -1564,6 +2218,16 @@ pub const Cluster = struct {
         max_speed: f32,
         charge: f32,
         full_charge: f32,
+        /// The Nova Cannon's charge (`GameObject.nova_charge`), which the charge arc shows in
+        /// place of the guns' on a Phoenix firing a group the cannon leads (`novaShown`).
+        nova: ?f32 = null,
+
+        /// How far down from the arcs' top the charge arc is unlit: for the Nova Cannon, as far
+        /// as it has charged.
+        pub fn unlit(gauges: Gauges) i32 {
+            if (gauges.nova) |nova| return round(nova * charge_height);
+            return chargeLevel(gauges.charge, gauges.full_charge);
+        }
     };
 
     /// Where a marker for `share` of the arc stands from the circle's centre, in the display's
@@ -1634,7 +2298,7 @@ pub fn drawCluster(
 
     // The speed's fill is lit below its marker, the charge's below its level.
     try drawFill(art, gpa, target, Cluster.speed_fill, left, offset[1] + Cluster.circle[1], colour, scale);
-    try drawFill(art, gpa, target, Cluster.charge_fill, right, Cluster.chargeLevel(gauges.charge, gauges.full_charge), colour, scale);
+    try drawFill(art, gpa, target, Cluster.charge_fill, right, gauges.unlit(), colour, scale);
 }
 
 /// An arc's fill for `level` pixels down from the arcs' top: the lit shape into the pane from
@@ -1755,6 +2419,268 @@ pub fn drawReticle(
     return aims;
 }
 
+/// What the display draws the target with, besides its shapes: `smlfont.fnt`, for the range by
+/// the marker at the screen's edge, and `newfont.fnt`, for the range by the brackets.
+pub const TargetFonts = struct {
+    small: *Opened,
+    new: *Opened,
+
+    pub const small_name = "SMLFONT.FNT";
+    pub const new_name = "NEWFONT.FNT";
+};
+
+/// What the display draws the target in: the scene as it is drawn this frame, the objects, and
+/// the cockpit's mode.
+pub const TargetScene = struct {
+    sight: Sight,
+    all: *const create.Objects,
+    mode: camera.CockpitMode,
+};
+
+/// **Improvement.** Where the line starts that places the marker for a target out of sight on
+/// the screen's edge (`drawTarget`). The game clips a line out to the edge from the arrow's tip
+/// across, but from the tip of one of the arrow's wings across again for down: a slip that starts
+/// the line as far down the screen as the middle is across, so the marker stands lower on the side
+/// edges than the target lies, and the more the wider the window. The port starts the line at the
+/// arrow's tip; `--original` starts it where the game does.
+pub const EdgeLine = enum { from_tip, original };
+
+/// The shapes of the target's brackets, the first of four for the corners: top left, top right,
+/// bottom left and bottom right.
+pub const brackets_shape: u16 = 0x122;
+pub const hostile_brackets_shape: u16 = 0x126;
+/// The least the brackets stand apart either way, in the display's own pixels (`0x004DC624`).
+pub const least_brackets: f32 = 15;
+/// Where the range stands from the bottom right bracket, ending there (`0x004DC620`).
+pub const range_offset: [2]i32 = .{ 10, 9 };
+/// The lead cursor's shape, and how far from its middle its line starts toward the target, in
+/// the display's own pixels (`0x004DC56C`).
+pub const lead_shape: u16 = 0x12F;
+pub const lead_gap: f32 = 5;
+/// The palette entries the arrow for a target out of sight is drawn in, hostile or not, and the
+/// lead cursor's line.
+pub const hostile_line: u8 = 0x26;
+pub const other_line: u8 = 0x62;
+/// How far from the middle of the screen the arrow's tip and its base stand, and how far either
+/// side of its base its wings reach, in the display's own pixels (`0x004DC724`, `0x004DC788`,
+/// `0x004DC424`).
+pub const arrow_tip: f32 = 32;
+pub const arrow_back: f32 = 10;
+pub const arrow_wing: f32 = 4;
+
+/// The marker at the screen's edge for a target out of sight: its shapes, the first of four for
+/// a hostile target and of four more for the rest, one for each edge.
+pub const Edge = enum(u2) {
+    bottom = 0,
+    left = 1,
+    right = 2,
+    top = 3,
+
+    pub const hostile_shape: u16 = 0x16C;
+    pub const other_shape: u16 = 0x170;
+
+    /// Where the shape and the range stand from where the line meets the edge, in the display's
+    /// own pixels, and how the range is aligned; at the top and on the left the game places the
+    /// shape at a set distance from the edge, which comes to the same.
+    pub const Spec = struct { shape: [2]i32, text: [2]i32, alignment: Align };
+
+    pub fn spec(edge: Edge) Spec {
+        return switch (edge) {
+            .top => .{ .shape = .{ 0, 12 }, .text = .{ -2, 11 }, .alignment = .centre },
+            .left => .{ .shape = .{ 8, 0 }, .text = .{ 9, -6 }, .alignment = .left },
+            .right => .{ .shape = .{ -6, 0 }, .text = .{ -8, -6 }, .alignment = .right },
+            .bottom => .{ .shape = .{ 0, -4 }, .text = .{ -2, -16 }, .alignment = .centre },
+        };
+    }
+
+    /// The edge a point on the screen's last row or column lies on, the top taking a corner of
+    /// its own and the right taking any point that is on no other.
+    pub fn of(at: [2]i32, last: [2]i32) Edge {
+        if (at[1] == 0) return .top;
+        if (at[1] >= last[1]) return .bottom;
+        return if (at[0] == 0) .left else .right;
+    }
+};
+
+/// `0x00489BC0`: which way on the screen the target at `at` lies from the ship at `ship`: the
+/// offset to it in the ship's frame, across and down, made a unit. A target straight ahead or
+/// behind, which leaves no way, is pointed at from below; the game divides by nothing there.
+pub fn pointerDirection(ship: math.Place, at: Vector) [2]f32 {
+    const offset = math.transformTransposed(ship.orientation, at - ship.position);
+    const length = @sqrt(offset[0] * offset[0] + offset[1] * offset[1]);
+    if (!(length > 0)) return .{ 0, 1 };
+    return .{ offset[0] / length, offset[1] / length };
+}
+
+/// `0x00489C70`, which `hud_draw` runs in view 0 between the jump prompt and the eject marker:
+/// draws the player's target, and returns where the lead cursor stands (`hud_target_x`,
+/// `hud_target_y`), the point the reticle closes on, if it is drawn.
+///
+/// A target whose node (`ai.targetPart`) stands off the screen or behind the camera gets an arrow
+/// from the middle of the screen pointing its way, red for a hostile one and green for the rest,
+/// and a marker where a line its way leaves the screen, with the range in kilometres. One on the
+/// screen gets four brackets at the corners of its box, the component's for a subtarget, as the
+/// camera sees it, with the range under them; and, if it lists no components and is not friendly,
+/// the lead cursor where to aim with the guns (`ai.leadAim`) and a line from it toward the target,
+/// in red.
+///
+/// Not yet ported: the corners it marks on the object the radio's window names (`0x0048B0F0`);
+/// the pointer to the next nav point (`GameObject.nav_point`), which needs the mission's
+/// ([#36](https://github.com/vdmkenny/openreliant/issues/36)); in the chase view, the pointers
+/// in the scene in place of the arrows ([#182](https://github.com/vdmkenny/openreliant/issues/182));
+/// the players' names over their ships in a multiplayer game.
+pub fn drawTarget(
+    state: *State,
+    art: *Art,
+    fonts: TargetFonts,
+    gpa: Allocator,
+    target: device.Device,
+    scene: TargetScene,
+    edge_line: EdgeLine,
+    colour: [4]f32,
+    scale: f32,
+) (spr.Error || Allocator.Error)!?[2]i32 {
+    const index = state.target orelse return null;
+    const all = scene.all;
+    const sight = scene.sight;
+    const ship = &all.slots[all.player];
+    const struck = &all.slots[index];
+    const hostile = struck.object.side == .hostile;
+    var buffer: [16]u8 = undefined;
+    const apart = round(math.distance(ship.drawn.position, struck.drawn.position));
+    const range = std.fmt.bufPrint(&buffer, "{d}k", .{@divTrunc(apart, 1000)}) catch return null;
+
+    const part = ai.targetPart(all, state.shown);
+    const node: math.Place = if (part) |found| .{ .position = found.object.position, .orientation = found.object.orientation } else struck.drawn;
+    const seen = sight.view(node.position);
+    if (!sight.onScreen(sight.pixel(seen)) or seen[2] < 0) {
+        try drawOffScreen(art, fonts.small, gpa, target, sight, pointerDirection(ship.drawn, node.position), hostile, range, scene.mode, edge_line, colour, scale);
+        return null;
+    }
+    if (!(seen[2] > 0)) return null;
+
+    // The node's box, the component's for a subtarget, as the camera sees it.
+    const box: [2]Vector = if (part) |found|
+        found.object.levels[found.object.level].mesh.bounds
+    else
+        .{ gameobj.vector(struck.object.bounds_min), gameobj.vector(struck.object.bounds_max) };
+    var low: Point = @splat(100000);
+    var high: Point = @splat(-100000);
+    for (0..8) |n| {
+        const corner: Corner = @bitCast(@as(u3, @intCast(n)));
+        const point: Vector = .{ box[corner.x][0], box[corner.y][1], box[corner.z][2] };
+        const on: Point = sight.projection.project(sight.view(math.transform(node.orientation, point) + node.position));
+        low = @min(low, on);
+        high = @max(high, on);
+    }
+    high = @max(high, low + @as(Point, @splat(least_brackets * scale)));
+
+    // The brackets dim as a missile's lock builds, and go at a tenth.
+    const brightness = @min(@as(f32, @floatFromInt(state.lock)) * 0.01, 1);
+    if (brightness > 0.1) {
+        const dim: [4]f32 = .{ colour[0] * brightness, colour[1] * brightness, colour[2] * brightness, colour[3] };
+        const first = if (hostile) hostile_brackets_shape else brackets_shape;
+        const ends = [2]Point{ low, high };
+        for (0..4) |n| {
+            const corner: Corner = @bitCast(@as(u3, @intCast(n)));
+            const at: [2]i32 = .{ round(ends[corner.x][0]), round(ends[corner.y][1]) };
+            try drawShape(art, gpa, target, first + n, at, dim, scale);
+        }
+    }
+    const offset = pointOf(range_offset) * @as(Point, @splat(scale));
+    _ = try drawText(fonts.new, gpa, target, .{ round(high[0]) + round(offset[0]), round(high[1] + offset[1]) }, range, colour, .right, scale);
+
+    if (struck.object.flags.components or struck.object.side == .friendly) return null;
+    const lead = ai.leadAim(all, all.player, state.shown, 1) orelse return null;
+    const aim: Point = sight.projection.project(sight.view(lead));
+    const cursor: [2]i32 = .{ round(aim[0]), round(aim[1]) };
+    try drawShape(art, gpa, target, lead_shape, cursor, colour, scale);
+    const toward: Point = sight.projection.project(sight.view(struck.drawn.position));
+    if (leadLine(aim, toward, state.lock, scale)) |line| {
+        drawLine(target, whole(line[0]), whole(line[1]), art.paletteColour(hostile_line), scale);
+    }
+    return cursor;
+}
+
+/// A corner of a box: which of its two ends it takes on each axis. The brackets' four take the
+/// first two.
+const Corner = packed struct(u3) { x: u1, y: u1, z: u1 };
+
+/// The lead cursor's line: from `lead_gap` out of the cursor at `aim`, along the axis on which
+/// the target at `toward` lies farther, to the target, shorter by `lock_shortening` for each unit
+/// the lock's count is short of 100. None for a target within the gap on that axis, or a line
+/// shortened away.
+pub fn leadLine(aim: Point, toward: Point, lock: i32, scale: f32) ?[2]Point {
+    const gap = lead_gap * scale;
+    const at: [2]f32 = aim;
+    const to: [2]f32 = toward;
+    const apart: [2]f32 = aim - toward;
+    const major: usize = if (@abs(apart[1]) <= @abs(apart[0])) 0 else 1;
+    const minor = 1 - major;
+    var start: [2]f32 = undefined;
+    if (to[major] > at[major] + gap) {
+        start[major] = at[major] + gap;
+    } else if (to[major] < at[major] - gap) {
+        start[major] = at[major] - gap;
+    } else return null;
+    start[minor] = (start[major] - to[major]) * apart[minor] / apart[major] + to[minor];
+    const from: Point = start;
+    const length = distance(from, toward);
+    const shortening = @as(f32, @floatFromInt(lock_none - lock)) * lock_shortening * scale;
+    if (!(shortening < length)) return null;
+    return .{ from, from + (toward - from) * @as(Point, @splat((length - shortening) / length)) };
+}
+
+/// The arrow and the marker at the screen's edge for a target out of sight, which lies `toward`
+/// from the player's ship. The chase view draws no arrow.
+fn drawOffScreen(
+    art: *Art,
+    font: *Opened,
+    gpa: Allocator,
+    target: device.Device,
+    sight: Sight,
+    toward: [2]f32,
+    hostile: bool,
+    range: []const u8,
+    mode: camera.CockpitMode,
+    edge_line: EdgeLine,
+    colour: [4]f32,
+    scale: f32,
+) (spr.Error || Allocator.Error)!void {
+    const middle = sight.middle();
+    const across: [2]f32 = .{ -toward[1], toward[0] };
+    var tip: [2]i32 = undefined;
+    var wings: [2][2]i32 = undefined;
+    for (0..2) |axis| {
+        const out = round(toward[axis] * arrow_tip * scale);
+        const base = out - round(toward[axis] * arrow_back * scale);
+        const wing = round(across[axis] * arrow_wing * scale);
+        tip[axis] = middle[axis] + out;
+        wings[0][axis] = middle[axis] + base + wing;
+        wings[1][axis] = middle[axis] + base - wing;
+    }
+    if (mode != .chase) {
+        const line = art.paletteColour(if (hostile) hostile_line else other_line);
+        for ([3][2][2]i32{ .{ tip, wings[0] }, .{ tip, wings[1] }, .{ wings[1], wings[0] } }) |ends| {
+            drawLine(target, pointOf(ends[0]), pointOf(ends[1]), line, scale);
+        }
+    }
+
+    const last = sight.last();
+    var from: [2]i32 = switch (edge_line) {
+        .from_tip => tip,
+        .original => .{ tip[0], wings[0][0] },
+    };
+    var to: [2]i32 = undefined;
+    for (&to, middle, last, toward) |*c, m, most, way| c.* = m + round(@as(f32, @floatFromInt(most)) * way);
+    _ = xtrabits.clipLine(last, &from, &to);
+    const edge: Edge = .of(to, last);
+    const spec = edge.spec();
+    const first: u16 = if (hostile) Edge.hostile_shape else Edge.other_shape;
+    try drawShape(art, gpa, target, first + @intFromEnum(edge), scaled(to, spec.shape, scale), colour, scale);
+    _ = try drawText(font, gpa, target, scaled(to, spec.text, scale), range, colour, spec.alignment, scale);
+}
+
 /// The radar (`hud_radar`, `0x00488BD0`): its rings, the shape `hud_init` starts on and the
 /// range key steps through, stand from a point placed half of the way across, at the foot of the
 /// screen, 1 right and 51 up. Not yet ported: the dots for the objects in range, with their
@@ -1823,6 +2749,84 @@ pub fn drawRadar(
 ) (spr.Error || Allocator.Error)!void {
     const point = place(screen, Radar.offset, Radar.across, Radar.down, scale);
     try drawShape(art, gpa, target, rings, scaled(point, Radar.rings_offset, scale), colour, scale);
+}
+
+test leadLine {
+    // From five pixels out of the cursor, along the axis the target lies farther on, to the
+    // target.
+    const line = leadLine(.{ 100, 100 }, .{ 200, 150 }, lock_none, 1).?;
+    try std.testing.expectEqual(Point{ 105, 102.5 }, line[0]);
+    try std.testing.expectEqual(Point{ 200, 150 }, line[1]);
+    // Farther down than across, it leaves by the top or the bottom.
+    const steep = leadLine(.{ 100, 100 }, .{ 110, 0 }, lock_none, 1).?;
+    try std.testing.expectEqual(95, steep[0][1]);
+    // Within the gap there is none.
+    try std.testing.expectEqual(null, leadLine(.{ 100, 100 }, .{ 103, 101 }, lock_none, 1));
+    // A lock building shortens it at the target's end, to nothing.
+    const shortened = leadLine(.{ 100, 100 }, .{ 200, 100 }, 50, 1).?;
+    try std.testing.expectApproxEqAbs(200 - 50 * lock_shortening, shortened[1][0], 1e-3);
+    try std.testing.expectEqual(null, leadLine(.{ 100, 100 }, .{ 110, 100 }, 0, 1));
+}
+
+test Edge {
+    const last: [2]i32 = .{ 639, 479 };
+    try std.testing.expectEqual(Edge.top, Edge.of(.{ 0, 0 }, last));
+    try std.testing.expectEqual(Edge.bottom, Edge.of(.{ 300, 479 }, last));
+    try std.testing.expectEqual(Edge.left, Edge.of(.{ 0, 200 }, last));
+    try std.testing.expectEqual(Edge.right, Edge.of(.{ 639, 200 }, last));
+    // Each edge's shape stands inside the screen from where the line meets it.
+    try std.testing.expect(Edge.top.spec().shape[1] > 0 and Edge.bottom.spec().shape[1] < 0);
+    try std.testing.expect(Edge.left.spec().shape[0] > 0 and Edge.right.spec().shape[0] < 0);
+}
+
+test pointerDirection {
+    // A target to the right and below the nose, in the ship's own frame, however it is turned.
+    const turned: math.Place = .{ .orientation = math.rotation(.z, std.math.pi / 2.0) };
+    const way = pointerDirection(turned, math.transform(turned.orientation, .{ 3, 4, -10 }));
+    try std.testing.expectApproxEqAbs(0.6, way[0], 1e-6);
+    try std.testing.expectApproxEqAbs(0.8, way[1], 1e-6);
+    // Straight behind, it points down.
+    try std.testing.expectEqual([2]f32{ 0, 1 }, pointerDirection(.{}, .{ 0, 0, -10 }));
+}
+
+test "a target out of sight gets an arrow and a marker" {
+    var t: TargetingTest = undefined;
+    try t.init();
+    defer t.deinit();
+    const all = t.mission.objects;
+    const behind = try t.add(.sabre, .{ 0, 0, -5000 });
+    input.setPlayerTarget(&t.state, all, @intCast(behind), -1, false);
+
+    const gpa = std.testing.allocator;
+    const Counter = struct {
+        lines: usize = 0,
+        fn begin(_: *anyopaque) void {}
+        fn end(_: *anyopaque) void {}
+        fn mark(_: *anyopaque) void {}
+        fn record(context: *anyopaque, state: device.State, _: device.Primitive, _: []const device.Vertex, _: ?[]const u16) void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            if (state.texture == null) self.lines += 1;
+        }
+    };
+    var counter: Counter = .{};
+    const into: device.Device = .{ .ptr = &counter, .vtable = &.{ .begin = Counter.begin, .end = Counter.end, .draw = Counter.record, .overlay = Counter.mark } };
+    const empty = std.mem.toBytes(spr.Header{ .version = spr.magic.*, .shape_count = 0 });
+    var art: Art = try .init(gpa, try .parse(&empty), null);
+    defer art.deinit(gpa);
+    var font: Opened = .open(try fnt.Font.parse(comptime fnt.testing.font(true)), null);
+    defer font.deinit(gpa);
+    const fonts: TargetFonts = .{ .small = &font, .new = &font };
+
+    // From the cockpit, three lines of the arrow, and no lead cursor.
+    const scene: TargetScene = .{ .sight = testSight(), .all = all, .mode = .cockpit };
+    try std.testing.expectEqual(null, try drawTarget(&t.state, &art, fonts, gpa, into, scene, .from_tip, .{ 1, 1, 1, 1 }, 1));
+    try std.testing.expectEqual(3, counter.lines);
+    // The chase view draws none.
+    counter.lines = 0;
+    var chase = scene;
+    chase.mode = .chase;
+    _ = try drawTarget(&t.state, &art, fonts, gpa, into, chase, .from_tip, .{ 1, 1, 1, 1 }, 1);
+    try std.testing.expectEqual(0, counter.lines);
 }
 
 test nextRadarRange {

@@ -89,13 +89,30 @@ pub const Aimed = struct {
 
 pub fn aimedAt(all: *const create.Objects, target: aigeneric.Target) Aimed {
     const slot = &all.slots[@intCast(target.index)];
-    if (slot.model) |*model| {
-        if (target.component >= 0 and target.component < slot.components.len) {
-            if (slot.components[@intCast(target.component)]) |part| return .ofPart(model, part);
-        }
-        if (slot.object.type.aimedChild()) |child| if (model.rootChild(child)) |part| return .ofPart(model, part);
-    }
+    if (targetPart(all, target)) |part| return .ofPart(&slot.model.?, part);
     return .{ .position = slot.drawn.position, .radius = slot.object.radius, .orientation = slot.drawn.orientation };
+}
+
+/// `ai_target_node` (`0x004018F0`): the part whose node a target names, the component or the part
+/// a few types are aimed at by, or null for the object's root.
+pub fn targetPart(all: *const create.Objects, target: aigeneric.Target) ?*const objects.Model.Part {
+    const slot = &all.slots[@intCast(target.index)];
+    const model = if (slot.model) |*model| model else return null;
+    if (target.component >= 0 and target.component < slot.components.len) {
+        if (slot.components[@intCast(target.component)]) |part| return part;
+    }
+    const child = slot.object.type.aimedChild() orelse return null;
+    return model.rootChild(child);
+}
+
+/// `0x00402860`: the entry of the player's orders that is Player Control, which holds the
+/// player's target, or null for none.
+pub fn playerControlEntry(all: *create.Objects) ?*aigeneric.Entry {
+    const slot = &all.slots[all.player];
+    for (slot.orders[0..@intCast(slot.object.order_count)]) |*entry| {
+        if (entry.order == .player_control) return entry;
+    }
+    return null;
 }
 
 /// How much further a Turret Flak's shot is led for, over its type's lifetime (`0x004DC3D8`), and
@@ -536,6 +553,19 @@ pub fn targetValid(all: *const create.Objects, target: aigeneric.Target, allowed
 
 comptime {
     assert(@as(u32, @bitCast(target_barred)) == 0x10000D40);
+}
+
+test playerControlEntry {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const player = try mission.add(.predator, @splat(0));
+    try std.testing.expectEqual(null, playerControlEntry(mission.objects));
+    // Found below an order pushed over it.
+    try std.testing.expect(try aigeneric.push(mission.orders(), player, .player_control, .none));
+    try std.testing.expect(try aigeneric.push(mission.orders(), player, .eject_player, .none));
+    const entry = playerControlEntry(mission.objects).?;
+    try std.testing.expectEqual(&mission.slot(player).orders[1], entry);
 }
 
 test steer {

@@ -172,10 +172,16 @@ always passes there, since `object_orders` has cleared the flag. `player_control
 throttle between 0 and 1, and at most 0.5 while the player holds the `half_throttle` deathmatch
 power-up (7).
 
-MATCH SPEED, once for each press, flips `matching_speed` (`0x579984`). While it is set,
-`match_target_speed` (`0x00412C10`) sets the throttle to the target's speed over the player's
-cruise speed, at most 1, while the target is within 330000 units; beyond that it puts back the
-throttle from before, `throttle_before_match` (`0x566794`), and stops matching.
+MATCH SPEED, once for each press, flips `matching_speed` (`0x579984`), putting back
+`throttle_before_match` (`0x566794`) as it turns off and matching at once as it turns on. While it
+is set, `match_target_speed` (`0x00412C10`) runs each update: it sets the throttle to the player's
+target's speed over the player's cruise speed, at most 1, while the target is within 330000 units
+and not exploding, keeping the throttle it found in `throttle_before_match`; a cloaked target
+leaves the throttle as it is. Past that range it puts back `throttle_before_match` and stops
+matching, as it does with no target at all, then without putting anything back. Since it keeps
+the throttle each time, what it puts back is the throttle of its last match. The port runs this
+part of `player_controls` after the rest (`input.matchSpeed`), where the game runs it among the
+keys after the throttle's and the strafe keys; nothing between reads the throttle.
 
 ## Afterburner and reverse thrust
 
@@ -276,9 +282,9 @@ which the original fixes at a tenth. A joystick that is disconnected is closed a
 centered, where the original tries to acquire it again.
 
 Not yet ported: the mouse ([issue 115](https://github.com/vdmkenny/openreliant/issues/115)), force
-feedback ([issue 83](https://github.com/vdmkenny/openreliant/issues/83)), matching a target's
-speed, the weapons and other actions `player_controls` reads, and the special cases for the byte
-at `0x529FB8`, the player's deathmatch power-up and the flags at `0x51CEF8`, `0x51CEFC`
-and `0x51CF04`. `object_orders` clears the two burns before each order update and, after it, when
-the ship is out of fuel or its engines are disabled; only the fuel check is ported, in
-`playerControls` itself, since nothing runs orders yet.
+feedback ([issue 83](https://github.com/vdmkenny/openreliant/issues/83)), the weapons and other
+actions `player_controls` reads, and the special cases for the byte at `0x529FB8`, the player's
+deathmatch power-up and the flags at `0x51CEF8`, `0x51CEFC` and `0x51CF04`. `object_orders`
+clears the two burns before each order update and, after it, when the ship is out of fuel or its
+engines are disabled; only the fuel check is ported, in `playerControls` itself, since nothing
+runs orders yet.

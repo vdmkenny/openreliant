@@ -60,7 +60,7 @@ pub const Stats = struct {
             record.name = static.name;
             record.class = static.class;
             record.side = static.side;
-            record._unknown_2c = static.unknown_2c;
+            record.display = static.display;
         }
         break :built tables;
     };
@@ -180,8 +180,18 @@ pub const ShipCombat = extern struct {
     class: Class,
     /// The side the type's objects start on.
     side: gameobj.Side(i16),
-    /// **Unknown.** 0 or 1.
-    _unknown_2c: u32,
+    /// Which form of the target display shows the type's objects.
+    display: TargetDisplay,
+
+    /// Which form of the target display shows a type's objects: the small window
+    /// (`hud.windows.Window.target`) for fighters and most small craft, the large one
+    /// (`Window.big_target`) for most capital and support ships. `hud_ship_status` draws a small
+    /// form's schematic mirrored and a large form's as it stands.
+    pub const TargetDisplay = enum(u32) {
+        small = 0,
+        large = 1,
+        _,
+    };
 
     pub const Targeting = packed struct(u16) {
         /// The type's objects can be picked as targets: `object_set_targetable` sets an object's
@@ -220,7 +230,7 @@ pub const ShipCombat = extern struct {
         assert(@offsetOf(ShipCombat, "name") == 0x26);
         assert(@offsetOf(ShipCombat, "class") == 0x28);
         assert(@offsetOf(ShipCombat, "side") == 0x2A);
-        assert(@offsetOf(ShipCombat, "_unknown_2c") == 0x2C);
+        assert(@offsetOf(ShipCombat, "display") == 0x2C);
         assert(@sizeOf(ShipCombat) == 0x30);
     }
 };
@@ -529,7 +539,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.orders = .null;
     object.created = true;
     object.last_attacker = -1;
-    object._unknown_720 = -1;
+    object.nav_point = -1;
     object._unknown_724 = -1;
     object.fought_by = 0;
     object.motion = .null;
