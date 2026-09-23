@@ -74,3 +74,17 @@ test followActivation {
     try std.testing.expect(!clock.paused and !app.paused);
     try std.testing.expectEqual(mss.Status.playing, driver.sampleStatus(sound.voices[v].sample));
 }
+
+/// What `WinMain` does before each single-player mission (`0x004A99CC`): puts back the pilot's
+/// kills as the last mission the pilot came through kept them (`gameflow.endMission`). **Not
+/// ported:** the rank, the medals and the other tallies it puts back with them, which no screen
+/// of the port shows.
+pub fn startMission(player: *@import("../input.zig").Player) void {
+    player.kills = player.kills_kept;
+}
+
+test startMission {
+    var player: @import("../input.zig").Player = .{ .kills = 9, .kills_kept = 4 };
+    startMission(&player);
+    try std.testing.expectEqual(4, player.kills);
+}

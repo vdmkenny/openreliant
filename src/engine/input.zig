@@ -714,6 +714,14 @@ pub const Player = struct {
     shield_reserves: gameobj.ShieldReserves = .{},
     /// How the mission is ending, which the player's ship's end decides.
     ending: @import("game/main.zig").Ending = .playing,
+    /// `skull_count` (`0x00562DF4`): the pilot's kills over the whole campaign, which
+    /// `deathmatch.addKills` counts and the display's skull readout shows. Only a new pilot
+    /// starts it again from 0.
+    kills: i32 = 0,
+    /// `skull_count_kept` (`0x00562D24`): the kills as the last mission the pilot came through
+    /// left them (`gameflow.endMission`), which the start of the next puts back
+    /// (`winmain.startMission`), undoing the kills of an attempt that failed.
+    kills_kept: i32 = 0,
 };
 
 /// How far a key steps a steering input each run (`0x004DC4C0`). The flight model clamps the

@@ -12,10 +12,13 @@
 //! The styles leave fireballs, burning bits and a torpedo's shockwave behind
 //! ([`explode.zig`](explode.zig), [`shockwave.zig`](shockwave.zig)).
 //!
+//! A ship's end credits the player with the kill where the player's ship struck it last
+//! (`killCredit`).
+//!
 //! **Not ported:** the other modes, for a ship that lists components, one of its components, an
 //! asteroid and the limpet car ([#41](https://github.com/vdmkenny/openreliant/issues/41)); and
-//! what a ship's end tells the mission, the kills' score and chatter (`0x00408500`), the pilots' records and the
-//! Destroyed event ([#37](https://github.com/vdmkenny/openreliant/issues/37)).
+//! what a ship's end tells the mission, the pilots' records and the Destroyed event
+//! ([#37](https://github.com/vdmkenny/openreliant/issues/37)).
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -28,6 +31,7 @@ const aigeneric = @import("aigeneric.zig");
 const Context = aigeneric.Context;
 const camera = @import("camera.zig");
 const create = @import("create.zig");
+const deathmatch = @import("deathmatch.zig");
 const explode = @import("explode.zig");
 const gameobj = @import("gameobj.zig");
 const shockwave = @import("shockwave.zig");
@@ -144,6 +148,7 @@ fn shipInit(ctx: Context, index: u16) void {
         .torpedo, .russian_torpedo => .halt,
         else => @enumFromInt(xtrabits.objectRandom15(object) % 3),
     };
+    killCredit(world, index);
 
     if (index == world.objects.player) {
         const view: camera.View = switch (state.style) {
@@ -160,6 +165,28 @@ fn shipInit(ctx: Context, index: u16) void {
         .burst => burstInit(object, state),
         .halt => haltInit(ctx, index),
     }
+}
+
+/// `explode_kill_credit` (`0x00408500`), as a ship's end begins: a kill for the player
+/// (`deathmatch.addKills`) where the player's ship struck it last and it is hostile, and a fighter
+/// by its type's class, a Kamov, a Kurgan or a Gurevich.
+///
+/// Not ported: a wingman's remark on the kill (`radio_kill_remark`) and the line the loss of a
+/// ship with `+0x74C` clear draws (`radio_ship_lost`), which wait for the radio
+/// ([#48](https://github.com/vdmkenny/openreliant/issues/48)); the other players' kills in a
+/// multiplayer game; and `0x00529C6C`, which a mission's start sets and two of the radio's states
+/// set and clear, and without which it does nothing.
+pub fn killCredit(world: gameobj.World, index: u16) void {
+    const all = world.objects;
+    const slot = &all.slots[index];
+    const object = &slot.object;
+    if (object.last_attacker != all.player or object.side != .hostile) return;
+    const fighter = if (slot.combat) |combat| combat.class == .fighter else false;
+    const credited = fighter or switch (object.type) {
+        .kamov, .kurgan, .gurevich => true,
+        else => false,
+    };
+    if (credited) deathmatch.addKills(world.player, all, all.player, 1);
 }
 
 fn movingSlowly(object: *const GameObject, flight: ?*const create.FlightModel, view: camera.View) bool {
@@ -417,4 +444,33 @@ test randomSpin {
         const most = spin_range / @as(Vector, @splat(2));
         try std.testing.expect(@abs(turn.x) <= most[0] and @abs(turn.y) <= most[1] and @abs(turn.z) <= most[2]);
     }
+}
+
+test killCredit {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const player = try mission.add(.predator, @splat(0));
+    const world = mission.world();
+    const credit = struct {
+        fn of(m: *gameobj.testing.Mission, w: gameobj.World, ship_type: gameobj.Type, by: u16) !i32 {
+            const index = try m.add(ship_type, .{ 0, 0, 1000 });
+            m.slot(index).object.last_attacker = by;
+            const before = m.player.kills;
+            killCredit(w, index);
+            return m.player.kills - before;
+        }
+    }.of;
+    // A hostile fighter the player's ship struck last is the player's kill.
+    try std.testing.expectEqual(1, try credit(&mission, world, .sabre, player));
+    // So are a Kamov and a Kurgan, which are not fighters by their class.
+    try std.testing.expectEqual(1, try credit(&mission, world, .kamov, player));
+    try std.testing.expectEqual(1, try credit(&mission, world, .kurgan, player));
+    // A Kronstadt, of the support class like the Kurgan, is not; nor is a friend, nor another's
+    // kill.
+    try std.testing.expectEqual(0, try credit(&mission, world, .kronstadt, player));
+    try std.testing.expectEqual(0, try credit(&mission, world, .predator, player));
+    const other = try mission.add(.predator, .{ 0, 0, 2000 });
+    try std.testing.expectEqual(0, try credit(&mission, world, .sabre, other));
+    try std.testing.expectEqual(3, mission.player.kills);
 }

@@ -536,6 +536,12 @@ within 20000 of the camera, sound 11 on a sure voice, and goes in one of three s
 | 1, burst | `0x004090F0` | Unpowered, no longer turning, it bursts at once. |
 | 2, halt | `0x00408D20` | It stops dead and blows up at once. A torpedo sets off a chain of fireballs and a shockwave that harms the player. |
 
+Having picked its style, a ship credits its end (`explode_kill_credit`, `0x00408500`): where the
+player's ship struck it last (`last_attacker`) and it is hostile, and a fighter by its type's class,
+a Kamov, a Kurgan or a Gurevich, the pilot has another kill (`kills_add`, which the display's skull
+readout shows), and a wingman remarks on it. It does this only while `0x00529C6C` is set, as a
+mission's start leaves it.
+
 Past its end, a burst blows up in its own way (`explode_burst`, `0x00471DB0`), a torpedo not at all,
 having gone up as it stopped, and anything else in a blast (`explode_blast`, `0x0046C980`); both
 play sound 11 again. `object_retire` (`0x004688E0`) then leaves a stand-in, of type 1001, flagged as

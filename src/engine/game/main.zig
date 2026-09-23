@@ -57,12 +57,19 @@ pub const PlayTime = struct {
 /// of a second stands in for the multimedia timer `timer_start` (`0x004A70F0`) sets up, so the
 /// clocks advance at the same rate without a thread of their own and without the drift a timer
 /// whose period the device rounds would bring.
-/// How the mission is ending (`0x00588394`), which its end and the debriefing go by: the player's
-/// ship destroyed or its pilot ejecting among them. Nothing ends a mission while it is `playing`.
-/// The other endings are not known yet.
+/// How the mission is ending (`0x00588394`), which its end and the debriefing go by. Nothing ends a
+/// mission while it is `playing`. An ejection is `ejecting` until the pilot's pod has drifted its
+/// time (`order_eject`, `0x00415C50`), when the mission's odds (`SetRescueProbabilities`; by
+/// default always picked up) settle it: the pilot killed, which counts as `destroyed`, picked up by
+/// a nanny ship, or picked up by the enemy. The other endings are not known yet.
 pub const Ending = enum(u8) {
     playing = 0,
+    /// The player's ship destroyed, or the ejected pilot killed.
     destroyed = 1,
+    /// The ejected pilot picked up by a nanny ship (type `0x18`).
+    rescued = 2,
+    /// The ejected pilot picked up by the enemy (type `0x46`).
+    captured = 3,
     ejecting = 8,
     _,
 };

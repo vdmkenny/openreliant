@@ -650,6 +650,11 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             restart_at = again;
             if (at >= again) {
                 restart_at = null;
+                // The attempt ends as a mission does, keeping the kills where its ending keeps
+                // them. Nothing picks up or loses a pilot who ejected, as the pod's order is not
+                // ported yet (#30), so the ending stays `ejecting`, which keeps them as the pickup
+                // the default odds always give would.
+                game.gameflow.endMission(&player);
                 try sandbox.start(orders, sandbox.player_type);
                 settleStart(&display, &sandbox, &view, at);
             }
@@ -962,6 +967,9 @@ const Sandbox = struct {
     fn start(sandbox: *Sandbox, orders: game.aigeneric.Context, ship_type: u8) !void {
         if (orders.world.hearing) |hearing| game.sound3d.endAll(hearing.sound);
         orders.world.player.ending = .playing;
+        // A mission's start puts back the pilot's kills as the last mission the pilot came through
+        // kept them, undoing a failed attempt's.
+        game.winmain.startMission(orders.world.player);
         if (orders.world.explosions) |explosions| explosions.reset();
         if (orders.world.shockwaves) |waves| waves.reset();
         if (orders.world.sparks) |thrown| thrown.reset();

@@ -185,6 +185,10 @@ pub const Type = enum(u32) {
     sabre = 0x2B,
     kamov = 0x2D,
     scimitar = 0x30,
+    /// The Kurgan (`rus_kurgan.shp`).
+    kurgan = 0x3C,
+    /// The Gurevich (`rmc_gurevich.shp`).
+    gurevich = 0x3E,
     /// Capital ships (`saladin.shp`, `kronstadt.shp`, `boridin.shp`).
     saladin = 0x43,
     kronstadt = 0x47,
@@ -244,6 +248,8 @@ pub const Type = enum(u32) {
             .{ .sabre, "rus_sabre.shp" },
             .{ .kamov, "rus_kamov.shp" },
             .{ .scimitar, "scimitar.shp" },
+            .{ .kurgan, "rus_kurgan.shp" },
+            .{ .gurevich, "rmc_gurevich.shp" },
             .{ .troop_car, "rus_troopcar.shp" },
             .{ .saladin, "saladin.shp" },
             .{ .kronstadt, "kronstadt.shp" },
