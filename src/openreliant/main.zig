@@ -99,7 +99,7 @@ const Doc = struct {
 
 /// Every option's help, which the compiler holds to having one for each.
 const docs: std.enums.EnumArray(Arg, Doc) = .init(.{
-    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, and the sound mixed plainly in stereo" },
+    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings and particles as few and plain as the original's, and the sound mixed plainly in stereo" },
     .@"--ship" = .{ .section = .sandbox, .value = "<type>", .text = "the ship type to fly, by its number in shipstats.bin; 0, the Predator, by default" },
     .@"--view" = .{ .section = .sandbox, .value = "<0|1|2>", .text = "the view it starts in, as the game's settings keep it: 0 the cockpit, the default; 1 the chase view; 2 no cockpit" },
     .@"--music" = .{ .section = .sandbox, .value = "<file>", .text = "the piece from the game's music folder it plays, or none; New_Mission01.wav by default" },
@@ -204,6 +204,11 @@ const Options = struct {
     shot_lights: game.guns.ShotLights = .every_shot,
     /// Which lights reach an explosion's debris: a ship's, or every one as the original lets them.
     debris_lights: game.explode.DebrisLights = .like_ships,
+    /// How full the explosions look: their fireballs, their shockwaves' rings, and the particles
+    /// sent far from the camera.
+    fireballs: game.explode.Fireballs = .fuller,
+    rings: game.shockwave.Roundness = .round,
+    distant: game.particles.Pool.Distant = .whole,
     /// How the sound plays, or null for none.
     sound: ?platform.audio.Options = .{},
     /// The piece of music the sandbox plays, from `music\`, or none.
@@ -249,6 +254,9 @@ const Options = struct {
                 options.smooth_motion = false;
                 options.shot_lights = .latest_two;
                 options.debris_lights = .every_light;
+                options.fireballs = .original;
+                options.rings = .octagon;
+                options.distant = .thinned;
                 if (options.sound) |*sound| sound.* = .{ .player = .software, .master = null };
             },
             .@"--ship" => {
@@ -538,9 +546,10 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     var explosions: game.explode.Explosions = try .init(gpa, try .load(&textures));
     defer explosions.deinit();
     explosions.settings.debris_lights = options.debris_lights;
-    var particles: game.particles.Pool = try .load(gpa, &textures);
+    explosions.settings.fireballs = options.fireballs;
+    var particles: game.particles.Pool = try .load(gpa, &textures, options.distant);
     defer particles.deinit();
-    var shockwaves: game.shockwave.Shockwaves = try .create(gpa, &textures);
+    var shockwaves: game.shockwave.Shockwaves = try .create(gpa, &textures, options.rings);
     defer shockwaves.deinit(gpa);
     var sparks: game.sparks.Sparks = try .create(gpa, &textures);
     defer sparks.deinit();
@@ -1307,6 +1316,10 @@ test Options {
     try std.testing.expectEqual(.latest_two, retro.shot_lights);
     try std.testing.expectEqual(.every_light, retro.debris_lights);
     try std.testing.expectEqual(.like_ships, plain.debris_lights);
+    try std.testing.expectEqual(.original, retro.fireballs);
+    try std.testing.expectEqual(.octagon, retro.rings);
+    try std.testing.expectEqual(.thinned, retro.distant);
+    try std.testing.expectEqual(.fuller, plain.fireballs);
     try std.testing.expect(!(try play(&.{"--no-smooth-motion"})).smooth_motion);
     try std.testing.expectEqual(.latest_two, (try play(&.{"--few-shot-lights"})).shot_lights);
     // Sound is on, with the first mission's music, unless told otherwise.

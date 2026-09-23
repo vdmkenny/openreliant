@@ -89,7 +89,7 @@ pub const Shockwave = struct {
     /// The ring, which its own colours colour, never culled (`+0x04`). Its scale is how far the
     /// ring has spread, and so how far it had the frame before.
     object: srapiext.MeshObject,
-    colours: [ring_vertices][4]f32,
+    colours: [Roundness.round.corners()][4]f32,
     /// How far it drifts a tick (`+0x08`), how far it spreads (`+0x14`), when it was set off and
     /// for how long (`+0x18`, `+0x1C`), and whose it is (`+0x20`). The game also keeps the side
     /// of `0x00495870`'s (`+0x24`), which only kinds 5 and 6 read.
@@ -142,13 +142,31 @@ pub const Shockwave = struct {
 /// assertion ("shockwave count exceeded") and writes past its table.
 pub const max_shockwaves = 30;
 
-/// A ring's mesh (`0x004A0B30`): `spokes` points a unit out and as many `hole` out, evenly about
-/// the Z axis, the band between them two triangles a spoke. Each corner's texture coordinates are
-/// how far it lies across and up, either way, no nearer the middle than `uv_least`, so the
-/// texture, a quarter of a ring, shows mirrored in each quarter.
-const spokes = 8;
-const ring_vertices = spokes * 2;
-const ring_triangles = spokes * 2;
+/// How round a ring is: how many points about it (`0x004A0B30`).
+///
+/// **Improvement:** `round` gives it 32, where the game's 8 make an octagon whose corners show on a
+/// ring ten times a ship's radius across. `--original` restores the octagon.
+pub const Roundness = enum {
+    octagon,
+    round,
+
+    fn spokes(roundness: Roundness) usize {
+        return switch (roundness) {
+            .octagon => 8,
+            .round => 32,
+        };
+    }
+
+    /// A point a unit out and one `hole` out for each spoke.
+    fn corners(roundness: Roundness) usize {
+        return roundness.spokes() * 2;
+    }
+};
+
+/// A ring's mesh (`0x004A0B30`): points a unit out and as many `hole` out, evenly about the Z
+/// axis, the band between them two triangles a spoke. Each corner's texture coordinates are how
+/// far it lies across and up, either way, no nearer the middle than `uv_least`, so the texture, a
+/// quarter of a ring, shows mirrored in each quarter.
 const hole: f32 = 0.1;
 const uv_least: f32 = 1.0 / 64.0;
 
@@ -173,13 +191,13 @@ pub const Shockwaves = struct {
 
     /// `shockwave_init` (`0x004A0D90`): the rings' meshes, over their textures. The game also
     /// builds a sphere (`0x004A16F0`, `0x005937B0`), which nothing draws.
-    pub fn create(gpa: Allocator, textures: *srtexture.Table) (Allocator.Error || matmanager.Error)!Shockwaves {
+    pub fn create(gpa: Allocator, textures: *srtexture.Table, roundness: Roundness) (Allocator.Error || matmanager.Error)!Shockwaves {
         var meshes: std.EnumArray(Ring, srapiext.Mesh) = undefined;
         var built: usize = 0;
         errdefer for (meshes.values[0..built]) |mesh| mesh.deinit(gpa);
         for (std.enums.values(Ring)) |ring| {
             const image = try matmanager.textureRequire(textures, @tagName(ring));
-            meshes.set(ring, try ringMesh(gpa, image));
+            meshes.set(ring, try ringMesh(gpa, image, roundness));
             built += 1;
         }
         return .{ .meshes = meshes };
@@ -270,21 +288,24 @@ fn shake(world: gameobj.World, done: f32) void {
 }
 
 /// `0x004A0B30`: a ring's mesh, over `image`.
-fn ringMesh(gpa: Allocator, image: *srtexture.Image) Allocator.Error!srapiext.Mesh {
-    var mesh: srapiext.Mesh = try .create(gpa, .{ .polygons = ring_triangles, .vertices = ring_vertices, .indices = ring_triangles * 3 });
+fn ringMesh(gpa: Allocator, image: *srtexture.Image, roundness: Roundness) Allocator.Error!srapiext.Mesh {
+    const spokes = roundness.spokes();
+    const corners = roundness.corners();
+    const triangles = spokes * 2;
+    var mesh: srapiext.Mesh = try .create(gpa, .{ .polygons = triangles, .vertices = corners, .indices = triangles * 3 });
     errdefer mesh.deinit(gpa);
     const uv = try mesh.addCoordinates(gpa);
-    mesh.surfaces[0] = .{ .polygons = ring_triangles, .material = ring_material, .textures = .{ .{ .image = image }, .none } };
+    mesh.surfaces[0] = .{ .polygons = @intCast(triangles), .material = ring_material, .textures = .{ .{ .image = image }, .none } };
     for (0..spokes) |spoke| {
-        const turn = math.fromAngles(0, 0, @as(f32, @floatFromInt(spoke)) * std.math.tau / spokes);
+        const turn = math.fromAngles(0, 0, @as(f32, @floatFromInt(spoke)) * std.math.tau / @as(f32, @floatFromInt(spokes)));
         mesh.positions[spoke * 2] = math.transform(turn, .{ 0, 1, 0 });
         mesh.positions[spoke * 2 + 1] = math.transform(turn, .{ 0, hole, 0 });
     }
     mesh.numberPolygons(3);
     for (0..spokes) |spoke| {
         const outer = spoke * 2;
-        const corners = [6]usize{ outer, outer + 1, outer + 2, outer + 2, outer + 3, outer + 1 };
-        for (mesh.indices[spoke * 6 ..][0..6], corners) |*index, corner| index.* = @intCast(corner % ring_vertices);
+        const band = [6]usize{ outer, outer + 1, outer + 2, outer + 2, outer + 3, outer + 1 };
+        for (mesh.indices[spoke * 6 ..][0..6], band) |*index, corner| index.* = @intCast(corner % corners);
     }
     for (mesh.indices, uv) |index, *corner| {
         const at = mesh.positions[index];
@@ -306,7 +327,7 @@ pub const testing = struct {
             for (&names, std.enums.values(Ring)) |*name, ring| name.* = @tagName(ring);
             const textures = try @import("backdrop.zig").testing.Textures.initNames(gpa, &names);
             errdefer textures.deinit(gpa);
-            return .{ .textures = textures, .waves = try .create(gpa, &textures.table) };
+            return .{ .textures = textures, .waves = try .create(gpa, &textures.table, .round) };
         }
 
         pub fn deinit(built: *Built, gpa: Allocator) void {
@@ -322,7 +343,7 @@ test Ring {
 
     // Each ring is a band a unit out, a tenth deep, over its own texture.
     const mesh = built.waves.meshes.getPtrConst(.rng_03);
-    try std.testing.expectEqual(ring_vertices, mesh.positions.len);
+    try std.testing.expectEqual(Roundness.round.corners(), mesh.positions.len);
     try std.testing.expectApproxEqAbs(1, mesh.radius, 1e-6);
     try std.testing.expectApproxEqAbs(hole, math.length(mesh.positions[1]), 1e-6);
     try std.testing.expectEqual((try built.textures.table.find("rng_03")).?, mesh.surfaces[0].textures[0].image);
@@ -335,6 +356,11 @@ test Ring {
         try std.testing.expect(corner[1] >= uv_least and corner[1] <= 1 + 1e-6);
     }
     try std.testing.expectEqual(Ring.rng_01, Kind.torpedo.ring());
+
+    // The original's is an octagon.
+    const octagon = try ringMesh(std.testing.allocator, (try built.textures.table.find("rng_03")).?, .octagon);
+    defer octagon.deinit(std.testing.allocator);
+    try std.testing.expectEqual(16, octagon.positions.len);
     try std.testing.expectEqual(Ring.rng_06, Kind._unknown_5.ring());
 }
 

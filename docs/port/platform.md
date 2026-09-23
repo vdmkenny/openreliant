@@ -48,7 +48,7 @@ improvements off, and an option after it turns one back on.
 
 | Option | Does |
 |---|---|
-| `--original` | The original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, and sound mixed plainly in stereo with no master bus |
+| `--original` | The original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings and particles as few and plain as the original's, and sound mixed plainly in stereo with no master bus |
 
 **The sandbox.**
 

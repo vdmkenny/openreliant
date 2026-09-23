@@ -47,6 +47,10 @@ velocity they inherit (`0xDC`); and the span of the texture they show (`0xE8`).
   by the distance alone, and each moves on at once as if it had left at the frame's start. It
   returns 0 once the emitter's life is over.
 
+**Improvement:** a burst and a stream are not thinned by their distance, so an explosion far off
+is as full as one close by, and the pool has room for 4000 to hold them. The half behind the camera
+is still left out. `--original` restores the thinning and the pool of 1000.
+
 `particles_frame` (`0x0049C8E0`), once a frame after the shots, moves each particle alive on by its
 velocity times the frame's ticks, sets its sprite's half-size and colour from its template's curves,
 and hides the rest; the set is drawn up to its last particle alive, in the world's layer.
@@ -85,8 +89,14 @@ It is blended over what is behind it by its texture's alpha. It waits out a dela
 drifts at a velocity a tick, and plays for its life, 150 ticks from every caller here. A fireball
 told it is lit is coloured by how far it has played, from black to white. One with a light carries
 a point light coloured (1, 0.5, 0.1) that starts at intensity 10 and fades to nothing as it plays,
-reaching 50 times the square root of its size. `explosions_update` (`0x0046E480`) plays each one on
+reaching its intensity times 50 times the square root of its size. The light stays where the
+fireball went off as the fireball drifts. `explosions_update` (`0x0046E480`) plays each one on
 once a frame and frees it once it is done.
+
+**Improvement:** there is room for 128 fireballs, where the thirty the game keeps leave part of a
+second burst out close after a first. A fireball's light moves with it as it drifts, and starts 50%
+brighter, at 15 where the game's starts at 10, so it also reaches 50% farther. `--original`
+restores the game's.
 
 | Who | Where | Size | Light | Delay | Drift |
 |---|---|---|---|---|---|
@@ -107,7 +117,7 @@ sets off, and the rest of `explosions_update`.
 fly at once: 100, 300 or 500 at low, medium and high. The port starts at high.
 
 A bit is a piece of debris, one of the ten models of types `0x4E` to `0x57`, which
-`explosions_init` loads through `ship_type_first_levels` (`0x004AE190`) and draws half as far again
+`explosions_init` loads through `ship_type_first_levels` (`0x004AE190`) and draws 1.5 times as far
 before a coarser level. The piece goes by one number `r` from 0 to 1: the first below a quarter, the
 last below a half, and above that the second to the tenth, `1 + (r - 0.5) × 16`. Its scale is half
 to one and a half times the throw's size. It leaves along its direction at 1500 to 4500 a second,
@@ -196,6 +206,10 @@ coordinates are how far it lies across and how far up, either way and no less th
 texture, a quarter of a ring, shows mirrored in each quarter. It is coloured by its own colours
 and added to what is behind it, and never culled. `shockwave_init` also builds a sphere
 (`0x004A16F0`), which nothing draws.
+
+**Improvement:** a ring has 32 points round it and its hole, so it is round where the game's eight
+make an octagon, whose corners show on a ring ten times a ship's radius across. `--original`
+restores the octagon.
 
 `shockwave_create` (`0x004A15D0`) sets one off into the first free of thirty (`shockwaves`,
 `0x005937C8`) at a place and facing, with a kind, a size, a life in ticks, a velocity a tick, a

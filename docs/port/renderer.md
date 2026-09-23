@@ -103,11 +103,16 @@ Deliberate differences from the original, each marked **Improvement** where it i
 - An explosion's burning bits take the lights a ship takes, one of each pair, where the original
   let every light reach them, both suns and both fills, which washed them out
   ([Effects](../engine/effects.md#burning-bits)).
+- Explosions are fuller: there is room for 128 fireballs where the original kept 30, each one's
+  light moves with it and starts 50% brighter, shockwaves' rings are round where the
+  original's were octagons, and bursts far off are not thinned, into a pool of 4000 particles
+  ([Effects](../engine/effects.md#fireballs)).
 - It draws in 32-bit colour, where the original drew in 16 bits, and dithers that too, which costs
   nothing and keeps a dark gradient, such as the nebula or a light's falloff, from banding. `--original` restores the
   original's look: 16-bit colour, dithered, into a 16-bit buffer where the GPU has one, with a
   16-bit depth buffer, one sample a pixel, bilinear filtering, lighting each vertex, lights
-  from the latest shots only and an explosion's debris lit by every light.
+  from the latest shots only, an explosion's debris lit by every light, and its fireballs, rings and
+  particles as few and plain as the original's.
 
 ## Scene objects of kinds 5 and 6
 
