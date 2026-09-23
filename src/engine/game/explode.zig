@@ -947,7 +947,7 @@ test blast {
     // The original thins them: all 400 of the flame, which thins slowly, and three quarters of the
     // sparkle, its half-size of 25 times 150 over the distance. The rounding is even.
     pool.reset();
-    pool.distant = .thinned;
+    pool.settings.distant = .thinned;
     blast(world, ship);
     try std.testing.expectEqual(400 + 112, testing.sent(&pool));
 }

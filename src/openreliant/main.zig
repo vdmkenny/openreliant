@@ -99,7 +99,7 @@ const Doc = struct {
 
 /// Every option's help, which the compiler holds to having one for each.
 const docs: std.enums.EnumArray(Arg, Doc) = .init(.{
-    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings and particles as few and plain as the original's, the shields' bubbles as coarse as the original's, the marker for a target out of sight placed as the original misplaces it, and the sound mixed plainly in stereo" },
+    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings and particles as few and plain as the original's, a damaged ship's smoke as even as the original's, the shields' bubbles as coarse as the original's, the marker for a target out of sight placed as the original misplaces it, and the sound mixed plainly in stereo" },
     .@"--ship" = .{ .section = .sandbox, .value = "<type>", .text = "the ship type to fly, by its number in shipstats.bin; 0, the Predator, by default" },
     .@"--view" = .{ .section = .sandbox, .value = "<0|1|2>", .text = "the view it starts in, as the game's settings keep it: 0 the cockpit, the default; 1 the chase view; 2 no cockpit" },
     .@"--difficulty" = .{ .section = .sandbox, .value = "<easy|medium|hard>", .text = "the game's difficulty: how hard hits land on your ship, and shots on the enemy; medium by default, as in the game" },
@@ -211,6 +211,8 @@ const Options = struct {
     fireballs: game.explode.Fireballs = .fuller,
     rings: game.shockwave.Roundness = .round,
     distant: game.particles.Pool.Distant = .whole,
+    /// How alike a damaged ship's smoke's particles are.
+    smoke: game.particles.Pool.Variety = .varied,
     /// How the shields' bubbles are drawn.
     shields: game.shield.Style = .smooth,
     /// Where the line starts that places the marker for a target out of sight.
@@ -263,6 +265,7 @@ const Options = struct {
                 options.fireballs = .original;
                 options.rings = .octagon;
                 options.distant = .thinned;
+                options.smoke = .alike;
                 options.shields = .original;
                 options.edge_line = .original;
                 if (options.sound) |*sound| sound.* = .{ .player = .software, .master = null };
@@ -557,10 +560,10 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     defer explosions.deinit();
     explosions.settings.debris_lights = options.debris_lights;
     explosions.settings.fireballs = options.fireballs;
-    var particles: game.particles.Pool = try .load(gpa, &textures, .standard, options.distant);
+    var particles: game.particles.Pool = try .load(gpa, &textures, .standard, .{ .distant = options.distant });
     defer particles.deinit();
     // The damaged ships' smoke, from pools of its own.
-    var smoke: game.main.smoke.Pools = try .load(gpa, &textures, options.distant);
+    var smoke: game.main.smoke.Pools = try .load(gpa, &textures, .{ .distant = options.distant, .variety = options.smoke });
     defer smoke.deinit();
     var shockwaves: game.shockwave.Shockwaves = try .create(gpa, &textures, options.rings);
     defer shockwaves.deinit(gpa);
@@ -1299,6 +1302,8 @@ test Options {
     try std.testing.expectEqual(.original, retro.fireballs);
     try std.testing.expectEqual(.octagon, retro.rings);
     try std.testing.expectEqual(.thinned, retro.distant);
+    try std.testing.expectEqual(.alike, retro.smoke);
+    try std.testing.expectEqual(.varied, plain.smoke);
     try std.testing.expectEqual(.fuller, plain.fireballs);
     try std.testing.expectEqual(.smooth, plain.shields);
     try std.testing.expectEqual(.original, retro.shields);

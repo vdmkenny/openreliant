@@ -113,14 +113,14 @@ pub const Pools = struct {
     /// None at `none`.
     by_level: std.EnumArray(Level, ?particles.Pool) = .initFill(null),
 
-    /// Each level's pool, over the texture its plume requires, sized for how it sends what is far
-    /// off (`particles.Pool.Distant`).
-    pub fn load(gpa: Allocator, textures: *srtexture.Table, distant: particles.Pool.Distant) (Allocator.Error || matmanager.Error)!Pools {
+    /// Each level's pool, over the texture its plume requires, sending and drawing its particles
+    /// as `settings` says.
+    pub fn load(gpa: Allocator, textures: *srtexture.Table, settings: particles.Pool.Settings) (Allocator.Error || matmanager.Error)!Pools {
         var pools: Pools = .{};
         errdefer pools.deinit();
         for (std.enums.values(Level)) |level| {
             const made = level.plume() orelse continue;
-            pools.by_level.set(level, try .load(gpa, textures, made.look, distant));
+            pools.by_level.set(level, try .load(gpa, textures, made.look, settings));
         }
         return pools;
     }

@@ -186,6 +186,9 @@ pub const Particle = struct {
     /// Where it is at the frame's tick. The game keeps it in the particle's sprite; the port draws
     /// the sprite from it, further along between the ticks (`Pool.draw`).
     at: Vector = @splat(0),
+    /// The port's: its size and its shade, as shares of its template's (`Pool.Variety`).
+    scale: f32 = 1,
+    shade: f32 = 1,
 
     /// The tick its life ends at: it is alive before it, and free after it, or from it on for a
     /// stream.
@@ -203,10 +206,19 @@ pub const Pool = struct {
     sprites: []srapiext.Sprite,
     /// Drawn with as many of `sprites` as `used`.
     set: srapiext.SpriteSet,
-    /// Whether what goes out far from the camera is thinned.
-    distant: Distant = .whole,
+    settings: Settings = .{},
+    /// What gives a particle its own size and shade where the pool varies them. The game's `rand`
+    /// is left as it would be.
+    varying: std.Random.DefaultPrng = .init(0),
     /// One past the last particle alive at the last frame (`+0x0C`), up to which the frame looks.
     used: u32 = 0,
+
+    /// How a pool sends and draws its particles where the port does more than the game.
+    pub const Settings = struct {
+        /// Whether what goes out far from the camera is thinned.
+        distant: Distant = .whole,
+        variety: Variety = .alike,
+    };
 
     /// How a burst or a stream far from the camera is sent, and the room the pool has for it.
     ///
@@ -222,6 +234,25 @@ pub const Pool = struct {
                 .thinned => 1000,
                 .whole => 4000,
             };
+        }
+    };
+
+    /// How alike the particles of a template are at the same age.
+    ///
+    /// **Improvement:** `varied` gives each particle a size of its own, from three quarters to one
+    /// and a quarter of its template's, and a shade of its own, from 0.85 to 1.15 of its colour, so
+    /// that a dense stream of the same soft sprite does not look even. The game draws them alike;
+    /// `--original` restores that.
+    pub const Variety = enum {
+        alike,
+        varied,
+
+        const sizes: [2]f32 = .{ 0.75, 1.25 };
+        const shades: [2]f32 = .{ 0.85, 1.15 };
+
+        /// A number between `range`'s two, by `numbers`.
+        fn within(range: [2]f32, numbers: std.Random) f32 {
+            return math.lerp(range[0], range[1], numbers.float(f32));
         }
     };
     /// How a pool's sprites are drawn: the texture they show, and how they combine with what is
@@ -252,9 +283,9 @@ pub const Pool = struct {
 
     /// A pool that looks as `look` says, over the texture it requires, sized for how it sends what
     /// is far off.
-    pub fn load(gpa: Allocator, textures: *srtexture.Table, look: Look, distant: Distant) (Allocator.Error || matmanager.Error)!Pool {
-        var pool: Pool = try .init(gpa, distant.size(), try matmanager.textureRequire(textures, look.image), look.blend);
-        pool.distant = distant;
+    pub fn load(gpa: Allocator, textures: *srtexture.Table, look: Look, settings: Settings) (Allocator.Error || matmanager.Error)!Pool {
+        var pool: Pool = try .init(gpa, settings.distant.size(), try matmanager.textureRequire(textures, look.image), look.blend);
+        pool.settings = settings;
         return pool;
     }
 
@@ -282,13 +313,19 @@ pub const Pool = struct {
         if (pool.used <= index) pool.used = @intCast(index + 1);
         const template = emitter.template;
         const spread = if (template.life_spread > 0) @rem(@as(i32, random.rand()), template.life_spread) else 0;
-        pool.particles[index] = .{
+        var particle: Particle = .{
             .born = clock.frame_start,
             .life = template.life + spread,
             .template = template,
             .velocity = emitter.velocity(random),
             .at = emitter.world.position,
         };
+        if (pool.settings.variety == .varied) {
+            const numbers = pool.varying.random();
+            particle.scale = Variety.within(Variety.sizes, numbers);
+            particle.shade = Variety.within(Variety.shades, numbers);
+        }
+        pool.particles[index] = particle;
         pool.sprites[index].offset = emitter.world.position;
         pool.sprites[index].uv = emitter.uv;
     }
@@ -299,7 +336,7 @@ pub const Pool = struct {
         emitter.stand(parent);
         const template = emitter.template;
         const offset = emitter.world.position - sending.view.position;
-        const thinned = pool.distant == .thinned and template.distance > 0;
+        const thinned = pool.settings.distant == .thinned and template.distance > 0;
         var left = template.thinned(count, offset, sending.view, if (thinned) math.length(offset) * template.distance else null);
         for (pool.particles, 0..) |particle, index| {
             if (left < 1) return;
@@ -329,7 +366,7 @@ pub const Pool = struct {
         }
         if (rolled == 0) return true;
         const offset = emitter.world.position - sending.view.position;
-        var left = template.thinned(rolled, offset, sending.view, if (pool.distant == .thinned) math.length(offset) else null);
+        var left = template.thinned(rolled, offset, sending.view, if (pool.settings.distant == .thinned) math.length(offset) else null);
         emitter.stand(parent);
         const ticks: Vector = @splat(@floatFromInt(clock.frame_duration));
         for (pool.particles, 0..) |particle, index| {
@@ -364,9 +401,9 @@ pub const Pool = struct {
             };
             particle.at += particle.velocity * ticks;
             const t = through(now, particle.born, particle.life);
-            const half = template.size.at(t);
+            const half = template.size.at(t) * particle.scale;
             sprite.half_size = .{ half, half };
-            for (&sprite.colour, template.colour) |*channel, curve| channel.* = std.math.clamp(curve.at(t), 0, 1);
+            for (&sprite.colour, template.colour) |*channel, curve| channel.* = std.math.clamp(curve.at(t) * particle.shade, 0, 1);
             sprite.hidden = false;
             last = @intCast(index);
         }
@@ -489,6 +526,39 @@ test "Pool.frame" {
     try std.testing.expect(pool.sprites[0].hidden and pool.sprites[1].hidden);
     try std.testing.expectEqual(1, pool.used);
     try std.testing.expectEqual(1, pool.set.sprites.len);
+}
+
+test "Pool.Variety" {
+    var alike = try testing.pool();
+    defer alike.deinit();
+    var varied = try testing.pool();
+    defer varied.deinit();
+    varied.settings.variety = .varied;
+    var clock: Clock = .{};
+    clock.frame_start = 1;
+    var random: libcmt.Rand = .{};
+    var same_random: libcmt.Rand = .{};
+    var emitter: Emitter = .{ .born = clock.frame_start, .template = &testing.template };
+    const view: Place = .{ .position = .{ 0, 0, -10 } };
+
+    // Varied, each particle has a size and a shade of its own, drawn from the pool's own numbers,
+    // so the game's go on as they would.
+    alike.burst(&emitter, null, 2, .{ .view = view, .clock = &clock, .random = &same_random });
+    varied.burst(&emitter, null, 2, .{ .view = view, .clock = &clock, .random = &random });
+    try std.testing.expectEqual(same_random.seed, random.seed);
+    try std.testing.expectEqual(1, alike.particles[0].scale);
+    for (varied.particles[0..2]) |particle| {
+        try std.testing.expect(particle.scale >= 0.75 and particle.scale <= 1.25);
+        try std.testing.expect(particle.shade >= 0.85 and particle.shade <= 1.15);
+    }
+    try std.testing.expect(varied.particles[0].scale != varied.particles[1].scale);
+
+    // Halfway through its life, its half-size and colour are its template's times its own.
+    clock.frame_start = 51;
+    varied.frame(&clock);
+    const own = varied.particles[0];
+    try std.testing.expectApproxEqAbs(20 * own.scale, varied.sprites[0].half_size[0], 1e-4);
+    try std.testing.expectApproxEqAbs(0.5 * own.shade, varied.sprites[0].colour[0], 1e-5);
 }
 
 test "Pool.stream" {

@@ -264,6 +264,12 @@ to 0.3 of the ship's radius across, for 90 ticks, drifting with the smoke.
 The port reckons which particles are behind the camera by the camera's last frame, as it frames the
 camera after the objects; the game frames the camera first.
 
+**Improvement:** each particle of the smoke has a size of its own, from three quarters to one and a
+quarter of its template's, and a shade of its own, from 0.85 to 1.15 of its colour
+(`particles.Pool.Variety`), so that a trail of the same soft sprite does not look even. The numbers
+come from the pool's own generator, which leaves the game's `rand()` as it would be. `--original`
+draws them alike.
+
 [`main/smoke.zig`](../../src/engine/game/main/smoke.zig) ports the smoke: the levels as `Level`, the
 pools as `Pools`, a ship's smoke as `Stream`, which its slot holds, and the pass as `frame`.
 
