@@ -762,9 +762,9 @@ pub fn playerThrottleKeys(player: *Player, devices: *Devices, object: *gameobj.G
 /// FIRE LASERS holds the guns' trigger for the frame (`guns.fire`).
 ///
 /// Not yet ported: the mouse (mouse mode uses the keys for now); matching a target's speed; the
-/// missiles and the other actions it reads; the special cases for 7 or 9 in the player's object at
-/// `0x754`; and the objectives window's use of the stick while `0x0051CF04` is set
-/// (`0x00413200`).
+/// missiles and the other actions it reads; the `half_throttle` and `reversed_controls` deathmatch
+/// power-ups (`gameobj.PowerUp`); and the objectives window's use of the stick while `0x0051CF04`
+/// is set (`0x00413200`).
 pub fn playerControls(
     player: *Player,
     devices: *Devices,

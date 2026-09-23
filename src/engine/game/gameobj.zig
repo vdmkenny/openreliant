@@ -82,6 +82,24 @@ pub const Invulnerability = enum(u8) {
     _,
 };
 
+/// A deathmatch power-up (`GameObject.power_up`): its record of 0x28 bytes in the table at
+/// `0x0050C510`, which gives how long it lasts and the routines that start and end it. `0x004B1C00`
+/// hands one out, by the weights at `0x005DB4C4` where none is named, and `0x004B18E0` ends it
+/// once it runs out. **Unknown:** what most of them do.
+pub const PowerUp = enum(i32) {
+    none = -1,
+    /// **Unknown.** In a multiplayer game, `0x00412820` and `0x00491520` act differently while the
+    /// player holds it.
+    _unknown_5 = 5,
+    /// The player's throttle goes no higher than half (`player_controls`).
+    half_throttle = 7,
+    /// Its shields don't recharge (`rechargeShields`).
+    no_shield_recharge = 8,
+    /// The player's controls steer the other way round (`player_controls`).
+    reversed_controls = 9,
+    _,
+};
+
 /// Components an object can list.
 pub const max_components = 60;
 
@@ -345,10 +363,14 @@ pub const GameObject = extern struct {
     _unknown_74c: u16,
     _unknown_74e: u16,
     _unknown_750: u32,
-    /// **Unknown.** -1 when created. Its shields don't recharge while it is 8
-    /// (`rechargeShields`), and the player's controls turn round while it is 9.
-    _unknown_754: i32,
-    _unknown_758: [0xC]u8,
+    /// The deathmatch power-up it holds.
+    power_up: PowerUp,
+    /// **Unknown.** Set as a power-up is handed out, where it is given (`0x004B1C00`).
+    _unknown_758: i32,
+    /// The frame (`Clock.frame_start`) the power-up runs out at, or -1 for never.
+    power_up_until: i32,
+    /// The frame it was handed out at, from which the display flashes its icon (`hud_draw`).
+    power_up_since: i32,
     /// **Unknown.** -1 when allocated.
     _unknown_764: i32,
     _unknown_768: [0x424]u8,
@@ -511,7 +533,7 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "gun_factor") == 0x734);
         assert(@offsetOf(GameObject, "speed_factor") == 0x738);
         assert(@offsetOf(GameObject, "shield_factor") == 0x73C);
-        assert(@offsetOf(GameObject, "_unknown_754") == 0x754);
+        assert(@offsetOf(GameObject, "power_up") == 0x754);
         assert(@offsetOf(GameObject, "order_count") == 0x680);
         assert(@offsetOf(GameObject, "orders") == 0x684);
         assert(@offsetOf(GameObject, "order_state") == 0x68C);
@@ -628,9 +650,9 @@ pub const ShieldReserves = struct {
 /// aft: the full charge of the fore and aft shields is lower by however far the other one and its
 /// reserve go beyond it.
 ///
-/// An object whose components are listed recharges no shields here, and neither does one whose
-/// `+0x754` is 8. One whose `invulnerable` is `_unknown_5` has its shields emptied instead. **Unknown:**
-/// what those values mean. Not ported: the case in a multiplayer game where the player's shields
+/// An object whose components are listed recharges no shields here, and neither does one holding
+/// the `no_shield_recharge` power-up. One whose `invulnerable` is `_unknown_5` has its shields
+/// emptied instead. **Unknown:** what that value means. Not ported: the case in a multiplayer game where the player's shields
 /// aren't recharged (`0x005D76F0` at 4 with `0x005DB538` naming the player).
 pub fn rechargeShields(object: *GameObject, combat: *const create.ShipCombat, reserves: ?ShieldReserves) void {
     if (object.flags.components) return;
@@ -638,7 +660,7 @@ pub fn rechargeShields(object: *GameObject, combat: *const create.ShipCombat, re
         object.shields = @splat(0);
         return;
     }
-    if (object._unknown_754 == 8) return;
+    if (object.power_up == .no_shield_recharge) return;
     const full = @as(f32, @floatFromInt(combat.shield_power * 6)) - 1;
     const rate = full * object.shield_factor * object.shield_condition / (combat.shield_recharge * recharge_steps);
     for (&object.shields, 0..) |*shield, quadrant| {
@@ -680,7 +702,7 @@ pub fn objectAlloc(object_type: u32, random: *libcmt.Rand) GameObject {
     var object = std.mem.zeroes(GameObject);
     object.type = object_type;
     object.rotation = math.identity;
-    object._unknown_754 = -1;
+    object.power_up = .none;
     object._unknown_764 = -1;
     object.root.flags.component = true;
     object._unknown_b96 = 0xFFFF;
@@ -1222,6 +1244,12 @@ test rechargeShields {
     object.shields = .{ 47, 47, 45, 40 };
     rechargeShields(&object, &combat, .{ .aft = 9 });
     try std.testing.expectEqual(45, object.shields[2]);
+    // One holding the power-up that stops them recharges none.
+    object.shields = @splat(0);
+    object.power_up = .no_shield_recharge;
+    rechargeShields(&object, &combat, null);
+    try std.testing.expectEqual([4]f32{ 0, 0, 0, 0 }, object.shields);
+    object.power_up = .none;
     // An object whose `invulnerable` is `_unknown_5` loses its shields.
     object.invulnerable = ._unknown_5;
     rechargeShields(&object, &combat, null);

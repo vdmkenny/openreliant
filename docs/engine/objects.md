@@ -59,7 +59,9 @@ again and again, and the game's loops never end; the port walks it once.
 | `0x73C` | 4 | The shields' share of the power as a factor on how fast they [recharge](#shields): 1.0 when created |
 | `0x740` | 4 | Its pilot, a record of `pilotstats.bin` (`object_set_pilot`, `0x0049CCE0`) |
 | `0x748` | 4 | The pilot's entry in `pilot_stats` |
-| `0x754` | 4 | **Unknown.** -1 when created. Its shields don't recharge while it is 8, and the player's controls turn round while it is 9 |
+| `0x754` | 4 | The deathmatch power-up it holds (`gameobj.PowerUp`), -1 for none: a record of the table at `0x0050C510` |
+| `0x75C` | 4 | The frame the power-up runs out at, or -1 for never |
+| `0x760` | 4 | The frame the power-up was handed out at |
 | `0xB8C`, `0xB90` | 8 | Orders from other players waiting for their frame, in a multiplayer game |
 | `0xB94` | 1 | Set once `create_object` has filled the slot |
 | `0xB95` | 1 | Nonzero while invulnerable: `SetInvulnerability` |
@@ -468,10 +470,10 @@ over the type's `shield_recharge` seconds of steps, and stops at the full charge
 ship, the full charge of the fore shield, the third, is lower by however far the aft shield and its
 [reserve](controls.md#the-shield-balance) together go beyond it, and the aft shield's likewise.
 
-An object whose components are listed recharges no shields here, and neither does one whose `0x754`
-is 8. One whose `0xB95` is 5 has its shields emptied instead. In a multiplayer game, the player's
-shields don't recharge while `0x5D76F0` is 4 and `0x5DB538` names the player. **Unknown:** what
-those values mean.
+An object whose components are listed recharges no shields here, and neither does one holding
+the `no_shield_recharge` power-up (8). One whose `0xB95` is 5 has its shields emptied instead. In a
+multiplayer game, the player's shields don't recharge while `0x5D76F0` is 4 and `0x5DB538` names
+the player. **Unknown:** what those values mean.
 
 `object_armor_conditions` (`0x00492370`) works out three conditions from each quadrant's armor over
 its full armor, `6 * armor_class - 1`, the fore quadrant being the third and the aft the fourth:

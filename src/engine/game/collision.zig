@@ -206,12 +206,23 @@ fn push(world: gameobj.World, first: u16, second: u16, pass: u8) bool {
     return true;
 }
 
-/// What the collision damage counts as (`0x00463EE0`'s last argument). **Unknown:** what 0, 1 and
-/// 5 stand for, beyond counting toward `recent_damage`, which 2 does not.
-pub const Kind = enum(u8) {
+/// What damage counts as (`0x00463EE0`'s last argument). Kinds 0, 1 and 5 count toward
+/// `recent_damage` (`counted`); 3 and 4 wreck a component with armour to spare (`heavyKind`).
+pub const Kind = enum(i32) {
     /// A shot from a gun (`guns.bulletHit`).
     bullet = 0,
+    /// **Unknown.** A missile's hit, where the missile's object is of any type but 0
+    /// (`0x00495AC0`, `0x00495BB0`, `0x00495CF0`), and what `0x004A0F00` does to the shields.
+    _unknown_1 = 1,
     collision = 2,
+    /// What a ship does to what it dies crashing into: 5000 to an object (`objects_collide`), 5001
+    /// to the component of a hull it hit (`collision_test_hull`).
+    crash = 3,
+    /// **Unknown.** Also 5001 from a ship dying against a hull, to another part of the component's
+    /// assembly (`collision_test_hull`).
+    _unknown_4 = 4,
+    /// **Unknown.** A missile's hit, where the missile's object is of type 0.
+    _unknown_5 = 5,
     _,
 };
 
@@ -306,10 +317,12 @@ pub fn armorDamage(world: gameobj.World, index: u16, struck: Quadrant, value: f3
     object.last_attacker = attacker;
 }
 
-/// The damage kinds that hurt a component with armour to spare, whatever its flags. **Unknown:**
-/// what 3 and 4 stand for; a torpedo's hit is one of them.
+/// The damage kinds that hurt a component with armour to spare, whatever its flags.
 fn heavyKind(kind: Kind) bool {
-    return @intFromEnum(kind) == 3 or @intFromEnum(kind) == 4;
+    return switch (kind) {
+        .crash, ._unknown_4 => true,
+        else => false,
+    };
 }
 
 /// The armour past which a component takes only a heavy hit, and how heavy that is (`0x9C3` and
@@ -366,8 +379,8 @@ pub fn componentDamage(world: gameobj.World, index: u16, component: *objects.Mod
 
 /// Whether the damage counts toward what an object has taken lately, which `order_retaliate` reads.
 fn counted(kind: Kind) bool {
-    return switch (@intFromEnum(kind)) {
-        0, 1, 5 => true,
+    return switch (kind) {
+        .bullet, ._unknown_1, ._unknown_5 => true,
         else => false,
     };
 }
@@ -581,7 +594,7 @@ test damage {
     // A collision is not what sends a ship after its attacker; a shot is. What passes a shield
     // that is already down carries the shield's deficit with it, so the armour takes both.
     try std.testing.expectEqual(0, object.recent_damage);
-    damage(world, index, .fore, 1, 1, 1, @enumFromInt(0));
+    damage(world, index, .fore, 1, 1, 1, .bullet);
     try std.testing.expectEqual(6, object.recent_damage);
 
     // Debris takes none, and neither does a ship that is jumping.
@@ -628,21 +641,21 @@ test componentDamage {
     try std.testing.expectEqual(100, part.armor);
 
     // A shot wears it down, and the attacker is recorded.
-    componentDamage(world, index, part, 40, 1, @enumFromInt(0));
+    componentDamage(world, index, part, 40, 1, .bullet);
     try std.testing.expectEqual(60, part.armor);
     try std.testing.expectEqual(1, all.slots[index].object.last_attacker);
 
     // Past its armour, the part it hangs from is marked destroyed; this one hangs from the root.
-    componentDamage(world, index, part, 100, 1, @enumFromInt(0));
+    componentDamage(world, index, part, 100, 1, .bullet);
     try std.testing.expect(part.armor < 0);
     try std.testing.expect(all.slots[index].model.?.destroyed);
 
     // A part with armour to spare takes only a heavy hit of a kind that can hurt it.
     part.component_armor = 20000;
     part.armor = 20000;
-    componentDamage(world, index, part, 100, 1, @enumFromInt(0));
+    componentDamage(world, index, part, 100, 1, .bullet);
     try std.testing.expectEqual(20000, part.armor);
-    componentDamage(world, index, part, 600, 1, @enumFromInt(3));
+    componentDamage(world, index, part, 600, 1, .crash);
     try std.testing.expectEqual(19400, part.armor);
 }
 

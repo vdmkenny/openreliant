@@ -132,6 +132,8 @@ pub const exported = [_]Export{
     .{ "NetworkFlags", engine.game.gameobj.NetworkFlags },
     .{ "GunMode", engine.game.gameobj.GunMode },
     .{ "Invulnerability", engine.game.gameobj.Invulnerability },
+    .{ "PowerUp", engine.game.gameobj.PowerUp },
+    .{ "DamageKind", engine.game.collision.Kind },
     .{ "GunGroupSide", engine.game.guns.GroupSide },
     .{ "ObjectRoutine", engine.game.gameobj.Routine },
     .{ "ModelNode", engine.game.objects.Node },

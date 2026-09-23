@@ -586,7 +586,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.engines_intact = 1;
     object.passes_through = @splat(.none);
     object._unknown_620 = -1;
-    object._unknown_754 = -1;
+    object.power_up = .none;
     object.afterburner_fuel = combat.afterburner_fuel * 100;
     object.countermeasures = gameobj.countermeasures_when_created;
     // The power shared evenly, at (1, 1) on the power ball.

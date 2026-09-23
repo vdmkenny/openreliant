@@ -148,8 +148,8 @@ values are scaled by 0.001, so the stick's travel spans -1 to 1.
 
 In each mode, half the yaw input is added to the roll input, so the ship banks into turns, and
 `joystick_invert` sets the sign of pitch. STRAFE LEFT and STRAFE RIGHT set the lateral input to -1
-and 1. While the word at `0x754` of the player's object is 9, all four inputs are reversed.
-**Unknown:** what that value means.
+and 1. While the player holds the `reversed_controls` deathmatch power-up (9), all four inputs are
+reversed.
 
 While SHIELD BALANCING or POWERBALL WINDOW is held, or the flag at `0x51CF04` is set, the stick
 doesn't steer: the four inputs are zeroed, the throttle isn't read, and the stick's position goes
@@ -169,7 +169,8 @@ throttle by 0.02 each run while ACCELERATE or DECELERATE is held, fifty runs fro
 and ZERO THROTTLE and FULL THROTTLE, once for each press, set them to 0 or 1 and stop MATCH
 SPEED. Then it sets the ship's throttle to `throttle_setting`; its check of `afterburner` first
 always passes there, since `object_orders` has cleared the flag. `player_controls` keeps the
-throttle between 0 and 1, and at most 0.5 while the word at `0x754` of the player's object is 7.
+throttle between 0 and 1, and at most 0.5 while the player holds the `half_throttle` deathmatch
+power-up (7).
 
 MATCH SPEED, once for each press, flips `matching_speed` (`0x579984`). While it is set,
 `match_target_speed` (`0x00412C10`) sets the throttle to the target's speed over the player's
@@ -277,7 +278,7 @@ centered, where the original tries to acquire it again.
 Not yet ported: the mouse ([issue 115](https://github.com/vdmkenny/openreliant/issues/115)), force
 feedback ([issue 83](https://github.com/vdmkenny/openreliant/issues/83)), matching a target's
 speed, the weapons and other actions `player_controls` reads, and the special cases for the byte
-at `0x529FB8`, the word at `0x754` of the player's object and the flags at `0x51CEF8`, `0x51CEFC`
+at `0x529FB8`, the player's deathmatch power-up and the flags at `0x51CEF8`, `0x51CEFC`
 and `0x51CF04`. `object_orders` clears the two burns before each order update and, after it, when
 the ship is out of fuel or its engines are disabled; only the fuel check is ported, in
 `playerControls` itself, since nothing runs orders yet.
