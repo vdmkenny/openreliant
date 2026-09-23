@@ -118,13 +118,15 @@ address	kind	name	type	comment
 0053757c	data	trigger_current	Trigger *	Trigger the matcher is testing
 00538ca0	data	event_values	ObjectEvents *	Each object's last events, which push_event_value reads
 00466500	function	stats_load_ships	void __fastcall (void)	Reads shipstats.bin into ship_flight_stats and ship_combat_stats
-004788f0	function	stats_load_guns	void __fastcall (void)	Reads gunstats.bin to the end of the file into gun_stats
+004788f0	function	stats_load_guns	void __fastcall (void)	Reads gunstats.bin to the end of the file into gun_stats, the first record into type 1
 00494bc0	function	stats_load_missiles	void __fastcall (void)	Reads missilestats.bin into missile_flight_stats and missile_stats
 0049cae0	function	stats_load_pilots	void __fastcall (void)	Fills pilot_stats with defaults, then applies pilotstats.bin
 00415430	function	player_spectral_shields_set	void __fastcall (bool on)	Turns the player's spectral shields on or off, when the ship carries them (spectral_shields_state not -1): object flag 0x8000000 and spectral_shields_state. Turning them on tunes them, into the object's +0x670, to the gun type most dangerous near the player: it counts the guns of each hostile ship within range, weights each type's count by its first damage value, and takes the highest, leaving out types 13 and 14
 004f9e70	data	ship_flight_stats	FlightModel[256]	
 004fc670	data	ship_combat_stats	ShipCombat[256]	
-00500ce4	data	gun_stats	GunStats[15]	
+00500ca4	data	gun_stats	GunStats[16]	Every gun type's figures. Type 0 is no gun, so stats_load_guns fills types 1 to 15 from gunstats.bin; the first five words of each record are the executable's own
+00500f64	data	gun_flash_ticks	int[15]	How long a muzzle's flash lasts, by gun type less one, which bullet_fire sets on the part it fires from
+00508700	data	gun_sound_periods	int[16]	The steps a firing gun of each type goes between the sounds of its shots. The player's shots are all heard
 005035e8	data	missile_flight_stats	FlightModel[11]	
 005037a8	data	missile_stats	MissileStats[11]	
 0058a968	data	pilot_stats	PilotStats[194]	
@@ -697,7 +699,7 @@ address	kind	name	type	comment
 004667f0	function	gun_groups_build	void __fastcall (int type, GameObject *object)	Works out a ship type's gun groups from an object's guns, pairing each with the one nearest its mirror image across the ship, into the type's table at 0x545900 + type * 0x78 and the count at ship_combat_stats + 0x1C
 004adce0	function	object_random15	uint __fastcall (GameObject *object)	The object's own random number from 0 to 32767: its seed steps as seed * 0x343FD + 0x269EC3, and bits 16 to 30 of it are the number
 00492370	function	object_armor_conditions	void __fastcall (GameObject *object)	Works out the guns' condition (0x66C), the cruise speed's (0x668) and the shields' (0x664) from the armour left in each quadrant; for the player's ship, sounds a warning at most every 500 ticks while a quadrant has lost its shield and half its armour
-004770e0	function	guns_step	void __fastcall (GameObject *object)	An object's guns each simulation step: the charge recharges by gun_energy * gun_factor * gun_condition / (seconds * 25) up to gun_energy; below a gun_condition of 0.9 a shot goes off only as often as the condition plus a tenth
+004770e0	function	guns_step	void __fastcall (GameObject *object)	An object's guns each simulation step: the charge recharges by gun_energy * gun_factor * gun_condition / (seconds * 25) up to gun_energy while +0x148 is zero. Each gun whose trigger is held fires once its interval has passed, drawing Gun.shot_energy from the charge or one of the object's rounds by the type's kind; the guns firing this step share out the charge the step began with. Below a gun_condition of 0.9 a shot goes off only as often as the condition plus a tenth, and blind fire lengthens the interval by 35 in 100
 0057e04e	data	cutaway_slot	short	The slot the loops over the objects walk after those handed out, which the mission's start sets to 399
 00457cd0	function	mission_ship_create	void __fastcall (MissionShip *ship)	Creates the object of a mission's ship record in the slot of its index: its type, a player's twin from the 14th mission on, its tier and position, turned by the record's angles; nav points and markers too
 00452240	function	object_orient_by_record	void __fastcall (GameObject *object, MissionShip *ship)	Turns an object's root to a mission ship record's angles in degrees: yaw about Y, then pitch about X, then roll about Z
@@ -728,3 +730,10 @@ address	kind	name	type	comment
 00479800	function	object_fit_guns	void __fastcall (GameObject *object)	Fits an object with the guns its model holds: counts them, allocates gun_count records of 0x60 bytes and a word each, then fills them in
 00479640	function	object_collect_guns	void __fastcall (GameObject *object, ModelNode *node, int fill)	Walks a node's children for the guns an object carries: an attachment of kind 3 is a gun of the type at the attachment's +0x64, and a turret part takes one by its turret kind. Called once to count and once to fill
 00479610	function	part_is_turret	bool __fastcall (ModelNode *node)	Whether a node's part is a turret: its class is 3, 9, 10 or 18
+0047b1f0	function	object_fire_guns	void __fastcall (GameObject *object, int ticks)	Holds the trigger of the guns that fire, gun+0x0C becoming frame_start + ticks. With gun_mode.all every gun but a turret of kind 1, otherwise the chosen group's two; a muzzle of gun type 11 is passed over, and so is a ship whose guns are disabled. A ship of type 11 or 255 whose chosen group holds a gun type 11 charges it up in +0x148 instead, shaking the player's view
+0047b3d0	function	object_release_guns	void __thiscall (GameObject *object, char param_2, float param_3)	What runs while the trigger is not held for a ship carrying a gun of type 11: the charge at +0x148
+0047c5f0	function	bullet_fire	void __fastcall (ModelNode *node, ShpPart *part, float speed_share, char heard)	Fires one shot: takes a free record of the 200 at bullet_pool, sets its owner, fills it in (bullet_place), adds the owner's velocity times speed_share, plays the type's sound when heard, links it into the list ending at bullet_last, and sets the part's muzzle flash to end after gun_flash_ticks
+0047bdb0	function	bullet_place	void __fastcall (int bullet, int gun_type, ModelNode *muzzle, ModelNode *node)	Fills in a new shot: its type and the record at gun_stats, the owner's side, the muzzle's place and orientation, a velocity of Gun.speed along its nose, a life of Gun.lifetime ticks, a light, and the object it is expected to hit. A ship aiming blind aims at its target, and type 12 scatters
+0047c950	function	object_step_turrets	void __fastcall (GameObject *object)	Once a frame from orders_update for a ship that is not exploding and is not docking: runs each gun's turret routine from the table at 0x500FA0, indexed by the gun's turret kind
+00563148	data	bullet_pool		The 200 shots in flight, 0xC4 bytes each (bullet_fire)
+00563144	data	bullet_last		The shot bullet_fire linked in last; each record holds the one before at +0xBC and the one after at +0xC0

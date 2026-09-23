@@ -261,6 +261,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     var textures: srtexture.Table = .init(arena, cache, palette);
     // The flight and combat stats `stats_load_ships` reads.
     const ship_stats = (try stats.File.parse(.ships, try directory.readFileAlloc(io, "shipstats.bin", arena, .limited(4 << 20)))).ships;
+    // Every gun type's figures, which `stats_load_guns` reads.
+    const gun_stats = (try stats.File.parse(.guns, try directory.readFileAlloc(io, "gunstats.bin", arena, .limited(4 << 20)))).guns;
     // The strings `language_init` reads out of `language.dll` at start-up.
     const strings: game.language.Language = try .load(arena, try .parse(try directory.readFileAlloc(io, game.language.file_name, arena, .limited(16 << 20))));
 
@@ -298,7 +300,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     const tables = try arena.create(game.create.Stats);
     tables.* = .initial;
     tables.load(ship_stats);
-    var sandbox: Sandbox = try .init(gpa, tables, &rand, .{
+    var sandbox: Sandbox = try .init(gpa, tables, gun_stats, &rand, .{
         .gpa = gpa,
         .resources = &resources,
         .textures = &textures,
@@ -330,7 +332,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     var clock: game.main.Clock = .{};
     clock.start(platform.window.ticks());
     try sandbox.start(.{
-        .world = .{ .objects = sandbox.objects, .player = &player, .view = view.view, .shake = &view.hit_shake },
+        .world = .{ .objects = sandbox.objects, .player = &player, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random },
         .clock = &clock,
         .devices = &devices,
     }, @intCast(options.ship));
@@ -383,7 +385,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         if (frames_left != null) clock.advanceBy(now / platform.window.tick_nanoseconds, 1) else clock.advanceToFine(now, platform.window.tick_nanoseconds);
         // While the communications window is open the keys 1 to 8 are its menu's.
         devices.keyboard.numbers_taken = display.state.windows.status.get(.comms).phase == .open;
-        const world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .view = view.view, .shake = &view.hit_shake };
+        const world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random };
         const orders: game.aigeneric.Context = .{ .world = world, .clock = &clock, .devices = &devices };
         while (clock.nextTick(&devices, world)) |_| {}
         clock.frameBegin();
@@ -624,13 +626,15 @@ const Sandbox = struct {
     const wing_ahead: f32 = 20000;
     const wing_spacing: f32 = 3000;
 
-    fn init(gpa: Allocator, tables: *game.create.Stats, random: *engine.libcmt.Rand, types: TypeCache) !Sandbox {
+    fn init(gpa: Allocator, tables: *game.create.Stats, gun_stats: []align(1) const stats.Gun, random: *engine.libcmt.Rand, types: TypeCache) !Sandbox {
         const cache = try gpa.create(TypeCache);
         errdefer gpa.destroy(cache);
         cache.* = types;
+        const objects = try game.create.Objects.create(gpa, random);
+        objects.gun_stats.load(gun_stats);
         return .{
             .gpa = gpa,
-            .objects = try .create(gpa, random),
+            .objects = objects,
             .tables = tables,
             .types = cache,
             .random = random,
@@ -923,8 +927,8 @@ const Display = struct {
         }, white, scale);
         try game.hud.drawRadar(&display.art, display.gpa, display.target, display.screen, state.radar_rings, white, scale);
         game.hud.stepRadarZoom(state, display.clock.game_ticks);
-        // The sandbox has no target, so blind fire has nothing to aim at. It would aim with its
-        // guns not all firing; the sandbox fits no guns, so no group of them is ever the one.
+        // The sandbox has no target, so blind fire has nothing to aim at. It aims only while the
+        // ship fires one group of guns rather than every group at once.
         const blind_fire: game.hud.BlindFire = if (state.blind_fire_fitted and state.blind_fire and !live.gun_mode.all) .on else .off;
         const aims = try game.hud.drawReticle(state, &display.art, display.gpa, display.target, display.screen, display.cockpit_mode, null, blind_fire, frame_duration, white, scale);
         live.blind_fire_aim = @intFromBool(aims);

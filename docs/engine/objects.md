@@ -92,8 +92,10 @@ each quadrant's shields and armor full, `6 * shield_power - 1` and `6 * armor_cl
 conditions that armor gives ([Shields](#shields)); for a model that lists no components the
 shield's effect and, in every slot past the players', the `ecm` flag, and for one that does, the
 `components` and `attached` flags; the afterburner's fuel, `100 * afterburner_fuel`, and 29
-countermeasures; the power shared evenly; the guns charged to `gun_energy`, their groups and the
-gun mode; the loadout; and `targetable`, where the type allows it. Capital ships, planets, gates,
+countermeasures; the power shared evenly. The gun and component counts are cleared, then the
+components are listed and the [guns fitted](guns.md) from the model's muzzles, which sets the gun
+count again; then come the guns' charge and rounds, their groups and the gun mode, the loadout, and
+`targetable`, where the type allows it. Capital ships, planets, gates,
 asteroids and a few other types get more set up for their kind.
 
 The words of each `ship_combat_stats` entry from `+0x1C` on come from the executable rather than

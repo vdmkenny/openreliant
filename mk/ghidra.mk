@@ -157,6 +157,16 @@ combat-tables: ## Re-derive each ship type's class, side, name and targeting fro
 	$(ROOT)/zig-out/bin/tablegen combat $(PAYLOAD) $(COMBAT_TABLES)
 	$(ZIG) fmt $(COMBAT_TABLES)
 
+GUN_TABLES := $(ROOT)/src/engine/game/guns/stats.zig
+
+.PHONY: gun-tables
+gun-tables: ## Re-derive each gun type's kind, sound and sound period from the payload executable
+	@test -f $(PAYLOAD) || { echo "missing $(PAYLOAD), the game executable with its code readable" >&2; exit 1; }
+	$(ZIG) build tablegen
+	mkdir -p $(dir $(GUN_TABLES))
+	$(ROOT)/zig-out/bin/tablegen guns $(PAYLOAD) $(GUN_TABLES)
+	$(ZIG) fmt $(GUN_TABLES)
+
 CONTROL_TABLES := $(ROOT)/src/engine/input/controls.zig
 
 .PHONY: control-tables

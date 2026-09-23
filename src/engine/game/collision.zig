@@ -436,8 +436,8 @@ const testing = struct {
     const input = @import("../input.zig");
 
     /// A world of objects with no models, at rest.
-    fn world(all: *create.Objects, player: *input.Player, shake: *f32) gameobj.World {
-        return .{ .objects = all, .player = player, .view = .chase, .shake = shake };
+    fn world(all: *create.Objects, player: *input.Player, shake: *f32, random: *libcmt.Rand) gameobj.World {
+        return .{ .objects = all, .player = player, .view = .chase, .shake = shake, .random = random };
     }
 
     /// An object of `ship_type` at `at`, with a radius of its own and nothing flying it.
@@ -458,7 +458,7 @@ test collide {
     var tables = create.testing.tables();
     var player: input.Player = .{};
     var shake: f32 = 0;
-    const world = testing.world(all, &player, &shake);
+    const world = testing.world(all, &player, &shake, &random);
 
     // Two ships of 1000 units, 400 apart: each ends 1100 from the point between them.
     const near = try testing.ship(all, &tables, &random, .{ -200, 0, 0 }, 1000);
@@ -484,7 +484,7 @@ test "a collision shoves both ships" {
     var tables = create.testing.tables();
     var player: input.Player = .{};
     var shake: f32 = 0;
-    const world = testing.world(all, &player, &shake);
+    const world = testing.world(all, &player, &shake, &random);
 
     // Two ships of the same mass, the first flying into the second.
     const near = try testing.ship(all, &tables, &random, .{ -900, 0, 0 }, 1000);
@@ -532,7 +532,7 @@ test "a ship that meets a hull is shoved off the face it hit" {
     var tables = create.testing.tables();
     var player: input.Player = .{};
     var shake: f32 = 0;
-    const world = testing.world(all, &player, &shake);
+    const world = testing.world(all, &player, &shake, &random);
 
     // A hull of one square part, and a ship flying into its face.
     // The inverse inertia of a body of this mass, about 6 / (mass * size squared), which is what
@@ -582,7 +582,7 @@ test damage {
     var tables = create.testing.tables();
     var player: input.Player = .{};
     var shake: f32 = 0;
-    const world = testing.world(all, &player, &shake);
+    const world = testing.world(all, &player, &shake, &random);
     const index = try testing.ship(all, &tables, &random, @splat(0), 1000);
     const object = &all.slots[index].object;
     object.shields = .{ 10, 10, 10, 10 };
@@ -643,7 +643,7 @@ test componentDamage {
     var tables = create.testing.tables();
     var player: input.Player = .{};
     var shake: f32 = 0;
-    const world = testing.world(all, &player, &shake);
+    const world = testing.world(all, &player, &shake, &random);
 
     const index = try create.createObject(all, &tables, model.types(), null, 0, @splat(0), &random);
     const part = &all.slots[index].model.?.parts[0];
@@ -681,7 +681,7 @@ test "what never collides" {
     var tables = create.testing.tables();
     var player: input.Player = .{};
     var shake: f32 = 0;
-    const world = testing.world(all, &player, &shake);
+    const world = testing.world(all, &player, &shake, &random);
 
     // The test's stats make every type a fighter; two pieces of debris pass through each other.
     const near = try testing.ship(all, &tables, &random, @splat(0), 1000);

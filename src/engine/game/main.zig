@@ -627,7 +627,7 @@ const TestWorld = struct {
     }
 
     fn get(world: *TestWorld) gameobj.World {
-        return .{ .objects = world.objects, .player = &world.player, .view = .cockpit, .shake = &world.shake };
+        return .{ .objects = world.objects, .player = &world.player, .view = .cockpit, .shake = &world.shake, .random = &world.random };
     }
 
     /// What the orders of its objects run against.

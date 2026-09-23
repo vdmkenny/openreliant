@@ -28,7 +28,7 @@ past its table's last field**, and in the shipped files those bytes are zero in 
 | Table | Loader | Records read | Runtime tables |
 |---|---|---|---|
 | Ships | `stats_load_ships` (`0x00466500`) | Exactly 256 | `ship_flight_stats` (`0x4F9E70`) and `ship_combat_stats` (`0x4FC670`), `0x28` and `0x30` bytes a ship |
-| Guns | `stats_load_guns` (`0x004788F0`) | Until end of file | `gun_stats` (`0x500CE4`), 15 entries of `0x2C` |
+| Guns | `stats_load_guns` (`0x004788F0`) | Until end of file | `gun_stats` (`0x500CA4`), 16 entries of `0x2C` |
 | Missiles | `stats_load_missiles` (`0x00494BC0`) | **At most 11** | `missile_flight_stats` (`0x5035E8`) and `missile_stats` (`0x5037A8`), `0x28` bytes a missile each |
 | Pilots | `stats_load_pilots` (`0x0049CAE0`) | Until end of file | `pilot_stats` (`0x58A968`), 194 entries of `0x24` |
 
@@ -73,8 +73,8 @@ which located fields by diffing known mods.
 | `0x68` | Afterburner fuel | truncated | Screen: **Afterburner Fuel**, a number labelled ` SECS` |
 | `0x6C` | Shield recharge | float; 0 becomes 10 | Screen: **Shield Recharge** bar |
 | `0x70` | Gun energy | float | The most the guns' charge holds: `create_object` gives a new ship this much (`GameObject.gun_charge`), the guns recharge to it, and the display's right arc measures against it. Mods: GunEnergy |
-| `0x74` | | float | **Unknown.** Mods: GunRecharge, unverified |
-| `0x78` | | truncated | **Unknown.** Mods: Ammo, unverified |
+| `0x74` | Gun recharge | float | The seconds the guns take to charge fully (`guns_step`). Mods: GunRecharge |
+| `0x78` | Rounds | truncated | The rounds a new ship's guns have, which a shot of a gun that fires rounds takes (`guns_step`). Mods: Ammo |
 
 "Truncated" means the loader converts the float to an integer with `_ftol`.
 
@@ -87,16 +87,23 @@ ships it lists: the Alliance fighters the player can fly, and in a second list C
 
 ## Guns
 
-| Offset | Field | Loaded as | Evidence |
-|---|---|---|---|
-| `0x40` | Range | truncated | Mods |
-| `0x44` | | float | **Unknown.** 1,200 to 2,000 in every gun |
-| `0x48` | Damage | float | Weighted by the threat check below. Mods: DamageMin |
-| `0x4C` | Damage | float | Mods: DamageMax |
-| `0x50` | Fire rate | `100 / x`, truncated | Mods: CyclicRate |
-| `0x54` | | truncated | **Unknown.** Mods: energy or heat per shot, unverified |
+| Offset | Field | Loaded as | Into | Evidence |
+|---|---|---|---|---|
+| `0x40` | Range | truncated | `+0x14` | The ticks a shot lives, which is what gives the gun its range. Mods |
+| `0x44` | Speed | float | `+0x18` | How fast a shot flies (`bullet_place`) |
+| `0x48` | Damage | float | `+0x1C` | Weighted by the threat check below. Mods: DamageMin |
+| `0x4C` | Damage | float | `+0x20` | Mods: DamageMax |
+| `0x50` | Fire rate | `100 / x`, truncated | `+0x24` | The ticks between shots. Mods: CyclicRate |
+| `0x54` | Shot energy | truncated | `+0x28` | What a shot draws from the guns' charge (`guns_step`). Zero in every gun that fires rounds. Mods: energy or heat per shot |
 
 The loader stores `100 / fire_rate`, the interval between shots.
+
+`gun_stats` is indexed by the gun type a model's muzzle names, from 1 to 15, so the file's first
+record is type 1 and type 0 is no gun. The loader fills only `+0x14` to `+0x28` of each record; the
+first five words are the executable's own and say what a shot costs the ship (energy for types 1 to
+7, one of its rounds for the rest) and which sound it makes. The engine's copy of those words is
+[`guns/stats.zig`](../../src/engine/game/guns/stats.zig), which `make gun-tables` derives from the
+executable.
 
 The two damage values are **not a minimum and a maximum**: in several guns the first is the larger.
 `player_spectral_shields_set` (`0x00415430`) uses the first alone: turning the spectral shields
