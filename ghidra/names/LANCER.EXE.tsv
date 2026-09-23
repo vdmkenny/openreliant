@@ -787,7 +787,7 @@ address	kind	name	type	comment
 004817e0	function	sound_3d_providers		Lists Miles's 3D providers, their handles at 0x00563A4C and their names at 0x00563A8C
 004818a0	function	sound_3d_close	void (void)	Closes the 3D provider, releasing its 3D voices, and frees smp3d.fat (sound3d_free)
 00481900	function	sound_3d_open	int __fastcall (int provider)	Opens a 3D provider by the game's number for it: 0 Miles Fast 2D Positional Audio, 1 Aureal A3D, 2 Creative Labs EAX, 3 RAD Game Tools RSX, with Dolby Surround where asked; a 3D voice for each sample it supports, up to 64; then sound3d_init
-00481af0	function	sound_3d_voice_end	void __fastcall (int voice)	Ends what a 3D voice plays and frees it; an object it followed is told so at +0xB96
+00481af0	function	sound_3d_voice_end	void __fastcall (int voice)	Ends what a 3D voice plays and frees it; the object or missile it followed has no voice left (+0xB96 to 0xFFFF)
 00481ba0	function	sound_3d_end_all	void (void)	Ends every 3D voice's sound
 00481bf0	function	sound_3d_update	void (void)	Once a frame: the player's engine (sound3d_engine_update), then each 3D voice freed once past its length (bytes / 441 ticks) or out of range, else placed again from the camera by what it follows
 004820c0	function	sound_play_on_voice		Plays sound n of a bank on a given voice, ending what it played

@@ -58,6 +58,9 @@ another or `none`; `--no-sound` runs silent ([Platform](platform.md#running)).
 - **Improvement:** `sound_pitch_factor` works a quarter tone's factor out, `2^(n/24)`, where the game
   looks it up in a table of rounded values.
 
+Upgrades to how it sounds, from resampling to surround, are gathered in
+[#162](https://github.com/vdmkenny/openreliant/issues/162).
+
 ## Not ported
 
 - The radio's speech, its double buffer and the speech volume.

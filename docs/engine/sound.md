@@ -180,9 +180,13 @@ the start. The stream's volume is `round(((Musicvolume × level) / 127) × Maste
 - The player's ship warns, sound 1 of `betty.fat`, once a quadrant has lost its shield and half its
   armour ([Objects](objects.md)).
 - A Huge Gun's shot striking a component plays `EXPLOSION01` where it strikes.
+- A node of kind 6 plays `SHLDDOWN` where it is drawn, facing its way, while its object's flag
+  `0x4000` is set (`node_draw`).
+- Turning the missile ring plays `MISSILESELECT` at the player's ship (`hud_target_keys`).
 
 Not ported: the radio's speech and its double buffer; the CD's audio; the missiles' sounds
 ([#39](https://github.com/vdmkenny/openreliant/issues/39)); the Huge Guns' hits on components,
 whose part-by-part test is not ported
-([#153](https://github.com/vdmkenny/openreliant/issues/153)); and the display's sounds
-([#101](https://github.com/vdmkenny/openreliant/issues/101)).
+([#153](https://github.com/vdmkenny/openreliant/issues/153)); the nodes of kind 6
+([#63](https://github.com/vdmkenny/openreliant/issues/63)); and the display's sounds, the missile
+ring's among them ([#101](https://github.com/vdmkenny/openreliant/issues/101)).
