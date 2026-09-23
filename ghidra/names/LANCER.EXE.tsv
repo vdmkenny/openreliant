@@ -160,12 +160,12 @@ address	kind	name	type	comment
 005e8308	data	hog_last_size	int	The size of the last file read
 004c5bd0	function	hog_load		
 00480d70	function	font_open		Wraps a loaded font and caches the widths of codes below 255
-00481f80	function	sound_play		Plays sound n of a bank, taking over a lower-priority voice if none is free
-004826a0	function	sound_start		Hands Miles the WAVE file at bank + offset
-00565080	data	sound_voices		Voices, 0x20 bytes each: SoundVoice
+00481f80	function	sound_play	int __fastcall (void *bank, int index, int volume, int loops, int pan, int pitch)	Plays sound n of a bank on a voice: one finished past the first, else one stopped, else the lowest-priority one not held, if below the new sound's
+004826a0	function	sound_start	void __fastcall (void *bank, int index, int volume, int pitch, int loops, int pan, int voice)	Hands Miles the WAVE file at bank + offset, at its rate moved by pitch quarter tones and its volume scaled by Fxvolume and Mastervolume
+00565080	data	sound_voices	SoundVoice[16]	Voices, 0x20 bytes each
 005d6ca0	data	bank_stdsmp		stdsmp.fat
 00524748	data	bank_ldsmp		ldsmp.fat
-0056654c	data	bank_betty		betty.fat
+0056654c	data	bank_betty		betty.fat: the cockpit's warnings
 0058cb10	data	bank_smp3d		smp3d.fat
 00587ce0	data	game_objects	GameObject *[400]	The GO array: every live object, a mission ship's at its index among the ship records
 005883fa	data	player_index	short	Slot of the player's own object in game_objects
@@ -781,3 +781,68 @@ address	kind	name	type	comment
 0047bdb0	function	bullet_place	void __fastcall (int bullet, int gun_type, ModelNode *muzzle, ModelNode *node)	Fills in a new shot: its type and the record at gun_stats, the owner's side, the muzzle's place and orientation, a velocity of Gun.speed along its nose, a life of Gun.lifetime ticks, a light, and the object it is expected to hit. A ship aiming blind aims at its target, and type 12 scatters
 0047c950	function	object_step_turrets	void __fastcall (GameObject *object)	Once a frame from orders_update for a ship that is not exploding and is not docking: runs each gun's turret routine from the table at 0x500FA0, indexed by the gun's turret kind
 004b1c00	function	powerup_give	void __fastcall (int slot, int unknown, PowerUp power_up)	Hands an object a deathmatch power-up, the one named or else one by the weights at 0x005DB4C4, where the object is the player's or one is named: sets power_up, power_up_since and power_up_until and runs the record's start routine; a record flagged 2 is used at once through 0x004B1B20
+00481400	function	sound_pitch_factor	float __fastcall (int quarter_tones)	What n quarter tones up or down multiply a playback rate by, 2^(n/24), from tables clamped to 96 either way
+00481440	function	sound_init	uint __fastcall (int voices, int speech, int redbook, char hardware)	Starts Miles: the digital driver, a sample for each voice up to 16, the radio speech's double buffer where asked, the CD's audio where asked, and tick_timer; WinMain asks for 10 voices
+00481750	function	sound_shutdown	int (void)	Ends the voices, stops the CD's audio, closes the music and shuts Miles down
+004817e0	function	sound_3d_providers		Lists Miles's 3D providers, their handles at 0x00563A4C and their names at 0x00563A8C
+004818a0	function	sound_3d_close	void (void)	Closes the 3D provider, releasing its 3D voices, and frees smp3d.fat (sound3d_free)
+00481900	function	sound_3d_open	int __fastcall (int provider)	Opens a 3D provider by the game's number for it: 0 Miles Fast 2D Positional Audio, 1 Aureal A3D, 2 Creative Labs EAX, 3 RAD Game Tools RSX, with Dolby Surround where asked; a 3D voice for each sample it supports, up to 64; then sound3d_init
+00481af0	function	sound_3d_voice_end	void __fastcall (int voice)	Ends what a 3D voice plays and frees it; the object or missile it followed has no voice left (+0xB96 to 0xFFFF)
+00481ba0	function	sound_3d_end_all	void (void)	Ends every 3D voice's sound
+00481bf0	function	sound_3d_update	void (void)	Once a frame: the player's engine (sound3d_engine_update), then each 3D voice freed once past its length (bytes / 441 ticks) or out of range, else placed again from the camera by what it follows
+004820c0	function	sound_play_on_voice		Plays sound n of a bank on a given voice, ending what it played
+00482160	function	sound_buffer_at	void __fastcall (int index, Vec3 *position, float volume)	Adds a positional sound of the first 18 slots to the frame's gathered levels in each ear, by its distance and which side of the camera it lies
+004822f0	function	sound_buffers_play	void __fastcall (void *bank)	Plays each positional sound gathered this frame, slot n as sound n of the bank (bank_stdsmp), panned by its two levels and as loud as the louder, then clears them
+004823d0	function	sound_voice_end	void __fastcall (int voice)	
+00482410	function	sound_voice_playing	bool __fastcall (int voice)	
+00482440	function	sound_voice_set_volume	void __fastcall (int voice, int volume)	A playing voice's volume, 0 to 127, scaled by Fxvolume and Mastervolume
+004824c0	function	sound_voice_fade	void __fastcall (int voice, int step)	Fades a playing voice out by step every five ticks (tick_timer)
+00482510	function	sound_fade_all	void __fastcall (int step)	Fades out every voice not finished
+00482570	function	sound_end_all	void (void)	Ends every voice and forgets the gathered positional sounds
+004825d0	function	sound_pause_all	void (void)	Stops every playing voice where it is, remembering which at 0x00563A20
+00482630	function	sound_resume_all	void (void)	
+00482940	function	music_playing	bool (void)	
+00482960	function	music_fade_out	void __fastcall (short step)	The music's level falls by step every five ticks until the stream closes
+00482990	function	sound_volumes_apply	void (void)	Sets the volumes again: the music's, each voice's still playing, and the speech sample's
+00482a80	function	music_play	int __fastcall (char *path, int loops, int level, int now)	Plays a file as a Miles stream at level and loops, now, or once the music playing has faded out; a piece the table at 0x005017A0 names loops back to its own offset
+00482c30	function	music_update	void (void)	Once a frame: the queued piece starts once the music has stopped
+00482c70	function	music_pause	int (void)	
+00482c90	function	music_resume	int (void)	
+00482cd0	function	music_start	int (void)	
+00482cf0	function	music_close	int (void)	
+00482d10	function	sound_driver_open		Opens Miles's digital driver on the wave-out device, as PCM of the given channels, bits and rate
+0049d160	function	sound3d_init	void (void)	Loads smp3d.fat, scales the 3D sounds' distances by 0.0004, gives each 3D voice its class from the row for the provider's size, and finds the engine's and the afterburner's voices
+0049d310	function	sound3d_free	void (void)	
+0049d330	function	sound3d_end_all	void (void)	Ends and frees every 3D voice playing
+0049d360	function	sound3d_play	int __fastcall (Vec3 *at, Vec3 *facing, int owner, int sound, float volume, int unused, char class)	Plays a 3D sound of the table at 0x00507140, placed by what it follows, on a voice of its class, else one not reserved, else a borrowed one; not started beyond its maximum distance but for the engines' sounds
+0049dcb0	function	sound3d_engine_sound	int (void)	The player's engine sound by its ship type: PSHIP01 on
+0049dcf0	function	sound3d_engine_update	void (void)	The player's engine pitched and loudened by its throttle, the afterburner's or reverse thrust's sound while either is on and its fade after, then the fighters heard flying past the camera
+0049e2f0	function	sound3d_pause	void (void)	Stops every 3D voice playing
+0049e330	function	sound3d_resume	void (void)	
+004c1510	function	vec3_cosine	float __fastcall (Vec3 *a, Vec3 *b)	The cosine of the angle between two vectors
+00507140	data	sound3d_definitions	Sound3DDefinition[76]	The 3D sounds, closed by a record whose entry is -1
+005085b4	data	sound3d_class_rows	byte[96]	Each 3D voice's class, 32 to a row: for up to 14 voices, up to 30, and more
+00508614	data	sound3d_class_names		Names of the voice classes, 30 characters each
+00508740	data	engine_sound_rates	int[13]	The player's engine sound's playback rate at no throttle, by ship type
+00508774	data	engine_sound_rates_by_throttle	int[13]	What full throttle adds to it
+005087a8	data	engine_sound_volumes	int[13]	Its volume at no throttle
+005087dc	data	engine_sound_volumes_by_throttle	int[13]	What full throttle adds to it
+005017a0	data	music_loops		The music's loop points: each piece's name and the byte its loop starts at
+00563f60	data	sound_voices_3d	SoundVoice3D[64]	
+0058cb1c	data	sound3d_classes	Sound3DClass[64]	Each 3D voice's class
+0058cb04	data	sound3d_engine_state	Sound3DEngineState	
+0050713c	data	sound3d_engine_changed_at	int	When the afterburner last came on or went off
+00565674	data	sound_engine_voice	int	The 3D voice of class player engines
+00565060	data	sound_burner_voice	int	The 3D voice of class player burners
+00565684	data	sound_voice_3d_count	int	
+00501798	data	sound_voice_count	int	
+00563a1c	data	sound_driver	void *	Miles's digital driver
+00565300	data	music_stream	HSTREAM	
+00565068	data	music_level	int	The music's level, 0 to 127, which fades
+00565340	data	sound_buffered	float[200]	Each positional sound's level in the left ear and the right, gathered over a frame
+005d5a70	data	volume_master	int	Mastervolume, 0 to 127
+005d5a74	data	volume_effects	int	Fxvolume
+005d55ec	data	volume_music	int	Musicvolume
+005d5e88	data	volume_speech	int	Speechvolume
+0048f160	function	sound_settings_save	void (void)	Writes Fxvolume, Musicvolume, Speechvolume and Mastervolume to [Sound] of the settings file
+00588334	data	armor_warned_at	int	The frame_start the player's armour last warned at: object_armor_conditions warns no more than once in 500 ticks

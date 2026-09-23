@@ -350,7 +350,9 @@ pub const GameObject = extern struct {
     /// draws the reticle.
     blind_fire_aim: i32,
     _unknown_678: i32,
-    _unknown_67c: u32,
+    /// The frame (`Clock.frame_start`) it was last heard flying past the camera
+    /// (`sound3d.engineUpdate`).
+    flyby_at: i32,
     /// Orders on its stack.
     order_count: i16,
     _unknown_682: u16,
@@ -421,7 +423,9 @@ pub const GameObject = extern struct {
     created: bool,
     /// How far harm reaches it (`SetInvulnerability`).
     invulnerable: Invulnerability,
-    _unknown_b96: u16,
+    /// The 3D voice following it, `0xFFFF` for none: `sound_3d_voice_end` sets it back, and the
+    /// missiles' code reads it (`0x00495CF0`).
+    sound_voice: u16,
 
     /// The names of the script commands that set a bit are the developers' own.
     pub const Flags = packed struct(u32) {
@@ -745,7 +749,7 @@ pub fn objectAlloc(object_type: u32, random: *libcmt.Rand) GameObject {
     object.power_up = .none;
     object._unknown_764 = -1;
     object.root.flags.component = true;
-    object._unknown_b96 = 0xFFFF;
+    object.sound_voice = 0xFFFF;
     object.blink_offset = blinkOffset(random);
     object.visibility = 1;
     return object;
@@ -782,6 +786,8 @@ pub const World = struct {
     random: *libcmt.Rand,
     /// Whoever sets off the effects of the events the objects' tracks pass.
     events: ?Events = null,
+    /// The sound the objects are heard through, and where from; null where nothing is heard.
+    hearing: ?@import("hog_snd.zig").Hearing = null,
 };
 
 /// `simulation_step` (`0x004774D0`): the work of every fourth tick, so 25 times a second, which

@@ -81,6 +81,14 @@ pub const exported = [_]Export{
 
     // Sound.
     .{ "SoundVoice", engine.game.hog_snd.Voice },
+    .{ "SoundVoice3D", engine.game.hog_snd.Voice3D },
+    .{ "Sound3DDefinition", engine.game.sound3d.Definition },
+    .{ "Sound3DFollows", engine.game.sound3d.Follows },
+    .{ "Sound3DClass", engine.game.sound3d.Class },
+    .{ "Sound3DEngineState", engine.game.sound3d.EngineState },
+    .{ "HSAMPLE", engine.mss.Sample },
+    .{ "H3DSAMPLE", engine.mss.Sample3D },
+    .{ "HSTREAM", engine.mss.Stream },
 
     // Player input.
     .{ "JoystickState", engine.input.JoystickState },

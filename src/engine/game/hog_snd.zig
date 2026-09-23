@@ -1,36 +1,772 @@
-//! `C:\lancer\game\hog_SND.CPP`: sound playback. `sound_play` (`0x00481F80`) and `sound_start`
-//! (`0x004826A0`) play the banks' sounds on the voices of `sound_voices`. **Unverified:** both lie
-//! outside this file's known code, on either side of it.
+//! `C:\lancer\game\hog_SND.CPP`: sound, through Miles ([`engine/mss.zig`](../mss.zig) in the port).
+//! The voices a bank's sounds play on (`sound_voices`), the positional sounds gathered over a
+//! frame, the music, and the 3D voices the effects of [`sound3d.zig`](sound3d.zig) play on.
+//!
+//! **Unverified:** most of it lies outside this file's known code (`0x00482160` to `0x004822E9`),
+//! from `0x00481400` to `0x00482DE0`, between `hog_gen.cpp`'s and `hud.cpp`'s.
+//!
+//! Not ported: the CD's own music (`AIL_redbook_open`), which the shipped game plays none of, and
+//! the speech sample's double buffer that `sound_init` sets up for the radio's voices.
 
 const std = @import("std");
 const assert = std.debug.assert;
+const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
+const fat = @import("../../formats/fat.zig");
+const shp = @import("../../formats/shp.zig");
+const wave = @import("../../formats/wave.zig");
+const math = @import("../surrender/math.zig");
+const Vector = math.Vector;
+const mss = @import("../mss.zig");
+const camera = @import("camera.zig");
 const Clock = @import("main.zig").Clock;
+const sound3d = @import("sound3d.zig");
+
+const log = std.log.scoped(.sound);
+
+/// The most voices `sound_init` sets up for the banks' sounds (`0x00501798`).
+pub const max_voices = 16;
+
+/// The most 3D voices the game takes of its provider's.
+pub const max_voices_3d = 64;
+
+/// The positional sounds gathered over a frame (`0x00565340`): slots for 100, of which
+/// `sound_buffer_at` fills the first 18.
+pub const buffer_slots = 100;
+pub const buffered_sounds = 18;
+
+/// The ticks between the fades' steps (`tick_timer`).
+const fade_ticks = 5;
+
+/// What turns the game's units into Miles's for a 3D sound's place and speed: its distances
+/// (`0x004DC9B4`) and the step's movement into a millisecond's.
+pub const distance_scale: f32 = 0.0004;
+pub const velocity_scale: f32 = 1e-5;
 
 /// One voice of `sound_voices`: a Miles sample and what is playing on it.
 pub const Voice = extern struct {
-    /// The Miles `HSAMPLE`.
-    sample: u32,
-    /// **Unknown.** `sound_play` takes a voice over only while this is zero.
-    _unknown_04: u32,
+    sample: mss.Sample,
+    /// Nonzero while the display holds the voice (`hud_draw`), which `play` then never takes over.
+    held: u32,
     /// The playing sound's priority, from its bank entry. A new sound takes over the voice with
     /// the lowest one, if that is below its own.
     priority: i32,
-    _unknown_0c: [5]u32,
+    _unknown_0c: u32,
+    /// Nonzero while it fades out, by `fade_step` of its volume every five ticks (`timerTick`).
+    fading: u32,
+    fade_step: i32,
+    /// The playing sound's own rate.
+    rate: u32,
+    /// Its volume as asked, from 0 to 127, which the effects volume and the master volume scale.
+    volume: i32,
 
     comptime {
         assert(@offsetOf(Voice, "priority") == 0x08);
+        assert(@offsetOf(Voice, "fading") == 0x10);
         assert(@sizeOf(Voice) == 0x20);
     }
 };
 
-test {
-    std.testing.refAllDecls(@This());
+/// One of the 3D voices (`0x00563F60`): a Miles 3D sample and the sound on it.
+pub const Voice3D = extern struct {
+    sample: mss.Sample3D,
+    follows: sound3d.Follows,
+    /// What it follows: a shot's record, a missile's or an object's slot; -1 while it is free.
+    owner: i32,
+    _unknown_0c: u32,
+    /// The playing sound's priority, from its entry in `smp3d.fat`.
+    priority: i32,
+    /// How far off it is still heard, in Miles's units (`sound3d.Definition.max_distance`).
+    range: f32,
+    /// The point and the direction it was started with, for a sound that keeps them.
+    position: shp.Vec3,
+    direction: shp.Vec3,
+    _unknown_30: u32,
+    /// Taken by a sound of another class while free, so that its own class may take it back.
+    borrowed: bool,
+    _unknown_35: [3]u8,
+    /// The sound playing (`sound3d.sounds.Sound`).
+    sound: i32,
+    /// When it started (`Clock.frame_start`).
+    started: i32,
+    /// The sound as 16-bit PCM, which the game decompresses into memory of Miles's own; the port's
+    /// Miles plays the bank's sound as it is.
+    decompressed: u32,
+
+    comptime {
+        assert(@offsetOf(Voice3D, "range") == 0x14);
+        assert(@offsetOf(Voice3D, "borrowed") == 0x34);
+        assert(@offsetOf(Voice3D, "started") == 0x3C);
+        assert(@sizeOf(Voice3D) == 0x44);
+    }
+
+    const free: Voice3D = .{
+        .sample = @enumFromInt(0),
+        .follows = .none,
+        .owner = -1,
+        ._unknown_0c = 0,
+        .priority = 0,
+        .range = 0,
+        .position = .{ .x = 0, .y = 0, .z = 0 },
+        .direction = .{ .x = 0, .y = 0, .z = 0 },
+        ._unknown_30 = 0,
+        .borrowed = false,
+        ._unknown_35 = @splat(0),
+        .sound = 0,
+        .started = 0,
+        .decompressed = 0,
+    };
+};
+
+/// The four volumes of `starlancer.ini`'s `[Sound]`, each from 0 to 127, with the defaults the
+/// options screen resets them to (`0x0042DC5E`).
+pub const Volumes = struct {
+    /// `Mastervolume` (`0x005D5A70`): everything.
+    master: i32 = 127,
+    /// `Fxvolume` (`0x005D5A74`): the banks' sounds and the 3D sounds.
+    effects: i32 = 80,
+    /// `Musicvolume` (`0x005D55EC`).
+    music: i32 = 80,
+    /// `Speechvolume` (`0x005D5E88`).
+    speech: i32 = 127,
+
+    pub const section = "Sound";
+
+    /// The master volume's share, as the game multiplies by it (`0x004DC6B0`, `1 / 127`).
+    pub fn masterShare(volumes: Volumes) f32 {
+        return @as(f32, @floatFromInt(volumes.master)) / 127;
+    }
+};
+
+/// Where the music comes from: files of their own in the game's directory, `music\` and the name,
+/// which Miles streamed from the disk (`AIL_open_stream`).
+pub const Files = struct {
+    gpa: Allocator,
+    io: Io,
+    dir: Io.Dir,
+};
+
+/// The music (`0x00565300` on): a stream of one file, which fades out before another starts.
+pub const Music = struct {
+    stream: ?mss.Stream = null,
+    /// The file it plays, which the stream reads from.
+    file: []u8 = &.{},
+    /// Its level, 0 to 127, which the music volume and the master volume scale (`0x00565068`).
+    level: i32 = 0,
+    /// While fading, the level falls by `fade_step` every five ticks until the stream closes
+    /// (`0x00563F58`, `0x00563A18`).
+    fading: bool = false,
+    fade_step: i32 = 0,
+    /// A piece to play once this one has faded (`0x0056533A` on): its path, loop count and level.
+    queued: ?Queued = null,
+
+    pub const Queued = struct {
+        path: [128]u8 = @splat(0),
+        path_len: usize = 0,
+        loops: u32,
+        level: i32,
+    };
+};
+
+/// Where a piece of music loops back to once it has played through: a byte offset into its data
+/// for each piece the table names (`0x005017A0`). The rest loop from the start.
+pub const music_loops = [_]struct { name: []const u8, loop_start: i32 }{
+    .{ .name = "new_mission01", .loop_start = 188318 },
+    .{ .name = "new_mission02", .loop_start = 237569 },
+    .{ .name = "new_mission03", .loop_start = 102043 },
+    .{ .name = "new_mission04", .loop_start = 223314 },
+    .{ .name = "new_mission05", .loop_start = 178163 },
+    .{ .name = "new_mission06", .loop_start = 144433 },
+    .{ .name = "new_mission07", .loop_start = 105604 },
+    .{ .name = "new_mission08", .loop_start = 75874 },
+    .{ .name = "new_mission09", .loop_start = 55392 },
+    .{ .name = "new_mission10", .loop_start = 127749 },
+    .{ .name = "new_defeat", .loop_start = 166910 },
+    .{ .name = "new_launch", .loop_start = 355065 },
+    .{ .name = "new_pensive", .loop_start = 132922 },
+    .{ .name = "new_victory", .loop_start = 176922 },
+    .{ .name = "new_searching mission 01", .loop_start = 297178 },
+    .{ .name = "new_searching mission 02", .loop_start = 126079 },
+    .{ .name = "new_searching mission 03", .loop_start = 108719 },
+    .{ .name = "new_searching mission 04", .loop_start = 143807 },
+    .{ .name = "new_searching mission 05", .loop_start = 101402 },
+    .{ .name = "new_searching mission 06", .loop_start = 64511 },
+    .{ .name = "new_searching mission 07", .loop_start = 116109 },
+    .{ .name = "new_searching mission 08", .loop_start = 158719 },
+    .{ .name = "new_searching mission 09", .loop_start = 90111 },
+    .{ .name = "new_searching mission 10", .loop_start = 146431 },
+    .{ .name = "new_sim01", .loop_start = 389937 },
+    .{ .name = "new_sim02", .loop_start = 211074 },
+    .{ .name = "new_sim03", .loop_start = 95328 },
+    .{ .name = "new_sim04", .loop_start = 438286 },
+    .{ .name = "new_sim05", .loop_start = 244327 },
+    .{ .name = "new_sim06", .loop_start = 157445 },
+    .{ .name = "new_sim07", .loop_start = 148140 },
+    .{ .name = "new_sim08", .loop_start = 201251 },
+    .{ .name = "new_sim09", .loop_start = 264760 },
+    .{ .name = "new_sim10", .loop_start = 337966 },
+    .{ .name = "new__spare!", .loop_start = 187648 },
+};
+
+/// What a 3D sound is placed and heard against: the objects, the shots, and the camera.
+pub const Scene = struct {
+    objects: *@import("create.zig").Objects,
+    camera: camera.Place,
+    view: camera.View,
+    clock: *const Clock,
+    /// The runtime's numbers, which pitch the explosions.
+    random: *@import("../libcmt.zig").Rand,
+};
+
+/// What the game's code reaches the sound through: the sound, the camera it is heard from,
+/// placed each frame (the game reads its camera's frame, `sr + 0x30`), and the mission's clock.
+pub const Hearing = struct {
+    sound: *Sound,
+    camera: *const camera.Place,
+    clock: *const Clock,
+
+    /// The scene a 3D sound is placed in, for `world`.
+    pub fn scene(hearing: Hearing, world: @import("gameobj.zig").World) Scene {
+        return .{ .objects = world.objects, .camera = hearing.camera.*, .view = world.view, .clock = hearing.clock, .random = world.random };
+    }
+};
+
+/// The game's sound: its globals, from `0x00563A18` to `0x00565690`.
+pub const Sound = struct {
+    /// Miles's digital driver (`0x00563A1C`), or null with none at all: every call then does
+    /// nothing, as the game's do while `0x00565688` is clear.
+    driver: ?*mss.Driver = null,
+    voices: [max_voices]Voice = @splat(std.mem.zeroes(Voice)),
+    voice_count: u8 = 0,
+    /// The voices `pauseAll` stopped, for `resumeAll` (`0x00563A20`).
+    paused: [max_voices]bool = @splat(false),
+    /// Each positional sound's level in the left ear and the right, gathered over a frame.
+    buffered: [buffer_slots][2]f32 = @splat(.{ 0, 0 }),
+    volumes: Volumes = .{},
+    music: Music = .{},
+    files: ?Files = null,
+    /// When the fades last stepped (`0x0056533C`).
+    faded_at: u32 = 0,
+    /// The 3D voices, as many as the provider has, up to 64 (`0x00565684`); none while no
+    /// provider is open (`0x0056567C`).
+    voices_3d: [max_voices_3d]Voice3D = @splat(Voice3D.free),
+    voice_3d_count: u8 = 0,
+    /// The voices set aside for the player's engine and its afterburner, of classes
+    /// `player_engines` and `player_burners` (`0x00565674`, `0x00565060`).
+    engine_voice: ?u8 = null,
+    burner_voice: ?u8 = null,
+    /// The 3D sounds' own state.
+    effects: sound3d.Effects = .{},
+    /// The live objects (`game_objects`), whose voices `end3D` lets go of.
+    objects: ?*@import("create.zig").Objects = null,
+    /// `betty.fat` (`bank_betty`, `0x0056654C`): the cockpit's warnings.
+    betty: ?fat.Bank = null,
+    /// When the player's armour last warned (`0x00588334`, `main.armorWarning`).
+    armor_warned_at: i32 = 0,
+
+    /// `sound_init` (`0x00481440`), as far as the port goes: up to 16 voices for the banks, each a
+    /// sample of `driver`, and the timer that steps the fades. `driver` is null where the platform
+    /// has no sound, which leaves the game silent.
+    pub fn init(sound: *Sound, driver: ?*mss.Driver, voice_count: u8, files: ?Files) void {
+        sound.* = .{ .files = files };
+        const opened = driver orelse return;
+        for (sound.voices[0..@min(voice_count, max_voices)]) |*voice| {
+            voice.* = std.mem.zeroes(Voice);
+            voice.sample = opened.allocateSample() orelse break;
+            sound.voice_count += 1;
+        }
+        if (sound.voice_count > 0) sound.driver = opened;
+    }
+
+    /// `sound_shutdown` (`0x00481750`): every voice ended and the music closed.
+    pub fn shutdown(sound: *Sound) void {
+        sound.endAll();
+        sound.close3D();
+        sound.closeMusic();
+        sound.driver = null;
+    }
+
+    // --- The banks' sounds -----------------------------------------------------------------------
+
+    /// `sound_play` (`0x00481F80`): plays sound `index` of `bank` on a voice, at `volume` from 0 to
+    /// 127, `loops` times, `pan` from 0 to 127, `pitch` quarter tones up or down. It takes a voice
+    /// that has finished, past the first; else one that was stopped; else the busy voice of lowest
+    /// priority, unless it is held or the new sound's is no higher. Returns the voice, or null.
+    pub fn play(sound: *Sound, bank: fat.Bank, index: usize, volume: i32, loops: u32, pan: i32, pitch: i32) ?u8 {
+        const driver = sound.driver orelse return null;
+        const entry_priority: i32 = if (index < bank.entries.len) @intCast(bank.entries[index].priority) else return null;
+        const count = sound.voice_count;
+        const chosen = chosen: {
+            for (1..count) |v| if (driver.sampleStatus(sound.voices[v].sample) == .done) break :chosen v;
+            for (0..count) |v| if (driver.sampleStatus(sound.voices[v].sample) == .stopped) break :chosen v;
+            var lowest: i32 = 9999;
+            var found: ?usize = null;
+            for (sound.voices[0..count], 0..) |voice, v| {
+                if (voice.priority < lowest and voice.held == 0) {
+                    lowest = voice.priority;
+                    found = v;
+                }
+            }
+            const taken = found orelse return null;
+            if (lowest >= entry_priority) return null;
+            sound.endVoice(@intCast(taken));
+            break :chosen taken;
+        };
+        sound.start(bank, index, volume, pitch, loops, pan, @intCast(chosen));
+        return @intCast(chosen);
+    }
+
+    /// `sound_play_on_voice` (`0x004820C0`): plays it on voice `v`, ending what it was playing.
+    pub fn playOn(sound: *Sound, v: u8, bank: fat.Bank, index: usize, volume: i32, loops: u32, pan: i32, pitch: i32) void {
+        const driver = sound.driver orelse return;
+        if (v >= sound.voice_count or index >= bank.entries.len) return;
+        if (driver.sampleStatus(sound.voices[v].sample) != .done) sound.endVoice(v);
+        sound.voices[v].held = 0;
+        sound.start(bank, index, volume, pitch, loops, pan, v);
+    }
+
+    /// `sound_start` (`0x004826A0`): hands Miles the WAVE file at the entry's offset in the bank,
+    /// at its rate moved by `pitch`, and at `volume` scaled by the effects volume and the master
+    /// volume.
+    fn start(sound: *Sound, bank: fat.Bank, index: usize, volume: i32, pitch: i32, loops: u32, pan: i32, v: u8) void {
+        const driver = sound.driver orelse return;
+        const voice = &sound.voices[v];
+        const file = bank.sound(index) orelse return;
+        driver.initSample(voice.sample);
+        if (!driver.setSampleFile(voice.sample, file)) {
+            log.warn("sound {d} of a bank cannot be played", .{index});
+            return;
+        }
+        const rate = if (wave.Wave.parse(file)) |info| info.rate else |_| 0;
+        if (pitch != 0) {
+            const moved = @as(f32, @floatFromInt(rate)) * pitchFactor(pitch);
+            driver.setSamplePlaybackRate(voice.sample, @intFromFloat(@trunc(moved)));
+        }
+        const scaled = @divTrunc(sound.volumes.effects * volume, 128);
+        driver.setSampleVolume(voice.sample, @intFromFloat(@round(@as(f32, @floatFromInt(scaled)) * sound.volumes.masterShare())));
+        driver.setSampleLoopCount(voice.sample, loops);
+        driver.setSamplePan(voice.sample, pan);
+        voice.priority = @intCast(bank.entries[index].priority);
+        voice.fading = 0;
+        voice.rate = rate;
+        voice.volume = volume;
+        driver.startSample(voice.sample);
+    }
+
+    /// `sound_voice_end` (`0x004823D0`).
+    pub fn endVoice(sound: *Sound, v: u8) void {
+        const driver = sound.driver orelse return;
+        const voice = &sound.voices[v];
+        voice._unknown_0c = 0;
+        voice.priority = 0;
+        voice.fading = 0;
+        voice.held = 0;
+        driver.endSample(voice.sample);
+    }
+
+    /// `sound_voice_playing` (`0x00482410`).
+    pub fn voicePlaying(sound: *Sound, v: u8) bool {
+        const driver = sound.driver orelse return false;
+        return driver.sampleStatus(sound.voices[v].sample) == .playing;
+    }
+
+    /// `sound_voice_set_volume` (`0x00482440`): a playing voice's volume, from 0 to 127.
+    pub fn setVoiceVolume(sound: *Sound, v: u8, volume: i32) void {
+        const driver = sound.driver orelse return;
+        if (!sound.voicePlaying(v)) return;
+        sound.voices[v].volume = volume;
+        const scaled = @divTrunc(sound.volumes.effects * volume, 127);
+        driver.setSampleVolume(sound.voices[v].sample, @intFromFloat(@round(@as(f32, @floatFromInt(scaled)) * sound.volumes.masterShare())));
+    }
+
+    /// `sound_voice_fade` (`0x004824C0`): fades a playing voice out by `step` every five ticks, and
+    /// lets any sound take it.
+    pub fn fadeVoice(sound: *Sound, v: u8, step: i32) void {
+        if (!sound.voicePlaying(v)) return;
+        const voice = &sound.voices[v];
+        voice.priority = 0;
+        voice.held = 0;
+        voice.fading = 1;
+        voice.fade_step = step;
+    }
+
+    /// `sound_fade_all` (`0x00482510`): every voice not finished fades by `step`.
+    pub fn fadeAll(sound: *Sound, step: i32) void {
+        const driver = sound.driver orelse return;
+        for (sound.voices[0..sound.voice_count]) |*voice| {
+            if (driver.sampleStatus(voice.sample) == .done) continue;
+            voice.priority = 0;
+            voice.held = 0;
+            voice.fading = 1;
+            voice.fade_step = step;
+        }
+    }
+
+    /// `sound_end_all` (`0x00482570`): every voice ended, and the positional sounds forgotten.
+    pub fn endAll(sound: *Sound) void {
+        if (sound.driver == null) return;
+        for (0..sound.voice_count) |v| sound.endVoice(@intCast(v));
+        sound.buffered = @splat(.{ 0, 0 });
+    }
+
+    /// `sound_pause_all` (`0x004825D0`): stops every playing voice where it is.
+    pub fn pauseAll(sound: *Sound) void {
+        const driver = sound.driver orelse return;
+        for (sound.voices[0..sound.voice_count], sound.paused[0..sound.voice_count]) |voice, *paused| {
+            paused.* = driver.sampleStatus(voice.sample) == .playing;
+            if (paused.*) driver.stopSample(voice.sample);
+        }
+    }
+
+    /// `sound_resume_all` (`0x00482630`): what `pauseAll` stopped goes on.
+    pub fn resumeAll(sound: *Sound) void {
+        const driver = sound.driver orelse return;
+        for (sound.voices[0..sound.voice_count], sound.paused[0..sound.voice_count]) |voice, *paused| {
+            if (!paused.*) continue;
+            paused.* = false;
+            driver.resumeSample(voice.sample);
+        }
+    }
+
+    /// `sound_volumes_apply` (`0x00482990`): the volumes again, after a setting changes: the
+    /// music's, and each voice's still playing.
+    pub fn applyVolumes(sound: *Sound) void {
+        const driver = sound.driver orelse return;
+        if (sound.music.stream) |stream| {
+            const scaled = @divTrunc(sound.volumes.music * sound.music.level, 127);
+            driver.setStreamVolume(stream, @intFromFloat(@round(@as(f32, @floatFromInt(scaled)) * sound.volumes.masterShare())));
+        }
+        for (0..sound.voice_count) |v| {
+            if (driver.sampleStatus(sound.voices[v].sample) != .done) sound.setVoiceVolume(@intCast(v), sound.voices[v].volume);
+        }
+    }
+
+    /// `tick_timer`'s (`0x004827C0`) sound: every five ticks and more, the music's fade and each
+    /// fading voice's step. The port runs it once a frame rather than on a timer of its own, which
+    /// steps it the same while frames come faster than every five ticks.
+    pub fn timerTick(sound: *Sound, game_ticks: u32) void {
+        const driver = sound.driver orelse return;
+        if (@as(i64, sound.faded_at) >= @as(i64, game_ticks) - fade_ticks) return;
+        sound.faded_at = game_ticks;
+        if (sound.music.stream) |stream| if (sound.music.fading and driver.streamStatus(stream) == .playing) {
+            sound.music.level -= sound.music.fade_step;
+            if (sound.music.level < 0) {
+                sound.closeMusic();
+                sound.music.fading = false;
+            } else sound.applyVolumes();
+        };
+        for (sound.voices[0..sound.voice_count]) |*voice| {
+            if (voice.fading == 0) continue;
+            if (driver.sampleStatus(voice.sample) == .done) {
+                voice.fading = 0;
+                continue;
+            }
+            var volume = driver.sampleVolume(voice.sample) - voice.fade_step;
+            if (volume < 1) {
+                volume = 0;
+                driver.endSample(voice.sample);
+                voice.fading = 0;
+            }
+            driver.setSampleVolume(voice.sample, volume);
+        }
+    }
+
+    // --- Positional sounds of a frame ------------------------------------------------------------
+
+    /// `sound_buffer_at` (`0x00482160`): adds sound `index` at `position`, at `volume`, to the
+    /// frame's positional sounds, its level in each ear by how far and which side of the camera it
+    /// is. Only the first 18 are gathered.
+    pub fn bufferAt(sound: *Sound, index: usize, position: Vector, view: camera.Place, volume: f32) void {
+        if (index >= buffered_sounds) return;
+        const loud = volume * 20;
+        const offset = position - view.position;
+        const distance = math.length(offset);
+        const across = math.transformTransposed(view.orientation, offset);
+        const share = 1 / (distance * 127);
+        const side = across[0] * share;
+        const left = std.math.clamp((if (side >= 0) 1 - side else 1) * share * loud, 0, 1);
+        const right = std.math.clamp((if (side >= 0) 1 else side + 1) * share * loud, 0, 1);
+        sound.buffered[index][0] += left;
+        sound.buffered[index][1] += right;
+    }
+
+    /// `sound_buffers_play` (`0x004822F0`): plays each positional sound gathered this frame, sound
+    /// `n` of `bank` for slot `n`, panned by its two levels and as loud as the louder, then
+    /// forgets them.
+    pub fn playBuffered(sound: *Sound, bank: fat.Bank) void {
+        const effects: f32 = @floatFromInt(sound.volumes.effects);
+        for (&sound.buffered, 0..) |*levels, index| {
+            if (!(levels[0] > 0) and !(levels[1] > 0)) continue;
+            const left = @min(levels[0], 1);
+            const right = @min(levels[1], 1);
+            const pan: i32 = @intFromFloat(@round(right * 127 / (right + left)));
+            const volume: i32 = @intFromFloat(@round(effects * @max(left, right) * sound.volumes.masterShare()));
+            _ = sound.play(bank, index, volume, 1, pan, 0);
+            levels.* = .{ 0, 0 };
+        }
+    }
+
+    // --- The 3D voices ---------------------------------------------------------------------------
+
+    /// `sound_3d_open` (`0x00481900`) on the port's one provider: as many 3D voices as it has, up
+    /// to 64, each free, then the effects set up on them (`sound3d.init`).
+    pub fn open3D(sound: *Sound, smp3d: fat.Bank) void {
+        const driver = sound.driver orelse return;
+        sound.close3D();
+        for (&sound.voices_3d) |*voice| {
+            voice.* = Voice3D.free;
+            voice.sample = driver.allocate3DSample() orelse break;
+            sound.voice_3d_count += 1;
+        }
+        sound3d.init(sound, smp3d);
+    }
+
+    /// `sound_3d_close` (`0x004818A0`).
+    pub fn close3D(sound: *Sound) void {
+        const driver = sound.driver orelse return;
+        for (sound.voices_3d[0..sound.voice_3d_count]) |*voice| {
+            driver.release3DSample(voice.sample);
+            voice.* = Voice3D.free;
+        }
+        sound.voice_3d_count = 0;
+        sound.engine_voice = null;
+        sound.burner_voice = null;
+    }
+
+    /// `sound_3d_voice_end` (`0x00481AF0`): ends what a 3D voice plays and frees it, and the
+    /// object it followed has none. Not ported: a missile's, whose object the missiles' records
+    /// name (#39).
+    pub fn end3D(sound: *Sound, v: u8) void {
+        const driver = sound.driver orelse return;
+        const voice = &sound.voices_3d[v];
+        if (voice.owner == -1) return;
+        if (voice.follows == .object) if (sound.objects) |all| {
+            if (voice.owner < all.slots.len) all.slots[@intCast(voice.owner)].object.sound_voice = 0xFFFF;
+        };
+        voice.priority = 0;
+        voice._unknown_0c = 0;
+        voice.owner = -1;
+        voice.borrowed = false;
+        voice.follows = .none;
+        driver.end3DSample(voice.sample);
+    }
+
+    /// `sound_3d_end_all` (`0x00481BA0`): ends every 3D voice's sound, keeping what it held.
+    pub fn end3DAll(sound: *Sound) void {
+        const driver = sound.driver orelse return;
+        for (sound.voices_3d[0..sound.voice_3d_count]) |*voice| {
+            voice.priority = 0;
+            voice._unknown_0c = 0;
+            driver.end3DSample(voice.sample);
+        }
+    }
+
+    /// `sound_3d_update` (`0x00481BF0`), once a frame: the player's engine first
+    /// (`sound3d.engineUpdate`), then each 3D voice. One that has played its length, past the
+    /// engine's and the afterburner's, is freed; the rest are placed again from the camera, by
+    /// what they follow, and freed once out of range.
+    pub fn update3D(sound: *Sound, scene: Scene) void {
+        const driver = sound.driver orelse return;
+        if (sound.voice_3d_count == 0) return;
+        sound3d.engineUpdate(sound, scene);
+        const frame_start = scene.clock.frame_start;
+        for (sound.voices_3d[0..sound.voice_3d_count], 0..) |*voice, index| {
+            if (voice.owner == -1) continue;
+            const v: u8 = @intCast(index);
+            const reserved = (if (sound.engine_voice) |held| held == v else false) or (if (sound.burner_voice) |held| held == v else false);
+            if (!reserved) {
+                // The length in bytes of 16-bit sound at 22,050 Hz, turned into ticks.
+                const ticks: i32 = @intFromFloat(@round(@as(f32, @floatFromInt(driver.sample3DLength(voice.sample))) / 441));
+                if (ticks < frame_start - voice.started) {
+                    sound.end3D(v);
+                    continue;
+                }
+            }
+            var position: Vector = @splat(0);
+            var direction: Vector = @splat(0);
+            var velocity: Vector = @splat(0);
+            var place = true;
+            var face = true;
+            var move = true;
+            switch (voice.follows) {
+                .shot, .missile, .none, _ => {
+                    place = false;
+                    face = false;
+                    move = false;
+                },
+                .point_facing => {
+                    position = vector(voice.position);
+                    direction = vector(voice.direction);
+                    move = false;
+                },
+                .point => {
+                    place = false;
+                    face = false;
+                    move = false;
+                },
+                .object => {
+                    const slot = &scene.objects.slots[@intCast(voice.owner)];
+                    if (slot.object.type == @import("gameobj.zig").stand_in_type) {
+                        sound.end3D(v);
+                        continue;
+                    }
+                    position = slot.drawn.position;
+                    if (voice.owner == scene.objects.player) {
+                        position += math.transform(slot.drawn.orientation, .{ 0, 0, -200 });
+                    }
+                    velocity = vector(slot.object.velocity);
+                    direction = math.forward(slot.drawn.orientation);
+                },
+            }
+            const relative = (position - scene.camera.position) * @as(Vector, @splat(distance_scale));
+            const in_range = reserved or !place or math.dot(relative, relative) <= voice.range * voice.range;
+            if (!in_range) {
+                sound.end3D(v);
+                continue;
+            }
+            const heading = if (voice.follows == .point) Vector{ 0, 0, 1 } else math.normalize(math.transformTransposed(scene.camera.orientation, direction));
+            if (place) driver.set3DPosition(voice.sample, miles(math.transformTransposed(scene.camera.orientation, relative)));
+            if (face or voice.follows == .point) driver.set3DOrientation(voice.sample, miles(heading), .{ 0, 1, 0 });
+            if (move) driver.set3DVelocity(voice.sample, miles(math.transformTransposed(scene.camera.orientation, velocity) * @as(Vector, @splat(velocity_scale))));
+        }
+    }
+
+    // --- Music -----------------------------------------------------------------------------------
+
+    /// `music_play` (`0x00482A80`): plays the file at `path`, `loops` times (0 for ever) at `level`,
+    /// now, closing what was playing; or, with `now` false, once the music playing has faded out.
+    /// A piece the loop table names loops back to its own point rather than to the start.
+    pub fn playMusic(sound: *Sound, path: []const u8, loops: u32, level: i32, now: bool) void {
+        const driver = sound.driver orelse return;
+        if (!now) {
+            var queued: Music.Queued = .{ .loops = loops, .level = level };
+            queued.path_len = @min(path.len, queued.path.len);
+            @memcpy(queued.path[0..queued.path_len], path[0..queued.path_len]);
+            sound.music.queued = queued;
+            sound.fadeMusic(fade_ticks);
+            return;
+        }
+        sound.closeMusic();
+        sound.music.fading = false;
+        sound.music.queued = null;
+        const files = sound.files orelse return;
+        sound.music.file = readMusic(files, path) catch |err| {
+            log.warn("the music {s} is left out: {s}", .{ path, @errorName(err) });
+            return;
+        };
+        const stream = driver.openStream(sound.music.file) orelse {
+            log.warn("the music {s} cannot be played", .{path});
+            files.gpa.free(sound.music.file);
+            sound.music.file = &.{};
+            return;
+        };
+        sound.music.stream = stream;
+        driver.setStreamLoopCount(stream, loops);
+        driver.setStreamPosition(stream, 0);
+        const loop_start = musicLoopStart(path);
+        driver.setStreamLoopBlock(stream, loop_start, -1);
+        // The game sets the position to the loop's start, negated, which Miles takes as nothing.
+        driver.setStreamPosition(stream, -loop_start);
+        sound.music.level = level;
+        sound.applyVolumes();
+        driver.startStream(stream);
+    }
+
+    /// `music_update` (`0x00482C30`), once a frame: the queued piece starts once the music has
+    /// stopped.
+    pub fn updateMusic(sound: *Sound) void {
+        const queued = sound.music.queued orelse return;
+        if (sound.musicPlaying()) return;
+        sound.music.queued = null;
+        sound.playMusic(queued.path[0..queued.path_len], queued.loops, queued.level, true);
+    }
+
+    /// `music_fade_out` (`0x00482960`): the music fades by `step` every five ticks until it stops.
+    pub fn fadeMusic(sound: *Sound, step: i32) void {
+        if (sound.music.stream == null) return;
+        sound.music.fading = true;
+        sound.music.fade_step = step;
+    }
+
+    /// `music_playing` (`0x00482940`).
+    pub fn musicPlaying(sound: *Sound) bool {
+        const driver = sound.driver orelse return false;
+        const stream = sound.music.stream orelse return false;
+        return driver.streamStatus(stream) == .playing;
+    }
+
+    /// `music_pause` (`0x00482C70`) and `music_resume` (`0x00482C90`).
+    pub fn pauseMusic(sound: *Sound, paused: bool) void {
+        const driver = sound.driver orelse return;
+        if (sound.music.stream) |stream| driver.pauseStream(stream, paused);
+    }
+
+    /// `music_close` (`0x00482CF0`).
+    pub fn closeMusic(sound: *Sound) void {
+        if (sound.music.stream) |stream| if (sound.driver) |driver| driver.closeStream(stream);
+        sound.music.stream = null;
+        if (sound.music.file.len > 0) if (sound.files) |files| files.gpa.free(sound.music.file);
+        sound.music.file = &.{};
+    }
+};
+
+/// `sound_pitch_factor` (`0x00481400`): what `n` quarter tones multiply a rate by, from a sixteenth
+/// at 96 down to sixteen at 96 up. **Improvement:** the game looks it up in a table of rounded
+/// powers of two; the port works it out.
+pub fn pitchFactor(n: i32) f32 {
+    const clamped = std.math.clamp(n, -96, 96);
+    return std.math.pow(f32, 2, @as(f32, @floatFromInt(clamped)) / 24);
+}
+
+/// The byte a piece of music loops back to: the loop table's, for the piece whose name the file's
+/// name starts with, ignoring case, or 0.
+pub fn musicLoopStart(path: []const u8) i32 {
+    const name = if (std.mem.lastIndexOfAny(u8, path, "\\/")) |at| path[at + 1 ..] else path;
+    for (music_loops) |piece| {
+        if (name.len >= piece.name.len and std.ascii.eqlIgnoreCase(name[0..piece.name.len], piece.name)) return piece.loop_start;
+    }
+    return 0;
+}
+
+/// Reads the music file at `path`, a path of the game's with backslashes, from the game's directory:
+/// as named, or else by a name that differs only in case, as Windows would find it.
+fn readMusic(files: Files, path: []const u8) ![]u8 {
+    var buffer: [256]u8 = undefined;
+    if (path.len > buffer.len) return error.NameTooLong;
+    const native = buffer[0..path.len];
+    for (native, path) |*out, char| out.* = if (char == '\\') '/' else char;
+    return files.dir.readFileAlloc(files.io, native, files.gpa, .limited(64 << 20)) catch |err| switch (err) {
+        error.FileNotFound => {
+            const slash = std.mem.lastIndexOfScalar(u8, native, '/');
+            const folder = if (slash) |at| native[0..at] else ".";
+            const name = if (slash) |at| native[at + 1 ..] else native;
+            var dir = try files.dir.openDir(files.io, folder, .{ .iterate = true });
+            defer dir.close(files.io);
+            var entries = dir.iterate();
+            while (try entries.next(files.io)) |entry| {
+                if (std.ascii.eqlIgnoreCase(entry.name, name)) {
+                    return dir.readFileAlloc(files.io, entry.name, files.gpa, .limited(64 << 20));
+                }
+            }
+            return err;
+        },
+        else => return err,
+    };
+}
+
+pub fn vector(v: shp.Vec3) Vector {
+    return @import("gameobj.zig").vector(v);
+}
+
+/// A camera-space vector as Miles takes it: the camera's `y` points down, Miles's up.
+pub fn miles(v: Vector) mss.Vector {
+    return .{ v[0], -v[1], v[2] };
 }
 
 /// What `tick_timer` (`0x004827C0`) does to the mission's clocks, 100 times a second. Its other
-/// half, which keeps the Miles streams and the sound voices going, isn't ported yet (#49).
-/// **Unverified:** it lies after this file's known code, before `hud.cpp`'s.
+/// half steps the fades (`Sound.timerTick`). **Unverified:** it lies after this file's known code,
+/// before `hud.cpp`'s.
 pub fn tickTimer(clock: *Clock) void {
     clock.timer_ticks +%= 1;
     if (clock.paused) return;
@@ -51,4 +787,113 @@ pub fn tickTimer(clock: *Clock) void {
             }
         }
     }
+}
+
+pub const testing = struct {
+    /// A bank of `count` sounds, each four frames of 16-bit PCM, the `n`th at priority `n * 10`.
+    pub fn bank(comptime count: usize) [fat.header_size + count * @sizeOf(fat.Entry) + count * sound_file.len]u8 {
+        var bytes: [fat.header_size + count * @sizeOf(fat.Entry) + count * sound_file.len]u8 = undefined;
+        @memcpy(bytes[0..fat.header_size], std.mem.asBytes(&fat.Header{ .magic = fat.magic.*, .count = count }));
+        for (0..count) |n| {
+            const offset = fat.header_size + count * @sizeOf(fat.Entry) + n * sound_file.len;
+            const entry: fat.Entry = .{ .offset = offset, .size = sound_file.len, .priority = n * 10 };
+            @memcpy(bytes[fat.header_size + n * @sizeOf(fat.Entry) ..][0..@sizeOf(fat.Entry)], std.mem.asBytes(&entry));
+            @memcpy(bytes[offset..][0..sound_file.len], sound_file);
+        }
+        return bytes;
+    }
+
+    pub const sound_file = wave.testing.pcm(&std.mem.toBytes([4]i16{ 16384, 16384, 16384, 16384 }));
+};
+
+test {
+    std.testing.refAllDecls(@This());
+}
+
+test "Sound.play takes a free voice, else the lowest priority below its own" {
+    var driver: mss.Driver = .init(22050);
+    var sound: Sound = undefined;
+    sound.init(&driver, 3, null);
+    const bytes = comptime testing.bank(4);
+    const bank = try fat.Bank.parse(&bytes);
+
+    // Voice 0 is passed over while another has finished.
+    try std.testing.expectEqual(1, sound.play(bank, 1, 127, 1, 64, 0));
+    try std.testing.expectEqual(2, sound.play(bank, 2, 127, 1, 64, 0));
+    try std.testing.expectEqual(10, sound.voices[1].priority);
+    // Voice 0 has never played, so it takes the next; then all are busy.
+    try std.testing.expectEqual(0, sound.play(bank, 1, 127, 1, 64, 0));
+    // A sound of priority 30 takes over the lowest, 10, on voice 0; one of 0 takes nothing.
+    try std.testing.expectEqual(0, sound.play(bank, 3, 127, 1, 64, 0));
+    try std.testing.expectEqual(null, sound.play(bank, 0, 127, 1, 64, 0));
+    // A held voice is never taken over.
+    sound.voices[1].held = 1;
+    try std.testing.expectEqual(null, sound.play(bank, 1, 127, 1, 64, 0));
+
+    // The effects volume, 80, and the master's scale the volume asked for.
+    try std.testing.expectEqual(@divTrunc(80 * 127, 128), driver.sampleVolume(sound.voices[0].sample));
+}
+
+test "Sound.timerTick steps the fades every five ticks" {
+    var driver: mss.Driver = .init(22050);
+    var sound: Sound = undefined;
+    sound.init(&driver, 2, null);
+    const bytes = comptime testing.bank(2);
+    const bank = try fat.Bank.parse(&bytes);
+    const v = sound.play(bank, 1, 127, 0, 64, 0).?;
+    const start = driver.sampleVolume(sound.voices[v].sample);
+    sound.fadeVoice(v, 30);
+    sound.timerTick(6);
+    try std.testing.expectEqual(start - 30, driver.sampleVolume(sound.voices[v].sample));
+    // Not again until five ticks have passed.
+    sound.timerTick(8);
+    try std.testing.expectEqual(start - 30, driver.sampleVolume(sound.voices[v].sample));
+    sound.timerTick(12);
+    sound.timerTick(18);
+    try std.testing.expectEqual(mss.Status.done, driver.sampleStatus(sound.voices[v].sample));
+    try std.testing.expectEqual(0, sound.voices[v].fading);
+}
+
+test "Sound pauses and resumes its voices" {
+    var driver: mss.Driver = .init(22050);
+    var sound: Sound = undefined;
+    sound.init(&driver, 2, null);
+    const bytes = comptime testing.bank(2);
+    const bank = try fat.Bank.parse(&bytes);
+    const v = sound.play(bank, 1, 127, 0, 64, 0).?;
+    sound.pauseAll();
+    try std.testing.expectEqual(mss.Status.stopped, driver.sampleStatus(sound.voices[v].sample));
+    sound.resumeAll();
+    try std.testing.expectEqual(mss.Status.playing, driver.sampleStatus(sound.voices[v].sample));
+}
+
+test "Sound gathers positional sounds and plays them panned" {
+    var driver: mss.Driver = .init(22050);
+    var sound: Sound = undefined;
+    sound.init(&driver, 4, null);
+    const bytes = comptime testing.bank(4);
+    const bank = try fat.Bank.parse(&bytes);
+    const view: camera.Place = .{ .position = @splat(0), .orientation = math.identity };
+    // Close by to the right: the right ear takes all of it, the left a little less.
+    sound.bufferAt(2, .{ 0.05, 0, 0.1 }, view, 1);
+    try std.testing.expect(sound.buffered[2][1] > 0);
+    try std.testing.expect(sound.buffered[2][0] <= sound.buffered[2][1]);
+    // Past the eighteenth, nothing is gathered.
+    sound.bufferAt(20, .{ 1, 0, 0 }, view, 1);
+    try std.testing.expectEqual([2]f32{ 0, 0 }, sound.buffered[20]);
+    sound.playBuffered(bank);
+    try std.testing.expectEqual([2]f32{ 0, 0 }, sound.buffered[2]);
+}
+
+test pitchFactor {
+    try std.testing.expectEqual(@as(f32, 1), pitchFactor(0));
+    try std.testing.expectApproxEqAbs(@as(f32, 2), pitchFactor(24), 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 16), pitchFactor(200), 1e-4);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0 / 16.0), pitchFactor(-200), 1e-6);
+}
+
+test musicLoopStart {
+    try std.testing.expectEqual(188318, musicLoopStart("music\\New_Mission01.wav"));
+    try std.testing.expectEqual(297178, musicLoopStart("music/New_Searching Mission 01.wav"));
+    try std.testing.expectEqual(0, musicLoopStart("music\\New_Takeoff - Music.wav"));
 }

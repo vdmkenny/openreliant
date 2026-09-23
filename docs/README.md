@@ -27,6 +27,7 @@ of a legally owned copy. The repository holds none of the game's files.
 | [`engine/rendering.md`](engine/rendering.md) | Rendering: layers, depth, shading modes as materials, lighting, blending, highlights. |
 | [`engine/objects.md`](engine/objects.md) | Live objects: the object array, model hierarchies, components, the flight model. |
 | [`engine/guns.md`](engine/guns.md) | Guns: the guns a model holds, their groups, the trigger and the step that fires them. |
+| [`engine/sound.md`](engine/sound.md) | Sound: the banks' sounds on their voices, the 3D effects, the player's engine, and the music. |
 | [`engine/loop.md`](engine/loop.md) | The game loop: the 100 Hz tick, the 25 Hz simulation step, collisions. |
 | [`engine/controls.md`](engine/controls.md) | Player input: devices, bindings, settings, steering and throttle. |
 | [`engine/hud.md`](engine/hud.md) | The head-up display: how it is reached, where an element stands, its text and its art. |
@@ -34,6 +35,7 @@ of a legally owned copy. The repository holds none of the game's files.
 | [`engine/maneuvers.md`](engine/maneuvers.md) | Combat maneuvers: the scripts Fight runs, their language, and how it chooses them. |
 | [`port/platform.md`](port/platform.md) | The platform: the `openreliant` executable on SDL3, how to build and run it on each system, the installer, and joysticks and gamepads. |
 | [`port/renderer.md`](port/renderer.md) | The renderer: Surrender's pipeline and Direct3D driver as ported, the software reference device, improvements and what is not yet ported. |
+| [`port/sound.md`](port/sound.md) | Sound: the stand-in for the Miles Sound System, and its output through SDL3. |
 
 ## Conventions
 

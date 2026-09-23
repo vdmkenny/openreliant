@@ -25,7 +25,7 @@ make sounds                           # every sound in resource.hog into game/so
 | 8 | Priority |
 
 The sounds follow the entries back to back, to the end of the file, and each is a complete WAVE
-file whose RIFF length matches its entry's size. All but one are IMA ADPCM (format `0x11`, 4 bits per
+file ([`formats/wave.zig`](../../src/formats/wave.zig)) whose RIFF length matches its entry's size. All but one are IMA ADPCM (format `0x11`, 4 bits per
 sample, with a `fact` chunk giving the length) at 11,025, 22,050 or 44,100 Hz, mono or stereo; the
 other is 16-bit PCM. `sltool fat extract` writes them unchanged.
 
@@ -35,8 +35,7 @@ The engine reads a whole bank into memory with its generic file loader, `hog_rea
 (`0x004C7F60`), and plays sound `n` of it with `sound_play` (`0x00481F80`), which passes Miles the
 WAVE file at `bank + offset`. The priority decides whether a sound may take over a voice already
 playing: the player finds the busy voice of lowest priority and stops it only for a sound whose
-priority is higher, then records the new sound's priority on the voice (`SoundVoice` in
-[`src/engine/game/hog_snd.zig`](../../src/engine/game/hog_snd.zig)).
+priority is higher, then records the new sound's priority on the voice ([Sound](../engine/sound.md)).
 
 The shipped banks use priorities 1, 5, 50 and 10000. Most hold a single sound: those named for the
 flyable fighters, such as `PREDATOR.FAT`, each hold one at priority 10000. `betty.fat` holds the

@@ -5,6 +5,7 @@ const Io = std.Io;
 
 const openreliant = @import("openreliant");
 const fat = openreliant.fat;
+const Wave = openreliant.wave.Wave;
 
 const Context = @import("main.zig").Context;
 
@@ -50,7 +51,7 @@ fn ls(ctx: Context, bank: fat.Bank) !void {
     try ctx.stdout.writeAll("   #    offset     bytes  priority  format      ch   rate  seconds\n");
     for (bank.entries, 0..) |entry, i| {
         try ctx.stdout.print("{d:>4}  {d:>8}  {d:>8}  {d:>8}  ", .{ i, entry.offset, entry.size, entry.priority });
-        const wave = fat.Wave.parse(bank.sound(i).?) catch {
+        const wave = Wave.parse(bank.sound(i).?) catch {
             try ctx.stdout.writeAll("not a WAVE file\n");
             continue;
         };

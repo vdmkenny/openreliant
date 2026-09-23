@@ -470,8 +470,9 @@ pub fn step(world: gameobj.World, clock: *const Clock, index: u16) void {
     for (fitted) |*gun| {
         if (clock.frame_start >= gun.firing_until) continue;
         const record = gun.type.stats(stats);
-        // The sound's turn comes round before the shot that would be heard (`heard`). Only type
+        // Whether the shot is heard is worked out before the sound's turn comes round. Only type
         // 0, which no gun has, has a period of zero.
+        const is_heard = heard(world, index, gun.*);
         if (gun.turret != .unset and (record.kind == .energy or record.kind == .rounds)) {
             gun.sounded = @rem(gun.sounded + 1, @max(1, gun_stats.sound_periods[gun.type.number()]));
         }
@@ -486,7 +487,7 @@ pub fn step(world: gameobj.World, clock: *const Clock, index: u16) void {
                             alternated = true;
                         }
                         if (!fires(world, object)) break :shot;
-                        shoot(world, clock, index, gun.*);
+                        shoot(world, clock, index, gun.*, is_heard);
                         object.gun_charge -= @floatFromInt(record.shot_energy);
                     },
                     .rounds => {
@@ -496,7 +497,7 @@ pub fn step(world: gameobj.World, clock: *const Clock, index: u16) void {
                             alternated = true;
                         }
                         if (!fires(world, object)) break :shot;
-                        shoot(world, clock, index, gun.*);
+                        shoot(world, clock, index, gun.*, is_heard);
                         object.rounds -= 1;
                     },
                     else => {},
@@ -510,7 +511,7 @@ pub fn step(world: gameobj.World, clock: *const Clock, index: u16) void {
                 alternated = true;
             }
             // Not ported: the particles the muzzle puffs (`clip_event_particles`).
-            shoot(world, clock, index, gun.*);
+            shoot(world, clock, index, gun.*, is_heard);
             object.rounds -= 1;
         }
     }
@@ -542,9 +543,6 @@ fn refire(record: Gun, blind: bool) i32 {
 /// Whether a gun's shot is heard: the player's shots all are, and another ship's one in every
 /// `gun_stats.sound_periods` steps of firing. The step works this out before it advances the
 /// count, so it holds for the shot the gun is about to take.
-///
-/// Nothing asks yet: the sound a shot makes isn't ported
-/// ([#47](https://github.com/vdmkenny/openreliant/issues/47)).
 pub fn heard(world: gameobj.World, owner: u16, gun: Fitted) bool {
     return owner == world.objects.player or gun.sounded == 0;
 }
@@ -977,7 +975,7 @@ const hostile_shot_light: [3]f32 = .{ 1, 0.5, 0 };
 /// ([#154](https://github.com/vdmkenny/openreliant/issues/154)); its sound ([#47](https://github.com/vdmkenny/openreliant/issues/47)), the force feedback a
 /// player's shot gives ([#83](https://github.com/vdmkenny/openreliant/issues/83)), and the aim a
 /// ship firing blind takes at its target.
-pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, gun: Fitted) void {
+pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, gun: Fitted, is_heard: bool) void {
     const all = world.objects;
     const slot = &all.slots[owner];
     const model = if (slot.model) |*live| live else return;
@@ -1037,7 +1035,20 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, gun: Fitted)
         const pitch = (draw(world.random) - 0.5) * flak_scatter;
         bullet.velocity = math.transform(math.fromAngles(pitch, yaw, roll), bullet.velocity);
     }
+    if (is_heard) shotSound(world, @intCast(index), kind, record.sound, owner == all.player);
     candidates(world, bullet, record, lifetime);
+}
+
+/// The sound a shot makes as it is fired (`bullet_fire`), its gun type's, following it: on a voice
+/// of the player's guns for the player's shots, and on a guaranteed one for the huge guns'.
+fn shotSound(world: gameobj.World, index: u8, kind: GunType, sound: i32, player: bool) void {
+    const hearing = world.hearing orelse return;
+    const which = std.enums.fromInt(sound3d.sounds.Sound, sound) orelse return;
+    const class: sound3d.Class = switch (kind) {
+        .allied_huge_gun, .coalition_huge_gun => .guaranteed,
+        else => if (player) .player_guns else .not_reserved,
+    };
+    _ = sound3d.play(hearing.sound, hearing.scene(world), null, null, index, which, 1, class);
 }
 
 /// The objects `bullet_place` gives a new shot: those its path comes near enough to over its life,
@@ -1137,6 +1148,10 @@ pub fn bulletsFrame(world: gameobj.World, clock: *const Clock, fraction: f32) vo
                 continue;
             }
         }
+        // A flak shell bursts as it ends. Not ported: the burst itself (#41).
+        if (bullet.kind == .turret_flak) if (world.hearing) |hearing| {
+            _ = sound3d.play(hearing.sound, hearing.scene(world), null, null, @intCast(index), .flak01, 1, .explosions);
+        };
         bullets.release(@intCast(index));
     }
 }
@@ -1291,7 +1306,7 @@ test shoot {
     defer ship.deinit(gpa);
     const world = ship.world();
 
-    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0]);
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0], false);
     try std.testing.expectEqual(1, flying(world));
     const bullet = &world.objects.bullets.pool[0];
     // It leaves the muzzle, a hundred to the left of the ship's nose, flying along that nose at
@@ -1310,7 +1325,7 @@ test shoot {
 
     // Nothing is fired once every record is in flight.
     for (&world.objects.bullets.pool) |*record| record.live = true;
-    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0]);
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0], false);
     try std.testing.expectEqual(max_bullets, flying(world));
 }
 
@@ -1329,7 +1344,7 @@ test bulletsFrame {
 
     // A shot whose path crosses the ship: its shields take the type's first damage, and it is
     // spent.
-    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0]);
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0], false);
     const bullet = &world.objects.bullets.pool[0];
     try std.testing.expectEqual(1, bullet.candidate_count);
     try std.testing.expectEqual(target, bullet.candidates[0].object);
@@ -1343,7 +1358,7 @@ test bulletsFrame {
     struck.shields = .all(0);
     struck.recent_damage = 0;
     const armor = struck.armor;
-    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0]);
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0], false);
     const next = &world.objects.bullets.pool[0];
     next.last = .{ 0, 0, 0 };
     next.at = .{ 0, 0, 600 };
@@ -1353,7 +1368,7 @@ test bulletsFrame {
     try std.testing.expectEqual(0, flying(world));
 
     // A shot that reaches the end of its life is let go.
-    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0]);
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0], false);
     try std.testing.expectEqual(1, flying(world));
     ship.mission.clock.frame_start += 1000;
     bulletsFrame(world, &ship.mission.clock, 0);
@@ -1373,7 +1388,7 @@ test "the player's shifted shields take a hit before the quadrant does" {
     ship.mission.player.shield_reserves = .{ .fore = 25, .aft = 0 };
 
     // A shot into the player's fore quadrant comes off the reserve, and the shields are untouched.
-    shoot(world, &ship.mission.clock, shooter, ship.mission.objects.slots[shooter].guns[0]);
+    shoot(world, &ship.mission.clock, shooter, ship.mission.objects.slots[shooter].guns[0], false);
     const bullet = &world.objects.bullets.pool[0];
     bullet.last = .{ 0, 0, 500 };
     bullet.at = .{ 0, 0, -100 };
@@ -1383,6 +1398,37 @@ test "the player's shifted shields take a hit before the quadrant does" {
     bulletsFrame(world, &ship.mission.clock, 0);
     try std.testing.expectEqual(15, ship.mission.player.shield_reserves.fore);
     try std.testing.expectEqual(shields, player.object.shields);
+}
+
+test "a heard shot sounds, following it" {
+    const hog_snd = @import("hog_snd.zig");
+    const mss = @import("../mss.zig");
+    const gpa = std.testing.allocator;
+    var ship: testing.Ship = undefined;
+    try ship.init(gpa);
+    defer ship.deinit(gpa);
+    var driver: mss.Driver = .init(22050);
+    var sound: hog_snd.Sound = undefined;
+    sound.init(&driver, 4, null);
+    const bank = comptime hog_snd.testing.bank(80);
+    sound.open3D(try @import("../../formats/fat.zig").Bank.parse(&bank));
+    const listener: @import("camera.zig").Place = .{ .position = @splat(0), .orientation = math.identity };
+    var world = ship.world();
+    world.hearing = .{ .sound = &sound, .camera = &listener, .clock = &ship.mission.clock };
+
+    // Unheard, nothing plays; heard, the gun type's sound follows the shot.
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0], false);
+    for (sound.voices_3d[0..sound.voice_3d_count]) |voice| try std.testing.expectEqual(-1, voice.owner);
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[1], true);
+    const record = testing.gun_type.stats(&ship.mission.objects.gun_stats);
+    var found = false;
+    for (sound.voices_3d[0..sound.voice_3d_count]) |voice| {
+        if (voice.owner != 1) continue;
+        try std.testing.expectEqual(sound3d.Follows.shot, voice.follows);
+        try std.testing.expectEqual(record.sound, voice.sound);
+        found = true;
+    }
+    try std.testing.expect(found);
 }
 
 test "only the latest two shots of a ring cast a light" {
@@ -1397,14 +1443,14 @@ test "only the latest two shots of a ring cast a light" {
     ship.mission.objects.slots[other].object.side = .hostile;
 
     // The player's third shot puts out the first one's light.
-    for (0..3) |_| shoot(world, &ship.mission.clock, ship.index, ship.guns()[0]);
+    for (0..3) |_| shoot(world, &ship.mission.clock, ship.index, ship.guns()[0], false);
     try std.testing.expectEqual(null, bullets.pool[0].light);
     try std.testing.expect(bullets.pool[1].light != null);
     try std.testing.expect(bullets.pool[2].light != null);
     try std.testing.expectEqual(shot_light, bullets.pool[2].light.?.colour);
 
     // Another ship's shots keep a ring of their own, and a hostile ship's are orange.
-    shoot(world, &ship.mission.clock, other, ship.mission.objects.slots[other].guns[0]);
+    shoot(world, &ship.mission.clock, other, ship.mission.objects.slots[other].guns[0], false);
     try std.testing.expectEqual(hostile_shot_light, bullets.pool[3].light.?.colour);
     try std.testing.expect(bullets.pool[1].light != null);
 
@@ -1422,7 +1468,7 @@ test "every shot casts a light where the port lets them" {
     defer ship.deinit(gpa);
     const world = ship.world();
     world.objects.bullets.shot_lights = .every_shot;
-    for (0..3) |_| shoot(world, &ship.mission.clock, ship.index, ship.guns()[0]);
+    for (0..3) |_| shoot(world, &ship.mission.clock, ship.index, ship.guns()[0], false);
     for (world.objects.bullets.pool[0..3]) |bullet| try std.testing.expect(bullet.light != null);
     // The rings are left alone.
     try std.testing.expectEqual(null, world.objects.bullets.player_lights.held[0]);
@@ -1445,7 +1491,7 @@ test "a Turret Flak shot bursts at a random range, scatters, and is at times a l
     var flak: usize = 0;
     var lasers: usize = 0;
     for (0..40) |_| {
-        shoot(world, &ship.mission.clock, ship.index, gun);
+        shoot(world, &ship.mission.clock, ship.index, gun, false);
         const bullet = &world.objects.bullets.pool[0];
         if (bullet.kind == .turret_lasers) {
             // A laser's shot flies straight, for its type's whole life.
@@ -1479,7 +1525,7 @@ test "a Huge Gun's shot reaches farther, and always through the shields" {
     const slot = &ship.mission.objects.slots[target];
     slot.drawn = .{ .position = .{ 1500, 0, 500 }, .orientation = math.identity };
     slot.object.shields = .all(0);
-    shoot(world, &ship.mission.clock, ship.index, gun);
+    shoot(world, &ship.mission.clock, ship.index, gun, false);
     const bullet = &world.objects.bullets.pool[0];
     try std.testing.expectEqual(1, bullet.candidate_count);
     bullet.last = .{ 0, 0, 0 };
@@ -2348,6 +2394,7 @@ const objects = @import("objects.zig");
 const math = @import("../surrender/math.zig");
 const Vector = math.Vector;
 const shp = @import("../../formats/shp.zig");
+const sound3d = @import("sound3d.zig");
 const srapi = @import("../surrender/surrenderlib/srapi.zig");
 const srapiext = @import("../surrender/surrenderlib/srapiext.zig");
 const srcore = @import("../surrender/surrenderlib/srcore.zig");
