@@ -100,7 +100,7 @@ const Doc = struct {
 
 /// Every option's help, which the compiler holds to having one for each.
 const docs: std.enums.EnumArray(Arg, Doc) = .init(.{
-    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings and particles as few and plain as the original's, and the sound mixed plainly in stereo" },
+    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings and particles as few and plain as the original's, the shields' bubbles as coarse as the original's, and the sound mixed plainly in stereo" },
     .@"--ship" = .{ .section = .sandbox, .value = "<type>", .text = "the ship type to fly, by its number in shipstats.bin; 0, the Predator, by default" },
     .@"--view" = .{ .section = .sandbox, .value = "<0|1|2>", .text = "the view it starts in, as the game's settings keep it: 0 the cockpit, the default; 1 the chase view; 2 no cockpit" },
     .@"--difficulty" = .{ .section = .sandbox, .value = "<easy|medium|hard>", .text = "the game's difficulty: how hard hits land on your ship, and shots on the enemy; medium by default, as in the game" },
@@ -212,6 +212,8 @@ const Options = struct {
     fireballs: game.explode.Fireballs = .fuller,
     rings: game.shockwave.Roundness = .round,
     distant: game.particles.Pool.Distant = .whole,
+    /// How the shields' bubbles are drawn.
+    shields: game.shield.Style = .smooth,
     /// How the sound plays, or null for none.
     sound: ?platform.audio.Options = .{},
     /// The piece of music the sandbox plays, from `music\`, or none.
@@ -260,6 +262,7 @@ const Options = struct {
                 options.fireballs = .original;
                 options.rings = .octagon;
                 options.distant = .thinned;
+                options.shields = .original;
                 if (options.sound) |*sound| sound.* = .{ .player = .software, .master = null };
             },
             .@"--ship" => {
@@ -558,7 +561,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     defer shockwaves.deinit(gpa);
     var sparks: game.sparks.Sparks = try .create(gpa, &textures);
     defer sparks.deinit();
-    var shields: game.shield.Shields = try .create(gpa, &textures, explosions.settings.detail, context.hardware);
+    var shields: game.shield.Shields = try .create(gpa, &textures, explosions.settings.detail, context.hardware, options.shields);
     defer shields.deinit(gpa);
     // What the objects run in, the camera's view brought up to date each frame.
     var world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .difficulty = options.difficulty, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .shockwaves = &shockwaves, .sparks = &sparks, .shields = &shields };
@@ -1332,6 +1335,8 @@ test Options {
     try std.testing.expectEqual(.octagon, retro.rings);
     try std.testing.expectEqual(.thinned, retro.distant);
     try std.testing.expectEqual(.fuller, plain.fireballs);
+    try std.testing.expectEqual(.smooth, plain.shields);
+    try std.testing.expectEqual(.original, retro.shields);
     try std.testing.expect(!(try play(&.{"--no-smooth-motion"})).smooth_motion);
     try std.testing.expectEqual(.latest_two, (try play(&.{"--few-shot-lights"})).shot_lights);
     // Sound is on, with the first mission's music, unless told otherwise.

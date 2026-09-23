@@ -312,6 +312,18 @@ bubble past the last level's reach is left out, where the game stops the pass th
 the bubbles in the slots after it. The port moves a bubble's colours on as it goes into the scene
 rather than as the renderer draws it, so one out of view still fades.
 
+**Improvement:** by default a bubble is drawn smooth; `--original` draws it as the game does. A
+smooth bubble keeps its last 16 hits as where each struck and when, and works each vertex's
+strength out from them for the frame, fading by the share of a tick the frame is at. So it is
+right on whichever level it is drawn at, where the game's strengths belong to the vertices of the
+level struck and a bubble drawn at another level reads them for other vertices, and it fades
+evenly at any frame rate. Each level's texture coordinates are its own vertices', where the game's
+lower levels read the finest level's; and the texture swirls about its centre, where the game
+leaves the centre off the coordinates it turns, so its texture wanders further each time it is
+drawn, the faster the higher the frame rate. Within half the finest level's reach it is drawn on a
+sphere of 48 slices by 40 bands, so the ripple is a smooth ring rather than a band of broad
+triangles.
+
 [`shield.zig`](../../src/engine/game/shield.zig) ports the bubbles, and
 [`guns.zig`](../../src/engine/game/guns.zig) and
 [`collision.zig`](../../src/engine/game/collision.zig) the shots and knocks that flare them. Not

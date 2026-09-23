@@ -247,10 +247,11 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     var attachments = frame.attachments;
     attachments.scale = context.projection.scale[0];
     try drawObjects(gpa, scene, frame.objects, attachments);
-    if (frame.shields) |bubbles| try bubbles.draw(gpa, scene, frame.objects, .{
+    if (frame.shields) |bubbles| try bubbles.draw(gpa, arena, scene, frame.objects, .{
         .camera = attachments.camera,
         .inside = camera.inCockpit(frame.view, frame.cockpit_mode),
         .frame_start = attachments.frame_start,
+        .ahead = frame.ahead,
         .paused = frame.paused,
         .random = attachments.random,
     });

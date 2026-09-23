@@ -92,13 +92,37 @@ const grids = [level_count]Grid{
     .{ .around = 4, .down = 4 },
 };
 
-/// The vertices of the finest level, which a bubble keeps its strengths, colours and texture
-/// coordinates for.
+/// The vertices of the game's finest level, which a bubble keeps its strengths, colours and texture
+/// coordinates for in the original style.
 const max_vertices = grids[0].vertices();
 
 comptime {
     for (grids[1..]) |grid| assert(grid.vertices() <= max_vertices);
 }
+
+/// How a bubble is drawn: as the game draws it, or smooth.
+///
+/// **Improvement:** in the smooth style a bubble keeps each hit as where it struck and when, and
+/// works each drawn vertex's strength out from them, fading by the share of a tick the frame is at
+/// rather than a tick at a time, on whichever level it is drawn at; the game keeps a strength for
+/// each vertex of the level it was struck at, which a bubble drawn at another level reads for
+/// other vertices. Each level's texture coordinates are its own vertices'; the game's lower levels
+/// read the finest level's for other vertices. The texture swirls about its centre, where the
+/// game leaves the centre off the coordinates it turns, so the texture wanders further each time
+/// it is drawn, the more often the higher the frame rate. And within `fine_reach` of the finest
+/// level's reach it is drawn on a finer sphere (`fine_grid`), so the ripple is a smooth ring rather
+/// than a band of the finest level's broad triangles.
+pub const Style = enum { original, smooth };
+
+/// The smooth style's finer sphere, the level `fine_level`, and the share of the finest level's
+/// reach it is drawn out to.
+const fine_grid: Grid = .{ .around = 48, .down = 40 };
+const fine_level = level_count;
+const fine_reach: f32 = 0.5;
+
+/// How many hits a bubble keeps in the smooth style: more than a ripple lasts at any rate of fire,
+/// so none ends early.
+const recent_hits = 16;
 
 /// How far from the camera each level of detail is drawn out to, by the options' detail
 /// (`0x0050887C`, into `0x00593734`). A struck bubble further off than the last isn't drawn.
@@ -205,9 +229,11 @@ const flicker_odds = 4;
 
 /// The bubbles' meshes, colours and textures (`0x0049EF10`), which every bubble shares.
 pub const Shields = struct {
-    meshes: [level_count]srapiext.Mesh,
+    /// The game's levels, then the smooth style's finer one (`fine_level`).
+    meshes: [level_count + 1]srapiext.Mesh,
     /// Each mesh as a single level of detail, which the bubbles drawn point at.
-    levels: [level_count][1]srapiext.Level = undefined,
+    levels: [level_count + 1][1]srapiext.Level = undefined,
+    style: Style,
     ramps: std.EnumArray(Tint, Ramp),
     /// How far from the camera each level is drawn out to.
     reaches: [level_count]f32,
@@ -217,19 +243,20 @@ pub const Shields = struct {
     field: *srtexture.Image,
 
     /// `0x0049EF10`: the textures, each tint's ramp, and the levels' spheres (`0x0049EE90`), at the
-    /// options' detail. The ramps are grey without a hardware renderer.
-    pub fn create(gpa: Allocator, textures: *srtexture.Table, detail: Detail, hardware: bool) (Allocator.Error || matmanager.Error)!Shields {
+    /// options' detail, in `style`. The ramps are grey without a hardware renderer.
+    pub fn create(gpa: Allocator, textures: *srtexture.Table, detail: Detail, hardware: bool, style: Style) (Allocator.Error || matmanager.Error)!Shields {
         const texture = try matmanager.textureRequire(textures, "shield128");
         const field = try matmanager.textureRequire(textures, "ffield");
-        var meshes: [level_count]srapiext.Mesh = undefined;
+        var meshes: [level_count + 1]srapiext.Mesh = undefined;
         var built: usize = 0;
         errdefer for (meshes[0..built]) |mesh| mesh.deinit(gpa);
-        for (&meshes, grids) |*mesh, grid| {
+        for (&meshes, grids ++ [1]Grid{fine_grid}) |*mesh, grid| {
             mesh.* = try sphereMesh(gpa, grid, texture);
             built += 1;
         }
         return .{
             .meshes = meshes,
+            .style = style,
             .ramps = .init(.{ .friendly = buildRamp(.friendly, hardware), .other = buildRamp(.other, hardware) }),
             .reaches = reaches.get(detail),
             .texture = texture,
@@ -242,8 +269,10 @@ pub const Shields = struct {
         for (shields.meshes) |mesh| mesh.deinit(gpa);
     }
 
-    /// The level of detail for a bubble `distance` from the camera, or null past the last.
+    /// The level of detail for a bubble `distance` from the camera, or null past the last: in the
+    /// smooth style, the finer sphere close to it.
     fn levelAt(shields: *const Shields, distance: f32) ?usize {
+        if (shields.style == .smooth and distance < shields.reaches[0] * fine_reach) return fine_level;
         for (shields.reaches, 0..) |reach, level| {
             if (distance < reach) return level;
         }
@@ -257,6 +286,9 @@ pub const Shields = struct {
         /// Whether the camera is in the player's cockpit (`camera.inCockpit`).
         inside: bool,
         frame_start: i32,
+        /// How far past `frame_start` the frame is drawn, as a share of a tick
+        /// (`objects.pastTick`), which the smooth style fades by.
+        ahead: f32 = 0,
         /// While the game is paused (`0x0057E04C`), the bubbles' colours stand still.
         paused: bool = false,
         /// The runtime's numbers (`libcmt.Rand`), which a force field flickers by; without them it
@@ -273,8 +305,9 @@ pub const Shields = struct {
     /// there, leaving out every bubble in the slots after it.
     ///
     /// The game moves a bubble's colours on as the renderer draws it; the port as it goes into the
-    /// scene, so one out of view still fades.
-    pub fn draw(shields: *Shields, gpa: Allocator, scene: *srcore.Scene, all: *Objects, look: Look) Allocator.Error!void {
+    /// scene, so one out of view still fades. In the smooth style each bubble's colours and texture
+    /// coordinates for the frame go in `arena`.
+    pub fn draw(shields: *Shields, gpa: Allocator, arena: Allocator, scene: *srcore.Scene, all: *Objects, look: Look) Allocator.Error!void {
         for (&shields.levels, &shields.meshes) |*level, *mesh| level.* = .{.{ .mesh = mesh, .until = std.math.inf(f32) }};
         for (&all.slots, 0..) |*slot, index| {
             if (slot.object.type == .stand_in) continue;
@@ -282,14 +315,22 @@ pub const Shields = struct {
             const struck = bubble.struck orelse continue;
             const since = look.frame_start -% struck;
             if (since < 0 or since > shown_for) continue;
-            bubble.level = shields.levelAt(math.distance(gameobj.vector(slot.object.root.position), look.camera)) orelse continue;
+            const level = shields.levelAt(math.distance(gameobj.vector(slot.object.root.position), look.camera)) orelse continue;
+            if (shields.style == .original) bubble.level = level;
             if (index == all.player and look.inside) continue;
-            if (!look.paused) {
-                const ticks = if (bubble.updated) |updated| look.frame_start -% updated else 0;
-                bubble.update(shields, ticks, look.frame_start, look.random);
-                bubble.updated = look.frame_start;
+            switch (shields.style) {
+                .original => {
+                    if (!look.paused) {
+                        const ticks = if (bubble.updated) |updated| look.frame_start -% updated else 0;
+                        bubble.update(shields, ticks, look.frame_start, look.random);
+                        bubble.updated = look.frame_start;
+                    }
+                    bubble.object.own_uv = .{ &bubble.uv, null };
+                    bubble.object.baked = &bubble.colours;
+                },
+                .smooth => try bubble.paint(shields, &shields.meshes[level], @as(f32, @floatFromInt(look.frame_start)) + look.ahead, arena),
             }
-            bubble.object.levels = &shields.levels[bubble.level];
+            bubble.object.levels = &shields.levels[level];
             bubble.object.position = slot.drawn.position;
             bubble.object.orientation = slot.drawn.orientation;
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &bubble.object }, .world);
@@ -339,6 +380,17 @@ pub const Bubble = struct {
     /// level's vertex stands across the sphere, and colour (`+0x110`).
     uv: [max_vertices][2]f32,
     colours: [max_vertices][4]f32 = @splat(@splat(0)),
+    /// In the smooth style, its recent hits, and which the next takes; and when it was first
+    /// drawn, from which its texture has swirled.
+    recent: [recent_hits]?Hit = @splat(null),
+    recent_next: std.math.IntFittingRange(0, recent_hits - 1) = 0,
+    born: ?f32 = null,
+
+    /// Where a hit struck, as a direction from the bubble's centre in the ship's frame, and when.
+    const Hit = struct {
+        direction: Vector,
+        at: f32,
+    };
 
     /// `0x0049EF90`: a bubble for a ship of `radius`, of the ship type's side.
     pub fn create(gpa: Allocator, radius: f32, side: gameobj.Side(i16)) Allocator.Error!*Bubble {
@@ -385,6 +437,47 @@ pub const Bubble = struct {
             strength.* = @min(struck_strength + angle / strength_spread, max_strength);
         }
         bubble.next +%= 1;
+    }
+
+    /// The smooth style's hit at `at` on a bubble standing at `place`, at tick `now`.
+    fn remember(bubble: *Bubble, place: math.Place, at: Vector, now: i32) void {
+        bubble.struck = now;
+        bubble.recent[bubble.recent_next] = .{
+            .direction = math.normalize(math.transformTransposed(place.orientation, at - place.position)),
+            .at = @floatFromInt(now),
+        };
+        bubble.recent_next +%= 1;
+    }
+
+    /// The smooth style's colours and texture coordinates for the bubble drawn on `mesh` at `now`,
+    /// in ticks and a share of one: each vertex's colour from what each recent hit leaves there by
+    /// then, and its coordinates its own, swirled about the centre as it has turned since the
+    /// bubble was first drawn.
+    fn paint(bubble: *Bubble, shields: *const Shields, mesh: *const srapiext.Mesh, now: f32, arena: Allocator) Allocator.Error!void {
+        const colours = try arena.alloc([4]f32, mesh.positions.len);
+        const uv = try arena.alloc([2]f32, mesh.positions.len);
+        const born = bubble.born orelse now;
+        bubble.born = born;
+        const age = now - born;
+        const centre = turned(start_centre, age * centre_turn_per_tick);
+        const ramp = shields.ramps.getPtrConst(bubble.tint);
+        for (mesh.positions, colours, uv) |position, *colour, *coordinates| {
+            var sum: Colour = @splat(0);
+            for (bubble.recent) |maybe| {
+                const hit = maybe orelse continue;
+                const angle = std.math.acos(std.math.clamp(math.dot(position, hit.direction), -1, 1));
+                if (!(angle <= hit_reach)) continue;
+                const strength = @min(struck_strength + angle / strength_spread, max_strength) - (now - hit.at) * fade_per_tick;
+                sum += rampAt(ramp, strength);
+            }
+            colour.* = .{ @min(sum[0], 1), @min(sum[1], 1), @min(sum[2], 1), 0 };
+            const off = [2]f32{ position[0] - centre[0], position[1] - centre[1] };
+            const reach = off[0] * off[0] + off[1] * off[1];
+            const swirled = turned(off, if (reach > 0) age * swirl_per_tick / reach else 0);
+            coordinates.* = .{ swirled[0] + centre[0], swirled[1] + centre[1] };
+        }
+        bubble.object.own_uv = .{ uv, null };
+        bubble.object.baked = colours;
     }
 
     /// Flickers the bubble as a force field for `flicker_for` ticks, as a shockwave of kind 6 does
@@ -480,7 +573,11 @@ pub fn flare(world: gameobj.World, index: u16, at: Vector) void {
         sparks.spray(world, .shield, at, at - slot.drawn.position, carried, shield_sparks);
     }
     const shared = world.shields orelse return;
-    bubble.strike(&shared.meshes[bubble.level], slot.drawn, gameobj.vector(object.root.position), at, world.clock.frame_start);
+    const now = world.clock.frame_start;
+    switch (shared.style) {
+        .original => bubble.strike(&shared.meshes[bubble.level], slot.drawn, gameobj.vector(object.root.position), at, now),
+        .smooth => bubble.remember(slot.drawn, at, now),
+    }
 }
 
 test {
@@ -496,7 +593,7 @@ pub const testing = struct {
         pub fn init(gpa: Allocator) !Built {
             const textures = try @import("backdrop.zig").testing.Textures.initNames(gpa, &.{ "shield128", "ffield" });
             errdefer textures.deinit(gpa);
-            return .{ .textures = textures, .shields = try .create(gpa, &textures.table, .high, true) };
+            return .{ .textures = textures, .shields = try .create(gpa, &textures.table, .high, true, .original) };
         }
 
         pub fn deinit(built: *Built, gpa: Allocator) void {
@@ -513,7 +610,7 @@ test Grid {
 
     // Each level is a closed sphere of a unit radius: every corner a vertex of it, no triangle
     // folded flat, and every edge shared by two triangles.
-    for (built.shields.meshes, grids) |mesh, grid| {
+    for (built.shields.meshes, grids ++ [1]Grid{fine_grid}) |mesh, grid| {
         try std.testing.expectEqual(grid.vertices(), mesh.positions.len);
         for (mesh.positions) |position| try std.testing.expectApproxEqAbs(1, math.length(position), 1e-5);
         try std.testing.expectApproxEqAbs(1, mesh.radius, 1e-5);
@@ -646,10 +743,13 @@ test "Shields.draw" {
     for ([_]u16{ player, other }) |index| mission.slot(index).shield.?.struck = 100;
     var scene: srcore.Scene = .{};
     defer scene.deinit(gpa);
+    var frame: std.heap.ArenaAllocator = .init(gpa);
+    defer frame.deinit();
+    const arena = frame.allocator();
     var look: Shields.Look = .{ .camera = @splat(0), .inside = true, .frame_start = 150, .random = null };
 
     // Both were struck within the last hundred ticks, but the camera is in the player's cockpit.
-    try built.shields.draw(gpa, &scene, mission.objects, look);
+    try built.shields.draw(gpa, arena, &scene, mission.objects, look);
     try std.testing.expectEqual(1, scene.layers.get(.world).items.len);
     try std.testing.expectEqual(&mission.slot(other).shield.?.object, scene.layers.get(.world).items[0].mesh);
     // A thousand away is the finest level's reach.
@@ -658,11 +758,60 @@ test "Shields.draw" {
     // From outside, both; past a hundred ticks, neither.
     scene.clear();
     look.inside = false;
-    try built.shields.draw(gpa, &scene, mission.objects, look);
+    try built.shields.draw(gpa, arena, &scene, mission.objects, look);
     try std.testing.expectEqual(2, scene.layers.get(.world).items.len);
     scene.clear();
     look.frame_start = 201;
-    try built.shields.draw(gpa, &scene, mission.objects, look);
+    try built.shields.draw(gpa, arena, &scene, mission.objects, look);
     try std.testing.expectEqual(0, scene.layers.get(.world).items.len);
+}
+
+test "the smooth style" {
+    const gpa = std.testing.allocator;
+    var built: testing.Built = try .init(gpa);
+    defer built.deinit(gpa);
+    built.shields.style = .smooth;
+    const shields = &built.shields;
+    var frame: std.heap.ArenaAllocator = .init(gpa);
+    defer frame.deinit();
+    const arena = frame.allocator();
+
+    // Close to the camera it is drawn on the finer sphere, further off on the game's levels.
+    try std.testing.expectEqual(fine_level, shields.levelAt(4000));
+    try std.testing.expectEqual(0, shields.levelAt(6000));
+
+    const bubble = try Bubble.create(gpa, 100, .friendly);
+    defer bubble.destroy(gpa);
+    const mesh = &shields.meshes[fine_level];
+    const pole = 0;
+    const near = fine_grid.ring(14, 0);
+    const angle = 14 * std.math.pi / @as(f32, fine_grid.down);
+
+    // A hit on its pole, remembered as where it struck and when.
+    bubble.remember(.{}, .{ 0, 0, 500 }, 10);
+    try std.testing.expectEqual(10, bubble.struck);
+    try bubble.paint(shields, mesh, 10, arena);
+    const first = bubble.object.baked.?;
+    try std.testing.expect(first[pole][2] > 0);
+    try std.testing.expectEqual(0, first[near][2]);
+    // Its texture coordinates start as the vertices' own.
+    try std.testing.expectEqual([2]f32{ mesh.positions[near][0], mesh.positions[near][1] }, bubble.object.own_uv[0].?[near]);
+
+    // As it fades the glow moves out, and it fades between the ticks too.
+    const ticks = (struck_strength + angle / strength_spread - 0.6) / fade_per_tick;
+    try bubble.paint(shields, mesh, 10 + ticks, arena);
+    try std.testing.expectEqual(0, bubble.object.baked.?[pole][2]);
+    const out = bubble.object.baked.?[near][2];
+    try std.testing.expect(out > 0);
+    try bubble.paint(shields, mesh, 10 + ticks + 0.5, arena);
+    try std.testing.expect(bubble.object.baked.?[near][2] != out);
+
+    // The texture swirls about its centre, each vertex's coordinates keeping their distance from it.
+    const age = 10 + ticks + 0.5 - 10;
+    const centre = turned(start_centre, age * centre_turn_per_tick);
+    const coordinates = bubble.object.own_uv[0].?[near];
+    const from = [2]f32{ mesh.positions[near][0] - centre[0], mesh.positions[near][1] - centre[1] };
+    const now = [2]f32{ coordinates[0] - centre[0], coordinates[1] - centre[1] };
+    try std.testing.expectApproxEqAbs(from[0] * from[0] + from[1] * from[1], now[0] * now[0] + now[1] * now[1], 1e-4);
 }
 
