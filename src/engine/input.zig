@@ -1191,7 +1191,7 @@ test "held, the stick moves the power or shifts the shields" {
     object.power_setting = .{ .x = 1, .y = 1, .z = 1 };
     object.throttle = 0.5;
     object.yaw_input = 0.3;
-    object.shields = .{ 47, 47, 47, 47 };
+    object.shields = .{ .left = 47, .right = 47, .fore = 47, .aft = 47 };
     var devices: Devices = .{ .settings = .{ .control_mode = .keyboard } };
     const keyboard = &devices.keyboard;
     var player: Player = .{ .throttle = 0.5, .power_held = true };
@@ -1210,8 +1210,8 @@ test "held, the stick moves the power or shifts the shields" {
     devices.read();
     playerControls(&player, &devices, &object, &testing_combat, .cockpit, 16, no_guns);
     try std.testing.expectEqual(17, object.power_setting.x);
-    try std.testing.expectEqual(45, object.shields[2]);
-    try std.testing.expectEqual(40, object.shields[3]);
+    try std.testing.expectEqual(45, object.shields.fore);
+    try std.testing.expectEqual(40, object.shields.aft);
 }
 
 test playerControls {

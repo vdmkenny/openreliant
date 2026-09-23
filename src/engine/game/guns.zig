@@ -1202,7 +1202,7 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
         const struck = collision.quadrant(object, math.transformTransposed(slot.drawn.orientation, point - slot.drawn.position));
 
         const huge = bullet.kind == .allied_huge_gun or bullet.kind == .coalition_huge_gun;
-        if (!huge and (object.shields[@intFromEnum(struck)] <= 0 or object.invulnerable == ._unknown_4 or object.invulnerable == ._unknown_5)) {
+        if (!huge and (object.shields.get(struck) <= 0 or object.invulnerable == ._unknown_4 or object.invulnerable == ._unknown_5)) {
             hullHit(world, bullet, candidate.object, struck);
             return;
         }
@@ -1340,7 +1340,7 @@ test bulletsFrame {
     try std.testing.expectEqual(0, flying(world));
 
     // With its shields down the next shot reaches the hull, which takes the second damage.
-    struck.shields = @splat(0);
+    struck.shields = .all(0);
     struck.recent_damage = 0;
     const armor = struck.armor;
     shoot(world, &ship.mission.clock, ship.index, ship.guns()[0]);
@@ -1349,7 +1349,7 @@ test bulletsFrame {
     next.at = .{ 0, 0, 600 };
     bulletsFrame(world, &ship.mission.clock, 0);
     try std.testing.expectEqual(4, struck.recent_damage);
-    try std.testing.expect(@reduce(.Add, @as(@Vector(4, f32), armor)) > @reduce(.Add, @as(@Vector(4, f32), struck.armor)));
+    try std.testing.expect(@reduce(.Add, @as(@Vector(4, f32), armor.values())) > @reduce(.Add, @as(@Vector(4, f32), struck.armor.values())));
     try std.testing.expectEqual(0, flying(world));
 
     // A shot that reaches the end of its life is let go.
@@ -1478,7 +1478,7 @@ test "a Huge Gun's shot reaches farther, and always through the shields" {
     const target = try ship.add(9, .{ 1500, 0, 500 });
     const slot = &ship.mission.objects.slots[target];
     slot.drawn = .{ .position = .{ 1500, 0, 500 }, .orientation = math.identity };
-    slot.object.shields = @splat(0);
+    slot.object.shields = .all(0);
     shoot(world, &ship.mission.clock, ship.index, gun);
     const bullet = &world.objects.bullets.pool[0];
     try std.testing.expectEqual(1, bullet.candidate_count);

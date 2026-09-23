@@ -522,8 +522,8 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
         object.type_data = .null;
         object.pilot_record = .null;
         object._unknown_628 = .{ .x = 0, .y = 0, .z = 0 };
-        object.shields = @splat(0);
-        object.armor = @splat(0);
+        object.shields = .all(0);
+        object.armor = .all(0);
         object.flags = .standing_in;
         object.radius = stand_in_radius;
         return index;
@@ -579,8 +579,8 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object._unknown_24 = 0;
     pilots.setPilot(object, if (combat.side == .hostile) coalition_pilot else 0);
     // Each quadrant's shields and armour full.
-    object.shields = @splat(@as(f32, @floatFromInt(combat.shield_power * 6)) - 1);
-    object.armor = @splat(@as(f32, @floatFromInt(combat.armor_class * 6)) - 1);
+    object.shields = .all(@as(f32, @floatFromInt(combat.shield_power * 6)) - 1);
+    object.armor = .all(@as(f32, @floatFromInt(combat.armor_class * 6)) - 1);
     main.armorConditions(object, combat);
 
     object.engines_intact = 1;
@@ -1015,8 +1015,8 @@ test createObject {
     try std.testing.expectEqual(.friendly, object.side);
     try std.testing.expectEqual(0, object.pilot);
     // Undamaged: each quadrant six times the type's figure, less one.
-    try std.testing.expectEqual([4]f32{ 47, 47, 47, 47 }, object.shields);
-    try std.testing.expectEqual([4]f32{ 29, 29, 29, 29 }, object.armor);
+    try std.testing.expectEqual(gameobj.Quadrants.all(47), object.shields);
+    try std.testing.expectEqual(gameobj.Quadrants.all(29), object.armor);
     try std.testing.expectEqual(1, object.shield_condition);
     try std.testing.expectEqual(6000, object.afterburner_fuel);
     try std.testing.expectEqual(100, object.gun_charge);

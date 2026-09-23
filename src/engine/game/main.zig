@@ -514,9 +514,9 @@ test "the radar's backing stands where the radar does" {
 /// quadrant has lost its shield and half its armour (#49).
 pub fn armorConditions(object: *gameobj.GameObject, combat: *const create.ShipCombat) void {
     const full: f32 = @floatFromInt(combat.armor_class * 6 - 1);
-    const fore = object.armor[2] / full;
-    const aft = object.armor[3] / full;
-    const sides = (object.armor[0] / full) * 0.25 + (object.armor[1] / full) * 0.25;
+    const fore = object.armor.fore / full;
+    const aft = object.armor.aft / full;
+    const sides = (object.armor.left / full) * 0.25 + (object.armor.right / full) * 0.25;
     object.gun_condition = fore * 0.5 + sides;
     object.armor_speed_factor = aft * 0.75 + 0.25;
     object.shield_condition = fore * 0.25 + aft * 0.25 + sides;
@@ -526,14 +526,14 @@ test armorConditions {
     var object = gameobj.testing.object();
     const combat = std.mem.zeroInit(create.ShipCombat, .{ .armor_class = 5 });
     // Whole, everything works fully.
-    object.armor = @splat(29);
+    object.armor = .all(29);
     armorConditions(&object, &combat);
     try std.testing.expectEqual(1, object.gun_condition);
     try std.testing.expectEqual(1, object.armor_speed_factor);
     try std.testing.expectEqual(1, object.shield_condition);
     // With the aft armour gone the ship is down to a quarter of its speed, and its shields to
     // three quarters; the guns, at the fore, are untouched.
-    object.armor[3] = 0;
+    object.armor.aft = 0;
     armorConditions(&object, &combat);
     try std.testing.expectEqual(1, object.gun_condition);
     try std.testing.expectEqual(0.25, object.armor_speed_factor);

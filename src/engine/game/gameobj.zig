@@ -24,6 +24,7 @@ const libcmt = @import("../libcmt.zig");
 const motion = @import("motion.zig");
 const input = @import("../input.zig");
 const Clock = @import("main.zig").Clock;
+const collision = @import("collision.zig");
 
 /// A slot of the object array as an object names one, or `none` for no slot, which the game holds
 /// as -1.
@@ -98,6 +99,44 @@ pub const PowerUp = enum(i32) {
     /// The player's controls steer the other way round (`player_controls`).
     reversed_controls = 9,
     _,
+};
+
+/// A value for each quadrant of an object's shields or armour (`collision.Quadrant`), in the order
+/// the game keeps them.
+pub const Quadrants = extern struct {
+    left: f32,
+    right: f32,
+    fore: f32,
+    aft: f32,
+
+    /// The same value in each.
+    pub fn all(value: f32) Quadrants {
+        return .{ .left = value, .right = value, .fore = value, .aft = value };
+    }
+
+    pub fn get(quadrants: Quadrants, quadrant: collision.Quadrant) f32 {
+        return switch (quadrant) {
+            inline else => |named| @field(quadrants, @tagName(named)),
+        };
+    }
+
+    pub fn at(quadrants: *Quadrants, quadrant: collision.Quadrant) *f32 {
+        return switch (quadrant) {
+            inline else => |named| &@field(quadrants, @tagName(named)),
+        };
+    }
+
+    /// Each, in the game's order.
+    pub fn values(quadrants: Quadrants) [4]f32 {
+        return .{ quadrants.left, quadrants.right, quadrants.fore, quadrants.aft };
+    }
+
+    comptime {
+        for (std.enums.values(collision.Quadrant), @typeInfo(Quadrants).@"struct".fields) |quadrant, field| {
+            assert(std.mem.eql(u8, @tagName(quadrant), field.name));
+            assert(@offsetOf(Quadrants, field.name) == @as(usize, @intFromEnum(quadrant)) * @sizeOf(f32));
+        }
+    }
 };
 
 /// Components an object can list.
@@ -249,11 +288,10 @@ pub const GameObject = extern struct {
     /// sound 3.
     countermeasures: u16,
     _unknown_5ee: u16,
-    /// Four values, each `6 * ShipCombat.shield_power - 1` when created.
-    shields: [4]f32,
-    /// Four values, each `6 * ShipCombat.armor_class - 1` when created. `ship_damage_value` reports
-    /// the lowest.
-    armor: [4]f32,
+    /// Each `6 * ShipCombat.shield_power - 1` when created.
+    shields: Quadrants,
+    /// Each `6 * ShipCombat.armor_class - 1` when created. `ship_damage_value` reports the lowest.
+    armor: Quadrants,
     _unknown_610: u32,
     /// **Unknown.** Code in `explode.cpp` that `create_object` gives capital ships, planets and a
     /// few other types, which `node_draw` runs as one of the object's components is destroyed.
@@ -637,9 +675,9 @@ pub fn applyKnocks(object: *GameObject) void {
 /// BALANCING (`input.power.balanceShields`), which keeps the other side's charge down as the
 /// shields recharge (`rechargeShields`).
 pub const ShieldReserves = struct {
-    /// Beyond the fore shield, `shields[2]` (`0x0051CF78`).
+    /// Beyond the fore shield, `shields.fore` (`0x0051CF78`).
     fore: f32 = 0,
-    /// Beyond the aft shield, `shields[3]` (`0x0051CF34`).
+    /// Beyond the aft shield, `shields.aft` (`0x0051CF34`).
     aft: f32 = 0,
 };
 
@@ -652,24 +690,26 @@ pub const ShieldReserves = struct {
 ///
 /// An object whose components are listed recharges no shields here, and neither does one holding
 /// the `no_shield_recharge` power-up. One whose `invulnerable` is `_unknown_5` has its shields
-/// emptied instead. **Unknown:** what that value means. Not ported: the case in a multiplayer game where the player's shields
-/// aren't recharged (`0x005D76F0` at 4 with `0x005DB538` naming the player).
+/// emptied instead. **Unknown:** what that value means. Not ported: the case in a multiplayer game
+/// where the player's shields aren't recharged (`0x005D76F0` at 4 with `0x005DB538` naming the
+/// player).
 pub fn rechargeShields(object: *GameObject, combat: *const create.ShipCombat, reserves: ?ShieldReserves) void {
     if (object.flags.components) return;
     if (object.invulnerable == ._unknown_5) {
-        object.shields = @splat(0);
+        object.shields = .all(0);
         return;
     }
     if (object.power_up == .no_shield_recharge) return;
     const full = @as(f32, @floatFromInt(combat.shield_power * 6)) - 1;
     const rate = full * object.shield_factor * object.shield_condition / (combat.shield_recharge * recharge_steps);
-    for (&object.shields, 0..) |*shield, quadrant| {
+    for (std.enums.values(collision.Quadrant)) |quadrant| {
+        const shield = object.shields.at(quadrant);
         var most = full;
         if (reserves) |shifted| {
             const other: ?f32 = switch (quadrant) {
-                2 => shifted.aft + object.shields[3],
-                3 => shifted.fore + object.shields[2],
-                else => null,
+                .fore => shifted.aft + object.shields.aft,
+                .aft => shifted.fore + object.shields.fore,
+                .left, .right => null,
             };
             if (other) |beside| if (beside > most) {
                 most -= beside - most;
@@ -1174,6 +1214,15 @@ pub const testing = struct {
     };
 };
 
+test Quadrants {
+    var shields: Quadrants = .all(5);
+    shields.at(.aft).* = 2;
+    // Each quadrant is the field of its name, and in the game's order among them.
+    try std.testing.expectEqual(2, shields.aft);
+    try std.testing.expectEqual(5, shields.get(.fore));
+    try std.testing.expectEqual([4]f32{ 5, 5, 5, 2 }, shields.values());
+}
+
 test "a knock pushes and turns an object" {
     var object = testing.object();
     object.rotation = math.identity;
@@ -1234,26 +1283,26 @@ test rechargeShields {
     const combat = std.mem.zeroInit(create.ShipCombat, .{ .shield_power = 8, .shield_recharge = 10 });
     // From empty, the full charge, 47, comes back over the ten seconds of steps, and no further.
     for (0..249) |_| rechargeShields(&object, &combat, null);
-    try std.testing.expect(object.shields[0] < 47);
+    try std.testing.expect(object.shields.left < 47);
     rechargeShields(&object, &combat, null);
-    try std.testing.expectApproxEqAbs(47, object.shields[0], 1e-3);
+    try std.testing.expectApproxEqAbs(47, object.shields.left, 1e-3);
     rechargeShields(&object, &combat, null);
-    try std.testing.expectEqual(47, object.shields[0]);
+    try std.testing.expectEqual(47, object.shields.left);
     // With shields shifted aft beyond its full charge, the fore one charges only as far as the
     // full charge less the excess.
-    object.shields = .{ 47, 47, 45, 40 };
+    object.shields = .{ .left = 47, .right = 47, .fore = 45, .aft = 40 };
     rechargeShields(&object, &combat, .{ .aft = 9 });
-    try std.testing.expectEqual(45, object.shields[2]);
+    try std.testing.expectEqual(45, object.shields.fore);
     // One holding the power-up that stops them recharges none.
-    object.shields = @splat(0);
+    object.shields = .all(0);
     object.power_up = .no_shield_recharge;
     rechargeShields(&object, &combat, null);
-    try std.testing.expectEqual([4]f32{ 0, 0, 0, 0 }, object.shields);
+    try std.testing.expectEqual(Quadrants.all(0), object.shields);
     object.power_up = .none;
     // An object whose `invulnerable` is `_unknown_5` loses its shields.
     object.invulnerable = ._unknown_5;
     rechargeShields(&object, &combat, null);
-    try std.testing.expectEqual([4]f32{ 0, 0, 0, 0 }, object.shields);
+    try std.testing.expectEqual(Quadrants.all(0), object.shields);
 }
 
 test "a step updates and moves every live object" {
@@ -1269,7 +1318,7 @@ test "a step updates and moves every live object" {
     all.slots[off].object.throttle = 1;
     all.slots[off].object.flags.disabled = true;
     // Its shields down, the player's recharge.
-    all.slots[player].object.shields = @splat(0);
+    all.slots[player].object.shields = .all(0);
     var devices: input.Devices = .{};
     var steps: usize = 0;
     for (0..ticks_per_step * 10) |_| {
@@ -1285,7 +1334,7 @@ test "a step updates and moves every live object" {
     try std.testing.expect(!all.slots[off].object.root.flags.next_pending);
     // No key held, the player's throttle stays at nothing, and it stays where it was.
     try std.testing.expectEqual(0, all.slots[player].object.root.next_position.z);
-    try std.testing.expect(all.slots[player].object.shields[0] > 0);
+    try std.testing.expect(all.slots[player].object.shields.left > 0);
 }
 
 test "each object's turn comes round in rotation" {

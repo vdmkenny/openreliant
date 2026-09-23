@@ -288,7 +288,7 @@ pub fn damage(world: gameobj.World, index: u16, struck: Quadrant, value: f32, fa
     if (object.flags.jumping) return;
     if (slot.combat) |combat| if (combat.class == .debris) return;
 
-    const shield = &object.shields[@intFromEnum(struck)];
+    const shield = object.shields.at(struck);
     const through = @max(value - shield.*, 0);
     if (counted(kind)) object.recent_damage += value;
     if (shield.* >= 0) shield.* -= value;
@@ -312,7 +312,7 @@ pub fn armorDamage(world: gameobj.World, index: u16, struck: Quadrant, value: f3
     if (counted(kind)) object.recent_damage += value;
     if (object.invulnerable != .none) return;
 
-    object.armor[@intFromEnum(struck)] -= value;
+    object.armor.at(struck).* -= value;
     if (slot.combat) |combat| main.armorConditions(object, combat);
     object.last_attacker = attacker;
 }
@@ -576,19 +576,19 @@ test damage {
     const world = mission.world();
     const index = try testing.ship(&mission, @splat(0), 1000);
     const object = &all.slots[index].object;
-    object.shields = .{ 10, 10, 10, 10 };
-    object.armor = .{ 20, 20, 20, 20 };
+    object.shields = .{ .left = 10, .right = 10, .fore = 10, .aft = 10 };
+    object.armor = .{ .left = 20, .right = 20, .fore = 20, .aft = 20 };
 
     // The shield takes it first.
     damage(world, index, .fore, 4, 1, 1, .collision);
-    try std.testing.expectEqual(6, object.shields[2]);
-    try std.testing.expectEqual(20, object.armor[2]);
+    try std.testing.expectEqual(6, object.shields.fore);
+    try std.testing.expectEqual(20, object.armor.fore);
     try std.testing.expectEqual(1, object.last_attacker);
 
     // Past the shield, the rest wears the armour, and the armour's conditions follow.
     damage(world, index, .fore, 10, 1, 1, .collision);
-    try std.testing.expect(object.shields[2] < 0);
-    try std.testing.expectEqual(16, object.armor[2]);
+    try std.testing.expect(object.shields.fore < 0);
+    try std.testing.expectEqual(16, object.armor.fore);
     try std.testing.expect(object.gun_condition < 1);
 
     // A collision is not what sends a ship after its attacker; a shot is. What passes a shield
@@ -598,14 +598,14 @@ test damage {
     try std.testing.expectEqual(6, object.recent_damage);
 
     // Debris takes none, and neither does a ship that is jumping.
-    const left = object.armor[2];
+    const left = object.armor.fore;
     mission.tables.combat[0].class = .debris;
     damage(world, index, .fore, 100, 1, 1, .collision);
-    try std.testing.expectEqual(left, object.armor[2]);
+    try std.testing.expectEqual(left, object.armor.fore);
     mission.tables.combat[0].class = .fighter;
     object.flags.jumping = true;
     damage(world, index, .fore, 100, 1, 1, .collision);
-    try std.testing.expectEqual(left, object.armor[2]);
+    try std.testing.expectEqual(left, object.armor.fore);
 }
 
 test quadrant {

@@ -113,8 +113,8 @@ pub fn move(object: *gameobj.GameObject, x: f32, y: f32, frame_duration: i32) vo
 pub fn balanceShields(object: *gameobj.GameObject, reserves: *gameobj.ShieldReserves, combat: *const create.ShipCombat, y: f32) void {
     const step: f32 = @floatFromInt(@divTrunc(combat.shield_power, 4));
     const most: f32 = @floatFromInt(combat.shield_power * 5);
-    const fore = &object.shields[2];
-    const aft = &object.shields[3];
+    const fore = &object.shields.fore;
+    const aft = &object.shields.aft;
     if (y >= 0) {
         if (y > 0.5 and fore.* > 0) shift(fore, &reserves.fore, aft, &reserves.aft, step, most);
     } else if (y < -0.5 and aft.* > 0) {
@@ -208,19 +208,19 @@ test balanceShields {
     var object = testingObject();
     var reserves: gameobj.ShieldReserves = .{};
     const combat = std.mem.zeroInit(create.ShipCombat, .{ .shield_power = 8 });
-    object.shields = .{ 47, 47, 47, 47 };
+    object.shields = .{ .left = 47, .right = 47, .fore = 47, .aft = 47 };
     // Only past half-way, and a quarter of the power a step: the aft shield holds five times the
     // power, and its reserve takes the rest.
     balanceShields(&object, &reserves, &combat, 0.5);
-    try std.testing.expectEqual(47, object.shields[2]);
+    try std.testing.expectEqual(47, object.shields.fore);
     balanceShields(&object, &reserves, &combat, 1);
-    try std.testing.expectEqual([4]f32{ 47, 47, 45, 40 }, object.shields);
+    try std.testing.expectEqual(gameobj.Quadrants{ .left = 47, .right = 47, .fore = 45, .aft = 40 }, object.shields);
     try std.testing.expectEqual(9, reserves.aft);
     try std.testing.expectEqual(0, reserves.fore);
     // Shifting back takes the aft reserve first.
     balanceShields(&object, &reserves, &combat, -1);
     try std.testing.expectEqual(7, reserves.aft);
-    try std.testing.expectEqual(40, object.shields[3]);
-    try std.testing.expectEqual(40, object.shields[2]);
+    try std.testing.expectEqual(40, object.shields.aft);
+    try std.testing.expectEqual(40, object.shields.fore);
     try std.testing.expectEqual(7, reserves.fore);
 }
