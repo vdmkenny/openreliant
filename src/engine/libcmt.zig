@@ -80,6 +80,17 @@ pub const Rand = struct {
         r.seed = r.seed *% 214013 +% 2531011;
         return @truncate(r.seed >> 16);
     }
+
+    /// The next number over `max`, from 0 to 1, as the game's code takes it (times `0x004DC4C8`).
+    pub fn fraction(r: *Rand) f32 {
+        return @as(f32, @floatFromInt(r.rand())) * (1.0 / @as(f32, max));
+    }
+
+    /// `fraction` less a half, from -0.5 to 0.5, as the game's code takes it for a direction or a
+    /// turn either way.
+    pub fn centred(r: *Rand) f32 {
+        return r.fraction() - 0.5;
+    }
 };
 
 test "stream flags match the runtime's constants" {
@@ -96,6 +107,8 @@ test Rand {
     try std.testing.expectEqual(41, r.rand());
     try std.testing.expectEqual(18467, r.rand());
     try std.testing.expectEqual(6334, r.rand());
+    try std.testing.expectApproxEqAbs(@as(f32, 26500.0 / 32767.0), r.fraction(), 1e-7);
+    try std.testing.expectApproxEqAbs(@as(f32, 19169.0 / 32767.0 - 0.5), r.centred(), 1e-7);
 }
 
 test {

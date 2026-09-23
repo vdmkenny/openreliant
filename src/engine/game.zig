@@ -5,6 +5,8 @@ const std = @import("std");
 
 pub const ai = @import("game/ai.zig");
 pub const aidefend = @import("game/aidefend.zig");
+pub const aieject = @import("game/aieject.zig");
+pub const aiexplode = @import("game/aiexplode.zig");
 pub const aifight = @import("game/aifight.zig");
 pub const aigeneric = @import("game/aigeneric.zig");
 pub const aiorders = @import("game/aiorders.zig");
@@ -14,6 +16,7 @@ pub const camera = @import("game/camera.zig");
 pub const collision = @import("game/collision.zig");
 pub const create = @import("game/create.zig");
 pub const environfx = @import("game/environfx.zig");
+pub const explode = @import("game/explode.zig");
 pub const hud = @import("game/hud.zig");
 pub const executor = @import("game/executor.zig");
 pub const gameobj = @import("game/gameobj.zig");

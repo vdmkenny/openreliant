@@ -346,7 +346,41 @@ address	kind	name	type	comment
 0040c520	function	order_retaliate	void __fastcall (int slot)	Pushes Fight at the last attacker, of the other side, once the ship's recent_damage reaches 4.2 times its armor class; only between ships whose combat stats hold 1 at +0x28
 00402660	function	order_queue	void __fastcall (int slot, OrderEntry *entry, int delay, int value)	Queues an order from another player, due delay ticks after frame_start; an equal order already queued stays if it is due no sooner, and is replaced otherwise
 00492190	function	avoidance_scan	void __fastcall (int slot)	For an object whose order has the avoidance flag: lists the objects it could hit, those with components by overlapping spheres at +0x6B8 and the others by 0x401980 at +0x6E4, ten of each at most
-00401f30	function	object_destroyed	void __fastcall (int slot, byte detail, bool no_eject)	A ship's end: an AI ship's pilot may eject, leaving the ship to Eject Spin, the player's ejects unless no_eject, and otherwise the ship explodes; detail goes into the order's data
+00401f30	function	object_destroyed	void __fastcall (int slot, bool may_spin, bool no_eject)	A ship's end: an AI ship's pilot ejects where +0x74C is clear and eject_roll is under 40, or where told to eject before exploding, leaving the ship to Eject Spin; the player's ejects unless no_eject or already ejected or flying the Kamov; otherwise the ship explodes, its stack overwritten; may_spin goes into the order's data
+004e1798	data	explode_modes		Explode's routines for each mode, 0x18 bytes each: init and update, for a ship, a ship with components as a whole, one of its components, an asteroid and the limpet car
+004086f0	function	explode_ship_init	ObjectRoutine	Explode's init for a ship: heard at once close to the camera, it takes a style (the torpedoes always 2, else object_random15 % 3), the player's has the camera watch it from view 8, 0x1A or 0x1B and sets mission_ending to 1, then the style's init
+00408a60	function	explode_ship	ObjectRoutine	Explode's update for a ship: its style's update until the tick at +4; then explode_burst for style 1, explode_blast for the rest but the torpedoes, and object_retire
+00409170	function	explode_hull_init	ObjectRoutine	Explode's init for a ship that lists components, going as a whole
+004091e0	function	explode_hull	ObjectRoutine	Explode's update for a ship that lists components, going as a whole
+00409200	function	explode_component_init	ObjectRoutine	Explode's init for the component of a ship the order is aimed at
+00409260	function	explode_component	ObjectRoutine	Explode's update for the component of a ship the order is aimed at
+00409270	function	explode_asteroid_init	ObjectRoutine	Explode's init for an asteroid, types 0x79 to 0x7F
+004092a0	function	explode_asteroid	ObjectRoutine	Explode's update for an asteroid
+004094d0	function	explode_limpet_car_init	ObjectRoutine	Explode's init for the limpet car, type 0x1D
+004095f0	function	explode_limpet_car	ObjectRoutine	Explode's update for the limpet car
+004e1740	data	explode_style_inits	void *[3]	Explode's init for each style a ship goes in: spin out, burst, halt
+004e174c	data	explode_style_updates	void *[3]	Explode's update for each style: explode_spin, noop, explode_spin
+00408bc0	function	explode_spin_out_init	ObjectRoutine	Style 0: 50 puffs to trail, unpowered, a random spin; blows up 200 to 399 ticks on, or at once, stopped dead, for a torpedo or a ship the order's data byte says may not spin; a fireball of its radius
+004090f0	function	explode_burst_init	ObjectRoutine	Style 1: unpowered, its rates and inputs zero, blowing up at once
+00408d20	function	explode_halt_init	ObjectRoutine	Style 2: stopped dead, unpowered, a random spin, blowing up at once; a fireball of its radius, and for a torpedo five more and a shockwave
+00408f70	function	explode_spin	ObjectRoutine	The update of styles 0 and 2: a puff of fire a frame while its puffs outrun the ticks left, then the rotation set from the spin times the ticks left times 0.005
+00408500	function	explode_kill_credit	ObjectRoutine	Where the player destroyed a hostile fighter, or type 0x2D, 0x3C or 0x3E, adds the kill (kills_add) and a radio line on it (radio_kill_remark); a ship with +0x74C clear gets a line of its own (radio_ship_lost)
+004b14f0	function	kills_add	void __fastcall (int slot, int count, bool report)	Adds count to a player's kills: skull_count for the local player, the per-player tally, and in a single player mission the mission's own
+00456bb0	function	radio_kill_remark	void __fastcall (int slot)	A line on the radio for the player's kill, by the class of what went down, at most once every 600 ticks and not while the radio is busy
+00456cf0	function	radio_ship_lost	void __fastcall (int slot)	A line on the radio for a ship lost, but the player's, while the radio is free
+0046c980	function	explode_blast	void __fastcall (GameObject *object)	A ship's blast at the end of Explode: the cloak dropped, the break-up, burning bits, two particle bursts, now and then a shockwave, a fireball, and explosion sound 11, on a sure voice within 20000 of the camera
+00471db0	function	explode_burst	void __fastcall (GameObject *object)	Style 1's blast: the cloak dropped, the break-up, burning bits, two particle bursts and 18 fireballs about it, and explosion sound 11; the player's sets the marker view 0x1B watches, drifting at a quarter of its velocity
+0046c550	function	explode_break_up	void __fastcall (GameObject *object, int kind, ModelNode *node)	Cuts a node's part into pieces (model_slice) and sends them off as debris with their own velocity and spin, every third with a smoke trail, then the node's children
+0046bf20	function	model_slice		Cuts a part's mesh into up to 2^n pieces along n random planes through its centre, sorting its faces by the side of each they fall on
+00472700	function	debris_add		A free record in the debris table at 0x0055AE88, 0x40 bytes each
+0046e480	function	explosions_update		Once a frame: moves the marker on by its drift while it moves, then the explosions' effects
+004688e0	function	object_retire	ObjectRoutine	What Explode leaves of an object: type 1001, flagged no_collisions, exploding, stand_in, frozen and unpowered, not targetable, and no orders
+0055ad0c	data	explode_marker	void *	The frame camera view 0x1B watches: where the player's ship burst
+0055ad10	data	explode_marker_drift	Vec3	How far explode_marker moves a frame: a quarter of the ship's velocity
+0055acfc	data	explode_marker_moving	bool	Set once explode_burst has placed explode_marker
+00463420	function	cloak_drop	ObjectRoutine	Drops an object's cloak: 0x00463470, the cloaked flag cleared and its record freed
+004c1070	function	vec3_lerp	void __fastcall (Vec3 *out, Vec3 *from, Vec3 *to, float share)	out = from + (to - from) * share
+00588394	data	mission_ending	byte	How the mission is ending: 0 while it goes on, 1 the player's ship destroyed, 8 the player ejecting; the debriefing names the ending by it
 004645c0	function	component_damage	void __fastcall (GameObject *object, ModelNode *node, float damage, int attacker, DamageKind kind)	Damages a component: lowers its node's armor, records the attacker in last_attacker, and marks the component's holder destroyed once the armor is below zero
 00463640	function	object_cloak	void __fastcall (int slot)	Cloaks an object: sets its cloaked flag, posts the Cloaked event and sets up the cloak state at +0x63C
 00401830	function	object_set_targetable	void __fastcall (int slot, bool targetable)	Sets or clears the object's targetable flag; it stays clear when the word at +0x24 of the combat stats is zero
@@ -539,11 +573,11 @@ address	kind	name	type	comment
 0054ea18	data	engine_glow_meshes	void *[8]	The engine glow mesh for each attachment id, which the glow reads at id clamped to 1 to 7; slot 0 is unused
 0054ea38	data	engine_glow_flares	void *[8][2]	The flare textures each glow wears, read at its attachment id clamped to 1 to 7: matflarea1 to matflarea7 for the nozzle quad, matflareb1 to matflareb7 for the blades; slot 0 is unused
 0054ea78	data	engine_glows_built	char	Set once engine_glows_build has made the glow meshes, so that it makes them only once
-00562df4	data	skull_count	int	The number the display's skull readout shows, drawn over the top of the screen. One of a run of tallies at 0x562DEC to 0x562DF8 that the mission's start zeroes together, and which is kept across a mission run. **Unknown:** what it counts; it reads 0 in a fresh mission
+00562df4	data	skull_count	int	The player's kills, which kills_add counts and the display's skull readout shows over the top of the screen. One of a run of tallies at 0x562DEC to 0x562DF8 that the mission's start zeroes together, and which is kept across a mission run
 00412b20	function	player_jump	void (void)	JUMP DRIVE, while 0x00588394 is 0: when the mission has a jump or a warp ready (jump_ready, warp_ready), clears it and posts player_ready_to_jump or player_ready_to_warp
 00415370	function	player_ecm_set	void __fastcall (bool on)	Turns the player's ECM on or off, when the ship carries one (ecm_state not -1): object flag 0x4000000 and ecm_state
 004153e0	function	player_cloak_set	void __fastcall (bool on)	Cloaks or uncloaks the player's ship through object_set_cloak, outside a multiplayer game, when its model can cloak (header flag 2) and cloak_state is not -1
-00416310	function	order_eject_player_init	ObjectRoutine	The init of order 118, Eject Player: marks the ship ejected (object flags 0x808), sets 0x00588394 to 8, sets player_ejected and starts the eject marker's flash
+00416310	function	order_eject_player_init	ObjectRoutine	The init of order 118, Eject Player: marks the ship ejected (object flags 0x808), sets mission_ending to 8, sets player_ejected and starts the eject marker's flash
 00428410	function	palette_to_vfx	void __thiscall (byte *palette, float brightness)	Makes VFX's global palette of a palette of 6-bit levels at a brightness, under the hardware renderers or on a pane of more than 8 bits: at a brightness of 1 each level is shifted up by two
 00482f50	function	hud_icon_lit	bool __fastcall (int icon)	Whether ShowHudIcon has an icon lit this frame: state 1 always, state 2 for the first 50 ticks of every 100, the count carrying what runs past 100 over
 00482fa0	function	hud_jump_prompt	void (void)	Flashes the warp icon (shape 0xC9) or else the jump icon (0xCE) above the middle of the screen while warp_ready or jump_ready says one is ready; the frame one becomes ready (1) it moves it to 2 and starts the flash

@@ -244,7 +244,7 @@ pub fn play(sound: *Sound, scene: Scene, at: ?Vector, facing: ?Vector, owner: i3
     driver.set3DSampleRadius(voice.sample, radius * hog_snd.distance_scale);
     // Every sound plays at 22,050 Hz; the explosions somewhere between 18,050 and 25,050.
     const rate: u32 = switch (which) {
-        .explosion01, .explosion02 => 18050 + @as(u32, @intFromFloat(@trunc(@as(f32, @floatFromInt(scene.random.rand())) * (1.0 / 32767.0) * 7000))),
+        .explosion01, .explosion02 => 18050 + @as(u32, @intFromFloat(@trunc(scene.random.fraction() * 7000))),
         else => 22050,
     };
     driver.set3DSamplePlaybackRate(voice.sample, rate);

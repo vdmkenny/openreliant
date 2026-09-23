@@ -64,8 +64,16 @@ pub const View = enum(u8) {
     target = 6,
     /// Around the player's ship, likewise.
     external = 0xC,
+    /// Behind the camera's object, turning slowly with it and pulling away, as the player's ship is
+    /// destroyed.
+    pull_back = 8,
     /// Behind a missile.
     missile = 0x12,
+    /// From where the camera was, watching its object.
+    watch = 0x1A,
+    /// From where the camera was, watching where the player's ship burst
+    /// (`explode.Explosions.marker`).
+    watch_marker = 0x1B,
     /// From a point the player flies past.
     flyby = 0x24,
     _,
@@ -192,6 +200,11 @@ pub const World = struct {
     target: ?Subject = null,
     /// Hundredths of a second since the last frame (`frame_duration`).
     ticks: u32,
+    /// The mission's ticks this frame (`frame_start`), which the views that move with time go by,
+    /// from when the view was switched to.
+    now: u32 = 0,
+    /// Where the player's ship burst, for `watch_marker`; null before it has.
+    marker: ?Vector = null,
     /// The cockpit's model and what moves it, for view 0 outside the chase mode; null for an
     /// object with no cockpit.
     cockpit: ?Cockpit.Input = null,
@@ -377,6 +390,11 @@ pub const Camera = struct {
             },
             .external => camera.place = camera.orbit.place(.external, world.player.position, world.player.radius),
             .flyby => camera.place = flyby(camera.place.position, world.player.position, world.player.orientation, world.player.radius),
+            .pull_back => camera.place = pullBack(world.object.position, world.object.orientation, world.now -| camera.switched),
+            .watch => camera.place.orientation = math.lookAt(world.object.position - camera.place.position),
+            .watch_marker => if (world.marker) |marker| {
+                camera.place.orientation = math.lookAt(marker - camera.place.position);
+            },
             else => {},
         }
         return null;
@@ -713,6 +731,33 @@ pub const Orbit = struct {
         return .{ .position = position, .orientation = math.lookAt(math.normalize(centre - position)) };
     }
 };
+
+// --- Pull back ---------------------------------------------------------------------------------
+
+/// How `pull_back` starts behind the object, how fast it pulls away, and how fast it turns, a
+/// tick (`0x004DC508`, `0x004DC788`, `0x004DC4D0`).
+const pull_back_distance: f32 = 3000;
+const pull_back_speed: f32 = 10;
+const pull_back_turn: f32 = 0.005;
+
+/// View `pull_back` (`camera_frame`, view 8), `ticks` after it was switched to: looking along the
+/// object's heading turned about its own `Y`, from behind it along that heading.
+pub fn pullBack(position: Vector, orientation: Matrix, ticks: u32) Place {
+    const since: f32 = @floatFromInt(ticks);
+    const turned = math.turned(orientation, .y, since * pull_back_turn);
+    const behind = pull_back_distance + since * pull_back_speed;
+    return .{ .position = position - math.forward(turned) * @as(Vector, @splat(behind)), .orientation = turned };
+}
+
+test pullBack {
+    // It starts behind the object, looking along its heading, and pulls away as it turns.
+    const start = pullBack(.{ 0, 0, 100 }, math.identity, 0);
+    try std.testing.expectEqual(Vector{ 0, 0, 100 - pull_back_distance }, start.position);
+    const later = pullBack(.{ 0, 0, 100 }, math.identity, 100);
+    const away = later.position - Vector{ 0, 0, 100 };
+    try std.testing.expectApproxEqAbs(pull_back_distance + 100 * pull_back_speed, @sqrt(math.dot(away, away)), 1e-2);
+    try std.testing.expect(later.position[0] != 0);
+}
 
 // --- Flyby --------------------------------------------------------------------------------------
 

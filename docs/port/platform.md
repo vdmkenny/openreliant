@@ -110,7 +110,9 @@ target, external and missile views, the cockpit key cycles the cockpit mode whil
 target and external views the arrow keys orbit and Shift with up or down zooms. Added for the port:
 F2 and F3 start the sandbox again in the previous or next ship type, passing over any whose files
 the game lacks, F4 brings another wing in front of the player, Alt and Enter switch between the
-window and the full screen, and Escape quits. A ship is shown in the chase view, or, where its own
+window and the full screen, and Escape quits. Once the player's ship is gone, [destroyed](../engine/objects.md#destruction)
+and the camera having watched its end for 500 ticks, the sandbox starts again in the same type, where
+a mission would end and go to its debriefing. A ship is shown in the chase view, or, where its own
 radius is larger than the distance that view sits behind it, in the external view, which orbits at
 a distance worked out from its size, so that a capital ship or a station is seen whole.
 

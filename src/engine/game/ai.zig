@@ -69,12 +69,96 @@ test {
     std.testing.refAllDecls(@This());
 }
 
+/// A pilot ejects rather than go down with the ship where its `eject_roll` is below this
+/// (`0x28`).
+pub const eject_below = 40;
+
+/// `object_destroyed` (`0x00401F30`): a ship's end. An AI ship's pilot ejects where the mission
+/// lets it and its roll says so, or where the ship is told to eject before exploding, and the ship
+/// spins on under Eject Spin. The player's ejects, unless it already has or the blow was too
+/// heavy, or it is flying the Kamov, and its ship blows up later (`aieject.playerInit`).
+/// Otherwise the ship explodes (`aiexplode`), in place of whatever it was doing: the stack is
+/// overwritten whether or not its order gives way, and the order's state is left for Explode's
+/// `init` to fill in. `may_spin` goes into the order's data.
+///
+/// Not ported: multiplayer, where the player's ship explodes at once.
+pub fn objectDestroyed(ctx: aigeneric.Context, index: u16, may_spin: bool, no_eject: bool) void {
+    const all = ctx.world.objects;
+    const slot = &all.slots[index];
+    const object = &slot.object;
+    const ai_pilot_ejects = index >= all.players and object._unknown_74c == 0 and object.eject_roll < eject_below;
+    if (!object.flags.ejected and (ai_pilot_ejects or object.invulnerable == .eject_before_exploding)) {
+        replaceOrders(ctx, index, .eject, .eject_spin, may_spin);
+        return;
+    }
+    if (slot.orders[0].order == .explode) return;
+    if (index == all.player and !object.flags.ejected and !no_eject and object.type != .kamov) {
+        if (slot.orders[0].order != .eject_player) {
+            const aimed = slot.orders[0].target;
+            _ = aigeneric.push(ctx, index, .eject_player, .{ .kind = .ship, .index = aimed.index, .component = aimed.component }) catch false;
+            object.flags.ejected = true;
+            return;
+        }
+        if (slot.state.eject_player.ended == 0) return;
+        _ = aigeneric.pop(ctx, index);
+    }
+    replaceOrders(ctx, index, .explode, .explode, may_spin);
+    object.flags.exploding = true;
+}
+
+/// Clears the way as for `making_way`, whatever the current order says, and leaves `order`,
+/// aimed at nothing, as the only one, starting.
+fn replaceOrders(ctx: aigeneric.Context, index: u16, making_way: orders.Order, order: orders.Order, may_spin: bool) void {
+    const slot = &ctx.world.objects.slots[index];
+    _ = aigeneric.giveWay(ctx, index, making_way) catch false;
+    slot.object.order_count = 1;
+    slot.orders[0].order = order;
+    slot.orders[0].target = .none;
+    slot.orders[0].data.destroyed = .{ .may_spin = may_spin };
+    slot.object.order_starting = true;
+}
+
 /// `object_set_targetable` (`0x00401830`): sets or clears the object's `targetable` flag, which
 /// stays clear for an object with no stats or of a type that can't be targeted
 /// (`ShipCombat.Targeting`). **Unverified:** it lies before this file's known code.
 pub fn setTargetable(object: *gameobj.GameObject, combat: ?*const create.ShipCombat, targetable: bool) void {
     const allowed = if (combat) |stats| stats.targeting.targetable else false;
     object.flags.targetable = targetable and allowed;
+}
+
+test objectDestroyed {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const ctx = mission.orders();
+    const player = try mission.add(.predator, @splat(0));
+    const other = try mission.add(.sabre, .{ 0, 0, 1000 });
+    const slots = &mission.objects.slots;
+
+    // An AI ship explodes, taking no order after.
+    try std.testing.expect(try aigeneric.push(ctx, other, .do_nothing, .none));
+    objectDestroyed(ctx, other, true, false);
+    try std.testing.expectEqual(.explode, slots[other].orders[0].order);
+    try std.testing.expectEqual(1, slots[other].object.order_count);
+    try std.testing.expect(slots[other].object.flags.exploding and slots[other].object.order_starting);
+    try std.testing.expect(!try aigeneric.push(ctx, other, .do_nothing, .none));
+
+    // Where the mission lets its pilot eject, a low roll ejects, and the ship spins on.
+    const ejecting = try mission.add(.sabre, .{ 0, 0, 2000 });
+    slots[ejecting].object._unknown_74c = 0;
+    slots[ejecting].object.eject_roll = eject_below - 1;
+    objectDestroyed(ctx, ejecting, true, false);
+    try std.testing.expectEqual(.eject_spin, slots[ejecting].orders[0].order);
+    try std.testing.expect(!slots[ejecting].object.flags.exploding);
+
+    // The player's pilot ejects, unless the blow was too heavy.
+    objectDestroyed(ctx, player, true, false);
+    try std.testing.expectEqual(.eject_player, slots[player].orders[0].order);
+    try std.testing.expect(slots[player].object.flags.ejected);
+    const heavy = try mission.add(.predator, .{ 0, 0, 3000 });
+    mission.objects.player = heavy;
+    objectDestroyed(ctx, heavy, true, true);
+    try std.testing.expectEqual(.explode, slots[heavy].orders[0].order);
 }
 
 test setTargetable {

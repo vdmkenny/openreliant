@@ -442,8 +442,10 @@ pub const GameObject = extern struct {
     _unknown_6ac: i32,
     _unknown_6b0: u32,
     _unknown_6b4: [0x58]u8,
-    /// **Unknown.** A number from 0 to 99 the object draws from its own seed when created.
-    _unknown_70c: i32,
+    /// A number from 0 to 99 the object draws from its own seed when created: where a mission lets
+    /// the pilot eject, it does below `ai.eject_below` (`object_destroyed`). The `WillsBlag`
+    /// command sets it to 100, which never does.
+    eject_roll: i32,
     _unknown_710: [4]u32,
     /// **Unknown.** Both -1 when created.
     _unknown_720: i32,
@@ -466,7 +468,8 @@ pub const GameObject = extern struct {
     /// **Unknown.** A 24-byte record for the pilot, from a table at `0x5048D8`.
     pilot_record: Pointer(anyopaque),
     pilot_stats: Pointer(@import("pilots.zig").Pilot),
-    /// **Unknown.** 0xFFFF when created.
+    /// **Unknown.** 0xFFFF when created, which a mission clears; while it is clear, an AI ship's
+    /// pilot may eject.
     _unknown_74c: u16,
     _unknown_74e: u16,
     _unknown_750: u32,
@@ -626,7 +629,7 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "gun_condition") == 0x66C);
         assert(@offsetOf(GameObject, "_unknown_678") == 0x678);
         assert(@offsetOf(GameObject, "_unknown_6ac") == 0x6AC);
-        assert(@offsetOf(GameObject, "_unknown_70c") == 0x70C);
+        assert(@offsetOf(GameObject, "eject_roll") == 0x70C);
         assert(@offsetOf(GameObject, "_unknown_720") == 0x720);
         assert(@offsetOf(GameObject, "_unknown_74c") == 0x74C);
         assert(@offsetOf(GameObject, "_unknown_764") == 0x764);
@@ -842,6 +845,8 @@ pub const ticks_per_step = 4;
 pub const World = struct {
     objects: *create.Objects,
     player: *input.Player,
+    /// The mission's clocks, whose `frame_start` the game's code reads as a global.
+    clock: *const Clock,
     view: camera.View,
     shake: *f32,
     /// The runtime's numbers (`libcmt.Rand`), which the guns' step draws a damaged gun's misfire
@@ -851,6 +856,12 @@ pub const World = struct {
     events: ?Events = null,
     /// The sound the objects are heard through, and where from; null where nothing is heard.
     hearing: ?@import("hog_snd.zig").Hearing = null,
+    /// The camera, whose view the game's code switches (`camera_set_view`); null where nothing is
+    /// seen, as in a test.
+    camera: ?*camera.Camera = null,
+    /// What the explosions leave for the frames after them (`explode.cpp`); null where nothing
+    /// explodes.
+    explosions: ?*@import("explode.zig").Explosions = null,
 };
 
 /// `simulation_step` (`0x004774D0`): the work of every fourth tick, so 25 times a second, which
@@ -1257,7 +1268,7 @@ pub const testing = struct {
         }
 
         pub fn world(mission: *Mission) World {
-            return .{ .objects = mission.objects, .player = &mission.player, .view = mission.view, .shake = &mission.shake, .random = &mission.random };
+            return .{ .objects = mission.objects, .player = &mission.player, .clock = &mission.clock, .view = mission.view, .shake = &mission.shake, .random = &mission.random };
         }
 
         /// What the objects' orders run against.

@@ -1,0 +1,330 @@
+//! Order 11, Explode: what a destroyed object does until it is gone. `object_destroyed`
+//! ([`ai.zig`](ai.zig)) gives it, and the object runs nothing else from then on. **Unknown:** its
+//! source file, which no assertion names: the code lies between `aidock.cpp`'s and
+//! `aifight.cpp`'s, so this module is named for the order, as theirs are for theirs.
+//!
+//! `order_explode_init` (`0x00408610`) picks a mode by what the object is, and each mode has an
+//! `init` and an `update` in the table at `0x004E1798`. A ship's (`0x004086F0`, `0x00408A60`)
+//! picks one of three styles of going, each with its own `init` and `update`
+//! (`0x004E1740`, `0x004E174C`), and ends in a blast ([`explode.zig`](explode.zig)), after which
+//! the ship is retired (`create.retire`).
+//!
+//! **Not ported:** the other modes, for a ship that lists components, one of its components, an
+//! asteroid and the limpet car; the effects the styles leave, fireballs, burning bits and
+//! shockwaves ([#41](https://github.com/vdmkenny/openreliant/issues/41)); and what a ship's end
+//! tells the mission, the kills' score and chatter (`0x00408500`), the pilots' records and the
+//! Destroyed event ([#37](https://github.com/vdmkenny/openreliant/issues/37)).
+
+const std = @import("std");
+const assert = std.debug.assert;
+
+const math = @import("../surrender/math.zig");
+const Vec3 = @import("../../formats/shp.zig").Vec3;
+const ai = @import("ai.zig");
+const aigeneric = @import("aigeneric.zig");
+const Context = aigeneric.Context;
+const camera = @import("camera.zig");
+const create = @import("create.zig");
+const explode = @import("explode.zig");
+const gameobj = @import("gameobj.zig");
+const GameObject = gameobj.GameObject;
+const libcmt = @import("../libcmt.zig");
+const main = @import("main.zig");
+const xtrabits = @import("xtrabits.zig");
+
+/// What the order does, by what the object is.
+pub const Mode = enum(i16) {
+    /// A ship that lists no components, and the troop car.
+    ship = 0,
+    /// A ship that lists components, going as a whole.
+    hull = 1,
+    /// One of a ship's components, which the order is aimed at.
+    component = 2,
+    asteroid = 3,
+    limpet_car = 4,
+
+    /// `order_explode_init`'s choice.
+    pub fn of(object: *const GameObject, target: aigeneric.Target) Mode {
+        return switch (object.type) {
+            .troop_car => .ship,
+            .limpet_car => .limpet_car,
+            else => if (object.type.isAsteroid())
+                .asteroid
+            else if (!object.flags.components)
+                .ship
+            else if (target.component != -1)
+                .component
+            else
+                .hull,
+        };
+    }
+};
+
+/// How a ship goes.
+pub const Style = enum(i16) {
+    /// It drifts on unpowered, spinning ever slower, for two to four seconds, then blows up.
+    spin_out = 0,
+    /// It drifts on unpowered, no longer turning, and bursts at once.
+    burst = 1,
+    /// It stops dead and blows up at once.
+    halt = 2,
+};
+
+/// What the order keeps in the object's order state. `init` writes the mode and the style before
+/// anything reads them.
+pub const State = extern struct {
+    mode: Mode,
+    _unknown_02: u16,
+    /// The tick past which it blows up.
+    end: i32,
+    /// A ship's.
+    style: Style,
+    _unknown_0a: u16,
+    /// A spinning ship's turn a step, as angles, at the full length of its spin.
+    spin: Vec3,
+    /// The puffs of fire a spinning ship has left to trail.
+    puffs: i16,
+    _unknown_1a: [0x90 - 0x1A]u8,
+
+    comptime {
+        assert(@offsetOf(State, "end") == 0x4);
+        assert(@offsetOf(State, "style") == 0x8);
+        assert(@offsetOf(State, "spin") == 0xC);
+        assert(@offsetOf(State, "puffs") == 0x18);
+        assert(@sizeOf(State) == 0x90);
+    }
+};
+
+/// What `object_destroyed` leaves in the order's data.
+pub const Data = extern struct {
+    /// Whether a ship may spin out: set by a blow to its armour, clear once its pilot has
+    /// ejected.
+    may_spin: bool,
+};
+
+/// `order_explode_init` (`0x00408610`).
+pub fn init(ctx: Context, index: u16) void {
+    const slot = &ctx.world.objects.slots[index];
+    const state = &slot.state.explode;
+    state.mode = .of(&slot.object, slot.orders[0].target);
+    switch (state.mode) {
+        .ship => shipInit(ctx, index),
+        else => {},
+    }
+}
+
+/// `order_explode` (`0x004086A0`).
+pub fn update(ctx: Context, index: u16) void {
+    switch (ctx.world.objects.slots[index].state.explode.mode) {
+        .ship => shipUpdate(ctx, index),
+        else => {},
+    }
+}
+
+/// A ship moving slower than this as it is destroyed is watched from behind, pulling away; one
+/// faster from where the camera was (`0x004DC440`).
+const slow: f32 = 100;
+
+/// `0x004086F0`: a ship's end begins. Close to the camera it is heard at once. It takes a style of
+/// going, the torpedoes always stopping dead, and the player's has the camera watch it, from a view
+/// by the style and how fast it was flying.
+fn shipInit(ctx: Context, index: u16) void {
+    const world = ctx.world;
+    const slot = &world.objects.slots[index];
+    const object = &slot.object;
+    const at = slot.drawn.position;
+    if (explode.soundClass(world, at) == .guaranteed) explode.sound(world, at, .guaranteed);
+
+    const state = &slot.state.explode;
+    state.style = switch (object.type) {
+        .torpedo, .russian_torpedo => .halt,
+        else => @enumFromInt(xtrabits.objectRandom15(object) % 3),
+    };
+
+    if (index == world.objects.player) {
+        const view: camera.View = switch (state.style) {
+            .spin_out => if (movingSlowly(object, slot.flight, world.view)) .pull_back else .watch,
+            .burst => .watch_marker,
+            .halt => .pull_back,
+        };
+        if (world.camera) |watching| _ = watching.setView(view, index, true, true, @intCast(@max(ctx.clock.mission_ticks, 0)));
+        world.player.ending = .destroyed;
+    }
+
+    switch (state.style) {
+        .spin_out => spinOutInit(ctx, index),
+        .burst => burstInit(object, state),
+        .halt => haltInit(ctx, index),
+    }
+}
+
+fn movingSlowly(object: *const GameObject, flight: ?*const create.FlightModel, view: camera.View) bool {
+    const model = flight orelse return true;
+    return ai.cruiseSpeed(object, model, view) * object.throttle < slow;
+}
+
+/// `0x00408A60`: until its end the ship goes on in its style; then it blows up, a burst in its own
+/// way and a torpedo not at all, having gone up as it stopped, and is retired.
+fn shipUpdate(ctx: Context, index: u16) void {
+    const slot = &ctx.world.objects.slots[index];
+    const state = &slot.state.explode;
+    if (ctx.clock.frame_start <= state.end) {
+        switch (state.style) {
+            .spin_out, .halt => spin(ctx.clock, &slot.object, state),
+            .burst => {},
+        }
+        return;
+    }
+    switch (state.style) {
+        .burst => explode.burst(ctx.world, index),
+        else => switch (slot.object.type) {
+            .torpedo, .russian_torpedo => {},
+            else => explode.blast(ctx.world, index),
+        },
+    }
+    create.retire(ctx, index);
+}
+
+/// The puffs a spinning ship trails, one a frame while it has time for them.
+const puffs = 50;
+
+/// How long a spin-out lasts: this, and up to as long again (`0x004DC4C4`).
+const spin_ticks = 200;
+
+/// How fast a spin's turn shrinks to nothing as the end comes, a tick (`0x004DC4D0`).
+const spin_fade: f32 = 0.005;
+
+/// How far a spinning ship's turn a step ranges about its first two axes and about its third, half
+/// of it either way (`0x004DC474`, `0x004DC4C0`).
+const spin_range = Vec3{ .x = 0.05, .y = 0.05, .z = 0.3 };
+
+/// `0x00408BC0`: a spinning ship drifts on unpowered for two to four seconds; a torpedo, or a ship
+/// told not to spin, stops dead and blows up at once.
+fn spinOutInit(ctx: Context, index: u16) void {
+    const slot = &ctx.world.objects.slots[index];
+    const object = &slot.object;
+    const state = &slot.state.explode;
+    state.puffs = puffs;
+    const torpedo = if (slot.combat) |combat| combat.class == .torpedo else false;
+    if (torpedo or !slot.orders[0].data.destroyed.may_spin) {
+        stop(object);
+        state.end = 0;
+    } else {
+        state.end = ctx.clock.frame_start + @as(i32, @intFromFloat(@trunc(ctx.world.random.fraction() * spin_ticks))) + spin_ticks;
+    }
+    object.flags.unpowered = true;
+    state.spin = randomSpin(ctx.world.random);
+}
+
+/// `0x004090F0`: a bursting ship drifts on unpowered, no longer turning.
+fn burstInit(object: *GameObject, state: *State) void {
+    state.puffs = puffs;
+    state.end = 0;
+    object.flags.unpowered = true;
+    object.pitch_rate = 0;
+    object.pitch_input = 0;
+    object.roll_rate = 0;
+    object.roll_input = 0;
+    object.yaw_rate = 0;
+    object.yaw_input = 0;
+}
+
+/// `0x00408D20`: a halting ship stops dead and blows up at once.
+fn haltInit(ctx: Context, index: u16) void {
+    const slot = &ctx.world.objects.slots[index];
+    const state = &slot.state.explode;
+    state.puffs = puffs;
+    stop(&slot.object);
+    state.end = 0;
+    slot.object.flags.unpowered = true;
+    state.spin = randomSpin(ctx.world.random);
+}
+
+/// Stops the ship dead, as the styles do: no velocity, speed or throttle.
+fn stop(object: *GameObject) void {
+    object.velocity = .{ .x = 0, .y = 0, .z = 0 };
+    object.speed = 0;
+    object.throttle = 0;
+}
+
+/// A turn a step either way about each axis, within `spin_range`: the game draws the third
+/// axis's first.
+fn randomSpin(random: *libcmt.Rand) Vec3 {
+    const z = random.centred() * spin_range.z;
+    const y = random.centred() * spin_range.y;
+    const x = random.centred() * spin_range.x;
+    return .{ .x = x, .y = y, .z = z };
+}
+
+/// `0x00408F70`, a spinning or halting ship's update: it turns by its spin, less and less as its
+/// end comes. **Not ported:** the puffs of fire it trails.
+fn spin(clock: *const main.Clock, object: *GameObject, state: *const State) void {
+    const left: f32 = @floatFromInt(state.end - clock.frame_start);
+    const share = left * spin_fade;
+    object.rotation = math.fromAngles(state.spin.x * share, state.spin.y * share, state.spin.z * share);
+}
+
+test Mode {
+    var object = gameobj.testing.object();
+    const whole = aigeneric.Target.none;
+    try std.testing.expectEqual(Mode.ship, Mode.of(&object, whole));
+    object.flags.components = true;
+    try std.testing.expectEqual(Mode.hull, Mode.of(&object, whole));
+    try std.testing.expectEqual(Mode.component, Mode.of(&object, .{ .kind = .ship, .index = 3, .component = 2 }));
+    object.type = .troop_car;
+    try std.testing.expectEqual(Mode.ship, Mode.of(&object, whole));
+    object.type = @enumFromInt(0x7B);
+    try std.testing.expectEqual(Mode.asteroid, Mode.of(&object, whole));
+    object.type = .limpet_car;
+    try std.testing.expectEqual(Mode.limpet_car, Mode.of(&object, whole));
+}
+
+test "a ship's end" {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    var watching: camera.Camera = .{};
+    var ctx = mission.orders();
+    ctx.world.camera = &watching;
+    const player = try mission.add(.predator, @splat(0));
+    const ship = try mission.add(.sabre, .{ 0, 0, 1000 });
+    const slots = &mission.objects.slots;
+
+    // A ship takes a style, and is gone once its end has passed.
+    ai.objectDestroyed(ctx, ship, true, false);
+    aigeneric.objectOrders(ctx, ship);
+    try std.testing.expectEqual(Mode.ship, slots[ship].state.explode.mode);
+    try std.testing.expect(slots[ship].object.flags.unpowered);
+    mission.clock.frame_start = 2 * spin_ticks;
+    aigeneric.objectOrders(ctx, ship);
+    try std.testing.expectEqual(gameobj.Type.stand_in, slots[ship].object.type);
+
+    // The player's has the camera watch it, and ends the mission.
+    ai.objectDestroyed(ctx, player, true, true);
+    aigeneric.objectOrders(ctx, player);
+    try std.testing.expect(watching.view == .pull_back or watching.view == .watch or watching.view == .watch_marker);
+    try std.testing.expectEqual(.destroyed, mission.player.ending);
+}
+
+test spin {
+    // A spin turns the ship less and less as its end comes.
+    var object = gameobj.testing.object();
+    var state = std.mem.zeroes(State);
+    state.spin = .{ .x = 0, .y = 0, .z = 0.1 };
+    state.end = 200;
+    var clock: main.Clock = .{};
+    spin(&clock, &object, &state);
+    const early = math.angles(object.rotation);
+    clock.frame_start = 150;
+    spin(&clock, &object, &state);
+    const late = math.angles(object.rotation);
+    try std.testing.expect(@abs(late[2]) < @abs(early[2]));
+}
+
+test randomSpin {
+    var random: libcmt.Rand = .{};
+    for (0..100) |_| {
+        const turn = randomSpin(&random);
+        try std.testing.expect(@abs(turn.x) <= spin_range.x / 2 and @abs(turn.y) <= spin_range.y / 2 and @abs(turn.z) <= spin_range.z / 2);
+    }
+}

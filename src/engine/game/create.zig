@@ -493,7 +493,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.engines = 0;
     object._unknown_6ac = -1;
     object._unknown_6b0 = 0;
-    object._unknown_70c = xtrabits.objectRandom15(object) % 100;
+    object.eject_roll = xtrabits.objectRandom15(object) % 100;
     objects.setPosition(object, &slot.drawn, at);
     objects.setOrientation(object, &slot.drawn, math.identity);
     // No orders, and no attacker yet.
@@ -893,6 +893,38 @@ pub const testing = struct {
         return made;
     }
 };
+
+/// `0x004688E0`: what the Explode order leaves of an object once it has blown up. It stands in
+/// where it was, of type `stand_in`, as flagged as a slot's stand-in and exploding, and with no
+/// orders. Nothing moves, draws, collides with or targets it. **Unverified:** it lies after
+/// `object_reset`, before this file's known code.
+///
+/// Not ported: the `exit` routines popping its orders would run, none of which is ported yet
+/// ([#30](https://github.com/vdmkenny/openreliant/issues/30)).
+pub fn retire(ctx: aigeneric.Context, index: u16) void {
+    const object = &ctx.world.objects.slots[index].object;
+    object.type = .stand_in;
+    object.flags = @bitCast(@as(u32, @bitCast(object.flags)) | @as(u32, @bitCast(gameobj.GameObject.Flags.standing_in)));
+    object.flags.exploding = true;
+    object.flags.targetable = false;
+    aigeneric.popAll(ctx, index);
+}
+
+test retire {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const ctx = mission.orders();
+    const index = try mission.addOther(@splat(0));
+    const object = &mission.objects.slots[index].object;
+    object.flags.targetable = true;
+    try std.testing.expect(try aigeneric.push(ctx, index, .do_nothing, .none));
+    retire(ctx, index);
+    try std.testing.expectEqual(gameobj.Type.stand_in, object.type);
+    try std.testing.expect(object.flags.stand_in and object.flags.no_collisions and object.flags.exploding);
+    try std.testing.expect(!object.flags.targetable);
+    try std.testing.expectEqual(0, object.order_count);
+}
 
 test "a mission starts with every slot standing in" {
     var mission: gameobj.testing.Mission = undefined;

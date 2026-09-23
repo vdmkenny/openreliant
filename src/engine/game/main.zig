@@ -52,6 +52,16 @@ pub const PlayTime = struct {
 /// of a second stands in for the multimedia timer `timer_start` (`0x004A70F0`) sets up, so the
 /// clocks advance at the same rate without a thread of their own and without the drift a timer
 /// whose period the device rounds would bring.
+/// How the mission is ending (`0x00588394`), which its end and the debriefing go by: the player's
+/// ship destroyed or its pilot ejecting among them. Nothing ends a mission while it is `playing`.
+/// The other endings are not known yet.
+pub const Ending = enum(u8) {
+    playing = 0,
+    destroyed = 1,
+    ejecting = 8,
+    _,
+};
+
 pub const Clock = struct {
     /// `timer_ticks` (`0x005DB8E8`): every tick of the timer, the paused ones included.
     timer_ticks: u32 = 0,

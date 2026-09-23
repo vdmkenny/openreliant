@@ -705,6 +705,8 @@ pub const Player = struct {
     balancing_shields: bool = false,
     /// What SHIELD BALANCING has shifted beyond the fore and aft shields' full charge.
     shield_reserves: gameobj.ShieldReserves = .{},
+    /// How the mission is ending, which the player's ship's end decides.
+    ending: @import("game/main.zig").Ending = .playing,
 };
 
 /// How far a key steps a steering input each run (`0x004DC4C0`). The flight model clamps the

@@ -110,6 +110,11 @@ pub const exported = [_]Export{
     .{ "QueuedOrder", engine.game.aigeneric.Queued },
     .{ "OrderState", engine.game.aigeneric.State },
     .{ "FlyState", engine.game.aiorders.FlyState },
+    .{ "ExplodeState", engine.game.aiexplode.State },
+    .{ "ExplodeMode", engine.game.aiexplode.Mode },
+    .{ "ExplodeStyle", engine.game.aiexplode.Style },
+    .{ "ExplodeData", engine.game.aiexplode.Data },
+    .{ "EjectPlayerState", engine.game.aieject.PlayerState },
 
     // Combat maneuvers.
     .{ "ManeuverOpcode", engine.game.aidefend.Opcode },

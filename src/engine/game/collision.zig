@@ -9,6 +9,7 @@ const std = @import("std");
 
 const math = @import("../surrender/math.zig");
 const Vector = math.Vector;
+const ai = @import("ai.zig");
 const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
 const main = @import("main.zig");
@@ -281,13 +282,15 @@ pub fn damage(world: gameobj.World, index: u16, struck: Quadrant, value: f32, fa
     object.last_attacker = attacker;
 }
 
-/// `0x004641F0`: damage to an object's armour, once its shields are down. The armour's conditions
-/// follow it (`object_armor_conditions`), and armour below zero destroys the object.
+/// `0x004641F0`: damage to an object's armour, once its shields are down. An invulnerable object
+/// takes it only while it leaves armour to spare, and one in its last state
+/// (`Invulnerability._unknown_4`) not at all. The armour's conditions follow it
+/// (`object_armor_conditions`), and armour below zero destroys the object (`ai.objectDestroyed`),
+/// which may spin out; a blow heavier than `heavy_blow` leaves the player no time to eject.
 ///
-/// Not ported: the destruction itself (`object_destroyed`,
-/// [#41](https://github.com/vdmkenny/openreliant/issues/41)), the damage a component takes in place
-/// of the hull ([#40](https://github.com/vdmkenny/openreliant/issues/40)), and what an invulnerable
-/// object shrugs off.
+/// Not ported: the damage a component takes in place of the hull
+/// ([#40](https://github.com/vdmkenny/openreliant/issues/40)), the display's interference and the
+/// damage the difficulty scales, and what the player's hits on a friend tell the mission.
 pub fn armorDamage(world: gameobj.World, index: u16, struck: Quadrant, value: f32, attacker: u16, kind: Kind) void {
     const all = world.objects;
     const slot = &all.slots[index];
@@ -295,15 +298,27 @@ pub fn armorDamage(world: gameobj.World, index: u16, struck: Quadrant, value: f3
     if (object.flags.jumping or object.flags.exploding) return;
     if (slot.combat) |combat| if (combat.class == .debris) return;
     if (counted(kind)) object.recent_damage += value;
-    if (object.invulnerable != .none) return;
 
-    object.armor.at(struck).* -= value;
+    const shielded = switch (object.invulnerable) {
+        .full => true,
+        .player_can_hit => attacker >= all.players,
+        else => false,
+    };
+    const armor = object.armor.at(struck);
+    const left = armor.* - value;
+    const blocked = (left < 0 and shielded) or object.invulnerable == ._unknown_4;
+    if (!blocked) armor.* = left;
+    const taken = if (blocked) 0 else value;
     if (slot.combat) |combat| {
         main.armorConditions(object, combat);
         if (index == all.player) if (world.hearing) |hearing| main.armorWarning(hearing, object, combat);
     }
     object.last_attacker = attacker;
+    if (armor.* < 0) ai.objectDestroyed(.{ .world = world, .clock = world.clock }, index, true, taken > heavy_blow);
 }
+
+/// A blow to the armour heavier than this leaves the player's ship no time to eject (`0x004DC44C`).
+const heavy_blow: f32 = 1000;
 
 /// The damage kinds that hurt a component with armour to spare, whatever its flags.
 fn heavyKind(kind: Kind) bool {
@@ -594,6 +609,34 @@ test damage {
     object.flags.jumping = true;
     damage(world, index, .fore, 100, 1, 1, .collision);
     try std.testing.expectEqual(left, object.armor.fore);
+}
+
+test armorDamage {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const world = mission.world();
+    // The player's ship, in the first slot, and another.
+    _ = try mission.add(.predator, @splat(0));
+    const index = try testing.ship(&mission, .{ 0, 0, 1000 }, 1000);
+    const object = &all.slots[index].object;
+    object.armor = .{ .left = 20, .right = 20, .fore = 20, .aft = 20 };
+
+    // An invulnerable ship takes what it has armour to spare for, and no more.
+    object.invulnerable = .full;
+    armorDamage(world, index, .fore, 15, 0, .bullet);
+    try std.testing.expectEqual(5, object.armor.fore);
+    armorDamage(world, index, .fore, 15, 0, .bullet);
+    try std.testing.expectEqual(5, object.armor.fore);
+    try std.testing.expect(!object.flags.exploding);
+
+    // Armour below zero destroys it.
+    object.invulnerable = .none;
+    armorDamage(world, index, .fore, 15, 0, .bullet);
+    try std.testing.expect(object.flags.exploding);
+    try std.testing.expectEqual(.explode, all.slots[index].orders[0].order);
+    try std.testing.expect(all.slots[index].orders[0].data.destroyed.may_spin);
 }
 
 test quadrant {

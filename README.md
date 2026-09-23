@@ -42,7 +42,10 @@ with their keys but don't show anything yet.
 Your ship carries the guns its model holds. Hold the fire key and they fire, drawing on the gun
 charge the power ball feeds, at the rate and cost their type has in the game's own data. The shots
 fly, each gun type drawn as the game draws it, and a fighter you hit loses its shields and then its
-armour. Shots still pass through capital ships.
+armour. Once its armour is gone it's destroyed: it spins out and blows up, bursts, or stops dead,
+with the game's explosion sounds, though the fireballs and flying wreckage aren't drawn yet. When
+yours goes, you eject and the camera watches your ship's end, and the sandbox starts again. Shots
+still pass through capital ships.
 
 You hear it as the game sounds: your guns and theirs, your engine rising with the throttle and
 roaring on afterburner, fighters sweeping past, and the game's music. The sounds are placed around
@@ -51,7 +54,7 @@ keeps loud fights clean; on headphones they are placed for headphones. `--music`
 another piece from the game's `music` folder, or `none`; `--no-sound` turns it all off, and
 `--original` plays the sound plainly, as the original mixed it.
 
-Nothing can be destroyed yet, and there are no missiles or missions. The radio's voices and the
+There are no missiles or missions yet. The radio's voices and the
 display's beeps are still silent. See the [milestones](../../milestones) for what's planned.
 
 ## Installing and playing

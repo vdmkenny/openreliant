@@ -9,6 +9,8 @@ const engine = @import("../../engine.zig");
 const Pointer = engine.Pointer;
 const dte = @import("../../formats/dte.zig");
 const ai = @import("ai.zig");
+const aieject = @import("aieject.zig");
+const aiexplode = @import("aiexplode.zig");
 const aifight = @import("aifight.zig");
 const aiorders = @import("aiorders.zig");
 const camera = @import("camera.zig");
@@ -70,6 +72,8 @@ pub const Entry = extern struct {
         /// Fly's: the speed to fly at, or zero for its full throttle, which it reads as a whole
         /// word from the first two. The entries sit two bytes apart, so the word is not aligned.
         fly: i32 align(2),
+        /// Explode's and Eject Spin's: what `object_destroyed` was told.
+        destroyed: aiexplode.Data,
     };
 
     comptime {
@@ -101,6 +105,8 @@ pub const State = extern union {
     bytes: [0x90]u8,
     fight: aifight.FightState,
     fly: aiorders.FlyState,
+    explode: aiexplode.State,
+    eject_player: aieject.PlayerState,
 
     comptime {
         assert(@sizeOf(State) == 0x90);
@@ -374,6 +380,8 @@ fn runInit(ctx: Context, index: u16, info: orders.Info) void {
         .random_spin_slow => aiorders.randomSpinInit(ctx, index, .slow),
         .random_spin_medium => aiorders.randomSpinInit(ctx, index, .medium),
         .random_spin_fast => aiorders.randomSpinInit(ctx, index, .fast),
+        .explode => aiexplode.init(ctx, index),
+        .eject_player => aieject.playerInit(ctx, index),
         else => {},
     }
 }
@@ -389,6 +397,8 @@ fn runUpdate(ctx: Context, index: u16, info: orders.Info) void {
         .immediately_set_ship_to_zero_velocity_and_rotation => zeroVelocity(ctx, index),
         .fly_ship_backwards => flyBackwards(ctx, index),
         .player_control => playerControl(ctx, index),
+        .explode => aiexplode.update(ctx, index),
+        .eject_player => aieject.player(ctx, index),
         else => {},
     }
 }
@@ -402,7 +412,7 @@ fn runExit(ctx: Context, index: u16, info: orders.Info) void {
 
 /// The update of Player Control (100), which is the player's own
 /// [controls](../input.zig). It needs the devices to read; without them the ship holds what it has.
-fn playerControl(ctx: Context, index: u16) void {
+pub fn playerControl(ctx: Context, index: u16) void {
     const devices = ctx.devices orelse return;
     const slot = &ctx.world.objects.slots[index];
     const combat = slot.combat orelse return;
