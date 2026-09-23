@@ -9,6 +9,22 @@ pub const Matrix = [9]f32;
 
 pub const identity: Matrix = .{ 1, 0, 0, 0, 1, 0, 0, 0, 1 };
 
+/// Where something stands and which way it faces: a position, and an orientation whose columns
+/// are its right, down and forward axes.
+pub const Place = struct {
+    position: Vector = @splat(0),
+    orientation: Matrix = identity,
+
+    /// This place, standing in `parent`'s frame, as it stands in the world
+    /// (`SR_object_concate_parents`, `0x004C3570`, one level up).
+    pub fn within(place: Place, parent: Place) Place {
+        return .{
+            .position = transform(parent.orientation, place.position) + parent.position,
+            .orientation = product(parent.orientation, place.orientation),
+        };
+    }
+};
+
 // The helpers add in the order the engine's do, which with the FPU rounding to single precision, as
 // it does once Direct3D is running, gives the same results.
 

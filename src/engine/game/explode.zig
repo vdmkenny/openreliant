@@ -14,6 +14,7 @@ const std = @import("std");
 const math = @import("../surrender/math.zig");
 const Vector = math.Vector;
 const gameobj = @import("gameobj.zig");
+const libcmt = @import("../libcmt.zig");
 const particles = @import("particles.zig");
 const sound3d = @import("sound3d.zig");
 
@@ -58,14 +59,12 @@ pub fn sound(world: gameobj.World, at: Vector, class: sound3d.Class) void {
 
 /// The flame a blast bursts into (`0x00553348`): five to six seconds of it, growing from nothing
 /// to a half-size of 400 as it goes from yellowish white through orange to nothing. It thins
-/// quickly with distance.
+/// slowly with distance.
 pub const flame: particles.Template = .{
     .life = 500,
     .life_spread = 100,
     .size = .through(0, 100, 400),
-    .red = .through(1, 0.75, 0),
-    .green = .through(1, 0.25, 0),
-    .blue = .through(0, 0, 0),
+    .colour = .{ .through(1, 0.75, 0), .through(1, 0.25, 0), .through(0, 0, 0) },
     .distance = 0.05,
 };
 
@@ -75,49 +74,69 @@ pub const sparkle: particles.Template = .{
     .life = 100,
     .life_spread = 500,
     .size = .through(0, 25, 25),
-    .red = .through(1, 1, 0),
-    .green = .through(1, 1, 0),
-    .blue = .through(1, 1, 0),
+    .colour = .{ .through(1, 1, 0), .through(1, 1, 0), .through(1, 1, 0) },
 };
 
-/// How a blast's flame leaves it: how fast, a tick, and how much of the ship's velocity, a
-/// quarter of which is a tick's, it carries on with; `carried_random` more at random.
+/// How much of a ship's velocity, a step's, the particles of its blast carry on with, a tick's.
+const Carried = union(enum) {
+    /// This share of it.
+    share: f32,
+    /// This share and up to as much again, at random.
+    share_or_more: f32,
+
+    fn of(carried: Carried, random: *libcmt.Rand) f32 {
+        return switch (carried) {
+            .share => |share| share,
+            .share_or_more => |share| (random.fraction() + 1) * share,
+        };
+    }
+};
+
+/// How a blast's flame leaves it: how fast, a tick, how much of the ship's velocity it carries, and
+/// how many.
 const Flames = struct {
     speed: f32,
     speed_range: f32,
-    carried: f32,
-    carried_random: f32 = 0,
+    carried: Carried,
     count: i32,
 };
 
-/// A burst of `flame` from a ship at `at`, spreading out mostly across the view: the emitter
-/// stands turned 60 degrees back and a random way about the camera's forward axis, from the
-/// camera's orientation.
-fn flames(world: gameobj.World, at: Vector, velocity: Vector, how: Flames) void {
+/// Sends `emitter` off from a ship at `at`, moving at `velocity`, carrying `carried` of it: `count`
+/// particles at once, as the camera sees them.
+fn send(world: gameobj.World, emitter: particles.Emitter, at: Vector, velocity: Vector, carried: f32, count: i32) void {
     const pool = world.particles orelse return;
     const view = (world.camera orelse return).place;
-    var emitter: particles.Emitter = .init(&flame, world.clock);
-    emitter.position = at;
-    emitter.orientation = math.product(math.fromAngles(-std.math.pi / 3.0, 0, world.random.fraction() * std.math.tau), view.orientation);
-    emitter.spread = .{ 1, 1, 0.2 };
-    emitter.speed = how.speed;
-    emitter.speed_range = how.speed_range;
-    const carried = if (how.carried_random > 0) world.random.fraction() * how.carried_random + how.carried else how.carried;
-    emitter.inherited = velocity * @as(Vector, @splat(carried));
-    pool.burst(&emitter, null, how.count, view, world.clock, world.random);
+    var from = emitter;
+    from.place.position = at;
+    from.inherited = velocity * @as(Vector, @splat(carried));
+    pool.burst(&from, null, count, view, world.clock, world.random);
 }
 
-/// A burst of 150 of `sparkle` from a ship at `at`, drifting every way, carrying `carried` of the
-/// ship's velocity.
-fn sparkles(world: gameobj.World, at: Vector, velocity: Vector, carried: f32) void {
-    const pool = world.particles orelse return;
+/// A burst of `flame`, spreading out mostly across the view: the emitter stands turned 60 degrees
+/// back and a random way about the camera's forward axis, from the camera's orientation.
+fn flames(world: gameobj.World, at: Vector, velocity: Vector, how: Flames) void {
     const view = (world.camera orelse return).place;
-    var emitter: particles.Emitter = .init(&sparkle, world.clock);
-    emitter.position = at;
-    emitter.spread = .{ 1, 1, 1 };
-    emitter.speed_range = 7;
-    emitter.inherited = velocity * @as(Vector, @splat(carried));
-    pool.burst(&emitter, null, 150, view, world.clock, world.random);
+    const turn = math.fromAngles(-std.math.pi / 3.0, 0, world.random.fraction() * std.math.tau);
+    const emitter: particles.Emitter = .{
+        .born = world.clock.frame_start,
+        .template = &flame,
+        .place = .{ .orientation = math.product(turn, view.orientation) },
+        .spread = .{ 1, 1, 0.2 },
+        .speed = how.speed,
+        .speed_range = how.speed_range,
+    };
+    send(world, emitter, at, velocity, how.carried.of(world.random), how.count);
+}
+
+/// A burst of 150 of `sparkle`, drifting every way.
+fn sparkles(world: gameobj.World, at: Vector, velocity: Vector, carried: f32) void {
+    const emitter: particles.Emitter = .{
+        .born = world.clock.frame_start,
+        .template = &sparkle,
+        .spread = .{ 1, 1, 1 },
+        .speed_range = 7,
+    };
+    send(world, emitter, at, velocity, carried, 150);
 }
 
 /// `0x0046C980`: a ship's blast at the end of its Explode order: a burst of flame, fast and wide,
@@ -129,7 +148,7 @@ pub fn blast(world: gameobj.World, index: u16) void {
     const slot = &world.objects.slots[index];
     const at = slot.drawn.position;
     const velocity = gameobj.vector(slot.object.velocity);
-    flames(world, at, velocity, .{ .speed = 200, .speed_range = 300, .carried = 0.25, .carried_random = 0.25, .count = 400 });
+    flames(world, at, velocity, .{ .speed = 200, .speed_range = 300, .carried = .{ .share_or_more = 0.25 }, .count = 400 });
     sparkles(world, at, velocity, 0.25);
     sound(world, at, soundClass(world, at) orelse return);
 }
@@ -146,7 +165,7 @@ pub fn burst(world: gameobj.World, index: u16) void {
     if (index == world.objects.player) if (world.explosions) |explosions| {
         explosions.marker = .{ .position = at, .drift = velocity * @as(Vector, @splat(0.25)) };
     };
-    flames(world, at, velocity, .{ .speed = 20, .speed_range = 5, .carried = 0.25, .count = 200 });
+    flames(world, at, velocity, .{ .speed = 20, .speed_range = 5, .carried = .{ .share = 0.25 }, .count = 200 });
     sparkles(world, at, velocity, 0.5);
     sound(world, at, .explosions);
 }

@@ -354,13 +354,13 @@ pub fn cockpitInput(cockpit: *const objects.Model, model: *const shp.Model, rate
 /// camera's frame where `placed` puts it, each part stands from the root as it does in the model,
 /// and the hands where the camera turned them.
 pub fn placeCockpit(cockpit: *objects.Model, at: camera.Place, placed: camera.Cockpit.Placed) void {
-    const orientation = math.product(at.orientation, placed.root.orientation);
-    const position = at.position + math.transform(at.orientation, placed.root.position);
-    cockpit.place(position, orientation);
+    const root = placed.root.within(at);
+    cockpit.place(root.position, root.orientation);
     if (cockpit.parts.len <= cockpit_hands) return;
-    const hands = &cockpit.parts[cockpit_hands].object;
-    hands.position = position + math.transform(orientation, placed.hands.position);
-    hands.orientation = math.product(orientation, placed.hands.orientation);
+    const hands = placed.hands.within(root);
+    const object = &cockpit.parts[cockpit_hands].object;
+    object.position = hands.position;
+    object.orientation = hands.orientation;
 }
 
 /// The radar's backing (`0x005883BC`), which the mission's start makes and the cockpit's view

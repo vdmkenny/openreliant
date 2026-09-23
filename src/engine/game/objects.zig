@@ -594,10 +594,7 @@ pub const Model = struct {
     pub const Slot = enum { startup, fire, deploy };
 
     /// A part node's place in the frame it hangs from.
-    pub const Local = struct {
-        position: Vector = @splat(0),
-        orientation: math.Matrix = math.identity,
-    };
+    pub const Local = math.Place;
 
     /// A part node's pose: the animation's angles, plus the turret's, and the animation's offset.
     pub const Pose = struct {
@@ -1051,11 +1048,11 @@ pub const Model = struct {
         }
         for (model.mounts) |*mount| {
             const carrier = model.parts[mount.part].object;
-            // The attachment's own turn, on the part that carries it.
-            const turn = math.product(carrier.orientation, mount.orientation);
-            const at = math.transform(carrier.orientation, mount.origin) + carrier.position;
+            // The attachment where the part that carries it stands.
+            const on = (math.Place{ .position = mount.origin, .orientation = mount.orientation })
+                .within(.{ .position = carrier.position, .orientation = carrier.orientation });
             // The mounted model stands on its own centre of mass, so its origin goes back by it.
-            mount.model.place(math.transform(turn, mount.model.centre) + at, turn);
+            mount.model.place(math.transform(on.orientation, mount.model.centre) + on.position, on.orientation);
         }
     }
 

@@ -991,8 +991,10 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, gun: Fitted,
     // The muzzle stands where the step is taking the ship, on the part that carries it.
     model.place(gameobj.vector(slot.object.root.next_position), slot.object.root.next_orientation);
     const part = gun.part.object;
-    const at = math.transform(part.orientation, gameobj.vector(gun.muzzle.position)) + part.position;
-    const turn = math.product(part.orientation, gun.muzzle.orientation);
+    const muzzle = (math.Place{ .position = gameobj.vector(gun.muzzle.position), .orientation = gun.muzzle.orientation })
+        .within(.{ .position = part.position, .orientation = part.orientation });
+    const at = muzzle.position;
+    const turn = muzzle.orientation;
 
     bullet.* = .{
         .live = true,
