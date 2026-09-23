@@ -939,3 +939,8 @@ address	kind	name	type	comment
 00593d8c	data	sparks_moved_at	int	The frame_start the sparks last moved on at
 00593d90	data	sparks	void *[256]	The sparks flying, 0x24 bytes each: kind, object, birth, velocity a tick, carried velocity a tick
 00594190	data	spark_shapes		Each spark kind's levels, 0x54 bytes each: count, distances, meshes
+004018f0	function	ai_target_node	ModelNode * __fastcall (OrderTarget *target)	The node the AI aims at on a target: its component's node, the root's child 0x14 for types 0x43 and 0x49, 0x11 for 0x47, 0x13 for 0x48, else the root
+00401280	function	ai_lead_aim	bool __fastcall (Vec3 *out, int slot, OrderEntry *entry, float lead)	Picks the fastest of the guns the ship fires together (its group's two, or all) and leads the target with it (ai_lead_aim_with_gun)
+00401180	function	ai_lead_aim_with_gun	bool __fastcall (Vec3 *out, void *node, OrderEntry *entry, int gun, float lead)	Aims at the target's node, ahead along its heading by its speed times lead times the gun's flight time to it; false, leaving the node's place, when the flight takes a quarter of the gun's lifetime or more (three times the lifetime for the Turret Flak)
+004010f0	function	ai_along_nose	bool __fastcall (void *frame, Vec3 *point, float radius)	Whether the point lies ahead of the frame and within radius of the line along its nose
+00401980	function	ai_collision_course	bool __fastcall (int slot, int target, float steps, float margin, int *node, int *part)	Whether the ship is on course to hit the target within steps: within reach at both cruise speeds, the target ahead, closing by the ship's velocity less twice the target's to within both radii and the margin; against a target with components, the part it would hit

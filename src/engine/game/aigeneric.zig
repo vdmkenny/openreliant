@@ -251,7 +251,7 @@ pub fn popAll(ctx: Context, index: u16) void {
 /// updates, which both `order_push` and `order_pop` do.
 fn start(slot: *create.Slot) void {
     slot.object.order_starting = true;
-    slot.object._unknown_620 = -1;
+    slot.object.fighting = -1;
     slot.state = .{ .bytes = @splat(0) };
 }
 

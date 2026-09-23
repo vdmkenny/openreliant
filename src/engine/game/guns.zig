@@ -407,20 +407,41 @@ pub const held_ticks: i32 = 1;
 pub fn fire(object: *gameobj.GameObject, trigger: Trigger, ticks: i32) void {
     if (object.flags.guns_disabled or object.gun_count == 0) return;
     const until = trigger.frame_start + ticks;
-    if (!object.gun_mode.all) {
-        const group = trigger.groups[object.gun_mode.group];
-        for ([2]i16{ group.first, group.second }) |index| {
-            if (index < 0 or index >= trigger.fitted.len) continue;
-            const gun = &trigger.fitted[@intCast(index)];
-            if (gun.type != charging_type) gun.firing_until = until;
-        }
-        return;
-    }
-    for (trigger.fitted) |*gun| {
-        if (gun.turret == .aimed or gun.turret == .unset or gun.type == charging_type) continue;
+    var chosen: Chosen = .of(object, trigger.fitted, trigger.groups);
+    while (chosen.next()) |gun| {
+        if (gun.type == charging_type) continue;
+        if (object.gun_mode.all and (gun.turret == .aimed or gun.turret == .unset)) continue;
         gun.firing_until = until;
     }
 }
+
+/// The guns a ship fires together (`GameObject.gun_mode`): its chosen group's two, or all of them.
+pub const Chosen = struct {
+    fitted: []Fitted,
+    /// The group's two, or null for all of them.
+    pair: ?[2]i16,
+    at: usize = 0,
+
+    pub fn of(object: *const gameobj.GameObject, fitted: []Fitted, groups: *const [max_groups]Group) Chosen {
+        if (object.gun_mode.all) return .{ .fitted = fitted, .pair = null };
+        const group = groups[object.gun_mode.group];
+        return .{ .fitted = fitted, .pair = .{ group.first, group.second } };
+    }
+
+    pub fn next(chosen: *Chosen) ?*Fitted {
+        const pair = chosen.pair orelse {
+            if (chosen.at >= chosen.fitted.len) return null;
+            defer chosen.at += 1;
+            return &chosen.fitted[chosen.at];
+        };
+        while (chosen.at < pair.len) {
+            const index = pair[chosen.at];
+            chosen.at += 1;
+            if (index >= 0 and index < chosen.fitted.len) return &chosen.fitted[@intCast(index)];
+        }
+        return null;
+    }
+};
 
 /// `guns_step` (`0x004770E0`), which `simulation_step` runs for every object after its shields
 /// recharge. The guns' charge grows by `gun_energy` times the guns' share of the power and their

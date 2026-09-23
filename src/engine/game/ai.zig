@@ -15,6 +15,8 @@ const math = @import("../surrender/math.zig");
 const Vector = math.Vector;
 const motion = @import("motion.zig");
 const aigeneric = @import("aigeneric.zig");
+const guns = @import("guns.zig");
+const objects = @import("objects.zig");
 const GameObject = gameobj.GameObject;
 
 pub const orders = @import("ai/orders.zig");
@@ -67,6 +69,104 @@ pub const Record = extern struct {
 
 test {
     std.testing.refAllDecls(@This());
+}
+
+/// Where the AI aims at a target, and how far across that is: the part a component names, the
+/// part a few types are aimed at by (`gameobj.Type.aimedChild`), or the object itself
+/// (`0x004018F0`, which gives the part's node). **Unverified:** these helpers lie before this
+/// file's path, beside `ai_steer`.
+pub const Aimed = struct {
+    position: Vector,
+    radius: f32,
+
+    fn ofPart(part: *const objects.Model.Part) Aimed {
+        return .{ .position = part.object.position, .radius = part.object.radius };
+    }
+};
+
+pub fn aimedAt(all: *const create.Objects, target: aigeneric.Target) Aimed {
+    const slot = &all.slots[@intCast(target.index)];
+    if (target.component >= 0 and target.component < slot.components.len) {
+        if (slot.components[@intCast(target.component)]) |part| return .ofPart(part);
+    }
+    if (slot.object.type.aimedChild()) |child| if (slot.model) |*model| {
+        if (model.rootChild(child)) |part| return .ofPart(part);
+    };
+    return .{ .position = slot.drawn.position, .radius = slot.object.radius };
+}
+
+/// How much further a Turret Flak's shot is led for, over its type's lifetime (`0x004DC3D8`), and
+/// the share of a gun's range within which a shot is led at all (`0x004DC3D4`).
+const flak_lead: f32 = 3;
+const lead_range: f32 = 0.25;
+
+/// `0x00401280`: where to aim at `target` for the fastest of the guns the ship fires together to
+/// hit it: ahead of it along its heading by how far it flies, times `lead`, while that gun's shot
+/// flies to it (`0x00401180`). Null where that takes longer than a quarter of the gun's life, when
+/// the caller aims at it unled.
+pub fn leadAim(all: *const create.Objects, index: u16, target: aigeneric.Target, lead: f32) ?Vector {
+    const slot = &all.slots[index];
+    var fastest: guns.GunType = .laser_cannon;
+    var best: f32 = -1;
+    var chosen: guns.Chosen = .of(&slot.object, slot.guns, slot.gun_groups);
+    while (chosen.next()) |gun| {
+        const speed = gun.type.stats(&all.gun_stats).speed;
+        if (speed > best) {
+            best = speed;
+            fastest = gun.type;
+        }
+    }
+    const record = fastest.stats(&all.gun_stats);
+    const life: f32 = @floatFromInt(record.lifetime);
+    const lifetime = if (fastest == .turret_flak) life * flak_lead else life;
+    const aimed = aimedAt(all, target);
+    const flight = math.distance(slot.drawn.position, aimed.position) / record.speed;
+    if (!(flight < lifetime * lead_range)) return null;
+    const struck = &all.slots[@intCast(target.index)];
+    return aimed.position + math.forward(struck.drawn.orientation) * @as(Vector, @splat(flight * struck.object.speed * lead));
+}
+
+/// `0x004010F0`: whether `point` lies ahead of `place` and within `radius` of the line along its
+/// nose.
+pub fn alongNose(place: math.Place, point: Vector, radius: f32) bool {
+    const offset = point - place.position;
+    const along = math.dot(math.forward(place.orientation), offset);
+    if (!(along > 0)) return false;
+    return math.lengthSquared(offset) - along * along < radius * radius;
+}
+
+/// How much of the target's velocity the course is closed against (`0x00401980`), and the least
+/// closing that counts (`0x004DC418`).
+const crash_target_share: f32 = -2;
+const least_closing: f32 = 0.001;
+
+/// `0x00401980`: whether the ship at `index` is on course to hit `target`, one without listed
+/// components, within `steps` simulation steps and with `margin` to spare: they are within reach
+/// of each other at their cruise speeds, the target is ahead of the ship, and the ship is closing
+/// on it by its velocity less twice the target's, to within both radii and the margin.
+///
+/// Not ported: against a target with listed components, the parts of it the ship could hit
+/// ([#40](https://github.com/vdmkenny/openreliant/issues/40)); that is taken as no.
+pub fn collisionCourse(world: gameobj.World, index: u16, target: u16, steps: f32, margin: f32) bool {
+    const all = world.objects;
+    const ship = &all.slots[index];
+    const struck = &all.slots[target];
+    if (struck.object.flags.components) return false;
+    const ship_flight = ship.flight orelse return false;
+    const struck_flight = struck.flight orelse return false;
+    var apart = gameobj.vector(ship.object.root.next_position) - gameobj.vector(struck.object.root.next_position);
+    const speeds = cruiseSpeed(&struck.object, struck_flight, world.view) + cruiseSpeed(&ship.object, ship_flight, world.view);
+    const reach = speeds * steps + struck.object.radius + ship.object.radius + margin;
+    if (math.lengthSquared(apart) > reach * reach) return false;
+    const closing = gameobj.vector(struck.object.velocity) * @as(Vector, @splat(crash_target_share)) + gameobj.vector(ship.object.velocity);
+    if (math.dot(math.forward(ship.object.root.next_orientation), apart) > 0) return false;
+    const along = math.dot(apart, closing);
+    if (-along < 0) return false;
+    const rate = math.dot(closing, closing);
+    if (rate < least_closing) return false;
+    apart += closing * @as(Vector, @splat(@min(-along / rate, steps)));
+    const touching = struck.object.radius + ship.object.radius + margin;
+    return math.lengthSquared(apart) < touching * touching;
 }
 
 /// A pilot ejects rather than go down with the ship where its `eject_roll` is below this
@@ -490,6 +590,58 @@ test "a slow frame halves the small turns" {
     const quick = slot.object.yaw_input;
     _ = steer(slot, .{ 200, 0, 4000 }, 1, 0, .{}, slow_frame + 1);
     try std.testing.expectApproxEqAbs(quick * 0.5, slot.object.yaw_input, 1e-6);
+}
+
+test alongNose {
+    const place: math.Place = .{ .position = .{ 0, 0, 100 } };
+    // Ahead and near the line, it is; behind, or wide of it, it isn't.
+    try std.testing.expect(alongNose(place, .{ 5, 0, 1000 }, 10));
+    try std.testing.expect(!alongNose(place, .{ 5, 0, 0 }, 10));
+    try std.testing.expect(!alongNose(place, .{ 50, 0, 1000 }, 10));
+}
+
+test "aiming at a target" {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const ship = try mission.add(.predator, @splat(0));
+    const target = try mission.add(.sabre, .{ 0, 0, 1000 });
+    const struck = &all.slots[target];
+    struck.drawn = .{ .position = .{ 0, 0, 1000 }, .orientation = math.rotation(.y, std.math.pi / 2.0) };
+    struck.object.speed = 10;
+    const aimed: aigeneric.Target = .{ .kind = .ship, .index = @intCast(target), .component = -1 };
+    try std.testing.expectEqual(Vector{ 0, 0, 1000 }, aimedAt(all, aimed).position);
+
+    // With no gun fast enough to reach it in a quarter of its life, it isn't led.
+    const laser = &all.gun_stats.types[guns.GunType.laser_cannon.number()];
+    laser.speed = 100;
+    laser.lifetime = 20;
+    try std.testing.expectEqual(null, leadAim(all, ship, aimed, 1));
+    // With one, it is led along its heading by how far it flies while the shot does.
+    laser.lifetime = 100;
+    const led = leadAim(all, ship, aimed, 1).?;
+    try std.testing.expectApproxEqAbs(100, led[0], 1e-3);
+    try std.testing.expectApproxEqAbs(1000, led[2], 1e-3);
+}
+
+test collisionCourse {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const world = mission.world();
+    const all = mission.objects;
+    const ship = try mission.add(.predator, @splat(0));
+    const target = try mission.add(.sabre, .{ 0, 0, 2000 });
+    all.slots[ship].object.velocity = .{ .x = 0, .y = 0, .z = 50 };
+
+    // Flying straight at it, it is on course to hit; turned away, or past it, it isn't.
+    try std.testing.expect(collisionCourse(world, ship, target, 100, 500));
+    all.slots[ship].object.velocity = .{ .x = 0, .y = 0, .z = -50 };
+    try std.testing.expect(!collisionCourse(world, ship, target, 100, 500));
+    all.slots[ship].object.velocity = .{ .x = 0, .y = 0, .z = 50 };
+    all.slots[target].object.root.next_position = .{ .x = 0, .y = 0, .z = -2000 };
+    try std.testing.expect(!collisionCourse(world, ship, target, 100, 500));
 }
 
 test rollUpright {

@@ -350,6 +350,9 @@ pub const Objects = struct {
     /// `gun_stats` (`0x00500CA4`): every gun type's figures, which `stats_load_guns` fills from
     /// `gunstats.bin`.
     gun_stats: guns.Stats = .initial,
+    /// `pilot_stats` (`0x0058A968`): every pilot, which `stats_load_pilots` fills from
+    /// `pilotstats.bin`.
+    pilots: pilots.Table = .{},
     /// The shots in flight (`0x00563148`), which the game keeps in `guns.cpp`'s own globals. The
     /// port keeps them here, beside the objects they fly among.
     bullets: guns.Bullets = .{},
@@ -513,7 +516,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.last_attacker = -1;
     object._unknown_720 = -1;
     object._unknown_724 = -1;
-    object._unknown_6a8 = 0;
+    object.fought_by = 0;
     object.motion = .null;
     object.side = .neutral;
     object._unknown_65c = 0;
@@ -591,7 +594,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
 
     object.engines_intact = 1;
     object.passes_through = @splat(.none);
-    object._unknown_620 = -1;
+    object.fighting = -1;
     object.power_up = .none;
     object.afterburner_fuel = combat.afterburner_fuel * 100;
     object.countermeasures = gameobj.countermeasures_when_created;

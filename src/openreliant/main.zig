@@ -450,6 +450,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     const ship_stats = (try stats.File.parse(.ships, try directory.readFileAlloc(io, "shipstats.bin", arena, .limited(4 << 20)))).ships;
     // Every gun type's figures, which `stats_load_guns` reads.
     const gun_stats = (try stats.File.parse(.guns, try directory.readFileAlloc(io, "gunstats.bin", arena, .limited(4 << 20)))).guns;
+    const pilot_stats = (try stats.File.parse(.pilots, try directory.readFileAlloc(io, "pilotstats.bin", arena, .limited(4 << 20)))).pilots;
     // The strings `language_init` reads out of `language.dll` at start-up.
     const strings: game.language.Language = try .load(arena, try .parse(try directory.readFileAlloc(io, game.language.file_name, arena, .limited(16 << 20))));
 
@@ -487,7 +488,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     const tables = try arena.create(game.create.Stats);
     tables.* = .initial;
     tables.load(ship_stats);
-    var sandbox: Sandbox = try .init(gpa, tables, gun_stats, &rand, .{
+    var sandbox: Sandbox = try .init(gpa, tables, gun_stats, pilot_stats, &rand, .{
         .gpa = gpa,
         .resources = &resources,
         .textures = &textures,
@@ -902,12 +903,13 @@ const Sandbox = struct {
     const wing_ahead: f32 = 150000;
     const wing_spacing: f32 = 3000;
 
-    fn init(gpa: Allocator, tables: *game.create.Stats, gun_stats: []align(1) const stats.Gun, random: *engine.libcmt.Rand, types: TypeCache) !Sandbox {
+    fn init(gpa: Allocator, tables: *game.create.Stats, gun_stats: []align(1) const stats.Gun, pilot_stats: []align(1) const stats.Pilot, random: *engine.libcmt.Rand, types: TypeCache) !Sandbox {
         const cache = try gpa.create(TypeCache);
         errdefer gpa.destroy(cache);
         cache.* = types;
         const objects = try game.create.Objects.create(gpa, random);
         objects.gun_stats.load(gun_stats);
+        objects.pilots.load(pilot_stats);
         return .{
             .gpa = gpa,
             .objects = objects,

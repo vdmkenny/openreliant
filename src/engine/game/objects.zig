@@ -653,6 +653,18 @@ pub const Model = struct {
         return if (parent < model.parts.len) parent else null;
     }
 
+    /// The part the root holds `child` of, counting only the parts hanging from the root, in the
+    /// order they were linked. **Unverified:** the root lists nothing else before them.
+    pub fn rootChild(model: *const Model, child: usize) ?*const Part {
+        var seen: usize = 0;
+        for (model.parts) |*part| {
+            if (part.parent != null) continue;
+            if (seen == child) return part;
+            seen += 1;
+        }
+        return null;
+    }
+
     /// The parts in an order that puts each after the one it hangs from, so that placing them in
     /// it needs only one pass: by how far each stands from the root, which a part's parent is
     /// always nearer than. A part whose parents run in a circle is taken as standing at the root,
