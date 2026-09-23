@@ -892,6 +892,15 @@ fn candidates(world: gameobj.World, bullet: *Bullet, record: Gun) void {
     }
 }
 
+/// What a turret's shot does to a player's ship, over what it does to any other (`0x004DC59C`).
+const turret_damage_to_players: f32 = 2.5;
+
+/// Whether the shot came from a turret's gun, which hits a player's ship harder. A shot keeps its
+/// type less one, so these are types 12 and 13, the two the turrets fire.
+fn fromTurret(kind: u4) bool {
+    return kind == 11 or kind == 12;
+}
+
 /// `0x0047A4E0`, which `simulation_step` runs after the objects move: every shot flies on by its
 /// velocity.
 pub fn moveBullets(world: gameobj.World) void {
@@ -930,8 +939,10 @@ pub fn bulletsFrame(world: gameobj.World, clock: *const Clock) void {
 /// An object is struck where the segment first crosses the sphere of its radius. With a shield up
 /// in that quadrant the shot spends itself on the shield (`object_damage` with the type's first
 /// damage, and its second over its first as the share that passes through); with the shield down
-/// the shot reaches the hull (`hullHit`). A ship with its spectral shields on takes nothing at all:
-/// the gun type they are tuned to is handed to the check and ignored, so every shot is turned.
+/// the shot reaches the hull (`hullHit`). What the player has shifted fore or aft takes the hit
+/// before the quadrant does, and a turret's shot hurts a player's ship more. A ship with its
+/// spectral shields on takes nothing at all: the gun type they are tuned to is handed to the check
+/// and ignored, so every shot is turned.
 ///
 /// Not ported: the parts of an object whose components are listed, which the game tests node by
 /// node ([#40](https://github.com/vdmkenny/openreliant/issues/40)); the cloak a hit reveals; the
@@ -986,7 +997,26 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
             return;
         }
         if (!object.flags.spectral_shields and record.damage[0] > 0) {
-            collision.damage(world, candidate.object, struck, record.damage[0], record.damage[1] / record.damage[0], bullet.owner, .bullet);
+            var value = record.damage[0];
+            // What the player has shifted fore or aft takes the hit before the quadrant does, and
+            // a hit it swallows whole leaves the shields alone.
+            const reserve: ?*f32 = if (candidate.object != all.player) null else switch (struck) {
+                .fore => &world.player.shield_reserves.fore,
+                .aft => &world.player.shield_reserves.aft,
+                else => null,
+            };
+            if (reserve) |shifted| {
+                if (shifted.* > 0) {
+                    shifted.* -= value;
+                    if (shifted.* > 0) {
+                        bullet.dies_at = spent;
+                        return;
+                    }
+                    shifted.* = 0;
+                }
+            }
+            if (candidate.object < all.players and fromTurret(bullet.kind)) value *= turret_damage_to_players;
+            collision.damage(world, candidate.object, struck, value, record.damage[1] / record.damage[0], bullet.owner, .bullet);
         }
         bullet.dies_at = spent;
         return;
@@ -998,14 +1028,15 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
 /// armour by the type's second damage.
 ///
 /// Not ported: the sparks the impact throws and its sound
-/// ([#41](https://github.com/vdmkenny/openreliant/issues/41)); what a player's shot of gun type 12
-/// or 13 does to a friendly ship, which the game softens.
+/// ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
 fn hullHit(world: gameobj.World, bullet: *Bullet, index: u16, struck: collision.Quadrant) void {
     const all = world.objects;
     const model = if (all.slots[index].model) |*live| live else return;
     if (!crossesPart(model, bullet.last, bullet.at)) return;
     const record = bullet.stats(&world.objects.gun_stats);
-    collision.armorDamage(world, index, struck, record.damage[1], bullet.owner, .bullet);
+    var value = record.damage[1];
+    if (index < all.players and fromTurret(bullet.kind)) value *= turret_damage_to_players;
+    collision.armorDamage(world, index, struck, value, bullet.owner, .bullet);
     bullet.dies_at = spent;
 }
 
@@ -1117,6 +1148,31 @@ test bulletsFrame {
     ship.clock.frame_start += 1000;
     bulletsFrame(world, &ship.clock);
     try std.testing.expectEqual(0, flying(world));
+}
+
+test "the player's shifted shields take a hit before the quadrant does" {
+    const gpa = std.testing.allocator;
+    var ship: testing.Ship = undefined;
+    try ship.init(gpa);
+    defer ship.deinit(gpa);
+    const world = ship.world();
+    // The ship that fires is the player's, so the target here is another slot shooting back.
+    const shooter = try create.createObject(ship.all, &ship.tables, ship.model.types(), null, 9, .{ 0, 0, 500 }, &ship.random);
+    const player = &ship.all.slots[ship.all.player];
+    player.drawn = .{ .position = @splat(0), .orientation = math.identity };
+    ship.controls.shield_reserves = .{ .fore = 25, .aft = 0 };
+
+    // A shot into the player's fore quadrant comes off the reserve, and the shields are untouched.
+    shoot(world, &ship.clock, shooter, ship.all.slots[shooter].guns[0]);
+    const bullet = &world.objects.bullets.pool[0];
+    bullet.last = .{ 0, 0, 500 };
+    bullet.at = .{ 0, 0, -100 };
+    bullet.candidates[0] = .{ .object = ship.all.player };
+    bullet.candidate_count = 1;
+    const shields = player.object.shields;
+    bulletsFrame(world, &ship.clock);
+    try std.testing.expectEqual(15, ship.controls.shield_reserves.fore);
+    try std.testing.expectEqual(shields, player.object.shields);
 }
 
 test crossesBox {
