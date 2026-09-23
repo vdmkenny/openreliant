@@ -121,7 +121,6 @@ its attacker; a shot does.
 
 Ported so far: the sweep, the pairs it passes over, the shove, setting two objects apart, the hull
 test and the damage ([`collision.zig`](../../src/engine/game/collision.zig)). A collision does no damage to a component: only a torpedo's hit and a ship destroying itself
-against a hull reach `component_damage`. Not yet: destroying an object whose armour runs out, and
-the torpedo's and the mine's explosions
-([#41](https://github.com/vdmkenny/openreliant/issues/41)); and the scaling the difficulty setting
-gives a hit.
+against a hull reach `component_damage`. Not yet: the mine's explosion
+([#41](https://github.com/vdmkenny/openreliant/issues/41)). The difficulty scales the damage
+([Destruction](objects.md#destruction)).

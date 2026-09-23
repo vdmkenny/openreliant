@@ -260,13 +260,62 @@ fn impact(world: gameobj.World, first: u16, second: u16, impulse: Vector, contac
     }
 }
 
-/// `0x00463EE0`: damage to an object, which its shields take first. What passes through wears the
-/// armour instead, times `factor`, which every caller here gives as 1. A shield that is already
-/// down adds its own deficit to what passes through. Damage of kinds 0, 1 and 5 counts toward what the object has
-/// taken lately, which is what sends a ship after its attacker.
+/// The game's difficulty (`0x00562F14`), which SET GAME DIFFICULTY starts at medium and steps
+/// through. It scales damage (`byDifficulty`).
+pub const Difficulty = enum(i16) {
+    easy = 0,
+    medium = 1,
+    hard = 2,
+    _,
+
+    /// How much harder a shot lands on a hostile object (`0x004DC4E0`, `0x004DC550`).
+    fn onHostile(difficulty: Difficulty) f32 {
+        return switch (difficulty) {
+            .easy => 1.5,
+            .hard => 0.75,
+            else => 1,
+        };
+    }
+
+    /// How much harder a hit lands on the player's ship, before `player_share`.
+    fn onPlayer(difficulty: Difficulty) f32 {
+        return switch (difficulty) {
+            .easy => 0.75,
+            .hard => 1.5,
+            else => 1,
+        };
+    }
+};
+
+/// The share of a hit the player's ship takes, whatever the difficulty (`0x004DC408`).
+const player_share: f32 = 0.5;
+
+/// `damage_by_difficulty` (`0x00463D70`): damage as the difficulty scales it. A shot lands on a
+/// hostile object harder the easier the game is, and anything that hits the player's ship lands
+/// at half, then harder or softer by the difficulty: at medium, half as hard.
 ///
-/// Not ported: the scaling the difficulty setting gives a hit (`0x00463D70`), the head-up display's
-/// answer to one, the score a player's hit is worth, and what multiplayer makes of it.
+/// The game compares the damage's kind with the player's slot, which in a single-player game is 0,
+/// a shot's kind; the port asks for a shot.
+///
+/// Not ported: multiplayer, where nothing is scaled.
+pub fn byDifficulty(world: gameobj.World, index: u16, kind: Kind, value: f32) f32 {
+    const all = world.objects;
+    var scaled = value;
+    if (kind == .bullet and all.slots[index].object.side == .hostile) scaled *= world.difficulty.onHostile();
+    if (index == all.player) scaled *= world.difficulty.onPlayer() * player_share;
+    return scaled;
+}
+
+/// `object_damage` (`0x00463EE0`): damage to an object, which its shields take first, as the
+/// difficulty scales it. What passes through wears the armour instead, times `factor`, which every
+/// caller here gives as 1; it is reckoned from the damage before the scaling, which the armour's
+/// damage then does. A shield that is already down adds its own deficit to what passes through,
+/// and an object in its last state (`Invulnerability._unknown_4`) keeps its shields. Damage of
+/// kinds 0, 1 and 5 counts toward what the object has taken lately, which is what sends a ship after
+/// its attacker.
+///
+/// Not ported: the head-up display's answer to a hit, the score a player's hit is worth, and what
+/// multiplayer makes of it.
 pub fn damage(world: gameobj.World, index: u16, struck: Quadrant, value: f32, factor: f32, attacker: u16, kind: Kind) void {
     const all = world.objects;
     const slot = &all.slots[index];
@@ -276,39 +325,47 @@ pub fn damage(world: gameobj.World, index: u16, struck: Quadrant, value: f32, fa
 
     const shield = object.shields.at(struck);
     const through = @max(value - shield.*, 0);
-    if (counted(kind)) object.recent_damage += value;
-    if (shield.* >= 0) shield.* -= value;
+    const scaled = byDifficulty(world, index, kind, value);
+    if (counted(kind)) object.recent_damage += scaled;
+    if (shield.* >= 0 and object.invulnerable != ._unknown_4) shield.* -= scaled;
     if (shield.* < 0) armorDamage(world, index, struck, through * factor, attacker, kind);
     object.last_attacker = attacker;
 }
 
-/// `0x004641F0`: damage to an object's armour, once its shields are down. An invulnerable object
-/// takes it only while it leaves armour to spare, and one in its last state
-/// (`Invulnerability._unknown_4`) not at all. The armour's conditions follow it
-/// (`object_armor_conditions`), and armour below zero destroys the object (`ai.objectDestroyed`),
-/// which may spin out; a blow heavier than `heavy_blow` leaves the player no time to eject.
+/// `object_armor_damage` (`0x004641F0`): damage to an object's armour, once its shields are down.
+/// The game scales it by the difficulty twice: once for what the object has taken lately, and that
+/// again for the armour, so at medium the player's armour takes a quarter. An exploding object
+/// takes no more, and a shot's damage to an object listing components goes to the component
+/// instead (`componentDamage`). An invulnerable object takes it only while it leaves armour to
+/// spare, and one in its last state (`Invulnerability._unknown_4`) not at all. The armour's
+/// conditions follow it (`object_armor_conditions`), and armour below zero destroys the object
+/// (`ai.objectDestroyed`), which may spin out; a blow heavier than `heavy_blow` leaves the player
+/// no time to eject.
 ///
-/// Not ported: the damage a component takes in place of the hull
-/// ([#40](https://github.com/vdmkenny/openreliant/issues/40)), the display's interference and the
-/// damage the difficulty scales, and what the player's hits on a friend tell the mission.
+/// Not ported: the display's interference, and what the player's hits on a friend tell the
+/// mission.
 pub fn armorDamage(world: gameobj.World, index: u16, struck: Quadrant, value: f32, attacker: u16, kind: Kind) void {
     const all = world.objects;
     const slot = &all.slots[index];
     const object = &slot.object;
-    if (object.flags.jumping or object.flags.exploding) return;
+    if (object.flags.jumping) return;
     if (slot.combat) |combat| if (combat.class == .debris) return;
-    if (counted(kind)) object.recent_damage += value;
+    const scaled = byDifficulty(world, index, kind, value);
+    if (counted(kind)) object.recent_damage += scaled;
+    if (object.flags.exploding) return;
+    if (kind == .bullet and object.flags.components) return;
 
     const shielded = switch (object.invulnerable) {
         .full => true,
         .player_can_hit => attacker >= all.players,
         else => false,
     };
+    const worn = byDifficulty(world, index, kind, scaled);
     const armor = object.armor.at(struck);
-    const left = armor.* - value;
+    const left = armor.* - worn;
     const blocked = (left < 0 and shielded) or object.invulnerable == ._unknown_4;
     if (!blocked) armor.* = left;
-    const taken = if (blocked) 0 else value;
+    const taken = if (blocked) 0 else worn;
     if (slot.combat) |combat| {
         main.armorConditions(object, combat);
         if (index == all.player) if (world.hearing) |hearing| main.armorWarning(hearing, object, combat);
@@ -337,8 +394,9 @@ const heavy_hit: f32 = 500;
 const shielded_damage: f32 = 0.25;
 const shielded_hit: f32 = 1000;
 
-/// `component_damage` (`0x004645C0`): damage to one of an object's components. A collision does
-/// none; guns, missiles and explosions do. Where the component belongs to an assembly, such as a
+/// `component_damage` (`0x004645C0`): damage to one of an object's components, as the difficulty
+/// scales it. A collision does none; guns, missiles and explosions do. Where the component belongs
+/// to an assembly, such as a
 /// turret and its barrels, the damage goes to the part of it that still has armour, and a component
 /// whose armour runs out marks the part it hangs from as destroyed.
 ///
@@ -350,6 +408,7 @@ pub fn componentDamage(world: gameobj.World, index: u16, component: *objects.Mod
     const object = &slot.object;
     const model = if (slot.model) |*live| live else return;
     if (object.flags.jumping or kind == .collision or component.flags.damaged) return;
+    var share = byDifficulty(world, index, kind, value);
 
     // The assembly's first part that still has armour takes the hit.
     var struck = component;
@@ -364,11 +423,10 @@ pub fn componentDamage(world: gameobj.World, index: u16, component: *objects.Mod
     if (struck.component_armor == 0) return;
     // A part with armour to spare takes only a heavy hit, and only from what can hurt it.
     if (struck.component_armor > heavy_component) {
-        if (value < heavy_hit) return;
+        if (share < heavy_hit) return;
         if (!struck.flags.lightmap and !heavyKind(kind)) return;
     }
 
-    var share = value;
     if (object.invulnerable != ._unknown_5 and object.flags.shield_generator and share < shielded_hit) share *= shielded_damage;
     const protected = object.invulnerable == .full or (object.invulnerable == .player_can_hit and attacker >= all.players);
 
@@ -577,7 +635,9 @@ test damage {
     defer mission.deinit();
     const all = mission.objects;
     const world = mission.world();
-    const index = try testing.ship(&mission, @splat(0), 1000);
+    // The player's ship, in the first slot, and another, which the difficulty leaves alone.
+    _ = try mission.add(.predator, @splat(0));
+    const index = try testing.ship(&mission, .{ 0, 0, 1000 }, 1000);
     const object = &all.slots[index].object;
     object.shields = .{ .left = 10, .right = 10, .fore = 10, .aft = 10 };
     object.armor = .{ .left = 20, .right = 20, .fore = 20, .aft = 20 };
@@ -639,6 +699,40 @@ test armorDamage {
     try std.testing.expect(all.slots[index].orders[0].data.destroyed.may_spin);
 }
 
+test byDifficulty {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    var world = mission.world();
+    const player = try mission.add(.predator, @splat(0));
+    const enemy = try mission.add(.sabre, .{ 0, 0, 1000 });
+    try std.testing.expectEqual(.hostile, all.slots[enemy].object.side);
+
+    // At medium, the player's ship takes half, and nothing else changes.
+    try std.testing.expectEqual(50, byDifficulty(world, player, .bullet, 100));
+    try std.testing.expectEqual(50, byDifficulty(world, player, .collision, 100));
+    try std.testing.expectEqual(100, byDifficulty(world, enemy, .bullet, 100));
+    // Easy: the player's ship takes three eighths, and a shot lands harder on the enemy.
+    world.difficulty = .easy;
+    try std.testing.expectEqual(37.5, byDifficulty(world, player, .bullet, 100));
+    try std.testing.expectEqual(150, byDifficulty(world, enemy, .bullet, 100));
+    try std.testing.expectEqual(100, byDifficulty(world, enemy, .collision, 100));
+    // Hard: three quarters on the player's ship, and a shot lands softer on the enemy.
+    world.difficulty = .hard;
+    try std.testing.expectEqual(75, byDifficulty(world, player, .bullet, 100));
+    try std.testing.expectEqual(75, byDifficulty(world, enemy, .bullet, 100));
+
+    // The armour's damage scales it twice: at medium the player's armour takes a quarter, and what
+    // it has taken lately counts half.
+    world.difficulty = .medium;
+    const object = &all.slots[player].object;
+    object.armor = .all(100);
+    armorDamage(world, player, .fore, 40, enemy, .bullet);
+    try std.testing.expectEqual(90, object.armor.fore);
+    try std.testing.expectEqual(20, object.recent_damage);
+}
+
 test quadrant {
     var object = gameobj.testing.object();
     object.bounds_min = .{ .x = -100, .y = -50, .z = -400 };
@@ -663,6 +757,9 @@ test componentDamage {
     model.data[0].part.component_armor = 100;
     const world = mission.world();
 
+    // The player's ship, in the first slot, and another, which the difficulty leaves alone. The
+    // player's is of another type, whose model the test's types don't give.
+    _ = try mission.add(.kamov, @splat(0));
     const index = try create.createObject(all, &mission.tables, model.types(), null, .predator, @splat(0), &mission.random);
     const part = &all.slots[index].model.?.parts[0];
     try std.testing.expectEqual(100, part.armor);

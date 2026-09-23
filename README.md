@@ -46,7 +46,8 @@ fly, each gun type drawn as the game draws it, and a fighter you hit loses its s
 armour. Once its armour is gone it's destroyed: it spins out and blows up, bursts, or stops dead,
 with the game's fireballs, flying wreckage, shockwaves and explosion sounds. When yours goes, you
 eject and the camera watches your ship's end, and the sandbox starts again. Shots still pass through
-capital ships.
+capital ships. How hard hits land follows the game's difficulty, medium by default;
+`--difficulty easy` or `--difficulty hard` changes it.
 
 You hear it as the game sounds: your guns and theirs, your engine rising with the throttle and
 roaring on afterburner, fighters sweeping past, and the game's music. The sounds are placed around

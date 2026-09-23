@@ -155,6 +155,7 @@ pub const exported = [_]Export{
     .{ "Invulnerability", engine.game.gameobj.Invulnerability },
     .{ "PowerUp", engine.game.gameobj.PowerUp },
     .{ "DamageKind", engine.game.collision.Kind },
+    .{ "Difficulty", engine.game.collision.Difficulty },
     .{ "GunGroupSide", engine.game.guns.GroupSide },
     .{ "ObjectRoutine", engine.game.gameobj.Routine },
     .{ "ModelNode", engine.game.objects.Node },

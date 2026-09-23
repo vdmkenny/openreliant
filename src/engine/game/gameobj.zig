@@ -934,6 +934,8 @@ pub const World = struct {
     player: *input.Player,
     /// The mission's clocks, whose `frame_start` the game's code reads as a global.
     clock: *const Clock,
+    /// The game's difficulty, which scales damage (`collision.byDifficulty`).
+    difficulty: collision.Difficulty = .medium,
     view: camera.View,
     shake: *f32,
     /// The runtime's numbers (`libcmt.Rand`), which the guns' step draws a damaged gun's misfire
