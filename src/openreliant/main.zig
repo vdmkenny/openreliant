@@ -622,19 +622,19 @@ const Sandbox = struct {
         model: game.objects.Model,
     };
 
-    /// The Reliant, which the sandbox starts ahead of the player and turned across its way, beyond
-    /// the wing. It flies its heading at `reliant_speed`, a tenth of the 100 its type cruises at,
+    /// The Reliant, which the sandbox starts ahead of the player and turned across its way. It flies its heading at `reliant_speed`, a tenth of the 100 its type cruises at,
     /// which carries it slowly across the player's way.
     const reliant_type = 0x0C;
     const reliant_at: math.Vector = .{ 6000, -9000, 48000 };
     const reliant_turn: f32 = 1.1;
     const reliant_speed: i32 = 10;
-    /// A wing: four Sabres, `wing_ahead` in front of the player and `wing_spacing` apart. That is
-    /// past a fighter's last level of detail, which reaches 25000, so the player has a while before
-    /// they arrive: at the Sabre's 300 they are drawn in under 20 seconds.
+    /// A wing: four Sabres, `wing_ahead` in front of the player, beyond the Reliant, and
+    /// `wing_spacing` apart. A Sabre flies 300 a step, 7500 a second, so they take about 20
+    /// seconds to arrive; their models are drawn once they are within 25000, a fighter's last
+    /// level of detail.
     const wing_type = 0x2B;
     const wing_size = 4;
-    const wing_ahead: f32 = 30000;
+    const wing_ahead: f32 = 150000;
     const wing_spacing: f32 = 3000;
 
     fn init(gpa: Allocator, tables: *game.create.Stats, gun_stats: []align(1) const stats.Gun, random: *engine.libcmt.Rand, types: TypeCache) !Sandbox {
