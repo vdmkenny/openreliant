@@ -153,6 +153,8 @@ pub const Spark = struct {
     /// Its bolt, pointing along its flight and coloured by its own colours, never culled (`+0x04`).
     object: srapiext.MeshObject,
     colours: [max_corners][4]f32 = @splat(@splat(1)),
+    /// Where it is at the frame's tick; its bolt is drawn from here (`Sparks.draw`).
+    at: Vector,
     born: i32,
     /// How far it flies a tick, slowing as it goes (`+0x0C`), and how far it drifts a tick with
     /// what threw it (`+0x18`).
@@ -224,6 +226,7 @@ pub const Sparks = struct {
                 .radius = all.shapes.getPtrConst(kind).meshes[0].radius,
                 .levels = all.shapes.getPtrConst(kind).shown(),
             },
+            .at = at,
             .born = clock.frame_start,
             .velocity = math.normalize(direction) * @as(Vector, @splat(speed)),
             .carried = carried,
@@ -244,7 +247,7 @@ pub const Sparks = struct {
                 slot.* = null;
                 continue;
             }
-            spark.object.position += (spark.velocity + spark.carried) * @as(Vector, @splat(ticks));
+            spark.at += (spark.velocity + spark.carried) * @as(Vector, @splat(ticks));
             spark.velocity *= @splat(std.math.pow(f32, look.drag, ticks));
             const done = @as(f32, @floatFromInt(age)) / @as(f32, @floatFromInt(look.life));
             const colour = std.math.lerp(@as(Vector, look.colours[0]), @as(Vector, look.colours[1]), @as(Vector, @splat(done)));
@@ -253,10 +256,14 @@ pub const Sparks = struct {
         all.moved_at = clock.frame_start;
     }
 
-    /// Each spark, into the world's layer.
-    pub fn draw(all: *Sparks, gpa: Allocator, scene: *srcore.Scene) Allocator.Error!void {
+    /// Each spark, into the world's layer, `ahead` of a tick along from where it was at the
+    /// frame's tick.
+    ///
+    /// **Improvement:** the game draws it where the tick left it (`particles.Pool.draw`).
+    pub fn draw(all: *Sparks, gpa: Allocator, scene: *srcore.Scene, ahead: f32) Allocator.Error!void {
         for (&all.sparks.slots) |*slot| {
             const spark = &(slot.* orelse continue);
+            spark.object.position = spark.at + (spark.velocity + spark.carried) * @as(Vector, @splat(ahead));
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &spark.object }, .world);
         }
     }
@@ -323,7 +330,11 @@ test Sparks {
     try std.testing.expectEqual(spark.object.levels.ptr, bolt.ptr);
     clock.frame_start = 50;
     all.frame(&clock);
-    try std.testing.expect(math.distance(spark.object.position, .{ 50, 0, 500 }) < 1e-3);
+    try std.testing.expect(math.distance(spark.at, .{ 50, 0, 500 }) < 1e-3);
+    var scene: srcore.Scene = .{};
+    defer scene.deinit(gpa);
+    try all.draw(gpa, &scene, 0.5);
+    try std.testing.expect(math.distance(spark.object.position, spark.at + (spark.velocity + spark.carried) * @as(Vector, @splat(0.5))) < 1e-4);
     try std.testing.expectApproxEqAbs(10 * std.math.pow(f32, 0.995, 50), spark.velocity[2], 1e-3);
     try std.testing.expectApproxEqAbs(0.5, spark.colours[3][0], 1e-6);
     clock.frame_start = 101;

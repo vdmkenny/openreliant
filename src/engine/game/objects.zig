@@ -813,7 +813,7 @@ pub const Model = struct {
     fn placeFor(model: *const Model, index: usize, posed: Pose) Local {
         const part = &model.parts[index];
         const a = &part.animation;
-        const turn = math.product(math.product(math.transpose(a.orientation), math.fromAngles(posed.angles[0], posed.angles[1], posed.angles[2])), a.orientation);
+        const turn = math.product(math.product(math.transpose(a.orientation), math.fromAngleVector(posed.angles)), a.orientation);
         const from = if (part.parent) |parent| model.parts[parent].animation.position else model.centre;
         var at = a.position + posed.offset;
         at -= from;
@@ -1186,8 +1186,14 @@ const tick_share: f32 = 1.0 / @as(f32, @import("gameobj.zig").ticks_per_step);
 /// unevenly. While the game is paused nothing moves, so the time past the tick doesn't count.
 pub fn stepFraction(clock: *const Clock, smooth: bool) f32 {
     const ticks: f32 = @floatFromInt(clock.simulation_counter);
-    if (!smooth or clock.paused) return ticks * tick_share;
-    return (ticks + clock.past_tick) * tick_share;
+    return (ticks + pastTick(clock, smooth)) * tick_share;
+}
+
+/// How far past its last tick the frame is drawn, as a share of a tick: what the effects, which
+/// move by their velocities a tick, are drawn that much further along by. None without `smooth`
+/// or while the game is paused, as `stepFraction` counts it.
+pub fn pastTick(clock: *const Clock, smooth: bool) f32 {
+    return if (!smooth or clock.paused) 0 else clock.past_tick;
 }
 
 /// Where `node_frame_update` draws a node that moved rather than posed, `fraction` of the way from
@@ -1197,7 +1203,7 @@ fn between(now: Model.Local, next: Model.Local, fraction: f32) Model.Local {
     const f: Vector = @splat(fraction);
     const position = (next.position - now.position) * f + now.position;
     const angles = math.angles(math.product(math.transpose(now.orientation), next.orientation)) * f;
-    return .{ .position = position, .orientation = math.product(now.orientation, math.fromAngles(angles[0], angles[1], angles[2])) };
+    return .{ .position = position, .orientation = math.product(now.orientation, math.fromAngleVector(angles)) };
 }
 
 /// The glow that burns at its full length whatever the throttle, the last of the seven

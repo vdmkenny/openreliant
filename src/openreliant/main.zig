@@ -738,6 +738,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .kills_shown = devices.active(.display_kills, false),
             .particles = &particles,
             .sparks = &sparks,
+            .ahead = game.objects.pastTick(&clock, options.smooth_motion),
             .explosions = &explosions,
             .shockwaves = &shockwaves,
             .attachments = .{

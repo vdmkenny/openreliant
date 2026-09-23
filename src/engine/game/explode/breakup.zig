@@ -268,9 +268,13 @@ pub const Flight = struct {
     until: i32,
     stage: Stage = .flying,
     piece: Piece,
-    /// How far it moves a tick (`+0x0C`), and how it turns a tick (`+0x18`).
+    /// Where it is and how it is turned at the frame's tick, which `Pieces.add` takes from the
+    /// piece; its object is drawn from here (`Pieces.draw`).
+    place: math.Place = .{},
+    /// How far it moves a tick (`+0x0C`), and the angles it turns by a tick, which the game keeps
+    /// as the turn they make (`+0x18`).
     velocity: Vector,
-    spin: math.Matrix,
+    tumble: Vector,
     /// The smoke it trails (`+0x3C`), streamed from it.
     trail: ?particles.Emitter = null,
 
@@ -320,6 +324,7 @@ pub const Pieces = struct {
         const slot = pieces.flights.take(max);
         pieces.drop(slot);
         slot.* = flight;
+        slot.*.?.place = flight.piece.place();
     }
 
     /// `explosions_update`'s pass over them: each moves on by its velocity times the frame's
@@ -331,7 +336,7 @@ pub const Pieces = struct {
             const flight = &(slot.* orelse continue);
             if (flight.until < clock.frame_start) switch (flight.stage) {
                 .flying => {
-                    explode.fireballAt(world, flight.piece.object.position, .{
+                    explode.fireballAt(world, flight.place.position, .{
                         .kind = .sheet,
                         .size = flight.piece.mesh.radius * Flight.blow_size,
                         .life = Flight.blow_life,
@@ -346,18 +351,25 @@ pub const Pieces = struct {
                     continue;
                 },
             };
-            if (flight.trail) |*trail| stream(world, trail, flight.piece.place());
-            const object = &flight.piece.object;
-            object.position += flight.velocity * @as(Vector, @splat(@floatFromInt(clock.frame_duration)));
-            for (0..@intCast(@max(clock.frame_duration, 0))) |_| object.orientation = math.product(object.orientation, flight.spin);
+            if (flight.trail) |*trail| stream(world, trail, flight.place);
+            const place = &flight.place;
+            place.position += flight.velocity * @as(Vector, @splat(@floatFromInt(clock.frame_duration)));
+            const spin = math.fromAngleVector(flight.tumble);
+            for (0..@intCast(@max(clock.frame_duration, 0))) |_| place.orientation = math.product(place.orientation, spin);
         }
     }
 
-    /// Each piece flying, into the world's layer.
-    pub fn draw(pieces: *Pieces, gpa: Allocator, scene: *srcore.Scene) Allocator.Error!void {
+    /// Each piece flying, into the world's layer, `ahead` of a tick along from where it was and
+    /// how it was turned at the frame's tick.
+    ///
+    /// **Improvement:** the game draws it as the tick left it (`particles.Pool.draw`).
+    pub fn draw(pieces: *Pieces, gpa: Allocator, scene: *srcore.Scene, ahead: f32) Allocator.Error!void {
         for (&pieces.flights.slots) |*slot| {
             const flight = &(slot.* orelse continue);
-            try xtrabits.sceneAdd(gpa, scene, .{ .mesh = flight.piece.shown() }, .world);
+            const object = flight.piece.shown();
+            object.position = flight.place.position + flight.velocity * @as(Vector, @splat(ahead));
+            object.orientation = math.product(flight.place.orientation, math.fromAngleVector(flight.tumble * @as(Vector, @splat(ahead))));
+            try xtrabits.sceneAdd(gpa, scene, .{ .mesh = object }, .world);
         }
     }
 };
@@ -439,11 +451,11 @@ fn breakUpPart(explosions: *explode.Explosions, world: gameobj.World, slot: *con
         };
         const cuts = again orelse {
             const speed = random.fraction() * first_speed_range + first_speed;
-            const spin = random.centredVector(@splat(first_tumble));
+            const tumble = random.centredVector(@splat(first_tumble));
             explosions.pieces.add(.{
                 .until = @as(i32, random.rand() % flight_range) + first_flight + now,
                 .velocity = away(piece.object.position, centre, speed, carried),
-                .spin = math.fromAngles(spin[0], spin[1], spin[2]),
+                .tumble = tumble,
                 .trail = trailFrom(kind, now),
                 .piece = piece,
             });
@@ -454,11 +466,11 @@ fn breakUpPart(explosions: *explode.Explosions, world: gameobj.World, slot: *con
         const count: f32 = @floatFromInt(@intFromEnum(cuts));
         for (&smaller) |*small| {
             const flying = small.* orelse continue;
-            const spin = random.centredVector(@splat(count * kind.tumble()));
+            const tumble = random.centredVector(@splat(count * kind.tumble()));
             explosions.pieces.add(.{
                 .until = @as(i32, random.rand() % flight_range) + kind.flight() + now,
                 .velocity = away(flying.object.position, centre, count * second_speed, carried),
-                .spin = math.fromAngles(spin[0], spin[1], spin[2]),
+                .tumble = tumble,
                 .piece = flying,
             });
         }
@@ -551,14 +563,20 @@ test Pieces {
     defer for (cuts[1..]) |*maybe| if (maybe.*) |*piece| piece.deinit(gpa);
 
     // A piece flies on by its velocity each tick, and turns by its spin each tick.
-    const spin = math.fromAngles(0, 0, 0.1);
     const from = cuts[0].?.object.position;
-    pieces.add(.{ .until = 10, .piece = cuts[0].?, .velocity = .{ 1, 0, 0 }, .spin = spin });
+    pieces.add(.{ .until = 10, .piece = cuts[0].?, .velocity = .{ 1, 0, 0 }, .tumble = .{ 0, 0, 0.1 } });
     cuts[0] = null;
     const flight = &pieces.flights.slots[0].?;
     pieces.frame(stage.world());
-    try std.testing.expectEqual(from + Vector{ 2, 0, 0 }, flight.piece.object.position);
-    try std.testing.expect(math.distance(math.angles(flight.piece.object.orientation), .{ 0, 0, 0.2 }) < 1e-5);
+    try std.testing.expectEqual(from + Vector{ 2, 0, 0 }, flight.place.position);
+    try std.testing.expect(math.distance(math.angles(flight.place.orientation), .{ 0, 0, 0.2 }) < 1e-5);
+
+    // Drawn half a tick on, it has moved and turned half a tick more.
+    var scene: srcore.Scene = .{};
+    defer scene.deinit(gpa);
+    try pieces.draw(gpa, &scene, 0.5);
+    try std.testing.expectEqual(from + Vector{ 2.5, 0, 0 }, flight.piece.object.position);
+    try std.testing.expect(math.distance(math.angles(flight.piece.object.orientation), .{ 0, 0, 0.25 }) < 1e-5);
 
     // Its time up, it goes up in a fireball of the sheet's, and is gone a little later.
     clock.frame_start = 11;

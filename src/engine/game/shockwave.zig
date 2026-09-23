@@ -90,6 +90,12 @@ pub const Shockwave = struct {
     /// ring has spread, and so how far it had the frame before.
     object: srapiext.MeshObject,
     colours: [Roundness.round.corners()][4]f32,
+    /// Where it is, how far through its life and how far it has spread at the frame's tick. The
+    /// game keeps the last in the ring's scale; the port draws the ring from these, further along
+    /// between the ticks (`Shockwaves.draw`).
+    at: Vector,
+    done: f32 = 0,
+    reach: f32 = 0,
     /// How far it drifts a tick (`+0x08`), how far it spreads (`+0x14`), when it was set off and
     /// for how long (`+0x18`, `+0x1C`), and whose it is (`+0x20`). The game also keeps the side
     /// of `0x00495870`'s (`+0x24`), which only kinds 5 and 6 read.
@@ -103,8 +109,8 @@ pub const Shockwave = struct {
     /// far it has now.
     fn passesPlayer(wave: *const Shockwave, world: gameobj.World, reach: f32) bool {
         const player = &world.objects.slots[world.objects.player];
-        const distance = math.distance(wave.object.position, player.drawn.position);
-        return wave.object.scale <= distance and distance < reach;
+        const distance = math.distance(wave.at, player.drawn.position);
+        return wave.reach <= distance and distance < reach;
     }
 
     /// A torpedo's shockwave passing the player's ship shakes the view and damages each quadrant by
@@ -229,6 +235,7 @@ pub const Shockwaves = struct {
                 .levels = &.{},
             },
             .colours = @splat(@splat(1)),
+            .at = at.position,
             .velocity = spec.velocity,
             .size = spec.size,
             .born = clock.frame_start,
@@ -250,7 +257,8 @@ pub const Shockwaves = struct {
                 slot.* = null;
                 continue;
             }
-            wave.object.position += wave.velocity * @as(Vector, @splat(@floatFromInt(clock.frame_duration)));
+            wave.at += wave.velocity * @as(Vector, @splat(@floatFromInt(clock.frame_duration)));
+            wave.done = done;
             wave.colours = @splat(@splat(1 - done));
             const reach = done * wave.size;
             switch (wave.kind) {
@@ -258,18 +266,24 @@ pub const Shockwaves = struct {
                 .torpedo => wave.harmPlayer(world, done, reach),
                 ._unknown_3, ._unknown_4, ._unknown_5, ._unknown_6, ._unknown_7 => {},
             }
-            wave.object.scale = reach;
+            wave.reach = reach;
         }
     }
 
-    /// Each shockwave's ring, into the world's layer, save kind 7's, which is unseen.
-    pub fn draw(waves: *Shockwaves, gpa: Allocator, scene: *srcore.Scene) Allocator.Error!void {
+    /// Each shockwave's ring, into the world's layer, save kind 7's, which is unseen: `ahead` of a
+    /// tick along from where it stood and how far it had spread at the frame's tick.
+    ///
+    /// **Improvement:** the game draws it as the tick left it (`particles.Pool.draw`).
+    pub fn draw(waves: *Shockwaves, gpa: Allocator, scene: *srcore.Scene, ahead: f32) Allocator.Error!void {
         for (std.enums.values(Ring)) |ring| waves.levels.set(ring, .{.{ .mesh = waves.meshes.getPtrConst(ring), .until = std.math.inf(f32) }});
         for (&waves.waves) |*slot| {
             const wave = &(slot.* orelse continue);
             if (wave.kind == ._unknown_7) continue;
             wave.object.levels = waves.levels.getPtrConst(wave.kind.ring());
             wave.object.baked = &wave.colours;
+            wave.object.position = wave.at + wave.velocity * @as(Vector, @splat(ahead));
+            const done = @min(wave.done + ahead / @as(f32, @floatFromInt(wave.life)), 1);
+            wave.object.scale = done * wave.size;
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &wave.object }, .world);
         }
     }
@@ -383,9 +397,16 @@ test Shockwaves {
     const wave = &built.waves.waves[0].?;
     mission.clock.frame_start = 10;
     built.waves.frame(world);
-    try std.testing.expectEqual(1000, wave.object.scale);
+    try std.testing.expectEqual(1000, wave.reach);
     try std.testing.expectEqual(0.9, wave.colours[5][3]);
-    try std.testing.expectEqual(Vector{ 10, 0, 0 }, wave.object.position);
+    try std.testing.expectEqual(Vector{ 10, 0, 0 }, wave.at);
+
+    // Drawn half a tick on, it has drifted and spread half a tick more.
+    var scene: srcore.Scene = .{};
+    defer scene.deinit(gpa);
+    try built.waves.draw(gpa, &scene, 0.5);
+    try std.testing.expectEqual(Vector{ 10.5, 0, 0 }, wave.object.position);
+    try std.testing.expectEqual(1050, wave.object.scale);
     try std.testing.expectEqual(1, mission.shake);
 
     // Once its life is over it is gone.

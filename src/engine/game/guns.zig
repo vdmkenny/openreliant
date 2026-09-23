@@ -1417,7 +1417,7 @@ test "a shot striking a hull throws sparks from where it struck" {
     bullet.at = .{ 0, 0, 600 };
     bulletsFrame(world, &ship.mission.clock, 0);
     for (built.sparks.sparks.slots[0..hull_sparks.count]) |thrown| {
-        try std.testing.expect(math.distance(thrown.?.object.position, .{ 0, 0, 500 }) < 1e-2);
+        try std.testing.expect(math.distance(thrown.?.at, .{ 0, 0, 500 }) < 1e-2);
     }
     try std.testing.expectEqual(null, built.sparks.sparks.slots[hull_sparks.count]);
 }

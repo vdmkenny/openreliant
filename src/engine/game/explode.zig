@@ -116,22 +116,24 @@ pub const Explosions = struct {
         explosions.pieces.frame(world);
         for (&explosions.fireballs) |*slot| {
             const fireball = &(slot.* orelse continue);
-            if (!fireball.frame(explosions.images, clock)) slot.* = null;
+            if (!fireball.frame(clock)) slot.* = null;
         }
     }
 
     /// The rest of `explosions_update`: the bits and the pieces go into the world's layer, and
-    /// each fireball showing, with its light among the lights.
-    pub fn draw(explosions: *Explosions, gpa: Allocator, scene: *srcore.Scene) Allocator.Error!void {
+    /// each fireball showing, with its light among the lights, `ahead` of a tick past the frame's
+    /// tick.
+    pub fn draw(explosions: *Explosions, gpa: Allocator, scene: *srcore.Scene, ahead: f32) Allocator.Error!void {
         for (&explosions.bits.slots) |*slot| {
             const bit = &(slot.* orelse continue);
+            bit.object.position = bit.at + bit.velocity * @as(Vector, @splat(ahead * Bit.per_tick));
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &bit.object }, .world);
         }
-        try explosions.pieces.draw(gpa, scene);
+        try explosions.pieces.draw(gpa, scene, ahead);
         for (&explosions.fireballs) |*slot| {
             const fireball = &(slot.* orelse continue);
             if (!fireball.showing) continue;
-            fireball.set.sprites = &fireball.sprite;
+            fireball.show(explosions.images, ahead);
             try xtrabits.sceneAdd(gpa, scene, .{ .sprites = &fireball.set }, .world);
             if (fireball.light) |*light| try xtrabits.sceneAdd(gpa, scene, .{ .light = light }, .background);
         }
@@ -151,7 +153,7 @@ pub const Explosions = struct {
         const scale = (random.fraction() + 0.5) * how.size;
         const leaving = direction * @as(Vector, @splat((random.fraction() + 0.5) * Bit.speed));
         const stray = random.centredVector(@splat(Bit.stray));
-        const velocity = math.transform(math.fromAngles(stray[0], stray[1], stray[2]), leaving) * @as(Vector, @splat(how.speed));
+        const velocity = math.transform(math.fromAngleVector(stray), leaving) * @as(Vector, @splat(how.speed));
         const spin = random.centredVector(@splat(Bit.tumble));
         explosions.bits.take(explosions.settings.detail.bits()).* = .{
             .born = clock.frame_start,
@@ -164,6 +166,7 @@ pub const Explosions = struct {
                 .radius = levels[0].mesh.radius,
                 .levels = levels,
             },
+            .at = at,
             .velocity = velocity,
             .spin = spin,
         };
@@ -191,8 +194,8 @@ pub const Settings = struct {
 /// **Improvement:** `fuller` gives them room for 128, where the game keeps 30 and a burst takes 18,
 /// so a second burst close after a first loses fireballs. A fireball's light moves with it as it
 /// drifts, where the game leaves the light where the fireball went off, and starts 50% brighter, at
-/// 15 where the game's starts at 10, so it also reaches 50% farther. `--original` restores the
-/// game's.
+/// 15 where the game's starts at 10, so it also reaches 50% farther. Each frame of its animation
+/// fades into the next (`Fireball.show`). `--original` restores the game's.
 pub const Fireballs = enum {
     original,
     fuller,
@@ -304,6 +307,9 @@ pub const Bit = struct {
     born: i32,
     life: i32,
     object: srapiext.MeshObject,
+    /// Where it is at the frame's tick, which the game keeps in its object; the object is drawn
+    /// from here (`Explosions.draw`).
+    at: Vector,
     /// How far it flies a second (`+0x10`), and its turn a frame, as angles (`+0x1C`).
     velocity: Vector,
     spin: Vector,
@@ -329,21 +335,26 @@ pub const Bit = struct {
 
     /// Moves it on by `seconds` of its velocity, and turns it by its spin, once whatever the time.
     fn fly(bit: *Bit, seconds: f32) void {
-        bit.object.position += bit.velocity * @as(Vector, @splat(seconds));
-        bit.object.orientation = math.product(bit.object.orientation, math.fromAngles(bit.spin[0], bit.spin[1], bit.spin[2]));
+        bit.at += bit.velocity * @as(Vector, @splat(seconds));
+        bit.object.orientation = math.product(bit.object.orientation, math.fromAngleVector(bit.spin));
     }
 };
 
 /// A fireball going off (0x2C bytes): a sprite that plays an animation of fire where it was set
 /// off, drifting, with a light that fades as it plays where it has one.
 pub const Fireball = struct {
-    /// Its one sprite, and the set that draws it (`ExplodeParticle BMO`); its light
-    /// (`ExplodeParticle Light`).
-    sprite: [1]srapiext.Sprite,
+    /// Its sprite, and the set that draws it (`ExplodeParticle BMO`); its light
+    /// (`ExplodeParticle Light`). A second sprite shows the next frame of its animation, which the
+    /// first fades into, over the bang's next texture (`fading`).
+    sprite: [2]srapiext.Sprite,
     set: srapiext.SpriteSet,
+    fading: srapiext.Surface,
     light: ?srlight.Light,
-    /// How far it drifts a tick (`+0x08`).
+    /// Where it is at the frame's tick, which the game keeps in its sprite, and how far it drifts
+    /// a tick (`+0x08`). How long it had played at the frame's tick.
+    at: Vector,
     velocity: Vector,
+    age: i32 = 0,
     /// When it was set off, how long it plays and how long it waits first, in ticks (`+0x14`,
     /// `+0x18`, `+0x20`).
     born: i32,
@@ -354,7 +365,7 @@ pub const Fireball = struct {
     lit: bool,
     /// Whether it showed at the last frame: past its wait, and not yet done.
     showing: bool = false,
-    /// How its light burns and moves.
+    /// How it plays, and how its light burns and moves.
     style: Fireballs,
 
     /// How it plays, and whether it is mirrored (`+0x1C`): a word the game builds from its kind
@@ -366,6 +377,16 @@ pub const Fireball = struct {
         /// The bang's sixteen frames, which it plays unmirrored; otherwise the sheet's nine.
         bang: bool,
         _: u29 = 0,
+
+        /// The sheet's cell `at`, three across and three down, as a sprite's span of it,
+        /// mirrored as the look says.
+        fn cell(look: Look, at: u32) [4]f32 {
+            const u = @as(f32, @floatFromInt(at % 3)) * sheet_step;
+            const v = @as(f32, @floatFromInt(at / 3)) * sheet_step;
+            const across: [2]f32 = if (look.mirror_u) .{ u + sheet_cell, u } else .{ u, u + sheet_cell };
+            const down: [2]f32 = if (look.mirror_v) .{ v + sheet_cell, v } else .{ v, v + sheet_cell };
+            return .{ across[0], across[1], down[0], down[1] };
+        }
     };
 
     /// What `explosion_fireball` is given.
@@ -404,15 +425,18 @@ pub const Fireball = struct {
         };
         set.surface.textures = .{ .{ .image = image }, .none };
         const mirrors: u2 = @truncate(random.rand());
+        const sprite: srapiext.Sprite = .{ .offset = at, .half_size = .{ spec.size, spec.size }, .bias = -spec.size };
         return .{
-            .sprite = .{.{ .offset = at, .half_size = .{ spec.size, spec.size }, .bias = -spec.size }},
+            .sprite = .{ sprite, sprite },
             .set = set,
+            .fading = set.surface,
             .light = if (spec.light) .{
                 .mask = 0,
                 .intensity = style.peak(),
                 .colour = light_colour,
                 .kind = .{ .point = .{ .position = at, .range = @sqrt(spec.size) * light_reach } },
             } else null,
+            .at = at,
             .velocity = spec.velocity,
             .born = clock.frame_start,
             .life = spec.life,
@@ -423,35 +447,51 @@ pub const Fireball = struct {
         };
     }
 
-    /// Plays on for the frame, once its wait is over: the frame of its animation this far through
-    /// its life, its drift, its colour where it is lit, and its light's fade. Whether it is still
+    /// Plays on for the frame, once its wait is over: its age and its drift. Whether it is still
     /// going.
-    fn frame(fireball: *Fireball, images: Explosions.Images, clock: *const Clock) bool {
+    fn frame(fireball: *Fireball, clock: *const Clock) bool {
         const age = clock.frame_start - fireball.delay - fireball.born;
         fireball.showing = false;
         if (age < 0) return true;
         if (age >= fireball.life) return false;
-        const sprite = &fireball.sprite[0];
-        if (fireball.look.bang) {
-            fireball.set.surface.textures[0].image = images.bang[@intCast(@divTrunc(age * 16, fireball.life))];
-        } else {
-            const at: u32 = @intCast(@divTrunc(age * 9, fireball.life));
-            const u = @as(f32, @floatFromInt(at % 3)) * sheet_step;
-            const v = @as(f32, @floatFromInt(at / 3)) * sheet_step;
-            const across: [2]f32 = if (fireball.look.mirror_u) .{ u + sheet_cell, u } else .{ u, u + sheet_cell };
-            const down: [2]f32 = if (fireball.look.mirror_v) .{ v + sheet_cell, v } else .{ v, v + sheet_cell };
-            sprite.uv = .{ across[0], across[1], down[0], down[1] };
-        }
-        sprite.offset += fireball.velocity * @as(Vector, @splat(@floatFromInt(clock.frame_duration)));
-        const played = @as(f32, @floatFromInt(age)) / @as(f32, @floatFromInt(fireball.life));
-        if (fireball.lit) sprite.colour = @splat(played);
-        if (fireball.light) |*light| {
-            const peak = fireball.style.peak();
-            light.intensity = peak - @as(f32, @floatFromInt(age)) * peak / @as(f32, @floatFromInt(fireball.life));
-            if (fireball.style == .fuller) light.kind.point.position = sprite.offset;
-        }
+        fireball.age = age;
+        fireball.at += fireball.velocity * @as(Vector, @splat(@floatFromInt(clock.frame_duration)));
         fireball.showing = true;
         return true;
+    }
+
+    /// How it shows, `ahead` of a tick past the frame's tick: the frame of its animation this far
+    /// through its life, where it has drifted to, its colour where it is lit, and its light's fade.
+    ///
+    /// **Improvement:** with the `fuller` style, each frame of its animation fades into the next,
+    /// where the game flips from one to the next: sixteen or nine over a second and a half. It is
+    /// drawn further along between the ticks as well (`particles.Pool.draw`).
+    fn show(fireball: *Fireball, images: Explosions.Images, ahead: f32) void {
+        const frames: u32 = if (fireball.look.bang) 16 else 9;
+        const life: f32 = @floatFromInt(fireball.life);
+        const played = @min((@as(f32, @floatFromInt(fireball.age)) + ahead) / life, 1);
+        const step = @min((@as(f32, @floatFromInt(fireball.age * @as(i32, @intCast(frames)))) + ahead * @as(f32, @floatFromInt(frames))) / life, @as(f32, @floatFromInt(frames - 1)));
+        const first: u32 = @intFromFloat(step);
+        const next = @min(first + 1, frames - 1);
+        const fade: f32 = if (fireball.style == .fuller and next > first) step - @as(f32, @floatFromInt(first)) else 0;
+        const offset = fireball.at + fireball.velocity * @as(Vector, @splat(ahead));
+        for (&fireball.sprite, [2]u32{ first, next }, [2]f32{ 1 - fade, fade }) |*sprite, cell, share| {
+            sprite.offset = offset;
+            sprite.fade = share;
+            if (fireball.lit) sprite.colour = @splat(played);
+            if (!fireball.look.bang) sprite.uv = fireball.look.cell(cell);
+        }
+        if (fireball.look.bang) {
+            fireball.set.surface.textures[0].image = images.bang[first];
+            fireball.fading = fireball.set.surface;
+            fireball.fading.textures[0].image = images.bang[next];
+            fireball.sprite[1].surface = &fireball.fading;
+        }
+        fireball.set.sprites = fireball.sprite[0..if (fade > 0) 2 else 1];
+        if (fireball.light) |*light| {
+            light.intensity = fireball.style.peak() * (1 - played);
+            if (fireball.style == .fuller) light.kind.point.position = offset;
+        }
     }
 };
 
@@ -665,7 +705,7 @@ pub fn burst(world: gameobj.World, index: u16) void {
     for (0..burst_fireballs) |_| {
         const out: Vector = .{ random.fraction() * radius * burst_spread, 0, 0 };
         const turn = random.fractionVector(@splat(std.math.tau));
-        const place = math.transform(math.fromAngles(turn[0], turn[1], turn[2]), out) + at;
+        const place = math.transform(math.fromAngleVector(turn), out) + at;
         const delay: i32 = @intFromFloat(random.fraction() * burst_delay);
         fireballAt(world, place, .{ .size = radius * burst_size, .light = true, .delay = delay, .velocity = velocity * @as(Vector, @splat(carried)) });
     }
@@ -755,24 +795,37 @@ test Fireball {
     explosions.frame(stage.world());
     try std.testing.expect(!bang.showing);
 
-    // Halfway through its life, the bang's middle frame, drifted on, its light half faded and
-    // drifting with it.
+    // Halfway through its life, the bang's middle frame alone, drifted on, its light half faded
+    // and drifting with it.
     clock.frame_start = 10 + 75;
     clock.frame_duration = 20;
     explosions.frame(stage.world());
     try std.testing.expect(bang.showing);
+    bang.show(explosions.images, 0);
     try std.testing.expectEqual(&testing.bang[8], bang.set.surface.textures[0].image);
+    try std.testing.expectEqual(1, bang.set.sprites.len);
     try std.testing.expectEqual(Vector{ 20, 0, 100 }, bang.sprite[0].offset);
     try std.testing.expectApproxEqAbs(Fireballs.fuller.peak() / 2, bang.light.?.intensity, 1e-6);
     try std.testing.expectEqual([3]f32{ 20, 0, 100 }, bang.light.?.kind.point.position);
 
-    // The original's is dimmer, and stays where it went off.
+    // Drawn half a tick on, it has drifted on half a tick more and begun to fade into the next.
+    bang.show(explosions.images, 0.5);
+    try std.testing.expectEqual(Vector{ 20.5, 0, 100 }, bang.sprite[0].offset);
+    try std.testing.expectEqual(2, bang.set.sprites.len);
+    try std.testing.expectEqual(&testing.bang[9], bang.sprite[1].surface.?.textures[0].image);
+    const fade = 0.5 * 16.0 / 150.0;
+    try std.testing.expectApproxEqAbs(fade, bang.sprite[1].fade, 1e-5);
+    try std.testing.expectApproxEqAbs(1 - fade, bang.sprite[0].fade, 1e-5);
+
+    // The original's flips from frame to frame, is dimmer, and its light stays where it went off.
     bang.style = .original;
-    explosions.frame(stage.world());
-    try std.testing.expectApproxEqAbs(Fireballs.original.peak() / 2, bang.light.?.intensity, 1e-6);
     bang.light.?.kind.point.position = .{ 0, 0, 100 };
-    explosions.frame(stage.world());
+    bang.show(explosions.images, 0.5);
+    try std.testing.expectEqual(1, bang.set.sprites.len);
+    try std.testing.expectEqual(1, bang.sprite[0].fade);
     try std.testing.expectEqual([3]f32{ 0, 0, 100 }, bang.light.?.kind.point.position);
+    bang.show(explosions.images, 0);
+    try std.testing.expectApproxEqAbs(Fireballs.original.peak() / 2, bang.light.?.intensity, 1e-6);
 
     // The sheet steps through its cells, mirrored as its look says.
     explosions.setOff(@splat(0), .{ .kind = .sheet, .size = 10, .life = 90 }, clock, &random);
@@ -781,6 +834,7 @@ test Fireball {
     sheet.look.mirror_v = false;
     clock.frame_start += 50;
     explosions.frame(stage.world());
+    sheet.show(explosions.images, 0);
     const u = 2 * Fireball.sheet_step;
     const v = 1 * Fireball.sheet_step;
     try std.testing.expectEqual([4]f32{ u + Fireball.sheet_cell, u, v, v + Fireball.sheet_cell }, sheet.sprite[0].uv);
@@ -886,10 +940,10 @@ test Bit {
     try std.testing.expect(bit.life >= 1750 and bit.life <= 2250);
 
     // A second later it has flown a second's velocity, and turned.
-    const from = bit.object.position;
+    const from = bit.at;
     clock.frame_start = 100;
     explosions.frame(stage.world());
-    try std.testing.expect(math.distance(from + bit.velocity, bit.object.position) < 1e-3);
+    try std.testing.expect(math.distance(from + bit.velocity, bit.at) < 1e-3);
     try std.testing.expect(!std.meta.eql(math.identity, bit.object.orientation));
 
     // Past its life, it is gone.

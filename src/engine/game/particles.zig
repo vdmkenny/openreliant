@@ -160,6 +160,9 @@ pub const Particle = struct {
     /// How far it moves a tick.
     velocity: Vector = @splat(0),
     template: ?*const Template = null,
+    /// Where it is at the frame's tick. The game keeps it in the particle's sprite; the port draws
+    /// the sprite from it, further along between the ticks (`Pool.draw`).
+    at: Vector = @splat(0),
 
     /// The tick its life ends at: it is alive before it, and free after it, or from it on for a
     /// stream.
@@ -250,6 +253,7 @@ pub const Pool = struct {
             .life = template.life + spread,
             .template = template,
             .velocity = emitter.velocity(random),
+            .at = emitter.world.position,
         };
         pool.sprites[index].offset = emitter.world.position;
         pool.sprites[index].uv = emitter.uv;
@@ -298,7 +302,7 @@ pub const Pool = struct {
                     pool.emit(emitter, index, clock, random);
                     // The game draws a number here that it does not use.
                     _ = random.rand();
-                    pool.sprites[index].offset += pool.particles[index].velocity * ticks;
+                    pool.particles[index].at += pool.particles[index].velocity * ticks;
                     left -= 1;
                 },
                 .spark => {},
@@ -315,13 +319,13 @@ pub const Pool = struct {
         const now = clock.frame_start;
         const ticks: Vector = @splat(@floatFromInt(clock.frame_duration));
         var last: u32 = 0;
-        for (pool.particles[0..pool.used], pool.sprites[0..pool.used], 0..) |particle, *sprite, index| {
+        for (pool.particles[0..pool.used], pool.sprites[0..pool.used], 0..) |*particle, *sprite, index| {
             const alive = if (now < particle.end()) particle.template else null;
             const template = alive orelse {
                 sprite.hidden = true;
                 continue;
             };
-            sprite.offset += particle.velocity * ticks;
+            particle.at += particle.velocity * ticks;
             const t = through(now, particle.born, particle.life);
             const half = template.size.at(t);
             sprite.half_size = .{ half, half };
@@ -332,9 +336,17 @@ pub const Pool = struct {
         pool.show(last + 1);
     }
 
-    /// The rest of `particles_frame`: the set goes into the world's layer.
-    pub fn draw(pool: *Pool, gpa: Allocator, scene: *srcore.Scene) Allocator.Error!void {
+    /// The rest of `particles_frame`: the set goes into the world's layer, each particle `ahead`
+    /// of a tick along from where it was at the frame's tick.
+    ///
+    /// **Improvement:** the game draws them where the tick left them, which moves them on in
+    /// hundredths of a second that a display's frames fall between unevenly.
+    pub fn draw(pool: *Pool, gpa: Allocator, scene: *srcore.Scene, ahead: f32) Allocator.Error!void {
         if (pool.used == 0) return;
+        const past: Vector = @splat(ahead);
+        for (pool.particles[0..pool.used], pool.sprites[0..pool.used]) |particle, *sprite| {
+            if (!sprite.hidden) sprite.offset = particle.at + particle.velocity * past;
+        }
         try xtrabits.sceneAdd(gpa, scene, .{ .sprites = &pool.set }, .world);
     }
 };
@@ -391,7 +403,7 @@ test "Pool.burst" {
     // speed plus what it inherits.
     pool.burst(&emitter, null, 3, view, &clock, &random);
     try std.testing.expectEqual(3, pool.used);
-    try std.testing.expectEqual(Vector{ 0, 0, 1000 }, pool.sprites[0].offset);
+    try std.testing.expectEqual(Vector{ 0, 0, 1000 }, pool.particles[0].at);
     const own = pool.particles[0].velocity - emitter.inherited;
     try std.testing.expectApproxEqAbs(5, math.length(own), 1e-4);
 
@@ -404,7 +416,7 @@ test "Pool.burst" {
     pool.reset();
     emitter.place.position = .{ 0, 0, 10 };
     pool.burst(&emitter, .{ .position = .{ 100, 0, 0 } }, 1, view, &clock, &random);
-    try std.testing.expectEqual(Vector{ 100, 0, 10 }, pool.sprites[0].offset);
+    try std.testing.expectEqual(Vector{ 100, 0, 10 }, pool.particles[0].at);
 }
 
 test "Pool.frame" {
@@ -423,10 +435,16 @@ test "Pool.frame" {
     clock.frame_start = 51;
     clock.frame_duration = 50;
     pool.frame(&clock);
-    try std.testing.expectEqual(Vector{ 50, 0, 0 }, pool.sprites[0].offset);
+    try std.testing.expectEqual(Vector{ 50, 0, 0 }, pool.particles[0].at);
     try std.testing.expectApproxEqAbs(20, pool.sprites[0].half_size[0], 1e-4);
     try std.testing.expectApproxEqAbs(0.5, pool.sprites[0].colour[0], 1e-6);
     try std.testing.expect(!pool.sprites[0].hidden);
+
+    // Drawn a quarter of a tick past the frame's, its sprite is that much further along.
+    var scene: srcore.Scene = .{};
+    defer scene.deinit(std.testing.allocator);
+    try pool.draw(std.testing.allocator, &scene, 0.25);
+    try std.testing.expectEqual(Vector{ 50.25, 0, 0 }, pool.sprites[0].offset);
 
     // Past it, both are hidden and the set drawn shrinks to one.
     clock.frame_start = 200;
