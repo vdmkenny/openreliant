@@ -41,9 +41,10 @@ The game sets EAX's room to the generic one, with an effect volume of 0, and eac
 effects level to 0, so the original's reverb is silent. It opens no listener, so the listener
 stands still, and it places every sound at a point.
 
-Two calls are not Miles's: the listener's velocity, which the 3D update sets to the player's ship's
-each frame, and a 3D sample's radius, which a sound following an object takes from its model's
-radius. They serve OpenAL's improvements; the software mixer leaves them out.
+Three calls are not Miles's: the listener's velocity, which the 3D update sets to the player's
+ship's each frame; a 3D sample's radius, which a sound following an object takes from its model's
+radius; and a sample's room, the cockpit for a sound of `betty.fat`, the cockpit's warnings, and
+none for any other. They serve OpenAL's improvements; the software mixer leaves them out.
 
 ## The software mixer
 
@@ -102,7 +103,10 @@ count but once loops it for ever.
   through OpenAL Soft's dedicated low-frequency effect, with their highs taken off and falling off
   with distance as the sound does; the receiver's crossover takes the rest.
 - The 3D sounds send to a reverb, the generic room of EFX's presets, the room the game asks EAX for,
-  at a fairly low level, falling off with distance as the sound does. `--no-reverb` leaves it out.
+  at a fairly low level, falling off with distance as the sound does.
+- The cockpit's warnings send to a reverb of the cockpit's cabin: EFX's race car cabin preset, the
+  nearest of its presets to a fighter's cockpit, short and hard, at half its level. The other
+  samples play dry. `--no-reverb` leaves both reverbs out.
 - A sample's pan keeps its power, as a 3D sample's does.
 
 ## The master bus
@@ -141,10 +145,10 @@ another or `none`; `--no-sound` runs silent ([Platform](platform.md#running)).
 
 - **Improvement:** `sound_pitch_factor` works a quarter tone's factor out, `2^(n/24)`, where the game
   looks it up in a table of rounded values.
-- OpenAL Soft's resampling, placing, moving listener, sizes, air absorption, subwoofer and reverb,
+- OpenAL Soft's resampling, placing, moving listener, sizes, air absorption, subwoofer and reverbs,
   and the master bus, above.
 
-A reverb for each place, the hangar and the cockpit, is gathered in
+A reverb for the hangar during launch and landing is gathered in
 [#164](https://github.com/vdmkenny/openreliant/issues/164).
 
 ## Not ported

@@ -8,8 +8,9 @@
 //! has two. `Mixer` mixes in software, plainly, as Miles is taken to have mixed; the platform's
 //! OpenAL renderer places the sounds with OpenAL Soft. The platform plays either on a thread of its
 //! own, so the mixer holds the platform's `Lock` through each call; `Mixer.mix` expects its caller
-//! to hold it. Two calls are not Miles's, the listener's velocity and a 3D sample's radius: they
-//! serve OpenAL's improvements, and the software mixer, the reference, leaves them out.
+//! to hold it. Three calls are not Miles's, the listener's velocity, a 3D sample's radius and a
+//! sample's room: they serve OpenAL's improvements, and the software mixer, the reference, leaves
+//! them out.
 //!
 //! Volumes and pans run from 0 to 127, a pan of 64 in the middle, as Miles's do. How Miles turned
 //! them into gains is not known here: the port takes a volume's share of 127 as its gain, and a pan
@@ -33,6 +34,14 @@ pub const Sample3D = enum(u32) { _ };
 /// A stream (`HSTREAM`): a long sound, such as a piece of music, that plays and loops as a sample
 /// does, from a file of its own.
 pub const Stream = enum(u32) { _ };
+
+/// Not Miles's: where a sample is heard, for the reverbs the port adds.
+pub const Room = enum {
+    /// Nowhere in particular, with no reverb.
+    none,
+    /// The cockpit's cabin, for the ship's own voice.
+    cockpit,
+};
 
 /// What keeps the platform's mixing thread out while the game changes the driver.
 pub const Lock = struct {
@@ -73,6 +82,7 @@ pub const Driver = struct {
         allocateSample: *const fn (*anyopaque) ?Sample,
         initSample: *const fn (*anyopaque, Sample) void,
         setSampleFile: *const fn (*anyopaque, Sample, []const u8) bool,
+        setSampleRoom: *const fn (*anyopaque, Sample, Room) void,
         setSampleVolume: *const fn (*anyopaque, Sample, i32) void,
         sampleVolume: *const fn (*anyopaque, Sample) i32,
         setSamplePan: *const fn (*anyopaque, Sample, i32) void,
@@ -174,6 +184,9 @@ pub const Driver = struct {
     }
     pub fn setSampleFile(driver: Driver, handle: Sample, file: []const u8) bool {
         return driver.vtable.setSampleFile(driver.context, handle, file);
+    }
+    pub fn setSampleRoom(driver: Driver, handle: Sample, room: Room) void {
+        driver.vtable.setSampleRoom(driver.context, handle, room);
     }
     pub fn setSampleVolume(driver: Driver, handle: Sample, volume: i32) void {
         driver.vtable.setSampleVolume(driver.context, handle, volume);
@@ -386,6 +399,13 @@ pub const Mixer = struct {
         defer mixer.lock.release();
         mixer.sample(handle).playing = voice.Voice.init(file) catch return false;
         return true;
+    }
+
+    /// Not Miles's: where a sample is heard. The software mixer has no reverbs.
+    pub fn setSampleRoom(mixer: *Mixer, handle: Sample, room: Room) void {
+        _ = mixer;
+        _ = handle;
+        _ = room;
     }
 
     pub fn setSampleVolume(mixer: *Mixer, handle: Sample, volume: i32) void {

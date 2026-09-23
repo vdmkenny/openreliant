@@ -338,6 +338,8 @@ pub const Sound = struct {
             log.warn("sound {d} of a bank cannot be played", .{index});
             return;
         }
+        // Not the game's: the cockpit's warnings play in the cockpit's cabin.
+        driver.setSampleRoom(voice.sample, if (sound.fromCockpit(bank)) .cockpit else .none);
         const rate = if (wave.Wave.parse(file)) |info| info.rate else |_| 0;
         if (pitch != 0) {
             const moved = @as(f32, @floatFromInt(rate)) * pitchFactor(pitch);
@@ -352,6 +354,12 @@ pub const Sound = struct {
         voice.rate = rate;
         voice.volume = volume;
         driver.startSample(voice.sample);
+    }
+
+    /// Whether `bank` is the cockpit's own, `betty.fat`.
+    fn fromCockpit(sound: *const Sound, bank: fat.Bank) bool {
+        const betty = sound.betty orelse return false;
+        return betty.bytes.ptr == bank.bytes.ptr;
     }
 
     /// `sound_voice_end` (`0x004823D0`).
@@ -872,6 +880,19 @@ test "Sound pauses and resumes its voices" {
     try std.testing.expectEqual(mss.Status.stopped, driver.sampleStatus(sound.voices[v].sample));
     sound.resumeAll();
     try std.testing.expectEqual(mss.Status.playing, driver.sampleStatus(sound.voices[v].sample));
+}
+
+test "Sound knows the cockpit's bank" {
+    var sound: Sound = undefined;
+    sound.init(null, 0, null);
+    const bytes = comptime testing.bank(2);
+    // A copy of its own, at another address.
+    var other = bytes;
+    const bank = try fat.Bank.parse(&bytes);
+    try std.testing.expect(!sound.fromCockpit(bank));
+    sound.betty = bank;
+    try std.testing.expect(sound.fromCockpit(bank));
+    try std.testing.expect(!sound.fromCockpit(try fat.Bank.parse(&other)));
 }
 
 test "Sound gathers positional sounds and plays them panned" {

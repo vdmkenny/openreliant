@@ -8,8 +8,9 @@
 //! pitch and volume. Samples play by their pan from ahead, streams stereo straight to the
 //! speakers. **Improvements:** OpenAL's band-limited sinc resampler and its smoothing of every
 //! change; UHJ stereo, or HRTF for headphones, where Miles panned left and right; as many speakers as
-//! the device has; high frequencies fading with distance; and a reverb on the 3D sounds, of the
-//! generic room the game asks EAX for with its effect volume at nothing.
+//! the device has; a listener that moves, sounds with a size, high frequencies fading with
+//! distance, a subwoofer; a reverb on the 3D sounds, of the generic room the game asks EAX for
+//! with its effect volume at nothing, and one of a cabin on the cockpit's own voice.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -25,9 +26,11 @@ pub const Settings = struct {
     /// Head-related transfer functions, for headphones, on a stereo device; UHJ otherwise. `auto`
     /// has them while the output is headphones.
     hrtf: Hrtf = .auto,
-    /// The reverb on the 3D sounds, and how much of it is heard.
+    /// The reverbs: the room the 3D sounds play in, and the cockpit's cabin the ship's own voice
+    /// plays in; and how much of each is heard.
     reverb: bool = true,
     reverb_level: f32 = 0.35,
+    cabin_level: f32 = 0.5,
     /// High frequencies fading with distance.
     air_absorption: bool = true,
     /// On a device with a subwoofer, how much of the 3D sounds goes to it.
@@ -66,6 +69,8 @@ const Voice = struct {
     pan: i32 = 64,
     loops: u32 = 1,
     rate: u32 = 0,
+    /// A sample's room.
+    room: mss.Room = .none,
     /// A 3D sample's position and velocity, in Miles's frame.
     position: mss.Vector = @splat(0),
     velocity: mss.Vector = @splat(0),
@@ -84,6 +89,153 @@ const Stream = struct {
     } = null,
 };
 
+/// An effect in an auxiliary slot that sources send to.
+const Effect = struct {
+    effect: c.ALuint,
+    slot: c.ALuint,
+
+    /// An effect `set` makes, in a slot heard at `level`; null where EFX refuses it.
+    fn create(level: f32, set: *const fn (c.ALuint) void) ?Effect {
+        var made: Effect = .{ .effect = 0, .slot = 0 };
+        c.alGenEffects(1, &made.effect);
+        set(made.effect);
+        c.alGenAuxiliaryEffectSlots(1, &made.slot);
+        c.alAuxiliaryEffectSloti(made.slot, c.AL_EFFECTSLOT_EFFECT, @intCast(made.effect));
+        c.alAuxiliaryEffectSlotf(made.slot, c.AL_EFFECTSLOT_GAIN, level);
+        if (c.alGetError() != c.AL_NO_ERROR) {
+            log.warn("EFX refused an effect", .{});
+            made.delete();
+            return null;
+        }
+        return made;
+    }
+
+    /// A reverb of `preset`.
+    fn reverb(comptime preset: Reverb, level: f32) ?Effect {
+        return create(level, struct {
+            fn set(name: c.ALuint) void {
+                preset.apply(name);
+            }
+        }.set);
+    }
+
+    fn delete(effect: Effect) void {
+        if (effect.slot != 0) c.alDeleteAuxiliaryEffectSlots(1, &effect.slot);
+        if (effect.effect != 0) c.alDeleteEffects(1, &effect.effect);
+    }
+
+    /// The slot to send to, or none.
+    fn slotOf(effect: ?Effect) c.ALint {
+        return if (effect) |held| @intCast(held.slot) else c.AL_EFFECTSLOT_NULL;
+    }
+};
+
+/// An EAX reverb, as `efx-presets.h` gives its presets (`EFXEAXREVERBPROPERTIES`), less the pans,
+/// which are all ahead.
+const Reverb = struct {
+    density: f32,
+    diffusion: f32,
+    gain: f32,
+    gain_hf: f32,
+    gain_lf: f32,
+    decay_time: f32,
+    decay_hf_ratio: f32,
+    decay_lf_ratio: f32,
+    reflections_gain: f32,
+    reflections_delay: f32,
+    late_reverb_gain: f32,
+    late_reverb_delay: f32,
+    echo_time: f32,
+    echo_depth: f32,
+    modulation_time: f32,
+    modulation_depth: f32,
+    air_absorption_gain_hf: f32,
+    hf_reference: f32,
+    lf_reference: f32,
+    room_rolloff_factor: f32,
+    decay_hf_limit: bool,
+
+    /// `EFX_REVERB_PRESET_GENERIC`: EAX's generic room (`EAX_ENVIRONMENT_GENERIC`), room type 0,
+    /// which the game asks its provider for.
+    const generic: Reverb = .{
+        .density = 1,
+        .diffusion = 1,
+        .gain = 0.3162,
+        .gain_hf = 0.8913,
+        .gain_lf = 1,
+        .decay_time = 1.49,
+        .decay_hf_ratio = 0.83,
+        .decay_lf_ratio = 1,
+        .reflections_gain = 0.05,
+        .reflections_delay = 0.007,
+        .late_reverb_gain = 1.2589,
+        .late_reverb_delay = 0.011,
+        .echo_time = 0.25,
+        .echo_depth = 0,
+        .modulation_time = 0.25,
+        .modulation_depth = 0,
+        .air_absorption_gain_hf = 0.9943,
+        .hf_reference = 5000,
+        .lf_reference = 250,
+        .room_rolloff_factor = 0,
+        .decay_hf_limit = true,
+    };
+
+    /// `EFX_REVERB_PRESET_DRIVING_INCAR_RACER`: a race car's bare cabin, short and hard, the
+    /// nearest of the presets to a fighter's cockpit.
+    const race_car_cabin: Reverb = .{
+        .density = 0.0832,
+        .diffusion = 0.8,
+        .gain = 0.3162,
+        .gain_hf = 1,
+        .gain_lf = 0.7943,
+        .decay_time = 0.17,
+        .decay_hf_ratio = 2,
+        .decay_lf_ratio = 0.41,
+        .reflections_gain = 1.7783,
+        .reflections_delay = 0.007,
+        .late_reverb_gain = 0.7079,
+        .late_reverb_delay = 0.015,
+        .echo_time = 0.25,
+        .echo_depth = 0,
+        .modulation_time = 0.25,
+        .modulation_depth = 0,
+        .air_absorption_gain_hf = 0.9943,
+        .hf_reference = 10268.2,
+        .lf_reference = 251,
+        .room_rolloff_factor = 0,
+        .decay_hf_limit = true,
+    };
+
+    fn apply(reverb: Reverb, effect: c.ALuint) void {
+        c.alEffecti(effect, c.AL_EFFECT_TYPE, c.AL_EFFECT_EAXREVERB);
+        const parameters = [_]struct { c.ALenum, f32 }{
+            .{ c.AL_EAXREVERB_DENSITY, reverb.density },
+            .{ c.AL_EAXREVERB_DIFFUSION, reverb.diffusion },
+            .{ c.AL_EAXREVERB_GAIN, reverb.gain },
+            .{ c.AL_EAXREVERB_GAINHF, reverb.gain_hf },
+            .{ c.AL_EAXREVERB_GAINLF, reverb.gain_lf },
+            .{ c.AL_EAXREVERB_DECAY_TIME, reverb.decay_time },
+            .{ c.AL_EAXREVERB_DECAY_HFRATIO, reverb.decay_hf_ratio },
+            .{ c.AL_EAXREVERB_DECAY_LFRATIO, reverb.decay_lf_ratio },
+            .{ c.AL_EAXREVERB_REFLECTIONS_GAIN, reverb.reflections_gain },
+            .{ c.AL_EAXREVERB_REFLECTIONS_DELAY, reverb.reflections_delay },
+            .{ c.AL_EAXREVERB_LATE_REVERB_GAIN, reverb.late_reverb_gain },
+            .{ c.AL_EAXREVERB_LATE_REVERB_DELAY, reverb.late_reverb_delay },
+            .{ c.AL_EAXREVERB_ECHO_TIME, reverb.echo_time },
+            .{ c.AL_EAXREVERB_ECHO_DEPTH, reverb.echo_depth },
+            .{ c.AL_EAXREVERB_MODULATION_TIME, reverb.modulation_time },
+            .{ c.AL_EAXREVERB_MODULATION_DEPTH, reverb.modulation_depth },
+            .{ c.AL_EAXREVERB_AIR_ABSORPTION_GAINHF, reverb.air_absorption_gain_hf },
+            .{ c.AL_EAXREVERB_HFREFERENCE, reverb.hf_reference },
+            .{ c.AL_EAXREVERB_LFREFERENCE, reverb.lf_reference },
+            .{ c.AL_EAXREVERB_ROOM_ROLLOFF_FACTOR, reverb.room_rolloff_factor },
+        };
+        for (parameters) |parameter| c.alEffectf(effect, parameter[0], parameter[1]);
+        c.alEffecti(effect, c.AL_EAXREVERB_DECAY_HFLIMIT, @intFromBool(reverb.decay_hf_limit));
+    }
+};
+
 pub const Renderer = struct {
     gpa: Allocator,
     device: *c.ALCdevice,
@@ -94,12 +246,11 @@ pub const Renderer = struct {
     /// Whether HRTF is on.
     hrtf: bool,
     resampler: ?c.ALint = null,
-    /// The reverb and its slot, and on a device with a subwoofer, the effect that feeds it, its slot
-    /// and the filter that takes the highs off what goes to it; 0 for none.
-    effect: c.ALuint = 0,
-    slot: c.ALuint = 0,
-    low_frequency_effect: c.ALuint = 0,
-    low_frequency_slot: c.ALuint = 0,
+    /// The room's reverb and the cabin's; on a device with a subwoofer, the effect that feeds it,
+    /// and the filter that takes the highs off what goes to it. Null or 0 for none.
+    room: ?Effect = null,
+    cabin: ?Effect = null,
+    low_frequency: ?Effect = null,
     low_frequency_filter: c.ALuint = 0,
     samples: [mss.max_samples]Voice = @splat(.{}),
     samples_3d: [max_3d_samples]Voice = @splat(.{}),
@@ -144,7 +295,10 @@ pub const Renderer = struct {
         c.alListenerfv(c.AL_ORIENTATION, &orientation);
         c.alListenerf(c.AL_METERS_PER_UNIT, 1);
         renderer.resampler = findResampler();
-        if (settings.reverb) renderer.createReverb();
+        if (settings.reverb) {
+            renderer.room = .reverb(Reverb.generic, settings.reverb_level);
+            renderer.cabin = .reverb(Reverb.race_car_cabin, settings.cabin_level);
+        }
         if (renderer.channels >= 6) renderer.createLowFrequency();
 
         for (&renderer.samples) |*voice| c.alGenSources(1, &voice.source);
@@ -165,11 +319,8 @@ pub const Renderer = struct {
         var buffers = renderer.buffers.valueIterator();
         while (buffers.next()) |buffer| c.alDeleteBuffers(1, &buffer.name);
         renderer.buffers.deinit(renderer.gpa);
-        for ([_]c.ALuint{ renderer.slot, renderer.low_frequency_slot }) |slot| {
-            if (slot != 0) c.alDeleteAuxiliaryEffectSlots(1, &slot);
-        }
-        for ([_]c.ALuint{ renderer.effect, renderer.low_frequency_effect }) |effect| {
-            if (effect != 0) c.alDeleteEffects(1, &effect);
+        for ([_]?Effect{ renderer.room, renderer.cabin, renderer.low_frequency }) |held| {
+            if (held) |effect| effect.delete();
         }
         if (renderer.low_frequency_filter != 0) c.alDeleteFilters(1, &renderer.low_frequency_filter);
         _ = c.alcMakeContextCurrent(null);
@@ -204,69 +355,29 @@ pub const Renderer = struct {
         if (frames > 0) c.alcRenderSamplesSOFT(renderer.device, samples.ptr, @intCast(frames));
     }
 
-    /// The reverb the game's EAX provider was asked for: the generic room (`EAX_ENVIRONMENT_GENERIC`,
-    /// room type 0), as EFX's preset has it.
-    fn createReverb(renderer: *Renderer) void {
-        c.alGenEffects(1, &renderer.effect);
-        c.alEffecti(renderer.effect, c.AL_EFFECT_TYPE, c.AL_EFFECT_EAXREVERB);
-        const generic = [_]struct { c.ALenum, f32 }{
-            .{ c.AL_EAXREVERB_DENSITY, 1 },
-            .{ c.AL_EAXREVERB_DIFFUSION, 1 },
-            .{ c.AL_EAXREVERB_GAIN, 0.3162 },
-            .{ c.AL_EAXREVERB_GAINHF, 0.8913 },
-            .{ c.AL_EAXREVERB_GAINLF, 1 },
-            .{ c.AL_EAXREVERB_DECAY_TIME, 1.49 },
-            .{ c.AL_EAXREVERB_DECAY_HFRATIO, 0.83 },
-            .{ c.AL_EAXREVERB_DECAY_LFRATIO, 1 },
-            .{ c.AL_EAXREVERB_REFLECTIONS_GAIN, 0.05 },
-            .{ c.AL_EAXREVERB_REFLECTIONS_DELAY, 0.007 },
-            .{ c.AL_EAXREVERB_LATE_REVERB_GAIN, 1.2589 },
-            .{ c.AL_EAXREVERB_LATE_REVERB_DELAY, 0.011 },
-            .{ c.AL_EAXREVERB_ECHO_TIME, 0.25 },
-            .{ c.AL_EAXREVERB_ECHO_DEPTH, 0 },
-            .{ c.AL_EAXREVERB_MODULATION_TIME, 0.25 },
-            .{ c.AL_EAXREVERB_MODULATION_DEPTH, 0 },
-            .{ c.AL_EAXREVERB_AIR_ABSORPTION_GAINHF, 0.9943 },
-            .{ c.AL_EAXREVERB_HFREFERENCE, 5000 },
-            .{ c.AL_EAXREVERB_LFREFERENCE, 250 },
-            .{ c.AL_EAXREVERB_ROOM_ROLLOFF_FACTOR, 0 },
-        };
-        for (generic) |parameter| c.alEffectf(renderer.effect, parameter[0], parameter[1]);
-        c.alGenAuxiliaryEffectSlots(1, &renderer.slot);
-        c.alAuxiliaryEffectSloti(renderer.slot, c.AL_EFFECTSLOT_EFFECT, @intCast(renderer.effect));
-        c.alAuxiliaryEffectSlotf(renderer.slot, c.AL_EFFECTSLOT_GAIN, renderer.settings.reverb_level);
-        if (c.alGetError() != c.AL_NO_ERROR) {
-            log.warn("no reverb: EFX refused it", .{});
-            if (renderer.slot != 0) c.alDeleteAuxiliaryEffectSlots(1, &renderer.slot);
-            if (renderer.effect != 0) c.alDeleteEffects(1, &renderer.effect);
-            renderer.slot = 0;
-            renderer.effect = 0;
-        }
-    }
-
     /// On a device with a subwoofer, the 3D sounds send to it too, through OpenAL Soft's
     /// dedicated low-frequency effect, with their highs taken off; the receiver's crossover takes
     /// the rest.
     fn createLowFrequency(renderer: *Renderer) void {
-        c.alGenEffects(1, &renderer.low_frequency_effect);
-        c.alEffecti(renderer.low_frequency_effect, c.AL_EFFECT_TYPE, c.AL_EFFECT_DEDICATED_LOW_FREQUENCY_EFFECT);
-        c.alEffectf(renderer.low_frequency_effect, c.AL_DEDICATED_GAIN, 1);
-        c.alGenAuxiliaryEffectSlots(1, &renderer.low_frequency_slot);
-        c.alAuxiliaryEffectSloti(renderer.low_frequency_slot, c.AL_EFFECTSLOT_EFFECT, @intCast(renderer.low_frequency_effect));
-        c.alAuxiliaryEffectSlotf(renderer.low_frequency_slot, c.AL_EFFECTSLOT_GAIN, renderer.settings.low_frequency_level);
-        c.alGenFilters(1, &renderer.low_frequency_filter);
-        c.alFilteri(renderer.low_frequency_filter, c.AL_FILTER_TYPE, c.AL_FILTER_LOWPASS);
-        c.alFilterf(renderer.low_frequency_filter, c.AL_LOWPASS_GAIN, 1);
-        c.alFilterf(renderer.low_frequency_filter, c.AL_LOWPASS_GAINHF, c.AL_LOWPASS_MIN_GAINHF);
+        const effect = Effect.create(renderer.settings.low_frequency_level, struct {
+            fn set(name: c.ALuint) void {
+                c.alEffecti(name, c.AL_EFFECT_TYPE, c.AL_EFFECT_DEDICATED_LOW_FREQUENCY_EFFECT);
+                c.alEffectf(name, c.AL_DEDICATED_GAIN, 1);
+            }
+        }.set) orelse return;
+        var filter: c.ALuint = 0;
+        c.alGenFilters(1, &filter);
+        c.alFilteri(filter, c.AL_FILTER_TYPE, c.AL_FILTER_LOWPASS);
+        c.alFilterf(filter, c.AL_LOWPASS_GAIN, 1);
+        c.alFilterf(filter, c.AL_LOWPASS_GAINHF, c.AL_LOWPASS_MIN_GAINHF);
         if (c.alGetError() != c.AL_NO_ERROR) {
-            log.warn("no subwoofer: EFX refused it", .{});
-            if (renderer.low_frequency_slot != 0) c.alDeleteAuxiliaryEffectSlots(1, &renderer.low_frequency_slot);
-            if (renderer.low_frequency_effect != 0) c.alDeleteEffects(1, &renderer.low_frequency_effect);
-            if (renderer.low_frequency_filter != 0) c.alDeleteFilters(1, &renderer.low_frequency_filter);
-            renderer.low_frequency_slot = 0;
-            renderer.low_frequency_effect = 0;
-            renderer.low_frequency_filter = 0;
+            log.warn("no subwoofer: EFX refused its filter", .{});
+            effect.delete();
+            c.alDeleteFilters(1, &filter);
+            return;
         }
+        renderer.low_frequency = effect;
+        renderer.low_frequency_filter = filter;
     }
 
     // --- Buffers ---------------------------------------------------------------------------------
@@ -313,6 +424,21 @@ pub const Renderer = struct {
         voice.rate = voice.buffer.?.rate;
         renderer.setUpFlat(voice);
         return true;
+    }
+
+    /// **Improvement:** the cockpit's voice plays in the cockpit's cabin.
+    pub fn setSampleRoom(renderer: *Renderer, handle: mss.Sample, room: mss.Room) void {
+        const voice = renderer.sample(handle);
+        voice.room = room;
+        renderer.sendToRoom(voice);
+    }
+
+    fn sendToRoom(renderer: *Renderer, voice: *Voice) void {
+        const effect = switch (voice.room) {
+            .none => null,
+            .cockpit => renderer.cabin,
+        };
+        c.alSource3i(voice.source, c.AL_AUXILIARY_SEND_FILTER, Effect.slotOf(effect), 0, c.AL_FILTER_NULL);
     }
 
     pub fn setSampleVolume(renderer: *Renderer, handle: mss.Sample, volume: i32) void {
@@ -362,12 +488,12 @@ pub const Renderer = struct {
     }
 
     /// A sample plays from ahead, turned by its pan, with no distance; a stereo one straight to the
-    /// speakers.
+    /// speakers. In the cockpit, it sends to the cabin's reverb.
     fn setUpFlat(renderer: *Renderer, voice: *Voice) void {
         const source = voice.source;
         c.alSourcei(source, c.AL_SOURCE_RELATIVE, c.AL_TRUE);
         c.alSourcef(source, c.AL_ROLLOFF_FACTOR, 0);
-        c.alSource3i(source, c.AL_AUXILIARY_SEND_FILTER, c.AL_EFFECTSLOT_NULL, 0, c.AL_FILTER_NULL);
+        renderer.sendToRoom(voice);
         const stereo = if (voice.buffer) |buffer| buffer.channels == 2 else false;
         c.alSourcei(source, c.AL_DIRECT_CHANNELS_SOFT, if (stereo) c.AL_REMIX_UNMATCHED_SOFT else c.AL_FALSE);
         renderer.useResampler(source);
@@ -518,9 +644,9 @@ pub const Renderer = struct {
         c.alSourcef(source, c.AL_SOURCE_RADIUS, 0);
         c.alSourcei(source, c.AL_SOURCE_SPATIALIZE_SOFT, c.AL_TRUE);
         c.alSourcef(source, c.AL_AIR_ABSORPTION_FACTOR, if (renderer.settings.air_absorption) 1 else 0);
-        c.alSource3i(source, c.AL_AUXILIARY_SEND_FILTER, @intCast(renderer.slot), 0, c.AL_FILTER_NULL);
-        if (renderer.low_frequency_slot != 0) {
-            c.alSource3i(source, c.AL_AUXILIARY_SEND_FILTER, @intCast(renderer.low_frequency_slot), 1, @intCast(renderer.low_frequency_filter));
+        c.alSource3i(source, c.AL_AUXILIARY_SEND_FILTER, Effect.slotOf(renderer.room), 0, c.AL_FILTER_NULL);
+        if (renderer.low_frequency) |effect| {
+            c.alSource3i(source, c.AL_AUXILIARY_SEND_FILTER, @intCast(effect.slot), 1, @intCast(renderer.low_frequency_filter));
         }
         renderer.useResampler(source);
         c.alSourcef(source, c.AL_GAIN, gain(voice.volume));
@@ -752,7 +878,7 @@ test Renderer {
     defer renderer.destroy();
     const driver = renderer.driver();
     try std.testing.expect(renderer.resampler != null);
-    try std.testing.expect(renderer.slot != 0);
+    try std.testing.expect(renderer.room != null and renderer.cabin != null);
     try std.testing.expectEqual(c.ALC_STEREO_UHJ_SOFT, renderer.outputMode());
 
     // A 3D sample to the right, heard in the right ear more than the left.
@@ -808,7 +934,7 @@ test "subwoofer" {
     // On 5.1, a 3D sound ahead reaches the subwoofer too.
     const renderer = Renderer.create(std.testing.allocator, 22050, 6, .{}, false) catch return error.SkipZigTest;
     defer renderer.destroy();
-    try std.testing.expect(renderer.low_frequency_slot != 0);
+    try std.testing.expect(renderer.low_frequency != null);
     const driver = renderer.driver();
     const file = comptime openreliant.wave.testing.pcm(&std.mem.toBytes([_]i16{16384} ** 4096));
     const placed = driver.allocate3DSample().?;
@@ -823,4 +949,37 @@ test "subwoofer" {
     var low: f32 = 0;
     for (0..1024) |frame| low += @abs(out[6 * frame + 3]);
     try std.testing.expect(low > 0);
+}
+
+test "the cockpit's cabin" {
+    // A short sound in the cockpit rings on in the cabin after it ends; one nowhere in particular
+    // doesn't.
+    const renderer = Renderer.create(std.testing.allocator, 22050, 2, .{}, false) catch return error.SkipZigTest;
+    defer renderer.destroy();
+    const driver = renderer.driver();
+    // A burst of a 1 kHz tone that fades in and out: one that stopped short would leave OpenAL's
+    // click removal ringing on.
+    const file = comptime file: {
+        var tone: [220]i16 = undefined;
+        for (&tone, 0..) |*value, i| {
+            const at: f64 = @floatFromInt(i);
+            const fade = 0.5 - 0.5 * @cos(2 * std.math.pi * at / (tone.len - 1));
+            value.* = @intFromFloat(16384 * fade * @sin(2 * std.math.pi * 1000 * at / 22050));
+        }
+        break :file openreliant.wave.testing.pcm(&std.mem.toBytes(tone));
+    };
+    var tails: [2]f32 = undefined;
+    for ([_]mss.Room{ .none, .cockpit }, &tails) |room, *tail| {
+        const sample = driver.allocateSample().?;
+        try std.testing.expect(driver.setSampleFile(sample, file));
+        driver.setSampleRoom(sample, room);
+        driver.startSample(sample);
+        var out: [2 * 4096]f32 = undefined;
+        renderer.render(&out);
+        tail.* = 0;
+        for (out[2 * 1500 ..]) |value| tail.* += @abs(value);
+        // Let the room fall quiet before the next.
+        for (0..8) |_| renderer.render(&out);
+    }
+    try std.testing.expect(tails[1] > 10 * tails[0] + 1e-3);
 }

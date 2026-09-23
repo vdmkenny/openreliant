@@ -58,7 +58,7 @@ files it says what it needs and exits.
 | `--music <file>` | The piece of `music\` the sandbox plays, or `none`; `New_Mission01.wav` by default |
 | `--hrtf` | Places the sounds for headphones, through a head-related transfer function, whatever the output; by default they are while the output is headphones |
 | `--no-hrtf` | Places the sounds for speakers, whatever the output |
-| `--no-reverb` | Plays the 3D sounds without reverb |
+| `--no-reverb` | Plays the 3D sounds and the cockpit's warnings without reverb |
 | `--no-compressor` | Leaves the master bus's compressor out, keeping its limiter |
 | `--no-sound` | Runs without sound |
 

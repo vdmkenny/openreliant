@@ -71,7 +71,8 @@ const usage =
     \\  --hrtf                    place the sounds for headphones, whatever the output; by
     \\                            default they are while the output is headphones
     \\  --no-hrtf                 place the sounds for speakers, whatever the output
-    \\  --no-reverb               play the sounds around you without reverb
+    \\  --no-reverb               play the sounds around you and the cockpit's voice without
+    \\                            reverb
     \\  --no-compressor           leave the mix's loudness as it is, only keeping its peaks in
     \\                            check
     \\  --no-sound                play without sound
