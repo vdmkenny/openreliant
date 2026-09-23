@@ -82,4 +82,3 @@ test hullHit {
     hullHit(world, other, .{ 0, 0, 990 });
     try std.testing.expectEqual(130, sound.player_hit_at);
 }
-

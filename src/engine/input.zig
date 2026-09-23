@@ -686,15 +686,22 @@ const create = @import("game/create.zig");
 const camera = @import("game/camera.zig");
 const guns = @import("game/guns.zig");
 const hud = @import("game/hud.zig");
+const ai = @import("game/ai.zig");
+const aigeneric = @import("game/aigeneric.zig");
+const objects = @import("game/objects.zig");
+const math = @import("surrender/math.zig");
 
 /// What the player's controls keep between updates, which the game holds in globals.
 pub const Player = struct {
     /// `throttle_setting` (`0x0051CF7C`): the throttle the keys set, which the ship's follows
     /// while the afterburner is off.
     throttle: f32 = 0,
-    /// `matching_speed` (`0x00579984`), flipped by MATCH SPEED. Matching a target's speed needs a
-    /// target, so nothing reads it yet.
+    /// `matching_speed` (`0x00579984`), flipped by MATCH SPEED: the throttle follows the target's
+    /// speed (`matchSpeed`).
     matching_speed: bool = false,
+    /// `throttle_before_match` (`0x00566794`): the throttle as matching last found it, which
+    /// matching puts back as it stops.
+    throttle_before_match: f32 = 0,
     /// `afterburner_toggled` (`0x0051CEFE`), flipped by AFTERBURNER TOGGLE.
     afterburner_toggled: bool = false,
     /// `powerball_held` (`0x0051CEF8`): set while POWERBALL WINDOW is held, and for the frame its
@@ -927,6 +934,270 @@ pub fn setSpectralShields(display: *hud.State, object: *gameobj.GameObject, on: 
     if (shields.setting == .absent) return;
     object.flags.spectral_shields = on;
     shields.setting = if (on) .on else .off;
+}
+
+// --- The player's target --------------------------------------------------------------------
+
+/// `0x00415270`: aims the player's Player Control order at `index` and its `component`, which
+/// makes that the player's target, and has the display follow it (`hud.State.targetChanged`).
+/// Not yet ported: what it tells a multiplayer game (`0x004BB980`).
+pub fn setPlayerTarget(display: *hud.State, all: *create.Objects, index: i16, component: i16, multiplayer: bool) void {
+    const entry = ai.playerControlEntry(all) orelse return;
+    entry.target.index = index;
+    entry.target.component = component;
+    display.targetChanged(all, multiplayer);
+}
+
+/// What `player_controls` (`0x00413410`) does about the target's speed, which reads the objects:
+/// while `matching_speed` is set, it matches it (`matchTargetSpeed`); then MATCH SPEED, once for
+/// each press, flips it, putting back `throttle_before_match` as it turns off and matching at once
+/// as it turns on. The game does this among the keys after the throttle's and the strafe keys;
+/// `aigeneric.playerControl` runs it after `playerControls`, since nothing between reads the
+/// throttle it sets.
+pub fn matchSpeed(player: *Player, devices: *Devices, all: *create.Objects, view: camera.View) void {
+    matchTargetSpeed(player, all, view);
+    if (!devices.active(.match_speed, true)) return;
+    player.matching_speed = !player.matching_speed;
+    if (player.matching_speed) {
+        matchTargetSpeed(player, all, view);
+    } else {
+        all.slots[all.player].object.throttle = player.throttle_before_match;
+    }
+}
+
+/// `match_target_speed` (`0x00412C10`): while `matching_speed` is set, the player's throttle is
+/// the target's speed over the ship's cruise speed, to full, while the target is within
+/// `hud.pick_range` and not exploding; a cloaked one leaves it as it is. Past that it puts back
+/// `throttle_before_match` and stops matching, as it does with no target at all, though then
+/// without putting anything back. It keeps the throttle it finds each time, so what it puts back
+/// is the throttle of its last match.
+pub fn matchTargetSpeed(player: *Player, all: *create.Objects, view: camera.View) void {
+    if (!player.matching_speed) return;
+    const entry = ai.playerControlEntry(all) orelse return;
+    const ship = &all.slots[all.player];
+    if (entry.target.index >= 0) {
+        const target = &all.slots[@intCast(entry.target.index)];
+        if (target.object.flags.cloaked) return;
+        const within = math.distance(ship.drawn.position, target.drawn.position) <= hud.pick_range;
+        if (within and !target.object.flags.exploding) {
+            if (ship.flight) |flight| {
+                player.throttle_before_match = ship.object.throttle;
+                ship.object.throttle = @min(target.object.speed / ai.cruiseSpeed(&ship.object, flight, view), 1);
+            }
+            return;
+        }
+        ship.object.throttle = player.throttle_before_match;
+    }
+    player.matching_speed = false;
+}
+
+/// Which way the targeting keys step through the objects or a target's components.
+pub const Step = enum {
+    next,
+    previous,
+
+    /// The index a step from `at` among `count`, going round: from none, -1, the next is the
+    /// first and the previous the last.
+    pub fn from(step: Step, at: i16, count: i16) i16 {
+        return switch (step) {
+            .next => if (at + 1 >= count) 0 else at + 1,
+            .previous => if (at < 1) count - 1 else at - 1,
+        };
+    }
+};
+
+/// Which objects `seekTarget` stops at: hostile ones or friendly ones within `hud.pick_reach` of
+/// the player's ship, as the next and previous target keys ask; hostile Russian torpedoes, Kamovs
+/// and Scimitars within it, as TARGET TORPEDO does (`hud.targetKeys`); or any the player can aim
+/// at, which no key asks for.
+pub const Among = enum { any, hostile, friendly, torpedo };
+
+/// `0x004150D0`: steps the player's target through the objects to the next one `among` takes
+/// (`seekTarget`), losing its component, or leaves the player without a target where none is to
+/// be found. The display follows either way. Returns whether one was found. Not yet ported: what
+/// it tells a multiplayer game.
+pub fn cycleTarget(display: *hud.State, all: *create.Objects, step: Step, among: Among, multiplayer: bool) bool {
+    const entry = ai.playerControlEntry(all) orelse return true;
+    const found = seekTarget(all, &entry.target, step, among);
+    if (!found) entry.target.index = -1;
+    display.targetChanged(all, multiplayer);
+    return found;
+}
+
+/// `0x004150D0`'s search, which TARGET TORPEDO repeats: steps `target` an object at a time, round
+/// from the last to the first, with no component, until it names one `among` takes that the
+/// player can aim at: not the player's own ship, one ejected from included and, for a friendly
+/// one, one cloaked. Having tried every object, it stands where it started.
+pub fn seekTarget(all: *const create.Objects, target: *aigeneric.Target, step: Step, among: Among) bool {
+    const count: i16 = @intCast(all.count);
+    const from = all.slots[all.player].drawn.position;
+    for (0..all.count) |_| {
+        target.index = step.from(target.index, count);
+        target.component = -1;
+        const slot = &all.slots[@intCast(target.index)];
+        const object = &slot.object;
+        if (!ai.targetValid(all, target.*, .{ .ejected = true, .cloaked = object.side == .friendly })) continue;
+        if (target.index == all.player) continue;
+        const within = math.distance(from, slot.drawn.position) <= hud.pick_reach;
+        const taken = switch (among) {
+            .any => true,
+            .hostile => object.side == .hostile and within,
+            .friendly => object.side == .friendly and within,
+            .torpedo => object.side == .hostile and within and switch (object.type) {
+                .russian_torpedo, .kamov, .scimitar => true,
+                else => false,
+            },
+        };
+        if (taken) return true;
+    }
+    return false;
+}
+
+/// `0x00414F90`: steps the player's target's component round its components to the next the
+/// player can aim at, targetable and not hidden, or to none when it finds none. It first gives
+/// both forms of the target display their full time again, and does nothing more for a target
+/// that lists no components, or a friendly one; otherwise it opens the target's form of the
+/// display, if that is shut. The display follows the new component on its next frame. Not yet
+/// ported: what it tells a multiplayer game.
+pub fn cycleSubtarget(display: *hud.State, all: *create.Objects, step: Step, multiplayer: bool) void {
+    const entry = ai.playerControlEntry(all) orelse return;
+    for ([_]hud.windows.Window{ .big_target, .target }) |window| display.windows.renew(window);
+    if (entry.target.index < 0) return;
+    const slot = &all.slots[@intCast(entry.target.index)];
+    if (!slot.object.flags.components or slot.object.side == .friendly) return;
+    const window = hud.targetWindow(slot);
+    if (display.windows.status.get(window).phase == .shut) _ = display.windows.open(window, multiplayer);
+
+    const count = slot.object.component_count;
+    if (count <= 0) return;
+    const component = &entry.target.component;
+    for (0..@intCast(count)) |_| {
+        component.* = step.from(component.*, count);
+        const part = slot.components[@intCast(component.*)] orelse continue;
+        if (part.targetable and !part.hidden) return;
+    }
+    component.* = -1;
+}
+
+test matchSpeed {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const player = try mission.add(.predator, @splat(0));
+    try std.testing.expect(try aigeneric.push(mission.orders(), player, .player_control, .none));
+    const ship = mission.slot(player);
+    const sabre = try mission.add(.sabre, .{ 0, 0, 5000 });
+    mission.slot(sabre).object.flags.targetable = true;
+    const cruise = ai.cruiseSpeed(&ship.object, ship.flight.?, .cockpit);
+    mission.slot(sabre).object.speed = cruise / 4;
+    var devices: Devices = .{};
+    var display: hud.State = .{};
+    const key = controls.binding(.match_speed).key;
+    ship.object.throttle = 0.9;
+
+    // With no target, matching stops as soon as the key starts it, and the throttle stands.
+    devices.keyboard.down[key] = true;
+    matchSpeed(&mission.player, &devices, all, .cockpit);
+    try std.testing.expect(!mission.player.matching_speed);
+    try std.testing.expectEqual(0.9, ship.object.throttle);
+    devices.keyboard.down[key] = false;
+    devices.keyboard.read();
+
+    // With one, the throttle follows its speed at once.
+    setPlayerTarget(&display, all, @intCast(sabre), -1, false);
+    devices.keyboard.down[key] = true;
+    matchSpeed(&mission.player, &devices, all, .cockpit);
+    try std.testing.expect(mission.player.matching_speed);
+    try std.testing.expectApproxEqAbs(0.25, ship.object.throttle, 1e-6);
+    devices.keyboard.down[key] = false;
+    devices.keyboard.read();
+    // Each run keeps the throttle it finds, by now the matched one.
+    matchSpeed(&mission.player, &devices, all, .cockpit);
+    try std.testing.expectApproxEqAbs(0.25, mission.player.throttle_before_match, 1e-6);
+
+    // Out of range, it puts that back and stops.
+    ship.object.throttle = 0.6;
+    objects.setPosition(&mission.slot(sabre).object, &mission.slot(sabre).drawn, .{ 0, 0, 400000 });
+    matchSpeed(&mission.player, &devices, all, .cockpit);
+    try std.testing.expect(!mission.player.matching_speed);
+    try std.testing.expectApproxEqAbs(0.25, ship.object.throttle, 1e-6);
+}
+
+test cycleTarget {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const player = try mission.add(.predator, @splat(0));
+    var display: hud.State = .{};
+    // Without Player Control, there is no target to step.
+    try std.testing.expect(cycleTarget(&display, all, .next, .hostile, false));
+    try std.testing.expect(try aigeneric.push(mission.orders(), player, .player_control, .none));
+    const friend = try mission.add(.predator, .{ 0, 0, 1000 });
+    const enemy = try mission.add(.sabre, .{ 0, 0, 2000 });
+    const cloaked = try mission.add(.sabre, .{ 0, 0, 3000 });
+    for ([_]u16{ friend, enemy, cloaked }) |index| mission.slot(index).object.flags.targetable = true;
+    mission.slot(cloaked).object.flags.cloaked = true;
+    const target = &mission.slot(player).orders[0].target;
+
+    // Hostile, the cloaked one passed over, round and round.
+    try std.testing.expect(cycleTarget(&display, all, .next, .hostile, false));
+    try std.testing.expectEqual(@as(i32, enemy), target.index);
+    try std.testing.expect(cycleTarget(&display, all, .previous, .hostile, false));
+    try std.testing.expectEqual(@as(i32, enemy), target.index);
+    try std.testing.expectEqual(enemy, display.target.?);
+    // A friend is taken cloaked too; never the player's own ship.
+    mission.slot(friend).object.flags.cloaked = true;
+    try std.testing.expect(cycleTarget(&display, all, .next, .friendly, false));
+    try std.testing.expectEqual(@as(i32, friend), target.index);
+    try std.testing.expect(!seekTarget(all, target, .next, .torpedo));
+    try std.testing.expectEqual(@as(i32, friend), target.index);
+    // None to be found leaves no target.
+    mission.slot(enemy).object.flags.exploding = true;
+    try std.testing.expect(!cycleTarget(&display, all, .next, .hostile, false));
+    try std.testing.expectEqual(-1, target.index);
+    try std.testing.expectEqual(null, display.target);
+}
+
+test cycleSubtarget {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const player = try mission.add(.predator, @splat(0));
+    try std.testing.expect(try aigeneric.push(mission.orders(), player, .player_control, .none));
+    const reliant = try mission.add(.reliant, .{ 0, 0, 5000 });
+    const slot = mission.slot(reliant);
+    // Three components, the middle one not targetable; a hostile ship lists them.
+    var parts: [3]objects.Model.Part = undefined;
+    for (&parts, 0..) |*part, n| {
+        part.* = .{ .hidden = false, .parent = null, .origin = @splat(0), .object = .{ .flags = .{}, .position = @splat(0), .radius = 0, .levels = &.{} } };
+        part.targetable = n != 1;
+        slot.components[n] = part;
+    }
+    slot.object.component_count = parts.len;
+    slot.object.flags.components = true;
+    slot.object.side = .hostile;
+    var display: hud.State = .{};
+    setPlayerTarget(&display, all, @intCast(reliant), -1, false);
+    const target = &mission.slot(player).orders[0].target;
+
+    // From none, the first; then past the one not targetable, and round.
+    display.windows = .{};
+    cycleSubtarget(&display, all, .next, false);
+    try std.testing.expectEqual(0, target.component);
+    try std.testing.expectEqual(.opening, display.windows.status.get(.big_target).phase);
+    cycleSubtarget(&display, all, .next, false);
+    try std.testing.expectEqual(2, target.component);
+    cycleSubtarget(&display, all, .next, false);
+    try std.testing.expectEqual(0, target.component);
+    cycleSubtarget(&display, all, .previous, false);
+    try std.testing.expectEqual(2, target.component);
+    // A friendly target's are not stepped through.
+    slot.object.side = .friendly;
+    cycleSubtarget(&display, all, .next, false);
+    try std.testing.expectEqual(2, target.component);
 }
 
 /// The power keys and the preset each puts the power at, in the order `frame_controls` reads them.

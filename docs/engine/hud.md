@@ -5,8 +5,8 @@ display and the text. Its code lies between `hog_SND.CPP`'s and `hudmovie.cpp`'s
 only `hud_init` asserts, so the source map places that stretch alone.
 
 The port draws the readouts, the clock, the status lights with the devices' charges, the jump
-prompt, the eject marker, the scanner, the ship status indicator's schematic and shields, the
-targeting cluster, the radar's rings and the windows' frames
+prompt, the player's target, the eject marker, the scanner, the ship status indicator's schematic
+and shields, the targeting cluster, the radar's rings and the windows' frames
 ([`engine/game/hud.zig`](../../src/engine/game/hud.zig),
 [`engine/game/hud/windows.zig`](../../src/engine/game/hud/windows.zig)), reaching them as the
 engine does, through the overlay `srcore.render` runs after a frame's layers and before the scene
@@ -19,10 +19,10 @@ been found. An element whose code is not found yet is marked so.
 
 | Element | Where | Key | Shows | Code |
 | --- | --- | --- | --- | --- |
-| Targeting cluster | middle | | the reticle where the guns aim; speed on an arc to the left, the speed the throttle sets and the speed the ship is making; the weapons' charge on an arc to the right; an indicator pointing to the next nav point, and one pointing to the target, red for hostile and green for friendly | [The targeting cluster](#the-targeting-cluster): the arcs, the two markers with their figures, the fills and the reticle. The indicators for the nav point and the target are not found |
-| Target ring | round the target | | a ring round a target in sight, red or green, with its range in metres under it; a lead cursor, a box with a line trailing from it, where to shoot | `hud_draw` works out where the target (`+0x720`) stands on the screen and draws shape `0x15F` there. Not ported |
-| Directional calipers | the display's edges | | the direction and range of a target out of sight | Not found |
-| Missile lock ring | round the target | | a ring that closes in round the target and turns white once a missile has locked, with a tone | Not found |
+| Targeting cluster | middle | | the reticle where the guns aim; speed on an arc to the left, the speed the throttle sets and the speed the ship is making; the weapons' charge on an arc to the right; an indicator pointing to the next nav point, and one pointing to the target, red for hostile and green for friendly | [The targeting cluster](#the-targeting-cluster): the arcs, the two markers with their figures, the fills and the reticle. The indicator for the target is the arrow `hud_target` draws for a target out of sight ([The target](#the-target)); the nav point's is drawn the same way and not ported ([#36](https://github.com/vdmkenny/openreliant/issues/36)) |
+| Target ring | round the target | | a ring round a target in sight, red or green, with its range in metres under it; a lead cursor, a box with a line trailing from it, where to shoot | `hud_target` (`0x00489C70`): brackets at the corners of the target's box, its range in kilometres, and the lead cursor with its line ([The target](#the-target)) |
+| Directional calipers | the display's edges | | the direction and range of a target out of sight | `hud_target`: a marker where a line toward the target leaves the screen, with the range ([The target](#the-target)) |
+| Missile lock ring | round the target | | a ring that closes in round the target and turns white once a missile has locked, with a tone | `hud_missile_lock` (`0x00491520`), whose count dims the target's brackets as a lock builds. Not ported ([#39](https://github.com/vdmkenny/openreliant/issues/39)) |
 | Jump icon | above the middle | J | the prompt to press JUMP DRIVE, once the mission has a jump ready | [The jump prompt](#the-jump-prompt-the-eject-marker-and-the-scanner) |
 | Target display | foot, right | | the target's image with its shields and armour in a ring, its name, its type, its range and its speed; a larger form for a big target, with its current subtarget and a bar for each | [Windows](#the-windows) 3 and 8. Window 3, the small form, draws `hud_ship_status` in its second mode for the target, its range and its speed; window 8 the target's own picture, its name, its subtarget, its range and its speed. Their frames are ported; what they show is not |
 | Subtarget | on the target's model | S, SHIFT+S | the parts of the subtarget picked out in red | `hud_subtarget` (`0x0048CC30`), which walks the target's assembly by `link_id` |
@@ -99,7 +99,13 @@ places, but both sides reach the same `hud_text`.
 
 A glyph's bytes are indices into the font's own palette. The shipped fonts run from those using its
 first seventeen entries as levels of coverage, `FONT.FNT` and `ITACSML.FNT` among them, to
-`BLUFONT.FNT` and `MED_RED.FNT` reaching past two hundred for glyphs of their own colours.
+`BLUFONT.FNT` and `MED_RED.FNT` reaching past two hundred for glyphs of their own colours. A font
+with no palette, as `SMLFONT.FNT`, draws with VFX's global palette, which `hud_draw` makes of the
+display's set: its glyphs are all index `0xF7`, a pale tan there.
+
+`hud_text` hands `VFX_string_draw` a remap table as well, 256 bytes that the glyph's bytes go
+through. `0x004A2AF0` builds them once, with the fonts it opens: most are each index itself, but
+index 0, which is `0xFF`, and a few change an index or a range of them.
 
 **Improvement:** the display is drawn over the finished frame, after the bloom, rather than into
 it, so that nothing of it blooms. The game has no bloom to keep it out of; the port's is an
@@ -126,11 +132,11 @@ views, 1 to 3, do not. In its order:
 | --- | --- |
 | the launch's typed text, and a key's prompt | every view |
 | the devices' charges, which run | every view |
-| the jump prompt, the radar, the eject marker, the scanner and the status lights | view 0 |
+| the jump prompt, the target, the radar, the eject marker, the scanner and the status lights | view 0 |
 | the view's name, centred half of the way across and 10 down: the view table's string for it | every view but 0, and but the fly-bys, `0x24` to `0x26` |
 | a string of `0x0057BF34`'s, `0x3C` above the foot, unless it is `0x90` | view `0xD` |
 | the table of lines `0x0048CF20` draws, placed `(-110, -140)` from the middle | every view |
-| the target ring, the readouts, the ship status indicator, the targeting cluster's arcs and markers, the radar and the clock | view 0 |
+| the readouts, the ship status indicator, the targeting cluster's arcs and markers, the radar and the clock | view 0 |
 | the reticle (`0xD7`) at the middle, and the blind fire sight (`0xD8`) that closes on a target | view 0, but not in the chase mode |
 | in a multiplayer game, a shape of `dmicons.spr` for the player's power-up at the middle | view 0 |
 | the panels the element state machine opens, sliding in and out | view 0 while they slide, every view once open |
@@ -197,20 +203,124 @@ into the one from a pixel above the level to the foot and the unlit one into the
 above the top to the level, so the row they share is unlit. The speed's level is its marker's
 height; the charge's is `0x8A` less the guns' charge (`GameObject.gun_charge`, `+0x140`) times
 `0x8A` over the most it holds (`ShipCombat.gun_energy`). For ship type `0x0B` or `0xFF`, the
-Phoenix, with the guns not all firing and the chosen group's first gun of type 11, the level is
-the object's `+0x148` times `0x8A` instead.
+Phoenix, with the guns not all firing and the chosen group's first gun of type 11, the Nova
+Cannon, the level is the cannon's charge (`GameObject.nova_charge`, `+0x148`) times `0x8A`
+instead, so the arc darkens as the cannon charges.
 
 The reticle is drawn at the middle unless the cockpit mode is the chase view, and a second time:
-at the middle when no target is on the screen (`hud_target_x` is -1); on the target, bright
+at the middle when no lead cursor is drawn (`hud_target_x` is -1); on the lead cursor, bright
 (`0xD8`), while blind fire aims at it, which it does for a target within `0x46` across and `0x32`
 down of the middle while the ship carries blind fire, has it on, and has the guns not all firing
 or only one group, unless the chosen group's first gun is of type 11; otherwise where blind fire's
 sight stands (`hud_sight_x`, `hud_sight_y`), which glides back to the middle a pixel a tick and
-rests within 2 of it, bright while the target stands within `0x10` of the middle. The object's
-`blind_fire_aim` (`+0x674`) says whether blind fire aims.
+rests within 2 of it, bright while the lead cursor stands within `0x10` of the middle. The
+object's `blind_fire_aim` (`+0x674`) says whether blind fire aims, and the player's guns then aim
+at the lead cursor's point (`hud_lead_point`, `0x0057C260`).
 
-The port draws all of it but the indicators and the target ring, which need a target. Not yet
-ported: the Phoenix's own level.
+The port draws all of it. Nothing charges the Nova Cannon yet
+([#150](https://github.com/vdmkenny/openreliant/issues/150)), and the guns do not yet aim at the
+lead cursor's point ([#183](https://github.com/vdmkenny/openreliant/issues/183)).
+
+## The target
+
+The player's target is the target of the player's Player Control order, wherever that order
+stands on the stack (`player_control_entry`, `0x00402860`). `GameObject.nav_point` (`+0x720`) is
+the nav point the display points to, not the target.
+
+The display keeps a copy (`hud_shown_target`, `0x005799E8`, an order's entry of which only the
+target's index and component are set). `hud_draw` first copies the target of the Player Control
+order below the current order, or else the current order's, each frame, and a change of target
+copies it at once (`hud_target_changed`, `0x0048C580`). It draws the target
+(`hud_target_object`, `0x00569940`) while the player can aim at it (`order_target_valid`), and
+outside a multiplayer game a friendly one that is cloaked too. A change of target also brings up
+the target's form of the target display, held open, and closes the other: [window](#the-windows)
+8, the large form, for a type whose combat stats' word at `+0x2C` is 1
+(`ShipCombat.display`), most capital and support ships; window 3 for the rest. With no target it
+closes both.
+
+### Picking a target
+
+`hud_target_keys` first finds the object under the reticle (`hud_under_reticle`, `0x00566664`): the
+first other than the player's in front of the camera within `0x20` of the middle of the screen
+either way. It then reads, in this order:
+
+| Key | Does |
+| --- | --- |
+| TARGET TORPEDO | steps the target to the next hostile Russian torpedo, Kamov or Scimitar within 660000, twice `pick_range` (`0x00501CB4`); with none, leaves it be |
+| TARGET NEAREST ENEMY, TARGET NEAREST FRIENDLY | from view 0 or the chase view, while the current order is Player Control: the nearest hostile ship neither exploding nor cloaked, or friendly one not exploding, within 660000 |
+| SMART TARGET | flips `smart_targeting` |
+| NEXT ENEMY TARGET, PREVIOUS ENEMY TARGET, NEXT FRIENDLY TARGET, PREVIOUS FRIENDLY TARGET | while the current order is Player Control: with neither form of the target display up and a target the player can aim at, brings up its form, held for NEXT ENEMY TARGET alone; otherwise steps the target (`player_target_cycle`, `0x004150D0`) |
+| NEXT SUBTARGET, PREVIOUS SUBTARGET | while the current order is Player Control, steps the target's component (`player_subtarget_cycle`, `0x00414F90`) |
+| TARGET UNDER RETICULE | makes the object under the reticle the target of the current order, while that is Player Control, and brings up its form of the target display |
+
+The next and previous target and subtarget keys stop MATCH SPEED, but for PREVIOUS FRIENDLY
+TARGET.
+
+`player_target_cycle` steps round the objects, the last to the first, to the next that the player
+can aim at, not the player's own ship, one ejected from included and, for a friendly one, one
+cloaked: a hostile one within 660000 for the enemy keys, a friendly one for the friendly keys. The
+component goes. With none to be found the player is left without a target.
+`player_subtarget_cycle` first gives both forms of the target display their full time again. For a
+target that lists components and is not friendly, it opens the target's form if it is shut and
+steps the component round to the next that is targetable and not hidden, or to none.
+
+PRIMARY TARGET (`frame_controls`) makes the mission's primary target (`primary_target`,
+`0x005883DC`) the player's, which needs the mission's script; it is not ported yet
+([#36](https://github.com/vdmkenny/openreliant/issues/36)).
+
+Smart targeting answers the player's hits. A blow of the player's ship, except by colliding, to an
+object's shields makes the object the player's target (`object_damage`). One to its armour makes
+it the target of the current order (`object_armor_damage`), and a hit on that target's armour
+brings up its form of the target display. A hit on a component of a hostile ship makes the
+component the subtarget, where the ship lists it, or else the ship the target
+(`component_damage`).
+
+### Drawing it
+
+`hud_target` (`0x00489C70`), which `hud_draw` runs in view 0 between the jump prompt and the eject
+marker, draws the target. Where its node (`ai_target_node`: the component's for a subtarget) stands
+off the screen or behind the camera:
+
+- an arrow from the middle of the screen, pointing the way to the node in the player's ship's
+  frame (`hud_pointer_direction`, `0x00489BC0`): three lines, the tip 32 from the middle and the
+  wings 22 from it and 4 either side, in palette entry `0x26`, red, for a hostile target and
+  `0x62`, green, for the rest. The chase view draws none, and shows a pointer in the scene instead
+  ([#182](https://github.com/vdmkenny/openreliant/issues/182));
+- a marker where a line from the arrow out the target's way leaves the screen (`line_clip`,
+  `0x004AAFC0`), one of shapes `0x16C` to `0x16F` for a hostile target and `0x170` to `0x173` for
+  the rest, for the bottom, the left, the right and the top, with the range in kilometres beside
+  it in `smlfont.fnt`.
+
+On the screen:
+
+- brackets, shapes `0x122` to `0x125`, or `0x126` to `0x129` for a hostile target, at the corners
+  of the rectangle the camera sees its box in: the component's box for a subtarget, the object's
+  bounds otherwise, turned as the node is. They stand at least 15 apart either way. The missile
+  lock's count (`missile_lock_count`, `0x0057DFBC`), 100 while no lock builds, dims them to its
+  hundredths, and at a tenth or less leaves them out;
+- the range, `%dk` of the distance over 1000, right-aligned 10 right of the bottom right bracket
+  and 9 below it, in `newfont.fnt`;
+- for a target that lists no components and is not friendly, the lead cursor, shape `0x12F`, at
+  the point `ai_lead_aim` aims the player's guns at, which is `hud_target_x` and `hud_target_y`,
+  and a line in entry `0x26` from 5 out of it, along the axis the target lies farther on, toward
+  the target, shorter by 0.28 for each unit the lock's count is short of 100.
+
+The range in the game is the text of the tables `0x004A2AF0` builds: `friendly_text_colours`,
+`hostile_text_colours` and `neutral_text_colours` by the target's side, which change only index
+`0xF7`, and `text_colours` for the marker's. `newfont.fnt` uses none of `0xF7`, so the range by
+the brackets is the font's own orange for every side; `smlfont.fnt`'s glyphs are all `0xF7`.
+
+**Improvement:** the game clips the line that places the marker at the screen's edge from the
+arrow's tip across, but from the tip of one of the arrow's wings across again for down: a slip
+that starts the line as far down the screen as its middle is across, so the marker stands lower
+on the side edges than the target lies, and the more the wider the window. The port starts the
+line at the arrow's tip. `--original` starts it where the game does.
+
+Not ported: the corners `hud_comms_marker` (`0x0048B0F0`) marks on the object the radio's window
+names; the pointer to the nav point; the players' names over their ships in a multiplayer game;
+and what `hud_target_keys` does while the radio's window is open, or while `0x00529FB8` is set,
+which leaves out every key after the search under the reticle. The display's sounds for the keys
+are [#101](https://github.com/vdmkenny/openreliant/issues/101).
 
 ## The radar
 
@@ -446,7 +556,7 @@ The keys, which `frame_controls` and `hud_target_keys` read:
 | ROTATE MISSILES CLOCKWISE, ANTICLOCKWISE | outside a multiplayer game, open window 2 held and turn the ring |
 
 The rest of the game opens windows too: firing the guns and launching a missile, the targeting keys
-the target display, and the radio its own. A mission's script opens and closes any window by its
+and a change of target the target display ([The target](#the-target)), and the radio its own. A mission's script opens and closes any window by its
 number, `OpenInstrument` and `CloseInstrument` (`0x0045D9D0`, `0x0045DA30`): a window it opens is
 held, window 11 starts the radio's menu too, and window 10 closes window 13 first; one it closes is
 let go of. The display beeps with `hud_beep` 1 as a window opens, 2 as it closes, and 0 for most of
@@ -520,14 +630,12 @@ the instruments and the windows.
 - The names of the display's elements, which `hud_init` copies from `0x00515D70`.
 - What windows 5, 6, 9, 12 and 14 are for, which no key opens and a mission's script may, and
   what window 14 shows.
-- What the rest of `hud_draw` draws: the target display, the armour, the targeting cluster's
-  indicators for the nav point and the target, and what `0x00489C70`, which the view ahead calls
-  before the eject marker, draws.
-- What the object's `+0x148` is, which the Phoenix's charge arc shows for a gun of type 11, and
-  why blind fire leaves guns of that type alone.
+- What the rest of `hud_draw` draws: the target display and the armour.
+- Why blind fire leaves the Nova Cannon alone.
 - What sets `0x0057BF34`, whose string view `0xD` shows, and `0x00529FB8`, which shows a line at
   the foot in every view.
-- What the flags at `0x00563160` mark, which flash parts of the ship status schematic.
+- Where the chase view's pointers to the target and the nav point are made, and their model
+  ([#182](https://github.com/vdmkenny/openreliant/issues/182)).
 - Which of the display's shapes `hud_blit` shakes by `hit_shake` rather than `hud_interference`.
 - What `hud_palette_ramp` (`0x0048D590`) colours, and whether the display's text takes its palette
   from it rather than from the font.

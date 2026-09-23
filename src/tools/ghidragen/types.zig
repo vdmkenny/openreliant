@@ -73,6 +73,7 @@ pub const exported = [_]Export{
     .{ "ShipCombat", engine.game.create.ShipCombat },
     .{ "ShipTargeting", engine.game.create.ShipCombat.Targeting },
     .{ "ShipClass", engine.game.create.ShipCombat.Class },
+    .{ "TargetDisplay", engine.game.create.ShipCombat.TargetDisplay },
     .{ "ShipSide", engine.game.gameobj.Side(i16) },
     .{ "GunStats", engine.game.guns.Gun },
     .{ "GunKind", engine.game.guns.Kind },

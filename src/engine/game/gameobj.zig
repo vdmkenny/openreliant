@@ -176,12 +176,15 @@ pub const NetworkFlags = packed struct(u32) {
 /// which have no stats. The names are the port's, for the types the game's code singles out.
 pub const Type = enum(u32) {
     predator = 0x00,
+    /// The Phoenix (`uspf_phx.shp`), which carries the Nova Cannon.
+    phoenix = 0x0B,
     reliant = 0x0C,
     /// The limpet car (`limpet_t_car.shp`).
     limpet_car = 0x1D,
     ripper = 0x1F,
     sabre = 0x2B,
     kamov = 0x2D,
+    scimitar = 0x30,
     /// Capital ships (`saladin.shp`, `kronstadt.shp`, `boridin.shp`).
     saladin = 0x43,
     kronstadt = 0x47,
@@ -211,6 +214,8 @@ pub const Type = enum(u32) {
     /// Escape pods again, of the same models as `escape_pod` and `other_escape_pod`.
     late_escape_pod = 0xDF,
     other_late_escape_pod = 0xE0,
+    /// A second Phoenix (`t_uspf_phx.shp`), the last type of the table.
+    t_phoenix = 0xFF,
     /// The markers `backdrop_place` reads a mission's sun and nebula from.
     sun_marker = 0x3DC,
     nebula_marker = 0x3DD,
@@ -225,11 +230,14 @@ pub const Type = enum(u32) {
         // The numbers are the game's own, so the models they stand for say which types they are.
         const models = [_]struct { Type, []const u8 }{
             .{ .predator, "uslf_prd.shp" },
+            .{ .phoenix, "uspf_phx.shp" },
+            .{ .t_phoenix, "t_uspf_phx.shp" },
             .{ .reliant, "reliant.shp" },
             .{ .limpet_car, "limpet_t_car.shp" },
             .{ .ripper, "ripper_2.shp" },
             .{ .sabre, "rus_sabre.shp" },
             .{ .kamov, "rus_kamov.shp" },
+            .{ .scimitar, "scimitar.shp" },
             .{ .troop_car, "rus_troopcar.shp" },
             .{ .saladin, "saladin.shp" },
             .{ .kronstadt, "kronstadt.shp" },
@@ -500,8 +508,11 @@ pub const GameObject = extern struct {
     /// command sets it to 100, which never does.
     eject_roll: i32,
     _unknown_710: [4]u32,
-    /// **Unknown.** Both -1 when created.
-    _unknown_720: i32,
+    /// The object of the nav point the display points to, set by the mission's `SetNavPoint` and
+    /// `nav_point_next` (`0x004152A0`), which passes on to the next the player's ship has not
+    /// reached; -1 for none, as when created.
+    nav_point: i32,
+    /// **Unknown.** -1 when created.
     _unknown_724: i32,
     /// Where the power distribution stands on the power ball (`input.power`): a point within a disc
     /// of radius 64, in `x` and `y`. `z` is 1 when created, and moving the point sets it to 0.
@@ -701,7 +712,7 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "_unknown_678") == 0x678);
         assert(@offsetOf(GameObject, "_unknown_6ac") == 0x6AC);
         assert(@offsetOf(GameObject, "eject_roll") == 0x70C);
-        assert(@offsetOf(GameObject, "_unknown_720") == 0x720);
+        assert(@offsetOf(GameObject, "nav_point") == 0x720);
         assert(@offsetOf(GameObject, "_unknown_74c") == 0x74C);
         assert(@offsetOf(GameObject, "_unknown_764") == 0x764);
         assert(@bitOffsetOf(Flags, "frozen") == 4);
@@ -979,6 +990,9 @@ pub const World = struct {
     shields: ?*@import("shield.zig").Shields = null,
     /// The sparks flying (`sparks.cpp`); null where none are thrown.
     sparks: ?*@import("sparks.zig").Sparks = null,
+    /// The head-up display's state (`hud.cpp`'s globals), which smart targeting and the target
+    /// display answer the player's hits through; null where there is none.
+    display: ?*@import("hud.zig").State = null,
 };
 
 /// `simulation_step` (`0x004774D0`): the work of every fourth tick, so 25 times a second, which
