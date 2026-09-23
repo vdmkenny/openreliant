@@ -350,7 +350,9 @@ pub const GameObject = extern struct {
     /// draws the reticle.
     blind_fire_aim: i32,
     _unknown_678: i32,
-    _unknown_67c: u32,
+    /// The frame (`Clock.frame_start`) it was last heard flying past the camera
+    /// (`sound3d.engineUpdate`).
+    flyby_at: i32,
     /// Orders on its stack.
     order_count: i16,
     _unknown_682: u16,

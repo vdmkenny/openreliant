@@ -6,6 +6,7 @@
 //!     tablegen models <LANCER.EXE> <disassembly.asm> <output.zig>
 //!     tablegen combat <LANCER.EXE> <output.zig>
 //!     tablegen guns <LANCER.EXE> <output.zig>
+//!     tablegen sounds <LANCER.EXE> <output.zig>
 //!     tablegen controls <LANCER.EXE> <output.zig>
 //!     tablegen orders <LANCER.EXE> <output.zig>
 //!     tablegen maneuvers <LANCER.EXE> <output.zig>
@@ -28,6 +29,9 @@
 //!
 //! `guns`: the words of each gun type's record that the executable holds: what a shot costs the
 //! ship, the sound it makes and how often that sound is heard.
+//!
+//! `sounds`: the 3D sounds' definitions, the voice classes they play on, and how the player's
+//! engine sounds for each ship type.
 //!
 //! `controls`: the player's actions and the bindings the game starts with.
 //!
@@ -55,6 +59,7 @@ const conditions = @import("conditions.zig");
 const controls = @import("controls.zig");
 const eval = @import("eval.zig");
 const gun_stats = @import("guns.zig");
+const sound_tables = @import("sounds.zig");
 const image = @import("image.zig");
 const maneuvers = @import("maneuvers.zig");
 const models = @import("models.zig");
@@ -83,6 +88,7 @@ const usage =
     \\       tablegen models <LANCER.EXE> <disassembly.asm> <output.zig>
     \\       tablegen combat <LANCER.EXE> <output.zig>
     \\       tablegen guns <LANCER.EXE> <output.zig>
+    \\       tablegen sounds <LANCER.EXE> <output.zig>
     \\       tablegen controls <LANCER.EXE> <output.zig>
     \\       tablegen orders <LANCER.EXE> <output.zig>
     \\       tablegen maneuvers <LANCER.EXE> <output.zig>
@@ -98,6 +104,7 @@ const Mode = union(enum) {
     models: struct { binary: []const u8, listing: []const u8, output: []const u8 },
     combat: struct { binary: []const u8, output: []const u8 },
     guns: struct { binary: []const u8, output: []const u8 },
+    sounds: struct { binary: []const u8, output: []const u8 },
     controls: struct { binary: []const u8, output: []const u8 },
     orders: struct { binary: []const u8, output: []const u8 },
     maneuvers: struct { binary: []const u8, output: []const u8 },
@@ -115,6 +122,7 @@ const Mode = union(enum) {
             .models => if (rest.len == 3) .{ .models = .{ .binary = rest[0], .listing = rest[1], .output = rest[2] } } else null,
             .combat => if (rest.len == 2) .{ .combat = .{ .binary = rest[0], .output = rest[1] } } else null,
             .guns => if (rest.len == 2) .{ .guns = .{ .binary = rest[0], .output = rest[1] } } else null,
+            .sounds => if (rest.len == 2) .{ .sounds = .{ .binary = rest[0], .output = rest[1] } } else null,
             .controls => if (rest.len == 2) .{ .controls = .{ .binary = rest[0], .output = rest[1] } } else null,
             .orders => if (rest.len == 2) .{ .orders = .{ .binary = rest[0], .output = rest[1] } } else null,
             .maneuvers => if (rest.len == 2) .{ .maneuvers = .{ .binary = rest[0], .output = rest[1] } } else null,
@@ -138,6 +146,7 @@ pub fn main(init: std.process.Init) !u8 {
         .models => |paths| modelTables(init, arena, paths.binary, paths.listing, paths.output),
         .combat => |paths| combatTable(init, arena, paths.binary, paths.output),
         .guns => |paths| gunTable(init, arena, paths.binary, paths.output),
+        .sounds => |paths| soundTables(init, arena, paths.binary, paths.output),
         .controls => |paths| controlTable(init, arena, paths.binary, paths.output),
         .orders => |paths| orderTable(init, arena, paths.binary, paths.output),
         .maneuvers => |paths| maneuverTable(init, arena, paths.binary, paths.output),
@@ -230,6 +239,22 @@ fn gunTable(init: std.process.Init, arena: std.mem.Allocator, binary_path: []con
     try out.interface.flush();
 
     std.debug.print("{d} gun types' own words -> {s}\n", .{ types.len, output });
+    return 0;
+}
+
+fn soundTables(init: std.process.Init, arena: std.mem.Allocator, binary_path: []const u8, output: []const u8) !u8 {
+    const cwd: Io.Dir = .cwd();
+    const binary = try cwd.readFileAlloc(init.io, binary_path, arena, .limited(64 << 20));
+    const pe_image: pe.Image = try .parse(binary);
+    const tables = try sound_tables.read(arena, .init(pe_image, binary));
+
+    var buffer: [16 << 10]u8 = undefined;
+    var out: Io.File.Writer = .init(try cwd.createFile(init.io, output, .{}), init.io, &buffer);
+    defer out.file.close(init.io);
+    try sound_tables.emit(&out.interface, tables);
+    try out.interface.flush();
+
+    std.debug.print("{d} 3D sounds, their voice classes and the engines -> {s}\n", .{ tables.definitions.len, output });
     return 0;
 }
 

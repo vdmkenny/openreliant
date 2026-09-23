@@ -20,14 +20,14 @@ pub const Status = voice.Status;
 pub const Vector = positional.Vector;
 
 /// A sample (`HSAMPLE`): a sound played as it is, with a volume and a pan.
-pub const Sample = enum(u8) { _ };
+pub const Sample = enum(u32) { _ };
 
 /// A 3D sample (`H3DSAMPLE`): a sound placed around the listener.
-pub const Sample3D = enum(u8) { _ };
+pub const Sample3D = enum(u32) { _ };
 
 /// A stream (`HSTREAM`): a long sound, such as a piece of music, that plays and loops as a sample
 /// does, from a file of its own.
-pub const Stream = enum(u8) { _ };
+pub const Stream = enum(u32) { _ };
 
 /// What keeps the platform's mixing thread out while the game changes the driver.
 pub const Lock = struct {

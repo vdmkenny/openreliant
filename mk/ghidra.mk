@@ -167,6 +167,16 @@ gun-tables: ## Re-derive each gun type's kind, sound and sound period from the p
 	$(ROOT)/zig-out/bin/tablegen guns $(PAYLOAD) $(GUN_TABLES)
 	$(ZIG) fmt $(GUN_TABLES)
 
+SOUND_TABLES := $(ROOT)/src/engine/game/sound3d/sounds.zig
+
+.PHONY: sound-tables
+sound-tables: ## Re-derive the 3D sounds, their voice classes and the engines' sounds from the payload executable
+	@test -f $(PAYLOAD) || { echo "missing $(PAYLOAD), the game executable with its code readable" >&2; exit 1; }
+	$(ZIG) build tablegen
+	mkdir -p $(dir $(SOUND_TABLES))
+	$(ROOT)/zig-out/bin/tablegen sounds $(PAYLOAD) $(SOUND_TABLES)
+	$(ZIG) fmt $(SOUND_TABLES)
+
 CONTROL_TABLES := $(ROOT)/src/engine/input/controls.zig
 
 .PHONY: control-tables
