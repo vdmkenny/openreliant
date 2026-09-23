@@ -24,6 +24,7 @@ const libcmt = @import("../libcmt.zig");
 const motion = @import("motion.zig");
 const input = @import("../input.zig");
 const Clock = @import("main.zig").Clock;
+const collision = @import("collision.zig");
 
 /// A slot of the object array as an object names one, or `none` for no slot, which the game holds
 /// as -1.
@@ -61,6 +62,82 @@ pub fn Side(comptime Tag: type) type {
         _,
     };
 }
+
+/// How far harm reaches an object (`GameObject.invulnerable`). The first four are the values
+/// `SetInvulnerability`'s catalogue entry lists; the game sets the last two itself. Any but `none`
+/// keeps its armour whole (`collision.armorDamage`).
+pub const Invulnerability = enum(u8) {
+    none = 0,
+    /// Only a player's ship can harm it: an ejected pilot, until it is picked up (`order_eject_spin`).
+    player_can_hit = 1,
+    /// Nothing harms it: what the Ripper has grabbed, and some types as they are created.
+    full = 2,
+    /// Its pilot ejects before it explodes.
+    eject_before_exploding = 3,
+    /// **Unknown.** Set as some types are created and as a deathmatch ship respawns. Shots pass its
+    /// shields to the hull (`guns.bulletHit`).
+    _unknown_4 = 4,
+    /// **Unknown.** Its shields are emptied each step (`rechargeShields`), shots pass them to the
+    /// hull, and a shield generator does not soften a component's hits.
+    _unknown_5 = 5,
+    _,
+};
+
+/// A deathmatch power-up (`GameObject.power_up`): its record of 0x28 bytes in the table at
+/// `0x0050C510`, which gives how long it lasts and the routines that start and end it. `0x004B1C00`
+/// hands one out, by the weights at `0x005DB4C4` where none is named, and `0x004B18E0` ends it
+/// once it runs out. **Unknown:** what most of them do.
+pub const PowerUp = enum(i32) {
+    none = -1,
+    /// **Unknown.** In a multiplayer game, `0x00412820` and `0x00491520` act differently while the
+    /// player holds it.
+    _unknown_5 = 5,
+    /// The player's throttle goes no higher than half (`player_controls`).
+    half_throttle = 7,
+    /// Its shields don't recharge (`rechargeShields`).
+    no_shield_recharge = 8,
+    /// The player's controls steer the other way round (`player_controls`).
+    reversed_controls = 9,
+    _,
+};
+
+/// A value for each quadrant of an object's shields or armour (`collision.Quadrant`), in the order
+/// the game keeps them.
+pub const Quadrants = extern struct {
+    left: f32,
+    right: f32,
+    fore: f32,
+    aft: f32,
+
+    /// The same value in each.
+    pub fn all(value: f32) Quadrants {
+        return .{ .left = value, .right = value, .fore = value, .aft = value };
+    }
+
+    pub fn get(quadrants: Quadrants, quadrant: collision.Quadrant) f32 {
+        return switch (quadrant) {
+            inline else => |named| @field(quadrants, @tagName(named)),
+        };
+    }
+
+    pub fn at(quadrants: *Quadrants, quadrant: collision.Quadrant) *f32 {
+        return switch (quadrant) {
+            inline else => |named| &@field(quadrants, @tagName(named)),
+        };
+    }
+
+    /// Each, in the game's order.
+    pub fn values(quadrants: Quadrants) [4]f32 {
+        return .{ quadrants.left, quadrants.right, quadrants.fore, quadrants.aft };
+    }
+
+    comptime {
+        for (std.enums.values(collision.Quadrant), @typeInfo(Quadrants).@"struct".fields) |quadrant, field| {
+            assert(std.mem.eql(u8, @tagName(quadrant), field.name));
+            assert(@offsetOf(Quadrants, field.name) == @as(usize, @intFromEnum(quadrant)) * @sizeOf(f32));
+        }
+    }
+};
 
 /// Components an object can list.
 pub const max_components = 60;
@@ -143,7 +220,7 @@ pub const GameObject = extern struct {
     nova_charge: f32,
     /// Which side of a gun group fires next, 0 or 1, while the ship fires one group out of step
     /// (`guns.step`).
-    gun_turn: u32,
+    gun_turn: guns.GroupSide,
     _unknown_150: i16,
     component_count: i16,
     _unknown_154: [0xF4]u8,
@@ -211,11 +288,10 @@ pub const GameObject = extern struct {
     /// sound 3.
     countermeasures: u16,
     _unknown_5ee: u16,
-    /// Four values, each `6 * ShipCombat.shield_power - 1` when created.
-    shields: [4]f32,
-    /// Four values, each `6 * ShipCombat.armor_class - 1` when created. `ship_damage_value` reports
-    /// the lowest.
-    armor: [4]f32,
+    /// Each `6 * ShipCombat.shield_power - 1` when created.
+    shields: Quadrants,
+    /// Each `6 * ShipCombat.armor_class - 1` when created. `ship_damage_value` reports the lowest.
+    armor: Quadrants,
     _unknown_610: u32,
     /// **Unknown.** Code in `explode.cpp` that `create_object` gives capital ships, planets and a
     /// few other types, which `node_draw` runs as one of the object's components is destroyed.
@@ -325,10 +401,14 @@ pub const GameObject = extern struct {
     _unknown_74c: u16,
     _unknown_74e: u16,
     _unknown_750: u32,
-    /// **Unknown.** -1 when created. Its shields don't recharge while it is 8
-    /// (`rechargeShields`), and the player's controls turn round while it is 9.
-    _unknown_754: i32,
-    _unknown_758: [0xC]u8,
+    /// The deathmatch power-up it holds.
+    power_up: PowerUp,
+    /// **Unknown.** Set as a power-up is handed out, where it is given (`0x004B1C00`).
+    _unknown_758: i32,
+    /// The frame (`Clock.frame_start`) the power-up runs out at, or -1 for never.
+    power_up_until: i32,
+    /// The frame it was handed out at, from which the display flashes its icon (`hud_draw`).
+    power_up_since: i32,
     /// **Unknown.** -1 when allocated.
     _unknown_764: i32,
     _unknown_768: [0x424]u8,
@@ -339,8 +419,8 @@ pub const GameObject = extern struct {
     /// Set once `create_object` has filled the slot; it stops with a fatal error if it is set
     /// already.
     created: bool,
-    /// Nonzero while it is invulnerable: `SetInvulnerability`.
-    invulnerable: u8,
+    /// How far harm reaches it (`SetInvulnerability`).
+    invulnerable: Invulnerability,
     _unknown_b96: u16,
 
     /// The names of the script commands that set a bit are the developers' own.
@@ -491,7 +571,7 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "gun_factor") == 0x734);
         assert(@offsetOf(GameObject, "speed_factor") == 0x738);
         assert(@offsetOf(GameObject, "shield_factor") == 0x73C);
-        assert(@offsetOf(GameObject, "_unknown_754") == 0x754);
+        assert(@offsetOf(GameObject, "power_up") == 0x754);
         assert(@offsetOf(GameObject, "order_count") == 0x680);
         assert(@offsetOf(GameObject, "orders") == 0x684);
         assert(@offsetOf(GameObject, "order_state") == 0x68C);
@@ -595,9 +675,9 @@ pub fn applyKnocks(object: *GameObject) void {
 /// BALANCING (`input.power.balanceShields`), which keeps the other side's charge down as the
 /// shields recharge (`rechargeShields`).
 pub const ShieldReserves = struct {
-    /// Beyond the fore shield, `shields[2]` (`0x0051CF78`).
+    /// Beyond the fore shield, `shields.fore` (`0x0051CF78`).
     fore: f32 = 0,
-    /// Beyond the aft shield, `shields[3]` (`0x0051CF34`).
+    /// Beyond the aft shield, `shields.aft` (`0x0051CF34`).
     aft: f32 = 0,
 };
 
@@ -608,26 +688,28 @@ pub const ShieldReserves = struct {
 /// aft: the full charge of the fore and aft shields is lower by however far the other one and its
 /// reserve go beyond it.
 ///
-/// An object whose components are listed recharges no shields here, and neither does one whose
-/// `+0x754` is 8. One whose `invulnerable` is 5 has its shields emptied instead. **Unknown:**
-/// what those values mean. Not ported: the case in a multiplayer game where the player's shields
-/// aren't recharged (`0x005D76F0` at 4 with `0x005DB538` naming the player).
+/// An object whose components are listed recharges no shields here, and neither does one holding
+/// the `no_shield_recharge` power-up. One whose `invulnerable` is `_unknown_5` has its shields
+/// emptied instead. **Unknown:** what that value means. Not ported: the case in a multiplayer game
+/// where the player's shields aren't recharged (`0x005D76F0` at 4 with `0x005DB538` naming the
+/// player).
 pub fn rechargeShields(object: *GameObject, combat: *const create.ShipCombat, reserves: ?ShieldReserves) void {
     if (object.flags.components) return;
-    if (object.invulnerable == 5) {
-        object.shields = @splat(0);
+    if (object.invulnerable == ._unknown_5) {
+        object.shields = .all(0);
         return;
     }
-    if (object._unknown_754 == 8) return;
+    if (object.power_up == .no_shield_recharge) return;
     const full = @as(f32, @floatFromInt(combat.shield_power * 6)) - 1;
     const rate = full * object.shield_factor * object.shield_condition / (combat.shield_recharge * recharge_steps);
-    for (&object.shields, 0..) |*shield, quadrant| {
+    for (std.enums.values(collision.Quadrant)) |quadrant| {
+        const shield = object.shields.at(quadrant);
         var most = full;
         if (reserves) |shifted| {
             const other: ?f32 = switch (quadrant) {
-                2 => shifted.aft + object.shields[3],
-                3 => shifted.fore + object.shields[2],
-                else => null,
+                .fore => shifted.aft + object.shields.aft,
+                .aft => shifted.fore + object.shields.fore,
+                .left, .right => null,
             };
             if (other) |beside| if (beside > most) {
                 most -= beside - most;
@@ -660,7 +742,7 @@ pub fn objectAlloc(object_type: u32, random: *libcmt.Rand) GameObject {
     var object = std.mem.zeroes(GameObject);
     object.type = object_type;
     object.rotation = math.identity;
-    object._unknown_754 = -1;
+    object.power_up = .none;
     object._unknown_764 = -1;
     object.root.flags.component = true;
     object._unknown_b96 = 0xFFFF;
@@ -1074,7 +1156,72 @@ pub const testing = struct {
         made.engines_intact = 1;
         return made;
     }
+
+    /// A mission with nothing in it but what a test puts there: objects with no models, the stats
+    /// they are made from, and what their world points at. It stays where `init` fills it in, as
+    /// the world points into it.
+    pub const Mission = struct {
+        random: libcmt.Rand,
+        objects: *create.Objects,
+        tables: create.Stats,
+        player: input.Player,
+        shake: f32,
+        clock: Clock,
+        view: camera.View,
+
+        /// Fills in every field, so a field added here has to be filled in too.
+        pub fn init(mission: *Mission, gpa: std.mem.Allocator) !void {
+            mission.* = .{
+                .random = .{},
+                .objects = undefined,
+                .tables = create.testing.tables(),
+                .player = .{},
+                .shake = 0,
+                .clock = .{},
+                .view = .chase,
+            };
+            mission.objects = try .create(gpa, &mission.random);
+        }
+
+        pub fn deinit(mission: *Mission) void {
+            mission.objects.destroy();
+        }
+
+        pub fn world(mission: *Mission) World {
+            return .{ .objects = mission.objects, .player = &mission.player, .view = mission.view, .shake = &mission.shake, .random = &mission.random };
+        }
+
+        /// What the objects' orders run against.
+        pub fn orders(mission: *Mission) aigeneric.Context {
+            return .{ .world = mission.world(), .clock = &mission.clock };
+        }
+
+        /// An object of `ship_type` at `at`, in the next slot.
+        pub fn add(mission: *Mission, ship_type: u32, at: Vector) !u16 {
+            return create.createObject(mission.objects, &mission.tables, create.testing.no_models, null, ship_type, at, &mission.random);
+        }
+
+        /// A ship that is nobody's, at `at`, which takes the orders the player's refuses: the
+        /// player holds the first slot, so the ship comes after it.
+        pub fn addOther(mission: *Mission, at: Vector) !u16 {
+            if (mission.objects.count == 0) _ = try mission.add(0, @splat(0));
+            return mission.add(0, at);
+        }
+
+        pub fn slot(mission: *Mission, index: u16) *create.Slot {
+            return &mission.objects.slots[index];
+        }
+    };
 };
+
+test Quadrants {
+    var shields: Quadrants = .all(5);
+    shields.at(.aft).* = 2;
+    // Each quadrant is the field of its name, and in the game's order among them.
+    try std.testing.expectEqual(2, shields.aft);
+    try std.testing.expectEqual(5, shields.get(.fore));
+    try std.testing.expectEqual([4]f32{ 5, 5, 5, 2 }, shields.values());
+}
 
 test "a knock pushes and turns an object" {
     var object = testing.object();
@@ -1136,44 +1283,46 @@ test rechargeShields {
     const combat = std.mem.zeroInit(create.ShipCombat, .{ .shield_power = 8, .shield_recharge = 10 });
     // From empty, the full charge, 47, comes back over the ten seconds of steps, and no further.
     for (0..249) |_| rechargeShields(&object, &combat, null);
-    try std.testing.expect(object.shields[0] < 47);
+    try std.testing.expect(object.shields.left < 47);
     rechargeShields(&object, &combat, null);
-    try std.testing.expectApproxEqAbs(47, object.shields[0], 1e-3);
+    try std.testing.expectApproxEqAbs(47, object.shields.left, 1e-3);
     rechargeShields(&object, &combat, null);
-    try std.testing.expectEqual(47, object.shields[0]);
+    try std.testing.expectEqual(47, object.shields.left);
     // With shields shifted aft beyond its full charge, the fore one charges only as far as the
     // full charge less the excess.
-    object.shields = .{ 47, 47, 45, 40 };
+    object.shields = .{ .left = 47, .right = 47, .fore = 45, .aft = 40 };
     rechargeShields(&object, &combat, .{ .aft = 9 });
-    try std.testing.expectEqual(45, object.shields[2]);
-    // An object whose `invulnerable` is 5 loses its shields.
-    object.invulnerable = 5;
+    try std.testing.expectEqual(45, object.shields.fore);
+    // One holding the power-up that stops them recharges none.
+    object.shields = .all(0);
+    object.power_up = .no_shield_recharge;
     rechargeShields(&object, &combat, null);
-    try std.testing.expectEqual([4]f32{ 0, 0, 0, 0 }, object.shields);
+    try std.testing.expectEqual(Quadrants.all(0), object.shields);
+    object.power_up = .none;
+    // An object whose `invulnerable` is `_unknown_5` loses its shields.
+    object.invulnerable = ._unknown_5;
+    rechargeShields(&object, &combat, null);
+    try std.testing.expectEqual(Quadrants.all(0), object.shields);
 }
 
 test "a step updates and moves every live object" {
     const gpa = std.testing.allocator;
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(gpa, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    const player = try create.createObject(all, &tables, create.testing.no_models, null, 0, @splat(0), &random);
-    const other = try create.createObject(all, &tables, create.testing.no_models, null, 0x2B, .{ 0, 0, 1000 }, &random);
-    const off = try create.createObject(all, &tables, create.testing.no_models, null, 0x2B, .{ 0, 0, 2000 }, &random);
+    var mission: testing.Mission = undefined;
+    try mission.init(gpa);
+    defer mission.deinit();
+    const all = mission.objects;
+    const player = try mission.add(0, @splat(0));
+    const other = try mission.add(0x2B, .{ 0, 0, 1000 });
+    const off = try mission.add(0x2B, .{ 0, 0, 2000 });
     all.slots[other].object.throttle = 1;
     all.slots[off].object.throttle = 1;
     all.slots[off].object.flags.disabled = true;
     // Its shields down, the player's recharge.
-    all.slots[player].object.shields = @splat(0);
-    var controls: input.Player = .{};
+    all.slots[player].object.shields = .all(0);
     var devices: input.Devices = .{};
-    var shake: f32 = 0;
-    var clock: Clock = .{};
-    const world: World = .{ .objects = all, .player = &controls, .view = .chase, .shake = &shake, .random = &random };
     var steps: usize = 0;
     for (0..ticks_per_step * 10) |_| {
-        if (gameTick(&clock, &devices, world)) steps += 1;
+        if (gameTick(&mission.clock, &devices, mission.world())) steps += 1;
     }
     try std.testing.expectEqual(10, steps);
     // The other ship has flown on along its nose, its committed place a step behind.
@@ -1185,7 +1334,7 @@ test "a step updates and moves every live object" {
     try std.testing.expect(!all.slots[off].object.root.flags.next_pending);
     // No key held, the player's throttle stays at nothing, and it stays where it was.
     try std.testing.expectEqual(0, all.slots[player].object.root.next_position.z);
-    try std.testing.expect(all.slots[player].object.shields[0] > 0);
+    try std.testing.expect(all.slots[player].object.shields.left > 0);
 }
 
 test "each object's turn comes round in rotation" {

@@ -762,9 +762,9 @@ pub fn playerThrottleKeys(player: *Player, devices: *Devices, object: *gameobj.G
 /// FIRE LASERS holds the guns' trigger for the frame (`guns.fire`).
 ///
 /// Not yet ported: the mouse (mouse mode uses the keys for now); matching a target's speed; the
-/// missiles and the other actions it reads; the special cases for 7 or 9 in the player's object at
-/// `0x754`; and the objectives window's use of the stick while `0x0051CF04` is set
-/// (`0x00413200`).
+/// missiles and the other actions it reads; the `half_throttle` and `reversed_controls` deathmatch
+/// power-ups (`gameobj.PowerUp`); and the objectives window's use of the stick while `0x0051CF04`
+/// is set (`0x00413200`).
 pub fn playerControls(
     player: *Player,
     devices: *Devices,
@@ -1191,7 +1191,7 @@ test "held, the stick moves the power or shifts the shields" {
     object.power_setting = .{ .x = 1, .y = 1, .z = 1 };
     object.throttle = 0.5;
     object.yaw_input = 0.3;
-    object.shields = .{ 47, 47, 47, 47 };
+    object.shields = .{ .left = 47, .right = 47, .fore = 47, .aft = 47 };
     var devices: Devices = .{ .settings = .{ .control_mode = .keyboard } };
     const keyboard = &devices.keyboard;
     var player: Player = .{ .throttle = 0.5, .power_held = true };
@@ -1210,8 +1210,8 @@ test "held, the stick moves the power or shifts the shields" {
     devices.read();
     playerControls(&player, &devices, &object, &testing_combat, .cockpit, 16, no_guns);
     try std.testing.expectEqual(17, object.power_setting.x);
-    try std.testing.expectEqual(45, object.shields[2]);
-    try std.testing.expectEqual(40, object.shields[3]);
+    try std.testing.expectEqual(45, object.shields.fore);
+    try std.testing.expectEqual(40, object.shields.aft);
 }
 
 test playerControls {

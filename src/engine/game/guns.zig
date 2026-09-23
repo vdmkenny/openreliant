@@ -115,8 +115,8 @@ pub const Stats = struct {
 
 /// One of an object's guns, as the game keeps it in the 0x60 bytes at `GameObject.guns`.
 pub const Fitted = struct {
-    /// The turret kind of the part it stands on (`+0x00`), or 0 for a gun that does not move.
-    turret: i32 = 0,
+    /// The turret kind of the part it stands on (`+0x00`).
+    turret: Turret = .fixed,
     /// The part it fires from (`+0x04`), and where on the part.
     part: *const objects.Model.Part,
     muzzle: shp.Attachment,
@@ -125,14 +125,46 @@ pub const Fitted = struct {
     /// The tick the trigger is held until (`+0x0C`): the gun fires while the frame begins before
     /// it (`fire`).
     firing_until: i32 = 0,
-    /// Which side of its group it is, 0 or 1 (`+0x14`), as `create_object` marks it from the
-    /// type's groups.
-    side: u8 = 0,
+    /// Which side of its group it is (`+0x14`), as `create_object` marks it from the type's
+    /// groups.
+    side: GroupSide = .first,
     /// The tick it may next fire (`+0x18`).
     next_shot: i32 = 0,
     /// The steps it has been firing, over the sound's period (`gun_stats.sound_periods`), which
     /// the game keeps in its own array at `GameObject+0x138`.
     sounded: i32 = 0,
+};
+
+/// What a gun stands on: the turret kind of its part (`ShpPart.turret_kind`, `+0xF4`), which the
+/// turret setups copy to `+0x00` of the gun's record. Turrets are not fitted yet
+/// ([#71](https://github.com/vdmkenny/openreliant/issues/71)).
+pub const Turret = enum(i32) {
+    /// **Unknown.** A part whose turret kind reads `0xFFFF`: the steps pass the gun over.
+    unset = -1,
+    /// A gun that does not move.
+    fixed = 0,
+    /// A turret the mission's `TurretSetTarget` aims. It is in no gun group, and FULL GUNS leaves
+    /// it out.
+    aimed = 1,
+    /// **Unknown.** A turret that fires the object's rounds and puffs particles at its muzzle.
+    _unknown_2 = 2,
+    /// **Unknown.** It is in no gun group.
+    _unknown_3 = 3,
+    _,
+};
+
+/// Which of its group's two guns a gun is, as `create_object` marks them (`+0x14`), and which
+/// fires next while a ship fires one group out of step (`GameObject.gun_turn`).
+pub const GroupSide = enum(u32) {
+    /// The group's first gun, the further to the left, or a gun alone in its group.
+    first = 0,
+    second = 1,
+    _,
+
+    /// The other gun of the pair.
+    pub fn other(side: GroupSide) GroupSide {
+        return if (side == .first) .second else .first;
+    }
 };
 
 /// `0x00479800` with `0x00479640`: the guns a model gives an object, one for each `gun_muzzle`
@@ -194,7 +226,7 @@ pub const Group = struct {
 
 /// The turret kinds `gun_groups_build` leaves out of the groups.
 fn grouped(gun: Fitted) bool {
-    return gun.turret != 1 and gun.turret != 3;
+    return gun.turret != .aimed and gun.turret != ._unknown_3;
 }
 
 /// `gun_groups_build` (`0x004667F0`): pairs a ship type's guns into groups, each gun with the gun
@@ -385,7 +417,7 @@ pub fn fire(object: *gameobj.GameObject, trigger: Trigger, ticks: i32) void {
         return;
     }
     for (trigger.fitted) |*gun| {
-        if (gun.turret == 1 or gun.turret == -1 or gun.type == charging_type) continue;
+        if (gun.turret == .aimed or gun.turret == .unset or gun.type == charging_type) continue;
         gun.firing_until = until;
     }
 }
@@ -404,7 +436,7 @@ pub fn fire(object: *gameobj.GameObject, trigger: Trigger, ticks: i32) void {
 /// An object whose components are listed steps no guns of its own, and one that is jumping fires
 /// none.
 ///
-/// Not ported: the particles a gun of turret kind 2 puffs.
+/// Not ported: the particles a turret of kind `_unknown_2` puffs.
 pub fn step(world: gameobj.World, clock: *const Clock, index: u16) void {
     const all = world.objects;
     const slot = &all.slots[index];
@@ -424,7 +456,7 @@ pub fn step(world: gameobj.World, clock: *const Clock, index: u16) void {
     var needed: f32 = 0;
     for (fitted) |gun| {
         const record = gun.type.stats(stats);
-        if (clock.frame_start <= gun.firing_until and gun.turret == 0 and
+        if (clock.frame_start <= gun.firing_until and gun.turret == .fixed and
             record.kind == .energy and gun.next_shot <= clock.frame_start)
         {
             needed += @floatFromInt(record.shot_energy);
@@ -440,10 +472,10 @@ pub fn step(world: gameobj.World, clock: *const Clock, index: u16) void {
         const record = gun.type.stats(stats);
         // The sound's turn comes round before the shot that would be heard (`heard`). Only type
         // 0, which no gun has, has a period of zero.
-        if (gun.turret != -1 and (record.kind == .energy or record.kind == .rounds)) {
+        if (gun.turret != .unset and (record.kind == .energy or record.kind == .rounds)) {
             gun.sounded = @rem(gun.sounded + 1, @max(1, gun_stats.sound_periods[gun.type.number()]));
         }
-        if (gun.turret == 0) {
+        if (gun.turret == .fixed) {
             if (gun.next_shot > clock.frame_start) continue;
             shot: {
                 switch (record.kind) {
@@ -471,7 +503,7 @@ pub fn step(world: gameobj.World, clock: *const Clock, index: u16) void {
                 }
             }
             gun.next_shot = clock.frame_start + refire(record, object.blind_fire_aim != 0);
-        } else if (gun.turret == 2 and gun.next_shot <= clock.frame_start and object.rounds > 0) {
+        } else if (gun.turret == ._unknown_2 and gun.next_shot <= clock.frame_start and object.rounds > 0) {
             gun.next_shot = clock.frame_start + refire(record, object.blind_fire_aim != 0);
             if (takesTurn(object, groups, gun.*)) |takes| {
                 if (!takes) continue;
@@ -482,7 +514,7 @@ pub fn step(world: gameobj.World, clock: *const Clock, index: u16) void {
             object.rounds -= 1;
         }
     }
-    if (alternated) object.gun_turn ^= 1;
+    if (alternated) object.gun_turn = object.gun_turn.other();
 }
 
 /// Whether a gun takes this shot, for a ship firing one group of guns out of step: the group's two
@@ -521,8 +553,8 @@ test fire {
     var object = gameobj.testing.object();
     var part: objects.Model.Part = undefined;
     var fitted = [_]Fitted{
-        .{ .part = &part, .muzzle = std.mem.zeroes(shp.Attachment), .type = .laser_cannon, .side = 0 },
-        .{ .part = &part, .muzzle = std.mem.zeroes(shp.Attachment), .type = .laser_cannon, .side = 1 },
+        .{ .part = &part, .muzzle = std.mem.zeroes(shp.Attachment), .type = .laser_cannon, .side = .first },
+        .{ .part = &part, .muzzle = std.mem.zeroes(shp.Attachment), .type = .laser_cannon, .side = .second },
         .{ .part = &part, .muzzle = std.mem.zeroes(shp.Attachment), .type = .pulse_cannon },
         .{ .part = &part, .muzzle = std.mem.zeroes(shp.Attachment), .type = charging_type },
     };
@@ -560,29 +592,22 @@ const testing = struct {
     const ship_type: u32 = 7;
 
     const Ship = struct {
-        all: *create.Objects,
-        tables: create.Stats,
+        mission: gameobj.testing.Mission,
         model: create.testing.Model,
         muzzles: [2]shp.Attachment,
-        random: libcmt.Rand,
-        controls: input.Player,
-        shake: f32,
-        clock: Clock,
         index: u16,
 
         /// Fills in every field, so a field added here has to be filled in too.
         fn init(ship: *Ship, gpa: Allocator) !void {
             ship.* = .{
-                .all = try .create(gpa, &ship.random),
-                .tables = create.testing.tables(),
+                .mission = undefined,
                 .model = undefined,
                 .muzzles = @splat(std.mem.zeroes(shp.Attachment)),
-                .random = .{},
-                .controls = .{},
-                .shake = 0,
-                .clock = .{ .frame_start = 700, .mission_ticks = 700 },
                 .index = 0,
             };
+            try ship.mission.init(gpa);
+            errdefer ship.mission.deinit();
+            ship.mission.clock = .{ .frame_start = 700, .mission_ticks = 700 };
             try ship.model.init(gpa);
             for (&ship.muzzles, [_]f32{ -100, 100 }) |*muzzle, x| {
                 muzzle.kind = .gun_muzzle;
@@ -591,37 +616,44 @@ const testing = struct {
                 muzzle.orientation = math.identity;
             }
             ship.model.data[0].attachments = &ship.muzzles;
-            ship.all.gun_stats.types[gun_type.number()].shot_energy = 2;
-            ship.all.gun_stats.types[gun_type.number()].refire_interval = 20;
-            ship.all.gun_stats.types[gun_type.number()].speed = 500;
-            ship.all.gun_stats.types[gun_type.number()].lifetime = 100;
-            ship.all.gun_stats.types[gun_type.number()].damage = .{ 10, 4 };
-            ship.index = try create.createObject(ship.all, &ship.tables, ship.model.types(), null, ship_type, @splat(0), &ship.random);
+            const stats = &ship.mission.objects.gun_stats.types[gun_type.number()];
+            stats.shot_energy = 2;
+            stats.refire_interval = 20;
+            stats.speed = 500;
+            stats.lifetime = 100;
+            stats.damage = .{ 10, 4 };
+            ship.index = try ship.add(ship_type, @splat(0));
             // Its guns hold 100 and charge fully in four seconds, so a step gives them one.
-            ship.tables.combat[ship_type].gun_recharge = 4;
+            ship.mission.tables.combat[ship_type].gun_recharge = 4;
             ship.object().gun_charge = 50;
         }
 
         fn deinit(ship: *Ship, gpa: Allocator) void {
-            ship.all.destroy();
+            ship.mission.deinit();
             ship.model.deinit(gpa);
         }
 
+        /// An object of type `of` at `at`, of the same model.
+        fn add(ship: *Ship, of: u32, at: Vector) !u16 {
+            const mission = &ship.mission;
+            return create.createObject(mission.objects, &mission.tables, ship.model.types(), null, of, at, &mission.random);
+        }
+
         fn world(ship: *Ship) gameobj.World {
-            return .{ .objects = ship.all, .player = &ship.controls, .view = .chase, .shake = &ship.shake, .random = &ship.random };
+            return ship.mission.world();
         }
 
         fn object(ship: *Ship) *gameobj.GameObject {
-            return &ship.all.slots[ship.index].object;
+            return &ship.mission.objects.slots[ship.index].object;
         }
 
         fn guns(ship: *Ship) []Fitted {
-            return ship.all.slots[ship.index].guns;
+            return ship.mission.objects.slots[ship.index].guns;
         }
 
         /// Holds both guns' triggers for the frame.
         fn hold(ship: *Ship) void {
-            for (ship.guns()) |*gun| gun.firing_until = ship.clock.frame_start + 1;
+            for (ship.guns()) |*gun| gun.firing_until = ship.mission.clock.frame_start + 1;
         }
 
         /// Lets both guns fire again at once.
@@ -642,24 +674,24 @@ test step {
 
     // A step recharges the guns by the ship's energy over the seconds it takes, and no further
     // than full.
-    step(world, &ship.clock, ship.index);
+    step(world, &ship.mission.clock, ship.index);
     try std.testing.expectEqual(51, object.gun_charge);
     object.gun_charge = 100;
-    step(world, &ship.clock, ship.index);
+    step(world, &ship.mission.clock, ship.index);
     try std.testing.expectEqual(100, object.gun_charge);
 
     // With the trigger held both guns fire, each drawing its shot's energy, and neither fires
     // again until its interval has passed.
     object.gun_charge = 50;
     ship.hold();
-    step(world, &ship.clock, ship.index);
+    step(world, &ship.mission.clock, ship.index);
     try std.testing.expectEqual(47, object.gun_charge);
-    for (ship.guns()) |gun| try std.testing.expectEqual(ship.clock.frame_start + 20, gun.next_shot);
+    for (ship.guns()) |gun| try std.testing.expectEqual(ship.mission.clock.frame_start + 20, gun.next_shot);
     // Each shot left the muzzle.
     try std.testing.expectEqual(2, flying(world));
 
     // Held again before the interval has passed, nothing is drawn.
-    step(world, &ship.clock, ship.index);
+    step(world, &ship.mission.clock, ship.index);
     try std.testing.expectEqual(48, object.gun_charge);
     try std.testing.expectEqual(2, flying(world));
 
@@ -668,9 +700,9 @@ test step {
     object.gun_charge = 3;
     ship.hold();
     ship.ready();
-    step(world, &ship.clock, ship.index);
+    step(world, &ship.mission.clock, ship.index);
     try std.testing.expectEqual(4, object.gun_charge);
-    for (ship.guns()) |gun| try std.testing.expectEqual(ship.clock.frame_start + 20, gun.next_shot);
+    for (ship.guns()) |gun| try std.testing.expectEqual(ship.mission.clock.frame_start + 20, gun.next_shot);
     try std.testing.expectEqual(2, flying(world));
 
     // A gun that fires rounds takes one instead of the charge.
@@ -682,7 +714,7 @@ test step {
     for (ship.guns()) |*gun| gun.type = rounds;
     ship.hold();
     ship.ready();
-    step(world, &ship.clock, ship.index);
+    step(world, &ship.mission.clock, ship.index);
     try std.testing.expectEqual(0, object.rounds);
     try std.testing.expectEqual(51, object.gun_charge);
 
@@ -692,7 +724,7 @@ test step {
     object.flags.jumping = true;
     ship.hold();
     ship.ready();
-    step(world, &ship.clock, ship.index);
+    step(world, &ship.mission.clock, ship.index);
     try std.testing.expectEqual(51, object.gun_charge);
     for (ship.guns()) |gun| try std.testing.expectEqual(0, gun.next_shot);
 
@@ -702,11 +734,11 @@ test step {
     for (ship.guns()) |*gun| gun.firing_until = 0;
     object.gun_charge = 50;
     object.flags.components = true;
-    step(world, &ship.clock, ship.index);
+    step(world, &ship.mission.clock, ship.index);
     try std.testing.expectEqual(50, object.gun_charge);
     object.flags.components = false;
     object.nova_charge = 0.5;
-    step(world, &ship.clock, ship.index);
+    step(world, &ship.mission.clock, ship.index);
     try std.testing.expectEqual(50, object.gun_charge);
 }
 
@@ -730,17 +762,17 @@ test "a group's two guns fire in turn while the ship fires out of step" {
     ship.hold();
 
     // The ship's turn is the first gun's side, so only that gun fires, and the turn passes.
-    step(world, &ship.clock, ship.index);
+    step(world, &ship.mission.clock, ship.index);
     try std.testing.expectEqual(49, object.gun_charge);
-    try std.testing.expectEqual(1, object.gun_turn);
+    try std.testing.expectEqual(GroupSide.second, object.gun_turn);
 
     // The other gun fires next time round.
     object.gun_charge = 50;
     ship.hold();
     ship.ready();
-    step(world, &ship.clock, ship.index);
+    step(world, &ship.mission.clock, ship.index);
     try std.testing.expectEqual(49, object.gun_charge);
-    try std.testing.expectEqual(0, object.gun_turn);
+    try std.testing.expectEqual(GroupSide.first, object.gun_turn);
 }
 
 test "a ship aiming blind fires more slowly" {
@@ -750,8 +782,8 @@ test "a ship aiming blind fires more slowly" {
     defer ship.deinit(gpa);
     ship.object().blind_fire_aim = 1;
     ship.hold();
-    step(ship.world(), &ship.clock, ship.index);
-    for (ship.guns()) |gun| try std.testing.expectEqual(ship.clock.frame_start + 27, gun.next_shot);
+    step(ship.world(), &ship.mission.clock, ship.index);
+    for (ship.guns()) |gun| try std.testing.expectEqual(ship.mission.clock.frame_start + 27, gun.next_shot);
 }
 
 test fires {
@@ -763,9 +795,9 @@ test fires {
     const object = ship.object();
 
     // Guns in good condition always fire, and draw no number to decide it.
-    const before = ship.random;
+    const before = ship.mission.random;
     for (0..8) |_| try std.testing.expect(fires(world, object));
-    try std.testing.expectEqual(before, ship.random);
+    try std.testing.expectEqual(before, ship.mission.random);
 
     // Half wrecked guns fire some of the time.
     object.gun_condition = 0.5;
@@ -784,7 +816,7 @@ test heard {
     var gun = ship.guns()[0];
     gun.sounded = 2;
     // Every one of the player's shots is heard; another ship's only as its count comes round.
-    try std.testing.expect(heard(ship.world(), ship.all.player, gun));
+    try std.testing.expect(heard(ship.world(), ship.mission.objects.player, gun));
     try std.testing.expect(!heard(ship.world(), ship.index + 1, gun));
 }
 
@@ -1170,7 +1202,7 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
         const struck = collision.quadrant(object, math.transformTransposed(slot.drawn.orientation, point - slot.drawn.position));
 
         const huge = bullet.kind == .allied_huge_gun or bullet.kind == .coalition_huge_gun;
-        if (!huge and (object.shields[@intFromEnum(struck)] <= 0 or object.invulnerable == 4 or object.invulnerable == 5)) {
+        if (!huge and (object.shields.get(struck) <= 0 or object.invulnerable == ._unknown_4 or object.invulnerable == ._unknown_5)) {
             hullHit(world, bullet, candidate.object, struck);
             return;
         }
@@ -1259,15 +1291,15 @@ test shoot {
     defer ship.deinit(gpa);
     const world = ship.world();
 
-    shoot(world, &ship.clock, ship.index, ship.guns()[0]);
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0]);
     try std.testing.expectEqual(1, flying(world));
     const bullet = &world.objects.bullets.pool[0];
     // It leaves the muzzle, a hundred to the left of the ship's nose, flying along that nose at
     // the type's speed, and lives for the type's ticks.
     try std.testing.expectEqual(@as(Vector, .{ -100, 0, 0 }), bullet.at);
     try std.testing.expectEqual(@as(Vector, .{ 0, 0, 500 }), bullet.velocity);
-    try std.testing.expectEqual(ship.clock.mission_ticks + 100, bullet.dies_at);
-    try std.testing.expectEqual(ship.clock.mission_ticks, bullet.fired_at);
+    try std.testing.expectEqual(ship.mission.clock.mission_ticks + 100, bullet.dies_at);
+    try std.testing.expectEqual(ship.mission.clock.mission_ticks, bullet.fired_at);
     try std.testing.expectEqual(ship.index, bullet.owner);
     // The record keeps the type less one, as the game does.
     try std.testing.expectEqual(testing.gun_type, bullet.kind);
@@ -1278,7 +1310,7 @@ test shoot {
 
     // Nothing is fired once every record is in flight.
     for (&world.objects.bullets.pool) |*record| record.live = true;
-    shoot(world, &ship.clock, ship.index, ship.guns()[0]);
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0]);
     try std.testing.expectEqual(max_bullets, flying(world));
 }
 
@@ -1290,41 +1322,41 @@ test bulletsFrame {
     const world = ship.world();
 
     // A ship of the same model, 500 ahead of the one that fires.
-    const target = try create.createObject(ship.all, &ship.tables, ship.model.types(), null, 9, .{ 0, 0, 500 }, &ship.random);
-    const slot = &ship.all.slots[target];
+    const target = try ship.add(9, .{ 0, 0, 500 });
+    const slot = &ship.mission.objects.slots[target];
     slot.drawn = .{ .position = .{ 0, 0, 500 }, .orientation = math.identity };
     const struck = &slot.object;
 
     // A shot whose path crosses the ship: its shields take the type's first damage, and it is
     // spent.
-    shoot(world, &ship.clock, ship.index, ship.guns()[0]);
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0]);
     const bullet = &world.objects.bullets.pool[0];
     try std.testing.expectEqual(1, bullet.candidate_count);
     try std.testing.expectEqual(target, bullet.candidates[0].object);
     bullet.last = .{ 0, 0, 0 };
     bullet.at = .{ 0, 0, 600 };
-    bulletsFrame(world, &ship.clock, 0);
+    bulletsFrame(world, &ship.mission.clock, 0);
     try std.testing.expectEqual(10, struck.recent_damage);
     try std.testing.expectEqual(0, flying(world));
 
     // With its shields down the next shot reaches the hull, which takes the second damage.
-    struck.shields = @splat(0);
+    struck.shields = .all(0);
     struck.recent_damage = 0;
     const armor = struck.armor;
-    shoot(world, &ship.clock, ship.index, ship.guns()[0]);
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0]);
     const next = &world.objects.bullets.pool[0];
     next.last = .{ 0, 0, 0 };
     next.at = .{ 0, 0, 600 };
-    bulletsFrame(world, &ship.clock, 0);
+    bulletsFrame(world, &ship.mission.clock, 0);
     try std.testing.expectEqual(4, struck.recent_damage);
-    try std.testing.expect(@reduce(.Add, @as(@Vector(4, f32), armor)) > @reduce(.Add, @as(@Vector(4, f32), struck.armor)));
+    try std.testing.expect(@reduce(.Add, @as(@Vector(4, f32), armor.values())) > @reduce(.Add, @as(@Vector(4, f32), struck.armor.values())));
     try std.testing.expectEqual(0, flying(world));
 
     // A shot that reaches the end of its life is let go.
-    shoot(world, &ship.clock, ship.index, ship.guns()[0]);
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0]);
     try std.testing.expectEqual(1, flying(world));
-    ship.clock.frame_start += 1000;
-    bulletsFrame(world, &ship.clock, 0);
+    ship.mission.clock.frame_start += 1000;
+    bulletsFrame(world, &ship.mission.clock, 0);
     try std.testing.expectEqual(0, flying(world));
 }
 
@@ -1335,21 +1367,21 @@ test "the player's shifted shields take a hit before the quadrant does" {
     defer ship.deinit(gpa);
     const world = ship.world();
     // The ship that fires is the player's, so the target here is another slot shooting back.
-    const shooter = try create.createObject(ship.all, &ship.tables, ship.model.types(), null, 9, .{ 0, 0, 500 }, &ship.random);
-    const player = &ship.all.slots[ship.all.player];
+    const shooter = try ship.add(9, .{ 0, 0, 500 });
+    const player = &ship.mission.objects.slots[ship.mission.objects.player];
     player.drawn = .{ .position = @splat(0), .orientation = math.identity };
-    ship.controls.shield_reserves = .{ .fore = 25, .aft = 0 };
+    ship.mission.player.shield_reserves = .{ .fore = 25, .aft = 0 };
 
     // A shot into the player's fore quadrant comes off the reserve, and the shields are untouched.
-    shoot(world, &ship.clock, shooter, ship.all.slots[shooter].guns[0]);
+    shoot(world, &ship.mission.clock, shooter, ship.mission.objects.slots[shooter].guns[0]);
     const bullet = &world.objects.bullets.pool[0];
     bullet.last = .{ 0, 0, 500 };
     bullet.at = .{ 0, 0, -100 };
-    bullet.candidates[0] = .{ .object = ship.all.player };
+    bullet.candidates[0] = .{ .object = ship.mission.objects.player };
     bullet.candidate_count = 1;
     const shields = player.object.shields;
-    bulletsFrame(world, &ship.clock, 0);
-    try std.testing.expectEqual(15, ship.controls.shield_reserves.fore);
+    bulletsFrame(world, &ship.mission.clock, 0);
+    try std.testing.expectEqual(15, ship.mission.player.shield_reserves.fore);
     try std.testing.expectEqual(shields, player.object.shields);
 }
 
@@ -1361,18 +1393,18 @@ test "only the latest two shots of a ring cast a light" {
     const world = ship.world();
     const bullets = &world.objects.bullets;
     // The player's ship is the first slot, and a hostile ship fires too.
-    const other = try create.createObject(ship.all, &ship.tables, ship.model.types(), null, 9, .{ 0, 0, 5000 }, &ship.random);
-    ship.all.slots[other].object.side = .hostile;
+    const other = try ship.add(9, .{ 0, 0, 5000 });
+    ship.mission.objects.slots[other].object.side = .hostile;
 
     // The player's third shot puts out the first one's light.
-    for (0..3) |_| shoot(world, &ship.clock, ship.index, ship.guns()[0]);
+    for (0..3) |_| shoot(world, &ship.mission.clock, ship.index, ship.guns()[0]);
     try std.testing.expectEqual(null, bullets.pool[0].light);
     try std.testing.expect(bullets.pool[1].light != null);
     try std.testing.expect(bullets.pool[2].light != null);
     try std.testing.expectEqual(shot_light, bullets.pool[2].light.?.colour);
 
     // Another ship's shots keep a ring of their own, and a hostile ship's are orange.
-    shoot(world, &ship.clock, other, ship.all.slots[other].guns[0]);
+    shoot(world, &ship.mission.clock, other, ship.mission.objects.slots[other].guns[0]);
     try std.testing.expectEqual(hostile_shot_light, bullets.pool[3].light.?.colour);
     try std.testing.expect(bullets.pool[1].light != null);
 
@@ -1390,7 +1422,7 @@ test "every shot casts a light where the port lets them" {
     defer ship.deinit(gpa);
     const world = ship.world();
     world.objects.bullets.shot_lights = .every_shot;
-    for (0..3) |_| shoot(world, &ship.clock, ship.index, ship.guns()[0]);
+    for (0..3) |_| shoot(world, &ship.mission.clock, ship.index, ship.guns()[0]);
     for (world.objects.bullets.pool[0..3]) |bullet| try std.testing.expect(bullet.light != null);
     // The rings are left alone.
     try std.testing.expectEqual(null, world.objects.bullets.player_lights.held[0]);
@@ -1413,16 +1445,16 @@ test "a Turret Flak shot bursts at a random range, scatters, and is at times a l
     var flak: usize = 0;
     var lasers: usize = 0;
     for (0..40) |_| {
-        shoot(world, &ship.clock, ship.index, gun);
+        shoot(world, &ship.mission.clock, ship.index, gun);
         const bullet = &world.objects.bullets.pool[0];
         if (bullet.kind == .turret_lasers) {
             // A laser's shot flies straight, for its type's whole life.
             lasers += 1;
             try std.testing.expectEqual(@as(Vector, .{ 0, 0, 500 }), bullet.velocity);
-            try std.testing.expectEqual(ship.clock.mission_ticks + 100, bullet.dies_at);
+            try std.testing.expectEqual(ship.mission.clock.mission_ticks + 100, bullet.dies_at);
         } else {
             flak += 1;
-            const life = bullet.dies_at - ship.clock.mission_ticks;
+            const life = bullet.dies_at - ship.mission.clock.mission_ticks;
             try std.testing.expect(life >= 20 and life <= 100);
             try std.testing.expect(!@reduce(.And, bullet.velocity == @as(Vector, .{ 0, 0, 500 })));
             try std.testing.expectApproxEqAbs(500, math.length(bullet.velocity), 0.01);
@@ -1443,16 +1475,16 @@ test "a Huge Gun's shot reaches farther, and always through the shields" {
     gun.type = .coalition_huge_gun;
 
     // A ship off to the side of the shot's path by more than its radius, but within 3000.
-    const target = try create.createObject(ship.all, &ship.tables, ship.model.types(), null, 9, .{ 1500, 0, 500 }, &ship.random);
-    const slot = &ship.all.slots[target];
+    const target = try ship.add(9, .{ 1500, 0, 500 });
+    const slot = &ship.mission.objects.slots[target];
     slot.drawn = .{ .position = .{ 1500, 0, 500 }, .orientation = math.identity };
-    slot.object.shields = @splat(0);
-    shoot(world, &ship.clock, ship.index, gun);
+    slot.object.shields = .all(0);
+    shoot(world, &ship.mission.clock, ship.index, gun);
     const bullet = &world.objects.bullets.pool[0];
     try std.testing.expectEqual(1, bullet.candidate_count);
     bullet.last = .{ 0, 0, 0 };
     bullet.at = .{ 0, 0, 1000 };
-    bulletsFrame(world, &ship.clock, 0);
+    bulletsFrame(world, &ship.mission.clock, 0);
     // It struck the ship with its shields down and still took the shield's way: the first damage,
     // then the share of it that passes to the armour. A hull hit would have counted the second
     // damage alone, 4.
@@ -1775,14 +1807,13 @@ fn meshMaterial(lit: bool) srapiext.Material {
 }
 
 /// A mesh of `faces`, each a fan of `n` corners by their index into `corners`, with the texture
-/// coordinates of each index in turn, if it has its own. `mesh_create` makes the game's; the port
-/// leaves out what nothing reads here, the normals and the planes, since every shot is never
-/// culled and lit by nothing but its own colours.
+/// coordinates of each index in turn, if it has its own. Its normals and planes stay zero, as
+/// nothing reads them here: every shot is never culled and lit by nothing but its own colours.
 ///
 /// `mesh_create` gives the mesh's one run of polygons as many as it has vertices, so the game walks
 /// empty polygons after the real ones, which draw nothing; the port's run holds the real ones.
 fn meshOf(
-    comptime n: usize,
+    comptime n: u16,
     gpa: Allocator,
     corners: []const Vector,
     faces: []const [n]u16,
@@ -1790,45 +1821,13 @@ fn meshOf(
     material: srapiext.Material,
     image: *srtexture.Image,
 ) Allocator.Error!srapiext.Mesh {
-    const index_count = faces.len * n;
-    const positions = try gpa.dupe(Vector, corners);
-    errdefer gpa.free(positions);
-    const normals = try gpa.alloc(Vector, corners.len);
-    errdefer gpa.free(normals);
-    @memset(normals, @splat(0));
-    const polygons = try gpa.alloc(srapiext.Polygon, faces.len);
-    errdefer gpa.free(polygons);
-    const indices = try gpa.alloc(u16, index_count);
-    errdefer gpa.free(indices);
-    var at: usize = 0;
-    for (polygons, faces) |*polygon, face| {
-        polygon.* = .{ .kind = .triangle, .continues = 0, .first = @intCast(at), .count = n };
-        indices[at..][0..n].* = face;
-        at += n;
-    }
-    const coordinates: ?[][2]f32 = if (uv) |given| try gpa.dupe([2]f32, given) else null;
-    errdefer if (coordinates) |c| gpa.free(c);
-    const planes = try gpa.alloc(srapiext.Plane, faces.len);
-    errdefer gpa.free(planes);
-    @memset(planes, .{ .normal = @splat(0), .distance = 0 });
-    const biases = try gpa.alloc(f32, faces.len);
-    errdefer gpa.free(biases);
-    @memset(biases, 0);
-    const surfaces = try gpa.alloc(srapiext.Surface, 1);
-    errdefer gpa.free(surfaces);
-    surfaces[0] = .{ .polygons = @intCast(faces.len), .material = material, .textures = .{ .{ .image = image }, .none } };
-    var mesh: srapiext.Mesh = .{
-        .positions = positions,
-        .normals = normals,
-        .polygons = polygons,
-        .indices = indices,
-        .uv = .{ coordinates, null },
-        .planes = planes,
-        .biases = biases,
-        .surfaces = surfaces,
-        .bounds = undefined,
-        .radius = undefined,
-    };
+    var mesh: srapiext.Mesh = try .create(gpa, .{ .polygons = faces.len, .vertices = corners.len, .indices = faces.len * n });
+    errdefer mesh.deinit(gpa);
+    @memcpy(mesh.positions, corners);
+    mesh.numberPolygons(n);
+    for (faces, 0..) |face, i| mesh.indices[i * n ..][0..n].* = face;
+    if (uv) |given| @memcpy(try mesh.addCoordinates(gpa), given);
+    mesh.surfaces[0] = .{ .polygons = @intCast(faces.len), .material = material, .textures = .{ .{ .image = image }, .none } };
     srapi.findBoundingBox(&mesh);
     return mesh;
 }

@@ -1461,14 +1461,14 @@ pub const ShipStatus = struct {
         gpa: Allocator,
         target: device.Device,
         screen: [2]u32,
-        shields: [4]f32,
+        shields: gameobj.Quadrants,
         shield_power: i32,
         reserves: ?gameobj.ShieldReserves,
         colour: [4]f32,
         scale: f32,
     ) (spr.Error || Allocator.Error)!void {
         const point = place(screen, offset, across, down, scale);
-        for (arcs, shields) |arc, shield| try drawArc(art, gpa, target, arc, level(shield, shield_power), point, colour, scale);
+        for (arcs, shields.values()) |arc, shield| try drawArc(art, gpa, target, arc, level(shield, shield_power), point, colour, scale);
         const shifted = reserves orelse return;
         try drawArc(art, gpa, target, reserve_arcs.fore, level(shifted.fore, shield_power), point, colour, scale);
         try drawArc(art, gpa, target, reserve_arcs.aft, level(shifted.aft, shield_power), point, colour, scale);

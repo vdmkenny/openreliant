@@ -132,7 +132,7 @@ views, 1 to 3, do not. In its order:
 | the table of lines `0x0048CF20` draws, placed `(-110, -140)` from the middle | every view |
 | the target ring, the readouts, the ship status indicator, the targeting cluster's arcs and markers, the radar and the clock | view 0 |
 | the reticle (`0xD7`) at the middle, and the blind fire sight (`0xD8`) that closes on a target | view 0, but not in the chase mode |
-| in a multiplayer game, a shape of `dmicons.spr` for the player's `+0x754` at the middle | view 0 |
+| in a multiplayer game, a shape of `dmicons.spr` for the player's power-up at the middle | view 0 |
 | the panels the element state machine opens, sliding in and out | view 0 while they slide, every view once open |
 | a line of text at the foot while `0x00529FB8` is set | every view |
 
@@ -354,9 +354,10 @@ hardware renderers and `hudsoft.spr` under the software one, which `sr + 0x1AC` 
 21 remap tables: radar rings, bar gauges, arcs, target boxes, ammunition, and the silhouettes the
 target display shows. `hud_init` hands `VFX_shape_multilookaside` 29 tables of 256 bytes from the
 start of block 0, where the remap tables begin, though the set holds 21. In a multiplayer game
-`hud_draw` draws a shape of `dmicons.spr` at the middle of the screen for the player's `+0x754`,
-flashing for the first 100 ticks after `+0x760` and gone once `frame_start` passes `+0x75C`.
-**Unknown:** what the three fields are.
+`hud_draw` draws a shape of `dmicons.spr` at the middle of the screen for the deathmatch power-up
+the player holds (`power_up`, `+0x754`), flashing for the first 100 ticks after it was handed out
+(`power_up_since`, `+0x760`) and gone once `frame_start` passes when it runs out
+(`power_up_until`, `+0x75C`).
 
 A shape's entry in its set names a palette or none (`VFX_shape_draw` in `winvfx16.dll`); one with
 none is drawn with VFX's global palette. Under the hardware renderers `hud_draw` makes that of
@@ -530,7 +531,5 @@ the instruments and the windows.
 - Which of the display's shapes `hud_blit` shakes by `hit_shake` rather than `hud_interference`.
 - What `hud_palette_ramp` (`0x0048D590`) colours, and whether the display's text takes its palette
   from it rather than from the font.
-- What the player's `+0x754`, `+0x75C` and `+0x760` are, which pick and time the `dmicons.spr`
-  shape of a multiplayer game.
 - How the display reaches the screen in the game, which is `vfx.dll`'s panes rather than anything
   in the payload.

@@ -231,6 +231,70 @@ pub const Mesh = struct {
     /// The farthest vertex from the origin.
     radius: f32,
 
+    /// How much `create` makes room for.
+    pub const Sizes = struct {
+        polygons: usize,
+        vertices: usize,
+        indices: usize,
+        surfaces: usize = 1,
+    };
+
+    /// A mesh of `sizes`, zeroed, for the caller to fill (`mesh_create`, `0x004C4440`): every
+    /// polygon an empty triangle, every position, normal, plane and bias zero, every surface empty
+    /// and untextured, no texture coordinates and no bounds.
+    pub fn create(gpa: Allocator, sizes: Sizes) Allocator.Error!Mesh {
+        const positions = try gpa.alloc(Vector, sizes.vertices);
+        errdefer gpa.free(positions);
+        @memset(positions, @splat(0));
+        const normals = try gpa.alloc(Vector, sizes.vertices);
+        errdefer gpa.free(normals);
+        @memset(normals, @splat(0));
+        const polygons = try gpa.alloc(Polygon, sizes.polygons);
+        errdefer gpa.free(polygons);
+        @memset(polygons, .{ .kind = .triangle, .continues = 0, .first = 0, .count = 0 });
+        const indices = try gpa.alloc(u16, sizes.indices);
+        errdefer gpa.free(indices);
+        @memset(indices, 0);
+        const planes = try gpa.alloc(Plane, sizes.polygons);
+        errdefer gpa.free(planes);
+        @memset(planes, .{ .normal = @splat(0), .distance = 0 });
+        const biases = try gpa.alloc(f32, sizes.polygons);
+        errdefer gpa.free(biases);
+        @memset(biases, 0);
+        const surfaces = try gpa.alloc(Surface, sizes.surfaces);
+        @memset(surfaces, .{ .material = std.mem.zeroes(Material) });
+        return .{
+            .positions = positions,
+            .normals = normals,
+            .polygons = polygons,
+            .indices = indices,
+            .uv = .{ null, null },
+            .planes = planes,
+            .biases = biases,
+            .surfaces = surfaces,
+            .bounds = .{ @splat(0), @splat(0) },
+            .radius = 0,
+        };
+    }
+
+    /// Gives the mesh texture coordinates for the first pass, one pair an index, zeroed
+    /// (`mesh_create`'s flag `0x01`), and returns them.
+    pub fn addCoordinates(mesh: *Mesh, gpa: Allocator) Allocator.Error![][2]f32 {
+        assert(mesh.uv[0] == null);
+        const uv = try gpa.alloc([2]f32, mesh.indices.len);
+        @memset(uv, .{ 0, 0 });
+        mesh.uv[0] = uv;
+        return uv;
+    }
+
+    /// Makes the polygons triangles, or fans merged into one, of `corners` indices each, one after
+    /// another, as the game's own builders number them.
+    pub fn numberPolygons(mesh: Mesh, corners: u16) void {
+        for (mesh.polygons, 0..) |*polygon, i| {
+            polygon.* = .{ .kind = .triangle, .continues = 0, .first = @intCast(i * corners), .count = corners };
+        }
+    }
+
     /// Frees what `gpa` allocated for it.
     pub fn deinit(mesh: Mesh, gpa: Allocator) void {
         gpa.free(mesh.positions);
@@ -318,6 +382,23 @@ pub const SpriteSet = struct {
     } },
     sprites: []Sprite,
 };
+
+test "Mesh.create" {
+    const gpa = std.testing.allocator;
+    var mesh: Mesh = try .create(gpa, .{ .polygons = 2, .vertices = 4, .indices = 8, .surfaces = 2 });
+    defer mesh.deinit(gpa);
+    try std.testing.expectEqual(4, mesh.normals.len);
+    try std.testing.expectEqual(2, mesh.planes.len);
+    try std.testing.expectEqual(null, mesh.uv[0]);
+    try std.testing.expectEqual(Material.Blend.off, mesh.surfaces[1].material.blend[0]);
+
+    // Texture coordinates, one pair an index; the polygons, runs of four one after another.
+    const uv = try mesh.addCoordinates(gpa);
+    try std.testing.expectEqual(8, uv.len);
+    mesh.numberPolygons(4);
+    try std.testing.expectEqual(4, mesh.polygons[1].first);
+    try std.testing.expectEqual(4, mesh.polygons[1].count);
+}
 
 test {
     std.testing.refAllDecls(@This());

@@ -417,33 +417,13 @@ test {
     std.testing.refAllDecls(@This());
 }
 
-const libcmt = @import("../libcmt.zig");
-
-/// A ship that is nobody's, which takes the orders a player's refuses: the player holds the first
-/// slot, so the test's ships come after it.
-fn testShip(all: *create.Objects, tables: *create.Stats, random: *libcmt.Rand) !u16 {
-    if (all.count == 0) _ = try create.createObject(all, tables, create.testing.no_models, null, 0, @splat(0), random);
-    return create.createObject(all, tables, create.testing.no_models, null, 0, @splat(0), random);
-}
-
-/// The world a test runs its orders in.
-fn testContext(all: *create.Objects, clock: *const Clock, player: *input.Player, shake: *f32, random: *libcmt.Rand) Context {
-    return .{
-        .world = .{ .objects = all, .player = player, .view = .chase, .shake = shake, .random = random },
-        .clock = clock,
-    };
-}
-
 test push {
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    var clock: Clock = .{};
-    var player: input.Player = .{};
-    var shake: f32 = 0;
-    const ctx = testContext(all, &clock, &player, &shake, &random);
-    const index = try testShip(all, &tables, &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const ctx = mission.orders();
+    const index = try mission.addOther(@splat(0));
     const slot = &all.slots[index];
 
     try std.testing.expect(try push(ctx, index, .slow_rotate, .{ .kind = .ship, .index = -1, .component = -1 }));
@@ -473,15 +453,11 @@ test push {
 }
 
 test "a player's ship refuses the orders that are not its own" {
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    var clock: Clock = .{};
-    var player: input.Player = .{};
-    var shake: f32 = 0;
-    const ctx = testContext(all, &clock, &player, &shake, &random);
-    const index = try create.createObject(all, &tables, create.testing.no_models, null, 0, @splat(0), &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const ctx = mission.orders();
+    const index = try mission.add(0, @splat(0));
     const none: Target = .none;
     try std.testing.expectEqual(0, index);
 
@@ -491,20 +467,17 @@ test "a player's ship refuses the orders that are not its own" {
     try std.testing.expect(try push(ctx, index, .eject, none));
     try std.testing.expect(try push(ctx, index, .player_control, none));
     // Another ship takes the orders the player's refuses.
-    const other = try testShip(all, &tables, &random);
+    const other = try mission.addOther(@splat(0));
     try std.testing.expect(try push(ctx, other, .slow_rotate, none));
 }
 
 test pop {
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    var clock: Clock = .{};
-    var player: input.Player = .{};
-    var shake: f32 = 0;
-    const ctx = testContext(all, &clock, &player, &shake, &random);
-    const index = try testShip(all, &tables, &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const ctx = mission.orders();
+    const index = try mission.addOther(@splat(0));
     const slot = &all.slots[index];
     const none: Target = .none;
 
@@ -524,15 +497,12 @@ test pop {
 }
 
 test giveWay {
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    var clock: Clock = .{};
-    var player: input.Player = .{};
-    var shake: f32 = 0;
-    const ctx = testContext(all, &clock, &player, &shake, &random);
-    const index = try testShip(all, &tables, &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const ctx = mission.orders();
+    const index = try mission.addOther(@splat(0));
     const slot = &all.slots[index];
     const none: Target = .none;
 
@@ -550,15 +520,12 @@ test giveWay {
 }
 
 test objectOrders {
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    var clock: Clock = .{};
-    var player: input.Player = .{};
-    var shake: f32 = 0;
-    const ctx = testContext(all, &clock, &player, &shake, &random);
-    const index = try testShip(all, &tables, &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const ctx = mission.orders();
+    const index = try mission.addOther(@splat(0));
     const slot = &all.slots[index];
     const none: Target = .none;
 
@@ -595,22 +562,19 @@ test objectOrders {
 }
 
 test ordersUpdate {
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    var clock: Clock = .{};
-    var player: input.Player = .{};
-    var shake: f32 = 0;
-    const ctx = testContext(all, &clock, &player, &shake, &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const ctx = mission.orders();
     const none: Target = .none;
     // The player's slot comes first, then three ships that all turn on the spot.
-    for (0..4) |_| _ = try create.createObject(all, &tables, create.testing.no_models, null, 0, @splat(0), &random);
+    for (0..4) |_| _ = try mission.add(0, @splat(0));
     for (1..4) |index| _ = try push(ctx, @intCast(index), .slow_rotate, none);
 
     all.slots[2].object.flags.disabled = true;
     for (all.slots[0..4]) |*slot| slot.object.recent_damage = 10;
-    clock.game_ticks = 1;
+    mission.clock.game_ticks = 1;
     ordersUpdate(ctx);
 
     // Every object that is not disabled has run its order, and what they had taken is cleared.
@@ -622,7 +586,7 @@ test ordersUpdate {
 
     // It clears them once a window, not every frame.
     all.slots[1].object.recent_damage = 10;
-    clock.game_ticks = damage_window;
+    mission.clock.game_ticks = damage_window;
     ordersUpdate(ctx);
     try std.testing.expectEqual(10, all.slots[1].object.recent_damage);
 }

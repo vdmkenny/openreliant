@@ -58,24 +58,8 @@ pub const dome_radius: f32 = 5000;
 /// planes, and no bounds: its object is neither culled nor tested against the view.
 pub fn domeMesh(gpa: Allocator, image: tga.Image, colours: *[dome_vertices][4]f32) (Allocator.Error || error{WrongSize})!srapiext.Mesh {
     if (image.width != 256 or image.height != 256) return error.WrongSize;
-    const positions = try gpa.alloc(Vector, dome_vertices);
-    errdefer gpa.free(positions);
-    const normals = try gpa.alloc(Vector, dome_vertices);
-    errdefer gpa.free(normals);
-    @memset(normals, @splat(0));
-    const polygons = try gpa.alloc(srapiext.Polygon, dome_polygons);
-    errdefer gpa.free(polygons);
-    const indices = try gpa.alloc(u16, dome_polygons * 3);
-    errdefer gpa.free(indices);
-    const planes = try gpa.alloc(srapiext.Plane, dome_polygons);
-    errdefer gpa.free(planes);
-    @memset(planes, .{ .normal = @splat(0), .distance = 0 });
-    const biases = try gpa.alloc(f32, dome_polygons);
-    errdefer gpa.free(biases);
-    @memset(biases, 0);
-    const surfaces = try gpa.alloc(srapiext.Surface, 1);
-    errdefer gpa.free(surfaces);
-    surfaces[0] = .{ .polygons = dome_polygons, .material = .{
+    const mesh: srapiext.Mesh = try .create(gpa, .{ .polygons = dome_polygons, .vertices = dome_vertices, .indices = dome_polygons * 3 });
+    mesh.surfaces[0] = .{ .polygons = dome_polygons, .material = .{
         .two_pass = false,
         ._unknown_01 = 0,
         .coordinates = .{ .none, .none },
@@ -86,7 +70,7 @@ pub fn domeMesh(gpa: Allocator, image: tga.Image, colours: *[dome_vertices][4]f3
 
     const across: f32 = 2.0 / 14.0;
     const down: f32 = 2.0 / 7.0;
-    for (positions, colours, 0..) |*position, *colour, i| {
+    for (mesh.positions, colours, 0..) |*position, *colour, i| {
         // `u` and `v` from 0 to 1 across the columns and down the rows, as the game works them out.
         const u = ((@as(f32, @floatFromInt(i % dome_columns)) * across - 1) + 1) * 0.5;
         const v = ((@as(f32, @floatFromInt(i / dome_columns)) * down - 1) + 1) * 0.5;
@@ -101,7 +85,7 @@ pub fn domeMesh(gpa: Allocator, image: tga.Image, colours: *[dome_vertices][4]f3
         const direction = math.normalize(.{ @sin(angle), (v - 0.5) * 5, @cos(angle) });
         position.* = direction * @as(Vector, @splat(dome_radius));
     }
-    for (polygons, 0..) |*polygon, i| {
+    for (mesh.polygons, 0..) |*polygon, i| {
         polygon.* = .{ .kind = .strip_even, .continues = @intCast(27 - i % 28), .first = @intCast(i * 3), .count = 3 };
         const row = i / 2 / (dome_columns - 1);
         const column = i / 2 % (dome_columns - 1);
@@ -110,20 +94,9 @@ pub fn domeMesh(gpa: Allocator, image: tga.Image, colours: *[dome_vertices][4]f3
             .{ at, at + dome_columns, at + 1 }
         else
             .{ at + dome_columns, at + 1, at + dome_columns + 1 };
-        for (corners, indices[i * 3 ..][0..3]) |corner, *index| index.* = @intCast(corner);
+        for (corners, mesh.indices[i * 3 ..][0..3]) |corner, *index| index.* = @intCast(corner);
     }
-    return .{
-        .positions = positions,
-        .normals = normals,
-        .polygons = polygons,
-        .indices = indices,
-        .uv = .{ null, null },
-        .planes = planes,
-        .biases = biases,
-        .surfaces = surfaces,
-        .bounds = .{ @splat(0), @splat(0) },
-        .radius = 0,
-    };
+    return mesh;
 }
 
 /// The nebula's patches: `patch_divisions` by `patch_divisions` quads on a sphere of `patch_radius`
@@ -146,26 +119,10 @@ pub fn patchMesh(gpa: Allocator, half_angle: f32, texture: *srtexture.Image) All
     const rows = patch_divisions;
     const vertex_count = (columns + 1) * (rows + 1);
     const polygon_count = columns * rows * 2;
-    const positions = try gpa.alloc(Vector, vertex_count);
-    errdefer gpa.free(positions);
-    const normals = try gpa.alloc(Vector, vertex_count);
-    errdefer gpa.free(normals);
-    @memset(normals, @splat(0));
-    const polygons = try gpa.alloc(srapiext.Polygon, polygon_count);
-    errdefer gpa.free(polygons);
-    const indices = try gpa.alloc(u16, polygon_count * 3);
-    errdefer gpa.free(indices);
-    const uv = try gpa.alloc([2]f32, polygon_count * 3);
-    errdefer gpa.free(uv);
-    const planes = try gpa.alloc(srapiext.Plane, polygon_count);
-    errdefer gpa.free(planes);
-    @memset(planes, .{ .normal = @splat(0), .distance = 0 });
-    const biases = try gpa.alloc(f32, polygon_count);
-    errdefer gpa.free(biases);
-    @memset(biases, 0);
-    const surfaces = try gpa.alloc(srapiext.Surface, 1);
-    errdefer gpa.free(surfaces);
-    surfaces[0] = .{ .polygons = polygon_count, .material = .{
+    var mesh: srapiext.Mesh = try .create(gpa, .{ .polygons = polygon_count, .vertices = vertex_count, .indices = polygon_count * 3 });
+    errdefer mesh.deinit(gpa);
+    const uv = try mesh.addCoordinates(gpa);
+    mesh.surfaces[0] = .{ .polygons = polygon_count, .material = .{
         .two_pass = false,
         ._unknown_01 = 0,
         .coordinates = .{ .mesh, .none },
@@ -182,13 +139,13 @@ pub fn patchMesh(gpa: Allocator, half_angle: f32, texture: *srtexture.Image) All
         var pitch = -half_angle;
         for (0..columns + 1) |_| {
             const turn = math.turned(math.turned(math.identity, .y, yaw), .x, pitch);
-            positions[at] = math.transform(turn, .{ 0, 0, patch_radius });
+            mesh.positions[at] = math.transform(turn, .{ 0, 0, patch_radius });
             at += 1;
             pitch += pitch_step;
         }
         yaw += yaw_step;
     }
-    for (polygons, 0..) |*polygon, i| polygon.* = .{ .kind = .triangle, .continues = 0, .first = @intCast(i * 3), .count = 3 };
+    mesh.numberPolygons(3);
     const du = 1 / @as(f32, columns);
     const dv = 1 / @as(f32, rows);
     var index: usize = 0;
@@ -201,25 +158,13 @@ pub fn patchMesh(gpa: Allocator, half_angle: f32, texture: *srtexture.Image) All
             const first = row * (columns + 1) + column;
             const corners = [6]usize{ first, first + columns + 2, first + 1, first, first + columns + 1, first + columns + 2 };
             const coordinates = [6][2]f32{ .{ left, top }, .{ right, bottom }, .{ right, top }, .{ left, top }, .{ left, bottom }, .{ right, bottom } };
-            for (corners, coordinates, indices[index..][0..6], uv[index..][0..6]) |corner, c, *i, *t| {
+            for (corners, coordinates, mesh.indices[index..][0..6], uv[index..][0..6]) |corner, c, *i, *t| {
                 i.* = @intCast(corner);
                 t.* = c;
             }
             index += 6;
         }
     }
-    var mesh: srapiext.Mesh = .{
-        .positions = positions,
-        .normals = normals,
-        .polygons = polygons,
-        .indices = indices,
-        .uv = .{ uv, null },
-        .planes = planes,
-        .biases = biases,
-        .surfaces = surfaces,
-        .bounds = undefined,
-        .radius = undefined,
-    };
     srapi.findBoundingBox(&mesh);
     return mesh;
 }

@@ -97,68 +97,38 @@ fn materialNames(comptime prefix: []const u8) [glow_kinds][]const u8 {
 /// along the plume by the throttle.
 fn glowMesh(gpa: Allocator, textures: *srtexture.Table, kind: usize) (Allocator.Error || matmanager.Error)!srapiext.Mesh {
     const vertex_count = quads * corners;
-    const positions = try gpa.alloc(Vector, vertex_count);
-    errdefer gpa.free(positions);
-    const normals = try gpa.alloc(Vector, vertex_count);
-    errdefer gpa.free(normals);
-    @memset(normals, @splat(0));
-    const polygons = try gpa.alloc(srapiext.Polygon, quads);
-    errdefer gpa.free(polygons);
-    const indices = try gpa.alloc(u16, vertex_count);
-    errdefer gpa.free(indices);
-    const uv = try gpa.alloc([2]f32, vertex_count);
-    errdefer gpa.free(uv);
+    var mesh: srapiext.Mesh = try .create(gpa, .{ .polygons = quads, .vertices = vertex_count, .indices = vertex_count, .surfaces = 2 });
+    errdefer mesh.deinit(gpa);
+    const uv = try mesh.addCoordinates(gpa);
     // Nothing gives the quads their planes, so every one of them faces the camera: the mesh is
     // never culled by them.
-    const planes = try gpa.alloc(srapiext.Plane, quads);
-    errdefer gpa.free(planes);
-    @memset(planes, .{ .normal = @splat(0), .distance = 0 });
-    const biases = try gpa.alloc(f32, quads);
-    errdefer gpa.free(biases);
-    @memset(biases, sort_bias);
-    const surfaces = try gpa.alloc(srapiext.Surface, 2);
-    errdefer gpa.free(surfaces);
-    surfaces[0] = .{
+    @memset(mesh.biases, sort_bias);
+    mesh.surfaces[0] = .{
         .polygons = nozzle_quads,
         .material = flare_material,
         .textures = .{ .{ .image = try matmanager.textureRequire(textures, nozzle_materials[kind]) }, .none },
     };
-    surfaces[1] = .{
+    mesh.surfaces[1] = .{
         .polygons = blade_quads,
         .material = flare_material,
         .textures = .{ .{ .image = try matmanager.textureRequire(textures, blade_materials[kind]) }, .none },
     };
 
     // The nozzle sits square across the plume's foot, where it leaves the hull.
-    positions[0..corners].* = .{ .{ -1, -1, 0 }, .{ 1, -1, 0 }, .{ 1, 1, 0 }, .{ -1, 1, 0 } };
+    mesh.positions[0..corners].* = .{ .{ -1, -1, 0 }, .{ 1, -1, 0 }, .{ 1, 1, 0 }, .{ -1, 1, 0 } };
     for (0..blade_quads) |blade| {
         const angle = @as(f32, @floatFromInt(blade)) * blade_step;
         const across: Vector = .{ @sin(angle), @cos(angle), 0 };
         const along: Vector = .{ 0, 0, 1 };
-        positions[(nozzle_quads + blade) * corners ..][0..corners].* = .{ -across, along - across, along + across, across };
+        mesh.positions[(nozzle_quads + blade) * corners ..][0..corners].* = .{ -across, along - across, along + across, across };
     }
-    for (polygons, 0..) |*polygon, quad| {
-        polygon.* = .{ .kind = .triangle, .continues = 0, .first = @intCast(quad * corners), .count = corners };
-    }
-    for (indices, 0..) |*index, at| index.* = @intCast(at);
+    mesh.numberPolygons(corners);
+    for (mesh.indices, 0..) |*index, at| index.* = @intCast(at);
     for (0..quads) |quad| {
         uv[quad * corners ..][0..corners].* = .{
             .{ uv_far, uv_far }, .{ uv_far, uv_near }, .{ uv_near, uv_near }, .{ uv_near, uv_far },
         };
     }
-
-    var mesh: srapiext.Mesh = .{
-        .positions = positions,
-        .normals = normals,
-        .polygons = polygons,
-        .indices = indices,
-        .uv = .{ uv, null },
-        .planes = planes,
-        .biases = biases,
-        .surfaces = surfaces,
-        .bounds = undefined,
-        .radius = undefined,
-    };
     srapi.findBoundingBox(&mesh);
     return mesh;
 }

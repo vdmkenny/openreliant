@@ -126,11 +126,16 @@ pub const exported = [_]Export{
 
     // Live objects and their models.
     .{ "GameObject", engine.game.gameobj.GameObject },
+    .{ "Quadrants", engine.game.gameobj.Quadrants },
     .{ "ObjectFlags", engine.game.gameobj.GameObject.Flags },
     .{ "ObjectSide", engine.game.gameobj.Side(i32) },
     .{ "ObjectSlot", engine.game.gameobj.Slot },
     .{ "NetworkFlags", engine.game.gameobj.NetworkFlags },
     .{ "GunMode", engine.game.gameobj.GunMode },
+    .{ "Invulnerability", engine.game.gameobj.Invulnerability },
+    .{ "PowerUp", engine.game.gameobj.PowerUp },
+    .{ "DamageKind", engine.game.collision.Kind },
+    .{ "GunGroupSide", engine.game.guns.GroupSide },
     .{ "ObjectRoutine", engine.game.gameobj.Routine },
     .{ "ModelNode", engine.game.objects.Node },
     .{ "NodeFlags", engine.game.objects.Node.Flags },
@@ -143,6 +148,7 @@ pub const exported = [_]Export{
     .{ "ShpPartFlags", shp.Part.Flags },
     .{ "ShpPartClass", shp.Part.Class },
     .{ "ShpAttachment", shp.Attachment },
+    .{ "NodePlayMode", shp.PlayMode(i32) },
     .{ "ShpAttachmentKind", shp.Attachment.Kind },
     .{ "Vec3", shp.Vec3 },
 

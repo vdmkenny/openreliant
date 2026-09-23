@@ -60,9 +60,8 @@ pub const Node = extern struct {
     /// The object the node belongs to.
     owner: Pointer(GameObject),
     _unknown_ac: [8]u8,
-    /// How the node plays its animation track (`Model.Mode`): 0 not at all, 1 once, 2 looping
-    /// and 3 back and forth.
-    mode: i32,
+    /// How the node plays its animation track.
+    mode: Model.Mode,
     /// Which of the part's animation tracks the node runs, and where `node_animate` reads its
     /// keyframes; past the part's tracks, the node is not animated.
     animation: i32,
@@ -589,16 +588,7 @@ pub const Model = struct {
     };
 
     /// How a node plays its animation track (node `+0xB4`).
-    pub const Mode = enum(i32) {
-        none = 0,
-        /// To the end, or back to the start at a speed below zero, then stops there.
-        once = 1,
-        /// Round and round.
-        loop = 2,
-        /// To the end and back again, round and round.
-        swing = 3,
-        _,
-    };
+    pub const Mode = shp.PlayMode(i32);
 
     /// The tracks the loader files by name, for the game to start by it (`node_play`).
     pub const Slot = enum { startup, fire, deploy };
@@ -856,7 +846,7 @@ pub const Model = struct {
 
     fn start(model: *Model, index: usize, track: usize, time: f32, mode: ?Mode, speed: f32) void {
         const a = &model.parts[index].animation;
-        const chosen = mode orelse @as(Mode, @enumFromInt(a.tracks[track].clip.mode));
+        const chosen = mode orelse @as(Mode, @enumFromInt(@intFromEnum(a.tracks[track].clip.mode)));
         a.track = track;
         a.mode = chosen;
         if (time >= 0) a.time = time;
@@ -1926,7 +1916,7 @@ fn testingKey(time: i32, angles: [3]f32, offset: [3]f32) shp.Keyframe {
 }
 
 fn testingClip(length: i32, mode: Model.Mode, name: []const u8) shp.Clip {
-    var made: shp.Clip = .{ .length = length, .mode = @intCast(@intFromEnum(mode)), .name_bytes = @splat(0) };
+    var made: shp.Clip = .{ .length = length, .mode = @enumFromInt(@intFromEnum(mode)), .name_bytes = @splat(0) };
     @memcpy(made.name_bytes[0..name.len], name);
     return made;
 }

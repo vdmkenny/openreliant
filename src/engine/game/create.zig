@@ -26,7 +26,6 @@ const aigeneric = @import("aigeneric.zig");
 const collision = @import("collision.zig");
 const gameobj = @import("gameobj.zig");
 const guns = @import("guns.zig");
-const input = @import("../input.zig");
 const GameObject = gameobj.GameObject;
 const main = @import("main.zig");
 const motion = @import("motion.zig");
@@ -489,7 +488,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.yaw_input = 0;
     object._unknown_74c = 0xFFFF;
     object.random_seed = random.rand();
-    object.invulnerable = 0;
+    object.invulnerable = .none;
     object.visibility = 1;
     object.engines = 0;
     object._unknown_6ac = -1;
@@ -514,7 +513,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.gun_condition = 1;
     object._unknown_750 = 0;
     object._unknown_b96 = 0xFFFF;
-    object.gun_turn = 0;
+    object.gun_turn = .first;
     object.blind_fire_aim = 0;
     object._unknown_678 = 0;
     object._unknown_710 = @splat(0);
@@ -523,8 +522,8 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
         object.type_data = .null;
         object.pilot_record = .null;
         object._unknown_628 = .{ .x = 0, .y = 0, .z = 0 };
-        object.shields = @splat(0);
-        object.armor = @splat(0);
+        object.shields = .all(0);
+        object.armor = .all(0);
         object.flags = .standing_in;
         object.radius = stand_in_radius;
         return index;
@@ -580,14 +579,14 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object._unknown_24 = 0;
     pilots.setPilot(object, if (combat.side == .hostile) coalition_pilot else 0);
     // Each quadrant's shields and armour full.
-    object.shields = @splat(@as(f32, @floatFromInt(combat.shield_power * 6)) - 1);
-    object.armor = @splat(@as(f32, @floatFromInt(combat.armor_class * 6)) - 1);
+    object.shields = .all(@as(f32, @floatFromInt(combat.shield_power * 6)) - 1);
+    object.armor = .all(@as(f32, @floatFromInt(combat.armor_class * 6)) - 1);
     main.armorConditions(object, combat);
 
     object.engines_intact = 1;
     object.passes_through = @splat(.none);
     object._unknown_620 = -1;
-    object._unknown_754 = -1;
+    object.power_up = .none;
     object.afterburner_fuel = combat.afterburner_fuel * 100;
     object.countermeasures = gameobj.countermeasures_when_created;
     // The power shared evenly, at (1, 1) on the power ball.
@@ -609,8 +608,8 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     slot.gun_groups = &all.gun_groups[stats_type];
     for (all.gun_groups[stats_type][0..@intCast(tables.combat[stats_type].gun_groups)]) |group| {
         if (group.first < 0 or group.first >= slot.guns.len) continue;
-        slot.guns[@intCast(group.first)].side = 0;
-        if (group.second >= 0 and group.second < slot.guns.len) slot.guns[@intCast(group.second)].side = 1;
+        slot.guns[@intCast(group.first)].side = .first;
+        if (group.second >= 0 and group.second < slot.guns.len) slot.guns[@intCast(group.second)].side = .second;
     }
     // Its guns charged.
     object.gun_charge = combat.gun_energy;
@@ -896,9 +895,10 @@ pub const testing = struct {
 };
 
 test "a mission starts with every slot standing in" {
-    var random: libcmt.Rand = .{};
-    const all = try Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
     try std.testing.expectEqual(0, all.count);
     for (all.slots) |slot| {
         try std.testing.expect(slot.object.flags.stand_in and !slot.object.created);
@@ -911,9 +911,10 @@ test "a mission starts with every slot standing in" {
 }
 
 test "the loops walk the slots handed out, then the cutaway slot" {
-    var random: libcmt.Rand = .{};
-    const all = try Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
     all.count = 3;
     var walked: std.ArrayList(u16) = .empty;
     defer walked.deinit(std.testing.allocator);
@@ -991,17 +992,17 @@ test collectComponents {
 
 test createObject {
     const gpa = std.testing.allocator;
-    var random: libcmt.Rand = .{};
-    const all = try Objects.create(gpa, &random);
-    defer all.destroy();
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(gpa);
+    defer mission.deinit();
+    const all = mission.objects;
     var model: testing.Model = undefined;
     try model.init(gpa);
     defer model.deinit(gpa);
-    var tables = testing.tables();
-    tables.combat[0x2B].side = .hostile;
+    mission.tables.combat[0x2B].side = .hostile;
 
     // The player first, in the next slot, at rest where it is put and facing along Z.
-    const player = try createObject(all, &tables, model.types(), null, 0, .{ 0, 0, 500 }, &random);
+    const player = try createObject(all, &mission.tables, model.types(), null, 0, .{ 0, 0, 500 }, &mission.random);
     try std.testing.expectEqual(0, player);
     try std.testing.expectEqual(1, all.count);
     const made = &all.slots[player];
@@ -1014,8 +1015,8 @@ test createObject {
     try std.testing.expectEqual(.friendly, object.side);
     try std.testing.expectEqual(0, object.pilot);
     // Undamaged: each quadrant six times the type's figure, less one.
-    try std.testing.expectEqual([4]f32{ 47, 47, 47, 47 }, object.shields);
-    try std.testing.expectEqual([4]f32{ 29, 29, 29, 29 }, object.armor);
+    try std.testing.expectEqual(gameobj.Quadrants.all(47), object.shields);
+    try std.testing.expectEqual(gameobj.Quadrants.all(29), object.armor);
     try std.testing.expectEqual(1, object.shield_condition);
     try std.testing.expectEqual(6000, object.afterburner_fuel);
     try std.testing.expectEqual(100, object.gun_charge);
@@ -1028,17 +1029,17 @@ test createObject {
     try std.testing.expect(!object.flags.ecm);
 
     // A Coalition fighter: hostile, flown by the Coalition's pilot, with its ECM on.
-    const enemy = try createObject(all, &tables, model.types(), null, 0x2B, .{ 0, 0, 0 }, &random);
+    const enemy = try createObject(all, &mission.tables, model.types(), null, 0x2B, .{ 0, 0, 0 }, &mission.random);
     try std.testing.expectEqual(.hostile, all.slots[enemy].object.side);
     try std.testing.expectEqual(coalition_pilot, all.slots[enemy].object.pilot);
     try std.testing.expect(all.slots[enemy].object.flags.ecm);
 
     // A slot filled once is not filled again, and nothing lies past the last.
-    try std.testing.expectError(error.CreatedTwice, createObject(all, &tables, model.types(), player, 0, @splat(0), &random));
-    try std.testing.expectError(error.Overrun, createObject(all, &tables, model.types(), gameobj.max_objects, 0, @splat(0), &random));
+    try std.testing.expectError(error.CreatedTwice, createObject(all, &mission.tables, model.types(), player, 0, @splat(0), &mission.random));
+    try std.testing.expectError(error.Overrun, createObject(all, &mission.tables, model.types(), gameobj.max_objects, 0, @splat(0), &mission.random));
 
     // Above the last ship type, a stand-in for a marker, at a slot of its own.
-    const marker = try createObject(all, &tables, model.types(), 20, 1000, @splat(0), &random);
+    const marker = try createObject(all, &mission.tables, model.types(), 20, 1000, @splat(0), &mission.random);
     try std.testing.expectEqual(20, marker);
     try std.testing.expectEqual(2, all.count);
     const stand_in = all.slots[marker];
@@ -1048,18 +1049,18 @@ test createObject {
     try std.testing.expectEqual(null, stand_in.combat);
 
     // Reset, the slot stands in again, and can be filled anew.
-    all.resetSlot(player, &random);
+    all.resetSlot(player, &mission.random);
     try std.testing.expectEqual(GameObject.Flags.standing_in, all.slots[player].object.flags);
     try std.testing.expectEqual(null, all.slots[player].model);
-    _ = try createObject(all, &tables, model.types(), player, 0, @splat(0), &random);
+    _ = try createObject(all, &mission.tables, model.types(), player, 0, @splat(0), &mission.random);
 }
 
 test "an object is created with the guns its model holds" {
     const gpa = std.testing.allocator;
-    var random: libcmt.Rand = .{};
-    const all = try Objects.create(gpa, &random);
-    defer all.destroy();
-    var tables = testing.tables();
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(gpa);
+    defer mission.deinit();
+    const all = mission.objects;
     var model: testing.Model = undefined;
     try model.init(gpa);
     defer model.deinit(gpa);
@@ -1072,18 +1073,18 @@ test "an object is created with the guns its model holds" {
     }
     model.data[0].attachments = &muzzles;
 
-    const index = try createObject(all, &tables, model.types(), null, 7, @splat(0), &random);
+    const index = try createObject(all, &mission.tables, model.types(), null, 7, @splat(0), &mission.random);
     const slot = &all.slots[index];
     // The guns are fitted after the count is cleared, so the object holds them all.
     try std.testing.expectEqual(2, slot.object.gun_count);
     try std.testing.expectEqual(2, slot.guns.len);
     // They make one group, whose two guns fire in turn as its left and right.
-    try std.testing.expectEqual(1, tables.combat[7].gun_groups);
+    try std.testing.expectEqual(1, mission.tables.combat[7].gun_groups);
     try std.testing.expectEqual(&all.gun_groups[7], slot.gun_groups);
     try std.testing.expectEqual(0, slot.gun_groups[0].first);
     try std.testing.expectEqual(1, slot.gun_groups[0].second);
-    try std.testing.expectEqual(0, slot.guns[0].side);
-    try std.testing.expectEqual(1, slot.guns[1].side);
+    try std.testing.expectEqual(guns.GroupSide.first, slot.guns[0].side);
+    try std.testing.expectEqual(guns.GroupSide.second, slot.guns[1].side);
     // One group of guns fires them in step (`GunMode.created`).
     try std.testing.expect(slot.object.gun_mode.synchronised);
     try std.testing.expect(!slot.object.gun_mode.all);
@@ -1091,15 +1092,15 @@ test "an object is created with the guns its model holds" {
 
 test "a type under another number takes its stats, then its number" {
     const gpa = std.testing.allocator;
-    var random: libcmt.Rand = .{};
-    const all = try Objects.create(gpa, &random);
-    defer all.destroy();
-    var tables = testing.tables();
-    tables.flight[0x21].max_speed = 55;
-    tables.combat[0x21].shield_power = 30;
-    tables.combat[0xE5].name = 1123;
-    tables.combat[0xE5].gun_groups = 2;
-    const index = try createObject(all, &tables, testing.no_models, null, 0xE5, @splat(0), &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(gpa);
+    defer mission.deinit();
+    const all = mission.objects;
+    mission.tables.flight[0x21].max_speed = 55;
+    mission.tables.combat[0x21].shield_power = 30;
+    mission.tables.combat[0xE5].name = 1123;
+    mission.tables.combat[0xE5].gun_groups = 2;
+    const index = try mission.add(0xE5, @splat(0));
     const slot = all.slots[index];
     try std.testing.expectEqual(0x21, slot.object.type);
     try std.testing.expectEqual(55, slot.flight.?.max_speed);
@@ -1108,32 +1109,30 @@ test "a type under another number takes its stats, then its number" {
     try std.testing.expectEqual(1123, slot.combat.?.name);
     try std.testing.expectEqual(2, slot.combat.?.gun_groups);
     // The table it points into is its own number's, which now holds the other's stats.
-    try std.testing.expectEqual(&tables.combat[0xE5], slot.combat.?);
+    try std.testing.expectEqual(&mission.tables.combat[0xE5], slot.combat.?);
     try std.testing.expectEqual(null, donor(0x21));
 }
 
 test "a type with no model still flies" {
-    var random: libcmt.Rand = .{};
-    const all = try Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = testing.tables();
-    const index = try createObject(all, &tables, testing.no_models, null, 3, @splat(0), &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const index = try mission.add(3, @splat(0));
     try std.testing.expectEqual(null, all.slots[index].model);
     all.slots[index].object.throttle = 1;
     all.slots[index].object.rotation = math.identity;
-    var shake: f32 = 0;
-    var player: input.Player = .{};
-    objectsUpdate(.{ .objects = all, .player = &player, .view = .chase, .shake = &shake, .random = &random });
+    objectsUpdate(mission.world());
     try std.testing.expect(all.slots[index].object.root.flags.next_pending);
     try std.testing.expect(all.slots[index].object.velocity.z > 0);
 }
 
 test objectsUpdate {
-    var random: libcmt.Rand = .{};
-    const all = try Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = testing.tables();
-    for (0..3) |_| _ = try createObject(all, &tables, testing.no_models, null, 0, @splat(0), &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    for (0..3) |_| _ = try mission.add(0, @splat(0));
     all.slots[1].object.flags.disabled = true;
     all.slots[2].object.flags.frozen = true;
     // Each drifting, with no motion of its own.
@@ -1141,9 +1140,7 @@ test objectsUpdate {
         slot.object.velocity = .{ .x = 0, .y = 0, .z = 10 };
         slot.motion = null;
     }
-    var shake: f32 = 0;
-    var player: input.Player = .{};
-    objectsUpdate(.{ .objects = all, .player = &player, .view = .chase, .shake = &shake, .random = &random });
+    objectsUpdate(mission.world());
     // The first moves on; the disabled and the frozen ones stay where they are.
     try std.testing.expectEqual(10, all.slots[0].object.root.next_position.z);
     try std.testing.expectEqual(0, all.slots[1].object.root.next_position.z);
@@ -1151,19 +1148,17 @@ test objectsUpdate {
 }
 
 test "the sweep pushes apart the objects that meet" {
-    var random: libcmt.Rand = .{};
-    const all = try Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = testing.tables();
-    var shake: f32 = 0;
-    var player: input.Player = .{};
-    const world: gameobj.World = .{ .objects = all, .player = &player, .view = .chase, .shake = &shake, .random = &random };
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const world = mission.world();
 
     // Three ships in a row, the first two of them overlapping, each 1000 units across and drifting
     // nowhere.
     const places = [_]math.Vector{ .{ -200, 0, 0 }, .{ 200, 0, 0 }, .{ 20000, 0, 0 } };
     for (places) |at| {
-        const index = try createObject(all, &tables, testing.no_models, null, 0, at, &random);
+        const index = try mission.add(0, at);
         all.slots[index].object.radius = 1000;
         all.slots[index].motion = null;
     }

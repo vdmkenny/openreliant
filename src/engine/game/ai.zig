@@ -15,7 +15,6 @@ const math = @import("../surrender/math.zig");
 const Vector = math.Vector;
 const motion = @import("motion.zig");
 const aigeneric = @import("aigeneric.zig");
-const libcmt = @import("../libcmt.zig");
 const GameObject = gameobj.GameObject;
 
 pub const orders = @import("ai/orders.zig");
@@ -105,7 +104,7 @@ const full_speed_view: camera.View = @enumFromInt(13);
 /// global, since `GameObject` holds the binary's own 32-bit pointers.
 pub fn cruiseSpeed(object: *const gameobj.GameObject, flight: *const create.FlightModel, view: camera.View) f32 {
     var speed = flight.max_speed * object.speed_factor * object.engines_intact;
-    if (view != full_speed_view and object.invulnerable == 0) speed *= object.armor_speed_factor;
+    if (view != full_speed_view and object.invulnerable == .none) speed *= object.armor_speed_factor;
     return speed;
 }
 
@@ -118,7 +117,7 @@ test cruiseSpeed {
     try std.testing.expectEqual(128, cruiseSpeed(&object, &gameobj.testing.flight, .chase));
     // The armor tells in every view but 13, and not at all while it is invulnerable.
     try std.testing.expectEqual(160, cruiseSpeed(&object, &gameobj.testing.flight, @enumFromInt(13)));
-    object.invulnerable = 1;
+    object.invulnerable = .player_can_hit;
     try std.testing.expectEqual(160, cruiseSpeed(&object, &gameobj.testing.flight, .chase));
 }
 
@@ -330,11 +329,11 @@ comptime {
 }
 
 test steer {
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    const index = try create.createObject(all, &tables, create.testing.no_models, null, 0, @splat(0), &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const index = try mission.add(0, @splat(0));
     const slot = &all.slots[index];
 
     // Dead ahead, nothing turns.
@@ -367,11 +366,11 @@ test steer {
 }
 
 test "a ship steered at a point comes round to face it" {
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    const index = try create.createObject(all, &tables, create.testing.no_models, null, 0, @splat(0), &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const index = try mission.add(0, @splat(0));
     const slot = &all.slots[index];
     const at: Vector = .{ 20000, 6000, 10000 };
 
@@ -396,11 +395,11 @@ test "a ship steered at a point comes round to face it" {
 }
 
 test "a slow frame halves the small turns" {
-    var random: libcmt.Rand = .{};
-    const all = try create.Objects.create(std.testing.allocator, &random);
-    defer all.destroy();
-    var tables = create.testing.tables();
-    const index = try create.createObject(all, &tables, create.testing.no_models, null, 0, @splat(0), &random);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const index = try mission.add(0, @splat(0));
     const slot = &all.slots[index];
 
     _ = steer(slot, .{ 200, 0, 4000 }, 1, 0, .{}, slow_frame);
