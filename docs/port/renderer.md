@@ -22,13 +22,8 @@ place of `IDirect3DDevice7`.
 | [`game/nebula.zig`](../../src/engine/game/nebula.zig), [`game/backdrop.zig`](../../src/engine/game/backdrop.zig) | `nebula.cpp`, backdrop | The sky dome, the nebula, the stars, the dust, the sun, the lights |
 | [`game/xtrabits.zig`](../../src/engine/game/xtrabits.zig) | `xtrabits.cpp` | `scene_add` |
 
-A scene object's kind picks its pipeline: 1 a mesh, 4 a sprite set, 7 a star field, and 2 and 5 are
-lights rather than things drawn. Kinds 5 and 6 are **dead in the shipped game**: `sr_draw_layers`
-would run them through `line_pipe` (`srline.cpp`) and `balls_pipe` (`srballs.cpp`) and then through
-the driver's entries at `sr + 0x5C` and `sr + 0x60`, but `SR_driver_init` fills every other entry
-and leaves those two null, the linker pulled only the two pipes out of their files, and nothing
-creates an object of either kind. The weapons' tracers are ordinary mesh objects and sprite sets
-([Guns](../engine/guns.md#shots)).
+A scene object's kind picks its pipeline: 1 a mesh, 4 a sprite set and 7 a star field. Kinds 5 and 6
+are dead, and are described below.
 
 The software device is the reference the GPU device is checked against: the same scene gives the
 same image. Pixel centres lie at whole numbers, as in Direct3D 7; screen positions are kept in
@@ -104,6 +99,38 @@ Deliberate differences from the original, each marked **Improvement** where it i
   nothing and keeps a dark gradient, such as the nebula or a light's falloff, from banding. `--original` restores the
   original's look: 16-bit colour, dithered, into a 16-bit buffer where the GPU has one, with a
   16-bit depth buffer, one sample a pixel, bilinear filtering and lighting each vertex.
+
+## Scene objects of kinds 5 and 6
+
+Nothing in the shipped game draws a line or a ball, and nothing makes one:
+
+- `SR_driver_init` fills every entry of the payload's device table from `+0x3C` to `+0x84` and
+  leaves `+0x5C` and `+0x60` null. Those two are what `sr_draw_layers` (`0x004C7960`) calls for
+  kinds 5 and 6, so an object of either kind would call through a null pointer.
+- The linker pulled one function out of `srline.cpp` and one out of `srballs.cpp`, `line_pipe`
+  (`0x004CE830`) and `balls_pipe` (`0x004CE7B0`), each reached only from the switch in
+  `sr_draw_layers`. Whatever creates such an object was never linked in, because nothing calls it.
+
+The weapons' tracers are ordinary mesh objects and sprite sets ([Guns](../engine/guns.md#shots)),
+not these.
+
+Both pipes begin with `SR_object_rotate`, which leaves the object's transform in the camera's frame
+at `+0x7C` (three rows) and `+0xA0` (the place), and both work as the mesh pipeline does.
+
+`line_pipe` walks the object's vertices, `+0xB4` of them at `+0xD4`, four floats each. It
+transforms each into the camera's frame and gives it the same
+[outcode](../../src/engine/surrender/surrenderlib/srapi.zig) the mesh pipeline uses: `0x10` for a
+vertex in front of the near plane, then `1` and `2` for a vertex outside the view's left and right
+at its depth, `4` and `8` for below and above. A vertex inside keeps `1/z` as its fourth float, and
+its place on the screen, `x` and `y` over `z`, goes to `+0xD8` as a pair of floats. The codes go to
+`+0xCC`, one byte a vertex. Then each of the `+0xB8` segments at `+0xDC`, 28 bytes each, holding the
+two vertices it joins at `+0x04` and `+0x08`, is marked at `+0x10` when both ends are off the same
+side, which rejects it.
+
+`balls_pipe` is a point with a size. A depth below the near plane returns `0x100`, which
+`sr_draw_layers` takes as nothing to draw. Otherwise `1/z` scales the size at `+0xF8` into the
+radius at `+0xD0` and the camera-space place into the screen place at `+0xC4` and `+0xC8`, and the
+drawn record at `+0xC0` points back at the object.
 
 ## Not yet ported
 
