@@ -25,11 +25,13 @@ pub const cockpit_map = cascade_count;
 /// A set of maps.
 pub const Maps = std.bit_set.IntegerBitSet(map_count);
 
-/// How a device draws shadows: its maps' texels across, and how far from the camera each cascade
-/// reaches in view depth, the first from the near plane. Past the last, nothing is shadowed.
+/// How a device draws shadows: its maps' texels across, how far from the camera each cascade
+/// reaches in view depth, the first from the near plane, and whether the cockpit gets a map of
+/// its own. Past the last cascade, nothing is shadowed.
 pub const Settings = struct {
     texels: u32,
     reaches: [cascade_count]f32,
+    cockpit: bool = true,
 };
 
 /// The frame's shadows as a device takes them, in the camera's frame.
@@ -241,7 +243,7 @@ pub fn gather(
         .arena = arena,
         .context = context,
         .cascades = fit(context, toward, settings),
-        .cockpit = fitCockpit(context, toward, overlay, settings.texels),
+        .cockpit = if (settings.cockpit) fitCockpit(context, toward, overlay, settings.texels) else null,
     };
     for (world) |object| try casters.addObject(object, into.world);
     for (unseen) |mesh| try casters.add(mesh, into.unseen);
@@ -458,4 +460,11 @@ test "the cockpit's map" {
     try std.testing.expectEqual(1, frame.runs[2].maps.count());
     try std.testing.expect(frame.runs[2].maps.isSet(cockpit_map));
     try std.testing.expectEqual(cockpit, frame.box(cockpit_map).?);
+
+    // Without shadows in the cockpit, it has no map, and its parts cast nothing.
+    var plain = testing.settings;
+    plain.cockpit = false;
+    const outside = (try gather(arena, context, &lights, &world, &overlay, &.{&seat}, plain)).?;
+    try std.testing.expectEqual(null, outside.cockpit);
+    for (outside.runs) |run| try std.testing.expect(!run.maps.isSet(cockpit_map));
 }

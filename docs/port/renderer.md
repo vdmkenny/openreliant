@@ -16,7 +16,9 @@ place of `IDirect3DDevice7`.
 | [`srd3d/device.zig`](../../src/engine/surrender/srd3d/device.zig) | Direct3D 7 | The device the driver draws with |
 | [`srd3d/software.zig`](../../src/engine/surrender/srd3d/software.zig) | | A device that rasterizes as Direct3D 7 does, in software |
 | [`platform/gpu.zig`](../../src/platform/gpu.zig) | Direct3D 7 | The device the `openreliant` executable draws with: SDL's GPU interface |
-| [`platform/shaders/device.glsl`](../../src/platform/shaders/device.glsl) | Direct3D 7's texture stages | The GPU device's one shader |
+| [`platform/shaders/device.glsl`](../../src/platform/shaders/device.glsl) | Direct3D 7's texture stages | The GPU device's shader |
+| [`surrenderlib/srshadow.zig`](../../src/engine/surrender/surrenderlib/srshadow.zig), [`platform/gpu/shadows.zig`](../../src/platform/gpu/shadows.zig), [`platform/shaders/shadow.glsl`](../../src/platform/shaders/shadow.glsl) | | The port's shadows: the maps' boxes and casters, and the GPU's depth passes |
+| [`platform/gpu/geometry.zig`](../../src/platform/gpu/geometry.zig) | | The GPU device's vertex and index buffers |
 | [`game/srofiles.zig`](../../src/engine/game/srofiles.zig) | `srofiles.cpp` | Meshes from `.SHP` models |
 | [`game/objects.zig`](../../src/engine/game/objects.zig) | `objects.cpp` | A live object's part nodes, placed and drawn |
 | [`game/nebula.zig`](../../src/engine/game/nebula.zig), [`game/backdrop.zig`](../../src/engine/game/backdrop.zig) | `nebula.cpp`, backdrop | The sky dome, the nebula, the stars, the dust, the sun, the lights |
@@ -56,14 +58,57 @@ textures are small, so the device gathers a frame before drawing it:
   than clipped, as Direct3D 7 did not clip transformed vertices in depth, and the pipelines write
   colour only, as the original's back buffer kept no alpha.
 
-The shader, [`device.glsl`](../../src/platform/shaders/device.glsl), takes the driver's vertices as
-they are: screen positions with pixel centres at whole numbers, reversed depth, and `rhw`, whose
-inverse as the clip-space `w` makes colours and texture coordinates vary in perspective. The
-fragment is the texel times the vertex colour, or the vertex colour alone. For a lit mesh, the
-shader first adds the frame's directional and point lights to the vertex colour for the pixel
-([Improvements](#improvements)). `make shaders` compiles
-it with `glslc` into SPIR-V, and from that into Metal's language with SPIRV-Cross, which `make`
-builds; the outputs are committed, so building the game needs neither.
+The device's shader, [`device.glsl`](../../src/platform/shaders/device.glsl), takes the driver's
+vertices as they are: screen positions with pixel centres at whole numbers, reversed depth, and
+`rhw`, whose inverse as the clip-space `w` makes colours and texture coordinates vary in
+perspective. The fragment is the texel times the vertex colour, or the vertex colour alone. For a
+lit mesh, the shader first adds the frame's directional and point lights to the vertex colour for
+the pixel, the key lights' share scaled by the [shadows](#shadows) ([Improvements](#improvements)).
+`make shaders` compiles it and the shadows' depth pass,
+[`shadow.glsl`](../../src/platform/shaders/shadow.glsl), with `glslc` into SPIR-V, and from that
+into Metal's language with SPIRV-Cross, which `make` builds; the outputs are committed, so building
+the game needs neither.
+
+## Shadows
+
+**Improvement:** the key lights cast shadows, where the original drew none.
+[`srshadow.zig`](../../src/engine/surrender/surrenderlib/srshadow.zig) gathers them each frame and
+the GPU device draws them ([`gpu/shadows.zig`](../../src/platform/gpu/shadows.zig)):
+
+- **The maps.** The view is split by depth into four cascades, each an orthographic box along the
+  sun around the sphere that holds its slice of the view. Its centre is moved to a whole texel of
+  the world and its axes follow the world, so the shadows hold still as the camera moves and turns.
+  The cockpit, where the scene holds one, gets a fifth box around its parts. The maps are the layers
+  of one depth texture.
+- **The casters.** Every lit mesh of the world's layer casts, whatever the camera sees of it: its
+  opaque surfaces at its current level of detail, each polygon a fan of its corners, turned into the
+  camera's frame each frame. The ship the camera sits in casts without being drawn
+  (`srcore.Scene.casters`), into the cascades alone, as the cockpit sits inside it. The cockpit's
+  parts cast into its map alone, and a ship between the cockpit and the sun casts into it too. Each
+  caster goes into the maps its bounding sphere can reach. Blended surfaces and sprites cast
+  nothing.
+- **The depth pass.** Before the frame, each map is cleared and its casters drawn, depth alone and
+  both faces, with a slope-scaled bias. What lies nearer the sun than a box is held at its near side
+  rather than cut off, so that it still casts.
+- **The lookup.** A world pixel takes its shadow from the first cascade that reaches as deep as it
+  stands, the cockpit's from its own map. Its place is moved a texel and a half along its normal, so
+  that a surface does not shade itself, and a square of taps, each comparing the four texels around
+  it, softens the edge. Only the key lights (`srlight.Light.shadowed`) are scaled, and only where
+  they face the pixel; the fill and ambient lights are not, so a shadowed hull keeps the nebula's
+  colour. The last cascade fades out toward its end. Point lights cast no shadows.
+- **The cockpit's** are fainter and softer: a full shadow takes away 40% of the sun, and the taps
+  spread three times as wide. The cockpit takes both key lights, and its map's texels are fine
+  enough to make the edges razor sharp otherwise.
+
+| `--shadows` | Maps | Taps | Cascades end at |
+|---|---|---|---|
+| `low` | 1024 texels across | 4, a texel apart | 1,500, 6,000, 20,000 and 60,000 |
+| `high`, the default | 4096 texels across | 16, 1.4 texels apart | 2,500, 10,000, 35,000 and 120,000 |
+
+`--shadows off`, `--original` and `--no-pixel-lighting` leave them out, and `--no-cockpit-shadows`
+the cockpit's alone. The software device draws none. Not yet: fitting the cascades to the objects
+in them, which space leaves mostly empty
+([#196](https://github.com/vdmkenny/openreliant/issues/196)).
 
 ## Improvements
 
@@ -113,8 +158,8 @@ Deliberate differences from the original, each marked **Improvement** where it i
   nothing and keeps a dark gradient, such as the nebula or a light's falloff, from banding. `--original` restores the
   original's look: 16-bit colour, dithered, into a 16-bit buffer where the GPU has one, with a
   16-bit depth buffer, one sample a pixel, bilinear filtering, lighting each vertex, lights
-  from the latest shots only, an explosion's debris lit by every light, and its fireballs, rings and
-  particles as few and plain as the original's.
+  from the latest shots only, an explosion's debris lit by every light, its fireballs, rings and
+  particles as few and plain as the original's, and no shadows.
 
 ## Scene objects of kinds 5 and 6
 

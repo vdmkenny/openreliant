@@ -5,13 +5,13 @@
 //! The game's textures are small, and its draws are too: the driver draws a strip, a fan or one
 //! blended polygon at a time. So each texture is a layer of an array holding the textures of its
 //! size and levels, each vertex names its layer, and consecutive draws with the same render states
-//! go to the GPU as one. `shaders/device.glsl`, the game's one shader, does what Direct3D 7's
-//! texture stages did.
+//! go to the GPU as one. `shaders/device.glsl` does what Direct3D 7's texture stages did.
 //!
 //! **Improvements**, each of which `Settings.original` turns off: the frame is drawn at the
 //! display's own resolution, with several samples a pixel; textures are filtered trilinearly,
 //! sixteen times anisotropic, and magnified with a Catmull-Rom filter, where the original filtered
-//! bilinearly from the nearest level; colour is 32-bit, where the original drew in 16 bits.
+//! bilinearly from the nearest level; colour is 32-bit, where the original drew in 16 bits; the
+//! key lights cast shadows (`gpu/shadows.zig`).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -56,6 +56,8 @@ pub const Settings = struct {
     /// Shadows from the key lights (`gpu/shadows.zig`), where each pixel is lit. The original drew
     /// none.
     shadows: Shadows = .high,
+    /// Shadows in the cockpit as well: the canopy's struts on the dashboard.
+    cockpit_shadows: bool = true,
     /// The frames' size in pixels whatever the window's, which shows them scaled to fit; null for
     /// the window's own, at the display's density.
     size: ?[2]u32 = null,
@@ -293,8 +295,9 @@ pub const Gpu = struct {
 
     /// One GPU device a run: the textures' slots it keeps in their images are its own.
     pub fn init(gpa: Allocator, handle: *c.SDL_GPUDevice, window: *c.SDL_Window, settings: Settings) Error!Gpu {
-        const spirv = takesSpirv(handle);
-        if (!spirv and c.SDL_GetGPUShaderFormats(handle) & c.SDL_GPU_SHADERFORMAT_MSL == 0) {
+        const formats = c.SDL_GetGPUShaderFormats(handle);
+        const spirv = formats & c.SDL_GPU_SHADERFORMAT_SPIRV != 0;
+        if (!spirv and formats & c.SDL_GPU_SHADERFORMAT_MSL == 0) {
             log.err("the GPU takes neither SPIR-V nor Metal's shaders", .{});
             return error.Sdl;
         }
@@ -302,7 +305,8 @@ pub const Gpu = struct {
         errdefer c.SDL_ReleaseGPUShader(handle, vertex_shader);
         const fragment_shader = try shader(handle, spirv, c.SDL_GPU_SHADERSTAGE_FRAGMENT, if (spirv) shaders.fragment_spirv else shaders.fragment_msl, 2, 3);
         errdefer c.SDL_ReleaseGPUShader(handle, fragment_shader);
-        var shadows = try makeShadows(handle, settings);
+        // Shadows darken what each pixel is lit by, so they need each pixel lit.
+        var shadows: shadow.Shadows = try .init(handle, spirv, if (settings.pixel_lighting) settings.shadows else .off);
         errdefer shadows.deinit(handle);
 
         const modern = settings.filter != .original;
@@ -377,16 +381,6 @@ pub const Gpu = struct {
         gpu.blank = try gpu.place(&blank_levels);
         if (settings.bloom) try gpu.startBloom(spirv);
         return gpu;
-    }
-
-    /// Whether the GPU takes SPIR-V, where it doesn't take Metal's language.
-    fn takesSpirv(handle: *c.SDL_GPUDevice) bool {
-        return c.SDL_GetGPUShaderFormats(handle) & c.SDL_GPU_SHADERFORMAT_SPIRV != 0;
-    }
-
-    /// The shadows the settings ask for, which need each pixel lit.
-    fn makeShadows(handle: *c.SDL_GPUDevice, settings: Settings) Error!shadow.Shadows {
-        return .init(handle, takesSpirv(handle), if (settings.pixel_lighting) settings.shadows else .off);
     }
 
     pub fn deinit(gpu: *Gpu) void {
@@ -476,7 +470,10 @@ pub const Gpu = struct {
     };
 
     fn shadowSettings(ptr: *anyopaque) ?srshadow.Settings {
-        return from(ptr).shadows.quality.settings();
+        const gpu = from(ptr);
+        var settings = gpu.shadows.quality.settings() orelse return null;
+        settings.cockpit = gpu.settings.cockpit_shadows;
+        return settings;
     }
 
     fn takeShadows(ptr: *anyopaque, frame: *const srshadow.Frame) void {

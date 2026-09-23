@@ -1,5 +1,5 @@
-// The game's one shader: what Direct3D 7's fixed function did with the vertices Surrender's driver
-// hands over, for SDL's GPU interface. `make shaders` compiles the vertex stage, with VERTEX
+// The device's shader: what Direct3D 7's fixed function did with the vertices Surrender's driver
+// hands over, for SDL's GPU interface, with the port's lighting of each pixel and its shadows. `make shaders` compiles the vertex stage, with VERTEX
 // defined, and the fragment stage, with FRAGMENT, into SPIR-V, and from that into Metal's
 // language. The platform layer embeds what it makes (src/platform/gpu.zig).
 #version 450
@@ -98,12 +98,17 @@ layout(location = 0) out vec4 result;
 
 // A map's box along the sun (srshadow.zig): where a point of the camera's frame falls in the map,
 // each row dotted with the point and 1, across and up from -1 to 1 and its depth from the sun's
-// side from 0 to 1; then a cascade's view depth, which it reaches to, a texel's width in the world,
-// how much of the sun a full shadow takes away, and how far apart the lookup's taps are, as a share
-// of the map.
+// side from 0 to 1.
 struct Box {
     vec4 rows[3];
-    vec4 extent;
+    // For a cascade, the view depth it reaches to.
+    float far;
+    // A texel's width in the world, which a pixel's place is moved off its surface by.
+    float texel;
+    // How much of the sun a full shadow takes away.
+    float depth;
+    // How far apart the lookup's taps are, as a share of the map.
+    float step;
 };
 
 const int cascadeCount = 4;
@@ -111,9 +116,13 @@ const int cockpitMap = cascadeCount;
 
 layout(set = 3, binding = 2) uniform Shadows {
     Box boxes[cascadeCount + 1];
-    // x: 1 where the frame has shadows. y: 1 to look them up in sixteen taps rather than four. z: 1
-    // where the cockpit has a map.
-    vec4 settings;
+    // 1 where the frame has shadows.
+    uint enabled;
+    // The lookup's taps across and down.
+    uint across;
+    // 1 where the cockpit has a map.
+    uint cockpit;
+    uint unused;
 } shadows;
 
 // How many texels a pixel's place is moved off its surface, along its normal, before its shadow
@@ -121,33 +130,32 @@ layout(set = 3, binding = 2) uniform Shadows {
 const float normalOffset = 1.5;
 
 // How much of the sun reaches the pixel in map `map`, from its box's depth of shadow to 1: from a
-// square of taps around it, two or four across, each comparing the four texels around it. Outside
-// the map it is lit.
+// square of taps around it, each comparing the four texels around it. Outside the map it is lit.
 float lookUp(int map, vec3 n) {
     Box box = shadows.boxes[map];
-    vec4 p = vec4(place + n * (box.extent.y * normalOffset), 1.0);
+    vec4 p = vec4(place + n * (box.texel * normalOffset), 1.0);
     vec3 at = vec3(dot(box.rows[0], p), dot(box.rows[1], p), dot(box.rows[2], p));
     if (any(greaterThan(abs(at.xy), vec2(1.0)))) return 1.0;
     vec2 uv = vec2(at.x, -at.y) * 0.5 + 0.5;
-    int across = shadows.settings.y > 0.0 ? 4 : 2;
+    int across = int(shadows.across);
     float middle = float(across - 1) * 0.5;
     float sum = 0.0;
     for (int y = 0; y < across; y++) {
         for (int x = 0; x < across; x++) {
-            vec2 offset = (vec2(x, y) - middle) * box.extent.w;
+            vec2 offset = (vec2(x, y) - middle) * box.step;
             sum += texture(shadowMaps, vec4(uv + offset, float(map), at.z));
         }
     }
-    return 1.0 - box.extent.z * (1.0 - sum / float(across * across));
+    return 1.0 - box.depth * (1.0 - sum / float(across * across));
 }
 
 // How much of the sun reaches the pixel: the cockpit's in its own map, where there is one; the
 // world's in the first cascade that reaches as deep as it stands, fading to lit toward the last
 // cascade's end.
 float sunlit(vec3 n) {
-    if (shade == 2u) return shadows.settings.z > 0.0 ? lookUp(cockpitMap, n) : 1.0;
+    if (shade == 2u) return shadows.cockpit != 0u ? lookUp(cockpitMap, n) : 1.0;
     for (int i = 0; i < cascadeCount; i++) {
-        float far = shadows.boxes[i].extent.x;
+        float far = shadows.boxes[i].far;
         if (place.z > far) continue;
         float lit = lookUp(i, n);
         if (i == cascadeCount - 1) lit = mix(lit, 1.0, smoothstep(far * 0.8, far, place.z));
@@ -166,7 +174,7 @@ vec4 lit(vec4 base) {
     if (mask == 0xFFFFFFFFu || length < 1e-6) return base;
     vec3 n = facing / length;
     vec3 sum = base.rgb;
-    bool shaded = shade != 0u && shadows.settings.x > 0.0;
+    bool shaded = shade != 0u && shadows.enabled != 0u;
     float sun = -1.0;
     for (uint i = 0u; i < lighting.count.x; i++) {
         Light light = lighting.lights[i];

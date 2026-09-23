@@ -23,31 +23,27 @@ pub const Quality = enum {
     /// smooth edges, and far out.
     high,
 
-    /// The maps' size and the cascades' reaches, or null for none.
-    pub fn settings(quality: Quality) ?srshadow.Settings {
+    /// What a quality draws: the maps and the cascades the engine fits them to, and how the
+    /// lookup filters them.
+    const Detail = struct {
+        settings: srshadow.Settings,
+        /// The lookup's taps across and down.
+        across: u32,
+        /// How far apart they are, in texels: the wider, the softer the shadows' edges.
+        spacing: f32,
+    };
+
+    fn detail(quality: Quality) ?Detail {
         return switch (quality) {
             .off => null,
-            .low => .{ .texels = 1024, .reaches = .{ 1500, 6000, 20000, 60000 } },
-            .high => .{ .texels = 4096, .reaches = .{ 2500, 10000, 35000, 120000 } },
+            .low => .{ .settings = .{ .texels = 1024, .reaches = .{ 1500, 6000, 20000, 60000 } }, .across = 2, .spacing = 1 },
+            .high => .{ .settings = .{ .texels = 4096, .reaches = .{ 2500, 10000, 35000, 120000 } }, .across = 4, .spacing = 1.4 },
         };
     }
 
-    /// How many texels across each cascade's map is, or 0 for none.
-    pub fn texels(quality: Quality) u32 {
-        return if (quality.settings()) |found| found.texels else 0;
-    }
-
-    /// Whether the lookup takes sixteen taps rather than four.
-    fn wide(quality: Quality) bool {
-        return quality == .high;
-    }
-
-    /// How far apart the lookup's taps are, in texels: the wider, the softer the shadows' edges.
-    fn spacing(quality: Quality) f32 {
-        return switch (quality) {
-            .off, .low => 1,
-            .high => 1.4,
-        };
+    /// The maps' size and the cascades' reaches, or null for none.
+    pub fn settings(quality: Quality) ?srshadow.Settings {
+        return if (quality.detail()) |found| found.settings else null;
     }
 };
 
@@ -55,33 +51,40 @@ pub const Quality = enum {
 pub const Uniforms = extern struct {
     /// Each map's box: the cascades', then the cockpit's.
     boxes: [srshadow.map_count]Box = @splat(.{}),
-    /// The first: 1 where the frame has shadows, and 0 where it has none. The second: 1 for
-    /// sixteen taps, 0 for four. The third: 1 where the cockpit has a map.
-    settings: [4]f32 = @splat(0),
+    /// 1 where the frame has shadows.
+    enabled: u32 = 0,
+    /// The lookup's taps across and down.
+    across: u32 = 0,
+    /// 1 where the cockpit has a map.
+    cockpit: u32 = 0,
+    unused: u32 = 0,
 
     const Box = extern struct {
         rows: [3][4]f32 = @splat(@splat(0)),
-        /// A cascade's view depth, which it reaches to; a texel's width in the world; how much of
-        /// the sun a full shadow takes away; and how far apart the lookup's taps are, as a share
-        /// of the map.
-        extent: [4]f32 = @splat(0),
+        /// For a cascade, the view depth it reaches to.
+        far: f32 = 0,
+        /// A texel's width in the world, which a pixel's place is moved off its surface by.
+        texel: f32 = 0,
+        /// How much of the sun a full shadow takes away.
+        depth: f32 = 0,
+        /// How far apart the lookup's taps are, as a share of the map.
+        step: f32 = 0,
     };
 
-    fn of(frame: *const srshadow.Frame, quality: Quality) Uniforms {
-        const step = quality.spacing() / @as(f32, @floatFromInt(quality.texels()));
-        const wide: f32 = @floatFromInt(@intFromBool(quality.wide()));
-        var uniforms: Uniforms = .{ .settings = .{ 1, wide, @floatFromInt(@intFromBool(frame.cockpit != null)), 0 } };
+    fn of(frame: *const srshadow.Frame, detail: Quality.Detail) Uniforms {
+        const step = detail.spacing / @as(f32, @floatFromInt(detail.settings.texels));
+        var uniforms: Uniforms = .{ .enabled = 1, .across = detail.across, .cockpit = @intFromBool(frame.cockpit != null) };
         for (&uniforms.boxes, 0..) |*taken, map| {
             const box = frame.box(map) orelse continue;
             const look: Look = if (map == srshadow.cockpit_map) .cockpit else .world;
-            taken.* = .{ .rows = box.rows, .extent = .{ box.far, box.texel, look.depth, step * look.spread } };
+            taken.* = .{ .rows = box.rows, .far = box.far, .texel = box.texel, .depth = look.depth, .step = step * look.spread };
         }
         return uniforms;
     }
 
     comptime {
         std.debug.assert(@sizeOf(Box) == 64);
-        std.debug.assert(@offsetOf(Uniforms, "settings") == srshadow.map_count * 64);
+        std.debug.assert(@offsetOf(Uniforms, "enabled") == srshadow.map_count * 64);
     }
 };
 
@@ -123,7 +126,7 @@ pub const Shadows = struct {
 
     pub fn init(handle: *c.SDL_GPUDevice, spirv: bool, quality: Quality) gpu.Error!Shadows {
         const format = depthFormat(handle);
-        const maps = try mapsTexture(handle, format, @max(quality.texels(), 1));
+        const maps = try mapsTexture(handle, format, if (quality.settings()) |found| found.texels else 1);
         errdefer c.SDL_ReleaseGPUTexture(handle, maps);
         var sampler_info = std.mem.zeroes(c.SDL_GPUSamplerCreateInfo);
         sampler_info.min_filter = c.SDL_GPU_FILTER_LINEAR;
@@ -206,22 +209,17 @@ pub const Shadows = struct {
         return c.SDL_CreateGPUGraphicsPipeline(handle, &info) orelse gpu.fail("SDL_CreateGPUGraphicsPipeline");
     }
 
-    /// How many texels across the maps are, or 0 without shadows.
-    pub fn texels(shadows: Shadows) u32 {
-        return shadows.quality.texels();
-    }
-
     /// Takes the frame's shadows, which last until it is drawn.
     pub fn take(shadows: *Shadows, frame: *const srshadow.Frame) void {
-        if (shadows.quality == .off) return;
+        const detail = shadows.quality.detail() orelse return;
         shadows.frame = frame;
-        shadows.uniforms = .of(frame, shadows.quality);
+        shadows.uniforms = .of(frame, detail);
     }
 
     /// Forgets the last frame's shadows, as a frame begins.
     pub fn clear(shadows: *Shadows) void {
         shadows.frame = null;
-        shadows.uniforms.settings[0] = 0;
+        shadows.uniforms.enabled = 0;
     }
 
     /// Sends the casters up with the frame's other uploads.
@@ -269,14 +267,19 @@ test "Uniforms.of" {
         const n: f32 = @floatFromInt(index);
         cascade.* = .{ .rows = @splat(@splat(n)), .far = 1000 * (n + 1), .texel = n + 0.5, .half = 1 };
     }
-    const uniforms: Uniforms = .of(&frame, .high);
-    try std.testing.expectEqual([4]f32{ 1, 1, 0, 0 }, uniforms.settings);
-    try std.testing.expectEqual(0, Uniforms.of(&frame, .low).settings[1]);
-    try std.testing.expectEqual([4]f32{ 3000, 2.5, 1, 1.4 / 4096.0 }, uniforms.boxes[2].extent);
+    const high = Quality.high.detail().?;
+    const uniforms: Uniforms = .of(&frame, high);
+    try std.testing.expectEqual(1, uniforms.enabled);
+    try std.testing.expectEqual(4, uniforms.across);
+    try std.testing.expectEqual(0, uniforms.cockpit);
+    try std.testing.expectEqual(2, Uniforms.of(&frame, Quality.low.detail().?).across);
+    const third = uniforms.boxes[2];
+    try std.testing.expectEqual([4]f32{ 3000, 2.5, 1, 1.4 / 4096.0 }, [4]f32{ third.far, third.texel, third.depth, third.step });
     try std.testing.expectEqual([4]f32{ 3, 3, 3, 3 }, uniforms.boxes[3].rows[1]);
     // With a cockpit, its box follows the cascades', its shadows fainter and softer.
     frame.cockpit = .{ .rows = @splat(@splat(9)), .texel = 0.01, .half = 20 };
-    const inside: Uniforms = .of(&frame, .high);
-    try std.testing.expectEqual(1, inside.settings[2]);
-    try std.testing.expectEqual([4]f32{ 0, 0.01, 0.4, 3 * 1.4 / 4096.0 }, inside.boxes[srshadow.cockpit_map].extent);
+    const inside: Uniforms = .of(&frame, high);
+    try std.testing.expectEqual(1, inside.cockpit);
+    const cockpit = inside.boxes[srshadow.cockpit_map];
+    try std.testing.expectEqual([3]f32{ 0.01, 0.4, 3 * 1.4 / 4096.0 }, [3]f32{ cockpit.texel, cockpit.depth, cockpit.step });
 }
