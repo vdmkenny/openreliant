@@ -41,10 +41,11 @@ with their keys but don't show anything yet.
 
 Your ship carries the guns its model holds. Hold the fire key and they fire, drawing on the gun
 charge the power ball feeds, at the rate and cost their type has in the game's own data. The shots
-themselves are not drawn yet, so nothing leaves the muzzle and nothing can be destroyed.
+fly, each gun type drawn as the game draws it, and a fighter you hit loses its shields and then its
+armour. Shots still pass through capital ships.
 
-There are no missiles, missions or sound yet. See the [milestones](../../milestones) for what's
-planned.
+Nothing can be destroyed yet, and there are no missiles, missions or sound. See the
+[milestones](../../milestones) for what's planned.
 
 ## Installing and playing
 

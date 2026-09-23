@@ -24,6 +24,7 @@ const camera = @import("camera.zig");
 const aigeneric = @import("aigeneric.zig");
 const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
+const guns = @import("guns.zig");
 const hog_snd = @import("hog_snd.zig");
 const hud = @import("hud.zig");
 const matmanager = @import("matmanager.zig");
@@ -173,8 +174,9 @@ pub const Frame = struct {
 };
 
 /// `mission_frame` (`0x004924B0`), as far as the objects go: every object's orders, which fly the
-/// ships and read the player's controls, and then the frames they are drawn at. A mission and the
-/// sandbox alike run this once a frame, before the camera's own frame and anything drawn.
+/// ships and read the player's controls, then the frames they are drawn at, and then the shots in
+/// flight (`guns.bulletsFrame`). A mission and the sandbox alike run this once a frame, before the
+/// camera's own frame and anything drawn.
 ///
 /// Not ported: the rest of the frame's work, which is the mission's events, its scripts and the
 /// missiles ([#30](https://github.com/vdmkenny/openreliant/issues/30),
@@ -182,6 +184,7 @@ pub const Frame = struct {
 pub fn missionFrame(orders: aigeneric.Context, fraction: f32) void {
     aigeneric.ordersUpdate(orders);
     frameObjects(orders.world.objects, fraction);
+    guns.bulletsFrame(orders.world, orders.clock, fraction);
 }
 
 /// `mission_frame`'s pass over the objects before the camera's frame: each live object, save
@@ -210,6 +213,7 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     var attachments = frame.attachments;
     attachments.scale = context.projection.scale[0];
     try drawObjects(gpa, scene, frame.objects, attachments);
+    try guns.drawBullets(gpa, scene, &frame.objects.bullets, context.hardware);
     try frame.space.frame(gpa, scene, context, frame.view, frame.cockpit_mode);
     if (context.hardware) try frame.sky.frame(gpa, scene, context);
     if (frame.view == .cockpit and frame.cockpit_mode == .cockpit and context.hardware) {

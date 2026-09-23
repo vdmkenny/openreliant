@@ -716,8 +716,7 @@ pub const World = struct {
 /// The player's own order runs here as well as once a frame, while its top order is Player
 /// Control, so the controls are read on every step.
 ///
-/// Not ported yet: the mouse; what runs after `objects_update`, the missiles and the bullets
-/// (`0x00495720`, `0x0047A4E0`).
+/// Not ported yet: the mouse; the missiles `objects_update` is followed by (`0x00495720`).
 pub fn simulationStep(clock: *Clock, devices: *input.Devices, world: World) bool {
     clock.simulation_counter += 1;
     if (clock.simulation_counter < ticks_per_step) return false;
@@ -734,12 +733,7 @@ pub fn simulationStep(clock: *Clock, devices: *input.Devices, world: World) bool
         updateTree(&object.root, if (slot.model) |*model| model else null, world.events);
         const combat = slot.combat orelse continue;
         rechargeShields(object, combat, if (index == all.player) world.player.shield_reserves else null);
-        guns.step(.{
-            .stats = &all.gun_stats,
-            .frame_start = clock.frame_start,
-            .random = world.random,
-            .player = index == all.player,
-        }, object, combat, slot.guns, slot.gun_groups);
+        guns.step(world, clock, index);
     }
     // The player's own order runs again here, before the objects move, so the controls tell on
     // every step rather than once a frame.
@@ -748,6 +742,7 @@ pub fn simulationStep(clock: *Clock, devices: *input.Devices, world: World) bool
         aigeneric.objectOrders(.{ .world = world, .clock = clock, .devices = devices }, all.player);
     }
     create.objectsUpdate(world);
+    guns.moveBullets(world);
     return true;
 }
 

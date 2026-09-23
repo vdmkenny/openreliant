@@ -48,8 +48,8 @@ const usage =
     \\                            shows them scaled; for a screenshot larger than the display
     \\  --fullscreen              fill the display; Alt and Enter switch while running
     \\  --original                the original's look: 16-bit colour, one sample a pixel,
-    \\                            bilinear filtering, lighting each vertex, and motion that
-    \\                            moves on with the game's ticks
+    \\                            bilinear filtering, lighting each vertex, motion that moves on
+    \\                            with the game's ticks, and lights from the latest shots only
     \\  --16-bit                  16-bit colour, dithered
     \\  --msaa <1|2|4|8>          samples a pixel; 4 by default
     \\  --filter <original|trilinear|crisp>
@@ -58,6 +58,8 @@ const usage =
     \\  --no-pixel-lighting       light each vertex rather than each pixel, as the original does
     \\  --no-smooth-motion        move what moves on with the game's ticks, a hundred a second,
     \\                            as the original does, rather than on every frame
+    \\  --few-shot-lights         light only the latest two of the player's shots and the latest
+    \\                            two of everyone else's, as the original does
     \\  --no-dither               draw without dithering 32-bit colour
     \\  --no-vsync                draw without waiting for the display
     \\  --fps <rate>              frames a second at most; without vsync, the display's rate by
@@ -80,8 +82,10 @@ const Options = struct {
     /// Draw what moves between the game's ticks as well as between its steps
     /// (`Clock.stepFraction`).
     smooth_motion: bool = true,
+    /// Which shots cast a light: every one, or the latest two of each side as the original does.
+    shot_lights: game.guns.ShotLights = .every_shot,
 
-    const Flag = enum { @"--fullscreen", @"--original", @"--16-bit", @"--no-vsync", @"--no-bloom", @"--no-dither", @"--no-pixel-lighting", @"--no-smooth-motion", @"--software" };
+    const Flag = enum { @"--fullscreen", @"--original", @"--16-bit", @"--no-vsync", @"--no-bloom", @"--no-dither", @"--no-pixel-lighting", @"--no-smooth-motion", @"--few-shot-lights", @"--software" };
     const Option = enum { @"--ship", @"--view", @"--screenshot", @"--size", @"--msaa", @"--filter", @"--fps" };
 
     fn parse(args: []const [:0]const u8) error{Usage}!Options {
@@ -94,6 +98,7 @@ const Options = struct {
                 .@"--original" => {
                     options.settings = .original;
                     options.smooth_motion = false;
+                    options.shot_lights = .latest_two;
                 },
                 .@"--16-bit" => options.settings.sixteen_bit = true,
                 .@"--no-vsync" => options.settings.vsync = false,
@@ -101,6 +106,7 @@ const Options = struct {
                 .@"--no-dither" => options.settings.dither = false,
                 .@"--no-pixel-lighting" => options.settings.pixel_lighting = false,
                 .@"--no-smooth-motion" => options.smooth_motion = false,
+                .@"--few-shot-lights" => options.shot_lights = .latest_two,
                 .@"--software" => options.software = true,
             } else if (std.meta.stringToEnum(Option, arg)) |option| {
                 i += 1;
@@ -309,6 +315,10 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         .global_palette = global_palette,
     });
     defer sandbox.deinit();
+    // What the shots are drawn with, built once (`guns_init`); the Turret Flak's shell is a ship
+    // type's model, so it comes after the types' loader.
+    sandbox.objects.bullets.looks = try game.guns.Looks.create(arena, &textures, sandbox.types.interface());
+    sandbox.objects.bullets.shot_lights = options.shot_lights;
     var player: engine.input.Player = .{};
     var devices: engine.input.Devices = .{};
     // The game's settings file, which `load_key_config` reads the input settings from. If it's
@@ -1007,7 +1017,9 @@ test Options {
     try std.testing.expect(!retro.settings.vsync);
     try std.testing.expectEqual(0, retro.fps.?);
     try std.testing.expect(!retro.smooth_motion);
+    try std.testing.expectEqual(.latest_two, retro.shot_lights);
     try std.testing.expect(!(try Options.parse(&.{"--no-smooth-motion"})).smooth_motion);
+    try std.testing.expectEqual(.latest_two, (try Options.parse(&.{"--few-shot-lights"})).shot_lights);
     try std.testing.expect((try Options.parse(&.{})).smooth_motion);
     try std.testing.expectEqual([2]u32{ 3840, 2160 }, (try Options.parse(&.{ "--size", "3840x2160" })).settings.size.?);
     for ([_][:0]const u8{ "3840", "0x100", "100x", "1x2x3", "99999x100" }) |bad| {
