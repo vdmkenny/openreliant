@@ -485,10 +485,7 @@ pub fn componentDamage(world: gameobj.World, index: u16, component: *objects.Mod
     const display = smartTargeting(world, attacker, kind) orelse return;
     if (object.side != .hostile) return;
     const count: usize = @intCast(@max(object.component_count, 0));
-    const listed = for (slot.components[0..count], 0..) |part, n| {
-        if (part == struck) break n;
-    } else null;
-    if (listed) |n| {
+    if (std.mem.indexOfScalar(?*objects.Model.Part, slot.components[0..count], struck)) |n| {
         input.setPlayerTarget(display, all, @intCast(index), @intCast(n), false);
     } else if (all.slots[all.player].orders[0].target.index != index) {
         input.setPlayerTarget(display, all, @intCast(index), -1, false);

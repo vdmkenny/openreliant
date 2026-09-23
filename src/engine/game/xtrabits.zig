@@ -150,6 +150,11 @@ const Outcode = packed struct(u4) {
     fn outside(code: Outcode) bool {
         return @as(u4, @bitCast(code)) != 0;
     }
+
+    /// Whether both points lie beyond one edge, which leaves the whole line beyond it.
+    fn shared(a: Outcode, b: Outcode) bool {
+        return @as(u4, @bitCast(a)) & @as(u4, @bitCast(b)) != 0;
+    }
 };
 
 /// `0x004AAFC0`: clips the line from `from` to `to` to a pane at the screen's corner whose last
@@ -159,7 +164,7 @@ const Outcode = packed struct(u4) {
 pub fn clipLine(last: [2]i32, from: *[2]i32, to: *[2]i32) bool {
     var codes: [2]Outcode = .{ .of(from.*, last), .of(to.*, last) };
     while (codes[0].outside() or codes[1].outside()) {
-        if (@as(u4, @bitCast(codes[0])) & @as(u4, @bitCast(codes[1])) != 0) return false;
+        if (codes[0].shared(codes[1])) return false;
         const end = if (codes[0].outside()) from else to;
         const out = if (codes[0].outside()) codes[0] else codes[1];
         const a = from.*;

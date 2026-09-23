@@ -43,6 +43,7 @@ const aigeneric = @import("aigeneric.zig");
 const create = @import("create.zig");
 const xtrabits = @import("xtrabits.zig");
 const guns = @import("guns.zig");
+const objects = @import("objects.zig");
 const libcmt = @import("../libcmt.zig");
 const Clock = @import("main.zig").Clock;
 const Vector = math.Vector;
@@ -611,7 +612,7 @@ pub const Resources = struct {
     /// written in.
     font: Opened,
     /// The fonts the target's ranges are written in.
-    target_fonts: struct { small: Opened, new: Opened },
+    target_fonts: TargetFonts,
     /// The power ball's tables, and the image it is drawn into.
     ball: *power.Ball,
 
@@ -635,10 +636,6 @@ pub const Resources = struct {
 
     fn openFont(gpa: Allocator, archive: bigfile.Hog, name: []const u8, global: ?*const [spr.palette_size]u8) !Opened {
         return .open(try fnt.Font.parse(try archive.readFile(gpa, name)), global);
-    }
-
-    fn targetFonts(resources: *Resources) TargetFonts {
-        return .{ .small = &resources.target_fonts.small, .new = &resources.target_fonts.new };
     }
 };
 
@@ -700,7 +697,7 @@ pub fn draw(state: *State, resources: *Resources, frame: Frame) (spr.Error || Al
         try state.drawJumpPrompt(frame.ready, art, frame.gpa, frame.target, frame.screen, frame_duration, colour, scale);
         if (frame.sight) |sight| {
             const scene: TargetScene = .{ .sight = sight, .all = frame.all, .mode = frame.mode };
-            lead = try drawTarget(state, art, resources.targetFonts(), frame.gpa, frame.target, scene, frame.edge_line, colour, scale);
+            lead = try drawTarget(state, art, &resources.target_fonts, frame.gpa, frame.target, scene, frame.edge_line, colour, scale);
         }
         try state.drawEjectMarker(art, frame.gpa, frame.target, frame.screen, frame_duration, colour, scale);
         try state.drawScanner(frame.scanning, frame.clock.game_ticks, art, frame.gpa, frame.target, frame.screen, colour, scale);
@@ -2422,8 +2419,8 @@ pub fn drawReticle(
 /// What the display draws the target with, besides its shapes: `smlfont.fnt`, for the range by
 /// the marker at the screen's edge, and `newfont.fnt`, for the range by the brackets.
 pub const TargetFonts = struct {
-    small: *Opened,
-    new: *Opened,
+    small: Opened,
+    new: Opened,
 
     pub const small_name = "SMLFONT.FNT";
     pub const new_name = "NEWFONT.FNT";
@@ -2445,10 +2442,21 @@ pub const TargetScene = struct {
 /// arrow's tip; `--original` starts it where the game does.
 pub const EdgeLine = enum { from_tip, original };
 
+/// What the display draws one way for a hostile target and another for the rest.
+pub fn Sided(comptime T: type) type {
+    return struct {
+        hostile: T,
+        other: T,
+
+        pub fn of(sided: @This(), hostile: bool) T {
+            return if (hostile) sided.hostile else sided.other;
+        }
+    };
+}
+
 /// The shapes of the target's brackets, the first of four for the corners: top left, top right,
 /// bottom left and bottom right.
-pub const brackets_shape: u16 = 0x122;
-pub const hostile_brackets_shape: u16 = 0x126;
+pub const brackets_shape: Sided(u16) = .{ .hostile = 0x126, .other = 0x122 };
 /// The least the brackets stand apart either way, in the display's own pixels (`0x004DC624`).
 pub const least_brackets: f32 = 15;
 /// Where the range stands from the bottom right bracket, ending there (`0x004DC620`).
@@ -2457,10 +2465,9 @@ pub const range_offset: [2]i32 = .{ 10, 9 };
 /// the display's own pixels (`0x004DC56C`).
 pub const lead_shape: u16 = 0x12F;
 pub const lead_gap: f32 = 5;
-/// The palette entries the arrow for a target out of sight is drawn in, hostile or not, and the
-/// lead cursor's line.
-pub const hostile_line: u8 = 0x26;
-pub const other_line: u8 = 0x62;
+/// The palette entries the arrow for a target out of sight is drawn in, the hostile one also the
+/// lead cursor's line's: red, and green.
+pub const line_colour: Sided(u8) = .{ .hostile = 0x26, .other = 0x62 };
 /// How far from the middle of the screen the arrow's tip and its base stand, and how far either
 /// side of its base its wings reach, in the display's own pixels (`0x004DC724`, `0x004DC788`,
 /// `0x004DC424`).
@@ -2468,16 +2475,15 @@ pub const arrow_tip: f32 = 32;
 pub const arrow_back: f32 = 10;
 pub const arrow_wing: f32 = 4;
 
-/// The marker at the screen's edge for a target out of sight: its shapes, the first of four for
-/// a hostile target and of four more for the rest, one for each edge.
+/// The marker at the screen's edge for a target out of sight: its shapes, the first of four,
+/// one for each edge.
 pub const Edge = enum(u2) {
     bottom = 0,
     left = 1,
     right = 2,
     top = 3,
 
-    pub const hostile_shape: u16 = 0x16C;
-    pub const other_shape: u16 = 0x170;
+    pub const shape: Sided(u16) = .{ .hostile = 0x16C, .other = 0x170 };
 
     /// Where the shape and the range stand from where the line meets the edge, in the display's
     /// own pixels, and how the range is aligned; at the top and on the left the game places the
@@ -2532,7 +2538,7 @@ pub fn pointerDirection(ship: math.Place, at: Vector) [2]f32 {
 pub fn drawTarget(
     state: *State,
     art: *Art,
-    fonts: TargetFonts,
+    fonts: *TargetFonts,
     gpa: Allocator,
     target: device.Device,
     scene: TargetScene,
@@ -2554,16 +2560,13 @@ pub fn drawTarget(
     const node: math.Place = if (part) |found| .{ .position = found.object.position, .orientation = found.object.orientation } else struck.drawn;
     const seen = sight.view(node.position);
     if (!sight.onScreen(sight.pixel(seen)) or seen[2] < 0) {
-        try drawOffScreen(art, fonts.small, gpa, target, sight, pointerDirection(ship.drawn, node.position), hostile, range, scene.mode, edge_line, colour, scale);
+        try drawOffScreen(art, &fonts.small, gpa, target, sight, pointerDirection(ship.drawn, node.position), hostile, range, scene.mode, edge_line, colour, scale);
         return null;
     }
     if (!(seen[2] > 0)) return null;
 
     // The node's box, the component's for a subtarget, as the camera sees it.
-    const box: [2]Vector = if (part) |found|
-        found.object.levels[found.object.level].mesh.bounds
-    else
-        .{ gameobj.vector(struck.object.bounds_min), gameobj.vector(struck.object.bounds_max) };
+    const box = if (part) |found| partBox(found) else [2]Vector{ gameobj.vector(struck.object.bounds_min), gameobj.vector(struck.object.bounds_max) };
     var low: Point = @splat(100000);
     var high: Point = @splat(-100000);
     for (0..8) |n| {
@@ -2579,7 +2582,7 @@ pub fn drawTarget(
     const brightness = @min(@as(f32, @floatFromInt(state.lock)) * 0.01, 1);
     if (brightness > 0.1) {
         const dim: [4]f32 = .{ colour[0] * brightness, colour[1] * brightness, colour[2] * brightness, colour[3] };
-        const first = if (hostile) hostile_brackets_shape else brackets_shape;
+        const first = brackets_shape.of(hostile);
         const ends = [2]Point{ low, high };
         for (0..4) |n| {
             const corner: Corner = @bitCast(@as(u3, @intCast(n)));
@@ -2588,7 +2591,7 @@ pub fn drawTarget(
         }
     }
     const offset = pointOf(range_offset) * @as(Point, @splat(scale));
-    _ = try drawText(fonts.new, gpa, target, .{ round(high[0]) + round(offset[0]), round(high[1] + offset[1]) }, range, colour, .right, scale);
+    _ = try drawText(&fonts.new, gpa, target, .{ round(high[0]) + round(offset[0]), round(high[1] + offset[1]) }, range, colour, .right, scale);
 
     if (struck.object.flags.components or struck.object.side == .friendly) return null;
     const lead = ai.leadAim(all, all.player, state.shown, 1) orelse return null;
@@ -2597,9 +2600,17 @@ pub fn drawTarget(
     try drawShape(art, gpa, target, lead_shape, cursor, colour, scale);
     const toward: Point = sight.projection.project(sight.view(struck.drawn.position));
     if (leadLine(aim, toward, state.lock, scale)) |line| {
-        drawLine(target, whole(line[0]), whole(line[1]), art.paletteColour(hostile_line), scale);
+        drawLine(target, whole(line[0]), whole(line[1]), art.paletteColour(line_colour.hostile), scale);
     }
     return cursor;
+}
+
+/// The box of the mesh a part draws at its level: none, at its origin, for a part with no mesh,
+/// which the game never has a subtarget of.
+fn partBox(part: *const objects.Model.Part) [2]Vector {
+    const levels = part.object.levels;
+    if (part.object.level >= levels.len) return .{ @splat(0), @splat(0) };
+    return levels[part.object.level].mesh.bounds;
 }
 
 /// A corner of a box: which of its two ends it takes on each axis. The brackets' four take the
@@ -2660,7 +2671,7 @@ fn drawOffScreen(
         wings[1][axis] = middle[axis] + base - wing;
     }
     if (mode != .chase) {
-        const line = art.paletteColour(if (hostile) hostile_line else other_line);
+        const line = art.paletteColour(line_colour.of(hostile));
         for ([3][2][2]i32{ .{ tip, wings[0] }, .{ tip, wings[1] }, .{ wings[1], wings[0] } }) |ends| {
             drawLine(target, pointOf(ends[0]), pointOf(ends[1]), line, scale);
         }
@@ -2676,8 +2687,7 @@ fn drawOffScreen(
     _ = xtrabits.clipLine(last, &from, &to);
     const edge: Edge = .of(to, last);
     const spec = edge.spec();
-    const first: u16 = if (hostile) Edge.hostile_shape else Edge.other_shape;
-    try drawShape(art, gpa, target, first + @intFromEnum(edge), scaled(to, spec.shape, scale), colour, scale);
+    try drawShape(art, gpa, target, Edge.shape.of(hostile) + @intFromEnum(edge), scaled(to, spec.shape, scale), colour, scale);
     _ = try drawText(font, gpa, target, scaled(to, spec.text, scale), range, colour, spec.alignment, scale);
 }
 
@@ -2813,19 +2823,20 @@ test "a target out of sight gets an arrow and a marker" {
     const empty = std.mem.toBytes(spr.Header{ .version = spr.magic.*, .shape_count = 0 });
     var art: Art = try .init(gpa, try .parse(&empty), null);
     defer art.deinit(gpa);
-    var font: Opened = .open(try fnt.Font.parse(comptime fnt.testing.font(true)), null);
-    defer font.deinit(gpa);
-    const fonts: TargetFonts = .{ .small = &font, .new = &font };
+    const font = try fnt.Font.parse(comptime fnt.testing.font(true));
+    var fonts: TargetFonts = .{ .small = .open(font, null), .new = .open(font, null) };
+    defer fonts.small.deinit(gpa);
+    defer fonts.new.deinit(gpa);
 
     // From the cockpit, three lines of the arrow, and no lead cursor.
     const scene: TargetScene = .{ .sight = testSight(), .all = all, .mode = .cockpit };
-    try std.testing.expectEqual(null, try drawTarget(&t.state, &art, fonts, gpa, into, scene, .from_tip, .{ 1, 1, 1, 1 }, 1));
+    try std.testing.expectEqual(null, try drawTarget(&t.state, &art, &fonts, gpa, into, scene, .from_tip, .{ 1, 1, 1, 1 }, 1));
     try std.testing.expectEqual(3, counter.lines);
     // The chase view draws none.
     counter.lines = 0;
     var chase = scene;
     chase.mode = .chase;
-    _ = try drawTarget(&t.state, &art, fonts, gpa, into, chase, .from_tip, .{ 1, 1, 1, 1 }, 1);
+    _ = try drawTarget(&t.state, &art, &fonts, gpa, into, chase, .from_tip, .{ 1, 1, 1, 1 }, 1);
     try std.testing.expectEqual(0, counter.lines);
 }
 

@@ -89,7 +89,7 @@ pub const Aimed = struct {
 
 pub fn aimedAt(all: *const create.Objects, target: aigeneric.Target) Aimed {
     const slot = &all.slots[@intCast(target.index)];
-    if (targetPart(all, target)) |part| return .ofPart(&slot.model.?, part);
+    if (slot.model) |*model| if (targetPart(all, target)) |part| return .ofPart(model, part);
     return .{ .position = slot.drawn.position, .radius = slot.object.radius, .orientation = slot.drawn.orientation };
 }
 
