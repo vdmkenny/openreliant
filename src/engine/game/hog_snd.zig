@@ -619,7 +619,7 @@ pub const Sound = struct {
                 },
                 .object => {
                     const slot = &scene.objects.slots[@intCast(voice.owner)];
-                    if (slot.object.type == @import("gameobj.zig").stand_in_type) {
+                    if (slot.object.type == .stand_in) {
                         sound.end3D(v);
                         continue;
                     }

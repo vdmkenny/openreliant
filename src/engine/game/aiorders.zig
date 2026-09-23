@@ -125,7 +125,7 @@ pub fn runAway(ctx: Context, index: u16) void {
     const all = ctx.world.objects;
     const slot = &all.slots[index];
     const target = slot.orders[0].target.index;
-    if (target < 0 or all.slots[@intCast(target)].object.type == gameobj.stand_in_type) {
+    if (target < 0 or all.slots[@intCast(target)].object.type == .stand_in) {
         _ = aigeneric.pop(ctx, index);
         return;
     }
@@ -194,7 +194,7 @@ test doNothing {
     try mission.init(std.testing.allocator);
     defer mission.deinit();
     const all = mission.objects;
-    const index = try mission.add(0, @splat(0));
+    const index = try mission.add(.predator, @splat(0));
     const ctx = mission.orders();
 
     all.slots[index].object.throttle = 1;

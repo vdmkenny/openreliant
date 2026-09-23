@@ -531,8 +531,10 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     var clock: game.main.Clock = .{};
     clock.start(platform.window.ticks());
     const hearing: game.hog_snd.Hearing = .{ .sound = sound, .camera = &view.place, .clock = &clock };
+    // What the explosions leave for the frames after them.
+    var explosions: game.explode.Explosions = .{};
     try sandbox.start(.{
-        .world = .{ .objects = sandbox.objects, .player = &player, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing },
+        .world = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing, .camera = &view, .explosions = &explosions },
         .clock = &clock,
         .devices = &devices,
     }, @intCast(options.ship));
@@ -578,6 +580,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
 
     // The window's activation, which a screenshot doesn't wait on.
     var app: game.winmain.App = .{};
+    // When the sandbox starts again after the player's ship is destroyed.
+    var restart_at: ?u32 = null;
     while (true) {
         while (window.poll()) |event| switch (event) {
             .quit => return,
@@ -597,7 +601,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         if (frames_left != null) clock.advanceBy(now / platform.window.tick_nanoseconds, 1) else clock.advanceToFine(now, platform.window.tick_nanoseconds);
         // While the communications window is open the keys 1 to 8 are its menu's.
         devices.keyboard.numbers_taken = display.state.windows.status.get(.comms).phase == .open;
-        const world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing };
+        const world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing, .camera = &view, .explosions = &explosions };
         const orders: game.aigeneric.Context = .{ .world = world, .clock = &clock, .devices = &devices };
         while (clock.nextTick(&devices, world)) |_| {}
         clock.frameBegin();
@@ -609,7 +613,19 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
 
         const ticks: u32 = @intCast(@max(clock.frame_duration, 0));
         const at: u32 = @intCast(@max(clock.mission_ticks, 0));
+        explosions.update(clock.frame_duration);
         if (devices.keyboard.pressed(engine.input.scan.escape, .none, true)) return;
+        // The player's ship gone, the sandbox starts again once the camera has watched for a
+        // while, where a mission would end and go to its debriefing.
+        if (sandbox.player().object.type == .stand_in) {
+            const again = restart_at orelse at + restart_after;
+            restart_at = again;
+            if (at >= again) {
+                restart_at = null;
+                try sandbox.start(orders, sandbox.player_type);
+                settleStart(&display, &sandbox, &view, at);
+            }
+        }
         for ([_]struct { u8, isize }{ .{ f2, -1 }, .{ f3, 1 } }) |step| {
             if (!devices.keyboard.pressed(step[0], .none, true)) continue;
             const was = sandbox.player_type;
@@ -626,9 +642,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
                 };
                 break;
             }
-            game.main.fitDevices(&display.state, sandbox.player_type, sandbox.canCloak());
-            // A ship of another size wants another view to be seen in.
-            _ = view.setView(startingView(sandbox.player(), view.cockpit_mode), sandbox.objects.player, false, true, at);
+            settleStart(&display, &sandbox, &view, at);
         }
         if (devices.keyboard.pressed(f4, .none, true)) sandbox.bringWing(orders);
 
@@ -652,7 +666,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             break :input game.main.cockpitInput(&cockpit.model, cockpit.source, rates, speed);
         } else null;
         const subject = playerSubject(slot);
-        if (view.frame(.{ .object = subject, .player = subject, .ticks = ticks, .cockpit = cockpit_input, .random = &rand })) |next| {
+        const marker = if (explosions.marker) |left| left.position else null;
+        if (view.frame(.{ .object = subject, .player = subject, .ticks = ticks, .now = at, .marker = marker, .cockpit = cockpit_input, .random = &rand })) |next| {
             _ = view.setView(next, sandbox.objects.player, false, true, at);
         }
         // From its cockpit, the ship is not drawn, as `camera_set_view` sees to.
@@ -754,7 +769,7 @@ fn playerSubject(slot: *const game.create.Slot) camera.Subject {
         // The chase view sits farther back the more throttle the ship carries and swings against
         // its rates of turn, so it lags a turn rather than riding rigidly behind the ship.
         .motion = .{
-            .ship_type = @intCast(live.type),
+            .ship_type = live.type,
             .throttle = live.throttle,
             .afterburner = live.afterburner,
             .pitch_rate = live.pitch_rate,
@@ -852,7 +867,6 @@ const Sandbox = struct {
 
     /// The Reliant, which the sandbox starts ahead of the player and turned across its way. It flies its heading at `reliant_speed`, a tenth of the 100 its type cruises at,
     /// which carries it slowly across the player's way.
-    const reliant_type = 0x0C;
     const reliant_at: math.Vector = .{ 6000, -9000, 48000 };
     const reliant_turn: f32 = 1.1;
     const reliant_speed: i32 = 10;
@@ -860,7 +874,6 @@ const Sandbox = struct {
     /// `wing_spacing` apart. A Sabre flies 300 a step, 7500 a second, so they take about 20
     /// seconds to arrive; their models are drawn once they are within 25000, a fighter's last
     /// level of detail.
-    const wing_type = 0x2B;
     const wing_size = 4;
     const wing_ahead: f32 = 150000;
     const wing_spacing: f32 = 3000;
@@ -904,19 +917,21 @@ const Sandbox = struct {
     /// player's type.
     fn start(sandbox: *Sandbox, orders: game.aigeneric.Context, ship_type: u8) !void {
         if (orders.world.hearing) |hearing| game.sound3d.endAll(hearing.sound);
+        orders.world.player.ending = .playing;
+        if (orders.world.explosions) |explosions| explosions.* = .{};
         sandbox.objects.reset(sandbox.random);
-        const index = try sandbox.create(ship_type, @splat(0));
+        const index = try sandbox.create(@enumFromInt(ship_type), @splat(0));
         if (sandbox.objects.slots[index].model == null) return error.NoModel;
         // The engine's sound, which a mission starts as the player's ship launches (`launch_run`).
         if (orders.world.hearing) |hearing| {
-            const engine_sound = game.sound3d.engineSound(ship_type);
+            const engine_sound = game.sound3d.engineSound(@enumFromInt(ship_type));
             _ = game.sound3d.play(hearing.sound, hearing.scene(orders.world), null, null, index, engine_sound, 0, .player_engines);
         }
         // The order a mission's start gives the player's ship, which its controls fly it by.
         _ = game.aigeneric.push(orders, index, .player_control, .none) catch |err| {
             std.log.warn("the player's controls are left out: {s}", .{@errorName(err)});
         };
-        if (sandbox.create(reliant_type, reliant_at)) |reliant| {
+        if (sandbox.create(.reliant, reliant_at)) |reliant| {
             const slot = &sandbox.objects.slots[reliant];
             game.objects.setOrientation(&slot.object, &slot.drawn, math.rotation(.y, reliant_turn));
             // Fly with nothing to fly to holds the heading it starts on, at the speed in its data.
@@ -930,7 +945,7 @@ const Sandbox = struct {
         sandbox.player_type = ship_type;
     }
 
-    fn create(sandbox: *Sandbox, ship_type: u32, at: math.Vector) game.create.Error!u16 {
+    fn create(sandbox: *Sandbox, ship_type: game.gameobj.Type, at: math.Vector) game.create.Error!u16 {
         return game.create.createObject(sandbox.objects, sandbox.tables, sandbox.types.interface(), null, ship_type, at, sandbox.random);
     }
 
@@ -944,7 +959,7 @@ const Sandbox = struct {
         for (0..wing_size) |place| {
             const across = (@as(f32, @floatFromInt(place)) - @as(f32, wing_size - 1) / 2) * wing_spacing;
             const at = from + math.transform(root.next_orientation, .{ across, 0, wing_ahead });
-            const index = sandbox.create(wing_type, at) catch |err| {
+            const index = sandbox.create(.sabre, at) catch |err| {
                 std.log.warn("the wing is left out: {s}", .{@errorName(err)});
                 return;
             };
@@ -1067,6 +1082,16 @@ const hud_font = "FONT.FNT";
 
 /// What draws the head-up display over the finished scene. `srcore.render` reaches it where
 /// Surrender reaches `hud_draw`, through the overlay it is handed.
+/// How long the camera watches the player's ship's end before the sandbox starts again, in ticks.
+const restart_after = 500;
+
+/// What a start of the sandbox leaves the player: its devices fitted to the ship, and the camera
+/// where a start puts it, since a ship of another size wants another view to be seen in.
+fn settleStart(display: *Display, sandbox: *Sandbox, view: *camera.Camera, at: u32) void {
+    game.main.fitDevices(&display.state, sandbox.player_type, sandbox.canCloak());
+    _ = view.setView(startingView(sandbox.player(), view.cockpit_mode), sandbox.objects.player, false, true, at);
+}
+
 const Display = struct {
     art: game.hud.Art,
     font: game.hud.Opened,

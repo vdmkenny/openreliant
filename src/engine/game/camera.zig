@@ -9,6 +9,7 @@ const srapi = @import("../surrender/surrenderlib/srapi.zig");
 const input = @import("../input.zig");
 const controls = @import("../input/controls.zig");
 const libcmt = @import("../libcmt.zig");
+const gameobj = @import("gameobj.zig");
 const Vector = math.Vector;
 
 /// The view table, which [`camera/views.zig`](camera/views.zig) transcribes.
@@ -63,8 +64,16 @@ pub const View = enum(u8) {
     target = 6,
     /// Around the player's ship, likewise.
     external = 0xC,
+    /// Behind the camera's object, turning slowly with it and pulling away, as the player's ship is
+    /// destroyed.
+    pull_back = 8,
     /// Behind a missile.
     missile = 0x12,
+    /// From where the camera was, watching its object.
+    watch = 0x1A,
+    /// From where the camera was, watching where the player's ship burst
+    /// (`explode.Explosions.marker`).
+    watch_marker = 0x1B,
     /// From a point the player flies past.
     flyby = 0x24,
     _,
@@ -191,6 +200,11 @@ pub const World = struct {
     target: ?Subject = null,
     /// Hundredths of a second since the last frame (`frame_duration`).
     ticks: u32,
+    /// The mission's ticks this frame (`frame_start`), which the views that move with time go by,
+    /// from when the view was switched to.
+    now: u32 = 0,
+    /// Where the player's ship burst, for `watch_marker`; null before it has.
+    marker: ?Vector = null,
     /// The cockpit's model and what moves it, for view 0 outside the chase mode; null for an
     /// object with no cockpit.
     cockpit: ?Cockpit.Input = null,
@@ -361,13 +375,13 @@ pub const Camera = struct {
             },
             .cockpit_left, .cockpit_right, .cockpit_rear => {
                 const n: u2 = @truncate(@intFromEnum(camera.view));
-                camera.place = if (camera.view == .cockpit_rear and world.object.motion.ship_type == kamov)
+                camera.place = if (camera.view == .cockpit_rear and world.object.motion.ship_type == .kamov)
                     kamovRear(world.object.position, world.object.orientation)
                 else
                     cockpit(n, world.object.position, world.object.orientation, world.object.eye);
             },
             .chase, chase_too => {
-                if (world.object.motion.ship_type >= 0x100) return .cockpit;
+                if (!world.object.motion.ship_type.hasStats()) return .cockpit;
                 camera.place = camera.chase.frame(world.object.motion, world.object.position, world.object.orientation);
             },
             .target => {
@@ -376,6 +390,11 @@ pub const Camera = struct {
             },
             .external => camera.place = camera.orbit.place(.external, world.player.position, world.player.radius),
             .flyby => camera.place = flyby(camera.place.position, world.player.position, world.player.orientation, world.player.radius),
+            .pull_back => camera.place = pullBack(world.object.position, world.object.orientation, world.now -| camera.switched),
+            .watch => camera.place.orientation = math.lookAt(world.object.position - camera.place.position),
+            .watch_marker => if (world.marker) |marker| {
+                camera.place.orientation = math.lookAt(marker - camera.place.position);
+            },
             else => {},
         }
         return null;
@@ -396,9 +415,7 @@ pub const chase_too: View = @enumFromInt(0x1E);
 /// How far each cockpit view turns from ahead, about the object's down axis, in degrees.
 pub const cockpit_turns = [4]f32{ 0, -90, 90, 180 };
 
-/// Ship type 0x2D, the Kamov, whose rear view is from this far along its back instead of from its
-/// eye.
-pub const kamov = 0x2D;
+/// The Kamov's rear view is from this far along its back instead of from its eye.
 pub const kamov_rear_distance: f32 = 1500;
 
 fn kamovRear(position: Vector, orientation: Matrix) Place {
@@ -567,8 +584,8 @@ pub const Chase = struct {
     /// A ship type's height, negative for above, and distance behind at no throttle.
     pub const Offset = struct { height: f32, distance: f32 };
 
-    pub fn offset(ship_type: u32) Offset {
-        return switch (ship_type) {
+    pub fn offset(ship_type: gameobj.Type) Offset {
+        return switch (ship_type.number()) {
             0x02 => .{ .height = -650, .distance = 1800 },
             0x08 => .{ .height = -850, .distance = 2000 },
             0x09 => .{ .height = -800, .distance = 2400 },
@@ -595,7 +612,7 @@ pub const Chase = struct {
 
     /// What the view follows of the object.
     pub const Motion = struct {
-        ship_type: u32 = 0,
+        ship_type: gameobj.Type = .predator,
         throttle: f32 = 0,
         afterburner: bool = false,
         pitch_rate: f32 = 0,
@@ -714,6 +731,33 @@ pub const Orbit = struct {
         return .{ .position = position, .orientation = math.lookAt(math.normalize(centre - position)) };
     }
 };
+
+// --- Pull back ---------------------------------------------------------------------------------
+
+/// How `pull_back` starts behind the object, how fast it pulls away, and how fast it turns, a
+/// tick (`0x004DC508`, `0x004DC788`, `0x004DC4D0`).
+const pull_back_distance: f32 = 3000;
+const pull_back_speed: f32 = 10;
+const pull_back_turn: f32 = 0.005;
+
+/// View `pull_back` (`camera_frame`, view 8), `ticks` after it was switched to: looking along the
+/// object's heading turned about its own `Y`, from behind it along that heading.
+pub fn pullBack(position: Vector, orientation: Matrix, ticks: u32) Place {
+    const since: f32 = @floatFromInt(ticks);
+    const turned = math.turned(orientation, .y, since * pull_back_turn);
+    const behind = pull_back_distance + since * pull_back_speed;
+    return .{ .position = position - math.forward(turned) * @as(Vector, @splat(behind)), .orientation = turned };
+}
+
+test pullBack {
+    // It starts behind the object, looking along its heading, and pulls away as it turns.
+    const start = pullBack(.{ 0, 0, 100 }, math.identity, 0);
+    try std.testing.expectEqual(Vector{ 0, 0, 100 - pull_back_distance }, start.position);
+    const later = pullBack(.{ 0, 0, 100 }, math.identity, 100);
+    const away = later.position - Vector{ 0, 0, 100 };
+    try std.testing.expectApproxEqAbs(pull_back_distance + 100 * pull_back_speed, @sqrt(math.dot(away, away)), 1e-2);
+    try std.testing.expect(later.position[0] != 0);
+}
 
 // --- Flyby --------------------------------------------------------------------------------------
 
@@ -843,7 +887,7 @@ test Chase {
     // Turning, the camera swings the other way, within its limit.
     for (0..400) |_| _ = chase.frame(.{ .yaw_rate = 1 }, .{ 0, 0, 0 }, math.identity);
     try std.testing.expectApproxEqAbs(-Chase.turn_limit, chase.yaw, 1e-3);
-    try std.testing.expectEqual(Chase.Offset{ .height = -1000, .distance = 3400 }, Chase.offset(0x2D));
+    try std.testing.expectEqual(Chase.Offset{ .height = -1000, .distance = 3400 }, Chase.offset(.kamov));
 }
 
 test Orbit {

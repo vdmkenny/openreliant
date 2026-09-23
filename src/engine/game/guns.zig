@@ -620,7 +620,7 @@ const testing = struct {
             stats.speed = 500;
             stats.lifetime = 100;
             stats.damage = .{ 10, 4 };
-            ship.index = try ship.add(ship_type, @splat(0));
+            ship.index = try ship.add(@enumFromInt(ship_type), @splat(0));
             // Its guns hold 100 and charge fully in four seconds, so a step gives them one.
             ship.mission.tables.combat[ship_type].gun_recharge = 4;
             ship.object().gun_charge = 50;
@@ -632,7 +632,7 @@ const testing = struct {
         }
 
         /// An object of type `of` at `at`, of the same model.
-        fn add(ship: *Ship, of: u32, at: Vector) !u16 {
+        fn add(ship: *Ship, of: gameobj.Type, at: Vector) !u16 {
             const mission = &ship.mission;
             return create.createObject(mission.objects, &mission.tables, ship.model.types(), null, of, at, &mission.random);
         }
@@ -1067,7 +1067,7 @@ fn candidates(world: gameobj.World, bullet: *Bullet, record: Gun, lifetime: i32)
         if (bullet.candidate_count == max_candidates) return;
         const slot = &all.slots[index];
         const object = &slot.object;
-        if (object.type >= create.ship_type_count or object.flags.no_collisions) continue;
+        if (!object.type.hasStats() or object.flags.no_collisions) continue;
         if (index == bullet.owner) continue;
         const to = gameobj.vector(object.root.next_position) - bullet.at;
         const when = std.math.clamp(math.dot(to, bullet.velocity) * along, 0, life);
@@ -1184,7 +1184,7 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
         const candidate = bullet.candidates[index];
         const slot = &all.slots[candidate.object];
         const object = &slot.object;
-        if (object.type >= create.ship_type_count) {
+        if (!object.type.hasStats()) {
             index += 1;
             continue;
         }
@@ -1337,7 +1337,7 @@ test bulletsFrame {
     const world = ship.world();
 
     // A ship of the same model, 500 ahead of the one that fires.
-    const target = try ship.add(9, .{ 0, 0, 500 });
+    const target = try ship.add(@enumFromInt(9), .{ 0, 0, 500 });
     const slot = &ship.mission.objects.slots[target];
     slot.drawn = .{ .position = .{ 0, 0, 500 }, .orientation = math.identity };
     const struck = &slot.object;
@@ -1382,7 +1382,7 @@ test "the player's shifted shields take a hit before the quadrant does" {
     defer ship.deinit(gpa);
     const world = ship.world();
     // The ship that fires is the player's, so the target here is another slot shooting back.
-    const shooter = try ship.add(9, .{ 0, 0, 500 });
+    const shooter = try ship.add(@enumFromInt(9), .{ 0, 0, 500 });
     const player = &ship.mission.objects.slots[ship.mission.objects.player];
     player.drawn = .{ .position = @splat(0), .orientation = math.identity };
     ship.mission.player.shield_reserves = .{ .fore = 25, .aft = 0 };
@@ -1440,7 +1440,7 @@ test "only the latest two shots of a ring cast a light" {
     const world = ship.world();
     const bullets = &world.objects.bullets;
     // The player's ship is the first slot, and a hostile ship fires too.
-    const other = try ship.add(9, .{ 0, 0, 5000 });
+    const other = try ship.add(@enumFromInt(9), .{ 0, 0, 5000 });
     ship.mission.objects.slots[other].object.side = .hostile;
 
     // The player's third shot puts out the first one's light.
@@ -1522,7 +1522,7 @@ test "a Huge Gun's shot reaches farther, and always through the shields" {
     gun.type = .coalition_huge_gun;
 
     // A ship off to the side of the shot's path by more than its radius, but within 3000.
-    const target = try ship.add(9, .{ 1500, 0, 500 });
+    const target = try ship.add(@enumFromInt(9), .{ 1500, 0, 500 });
     const slot = &ship.mission.objects.slots[target];
     slot.drawn = .{ .position = .{ 1500, 0, 500 }, .orientation = math.identity };
     slot.object.shields = .all(0);

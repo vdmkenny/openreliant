@@ -171,11 +171,78 @@ pub const NetworkFlags = packed struct(u32) {
     _unknown_3: u29,
 };
 
+/// An object's type (`GameObject.type`): for a ship, missile, mine or asteroid its record in
+/// `shipstats.bin`, and past those what else the game places, markers and nav points among them,
+/// which have no stats. The names are the port's, for the types the game's code singles out.
+pub const Type = enum(u32) {
+    predator = 0x00,
+    reliant = 0x0C,
+    /// The limpet car (`limpet_t_car.shp`).
+    limpet_car = 0x1D,
+    ripper = 0x1F,
+    sabre = 0x2B,
+    kamov = 0x2D,
+    /// The Russian troop car (`rus_troopcar.shp`).
+    troop_car = 0x49,
+    torpedo = 0x4A,
+    /// The Russian torpedo (`rus_torp.shp`).
+    russian_torpedo = 0x5C,
+    /// The proximity mine (`mine_prox.shp`).
+    proximity_mine = 0x6F,
+    satellite = 0x71,
+    /// The Turret Flak's shell (`shell.shp`).
+    shell = 0xB1,
+    /// The limpet pod, which rides on a hull.
+    limpet_pod = 0xBC,
+    /// The markers `backdrop_place` reads a mission's sun and nebula from.
+    sun_marker = 0x3DC,
+    nebula_marker = 0x3DD,
+    /// What a slot holds until `create_object` fills it, and what a destroyed object becomes.
+    stand_in = 1001,
+    _,
+
+    /// The asteroids, `ast_1.shp` to `ast_7.shp`.
+    const asteroids = [2]u32{ 0x79, 0x7F };
+
+    comptime {
+        // The numbers are the game's own, so the models they stand for say which types they are.
+        const models = [_]struct { Type, []const u8 }{
+            .{ .predator, "uslf_prd.shp" },
+            .{ .reliant, "reliant.shp" },
+            .{ .limpet_car, "limpet_t_car.shp" },
+            .{ .ripper, "ripper_2.shp" },
+            .{ .sabre, "rus_sabre.shp" },
+            .{ .kamov, "rus_kamov.shp" },
+            .{ .troop_car, "rus_troopcar.shp" },
+            .{ .torpedo, "torpedo.shp" },
+            .{ .russian_torpedo, "rus_torp.shp" },
+            .{ .proximity_mine, "mine_prox.shp" },
+            .{ .satellite, "stork_sat.shp" },
+            .{ .shell, "shell.shp" },
+            .{ .limpet_pod, "limpet_pod.shp" },
+            .{ @enumFromInt(asteroids[0]), "ast_1.shp" },
+            .{ @enumFromInt(asteroids[1]), "ast_7.shp" },
+        };
+        for (models) |named| assert(std.mem.eql(u8, create.models.ship_types[named[0].number()].model.?, named[1]));
+    }
+
+    pub fn number(object_type: Type) u32 {
+        return @intFromEnum(object_type);
+    }
+
+    /// Whether it has a record in the ship tables.
+    pub fn hasStats(object_type: Type) bool {
+        return object_type.number() < create.ship_type_count;
+    }
+
+    pub fn isAsteroid(object_type: Type) bool {
+        return object_type.number() >= asteroids[0] and object_type.number() <= asteroids[1];
+    }
+};
+
 /// A live object (`gameobj.cpp`), allocated at `0x00475DD0`.
 pub const GameObject = extern struct {
-    /// The ship type: its record in `shipstats.bin`, which `combat` and `flight` point into. Types
-    /// above 255, markers and nav points among them, have no stats.
-    type: u32,
+    type: Type,
     /// Its slot in `game_objects`.
     index: u32,
     flags: Flags,
@@ -375,8 +442,10 @@ pub const GameObject = extern struct {
     _unknown_6ac: i32,
     _unknown_6b0: u32,
     _unknown_6b4: [0x58]u8,
-    /// **Unknown.** A number from 0 to 99 the object draws from its own seed when created.
-    _unknown_70c: i32,
+    /// A number from 0 to 99 the object draws from its own seed when created: where a mission lets
+    /// the pilot eject, it does below `ai.eject_below` (`object_destroyed`). The `WillsBlag`
+    /// command sets it to 100, which never does.
+    eject_roll: i32,
     _unknown_710: [4]u32,
     /// **Unknown.** Both -1 when created.
     _unknown_720: i32,
@@ -399,7 +468,8 @@ pub const GameObject = extern struct {
     /// **Unknown.** A 24-byte record for the pilot, from a table at `0x5048D8`.
     pilot_record: Pointer(anyopaque),
     pilot_stats: Pointer(@import("pilots.zig").Pilot),
-    /// **Unknown.** 0xFFFF when created.
+    /// **Unknown.** 0xFFFF when created, which a mission clears; while it is clear, an AI ship's
+    /// pilot may eject.
     _unknown_74c: u16,
     _unknown_74e: u16,
     _unknown_750: u32,
@@ -559,7 +629,7 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "gun_condition") == 0x66C);
         assert(@offsetOf(GameObject, "_unknown_678") == 0x678);
         assert(@offsetOf(GameObject, "_unknown_6ac") == 0x6AC);
-        assert(@offsetOf(GameObject, "_unknown_70c") == 0x70C);
+        assert(@offsetOf(GameObject, "eject_roll") == 0x70C);
         assert(@offsetOf(GameObject, "_unknown_720") == 0x720);
         assert(@offsetOf(GameObject, "_unknown_74c") == 0x74C);
         assert(@offsetOf(GameObject, "_unknown_764") == 0x764);
@@ -734,15 +804,11 @@ pub fn blinkOffset(random: *libcmt.Rand) i16 {
     return @intFromFloat(share * 100);
 }
 
-/// The type a slot's stand-in has until `create_object` fills the slot: above every ship type,
-/// so it has no stats.
-pub const stand_in_type = 1001;
-
 /// `object_alloc` (`0x00475DD0`): a new object of `object_type`. `SR_MEM_allocate` clears what
 /// it hands out, so everything the allocation doesn't set starts at zero: the object is at rest,
 /// turned by nothing each update, and has no motion, orders or renderer's object. Its root is
 /// flagged as a component, and it draws its `blink_offset` from `random`.
-pub fn objectAlloc(object_type: u32, random: *libcmt.Rand) GameObject {
+pub fn objectAlloc(object_type: Type, random: *libcmt.Rand) GameObject {
     var object = std.mem.zeroes(GameObject);
     object.type = object_type;
     object.rotation = math.identity;
@@ -757,8 +823,8 @@ pub fn objectAlloc(object_type: u32, random: *libcmt.Rand) GameObject {
 
 test objectAlloc {
     var random: libcmt.Rand = .{};
-    const object = objectAlloc(stand_in_type, &random);
-    try std.testing.expectEqual(stand_in_type, object.type);
+    const object = objectAlloc(.stand_in, &random);
+    try std.testing.expectEqual(Type.stand_in, object.type);
     try std.testing.expectEqual(math.identity, object.rotation);
     try std.testing.expect(object.root.flags.component);
     try std.testing.expectEqual(1, object.visibility);
@@ -779,6 +845,8 @@ pub const ticks_per_step = 4;
 pub const World = struct {
     objects: *create.Objects,
     player: *input.Player,
+    /// The mission's clocks, whose `frame_start` the game's code reads as a global.
+    clock: *const Clock,
     view: camera.View,
     shake: *f32,
     /// The runtime's numbers (`libcmt.Rand`), which the guns' step draws a damaged gun's misfire
@@ -788,6 +856,12 @@ pub const World = struct {
     events: ?Events = null,
     /// The sound the objects are heard through, and where from; null where nothing is heard.
     hearing: ?@import("hog_snd.zig").Hearing = null,
+    /// The camera, whose view the game's code switches (`camera_set_view`); null where nothing is
+    /// seen, as in a test.
+    camera: ?*camera.Camera = null,
+    /// What the explosions leave for the frames after them (`explode.cpp`); null where nothing
+    /// explodes.
+    explosions: ?*@import("explode.zig").Explosions = null,
 };
 
 /// `simulation_step` (`0x004774D0`): the work of every fourth tick, so 25 times a second, which
@@ -1194,7 +1268,7 @@ pub const testing = struct {
         }
 
         pub fn world(mission: *Mission) World {
-            return .{ .objects = mission.objects, .player = &mission.player, .view = mission.view, .shake = &mission.shake, .random = &mission.random };
+            return .{ .objects = mission.objects, .player = &mission.player, .clock = &mission.clock, .view = mission.view, .shake = &mission.shake, .random = &mission.random };
         }
 
         /// What the objects' orders run against.
@@ -1203,15 +1277,15 @@ pub const testing = struct {
         }
 
         /// An object of `ship_type` at `at`, in the next slot.
-        pub fn add(mission: *Mission, ship_type: u32, at: Vector) !u16 {
+        pub fn add(mission: *Mission, ship_type: Type, at: Vector) !u16 {
             return create.createObject(mission.objects, &mission.tables, create.testing.no_models, null, ship_type, at, &mission.random);
         }
 
         /// A ship that is nobody's, at `at`, which takes the orders the player's refuses: the
         /// player holds the first slot, so the ship comes after it.
         pub fn addOther(mission: *Mission, at: Vector) !u16 {
-            if (mission.objects.count == 0) _ = try mission.add(0, @splat(0));
-            return mission.add(0, at);
+            if (mission.objects.count == 0) _ = try mission.add(.predator, @splat(0));
+            return mission.add(.predator, at);
         }
 
         pub fn slot(mission: *Mission, index: u16) *create.Slot {
@@ -1317,9 +1391,9 @@ test "a step updates and moves every live object" {
     try mission.init(gpa);
     defer mission.deinit();
     const all = mission.objects;
-    const player = try mission.add(0, @splat(0));
-    const other = try mission.add(0x2B, .{ 0, 0, 1000 });
-    const off = try mission.add(0x2B, .{ 0, 0, 2000 });
+    const player = try mission.add(.predator, @splat(0));
+    const other = try mission.add(.sabre, .{ 0, 0, 1000 });
+    const off = try mission.add(.sabre, .{ 0, 0, 2000 });
     all.slots[other].object.throttle = 1;
     all.slots[off].object.throttle = 1;
     all.slots[off].object.flags.disabled = true;

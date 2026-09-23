@@ -110,6 +110,11 @@ pub const exported = [_]Export{
     .{ "QueuedOrder", engine.game.aigeneric.Queued },
     .{ "OrderState", engine.game.aigeneric.State },
     .{ "FlyState", engine.game.aiorders.FlyState },
+    .{ "ExplodeState", engine.game.aiexplode.State },
+    .{ "ExplodeMode", engine.game.aiexplode.Mode },
+    .{ "ExplodeStyle", engine.game.aiexplode.Style },
+    .{ "ExplodeData", engine.game.aiexplode.Data },
+    .{ "EjectPlayerState", engine.game.aieject.PlayerState },
 
     // Combat maneuvers.
     .{ "ManeuverOpcode", engine.game.aidefend.Opcode },
@@ -134,6 +139,7 @@ pub const exported = [_]Export{
 
     // Live objects and their models.
     .{ "GameObject", engine.game.gameobj.GameObject },
+    .{ "ObjectType", engine.game.gameobj.Type },
     .{ "Quadrants", engine.game.gameobj.Quadrants },
     .{ "ObjectFlags", engine.game.gameobj.GameObject.Flags },
     .{ "ObjectSide", engine.game.gameobj.Side(i32) },

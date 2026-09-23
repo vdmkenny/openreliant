@@ -52,6 +52,16 @@ pub const PlayTime = struct {
 /// of a second stands in for the multimedia timer `timer_start` (`0x004A70F0`) sets up, so the
 /// clocks advance at the same rate without a thread of their own and without the drift a timer
 /// whose period the device rounds would bring.
+/// How the mission is ending (`0x00588394`), which its end and the debriefing go by: the player's
+/// ship destroyed or its pilot ejecting among them. Nothing ends a mission while it is `playing`.
+/// The other endings are not known yet.
+pub const Ending = enum(u8) {
+    playing = 0,
+    destroyed = 1,
+    ejecting = 8,
+    _,
+};
+
 pub const Clock = struct {
     /// `timer_ticks` (`0x005DB8E8`): every tick of the timer, the paused ones included.
     timer_ticks: u32 = 0,
@@ -265,7 +275,7 @@ test "the objects are framed and drawn, save those left out" {
     var tables = create.testing.tables();
     for (0..4) |place| {
         const at: math.Vector = .{ @floatFromInt(place * 100), 0, 0 };
-        _ = try create.createObject(all, &tables, model.types(), null, 0, at, &random);
+        _ = try create.createObject(all, &tables, model.types(), null, .predator, at, &random);
     }
     // The first is the ship the camera sits in, the second is disabled and the third jumping.
     all.slots[0].object.flags.hidden = true;
@@ -664,7 +674,7 @@ test missionFrame {
     try mission.init(std.testing.allocator);
     defer mission.deinit();
     // The player's slot, then a ship that turns on the spot under an order of its own.
-    for (0..2) |_| _ = try mission.add(0, @splat(0));
+    for (0..2) |_| _ = try mission.add(.predator, @splat(0));
     const orders = mission.orders();
     try std.testing.expect(try aigeneric.push(orders, 1, .slow_rotate, .{ .kind = .ship, .index = -1, .component = -1 }));
 

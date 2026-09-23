@@ -54,11 +54,13 @@ again and again, and the game's loops never end; the port walks it once.
 | `0x668` | 4 | The cruise speed's condition, which `object_cruise_speed` scales the speed by: 1.0 when created |
 | `0x66C` | 4 | The guns' condition: 1.0 when created. The guns recharge by it, and below 0.9 each shot goes off only as often as it plus a tenth (`guns_step`, `0x004770E0`) |
 | `0x680` to `0x697` | | Its [orders](orders.md): the stack and what the current order keeps, the damage it has taken lately and its last attacker |
+| `0x70C` | 4 | Its pilot's eject roll, 0 to 99 from `object_random15` when created: where a mission lets the pilot eject, it does below 40 ([Destruction](#destruction)). The `WillsBlag` command sets it to 100 |
 | `0x728` | 12 | The [power distribution](controls.md#the-power-distribution)'s point on the power ball: (1, 1, 1) when created |
 | `0x734` | 4 | The guns' share of the power as a factor on how fast they recharge: 1.0 when created |
 | `0x73C` | 4 | The shields' share of the power as a factor on how fast they [recharge](#shields): 1.0 when created |
 | `0x740` | 4 | Its pilot, a record of `pilotstats.bin` (`object_set_pilot`, `0x0049CCE0`) |
 | `0x748` | 4 | The pilot's entry in `pilot_stats` |
+| `0x74C` | 2 | 0xFFFF when created. While a mission has it clear, an AI ship's pilot may eject. **Unknown:** what else it is |
 | `0x754` | 4 | The deathmatch power-up it holds (`gameobj.PowerUp`), -1 for none: a record of the table at `0x0050C510` |
 | `0x75C` | 4 | The frame the power-up runs out at, or -1 for never |
 | `0x760` | 4 | The frame the power-up was handed out at |
@@ -486,6 +488,60 @@ its shield and half its armor.
 [`gameobj.zig`](../../src/engine/game/gameobj.zig) ports the recharge as `rechargeShields`, which
 `simulationStep` runs, and [`main.zig`](../../src/engine/game/main.zig) the conditions as
 `armorConditions` and the warning as `armorWarning`. Not ported: the multiplayer case.
+
+## Destruction
+
+What gets through a shield wears the quadrant's armour (`object_armor_damage`, `0x004641F0`). An
+invulnerable object takes it only while it leaves armour to spare: one fully invulnerable from
+anything, one that only a player can hit from anyone else. One in the last state, 4, takes none.
+Armour below zero destroys the object (`object_destroyed`, `0x00401F30`), telling it that it may spin
+out, and that a player's pilot has no time to eject where the blow was over 1000.
+
+- An AI ship's pilot ejects where the mission lets it, `0x74C` clear, and its roll at `0x70C` is
+  below 40, or where the ship was told to eject before exploding. The ship spins on under Eject
+  Spin (108).
+- The player's pilot ejects, unless it has already, the blow was too heavy, or the ship is the Kamov:
+  Eject Player (118) marks the ship ejected and unpowered and `mission_ending` (`0x00588394`) 8. The
+  ship drifts, the player's controls still running, for 400 to 599 ticks, and is then destroyed
+  again, now without spinning out.
+- Otherwise the object explodes: its stack becomes the one order Explode (11), whatever it was
+  doing, and it is flagged `exploding`.
+
+Explode's `init` (`0x00408610`) picks a mode by what the object is, with an `init` and an `update`
+for each in `explode_modes` (`0x004E1798`): a ship, a ship that lists components going as a whole,
+one of its components, an asteroid, and the limpet car. A ship (`0x004086F0`) is heard at once
+within 20000 of the camera, sound 11 on a sure voice, and goes in one of three styles, by
+`object_random15` over 3; the torpedoes always halt:
+
+| Style | Init | What it does |
+|---|---|---|
+| 0, spin out | `0x00408BC0` | Unpowered, it drifts on, turning by a random spin a step, up to ±0.025 about its first two axes and ±0.15 about its third, which shrinks to nothing as its end comes: 200 to 399 ticks on. A torpedo, or a ship that may not spin, stops dead instead and blows up at once. |
+| 1, burst | `0x004090F0` | Unpowered, no longer turning, it bursts at once. |
+| 2, halt | `0x00408D20` | It stops dead and blows up at once. |
+
+Past its end, a burst blows up in its own way (`explode_burst`, `0x00471DB0`), a torpedo not at all,
+having gone up as it stopped, and anything else in a blast (`explode_blast`, `0x0046C980`); both
+play sound 11 again. `object_retire` (`0x004688E0`) then leaves a stand-in, of type 1001, flagged as
+one and exploding, not targetable and with no orders, which nothing moves, draws or collides with.
+
+The player's ship has the camera watch its end, locked: a spin-out slower than 100 from behind,
+pulling away (view 8), a faster one from where the camera was (view `0x1A`), a burst from there
+watching where it burst (view `0x1B`), and a halt from behind. `mission_ending` becomes 1.
+
+[`ai.zig`](../../src/engine/game/ai.zig) ports `object_destroyed` as `objectDestroyed`,
+[`collision.zig`](../../src/engine/game/collision.zig) the armour damage as `armorDamage`,
+[`aiexplode.zig`](../../src/engine/game/aiexplode.zig) Explode,
+[`aieject.zig`](../../src/engine/game/aieject.zig) Eject Player,
+[`explode.zig`](../../src/engine/game/explode.zig) the blasts, and
+[`create.zig`](../../src/engine/game/create.zig) `object_retire` as `retire`.
+
+Not ported ([#41](https://github.com/vdmkenny/openreliant/issues/41)): the effects, the fireballs,
+burning bits, particles and shockwaves, and the break-up (`explode_break_up`, `0x0046C550`), which
+cuts each part's mesh into up to 2ⁿ pieces along random planes through its centre (`model_slice`,
+`0x0046BF20`) and sends every third off as debris with a smoke trail; the other modes; Eject Spin
+and the other ejection orders ([#30](https://github.com/vdmkenny/openreliant/issues/30)); and what
+the end tells the mission, the kill and the radio's lines on it, and the Destroyed event
+([#37](https://github.com/vdmkenny/openreliant/issues/37)).
 
 ## Components
 

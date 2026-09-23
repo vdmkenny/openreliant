@@ -182,6 +182,7 @@ set from C's `rand()` when the object is created, that steps as `seed * 0x343FD 
 | Order | What it does |
 |---|---|
 | Do Nothing (0) | Zeroes the throttle and the turning inputs. |
+| Explode (11) | A destroyed object's end, by what it is and in one of three styles ([Destruction](objects.md#destruction)). |
 | Launch Missile (2) | One-shot: fires a missile at the target from the first of the ship's mounts that has ammunition and is not of kind 3 (`0x00496290`). |
 | 3, nameless | One-shot: as Launch Missile, from the first mount of kind 3. |
 | Fly (6) | Flies at the speed in its data, or at full throttle for zero. With a target it flies to it and pops within 2000 units; otherwise it keeps the heading it had when it started, steering at a point 20000 units along it. It steers with flags `0x7` and halves the throttle while avoiding. An object without flight stats is moved along that heading instead. |
@@ -198,5 +199,6 @@ set from C's `rand()` when the object is created, that steps as `seed * 0x343FD 
 | Multiplayer Control (101) | Disables the object once it has object flag `0x10000000`. |
 | Fight (105) | Fights its target by running [combat maneuvers](maneuvers.md), one after another. |
 | Disrupted (114) | On starting, sets object flag `0x8`, sets the ship tumbling with random turn rates, and keeps the tick to end at, the duration in its data after `frame_start`. It pops at that tick, and its `exit` clears the flag. |
+| Eject Player (118) | The player's pilot ejects; the ship drifts, unpowered, for 400 to 599 ticks, then explodes ([Destruction](objects.md#destruction)). |
 
 **Unknown:** what the other orders do.
