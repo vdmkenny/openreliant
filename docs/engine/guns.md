@@ -125,6 +125,13 @@ last place and its next, before it tests what the shot has struck. A Proton Cann
 it flies: over its life its colours go from white to blue for a friendly shot and to nothing for any
 other.
 
+On a hardware renderer (`sr + 0x1AC`) a shot also casts a point light from where it is drawn: blue
+(0, 0.5, 1), or orange (1, 0.5, 0) for a hostile ship's shot unless the player fired it, reaching
+1000 at full strength. Only the latest two of the player's shots cast one (`0x0056317C`), and the
+latest two of everyone else's (`0x00563168`): a new shot's light puts out the light of the oldest
+of its two. A shot flies past that reach within a step, so its light shows on the hull that fired
+it for the frames just after it leaves the muzzle.
+
 ## The port
 
 [`guns.zig`](../../src/engine/game/guns.zig) holds the fitting (`fit`), the groups (`buildGroups`),
@@ -136,7 +143,7 @@ they are drawn (`Bolts`, `drawBullets`). `simulationStep` runs the step and move
 [`guns/stats.zig`](../../src/engine/game/guns/stats.zig), which `make gun-tables` derives from the
 payload.
 
-Not ported: how the shots of gun types other than 1 and 4 are drawn, and the light a shot carries
+Not ported: how the shots of gun types other than 1 and 4 are drawn
 ([#154](https://github.com/vdmkenny/openreliant/issues/154)); the parts of an object whose components
 are listed, so shots pass through a capital ship
 ([#153](https://github.com/vdmkenny/openreliant/issues/153)); the sparks and sounds an impact makes

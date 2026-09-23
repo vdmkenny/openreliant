@@ -800,8 +800,13 @@ pub const Bullet = struct {
     /// The objects it may reach (`+0x68`), as many as `candidate_count` (`+0x64`).
     candidates: [max_candidates]Candidate = @splat(.{}),
     candidate_count: u8 = 0,
+    /// Where the frame draws it, between its last place and its next (`bulletsFrame`).
+    place: Vector = @splat(0),
     /// What it is drawn with (`+0x3C`), where the port draws its type (`Bolts`).
     drawn: ?srapiext.MeshObject = null,
+    /// The light it casts (`+0x60`), while it is one of the latest two of its ring
+    /// (`Bullets.player_lights`, `Bullets.other_lights`).
+    light: ?srlight.Light = null,
     /// The drawn bolt's own texture coordinates (`MeshObject.own_uv`), and its own colours where
     /// its type fades them (`MeshObject.baked`).
     uv: [bolt_quads * bolt_corners][2]f32 = @splat(.{ 0, 0 }),
@@ -818,13 +823,55 @@ pub const Bullets = struct {
     pool: [max_bullets]Bullet = @splat(.{}),
     /// What the shots are drawn with, where the caller has built it; without, they fly unseen.
     bolts: ?*const Bolts = null,
+    /// The shots that cast a light: the player's latest two (`0x0056317C`), and the latest two of
+    /// everyone else's (`0x00563168`).
+    player_lights: Ring = .{},
+    other_lights: Ring = .{},
+
+    /// The shots of one ring that cast a light, as indices into the pool.
+    pub const Ring = struct {
+        held: [lights_kept]?u8 = @splat(null),
+        next: u1 = 0,
+
+        /// Gives the shot at `index` the ring's next light, putting out the light of the shot that
+        /// held it.
+        fn take(ring: *Ring, pool: *[max_bullets]Bullet, index: u8) void {
+            if (ring.held[ring.next]) |old| pool[old].light = null;
+            ring.held[ring.next] = index;
+            ring.next +%= 1;
+        }
+
+        fn drop(ring: *Ring, index: u8) void {
+            for (&ring.held) |*held| {
+                if (held.* == index) held.* = null;
+            }
+        }
+    };
 
     /// The first free record, as `bullet_fire` takes it, or null while every one is in flight.
-    fn free(bullets: *Bullets) ?*Bullet {
-        for (&bullets.pool) |*bullet| if (!bullet.live) return bullet;
+    fn free(bullets: *Bullets) ?u8 {
+        for (&bullets.pool, 0..) |bullet, index| if (!bullet.live) return @intCast(index);
         return null;
     }
+
+    /// Lets the shot at `index` go, and its light with it (`bullet_free`, `0x0047A3D0`).
+    fn release(bullets: *Bullets, index: u8) void {
+        bullets.player_lights.drop(index);
+        bullets.other_lights.drop(index);
+        bullets.pool[index] = .{};
+    }
 };
+
+/// How many shots of a ring cast a light at once.
+const lights_kept = 2;
+
+/// How far a shot's light reaches at full strength (`bullet_place`).
+const shot_light_range: f32 = 1000;
+
+/// The colour of a shot's light: blue, or orange for a hostile ship's shot, unless the player fired
+/// it.
+const shot_light: [3]f32 = .{ 0, 0.5, 1 };
+const hostile_shot_light: [3]f32 = .{ 1, 0.5, 0 };
 
 /// `bullet_fire` (`0x0047C5F0`) with `bullet_place` (`0x0047BDB0`): the shot a gun takes. It
 /// leaves the muzzle where the step is taking it, flying along the muzzle's nose at the type's
@@ -837,7 +884,9 @@ pub const Bullets = struct {
 ///
 /// The shot is drawn with its type's bolt where the port has one (`Bolts`).
 ///
-/// Not ported: how the other gun types' shots are drawn, and the light a shot carries
+/// It casts a light while it is one of the latest two of its ring (`Bullets.Ring`).
+///
+/// Not ported: how the other gun types' shots are drawn
 /// ([#154](https://github.com/vdmkenny/openreliant/issues/154)); its sound ([#47](https://github.com/vdmkenny/openreliant/issues/47)), the force feedback a
 /// player's shot gives ([#83](https://github.com/vdmkenny/openreliant/issues/83)), the aim a ship
 /// firing blind takes at its target, and the scatter of gun type 12.
@@ -846,7 +895,8 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, gun: Fitted)
     const slot = &all.slots[owner];
     const model = if (slot.model) |*live| live else return;
     const record = world.objects.gun_stats.types[gun.type];
-    const bullet = all.bullets.free() orelse return;
+    const index = all.bullets.free() orelse return;
+    const bullet = &all.bullets.pool[index];
 
     // The muzzle stands where the step is taking the ship, on the part that carries it.
     model.place(gameobj.vector(slot.object.root.next_position), slot.object.root.next_orientation);
@@ -864,8 +914,19 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, gun: Fitted)
         .velocity = math.transform(turn, .{ 0, 0, record.speed }),
         .owner = owner,
         .side = slot.object.side,
+        .place = at,
     };
     candidates(world, bullet, record);
+
+    // The light it casts, which the oldest shot of its ring gives up (`bullet_place`).
+    const player = owner == all.player;
+    (if (player) &all.bullets.player_lights else &all.bullets.other_lights).take(&all.bullets.pool, index);
+    bullet.light = .{
+        .mask = 0,
+        .intensity = 1,
+        .colour = if (!player and bullet.side == .hostile) hostile_shot_light else shot_light,
+        .kind = .{ .point = .{ .position = at, .range = shot_light_range } },
+    };
 
     // What it is drawn with (`bullet_build`, `0x0047D9A0`): its type's bolt, turned as the muzzle
     // is, with its own span of the shot texture.
@@ -939,13 +1000,15 @@ pub fn moveBullets(world: gameobj.World) void {
 /// impact makes ([#41](https://github.com/vdmkenny/openreliant/issues/41)); what multiplayer makes
 /// of a hit.
 pub fn bulletsFrame(world: gameobj.World, clock: *const Clock, fraction: f32) void {
-    for (&world.objects.bullets.pool) |*bullet| {
+    const bullets = &world.objects.bullets;
+    for (&bullets.pool, 0..) |*bullet, index| {
         if (!bullet.live) continue;
         // It is drawn as far through the step as the frame is, between its last place and its
         // next, and a shot that fades loses its colour as it flies: a friendly one down to blue,
         // any other's to nothing.
+        bullet.place = bullet.last + (bullet.at - bullet.last) * @as(Vector, @splat(fraction));
         if (bullet.drawn) |*drawn| {
-            drawn.position = bullet.last + (bullet.at - bullet.last) * @as(Vector, @splat(fraction));
+            drawn.position = bullet.place;
             if (drawn.flags.baked_object) {
                 const left = fade(bullet, clock, bullet.stats(&world.objects.gun_stats));
                 const blue = if (bullet.side == .friendly) 1 else left;
@@ -960,7 +1023,7 @@ pub fn bulletsFrame(world: gameobj.World, clock: *const Clock, fraction: f32) vo
                 continue;
             }
         }
-        bullet.* = .{};
+        bullets.release(@intCast(index));
     }
 }
 
@@ -1206,6 +1269,36 @@ test "the player's shifted shields take a hit before the quadrant does" {
     try std.testing.expectEqual(shields, player.object.shields);
 }
 
+test "only the latest two shots of a ring cast a light" {
+    const gpa = std.testing.allocator;
+    var ship: testing.Ship = undefined;
+    try ship.init(gpa);
+    defer ship.deinit(gpa);
+    const world = ship.world();
+    const bullets = &world.objects.bullets;
+    // The player's ship is the first slot, and a hostile ship fires too.
+    const other = try create.createObject(ship.all, &ship.tables, ship.model.types(), null, 9, .{ 0, 0, 5000 }, &ship.random);
+    ship.all.slots[other].object.side = .hostile;
+
+    // The player's third shot puts out the first one's light.
+    for (0..3) |_| shoot(world, &ship.clock, ship.index, ship.guns()[0]);
+    try std.testing.expectEqual(null, bullets.pool[0].light);
+    try std.testing.expect(bullets.pool[1].light != null);
+    try std.testing.expect(bullets.pool[2].light != null);
+    try std.testing.expectEqual(shot_light, bullets.pool[2].light.?.colour);
+
+    // Another ship's shots keep a ring of their own, and a hostile ship's are orange.
+    shoot(world, &ship.clock, other, ship.all.slots[other].guns[0]);
+    try std.testing.expectEqual(hostile_shot_light, bullets.pool[3].light.?.colour);
+    try std.testing.expect(bullets.pool[1].light != null);
+
+    // A shot let go leaves its ring's place empty, and the record free for the next shot.
+    bullets.release(2);
+    try std.testing.expectEqual(null, bullets.player_lights.held[0]);
+    try std.testing.expectEqual(1, bullets.player_lights.held[1]);
+    try std.testing.expect(!bullets.pool[2].live);
+}
+
 test crossesBox {
     const bounds: [2]Vector = .{ .{ -10, -10, -10 }, .{ 10, 10, 10 } };
     // Through the middle, from a corner, and ending inside.
@@ -1386,11 +1479,19 @@ fn fade(bullet: *const Bullet, clock: *const Clock, record: Gun) f32 {
 }
 
 /// The shots in flight, added to the world's layer as `bullets_frame` adds them once it has placed
-/// them.
-pub fn drawBullets(gpa: Allocator, scene: *srcore.Scene, bullets: *Bullets) Allocator.Error!void {
+/// them, with the lights they cast where the renderer is a hardware one.
+///
+/// The game gives a shot no light at all on its software renderer (`sr + 0x1AC`); the port gives it
+/// one and leaves it out here, which shows the same.
+pub fn drawBullets(gpa: Allocator, scene: *srcore.Scene, bullets: *Bullets, lights: bool) Allocator.Error!void {
     for (&bullets.pool) |*bullet| {
         if (!bullet.live) continue;
         if (bullet.drawn) |*drawn| try xtrabits.sceneAdd(gpa, scene, .{ .mesh = drawn }, .world);
+        if (!lights) continue;
+        if (bullet.light) |*light| {
+            light.kind.point.position = bullet.place;
+            try xtrabits.sceneAdd(gpa, scene, .{ .light = light }, .world);
+        }
     }
 }
 
@@ -1462,8 +1563,11 @@ test "a shot is drawn where the frame has it, and fades as it flies" {
 
     var scene: srcore.Scene = .{};
     defer scene.deinit(gpa);
-    try drawBullets(gpa, &scene, &world.objects.bullets);
+    try drawBullets(gpa, &scene, &world.objects.bullets, true);
     try std.testing.expectEqual(1, scene.layers.get(.world).items.len);
+    // It lights what stands near it, from where it is drawn.
+    try std.testing.expectEqual(1, scene.lights.items.len);
+    try std.testing.expectEqual(bullet.place, @as(Vector, scene.lights.items[0].kind.point.position));
 }
 
 test {
@@ -1487,5 +1591,6 @@ const shp = @import("../../formats/shp.zig");
 const srapi = @import("../surrender/surrenderlib/srapi.zig");
 const srapiext = @import("../surrender/surrenderlib/srapiext.zig");
 const srcore = @import("../surrender/surrenderlib/srcore.zig");
+const srlight = @import("../surrender/surrenderlib/srlight.zig");
 const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
 const xtrabits = @import("xtrabits.zig");
