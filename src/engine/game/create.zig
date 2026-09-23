@@ -351,6 +351,9 @@ pub const Objects = struct {
     /// `gun_stats` (`0x00500CA4`): every gun type's figures, which `stats_load_guns` fills from
     /// `gunstats.bin`.
     gun_stats: guns.Stats = .initial,
+    /// The shots in flight (`0x00563148`), which the game keeps in `guns.cpp`'s own globals. The
+    /// port keeps them here, beside the objects they fly among.
+    bullets: guns.Bullets = .{},
     /// The working lists of the collision sweep `objectsUpdate` runs.
     sweep: Sweep = .{},
     /// `0x005185AC`: the tick at which `aigeneric.ordersUpdate` next clears what every object has

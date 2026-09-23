@@ -1,9 +1,8 @@
 # Guns
 
-How a ship is fitted with guns, how they are grouped, and what a simulation step does with them.
-The gun types' figures and where they come from are in
-[`formats/stats.md`](../formats/stats.md#guns); the shot a gun fires is
-[#151](https://github.com/vdmkenny/openreliant/issues/151).
+How a ship is fitted with guns, how they are grouped, what a simulation step does with them, and
+the shots they fire. The gun types' figures and where they come from are in
+[`formats/stats.md`](../formats/stats.md#guns).
 
 ## The guns a model holds
 
@@ -69,19 +68,58 @@ Then each gun whose trigger is held fires, once its refire interval has passed:
 - The player's shots are all heard; another ship's are heard one step in every
   `gun_sound_periods` of its type.
 
-A ship that is jumping fires nothing, though its guns still recharge.
+A ship that is jumping fires nothing, though its guns still recharge. Every shot that does go off
+is a bullet, below.
+
+## Shots
+
+A gun that fires makes a shot: `bullet_fire` (`0x0047C5F0`) takes the first free of the 200 records
+at `0x00563148`, `0xC4` bytes each, and `bullet_place` (`0x0047BDB0`) fills it in. The shot leaves
+the muzzle node where the step is taking it, flying along that node's nose at the gun type's speed,
+and lives for the type's ticks, which is what gives the gun its range. A ship aiming blind aims at
+its target instead of its nose, and gun type 12 scatters.
+
+The shot is then given the objects it may reach: each object whose radius, widened by how far it
+could move meanwhile, its path comes within over its whole life, up to 20 of them. An object whose
+components are listed is listed component by component instead. Nothing else is ever tested, so a
+ship that flies into a shot's path after it was fired is not hit.
+
+`bullets_move` (`0x0047A4E0`) moves every shot on by its velocity each simulation step, after the
+objects move. Once a frame `bullets_frame` (`0x0047A510`) draws them, tests them and lets the spent
+ones go.
+
+`bullet_hit` (`0x00479B40`) tests what the shot crossed between its last place and its place now
+against the objects it was given, and drops any it has flown past. An object is struck where the
+segment first crosses the sphere of its radius:
+
+- With a shield up in that quadrant the shot spends itself there: `object_damage` takes the gun
+  type's first damage, and the share that passes through to the armour is its second over its
+  first. For the player's ship the [shield reserves](controls.md#the-shield-balance) take the hit
+  first.
+- With the shield down the shot reaches the hull (`bullet_hull_hit`, `0x00479940`): the first of
+  the object's part nodes whose box the segment crosses decides that it hit, and the quadrant's
+  armour takes the type's second damage.
+- A ship with its spectral shields on takes nothing at all. The gun type they are tuned to is
+  handed to the check and ignored, so every shot is turned.
+
+Either way the shot is spent and the frame that follows lets it go.
 
 ## The port
 
 [`guns.zig`](../../src/engine/game/guns.zig) holds the fitting (`fit`), the groups (`buildGroups`),
-the trigger (`fire`) and the step (`step`), which `simulationStep` runs for every object and
-`playerControls` triggers from FIRE LASERS. `gun_stats` lives in `create.Objects.gun_stats`, and
-the executable's own half of each record is
+the trigger (`fire`), the step (`step`) and the shots (`shoot`, `moveBullets`, `bulletsFrame`).
+`simulationStep` runs the step and moves the shots; `missionFrame` runs their frame pass; and
+`playerControls` pulls the trigger from FIRE LASERS. `gun_stats` and the shots in flight live in
+`create.Objects`, and the executable's own half of each gun record is
 [`guns/stats.zig`](../../src/engine/game/guns/stats.zig), which `make gun-tables` derives from the
 payload.
 
-Not ported: the shot itself, so firing costs the ship its charge or a round and nothing leaves the
-muzzle ([#151](https://github.com/vdmkenny/openreliant/issues/151)); the Nova Cannon's charge
+Not ported: how a shot is drawn, so nothing is seen leaving the muzzle
+([#65](https://github.com/vdmkenny/openreliant/issues/65)); the parts of an object whose components
+are listed, so shots pass through a capital ship
+([#153](https://github.com/vdmkenny/openreliant/issues/153)); the sparks and sounds an impact makes
+([#41](https://github.com/vdmkenny/openreliant/issues/41),
+[#47](https://github.com/vdmkenny/openreliant/issues/47)); the Nova Cannon's charge
 ([#150](https://github.com/vdmkenny/openreliant/issues/150)); turrets, their aiming and the guns
 they carry ([#71](https://github.com/vdmkenny/openreliant/issues/71)); and the gunnery keys that
 choose a group or fire them all ([#92](https://github.com/vdmkenny/openreliant/issues/92)).

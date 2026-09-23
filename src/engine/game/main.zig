@@ -24,6 +24,7 @@ const camera = @import("camera.zig");
 const aigeneric = @import("aigeneric.zig");
 const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
+const guns = @import("guns.zig");
 const hog_snd = @import("hog_snd.zig");
 const hud = @import("hud.zig");
 const matmanager = @import("matmanager.zig");
@@ -173,8 +174,9 @@ pub const Frame = struct {
 };
 
 /// `mission_frame` (`0x004924B0`), as far as the objects go: every object's orders, which fly the
-/// ships and read the player's controls, and then the frames they are drawn at. A mission and the
-/// sandbox alike run this once a frame, before the camera's own frame and anything drawn.
+/// ships and read the player's controls, then the frames they are drawn at, and then the shots in
+/// flight (`guns.bulletsFrame`). A mission and the sandbox alike run this once a frame, before the
+/// camera's own frame and anything drawn.
 ///
 /// Not ported: the rest of the frame's work, which is the mission's events, its scripts and the
 /// missiles ([#30](https://github.com/vdmkenny/openreliant/issues/30),
@@ -182,6 +184,7 @@ pub const Frame = struct {
 pub fn missionFrame(orders: aigeneric.Context, fraction: f32) void {
     aigeneric.ordersUpdate(orders);
     frameObjects(orders.world.objects, fraction);
+    guns.bulletsFrame(orders.world, orders.clock);
 }
 
 /// `mission_frame`'s pass over the objects before the camera's frame: each live object, save

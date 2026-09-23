@@ -209,6 +209,8 @@ fn push(world: gameobj.World, first: u16, second: u16, pass: u8) bool {
 /// What the collision damage counts as (`0x00463EE0`'s last argument). **Unknown:** what 0, 1 and
 /// 5 stand for, beyond counting toward `recent_damage`, which 2 does not.
 pub const Kind = enum(u8) {
+    /// A shot from a gun (`guns.bulletHit`).
+    bullet = 0,
     collision = 2,
     _,
 };
