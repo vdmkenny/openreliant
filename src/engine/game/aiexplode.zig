@@ -456,9 +456,9 @@ test killCredit {
         fn of(m: *gameobj.testing.Mission, w: gameobj.World, ship_type: gameobj.Type, by: u16) !i32 {
             const index = try m.add(ship_type, .{ 0, 0, 1000 });
             m.slot(index).object.last_attacker = by;
-            const before = m.player.kills;
+            const before = m.player.kills.count;
             killCredit(w, index);
-            return m.player.kills - before;
+            return m.player.kills.count - before;
         }
     }.of;
     // A hostile fighter the player's ship struck last is the player's kill.
@@ -472,5 +472,5 @@ test killCredit {
     try std.testing.expectEqual(0, try credit(&mission, world, .predator, player));
     const other = try mission.add(.predator, .{ 0, 0, 2000 });
     try std.testing.expectEqual(0, try credit(&mission, world, .sabre, other));
-    try std.testing.expectEqual(3, mission.player.kills);
+    try std.testing.expectEqual(3, mission.player.kills.count);
 }

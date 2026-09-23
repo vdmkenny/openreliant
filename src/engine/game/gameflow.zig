@@ -25,20 +25,20 @@ pub fn keepsKills(ending: Ending) bool {
 /// the medals, the mission's rank and moving `mission_number` on
 /// ([#74](https://github.com/vdmkenny/openreliant/issues/74)).
 pub fn endMission(player: *input.Player) void {
-    if (keepsKills(player.ending)) player.kills_kept = player.kills;
+    if (keepsKills(player.ending)) player.kills.kept = player.kills.count;
 }
 
 test endMission {
-    var player: input.Player = .{ .kills = 7, .kills_kept = 2 };
+    var player: input.Player = .{ .kills = .{ .count = 7, .kept = 2 } };
     // Destroyed, or captured after ejecting, the attempt's kills are not kept.
     player.ending = .destroyed;
     endMission(&player);
-    try std.testing.expectEqual(2, player.kills_kept);
+    try std.testing.expectEqual(2, player.kills.kept);
     player.ending = .captured;
     endMission(&player);
-    try std.testing.expectEqual(2, player.kills_kept);
+    try std.testing.expectEqual(2, player.kills.kept);
     // Picked up, they are.
     player.ending = .rescued;
     endMission(&player);
-    try std.testing.expectEqual(7, player.kills_kept);
+    try std.testing.expectEqual(7, player.kills.kept);
 }

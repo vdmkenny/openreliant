@@ -15,7 +15,7 @@ const input = @import("../input.zig");
 /// (`0x005DB684`), the kills a campaign keeps for each mission (`0x00562E64`) and a team's in a
 /// multiplayer game, and what it tells a multiplayer game when asked to.
 pub fn addKills(player: *input.Player, all: *const create.Objects, slot: u16, count: i32) void {
-    if (slot == all.player) player.kills += count;
+    if (slot == all.player) player.kills.count += count;
 }
 
 test addKills {
@@ -28,5 +28,5 @@ test addKills {
     addKills(&mission.player, mission.objects, player, 2);
     // Another player's kills are not the local pilot's.
     addKills(&mission.player, mission.objects, other, 5);
-    try std.testing.expectEqual(3, mission.player.kills);
+    try std.testing.expectEqual(3, mission.player.kills.count);
 }

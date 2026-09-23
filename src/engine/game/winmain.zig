@@ -8,6 +8,7 @@
 const std = @import("std");
 
 const Clock = @import("main.zig").Clock;
+const input = @import("../input.zig");
 const hog_snd = @import("hog_snd.zig");
 const Sound = hog_snd.Sound;
 const sound3d = @import("sound3d.zig");
@@ -79,12 +80,12 @@ test followActivation {
 /// kills as the last mission the pilot came through kept them (`gameflow.endMission`). **Not
 /// ported:** the rank, the medals and the other tallies it puts back with them, which no screen
 /// of the port shows.
-pub fn startMission(player: *@import("../input.zig").Player) void {
-    player.kills = player.kills_kept;
+pub fn startMission(player: *input.Player) void {
+    player.kills.count = player.kills.kept;
 }
 
 test startMission {
-    var player: @import("../input.zig").Player = .{ .kills = 9, .kills_kept = 4 };
+    var player: input.Player = .{ .kills = .{ .count = 9, .kept = 4 } };
     startMission(&player);
-    try std.testing.expectEqual(4, player.kills);
+    try std.testing.expectEqual(4, player.kills.count);
 }
