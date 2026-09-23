@@ -416,14 +416,7 @@ pub const RadarBacking = struct {
         const backing = try gpa.create(RadarBacking);
         backing.* = .{
             .positions = @splat(@splat(0)),
-            .surfaces = .{.{ .polygons = 1, .material = .{
-                .two_pass = false,
-                ._unknown_01 = 0,
-                .coordinates = .{ .generated, .none },
-                .lit = .{ true, false },
-                .blend = .{ .alpha, .off },
-                .image = .{ .null, .null },
-            }, .textures = .{ .{ .image = texture }, .none } }},
+            .surfaces = .{.{ .polygons = 1, .material = .onePass(.{ .coordinates = .generated, .lit = true, .blend = .alpha }), .textures = .{ .{ .image = texture }, .none } }},
             .mesh = undefined,
             .levels = undefined,
             .object = undefined,

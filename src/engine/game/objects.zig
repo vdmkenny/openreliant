@@ -1254,14 +1254,7 @@ fn lightColour(id: u32) [3]f32 {
 /// A light's sprite, added and lit by its own colour, as the sun's sprites are.
 fn lightSurface(image: ?*srtexture.Image) srapiext.Surface {
     return .{
-        .material = .{
-            .two_pass = false,
-            ._unknown_01 = 0,
-            .coordinates = .{ .mesh, .none },
-            .lit = .{ true, false },
-            .blend = .{ .add, .off },
-            .image = .{ .null, .null },
-        },
+        .material = .onePass(.{ .coordinates = .mesh, .lit = true, .blend = .add }),
         .textures = .{ if (image) |texture| .{ .image = texture } else .none, .none },
     };
 }

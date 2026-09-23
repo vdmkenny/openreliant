@@ -717,7 +717,7 @@ test "a pass keeps what it gathers while it clips a polygon" {
     var biases = [_]f32{ 0, 0, 0 };
     var surfaces = [_]srapiext.Surface{.{
         .polygons = 3,
-        .material = .{ .two_pass = false, ._unknown_01 = 0, .coordinates = .{ .none, .none }, .lit = .{ false, false }, .blend = .{ .off, .off }, .image = .{ .null, .null } },
+        .material = .onePass(.{ .coordinates = .none, .lit = false, .blend = .off }),
     }};
     var mesh: srapiext.Mesh = .{
         .positions = &positions,

@@ -27,6 +27,7 @@ const particles = @import("particles.zig");
 pub const breakup = @import("explode/breakup.zig");
 const shockwave = @import("shockwave.zig");
 const sound3d = @import("sound3d.zig");
+const table = @import("table.zig");
 const xtrabits = @import("xtrabits.zig");
 const Clock = @import("main.zig").Clock;
 
@@ -40,8 +41,7 @@ pub const Explosions = struct {
     /// (`explosion_bit_next`) takes the place of the oldest. When they last moved on
     /// (`explosion_bits_moved_at`). The game also counts them (`explosion_bit_count`), which
     /// nothing reads.
-    bits: [max_bits]?Bit = @splat(null),
-    next_bit: usize = 0,
+    bits: table.Ring(Bit, max_bits) = .{},
     moved_at: i32 = 0,
     /// The pieces the ships' break-ups send flying (`0x0055AE88`).
     pieces: breakup.Pieces,
@@ -109,7 +109,7 @@ pub const Explosions = struct {
         const clock = world.clock;
         if (explosions.marker) |*marker| marker.position += marker.drift * @as(Vector, @splat(@floatFromInt(@max(clock.frame_duration, 0))));
         const seconds = @as(f32, @floatFromInt(clock.frame_start - explosions.moved_at)) * Bit.per_tick;
-        for (&explosions.bits) |*slot| {
+        for (&explosions.bits.slots) |*slot| {
             const bit = &(slot.* orelse continue);
             if (bit.born + bit.life < clock.frame_start) slot.* = null else bit.fly(seconds);
         }
@@ -124,7 +124,7 @@ pub const Explosions = struct {
     /// The rest of `explosions_update`: the bits and the pieces go into the world's layer, and
     /// each fireball showing, with its light among the lights.
     pub fn draw(explosions: *Explosions, gpa: Allocator, scene: *srcore.Scene) Allocator.Error!void {
-        for (&explosions.bits) |*slot| {
+        for (&explosions.bits.slots) |*slot| {
             const bit = &(slot.* orelse continue);
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &bit.object }, .world);
         }
@@ -154,7 +154,7 @@ pub const Explosions = struct {
         const stray = random.centredVector(@splat(Bit.stray));
         const velocity = math.transform(math.fromAngles(stray[0], stray[1], stray[2]), leaving) * @as(Vector, @splat(how.speed));
         const spin = random.centredVector(@splat(Bit.tumble));
-        explosions.bits[explosions.next_bit] = .{
+        explosions.bits.take(explosions.settings.detail.bits()).* = .{
             .born = clock.frame_start,
             .life = Bit.flight + @as(i32, @intFromFloat(random.centred() * Bit.flight_spread)),
             .object = .{
@@ -168,17 +168,13 @@ pub const Explosions = struct {
             .velocity = velocity,
             .spin = spin,
         };
-        explosions.next_bit = (explosions.next_bit + 1) % explosions.settings.detail.bits();
     }
 
     /// `explosion_fireball` (`0x0046BD00`): sets a fireball off at `at`, into the first free slot,
     /// and not at all where there is none.
     pub fn setOff(explosions: *Explosions, at: Vector, spec: Fireball.Spec, clock: *const Clock, random: *libcmt.Rand) void {
-        for (&explosions.fireballs) |*slot| {
-            if (slot.* != null) continue;
-            slot.* = .init(explosions.images, at, spec, clock, random);
-            return;
-        }
+        const slot = table.firstFree(Fireball, &explosions.fireballs) orelse return;
+        slot.* = .init(explosions.images, at, spec, clock, random);
     }
 };
 
@@ -635,7 +631,7 @@ pub fn burst(world: gameobj.World, index: u16) void {
         const out: Vector = .{ random.fraction() * radius * burst_spread, 0, 0 };
         const turn = random.fractionVector(@splat(std.math.tau));
         const place = math.transform(math.fromAngles(turn[0], turn[1], turn[2]), out) + at;
-        const delay: i32 = @intFromFloat(@trunc(random.fraction() * burst_delay));
+        const delay: i32 = @intFromFloat(random.fraction() * burst_delay);
         fireballAt(world, place, .{ .size = radius * burst_size, .light = true, .delay = delay, .velocity = velocity * @as(Vector, @splat(carried)) });
     }
     sound(world, at, .explosions);
@@ -660,7 +656,7 @@ pub const testing = struct {
 
     fn flying(explosions: *const Explosions) usize {
         var count: usize = 0;
-        for (explosions.bits) |slot| count += @intFromBool(slot != null);
+        for (explosions.bits.slots) |slot| count += @intFromBool(slot != null);
         return count;
     }
 
@@ -817,7 +813,7 @@ test Bit {
     // A bit is lit, keeps its detail further off, and leaves along its direction at 1500 to 4500
     // a second times its throw's speed, for 17.5 to 22.5 seconds.
     explosions.throwBit(.{ 0, 0, 100 }, .{ 0, 0, 1 }, .{ .size = 0.4, .speed = 0.2 }, clock, &random);
-    const bit = &explosions.bits[0].?;
+    const bit = &explosions.bits.slots[0].?;
     try std.testing.expect(bit.object.flags.lit);
     try std.testing.expectEqual(objects.lightMask(false), bit.object.light_mask);
     try std.testing.expectEqual(1500, bit.object.levels[0].until);
@@ -836,13 +832,13 @@ test Bit {
     // Past its life, it is gone.
     clock.frame_start = bit.born + bit.life + 1;
     explosions.frame(stage.world());
-    try std.testing.expectEqual(null, explosions.bits[0]);
+    try std.testing.expectEqual(null, explosions.bits.slots[0]);
 
     // As the original has it, every light reaches it.
     explosions.settings.debris_lights = .every_light;
-    const index = explosions.next_bit;
+    const index = explosions.bits.next;
     explosions.throwBit(@splat(0), .{ 0, 0, 1 }, .{ .size = 1, .speed = 1 }, clock, &random);
-    try std.testing.expectEqual(0, explosions.bits[index].?.object.light_mask);
+    try std.testing.expectEqual(0, explosions.bits.slots[index].?.object.light_mask);
     explosions.reset();
     try std.testing.expectEqual(.every_light, explosions.settings.debris_lights);
     explosions.debris = testing.debris(&mesh);
@@ -850,7 +846,7 @@ test Bit {
     // The detail sets how many fly: at low, the 101st takes the first's place.
     for (0..Detail.low.bits() + 1) |_| explosions.throwBit(@splat(0), .{ 0, 0, 1 }, .{ .size = 1, .speed = 1 }, clock, &random);
     try std.testing.expectEqual(Detail.low.bits(), testing.flying(explosions));
-    try std.testing.expectEqual(1, explosions.next_bit);
+    try std.testing.expectEqual(1, explosions.bits.next);
 }
 
 test Debris {

@@ -59,14 +59,7 @@ pub const dome_radius: f32 = 5000;
 pub fn domeMesh(gpa: Allocator, image: tga.Image, colours: *[dome_vertices][4]f32) (Allocator.Error || error{WrongSize})!srapiext.Mesh {
     if (image.width != 256 or image.height != 256) return error.WrongSize;
     const mesh: srapiext.Mesh = try .create(gpa, .{ .polygons = dome_polygons, .vertices = dome_vertices, .indices = dome_polygons * 3 });
-    mesh.surfaces[0] = .{ .polygons = dome_polygons, .material = .{
-        .two_pass = false,
-        ._unknown_01 = 0,
-        .coordinates = .{ .none, .none },
-        .lit = .{ true, false },
-        .blend = .{ .off, .off },
-        .image = .{ .null, .null },
-    } };
+    mesh.surfaces[0] = .{ .polygons = dome_polygons, .material = .onePass(.{ .coordinates = .none, .lit = true, .blend = .off }) };
 
     const across: f32 = 2.0 / 14.0;
     const down: f32 = 2.0 / 7.0;
@@ -122,14 +115,7 @@ pub fn patchMesh(gpa: Allocator, half_angle: f32, texture: *srtexture.Image) All
     var mesh: srapiext.Mesh = try .create(gpa, .{ .polygons = polygon_count, .vertices = vertex_count, .indices = polygon_count * 3 });
     errdefer mesh.deinit(gpa);
     const uv = try mesh.addCoordinates(gpa);
-    mesh.surfaces[0] = .{ .polygons = polygon_count, .material = .{
-        .two_pass = false,
-        ._unknown_01 = 0,
-        .coordinates = .{ .mesh, .none },
-        .lit = .{ false, false },
-        .blend = .{ .add, .off },
-        .image = .{ .null, .null },
-    }, .textures = .{ .{ .image = texture }, .none } };
+    mesh.surfaces[0] = .{ .polygons = polygon_count, .material = .onePass(.{ .coordinates = .mesh, .lit = false, .blend = .add }), .textures = .{ .{ .image = texture }, .none } };
 
     const pitch_step = (half_angle - -half_angle) / @as(f32, columns);
     const yaw_step = (half_angle - -half_angle) / @as(f32, rows);

@@ -21,6 +21,7 @@ const camera = @import("camera.zig");
 const collision = @import("collision.zig");
 const gameobj = @import("gameobj.zig");
 const matmanager = @import("matmanager.zig");
+const table = @import("table.zig");
 const xtrabits = @import("xtrabits.zig");
 const Clock = @import("main.zig").Clock;
 
@@ -153,14 +154,7 @@ const uv_least: f32 = 1.0 / 64.0;
 
 /// A ring's material: its own texture coordinates, coloured by its colours, and added to what is
 /// behind it.
-const ring_material: srapiext.Material = .{
-    .two_pass = false,
-    ._unknown_01 = 0,
-    .coordinates = .{ .mesh, .none },
-    .lit = .{ true, false },
-    .blend = .{ .add, .off },
-    .image = .{ .null, .null },
-};
+const ring_material: srapiext.Material = .onePass(.{ .coordinates = .mesh, .lit = true, .blend = .add });
 
 /// How hard a shockwave shakes the player's view as it passes, times how far through its life it
 /// is (`0x004DC520`), no more than the camera takes; how long the player is left alone after a
@@ -204,9 +198,7 @@ pub const Shockwaves = struct {
     /// `shockwave_create` (`0x004A15D0`): sets a shockwave off at `at`, facing as it faces, into
     /// the first free slot, and not at all where there is none. It starts at nothing.
     pub fn add(waves: *Shockwaves, at: math.Place, spec: Spec, clock: *const Clock) void {
-        const slot = for (&waves.waves) |*slot| {
-            if (slot.* == null) break slot;
-        } else return;
+        const slot = table.firstFree(Shockwave, &waves.waves) orelse return;
         const mesh = waves.meshes.getPtrConst(spec.kind.ring());
         slot.* = .{
             .kind = spec.kind,

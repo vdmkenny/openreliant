@@ -17,6 +17,7 @@ const srcore = @import("../surrender/surrenderlib/srcore.zig");
 const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
 const gameobj = @import("gameobj.zig");
 const matmanager = @import("matmanager.zig");
+const table = @import("table.zig");
 const xtrabits = @import("xtrabits.zig");
 const Clock = @import("main.zig").Clock;
 
@@ -132,14 +133,7 @@ fn quadMesh(gpa: Allocator, quads: []const Quad, uv: [4]f32, image: *srtexture.I
     const coords = try mesh.addCoordinates(gpa);
     mesh.surfaces[0] = .{
         .polygons = @intCast(quads.len),
-        .material = .{
-            .two_pass = false,
-            ._unknown_01 = 0,
-            .coordinates = .{ coordinates, .none },
-            .lit = .{ true, false },
-            .blend = .{ .add, .off },
-            .image = .{ .null, .null },
-        },
+        .material = .onePass(.{ .coordinates = coordinates, .lit = true, .blend = .add }),
         .textures = .{ .{ .image = image }, .none },
     };
     mesh.numberPolygons(4);
@@ -182,13 +176,13 @@ pub const Spray = struct {
 pub const Sparks = struct {
     gpa: Allocator,
     shapes: *std.EnumArray(Kind, Shape),
-    sparks: *[max]?Spark,
-    /// The slot the next takes (`0x00593D88`), in the place of whatever was there, and when they
-    /// last moved on (`0x00593D8C`).
-    next: u8 = 0,
+    /// The sparks flying, the next taking the place of whatever was in its slot (`0x00593D88`),
+    /// and when they last moved on (`0x00593D8C`).
+    sparks: *Flying,
     moved_at: i32 = 0,
 
     pub const max = 256;
+    const Flying = table.Ring(Spark, max);
 
     /// `0x004A1AF0`, which `particles_init` runs: the shapes, over their textures.
     pub fn create(gpa: Allocator, textures: *srtexture.Table) (Allocator.Error || matmanager.Error)!Sparks {
@@ -200,8 +194,8 @@ pub const Sparks = struct {
             try buildShape(gpa, textures, kind, shape);
             built += 1;
         }
-        const sparks = try gpa.create([max]?Spark);
-        sparks.* = @splat(null);
+        const sparks = try gpa.create(Flying);
+        sparks.* = .{};
         return .{ .gpa = gpa, .shapes = shapes, .sparks = sparks };
     }
 
@@ -214,14 +208,13 @@ pub const Sparks = struct {
 
     /// `0x004A1B70`: none flying.
     pub fn reset(all: *Sparks) void {
-        all.sparks.* = @splat(null);
-        all.next = 0;
+        all.sparks.* = .{};
     }
 
     /// `0x004A1DB0`: a spark of `kind` thrown from `at` along `direction` at `speed` a tick,
     /// drifting on with `carried`, in the place of the oldest.
     pub fn add(all: *Sparks, kind: Kind, at: Vector, direction: Vector, speed: f32, carried: Vector, clock: *const Clock) void {
-        const slot = &all.sparks[all.next];
+        const slot = all.sparks.take(max);
         slot.* = .{
             .kind = kind,
             .object = .{
@@ -236,7 +229,6 @@ pub const Sparks = struct {
             .carried = carried,
         };
         slot.*.?.object.baked = &slot.*.?.colours;
-        all.next +%= 1;
     }
 
     /// `0x004A1BB0`, which `particles_frame` runs first: each spark flies on by its velocity and
@@ -244,7 +236,7 @@ pub const Sparks = struct {
     /// and fades from its first colour to its last over its life, after which it is gone.
     pub fn frame(all: *Sparks, clock: *const Clock) void {
         const ticks: f32 = @floatFromInt(clock.frame_start - all.moved_at);
-        for (all.sparks) |*slot| {
+        for (&all.sparks.slots) |*slot| {
             const spark = &(slot.* orelse continue);
             const look = spark.kind.look();
             const age = clock.frame_start - spark.born;
@@ -255,9 +247,7 @@ pub const Sparks = struct {
             spark.object.position += (spark.velocity + spark.carried) * @as(Vector, @splat(ticks));
             spark.velocity *= @splat(std.math.pow(f32, look.drag, ticks));
             const done = @as(f32, @floatFromInt(age)) / @as(f32, @floatFromInt(look.life));
-            const first: Vector = look.colours[0];
-            const last: Vector = look.colours[1];
-            const colour = first + (last - first) * @as(Vector, @splat(done));
+            const colour = std.math.lerp(@as(Vector, look.colours[0]), @as(Vector, look.colours[1]), @as(Vector, @splat(done)));
             spark.colours = @splat(.{ colour[0], colour[1], colour[2], 1 });
         }
         all.moved_at = clock.frame_start;
@@ -265,7 +255,7 @@ pub const Sparks = struct {
 
     /// Each spark, into the world's layer.
     pub fn draw(all: *Sparks, gpa: Allocator, scene: *srcore.Scene) Allocator.Error!void {
-        for (all.sparks) |*slot| {
+        for (&all.sparks.slots) |*slot| {
             const spark = &(slot.* orelse continue);
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &spark.object }, .world);
         }
@@ -329,7 +319,7 @@ test Sparks {
     // A spark flies on with what it carries, slows by its drag and fades, until its life is over.
     var clock: Clock = .{};
     all.add(.hull, @splat(0), .{ 0, 0, 2 }, 10, .{ 1, 0, 0 }, &clock);
-    const spark = &all.sparks[0].?;
+    const spark = &all.sparks.slots[0].?;
     try std.testing.expectEqual(spark.object.levels.ptr, bolt.ptr);
     clock.frame_start = 50;
     all.frame(&clock);
@@ -338,12 +328,12 @@ test Sparks {
     try std.testing.expectApproxEqAbs(0.5, spark.colours[3][0], 1e-6);
     clock.frame_start = 101;
     all.frame(&clock);
-    try std.testing.expectEqual(null, all.sparks[0]);
+    try std.testing.expectEqual(null, all.sparks.slots[0]);
 
     // The next takes the place of the oldest, round the table.
-    const before = all.next;
+    const before = all.sparks.next;
     for (0..Sparks.max + 1) |_| all.add(.shield, @splat(0), .{ 0, 0, 1 }, 1, @splat(0), &clock);
-    try std.testing.expectEqual(before +% 1, all.next);
+    try std.testing.expectEqual((before + 1) % Sparks.max, all.sparks.next);
 }
 
 test spray {
@@ -360,17 +350,17 @@ test spray {
 
     // Ten, each within the spread of the aim and the range of the speed.
     spray(world, .hull, .{ 0, 0, 1000 }, .{ 0, 0, 1 }, @splat(0), .{ .speed = 10, .speed_range = 5, .spread = 1, .count = 10 });
-    for (built.sparks.sparks[0..10]) |slot| {
+    for (built.sparks.sparks.slots[0..10]) |slot| {
         const spark = slot.?;
         const speed = math.length(spark.velocity);
         try std.testing.expect(speed >= 7.5 and speed <= 12.5);
         try std.testing.expect(spark.velocity[2] / speed >= @cos(@as(f32, 0.75)));
     }
-    try std.testing.expectEqual(null, built.sparks.sparks[10]);
+    try std.testing.expectEqual(null, built.sparks.sparks.slots[10]);
 
     // A hull's are not thrown far from the camera; a component's are.
     spray(world, .hull, .{ 0, 0, near_only + 1 }, .{ 0, 0, 1 }, @splat(0), .{ .speed = 10, .speed_range = 0, .spread = 0, .count = 1 });
-    try std.testing.expectEqual(null, built.sparks.sparks[10]);
+    try std.testing.expectEqual(null, built.sparks.sparks.slots[10]);
     spray(world, .component, .{ 0, 0, near_only + 1 }, .{ 0, 0, 1 }, @splat(0), .{ .speed = 10, .speed_range = 0, .spread = 0, .count = 1 });
-    try std.testing.expect(built.sparks.sparks[10] != null);
+    try std.testing.expect(built.sparks.sparks.slots[10] != null);
 }

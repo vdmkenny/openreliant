@@ -17,6 +17,7 @@ const gameobj = @import("../gameobj.zig");
 const libcmt = @import("../../libcmt.zig");
 const objects = @import("../objects.zig");
 const particles = @import("../particles.zig");
+const table = @import("../table.zig");
 const xtrabits = @import("../xtrabits.zig");
 
 /// Which blast breaks the ship up, which sets how its pieces fly: a ship's blast
@@ -286,14 +287,14 @@ pub const Flight = struct {
 /// (`debris_add`, `0x00472700`; `0x0055AD1C`).
 pub const Pieces = struct {
     gpa: Allocator,
-    flights: *[max]?Flight,
-    next: usize = 0,
+    flights: *Flights,
 
     pub const max = 500;
+    const Flights = table.Ring(Flight, max);
 
     pub fn create(gpa: Allocator) Allocator.Error!Pieces {
-        const flights = try gpa.create([max]?Flight);
-        flights.* = @splat(null);
+        const flights = try gpa.create(Flights);
+        flights.* = .{};
         return .{ .gpa = gpa, .flights = flights };
     }
 
@@ -304,8 +305,8 @@ pub const Pieces = struct {
 
     /// As a mission starts again: none flying.
     pub fn reset(pieces: *Pieces) void {
-        for (pieces.flights) |*slot| pieces.drop(slot);
-        pieces.next = 0;
+        for (&pieces.flights.slots) |*slot| pieces.drop(slot);
+        pieces.flights.next = 0;
     }
 
     /// `0x00472740`: lets a flight go, its piece and its smoke with it.
@@ -316,10 +317,9 @@ pub const Pieces = struct {
 
     /// `debris_add`: sends `flight` off in the place of the oldest.
     fn add(pieces: *Pieces, flight: Flight) void {
-        const slot = &pieces.flights[pieces.next];
+        const slot = pieces.flights.take(max);
         pieces.drop(slot);
         slot.* = flight;
-        pieces.next = (pieces.next + 1) % max;
     }
 
     /// `explosions_update`'s pass over them: each moves on by its velocity times the frame's
@@ -327,7 +327,7 @@ pub const Pieces = struct {
     /// its fireball, and one gone up is let go once its last ticks are over.
     pub fn frame(pieces: *Pieces, world: gameobj.World) void {
         const clock = world.clock;
-        for (pieces.flights) |*slot| {
+        for (&pieces.flights.slots) |*slot| {
             const flight = &(slot.* orelse continue);
             if (flight.until < clock.frame_start) switch (flight.stage) {
                 .flying => {
@@ -355,7 +355,7 @@ pub const Pieces = struct {
 
     /// Each piece flying, into the world's layer.
     pub fn draw(pieces: *Pieces, gpa: Allocator, scene: *srcore.Scene) Allocator.Error!void {
-        for (pieces.flights) |*slot| {
+        for (&pieces.flights.slots) |*slot| {
             const flight = &(slot.* orelse continue);
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = flight.piece.shown() }, .world);
         }
@@ -555,7 +555,7 @@ test Pieces {
     const from = cuts[0].?.object.position;
     pieces.add(.{ .until = 10, .piece = cuts[0].?, .velocity = .{ 1, 0, 0 }, .spin = spin });
     cuts[0] = null;
-    const flight = &pieces.flights[0].?;
+    const flight = &pieces.flights.slots[0].?;
     pieces.frame(stage.world());
     try std.testing.expectEqual(from + Vector{ 2, 0, 0 }, flight.piece.object.position);
     try std.testing.expect(math.distance(math.angles(flight.piece.object.orientation), .{ 0, 0, 0.2 }) < 1e-5);
@@ -567,7 +567,7 @@ test Pieces {
     try std.testing.expect(!stage.explosions.fireballs[0].?.look.bang);
     clock.frame_start = 11 + Flight.lingers + 1;
     pieces.frame(stage.world());
-    try std.testing.expectEqual(null, pieces.flights[0]);
+    try std.testing.expectEqual(null, pieces.flights.slots[0]);
 }
 
 test breakUp {
@@ -587,7 +587,7 @@ test breakUp {
     // the part is; a burst's fly longer.
     breakUp(stage.world(), index, .burst);
     var flying: usize = 0;
-    for (stage.explosions.pieces.flights) |maybe| {
+    for (stage.explosions.pieces.flights.slots) |maybe| {
         const flight = maybe orelse continue;
         flying += 1;
         try std.testing.expectEqual(slot.model.?.parts[0].object.light_mask, flight.piece.object.light_mask);
@@ -602,7 +602,7 @@ test breakUp {
     stage.explosions.pieces.reset();
     stage.explosions.settings.debris_lights = .every_light;
     breakUp(stage.world(), index, .blast);
-    for (stage.explosions.pieces.flights) |maybe| {
+    for (stage.explosions.pieces.flights.slots) |maybe| {
         const flight = maybe orelse continue;
         try std.testing.expectEqual(0, flight.piece.object.light_mask);
     }

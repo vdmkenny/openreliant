@@ -219,7 +219,7 @@ fn spinOutInit(ctx: Context, index: u16) void {
         stop(object);
         state.end = 0;
     } else {
-        state.end = ctx.clock.frame_start + @as(i32, @intFromFloat(@trunc(ctx.world.random.fraction() * spin_ticks))) + spin_ticks;
+        state.end = ctx.clock.frame_start + @as(i32, @intFromFloat(ctx.world.random.fraction() * spin_ticks)) + spin_ticks;
     }
     object.flags.unpowered = true;
     state.spin = randomSpin(ctx.world.random);
@@ -283,7 +283,7 @@ fn chain(world: gameobj.World, at: Vector) void {
     const random = world.random;
     for (0..chain_length) |n| {
         const offset = random.centredVector(@splat(chain_spread));
-        const lag: i32 = @intFromFloat(@trunc(random.fraction() * chain_lag));
+        const lag: i32 = @intFromFloat(random.fraction() * chain_lag);
         const size = random.fraction() * chain_size_range + chain_size;
         explode.fireballAt(world, offset + at, .{ .size = size, .light = true, .delay = @as(i32, @intCast(n)) * chain_step - lag });
     }

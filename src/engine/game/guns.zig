@@ -1416,10 +1416,10 @@ test "a shot striking a hull throws sparks from where it struck" {
     bullet.last = .{ 0, 0, 0 };
     bullet.at = .{ 0, 0, 600 };
     bulletsFrame(world, &ship.mission.clock, 0);
-    for (built.sparks.sparks[0..hull_sparks.count]) |thrown| {
+    for (built.sparks.sparks.slots[0..hull_sparks.count]) |thrown| {
         try std.testing.expect(math.distance(thrown.?.object.position, .{ 0, 0, 500 }) < 1e-2);
     }
-    try std.testing.expectEqual(null, built.sparks.sparks[hull_sparks.count]);
+    try std.testing.expectEqual(null, built.sparks.sparks.slots[hull_sparks.count]);
 }
 
 test "the player's shifted shields take a hit before the quadrant does" {
@@ -1884,14 +1884,7 @@ fn quadFace(index: usize) [4]u16 {
 /// A material drawn with the shot's own texture coordinates (`MeshObject.own_uv`), added to what
 /// stands behind it.
 fn ownMaterial(lit: bool) srapiext.Material {
-    return .{
-        .two_pass = false,
-        ._unknown_01 = 0,
-        .coordinates = .{ .generated, .none },
-        .lit = .{ lit, false },
-        .blend = .{ .add, .off },
-        .image = .{ .null, .null },
-    };
+    return .onePass(.{ .coordinates = .generated, .lit = lit, .blend = .add });
 }
 
 /// A material drawn with the mesh's own texture coordinates, added to what stands behind it.

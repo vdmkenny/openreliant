@@ -71,14 +71,7 @@ const uv_far: f32 = 0.99;
 const sort_bias: f32 = -10;
 
 /// A flare's material: added to what stands behind it, unlit, with the mesh's own coordinates.
-const flare_material: srapiext.Material = .{
-    .two_pass = false,
-    ._unknown_01 = 0,
-    .coordinates = .{ .mesh, .none },
-    .lit = .{ false, false },
-    .blend = .{ .add, .off },
-    .image = .{ .null, .null },
-};
+const flare_material: srapiext.Material = .onePass(.{ .coordinates = .mesh, .lit = false, .blend = .add });
 
 /// The material a glow's nozzle draws with, and the one its blades draw with (`engine_glows_build`).
 const nozzle_materials = materialNames("matflarea");
