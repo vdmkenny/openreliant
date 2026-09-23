@@ -289,76 +289,43 @@ const labels = [_]struct { shape: u16, at: [2]i32 }{
 /// 1 up.
 const ball_at: [2]i32 = .{ 68 - radius, -1 - radius };
 
-/// Draws what window 7 shows, the window's place at `at` on the screen and `size` times its own
-/// size, cut to `clip` while it opens or closes, in the order `hud_window_draw` draws it: the title,
-/// the ball, the percentages, then each bar and the shapes round them.
+/// Draws what window 7 shows, in the order `hud_window_draw` draws it: the title, the ball, the
+/// percentages, then each bar and the shapes round them.
 pub fn draw(
     shown: Shown,
     art: *hud.Art,
     gpa: Allocator,
     target: device.Device,
-    at: [2]i32,
-    size_on_screen: f32,
-    clip: ?hud.Clip,
+    placed: hud.windows.Inside,
     colour: [4]f32,
 ) (spr.Error || Allocator.Error)!void {
-    const place = struct {
-        fn of(from: [2]i32, offset: [2]i32, by: f32) [2]i32 {
-            return .{
-                from[0] + round(@as(f32, @floatFromInt(offset[0])) * by),
-                from[1] + round(@as(f32, @floatFromInt(offset[1])) * by),
-            };
-        }
-    }.of;
+    const size_on_screen = placed.size;
     if (shown.strings.string(title)) |text| {
-        _ = try hud.drawText(shown.font, gpa, target, place(at, .{ 2, -77 }, size_on_screen), text, colour, .left, size_on_screen);
+        _ = try hud.drawText(shown.font, gpa, target, placed.place(.{ 2, -77 }), text, colour, .left, size_on_screen);
     }
 
     const setting = input_power.point(shown.object);
     shown.ball.render(setting, shown.hit_shake, shown.random);
-    const corner = place(at, ball_at, size_on_screen);
-    hud.drawImage(target, &shown.ball.image, .{ @floatFromInt(corner[0]), @floatFromInt(corner[1]) }, colour, size_on_screen, .{ .clip = clip });
+    const corner = placed.place(ball_at);
+    hud.drawImage(target, &shown.ball.image, .{ @floatFromInt(corner[0]), @floatFromInt(corner[1]) }, colour, size_on_screen, .{ .clip = placed.clip });
 
     const found = percentages(setting);
     for (std.enums.values(input_power.System)) |system| {
         var buffer: [16]u8 = undefined;
         const text = std.fmt.bufPrint(&buffer, "{d}%", .{found.get(system)}) catch continue;
-        _ = try hud.drawText(shown.font, gpa, target, place(at, figures.get(system), size_on_screen), text, colour, .left, size_on_screen);
+        _ = try hud.drawText(shown.font, gpa, target, placed.place(figures.get(system)), text, colour, .left, size_on_screen);
     }
 
     const shares = input_power.shares(setting);
     for ([_]input_power.System{ .guns, .engines, .shields }) |system| {
         const bar = bars.get(system);
-        const from = place(at, bar.at, size_on_screen);
-        try hud.drawShapeWith(art, gpa, target, bar.empty, from, colour, size_on_screen, .{ .clip = clip });
-        const pane = bar.pane(shares.get(system));
-        const cut = within(.{
-            .left = edge(at[0], pane[0], size_on_screen),
-            .top = edge(at[1], pane[1], size_on_screen),
-            .right = edge(at[0], pane[2] + 1, size_on_screen),
-            .bottom = edge(at[1], pane[3] + 1, size_on_screen),
-        }, clip);
-        try hud.drawShapeWith(art, gpa, target, bar.full, from, colour, size_on_screen, .{ .clip = cut });
+        const from = placed.place(bar.at);
+        try hud.drawShapeWith(art, gpa, target, bar.empty, from, colour, size_on_screen, .{ .clip = placed.clip });
+        try hud.drawShapeWith(art, gpa, target, bar.full, from, colour, size_on_screen, .{ .clip = placed.pane(bar.pane(shares.get(system))) });
     }
     for (labels) |label| {
-        try hud.drawShapeWith(art, gpa, target, label.shape, place(at, label.at, size_on_screen), colour, size_on_screen, .{ .clip = clip });
+        try hud.drawShapeWith(art, gpa, target, label.shape, placed.place(label.at), colour, size_on_screen, .{ .clip = placed.clip });
     }
-}
-
-/// Where a pane's edge `pixels` from the window's place falls on the screen.
-fn edge(from: i32, pixels: i32, by: f32) f32 {
-    return @as(f32, @floatFromInt(from)) + @as(f32, @floatFromInt(pixels)) * by;
-}
-
-/// `pane` cut to `clip` as well, if there is one.
-fn within(pane: hud.Clip, clip: ?hud.Clip) hud.Clip {
-    const outer = clip orelse return pane;
-    return .{
-        .left = @max(pane.left, outer.left),
-        .top = @max(pane.top, outer.top),
-        .right = @min(pane.right, outer.right),
-        .bottom = @min(pane.bottom, outer.bottom),
-    };
 }
 
 fn round(value: f32) i32 {

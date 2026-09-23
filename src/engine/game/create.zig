@@ -277,6 +277,9 @@ pub const Type = struct {
     loaded: *const srofiles.Loaded,
     /// What the type's objects light themselves with and mount.
     effects: objects.Effects = .{},
+    /// The type's own sprite (`GameObject.type_data`), which for a ship is its schematic, where
+    /// the game has one: the ship status indicator and the target display draw it.
+    schematic: ?@import("hud.zig").Schematic = null,
 };
 
 /// Where ship types' models come from: whoever has the game's files answers, as for

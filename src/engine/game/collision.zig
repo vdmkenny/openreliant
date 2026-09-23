@@ -375,12 +375,12 @@ fn smartTargeting(world: gameobj.World, attacker: u16, kind: Kind) ?*hud.State {
 /// conditions follow it (`object_armor_conditions`), and armour below zero destroys the object
 /// (`ai.objectDestroyed`), which may spin out; a blow heavier than `heavy_blow` leaves the player
 /// no time to eject. Smart targeting makes what the player's ship struck, but by colliding, the
-/// target of its current order, and a hit on that target brings up its form of the target
-/// display.
+/// target of its current order. A hit on that target brings up its form of the target display,
+/// and a hit on it or on the player's ship marks the quadrant struck for the ship status indicator
+/// to flash (`hud.State.target_hits`, `ship_hits`).
 ///
-/// Not ported: the display's interference, the quadrant a hit on the player's ship or its target
-/// flashes on the display (`0x00563160`, `0x005635D4`), and what the player's hits on a friend
-/// tell the mission.
+/// Not ported: the display's interference, and what the player's hits on a friend tell the
+/// mission.
 pub fn armorDamage(world: gameobj.World, index: u16, struck: Quadrant, value: f32, attacker: u16, kind: Kind) void {
     const all = world.objects;
     const slot = &all.slots[index];
@@ -411,9 +411,12 @@ pub fn armorDamage(world: gameobj.World, index: u16, struck: Quadrant, value: f3
     if (armor.* < 0) ai.objectDestroyed(.{ .world = world, .clock = world.clock }, index, true, taken > heavy_blow);
     const current = &all.slots[all.player].orders[0].target;
     if (smartTargeting(world, attacker, kind) != null) current.index = @intCast(index);
-    if (world.display) |display| if (current.index == index) {
+    const display = world.display orelse return;
+    if (current.index == index) {
         _ = display.bringUp(hud.targetWindow(slot), false);
-    };
+        display.target_hits.insert(struck);
+    }
+    if (index == all.player) display.ship_hits.insert(struck);
 }
 
 /// A blow to the armour heavier than this leaves the player's ship no time to eject (`0x004DC44C`).
@@ -756,6 +759,15 @@ test "smart targeting takes what the player's ship hits" {
     try std.testing.expectEqual(@as(i32, index), target.index);
     try std.testing.expectEqual(index, display.target.?);
     try std.testing.expect(display.windows.up(.target));
+
+    // Past its shields, a hit on the target marks the quadrant it wore, for the target display;
+    // one on the player's ship marks the player's.
+    armorDamage(world, index, .left, 1, player, .bullet);
+    try std.testing.expect(display.target_hits.contains(.left));
+    try std.testing.expect(!display.target_hits.contains(.fore));
+    all.slots[player].object.armor = .all(100);
+    armorDamage(world, player, .aft, 1, index, .bullet);
+    try std.testing.expect(display.ship_hits.contains(.aft));
 }
 
 test knockDamage {

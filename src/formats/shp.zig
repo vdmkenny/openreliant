@@ -202,12 +202,13 @@ pub const Part = extern struct {
         };
     }
 
-    /// What a part is, going by what the engine does with each class and by the parts' names.
-    /// Classes 3, 9, 10 and 18 are turrets.
+    /// What a part is, going by what the engine does with each class and by the names the target
+    /// display gives a subtarget of each (`hud_window_draw`). Classes 3, 9, 10 and 18 are turrets.
     pub const Class = enum(u32) {
-        /// Hull sections, going by their names.
+        /// Hull sections, going by their names. The target display's large form shows the armour
+        /// of the first a ship has (`hud_window_draw`).
         hull = 1,
-        /// A turret, with its own yaw and pitch limits.
+        /// A turret, with its own yaw and pitch limits: a Laser Turret.
         turret = 3,
         /// An engine. `create_object` counts them (`GameObject.engines`), and each one destroyed
         /// takes its share of the thrust (`GameObject.engines_intact`).
@@ -215,6 +216,24 @@ pub const Part = extern struct {
         /// A shield generator: an object with one has `shield_generator` until the part is
         /// destroyed.
         shield_generator = 6,
+        comms_transmitter = 7,
+        gravity_drive = 8,
+        /// Another Laser Turret, by the name the display gives it. **Unknown:** how it differs from
+        /// `turret`.
+        laser_turret = 9,
+        missile_turret = 10,
+        power_core = 11,
+        satellite_dish = 12,
+        service_door = 13,
+        shaft = 14,
+        surface_building = 15,
+        twin_power_cores = 16,
+        vent_hatch = 17,
+        ion_cannon = 18,
+        armored_plate = 19,
+        cap_gun = 20,
+        warp_projector = 21,
+        fuel_pod = 22,
         _,
     };
 

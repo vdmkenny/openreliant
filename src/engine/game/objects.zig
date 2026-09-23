@@ -570,6 +570,8 @@ pub const Model = struct {
         /// Its node's `targetable` flag, which cycling subtargets requires and `SetTargetable`
         /// changes.
         targetable: bool = false,
+        /// What its part is (part `+0x40`), which the target display names a subtarget by.
+        class: shp.Part.Class = @enumFromInt(0),
         /// The part its node hangs from (`object_link_part`), or null for one hanging from the
         /// root. A part names its parent by index, or -1 for none.
         parent: ?usize,
@@ -729,6 +731,7 @@ pub const Model = struct {
                 .attachments = source.attachments,
                 .armor = @floatFromInt(source.part.component_armor),
                 .component_armor = source.part.component_armor,
+                .class = source.part.class,
                 .link_id = source.part.link_id,
                 .parent = parentOf(model, index),
                 .origin = @splat(0),
