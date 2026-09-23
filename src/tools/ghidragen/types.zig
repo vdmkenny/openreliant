@@ -145,6 +145,7 @@ pub const exported = [_]Export{
     .{ "ShpPartFlags", shp.Part.Flags },
     .{ "ShpPartClass", shp.Part.Class },
     .{ "ShpAttachment", shp.Attachment },
+    .{ "NodePlayMode", shp.PlayMode(i32) },
     .{ "ShpAttachmentKind", shp.Attachment.Kind },
     .{ "Vec3", shp.Vec3 },
 

@@ -250,6 +250,21 @@ pub const TreeNode = extern struct {
     }
 };
 
+/// How a node plays an animation track, as a track's clip holds it and a live node keeps it (the
+/// node's `+0xB4`, a word wider).
+pub fn PlayMode(comptime Int: type) type {
+    return enum(Int) {
+        none = 0,
+        /// To the end, or back to the start at a speed below zero, then stops there.
+        once = 1,
+        /// Round and round.
+        loop = 2,
+        /// To the end and back again, round and round.
+        swing = 3,
+        _,
+    };
+}
+
 /// Tag `0x09`. A point on a part where the engine mounts something: a gun or turret, a missile
 /// pod, a light, a cargo pod. The engine keeps 124 bytes of each record, and exporters that write
 /// longer ones add nothing it reads.
@@ -324,9 +339,8 @@ pub const Attachment = extern struct {
 pub const Clip = extern struct {
     /// In the track's own time, which the part's node advances by its speed each simulation step.
     length: i32,
-    /// How the track plays unless its starter says otherwise: 0 not at all, 1 once, 2 looping and
-    /// 3 back and forth (`node_tree_update`).
-    mode: i16,
+    /// How the track plays unless its starter says otherwise (`node_tree_update`).
+    mode: PlayMode(i16),
     name_bytes: [18]u8,
 
     /// The name, up to its first NUL.
