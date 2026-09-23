@@ -79,6 +79,26 @@ pub const Material = extern struct {
         _,
     };
 
+    /// A single pass: where its texture coordinates come from, whether the lighting colours it,
+    /// and how it combines with what is drawn.
+    pub const Pass = struct {
+        coordinates: Coordinates,
+        lit: bool,
+        blend: Blend,
+    };
+
+    /// A material of one pass, whose image its surface's textures hold.
+    pub fn onePass(pass: Pass) Material {
+        return .{
+            .two_pass = false,
+            ._unknown_01 = 0,
+            .coordinates = .{ pass.coordinates, .none },
+            .lit = .{ pass.lit, false },
+            .blend = .{ pass.blend, .off },
+            .image = .{ .null, .null },
+        };
+    }
+
     comptime {
         assert(@offsetOf(Material, "blend") == 6);
         assert(@sizeOf(Material) == 0x10);
@@ -136,7 +156,9 @@ pub const ObjectFlags = packed struct(u32) {
     always_drawn: bool = false,
     /// Not tested against the view, and always clipped (`0x004C5E20`).
     unbounded: bool = false,
-    _unknown_14: bool = false,
+    /// Its mesh is its own, freed with it (`0x004C4D50`): a piece of the break-up's
+    /// (`model_slice`).
+    owns_mesh: bool = false,
     /// Its triangles hide the sun, lessening its visibility (`0x10001FD0`).
     sun_occluder: bool = false,
     geomorph_positions: bool = false,
@@ -372,14 +394,7 @@ pub const SpriteSet = struct {
     /// In the world; the sprites are offset from it.
     position: Vector = @splat(0),
     scale: f32 = 1,
-    surface: Surface = .{ .material = .{
-        .two_pass = false,
-        ._unknown_01 = 0,
-        .coordinates = .{ .mesh, .none },
-        .lit = .{ false, false },
-        .blend = .{ .add, .off },
-        .image = .{ .null, .null },
-    } },
+    surface: Surface = .{ .material = .onePass(.{ .coordinates = .mesh, .lit = false, .blend = .add }) },
     sprites: []Sprite,
 };
 

@@ -473,7 +473,7 @@ pub const testing = struct {
         const biases = try gpa.dupe(f32, &.{ 0, 0 });
         const surfaces = try gpa.dupe(srapiext.Surface, &.{.{
             .polygons = 2,
-            .material = .{ .two_pass = false, ._unknown_01 = 0, .coordinates = .{ .none, .none }, .lit = .{ true, false }, .blend = .{ .off, .off }, .image = .{ .null, .null } },
+            .material = .onePass(.{ .coordinates = .none, .lit = true, .blend = .off }),
         }});
         return .{
             .positions = positions,

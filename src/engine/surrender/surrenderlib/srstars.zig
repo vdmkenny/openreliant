@@ -116,14 +116,7 @@ pub const Field = struct {
     /// The field's frame: a sky field is turned to face its axis.
     orientation: math.Matrix = math.identity,
     /// Untextured, lit and added: each star takes its own colour.
-    surface: srapiext.Surface = .{ .material = .{
-        .two_pass = false,
-        ._unknown_01 = 0,
-        .coordinates = .{ .none, .none },
-        .lit = .{ true, false },
-        .blend = .{ .add, .off },
-        .image = .{ .null, .null },
-    } },
+    surface: srapiext.Surface = .{ .material = .onePass(.{ .coordinates = .none, .lit = true, .blend = .add }) },
     stars: []const Star,
     /// Dust: the cube's side less one; positions wrap by masking with it.
     cube_mask: u32 = 0,

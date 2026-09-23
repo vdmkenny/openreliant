@@ -99,7 +99,7 @@ const Doc = struct {
 
 /// Every option's help, which the compiler holds to having one for each.
 const docs: std.enums.EnumArray(Arg, Doc) = .init(.{
-    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks, lights from the latest shots only, and the sound mixed plainly in stereo" },
+    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, and the sound mixed plainly in stereo" },
     .@"--ship" = .{ .section = .sandbox, .value = "<type>", .text = "the ship type to fly, by its number in shipstats.bin; 0, the Predator, by default" },
     .@"--view" = .{ .section = .sandbox, .value = "<0|1|2>", .text = "the view it starts in, as the game's settings keep it: 0 the cockpit, the default; 1 the chase view; 2 no cockpit" },
     .@"--music" = .{ .section = .sandbox, .value = "<file>", .text = "the piece from the game's music folder it plays, or none; New_Mission01.wav by default" },
@@ -202,6 +202,8 @@ const Options = struct {
     smooth_motion: bool = true,
     /// Which shots cast a light: every one, or the latest two of each side as the original does.
     shot_lights: game.guns.ShotLights = .every_shot,
+    /// Which lights reach an explosion's debris: a ship's, or every one as the original lets them.
+    debris_lights: game.explode.DebrisLights = .like_ships,
     /// How the sound plays, or null for none.
     sound: ?platform.audio.Options = .{},
     /// The piece of music the sandbox plays, from `music\`, or none.
@@ -246,6 +248,7 @@ const Options = struct {
                 options.settings = .original;
                 options.smooth_motion = false;
                 options.shot_lights = .latest_two;
+                options.debris_lights = .every_light;
                 if (options.sound) |*sound| sound.* = .{ .player = .software, .master = null };
             },
             .@"--ship" => {
@@ -531,10 +534,18 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     var clock: game.main.Clock = .{};
     clock.start(platform.window.ticks());
     const hearing: game.hog_snd.Hearing = .{ .sound = sound, .camera = &view.place, .clock = &clock };
-    // What the explosions leave for the frames after them.
-    var explosions: game.explode.Explosions = .{};
+    // What the explosions leave for the frames after them, and the particles they send out.
+    var explosions: game.explode.Explosions = try .init(gpa, try .load(&textures));
+    defer explosions.deinit();
+    explosions.settings.debris_lights = options.debris_lights;
+    var particles: game.particles.Pool = try .load(gpa, &textures);
+    defer particles.deinit();
+    var shockwaves: game.shockwave.Shockwaves = try .create(gpa, &textures);
+    defer shockwaves.deinit(gpa);
+    var sparks: game.sparks.Sparks = try .create(gpa, &textures);
+    defer sparks.deinit();
     try sandbox.start(.{
-        .world = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing, .camera = &view, .explosions = &explosions },
+        .world = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .shockwaves = &shockwaves, .sparks = &sparks },
         .clock = &clock,
         .devices = &devices,
     }, @intCast(options.ship));
@@ -601,7 +612,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         if (frames_left != null) clock.advanceBy(now / platform.window.tick_nanoseconds, 1) else clock.advanceToFine(now, platform.window.tick_nanoseconds);
         // While the communications window is open the keys 1 to 8 are its menu's.
         devices.keyboard.numbers_taken = display.state.windows.status.get(.comms).phase == .open;
-        const world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing, .camera = &view, .explosions = &explosions };
+        const world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .shockwaves = &shockwaves, .sparks = &sparks };
         const orders: game.aigeneric.Context = .{ .world = world, .clock = &clock, .devices = &devices };
         while (clock.nextTick(&devices, world)) |_| {}
         clock.frameBegin();
@@ -613,7 +624,6 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
 
         const ticks: u32 = @intCast(@max(clock.frame_duration, 0));
         const at: u32 = @intCast(@max(clock.mission_ticks, 0));
-        explosions.update(clock.frame_duration);
         if (devices.keyboard.pressed(engine.input.scan.escape, .none, true)) return;
         // The player's ship gone, the sandbox starts again once the camera has watched for a
         // while, where a mission would end and go to its debriefing.
@@ -717,6 +727,10 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .cockpit = if (sandbox.cockpit) |*cockpit| &cockpit.model else null,
             .backing = backing,
             .kills_shown = devices.active(.display_kills, false),
+            .particles = &particles,
+            .sparks = &sparks,
+            .explosions = &explosions,
+            .shockwaves = &shockwaves,
             .attachments = .{
                 .camera = view.place.position,
                 .frame_start = clock.frame_start,
@@ -918,8 +932,13 @@ const Sandbox = struct {
     fn start(sandbox: *Sandbox, orders: game.aigeneric.Context, ship_type: u8) !void {
         if (orders.world.hearing) |hearing| game.sound3d.endAll(hearing.sound);
         orders.world.player.ending = .playing;
-        if (orders.world.explosions) |explosions| explosions.* = .{};
+        if (orders.world.explosions) |explosions| explosions.reset();
+        if (orders.world.shockwaves) |waves| waves.reset();
+        if (orders.world.sparks) |thrown| thrown.reset();
+        if (orders.world.particles) |pool| pool.reset();
         sandbox.objects.reset(sandbox.random);
+        // The debris models, counted as used so the sweep below keeps them (`explosions_init`).
+        if (orders.world.explosions) |explosions| explosions.debris = .load(sandbox.objects, sandbox.types.interface());
         const index = try sandbox.create(@enumFromInt(ship_type), @splat(0));
         if (sandbox.objects.slots[index].model == null) return error.NoModel;
         // The engine's sound, which a mission starts as the player's ship launches (`launch_run`).
@@ -1286,6 +1305,8 @@ test Options {
     try std.testing.expectEqual(0, retro.fps.?);
     try std.testing.expect(!retro.smooth_motion);
     try std.testing.expectEqual(.latest_two, retro.shot_lights);
+    try std.testing.expectEqual(.every_light, retro.debris_lights);
+    try std.testing.expectEqual(.like_ships, plain.debris_lights);
     try std.testing.expect(!(try play(&.{"--no-smooth-motion"})).smooth_motion);
     try std.testing.expectEqual(.latest_two, (try play(&.{"--few-shot-lights"})).shot_lights);
     // Sound is on, with the first mission's music, unless told otherwise.

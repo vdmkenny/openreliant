@@ -91,7 +91,32 @@ pub const Rand = struct {
     pub fn centred(r: *Rand) f32 {
         return r.fraction() - 0.5;
     }
+
+    /// Three `fraction`s times `reach`, the last drawn first, as the game's code draws a vector:
+    /// its compiler works a call's arguments out from the last.
+    pub fn fractionVector(r: *Rand, reach: @Vector(3, f32)) @Vector(3, f32) {
+        const z = r.fraction();
+        const y = r.fraction();
+        const x = r.fraction();
+        return @Vector(3, f32){ x, y, z } * reach;
+    }
+
+    /// `fractionVector`, each less a half: from -0.5 to 0.5 times `reach`.
+    pub fn centredVector(r: *Rand, reach: @Vector(3, f32)) @Vector(3, f32) {
+        return (r.fractionVector(@splat(1)) - @as(@Vector(3, f32), @splat(0.5))) * reach;
+    }
 };
+
+test "a vector's numbers are drawn last first" {
+    var drawn: Rand = .{};
+    const vector = drawn.centredVector(.{ 1, 2, 4 });
+    var one_by_one: Rand = .{};
+    const z = one_by_one.centred() * 4;
+    const y = one_by_one.centred() * 2;
+    const x = one_by_one.centred();
+    try std.testing.expectEqual(@Vector(3, f32){ x, y, z }, vector);
+    try std.testing.expectEqual(one_by_one.seed, drawn.seed);
+}
 
 test "stream flags match the runtime's constants" {
     // `sprintf`'s stream is `_IOWRT | _IOSTRG`, and a stream is in use while any of `_IOREAD`,

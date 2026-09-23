@@ -403,6 +403,16 @@ pub const Objects = struct {
         slot.* = .{ .object = object };
     }
 
+    /// A type's model, loaded for its first object where it isn't held, and one more object of it
+    /// counted, so that it stays (`create_object`, `ship_type_first_levels`). Null where the game
+    /// has no model for it.
+    pub fn useType(all: *Objects, types: Types, ship_type: u8) ?*const Type {
+        const use = &all.types[ship_type];
+        if (use.objects == 0 and use.loaded == null) use.loaded = types.load(types.context, ship_type);
+        use.objects += 1;
+        return use.loaded;
+    }
+
     /// The slots the loops over the objects walk, in their order.
     pub fn walk(all: *const Objects) Walk {
         return .{ .all = all };
@@ -536,12 +546,8 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     slot.motion = .forward;
     object.side = @enumFromInt(@intFromEnum(combat.side));
 
-    // The type's model, loaded for its first object.
-    const use = &all.types[stats_type];
-    if (use.objects == 0 and use.loaded == null) use.loaded = types.load(types.context, stats_type);
-    use.objects += 1;
-    slot.type = use.loaded;
-    if (use.loaded) |loaded| {
+    slot.type = all.useType(types, stats_type);
+    if (slot.type) |loaded| {
         var model: objects.Model = try .create(all.gpa, loaded.model, loaded.loaded, loaded.effects);
         startUp(&model);
         for (loaded.model.parts) |part| {

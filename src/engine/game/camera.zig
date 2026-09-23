@@ -17,11 +17,7 @@ pub const views = @import("camera/views.zig");
 const Matrix = math.Matrix;
 
 /// Where the camera is and which way it looks.
-pub const Place = struct {
-    position: Vector,
-    /// Its columns are the camera's right, down and forward axes.
-    orientation: Matrix,
-};
+pub const Place = math.Place;
 
 // --- Projection ---------------------------------------------------------------------------------
 

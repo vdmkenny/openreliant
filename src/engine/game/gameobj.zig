@@ -185,15 +185,28 @@ pub const Type = enum(u32) {
     /// The Russian troop car (`rus_troopcar.shp`).
     troop_car = 0x49,
     torpedo = 0x4A,
+    /// An escape pod (`uly_escape.shp`).
+    escape_pod = 0x4D,
+    /// The first of ten pieces of debris an explosion throws out (`deb_1.shp` to `deb_10.shp`).
+    debris = 0x4E,
+    /// The first of four bodies an explosion throws out (`rus_man1.shp` to `rus_man4.shp`).
+    crewman = 0x58,
     /// The Russian torpedo (`rus_torp.shp`).
     russian_torpedo = 0x5C,
     /// The proximity mine (`mine_prox.shp`).
     proximity_mine = 0x6F,
     satellite = 0x71,
+    /// Another escape pod (`ber_escape.shp`).
+    other_escape_pod = 0x90,
     /// The Turret Flak's shell (`shell.shp`).
     shell = 0xB1,
+    /// The first of five chunks of rock (`rockchunk00.SHP` to `rockchunk04.SHP`).
+    rock_chunk = 0xB2,
     /// The limpet pod, which rides on a hull.
     limpet_pod = 0xBC,
+    /// Escape pods again, of the same models as `escape_pod` and `other_escape_pod`.
+    late_escape_pod = 0xDF,
+    other_late_escape_pod = 0xE0,
     /// The markers `backdrop_place` reads a mission's sun and nebula from.
     sun_marker = 0x3DC,
     nebula_marker = 0x3DD,
@@ -218,6 +231,16 @@ pub const Type = enum(u32) {
             .{ .russian_torpedo, "rus_torp.shp" },
             .{ .proximity_mine, "mine_prox.shp" },
             .{ .satellite, "stork_sat.shp" },
+            .{ .escape_pod, "uly_escape.shp" },
+            .{ .other_escape_pod, "ber_escape.shp" },
+            .{ .late_escape_pod, "uly_escape.shp" },
+            .{ .other_late_escape_pod, "ber_escape.shp" },
+            .{ .debris, "deb_1.shp" },
+            .{ @enumFromInt(Type.debris.number() + 9), "deb_10.shp" },
+            .{ .crewman, "rus_man1.shp" },
+            .{ @enumFromInt(Type.crewman.number() + 3), "rus_man4.shp" },
+            .{ .rock_chunk, "rockchunk00.SHP" },
+            .{ @enumFromInt(Type.rock_chunk.number() + 4), "rockchunk04.SHP" },
             .{ .shell, "shell.shp" },
             .{ .limpet_pod, "limpet_pod.shp" },
             .{ @enumFromInt(asteroids[0]), "ast_1.shp" },
@@ -393,7 +416,10 @@ pub const GameObject = extern struct {
     missile_homing: i32,
     /// The throttle of the last update.
     last_throttle: f32,
-    _unknown_654: [8]u8,
+    /// Until when a shockwave that harms what it passes leaves it alone, having harmed it
+    /// (`shockwave.Shockwave.harmPlayer`).
+    shockwave_until: i32,
+    _unknown_658: [4]u8,
     _unknown_65c: u32,
     _unknown_660: u8,
     _unknown_661: [3]u8,
@@ -753,7 +779,23 @@ pub const ShieldReserves = struct {
     fore: f32 = 0,
     /// Beyond the aft shield, `shields.aft` (`0x0051CF34`).
     aft: f32 = 0,
+
+    /// The reserve a hit on `quadrant` draws on before the shield does, where it has one.
+    pub fn of(reserves: *ShieldReserves, quadrant: collision.Quadrant) ?*f32 {
+        return switch (quadrant) {
+            .fore => &reserves.fore,
+            .aft => &reserves.aft,
+            .left, .right => null,
+        };
+    }
 };
+
+test ShieldReserves {
+    var reserves: ShieldReserves = .{ .fore = 1, .aft = 2 };
+    try std.testing.expectEqual(&reserves.fore, reserves.of(.fore).?);
+    try std.testing.expectEqual(&reserves.aft, reserves.of(.aft).?);
+    try std.testing.expectEqual(null, reserves.of(.left));
+}
 
 /// `object_recharge_shields` (`0x00476FC0`), which `simulation_step` runs for every object after
 /// its node update. Each shield gains its full charge, `6 * ShipCombat.shield_power - 1`, times
@@ -862,6 +904,12 @@ pub const World = struct {
     /// What the explosions leave for the frames after them (`explode.cpp`); null where nothing
     /// explodes.
     explosions: ?*@import("explode.zig").Explosions = null,
+    /// The pool particles come from; null where none are sent out.
+    particles: ?*@import("particles.zig").Pool = null,
+    /// The shockwaves spreading (`shockwave.cpp`); null where none spread.
+    shockwaves: ?*@import("shockwave.zig").Shockwaves = null,
+    /// The sparks flying (`sparks.cpp`); null where none are thrown.
+    sparks: ?*@import("sparks.zig").Sparks = null,
 };
 
 /// `simulation_step` (`0x004774D0`): the work of every fourth tick, so 25 times a second, which

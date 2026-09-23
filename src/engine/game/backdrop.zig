@@ -350,14 +350,7 @@ fn channel(byte: u8) f32 {
 /// A sun sprite's surface: textured, lit and added, so it takes its sprite's colour.
 fn sunSurface(image: *srtexture.Image) srapiext.Surface {
     return .{
-        .material = .{
-            .two_pass = false,
-            ._unknown_01 = 0,
-            .coordinates = .{ .mesh, .none },
-            .lit = .{ true, false },
-            .blend = .{ .add, .off },
-            .image = .{ .null, .null },
-        },
+        .material = .onePass(.{ .coordinates = .mesh, .lit = true, .blend = .add }),
         .textures = .{ .{ .image = image }, .none },
     };
 }

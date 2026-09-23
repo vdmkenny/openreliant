@@ -991,8 +991,10 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, gun: Fitted,
     // The muzzle stands where the step is taking the ship, on the part that carries it.
     model.place(gameobj.vector(slot.object.root.next_position), slot.object.root.next_orientation);
     const part = gun.part.object;
-    const at = math.transform(part.orientation, gameobj.vector(gun.muzzle.position)) + part.position;
-    const turn = math.product(part.orientation, gun.muzzle.orientation);
+    const muzzle = (math.Place{ .position = gameobj.vector(gun.muzzle.position), .orientation = gun.muzzle.orientation })
+        .within(.{ .position = part.position, .orientation = part.orientation });
+    const at = muzzle.position;
+    const turn = muzzle.orientation;
 
     bullet.* = .{
         .live = true,
@@ -1225,11 +1227,7 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
             var value = record.damage[0];
             // What the player has shifted fore or aft takes the hit before the quadrant does, and
             // a hit it swallows whole leaves the shields alone.
-            const reserve: ?*f32 = if (candidate.object != all.player) null else switch (struck) {
-                .fore => &world.player.shield_reserves.fore,
-                .aft => &world.player.shield_reserves.aft,
-                else => null,
-            };
+            const reserve = if (candidate.object != all.player) null else world.player.shield_reserves.of(struck);
             if (reserve) |shifted| {
                 if (shifted.* > 0) {
                     shifted.* -= value;
@@ -1248,26 +1246,45 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
     }
 }
 
-/// `0x00479940`: a shot that has passed an object's shields. It finds the first of the object's
+/// The sparks a shot striking a hull throws: from where it struck, out from the object's
+/// centre through it, at 7.5 to 12.5 a tick, within half a radian either way, carrying on with a
+/// quarter of the object's velocity, a step's (`bullet_hull_hit`).
+const hull_sparks: sparks.Spray = .{ .speed = 10, .speed_range = 5, .spread = 1, .count = 10 };
+const hull_sparks_carry: f32 = 0.25;
+
+/// `0x00479940`: a shot that has passed an object's shields. It finds the last of the object's
 /// parts the segment crosses, by the box each part's mesh stands in, and wears the quadrant's
-/// armour by the type's second damage.
+/// armour by the type's second damage. Then it throws sparks from where it struck, unless the
+/// camera is in the object's cockpit.
 ///
-/// Not ported: the sparks the impact throws and its sound
-/// ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
+/// **Improvement:** the game takes where the shot struck in the part's own frame for where it
+/// stands in the world, so its sparks fly from near the world's origin, far from the hit; the
+/// port throws them from the hit.
+///
+/// Not ported: its sound ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
 fn hullHit(world: gameobj.World, bullet: *Bullet, index: u16, struck: collision.Quadrant) void {
     const all = world.objects;
-    const model = if (all.slots[index].model) |*live| live else return;
-    if (!crossesPart(model, bullet.last, bullet.at)) return;
+    const slot = &all.slots[index];
+    const model = if (slot.model) |*live| live else return;
+    const along = partEntry(model, bullet.last, bullet.at) orelse return;
     const record = bullet.stats(&world.objects.gun_stats);
     var value = record.damage[1];
     if (index < all.players and fromTurret(bullet.kind)) value *= turret_damage_to_players;
     collision.armorDamage(world, index, struck, value, bullet.owner, .bullet);
+    const inside = if (world.camera) |watching| watching.inside(index) else false;
+    if (!inside) {
+        const at = bullet.last + (bullet.at - bullet.last) * @as(Vector, @splat(along));
+        const carried = gameobj.vector(slot.object.velocity) * @as(Vector, @splat(hull_sparks_carry));
+        sparks.spray(world, .hull, at, at - slot.drawn.position, carried, hull_sparks);
+    }
     bullet.dies_at = spent;
 }
 
-/// Whether the segment from `from` to `to` crosses the box any of the model's parts stands in,
-/// which is how `0x00479940` finds what a shot has hit.
-fn crossesPart(model: *const objects.Model, from: Vector, to: Vector) bool {
+/// How far along the segment from `from` to `to` it enters the box the last of the model's parts
+/// it crosses stands in, which is how `0x00479940` finds what a shot has hit; null where it
+/// crosses none.
+fn partEntry(model: *const objects.Model, from: Vector, to: Vector) ?f32 {
+    var entry: ?f32 = null;
     for (model.parts) |*part| {
         if (part.hidden) continue;
         if (part.object.levels.len == 0) continue;
@@ -1275,28 +1292,29 @@ fn crossesPart(model: *const objects.Model, from: Vector, to: Vector) bool {
         // The segment in the part's own frame, where its mesh's box stands.
         const start = math.transformTransposed(part.object.orientation, from - part.object.position);
         const end = math.transformTransposed(part.object.orientation, to - part.object.position);
-        if (crossesBox(start, end, mesh.bounds)) return true;
+        if (boxEntry(start, end, mesh.bounds)) |along| entry = along;
     }
-    return false;
+    return entry;
 }
 
-/// Whether a segment meets a box (`0x0049B6A0`), by the slab test.
-fn crossesBox(from: Vector, to: Vector, bounds: [2]Vector) bool {
+/// How far along a segment it enters a box (`segment_meets_box`, `0x0049B6A0`), by the slab test:
+/// 0 where it starts inside; null where it misses.
+fn boxEntry(from: Vector, to: Vector, bounds: [2]Vector) ?f32 {
     var near: f32 = 0;
     var far: f32 = 1;
     const span = to - from;
     inline for (0..3) |axis| {
         if (span[axis] == 0) {
-            if (from[axis] < bounds[0][axis] or from[axis] > bounds[1][axis]) return false;
+            if (from[axis] < bounds[0][axis] or from[axis] > bounds[1][axis]) return null;
         } else {
             const first = (bounds[0][axis] - from[axis]) / span[axis];
             const second = (bounds[1][axis] - from[axis]) / span[axis];
             near = @max(near, @min(first, second));
             far = @min(far, @max(first, second));
-            if (near > far) return false;
+            if (near > far) return null;
         }
     }
-    return true;
+    return near;
 }
 
 test shoot {
@@ -1373,6 +1391,35 @@ test bulletsFrame {
     ship.mission.clock.frame_start += 1000;
     bulletsFrame(world, &ship.mission.clock, 0);
     try std.testing.expectEqual(0, flying(world));
+}
+
+test "a shot striking a hull throws sparks from where it struck" {
+    const gpa = std.testing.allocator;
+    var ship: testing.Ship = undefined;
+    try ship.init(gpa);
+    defer ship.deinit(gpa);
+    var built: sparks.testing.Built = try .init(gpa);
+    defer built.deinit(gpa);
+    var watching: @import("camera.zig").Camera = .{};
+    var world = ship.world();
+    world.sparks = &built.sparks;
+    world.camera = &watching;
+    const target = try ship.add(@enumFromInt(9), .{ 0, 0, 500 });
+    const slot = &ship.mission.objects.slots[target];
+    slot.drawn = .{ .position = .{ 0, 0, 500 }, .orientation = math.identity };
+    slot.model.?.place(slot.drawn.position, slot.drawn.orientation);
+    slot.object.shields = .all(0);
+
+    // They fly from where the shot enters the part's box, its face 500 ahead.
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0], false);
+    const bullet = &world.objects.bullets.pool[0];
+    bullet.last = .{ 0, 0, 0 };
+    bullet.at = .{ 0, 0, 600 };
+    bulletsFrame(world, &ship.mission.clock, 0);
+    for (built.sparks.sparks.slots[0..hull_sparks.count]) |thrown| {
+        try std.testing.expect(math.distance(thrown.?.object.position, .{ 0, 0, 500 }) < 1e-2);
+    }
+    try std.testing.expectEqual(null, built.sparks.sparks.slots[hull_sparks.count]);
 }
 
 test "the player's shifted shields take a hit before the quadrant does" {
@@ -1538,16 +1585,17 @@ test "a Huge Gun's shot reaches farther, and always through the shields" {
     try std.testing.expectEqual(10 + 4, slot.object.recent_damage);
 }
 
-test crossesBox {
+test boxEntry {
     const bounds: [2]Vector = .{ .{ -10, -10, -10 }, .{ 10, 10, 10 } };
-    // Through the middle, from a corner, and ending inside.
-    try std.testing.expect(crossesBox(.{ 0, 0, -50 }, .{ 0, 0, 50 }, bounds));
-    try std.testing.expect(crossesBox(.{ -50, -50, -50 }, .{ 50, 50, 50 }, bounds));
-    try std.testing.expect(crossesBox(.{ 0, 0, -50 }, .{ 0, 0, 0 }, bounds));
+    // Through the middle, entering 40 of 100 in; from a corner; ending inside; and from inside.
+    try std.testing.expectEqual(0.4, boxEntry(.{ 0, 0, -50 }, .{ 0, 0, 50 }, bounds));
+    try std.testing.expect(boxEntry(.{ -50, -50, -50 }, .{ 50, 50, 50 }, bounds) != null);
+    try std.testing.expect(boxEntry(.{ 0, 0, -50 }, .{ 0, 0, 0 }, bounds) != null);
+    try std.testing.expectEqual(0, boxEntry(.{ 0, 0, 0 }, .{ 0, 0, 50 }, bounds));
     // Past it, short of it, and alongside it.
-    try std.testing.expect(!crossesBox(.{ 50, 0, -50 }, .{ 50, 0, 50 }, bounds));
-    try std.testing.expect(!crossesBox(.{ 0, 0, -50 }, .{ 0, 0, -20 }, bounds));
-    try std.testing.expect(!crossesBox(.{ 0, 20, -50 }, .{ 0, 20, 50 }, bounds));
+    try std.testing.expectEqual(null, boxEntry(.{ 50, 0, -50 }, .{ 50, 0, 50 }, bounds));
+    try std.testing.expectEqual(null, boxEntry(.{ 0, 0, -50 }, .{ 0, 0, -20 }, bounds));
+    try std.testing.expectEqual(null, boxEntry(.{ 0, 20, -50 }, .{ 0, 20, 50 }, bounds));
 }
 
 // --- How a shot is drawn -------------------------------------------------------------------------
@@ -1836,14 +1884,7 @@ fn quadFace(index: usize) [4]u16 {
 /// A material drawn with the shot's own texture coordinates (`MeshObject.own_uv`), added to what
 /// stands behind it.
 fn ownMaterial(lit: bool) srapiext.Material {
-    return .{
-        .two_pass = false,
-        ._unknown_01 = 0,
-        .coordinates = .{ .generated, .none },
-        .lit = .{ lit, false },
-        .blend = .{ .add, .off },
-        .image = .{ .null, .null },
-    };
+    return .onePass(.{ .coordinates = .generated, .lit = lit, .blend = .add });
 }
 
 /// A material drawn with the mesh's own texture coordinates, added to what stands behind it.
@@ -2019,7 +2060,7 @@ fn dress(bullet: *Bullet, looks: *const Looks, random: *libcmt.Rand, turn: math.
         },
         // The game turns its bolt an eighth of a turn about the flight here, and `bullet_place`
         // then gives it the muzzle's turn in place of it, so it is drawn unturned.
-        .nova_cannon => one(&pieces, meshPiece(looks, .nova, .{ .not_culled = true, .own_first = true, ._unknown_14 = true })),
+        .nova_cannon => one(&pieces, meshPiece(looks, .nova, .{ .not_culled = true, .own_first = true, .owns_mesh = true })),
         .turret_flak => flak: {
             if (looks.shell == null) break :flak 0;
             const shell: *const [1]srapiext.Level = &looks.shell.?;
@@ -2383,6 +2424,7 @@ test {
 const Allocator = std.mem.Allocator;
 const ai = @import("ai.zig");
 const collision = @import("collision.zig");
+const sparks = @import("sparks.zig");
 const create = @import("create.zig");
 const ShipTypes = create.Types;
 const formats = @import("../../formats/stats.zig");

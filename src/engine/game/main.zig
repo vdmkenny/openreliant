@@ -25,6 +25,10 @@ const aigeneric = @import("aigeneric.zig");
 const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
 const guns = @import("guns.zig");
+const explode = @import("explode.zig");
+const particles = @import("particles.zig");
+const shockwave = @import("shockwave.zig");
+const sparks = @import("sparks.zig");
 const hog_snd = @import("hog_snd.zig");
 const hud = @import("hud.zig");
 const matmanager = @import("matmanager.zig");
@@ -181,11 +185,19 @@ pub const Frame = struct {
     backing: ?*RadarBacking = null,
     /// Whether DISPLAY KILLS is held, which leaves the backing out.
     kills_shown: bool = false,
+    /// The sparks and the particles, which go into the world's layer after the shots, the
+    /// explosions' bits, pieces and fireballs, and the shockwaves.
+    sparks: ?*sparks.Sparks = null,
+    particles: ?*particles.Pool = null,
+    explosions: ?*explode.Explosions = null,
+    shockwaves: ?*shockwave.Shockwaves = null,
 };
 
 /// `mission_frame` (`0x004924B0`), as far as the objects go: every object's orders, which fly the
-/// ships and read the player's controls, then the frames they are drawn at, and then the shots in
-/// flight (`guns.bulletsFrame`). A mission and the sandbox alike run this once a frame, before the
+/// ships and read the player's controls, then the frames they are drawn at, then the shots in
+/// flight (`guns.bulletsFrame`), then the sparks (`sparks.Sparks.frame`) and the particles
+/// (`particles.Pool.frame`), which `particles_frame` runs together, the explosions
+/// (`explode.Explosions.frame`) and the shockwaves (`shockwave.Shockwaves.frame`). A mission and the sandbox alike run this once a frame, before the
 /// camera's own frame and anything drawn.
 ///
 /// Not ported: the rest of the frame's work, which is the mission's events, its scripts and the
@@ -195,6 +207,10 @@ pub fn missionFrame(orders: aigeneric.Context, fraction: f32) void {
     aigeneric.ordersUpdate(orders);
     frameObjects(orders.world.objects, fraction);
     guns.bulletsFrame(orders.world, orders.clock, fraction);
+    if (orders.world.sparks) |thrown| thrown.frame(orders.clock);
+    if (orders.world.particles) |pool| pool.frame(orders.clock);
+    if (orders.world.explosions) |explosions| explosions.frame(orders.world);
+    if (orders.world.shockwaves) |waves| waves.frame(orders.world);
 }
 
 /// `mission_frame`'s pass over the objects before the camera's frame: each live object, save
@@ -224,6 +240,10 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     attachments.scale = context.projection.scale[0];
     try drawObjects(gpa, scene, frame.objects, attachments);
     try guns.drawBullets(gpa, scene, &frame.objects.bullets, context.hardware);
+    if (frame.sparks) |thrown| try thrown.draw(gpa, scene);
+    if (frame.particles) |pool| try pool.draw(gpa, scene);
+    if (frame.explosions) |explosions| try explosions.draw(gpa, scene);
+    if (frame.shockwaves) |waves| try waves.draw(gpa, scene);
     try frame.space.frame(gpa, scene, context, frame.view, frame.cockpit_mode);
     if (context.hardware) try frame.sky.frame(gpa, scene, context);
     if (frame.view == .cockpit and frame.cockpit_mode == .cockpit and context.hardware) {
@@ -349,13 +369,13 @@ pub fn cockpitInput(cockpit: *const objects.Model, model: *const shp.Model, rate
 /// camera's frame where `placed` puts it, each part stands from the root as it does in the model,
 /// and the hands where the camera turned them.
 pub fn placeCockpit(cockpit: *objects.Model, at: camera.Place, placed: camera.Cockpit.Placed) void {
-    const orientation = math.product(at.orientation, placed.root.orientation);
-    const position = at.position + math.transform(at.orientation, placed.root.position);
-    cockpit.place(position, orientation);
+    const root = placed.root.within(at);
+    cockpit.place(root.position, root.orientation);
     if (cockpit.parts.len <= cockpit_hands) return;
-    const hands = &cockpit.parts[cockpit_hands].object;
-    hands.position = position + math.transform(orientation, placed.hands.position);
-    hands.orientation = math.product(orientation, placed.hands.orientation);
+    const hands = placed.hands.within(root);
+    const object = &cockpit.parts[cockpit_hands].object;
+    object.position = hands.position;
+    object.orientation = hands.orientation;
 }
 
 /// The radar's backing (`0x005883BC`), which the mission's start makes and the cockpit's view
@@ -396,14 +416,7 @@ pub const RadarBacking = struct {
         const backing = try gpa.create(RadarBacking);
         backing.* = .{
             .positions = @splat(@splat(0)),
-            .surfaces = .{.{ .polygons = 1, .material = .{
-                .two_pass = false,
-                ._unknown_01 = 0,
-                .coordinates = .{ .generated, .none },
-                .lit = .{ true, false },
-                .blend = .{ .alpha, .off },
-                .image = .{ .null, .null },
-            }, .textures = .{ .{ .image = texture }, .none } }},
+            .surfaces = .{.{ .polygons = 1, .material = .onePass(.{ .coordinates = .generated, .lit = true, .blend = .alpha }), .textures = .{ .{ .image = texture }, .none } }},
             .mesh = undefined,
             .levels = undefined,
             .object = undefined,

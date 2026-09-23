@@ -115,6 +115,9 @@ pub const exported = [_]Export{
     .{ "ExplodeStyle", engine.game.aiexplode.Style },
     .{ "ExplodeData", engine.game.aiexplode.Data },
     .{ "EjectPlayerState", engine.game.aieject.PlayerState },
+    .{ "ParticleTemplate", engine.game.particles.Template },
+    .{ "ParticleKind", engine.game.particles.Template.Kind },
+    .{ "ParticleCurve", engine.game.particles.Curve },
 
     // Combat maneuvers.
     .{ "ManeuverOpcode", engine.game.aidefend.Opcode },

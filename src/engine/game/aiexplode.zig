@@ -9,16 +9,19 @@
 //! (`0x004E1740`, `0x004E174C`), and ends in a blast ([`explode.zig`](explode.zig)), after which
 //! the ship is retired (`create.retire`).
 //!
+//! The styles leave fireballs, burning bits and a torpedo's shockwave behind
+//! ([`explode.zig`](explode.zig), [`shockwave.zig`](shockwave.zig)).
+//!
 //! **Not ported:** the other modes, for a ship that lists components, one of its components, an
-//! asteroid and the limpet car; the effects the styles leave, fireballs, burning bits and
-//! shockwaves ([#41](https://github.com/vdmkenny/openreliant/issues/41)); and what a ship's end
-//! tells the mission, the kills' score and chatter (`0x00408500`), the pilots' records and the
+//! asteroid and the limpet car ([#41](https://github.com/vdmkenny/openreliant/issues/41)); and
+//! what a ship's end tells the mission, the kills' score and chatter (`0x00408500`), the pilots' records and the
 //! Destroyed event ([#37](https://github.com/vdmkenny/openreliant/issues/37)).
 
 const std = @import("std");
 const assert = std.debug.assert;
 
 const math = @import("../surrender/math.zig");
+const Vector = math.Vector;
 const Vec3 = @import("../../formats/shp.zig").Vec3;
 const ai = @import("ai.zig");
 const aigeneric = @import("aigeneric.zig");
@@ -27,6 +30,7 @@ const camera = @import("camera.zig");
 const create = @import("create.zig");
 const explode = @import("explode.zig");
 const gameobj = @import("gameobj.zig");
+const shockwave = @import("shockwave.zig");
 const GameObject = gameobj.GameObject;
 const libcmt = @import("../libcmt.zig");
 const main = @import("main.zig");
@@ -82,15 +86,15 @@ pub const State = extern struct {
     _unknown_0a: u16,
     /// A spinning ship's turn a step, as angles, at the full length of its spin.
     spin: Vec3,
-    /// The puffs of fire a spinning ship has left to trail.
-    puffs: i16,
+    /// The bits a spinning ship has left to trail behind it.
+    trail: i16,
     _unknown_1a: [0x90 - 0x1A]u8,
 
     comptime {
         assert(@offsetOf(State, "end") == 0x4);
         assert(@offsetOf(State, "style") == 0x8);
         assert(@offsetOf(State, "spin") == 0xC);
-        assert(@offsetOf(State, "puffs") == 0x18);
+        assert(@offsetOf(State, "trail") == 0x18);
         assert(@sizeOf(State) == 0x90);
     }
 };
@@ -170,7 +174,7 @@ fn shipUpdate(ctx: Context, index: u16) void {
     const state = &slot.state.explode;
     if (ctx.clock.frame_start <= state.end) {
         switch (state.style) {
-            .spin_out, .halt => spin(ctx.clock, &slot.object, state),
+            .spin_out, .halt => spin(ctx.world, slot),
             .burst => {},
         }
         return;
@@ -185,8 +189,13 @@ fn shipUpdate(ctx: Context, index: u16) void {
     create.retire(ctx, index);
 }
 
-/// The puffs a spinning ship trails, one a frame while it has time for them.
-const puffs = 50;
+/// The trail a spinning ship leaves: a small bit of debris a frame while it has less than
+/// `trail_ticks` a bit left, from within half of `trail_spread` of it on each axis, thrown out
+/// backwards (`0x004DC4A8`).
+const trail_bits = 50;
+const trail_ticks = 10;
+const trail_spread: f32 = 500;
+const trail_throw: explode.Bit.Throw = .{ .size = 0.1, .speed = 1 };
 
 /// How long a spin-out lasts: this, and up to as long again (`0x004DC4C4`).
 const spin_ticks = 200;
@@ -196,7 +205,7 @@ const spin_fade: f32 = 0.005;
 
 /// How far a spinning ship's turn a step ranges about its first two axes and about its third, half
 /// of it either way (`0x004DC474`, `0x004DC4C0`).
-const spin_range = Vec3{ .x = 0.05, .y = 0.05, .z = 0.3 };
+const spin_range: Vector = .{ 0.05, 0.05, 0.3 };
 
 /// `0x00408BC0`: a spinning ship drifts on unpowered for two to four seconds; a torpedo, or a ship
 /// told not to spin, stops dead and blows up at once.
@@ -204,21 +213,27 @@ fn spinOutInit(ctx: Context, index: u16) void {
     const slot = &ctx.world.objects.slots[index];
     const object = &slot.object;
     const state = &slot.state.explode;
-    state.puffs = puffs;
+    state.trail = trail_bits;
     const torpedo = if (slot.combat) |combat| combat.class == .torpedo else false;
     if (torpedo or !slot.orders[0].data.destroyed.may_spin) {
         stop(object);
         state.end = 0;
     } else {
-        state.end = ctx.clock.frame_start + @as(i32, @intFromFloat(@trunc(ctx.world.random.fraction() * spin_ticks))) + spin_ticks;
+        state.end = ctx.clock.frame_start + @as(i32, @intFromFloat(ctx.world.random.fraction() * spin_ticks)) + spin_ticks;
     }
     object.flags.unpowered = true;
     state.spin = randomSpin(ctx.world.random);
+    goesUp(ctx.world, slot);
+}
+
+/// A bang of the ship's size where it is, which a spinning or halting ship sets off as it goes.
+fn goesUp(world: gameobj.World, slot: *const create.Slot) void {
+    explode.fireballAt(world, slot.drawn.position, .{ .size = slot.object.radius });
 }
 
 /// `0x004090F0`: a bursting ship drifts on unpowered, no longer turning.
 fn burstInit(object: *GameObject, state: *State) void {
-    state.puffs = puffs;
+    state.trail = trail_bits;
     state.end = 0;
     object.flags.unpowered = true;
     object.pitch_rate = 0;
@@ -229,16 +244,57 @@ fn burstInit(object: *GameObject, state: *State) void {
     object.yaw_input = 0;
 }
 
-/// `0x00408D20`: a halting ship stops dead and blows up at once.
+/// `0x00408D20`: a halting ship stops dead and blows up at once; a torpedo sets off its chain of
+/// fireballs and a shockwave that harms the player it passes.
 fn haltInit(ctx: Context, index: u16) void {
     const slot = &ctx.world.objects.slots[index];
     const state = &slot.state.explode;
-    state.puffs = puffs;
+    state.trail = trail_bits;
     stop(&slot.object);
     state.end = 0;
     slot.object.flags.unpowered = true;
     state.spin = randomSpin(ctx.world.random);
+    goesUp(ctx.world, slot);
+    switch (slot.object.type) {
+        .torpedo, .russian_torpedo => {
+            chain(ctx.world, slot.drawn.position);
+            shockwave.setOff(ctx.world, slot.drawn, .{
+                .kind = .torpedo,
+                .size = torpedo_shockwave_size,
+                .life = torpedo_shockwave_life,
+                .velocity = gameobj.vector(slot.object.velocity),
+                .owner = index,
+            });
+        },
+        else => {},
+    }
 }
+
+/// A halting torpedo's shockwave, which harms the player it passes: how far it spreads, over how
+/// many ticks.
+const torpedo_shockwave_size: f32 = 6000;
+const torpedo_shockwave_life = 100;
+
+/// A torpedo's chain of lit fireballs, `chain_length` of them `chain_step` ticks apart, each less a
+/// share of `chain_lag`, so up to 19 ticks later; within half of `chain_spread` of it on each axis,
+/// and `chain_size` and up to `chain_size_range` more across (`0x004DC4B8`, `0x004DC4CC`,
+/// `0x004DC44C`, `0x004DC4A8`).
+fn chain(world: gameobj.World, at: Vector) void {
+    const random = world.random;
+    for (0..chain_length) |n| {
+        const offset = random.centredVector(@splat(chain_spread));
+        const lag: i32 = @intFromFloat(random.fraction() * chain_lag);
+        const size = random.fraction() * chain_size_range + chain_size;
+        explode.fireballAt(world, offset + at, .{ .size = size, .light = true, .delay = @as(i32, @intCast(n)) * chain_step - lag });
+    }
+}
+
+const chain_length = 5;
+const chain_step = 30;
+const chain_lag: f32 = -20;
+const chain_spread: f32 = 1500;
+const chain_size: f32 = 1000;
+const chain_size_range: f32 = 500;
 
 /// Stops the ship dead, as the styles do: no velocity, speed or throttle.
 fn stop(object: *GameObject) void {
@@ -247,21 +303,24 @@ fn stop(object: *GameObject) void {
     object.throttle = 0;
 }
 
-/// A turn a step either way about each axis, within `spin_range`: the game draws the third
-/// axis's first.
+/// A turn a step either way about each axis, within `spin_range`.
 fn randomSpin(random: *libcmt.Rand) Vec3 {
-    const z = random.centred() * spin_range.z;
-    const y = random.centred() * spin_range.y;
-    const x = random.centred() * spin_range.x;
-    return .{ .x = x, .y = y, .z = z };
+    return gameobj.vec3(random.centredVector(spin_range));
 }
 
-/// `0x00408F70`, a spinning or halting ship's update: it turns by its spin, less and less as its
-/// end comes. **Not ported:** the puffs of fire it trails.
-fn spin(clock: *const main.Clock, object: *GameObject, state: *const State) void {
-    const left: f32 = @floatFromInt(state.end - clock.frame_start);
-    const share = left * spin_fade;
-    object.rotation = math.fromAngles(state.spin.x * share, state.spin.y * share, state.spin.z * share);
+/// `0x00408F70`, a spinning or halting ship's update: it leaves its trail, a ship with flag 24
+/// set only every other bit, and turns by its spin, less and less as its end comes.
+fn spin(world: gameobj.World, slot: *create.Slot) void {
+    const state = &slot.state.explode;
+    const left = state.end - world.clock.frame_start;
+    if (left < @as(i32, state.trail) * trail_ticks) {
+        const at = world.random.centredVector(@splat(trail_spread)) + slot.drawn.position;
+        const behind = -math.forward(slot.drawn.orientation);
+        if (!slot.object.flags._unknown_24 or @rem(state.trail, 2) == 0) explode.throwBit(world, at, behind, trail_throw);
+        state.trail -= 1;
+    }
+    const share = @as(f32, @floatFromInt(left)) * spin_fade;
+    slot.object.rotation = math.fromAngles(state.spin.x * share, state.spin.y * share, state.spin.z * share);
 }
 
 test Mode {
@@ -307,24 +366,55 @@ test "a ship's end" {
 }
 
 test spin {
-    // A spin turns the ship less and less as its end comes.
-    var object = gameobj.testing.object();
-    var state = std.mem.zeroes(State);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const ship = try mission.add(.sabre, @splat(0));
+    const slot = &mission.objects.slots[ship];
+    const state = &slot.state.explode;
+    const world = mission.orders().world;
     state.spin = .{ .x = 0, .y = 0, .z = 0.1 };
     state.end = 200;
-    var clock: main.Clock = .{};
-    spin(&clock, &object, &state);
-    const early = math.angles(object.rotation);
-    clock.frame_start = 150;
-    spin(&clock, &object, &state);
-    const late = math.angles(object.rotation);
+    state.trail = 2;
+
+    // A spin turns the ship less and less as its end comes, and leaves its trail once it has
+    // less than the trail's time left.
+    spin(world, slot);
+    const early = math.angles(slot.object.rotation);
+    try std.testing.expectEqual(2, state.trail);
+    mission.clock.frame_start = 185;
+    spin(world, slot);
+    spin(world, slot);
+    const late = math.angles(slot.object.rotation);
     try std.testing.expect(@abs(late[2]) < @abs(early[2]));
+    try std.testing.expectEqual(1, state.trail);
+}
+
+test "a halting torpedo's shockwave" {
+    const gpa = std.testing.allocator;
+    var built: shockwave.testing.Built = try .init(gpa);
+    defer built.deinit(gpa);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(gpa);
+    defer mission.deinit();
+    var ctx = mission.orders();
+    ctx.world.shockwaves = &built.waves;
+    _ = try mission.add(.predator, @splat(0));
+    const torpedo = try mission.add(.torpedo, .{ 0, 0, 1000 });
+
+    // It halts, and sets off a shockwave that harms the player it passes.
+    haltInit(ctx, torpedo);
+    const wave = built.waves.waves[0].?;
+    try std.testing.expectEqual(shockwave.Kind.torpedo, wave.kind);
+    try std.testing.expectEqual(torpedo_shockwave_size, wave.size);
+    try std.testing.expectEqual(torpedo, wave.owner);
 }
 
 test randomSpin {
     var random: libcmt.Rand = .{};
     for (0..100) |_| {
         const turn = randomSpin(&random);
-        try std.testing.expect(@abs(turn.x) <= spin_range.x / 2 and @abs(turn.y) <= spin_range.y / 2 and @abs(turn.z) <= spin_range.z / 2);
+        const most = spin_range / @as(Vector, @splat(2));
+        try std.testing.expect(@abs(turn.x) <= most[0] and @abs(turn.y) <= most[1] and @abs(turn.z) <= most[2]);
     }
 }

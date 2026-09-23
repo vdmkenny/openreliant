@@ -31,8 +31,12 @@ pub const missiles = @import("game/missiles.zig");
 pub const motion = @import("game/motion.zig");
 pub const nebula = @import("game/nebula.zig");
 pub const objects = @import("game/objects.zig");
+pub const particles = @import("game/particles.zig");
 pub const pilots = @import("game/pilots.zig");
+pub const shockwave = @import("game/shockwave.zig");
+pub const sparks = @import("game/sparks.zig");
 pub const srofiles = @import("game/srofiles.zig");
+pub const table = @import("game/table.zig");
 pub const winmain = @import("game/winmain.zig");
 pub const xtrabits = @import("game/xtrabits.zig");
 
