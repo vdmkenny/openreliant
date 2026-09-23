@@ -373,7 +373,11 @@ address	kind	name	type	comment
 0046c550	function	explode_break_up	void __fastcall (GameObject *object, int kind, ModelNode *node)	Cuts a node's part into pieces (model_slice) and sends them off as debris with their own velocity and spin, every third with a smoke trail, then the node's children
 0046bf20	function	model_slice		Cuts a part's mesh into up to 2^n pieces along n random planes through its centre, sorting its faces by the side of each they fall on
 00472700	function	debris_add		A free record in the debris table at 0x0055AE88, 0x40 bytes each
-0046e480	function	explosions_update		Once a frame: moves the marker on by its drift while it moves, then the explosions' effects
+0046e480	function	explosions_update		Once a frame: moves the marker on by its drift while it moves, then the explosions' tables: the Uber Explode (0x00473210), rock chunks, streaming emitters, flickering lights, scripted effects, the break-up's debris, which ends in a fireball, then explosion_fireballs, each playing on: the bang's 16 textures or the sheet's 9 cells, drifting, coloured by how far it has played where it is lit, its light fading from 10
+0046bd00	function	explosion_fireball	void __fastcall (Vec3 *at, Vec3 *velocity, int kind, float size, int life, bool light, int delay, bool lit, bool special)	Sets a fireball off in the first free of explosion_fireballs: a sprite of the size at, kind 0 playing explosion_bang_images, 1 the cells of explosion_sheet_image, mirrored by two random bits, blended over what is behind; drifting at velocity, after delay ticks, for life; with a light (1, 0.5, 0.1) of intensity 10 reaching 50 times the square root of the size, where asked
+00553398	data	explosion_fireballs		Thirty fireballs, 0x2C bytes each: the sprite set, its light, its velocity, its birth, life, look (bit 2 the bang, bits 0 and 1 the mirrors), delay, whether it is lit, and whether it is special
+00558734	data	explosion_bang_images	TextureImage *[16]	The bang's frames, explosion\bang_00000 to bang_00015
+00558730	data	explosion_sheet_image	TextureImage *	Nine frames in a three by three sheet, explosion\explosion sheet
 004688e0	function	object_retire	ObjectRoutine	What Explode leaves of an object: type 1001, flagged no_collisions, exploding, stand_in, frozen and unpowered, not targetable, and no orders
 0055ad0c	data	explode_marker	void *	The frame camera view 0x1B watches: where the player's ship burst
 0055ad10	data	explode_marker_drift	Vec3	How far explode_marker moves a frame: a quarter of the ship's velocity

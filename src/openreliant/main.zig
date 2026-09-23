@@ -532,7 +532,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     clock.start(platform.window.ticks());
     const hearing: game.hog_snd.Hearing = .{ .sound = sound, .camera = &view.place, .clock = &clock };
     // What the explosions leave for the frames after them, and the particles they send out.
-    var explosions: game.explode.Explosions = .{};
+    var explosions: game.explode.Explosions = .init(try .load(&textures));
     var particles: game.particles.Pool = try .load(gpa, &textures);
     defer particles.deinit();
     try sandbox.start(.{
@@ -615,7 +615,6 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
 
         const ticks: u32 = @intCast(@max(clock.frame_duration, 0));
         const at: u32 = @intCast(@max(clock.mission_ticks, 0));
-        explosions.update(clock.frame_duration);
         if (devices.keyboard.pressed(engine.input.scan.escape, .none, true)) return;
         // The player's ship gone, the sandbox starts again once the camera has watched for a
         // while, where a mission would end and go to its debriefing.
@@ -720,6 +719,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .backing = backing,
             .kills_shown = devices.active(.display_kills, false),
             .particles = &particles,
+            .explosions = &explosions,
             .attachments = .{
                 .camera = view.place.position,
                 .frame_start = clock.frame_start,
@@ -921,7 +921,7 @@ const Sandbox = struct {
     fn start(sandbox: *Sandbox, orders: game.aigeneric.Context, ship_type: u8) !void {
         if (orders.world.hearing) |hearing| game.sound3d.endAll(hearing.sound);
         orders.world.player.ending = .playing;
-        if (orders.world.explosions) |explosions| explosions.* = .{};
+        if (orders.world.explosions) |explosions| explosions.reset();
         if (orders.world.particles) |pool| pool.reset();
         sandbox.objects.reset(sandbox.random);
         const index = try sandbox.create(@enumFromInt(ship_type), @splat(0));

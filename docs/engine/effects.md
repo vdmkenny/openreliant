@@ -1,7 +1,7 @@
 # Effects
 
-What the game shows besides its objects and their shots: for now, the particles an explosion
-sends out. [Destruction](objects.md#destruction) covers when a ship blows up.
+What the game shows besides its objects and their shots: for now, the particles and fireballs of
+an explosion. [Destruction](objects.md#destruction) covers when a ship blows up.
 
 ## Particles
 
@@ -67,3 +67,34 @@ tick, carrying a quarter, and the sparkle carrying half.
 frame; [`explode.zig`](../../src/engine/game/explode.zig) the two templates and the bursts. Not
 ported: the sparks (`particle_spark`, `0x0049C340`), which are the explosions' burning bits, and what
 `particles_frame` runs first (`0x004A1BB0`).
+
+## Fireballs
+
+`explosion_fireball` (`0x0046BD00`) sets a fireball off in the first free of the thirty
+`explosion_fireballs` (`0x00553398`), and none at all where they are all going off. A fireball is
+one sprite, as large either way as it is told and sorted as if it stood that much nearer, that plays
+an animation where it was set off:
+
+| Kind | Frames |
+|---|---|
+| 0, the bang | The sixteen textures `explosion\bang_00000` to `bang_00015` (`explosion_bang_images`), one after another over its life |
+| 1, the sheet | The nine cells of `explosion\explosion sheet` (`explosion_sheet_image`), three across and three down, 82 texels apart and 81 across, mirrored left for right and top for bottom by two random bits |
+
+It is blended over what is behind it by its texture's alpha. It waits out a delay before it shows,
+drifts at a velocity a tick, and plays for its life, 150 ticks from every caller here. A fireball
+told it is lit is coloured by how far it has played, from black to white. One with a light carries
+a point light coloured (1, 0.5, 0.1) that starts at intensity 10 and fades to nothing as it plays,
+reaching 50 times the square root of its size. `explosions_update` (`0x0046E480`) plays each one on
+once a frame and frees it once it is done.
+
+| Who | Where | Size | Light | Delay | Drift |
+|---|---|---|---|---|---|
+| A blast (`explode_blast`) | At the ship | Its radius | Yes | None | A quarter of the ship's velocity |
+| A burst (`explode_burst`), 18 of them | Within 0.3 of the radius, a random way | 0.8 of the radius | Yes | Up to 9 ticks | Half of it |
+| A spin-out and a halt, as they begin | At the ship | Its radius | No | None | None |
+| A halting torpedo, 5 more | Within 750 each way | 1000 to 1500 | Yes | 30 ticks apart, and up to 19 later | None |
+
+[`explode.zig`](../../src/engine/game/explode.zig) ports the fireballs as `Explosions.setOff` and
+`Fireball`, and [`aiexplode.zig`](../../src/engine/game/aiexplode.zig) the spin-out's, the halt's
+and the torpedo's. Not ported: a special fireball's own texture (`0x00562CCC`), which none of these
+sets off, and the rest of `explosions_update`.

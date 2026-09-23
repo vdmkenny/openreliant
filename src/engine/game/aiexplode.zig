@@ -19,6 +19,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const math = @import("../surrender/math.zig");
+const Vector = math.Vector;
 const Vec3 = @import("../../formats/shp.zig").Vec3;
 const ai = @import("ai.zig");
 const aigeneric = @import("aigeneric.zig");
@@ -214,6 +215,12 @@ fn spinOutInit(ctx: Context, index: u16) void {
     }
     object.flags.unpowered = true;
     state.spin = randomSpin(ctx.world.random);
+    goesUp(ctx.world, slot);
+}
+
+/// A bang of the ship's size where it is, which a spinning or halting ship sets off as it goes.
+fn goesUp(world: gameobj.World, slot: *const create.Slot) void {
+    explode.fireballAt(world, slot.drawn.position, .{ .size = slot.object.radius });
 }
 
 /// `0x004090F0`: a bursting ship drifts on unpowered, no longer turning.
@@ -238,7 +245,37 @@ fn haltInit(ctx: Context, index: u16) void {
     state.end = 0;
     slot.object.flags.unpowered = true;
     state.spin = randomSpin(ctx.world.random);
+    goesUp(ctx.world, slot);
+    switch (slot.object.type) {
+        .torpedo, .russian_torpedo => chain(ctx.world, slot.drawn.position),
+        else => {},
+    }
 }
+
+/// A torpedo's chain of lit fireballs, `chain_length` of them `chain_step` ticks apart, each less a
+/// share of `chain_lag`, so up to 19 ticks later; within half of `chain_spread` of it on each axis,
+/// and `chain_size` and up to `chain_size_range` more across (`0x004DC4B8`, `0x004DC4CC`,
+/// `0x004DC44C`, `0x004DC4A8`).
+///
+/// Not ported: the shockwave it ends with.
+fn chain(world: gameobj.World, at: Vector) void {
+    const random = world.random;
+    for (0..chain_length) |n| {
+        const z = random.centred() * chain_spread;
+        const y = random.centred() * chain_spread;
+        const x = random.centred() * chain_spread;
+        const lag: i32 = @intFromFloat(@trunc(random.fraction() * chain_lag));
+        const size = random.fraction() * chain_size_range + chain_size;
+        explode.fireballAt(world, Vector{ x, y, z } + at, .{ .size = size, .light = true, .delay = @as(i32, @intCast(n)) * chain_step - lag });
+    }
+}
+
+const chain_length = 5;
+const chain_step = 30;
+const chain_lag: f32 = -20;
+const chain_spread: f32 = 1500;
+const chain_size: f32 = 1000;
+const chain_size_range: f32 = 500;
 
 /// Stops the ship dead, as the styles do: no velocity, speed or throttle.
 fn stop(object: *GameObject) void {
