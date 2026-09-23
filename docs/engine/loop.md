@@ -51,8 +51,9 @@ second of play is 100 ticks and 25 simulation steps whatever the rate the engine
 
 **Improvement:** `objects.stepFraction` also counts the time past the last tick, which `advanceToFine`
 keeps from a finer count, so that what moves moves on every frame rather than every tick, evenly at
-any display rate. `--no-smooth-motion` and `--original` move it on with the ticks, as the original
-does.
+any display rate. The effects, which move by a velocity a tick, are drawn that far past the tick
+as well (`objects.pastTick`, and [Effects](effects.md#drawn-between-the-ticks)).
+`--no-smooth-motion` and `--original` move it on with the ticks, as the original does.
 
 The simulation step walks the objects ([The object array](objects.md#the-object-array)): each has
 its orientation orthonormalized in its turn, then its node update, its shields' recharge and its

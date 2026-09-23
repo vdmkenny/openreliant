@@ -226,6 +226,11 @@ pub fn fromAngles(pitch: f32, yaw: f32, roll: f32) Matrix {
     };
 }
 
+/// `fromAngles` with the three angles in a vector, pitch, yaw and roll, as `angles` gives them.
+pub fn fromAngleVector(v: Vector) Matrix {
+    return fromAngles(v[0], v[1], v[2]);
+}
+
 /// An orientation whose forward axis, its third column, points along `direction`: turned about `Y`,
 /// then about `X`, with no roll (`mat3_look_at`, `0x004C1940`).
 ///

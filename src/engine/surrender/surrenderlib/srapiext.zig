@@ -385,6 +385,9 @@ pub const Sprite = struct {
     uv: [4]f32 = .{ 0, 1, 0, 1 },
     /// Left out (the set's flags at `+0xC8`).
     hidden: bool = false,
+    /// The port's: how much of it shows, its colour and its alpha both scaled, which a fireball
+    /// fades from one frame of its animation into the next by.
+    fade: f32 = 1,
 };
 
 /// A set of sprites sharing a material (`sprite_set_create`): at first unlit and added, textured

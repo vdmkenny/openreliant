@@ -189,6 +189,9 @@ pub const Frame = struct {
     /// explosions' bits, pieces and fireballs, and the shockwaves.
     sparks: ?*sparks.Sparks = null,
     particles: ?*particles.Pool = null,
+    /// How far past the frame's tick the effects are drawn, as a share of a tick
+    /// (`objects.pastTick`).
+    ahead: f32 = 0,
     explosions: ?*explode.Explosions = null,
     shockwaves: ?*shockwave.Shockwaves = null,
 };
@@ -240,10 +243,10 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     attachments.scale = context.projection.scale[0];
     try drawObjects(gpa, scene, frame.objects, attachments);
     try guns.drawBullets(gpa, scene, &frame.objects.bullets, context.hardware);
-    if (frame.sparks) |thrown| try thrown.draw(gpa, scene);
-    if (frame.particles) |pool| try pool.draw(gpa, scene);
-    if (frame.explosions) |explosions| try explosions.draw(gpa, scene);
-    if (frame.shockwaves) |waves| try waves.draw(gpa, scene);
+    if (frame.sparks) |thrown| try thrown.draw(gpa, scene, frame.ahead);
+    if (frame.particles) |pool| try pool.draw(gpa, scene, frame.ahead);
+    if (frame.explosions) |explosions| try explosions.draw(gpa, scene, frame.ahead);
+    if (frame.shockwaves) |waves| try waves.draw(gpa, scene, frame.ahead);
     try frame.space.frame(gpa, scene, context, frame.view, frame.cockpit_mode);
     if (context.hardware) try frame.sky.frame(gpa, scene, context);
     if (frame.view == .cockpit and frame.cockpit_mode == .cockpit and context.hardware) {

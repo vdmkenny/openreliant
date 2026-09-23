@@ -106,7 +106,9 @@ Deliberate differences from the original, each marked **Improvement** where it i
 - Explosions are fuller: there is room for 128 fireballs where the original kept 30, each one's
   light moves with it and starts 50% brighter, shockwaves' rings are round where the
   original's were octagons, and bursts far off are not thinned, into a pool of 4000 particles
-  ([Effects](../engine/effects.md#fireballs)).
+  ([Effects](../engine/effects.md#fireballs)). A fireball's frames fade into each other, and every
+  effect is drawn between the ticks as the ships are
+  ([Effects](../engine/effects.md#drawn-between-the-ticks)).
 - It draws in 32-bit colour, where the original drew in 16 bits, and dithers that too, which costs
   nothing and keeps a dark gradient, such as the nebula or a light's falloff, from banding. `--original` restores the
   original's look: 16-bit colour, dithered, into a 16-bit buffer where the GPU has one, with a

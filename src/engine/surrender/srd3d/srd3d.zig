@@ -564,9 +564,10 @@ pub const Driver = struct {
         const top = projection.scale[1] * rect[1] + projection.centre[1];
         const bottom = projection.scale[1] * rect[3] + projection.centre[1];
         const z = @sqrt(p.reciprocal) * projection.depth_scale;
-        var colour = device.white;
-        if (material.lit[0]) colour = device.pack(.{ sprite.colour[0], sprite.colour[1], sprite.colour[2], 0 });
-        if (!material.lit[pass]) colour = device.white;
+        const f = sprite.fade;
+        var colour = device.pack(.{ f, f, f, f });
+        if (material.lit[0]) colour = device.pack(.{ sprite.colour[0] * f, sprite.colour[1] * f, sprite.colour[2] * f, 0 });
+        if (!material.lit[pass]) colour = device.pack(.{ f, f, f, f });
         const vertices = [4]Vertex{
             .{ .x = left, .y = top, .z = z, .rhw = 0.5, .diffuse = colour, .u = uv[0], .v = uv[2] },
             .{ .x = right, .y = top, .z = z, .rhw = 0.5, .diffuse = colour, .u = uv[1], .v = uv[2] },
