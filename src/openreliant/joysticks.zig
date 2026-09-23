@@ -9,6 +9,7 @@ const Allocator = std.mem.Allocator;
 
 const openreliant = @import("openreliant");
 const platform = @import("platform");
+const help = @import("help.zig");
 const joystick = platform.joystick;
 const input = openreliant.engine.input;
 const interface = openreliant.engine.game.interface;
@@ -19,6 +20,7 @@ pub const usage =
     \\  <game-directory>  the folder StarLancer is installed in, for the settings in its
     \\                    starlancer.ini; the current directory by default
     \\  --watch           show live input from the controller the game uses, until Ctrl+C
+    \\  -h, --help        show this page
     \\
 ;
 
@@ -49,8 +51,12 @@ pub fn main(io: Io, arena: Allocator, args: []const [:0]const u8) !u8 {
     var stdout: Io.File.Writer = .initStreaming(.stdout(), io, &out_buffer);
     const out = &stdout.interface;
     defer out.flush() catch {};
-    const options = Options.parse(args) catch {
+    if (help.asked(args)) {
         try out.writeAll(usage);
+        return 0;
+    }
+    const options = Options.parse(args) catch {
+        std.debug.print("{s}", .{usage});
         return 2;
     };
     const settings_file: Profile = .{ .text = settings: {

@@ -37,30 +37,66 @@ given, and reads `resource.hog` and `tcachehw.dat` from it as the original does
 ([`bigfile.zig`](../../src/engine/game/bigfile.zig)). It has no data of its own: without those
 files it says what it needs and exits.
 
+`openreliant --help` lists the options in the groups below, the keys OpenReliant adds, and the
+commands; each command's `--help` shows its own. A wrong option or value is named in one line, and
+`openreliant` exits with status 2. The page comes from one table in
+[`main.zig`](../../src/openreliant/main.zig), which the compiler holds to having help for every
+option, and [`help.zig`](../../src/openreliant/help.zig) wraps it to 80 columns at compile time.
+
+**The original.** OpenReliant improves on the original's look and sound; `--original` turns the
+improvements off, and an option after it turns one back on.
+
 | Option | Does |
 |---|---|
-| `--ship <type>` | Shows the ship type by its number in `shipstats.bin` |
-| `--screenshot <file.png>` | Draws one frame, with the camera settled, to a PNG and quits |
-| `--size <width>x<height>` | Draws frames of this size in pixels whatever the window's, which shows them scaled; for a screenshot larger than the display |
-| `--fullscreen` | Fills the display |
 | `--original` | The original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks, lights from the latest shots only, and sound mixed plainly in stereo with no master bus |
+
+**The sandbox.**
+
+| Option | Does |
+|---|---|
+| `--ship <type>` | The ship type to fly, by its number in `shipstats.bin`; 0, the Predator, by default |
+| `--view <0\|1\|2>` | The view it starts in, as the game's settings keep it: 0 the cockpit, the default; 1 the chase view; 2 no cockpit |
+| `--music <file>` | The piece of `music\` it plays, or `none`; `New_Mission01.wav` by default |
+
+**Display.**
+
+| Option | Does |
+|---|---|
+| `--fullscreen` | Fills the display |
+| `--size <width>x<height>` | Draws frames of this size in pixels whatever the window's, which shows them scaled; for a screenshot larger than the display |
+| `--fps <rate>` | Frames a second at most; 0 for no limit |
+| `--no-vsync` | Draws without waiting for the display |
+
+**Graphics.**
+
+| Option | Does |
+|---|---|
+| `--software` | Draws on the software device, the port's reference, at the window's size in points |
 | `--16-bit` | 16-bit colour, dithered |
 | `--msaa <1\|2\|4\|8>` | Samples a pixel; 4 by default |
 | `--filter <original\|trilinear\|crisp>` | How textures are filtered; `crisp` by default |
 | `--no-bloom` | Draws without the bloom around bright things |
+| `--no-dither` | Draws without dithering 32-bit colour |
 | `--no-pixel-lighting` | Lights each vertex rather than each pixel, as the original does |
 | `--no-smooth-motion` | Moves what moves on with the game's ticks, a hundred a second, as the original does, rather than on every frame |
 | `--few-shot-lights` | Lights only the latest two of the player's shots and the latest two of everyone else's, as the original does |
-| `--no-dither` | Draws without dithering 32-bit colour |
-| `--no-vsync` | Draws without waiting for the display |
-| `--fps <rate>` | Frames a second at most; 0 for no limit |
-| `--software` | Draws on the software device, the port's reference, at the window's size in points |
-| `--music <file>` | The piece of `music\` the sandbox plays, or `none`; `New_Mission01.wav` by default |
+
+**Sound.**
+
+| Option | Does |
+|---|---|
 | `--hrtf` | Places the sounds for headphones, through a head-related transfer function, whatever the output; by default they are while the output is headphones |
 | `--no-hrtf` | Places the sounds for speakers, whatever the output |
 | `--no-reverb` | Plays the 3D sounds and the cockpit's warnings without reverb |
 | `--no-compressor` | Leaves the master bus's compressor out, keeping its limiter |
 | `--no-sound` | Runs without sound |
+
+**Other.**
+
+| Option | Does |
+|---|---|
+| `--screenshot <file.png>` | Draws one frame, with the camera settled, to a PNG and quits |
+| `-h`, `--help` | Shows the options |
 
 It runs a sandbox of its own, drawn through the ported pipeline and driver with the GPU
 ([Renderer](renderer.md)): the player's ship at the origin, facing along Z, the Reliant ahead of it

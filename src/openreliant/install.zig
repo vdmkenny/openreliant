@@ -18,6 +18,7 @@ const cdimage = openreliant.cdimage;
 const iso9660 = openreliant.iso9660;
 const game = openreliant.engine.game;
 const c = @import("archive");
+const help = @import("help.zig");
 
 pub const usage =
     \\usage: openreliant install [--from <disc>] [--force] <directory>
@@ -26,6 +27,7 @@ pub const usage =
     \\                   disc's files; without it, the CD drives are searched for the disc
     \\  --force          install from a disc 1 that OpenReliant doesn't know, such as another
     \\                   country's release
+    \\  -h, --help       show this page
     \\
 ;
 
@@ -504,6 +506,10 @@ pub fn main(io: Io, arena: Allocator, args: []const [:0]const u8) !u8 {
     defer {
         out.interface.flush() catch {};
         err.interface.flush() catch {};
+    }
+    if (help.asked(args)) {
+        try out.interface.writeAll(usage);
+        return 0;
     }
     const options = Options.parse(args) catch {
         try err.interface.writeAll(usage);

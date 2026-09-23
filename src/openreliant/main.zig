@@ -30,54 +30,161 @@ const srtexture = engine.surrender.surrenderlib.srtexture;
 const srd3d = engine.surrender.srd3d;
 const game = engine.game;
 const camera = game.camera;
+const help = @import("help.zig");
 const install = @import("install.zig");
 const joysticks = @import("joysticks.zig");
 
-const usage =
-    \\usage: openreliant [<game-directory>] [<option>...]
-    \\       openreliant install [--from <disc>] [--force] <game-directory>
-    \\       openreliant joysticks [<game-directory>] [--watch]
-    \\  <game-directory>          where StarLancer is installed, with resource.hog and
-    \\                            tcachehw.dat; the current directory by default
-    \\  --ship <type>             the ship type to show, by its number in shipstats.bin; 0 is the
-    \\                            Predator
-    \\  --view <0|1|2>            the view a mission starts in, as the game's ini keeps it: 0 the
-    \\                            cockpit, the default; 1 the chase view; 2 no cockpit
-    \\  --screenshot <file.png>   draw one frame, with the camera settled, to a PNG, and quit
-    \\  --size <width>x<height>   draw frames of this size in pixels whatever the window's, which
-    \\                            shows them scaled; for a screenshot larger than the display
-    \\  --fullscreen              fill the display; Alt and Enter switch while running
-    \\  --original                the original's look and sound: 16-bit colour, one sample a
-    \\                            pixel, bilinear filtering, lighting each vertex, motion that
-    \\                            moves on with the game's ticks, lights from the latest shots
-    \\                            only, and sound mixed plainly in stereo
-    \\  --16-bit                  16-bit colour, dithered
-    \\  --msaa <1|2|4|8>          samples a pixel; 4 by default
-    \\  --filter <original|trilinear|crisp>
-    \\                            how textures are filtered; crisp by default
-    \\  --no-bloom                draw without the bloom around bright things
-    \\  --no-pixel-lighting       light each vertex rather than each pixel, as the original does
-    \\  --no-smooth-motion        move what moves on with the game's ticks, a hundred a second,
-    \\                            as the original does, rather than on every frame
-    \\  --few-shot-lights         light only the latest two of the player's shots and the latest
-    \\                            two of everyone else's, as the original does
-    \\  --no-dither               draw without dithering 32-bit colour
-    \\  --no-vsync                draw without waiting for the display
-    \\  --fps <rate>              frames a second at most; without vsync, the display's rate by
-    \\                            default; 0 for no limit
-    \\  --software                draw on the software device, the port's reference
-    \\  --music <file>            the piece of music\\ the sandbox plays, or none; New_Mission01.wav
-    \\                            by default
-    \\  --hrtf                    place the sounds for headphones, whatever the output; by
-    \\                            default they are while the output is headphones
-    \\  --no-hrtf                 place the sounds for speakers, whatever the output
-    \\  --no-reverb               play the sounds around you and the cockpit's voice without
-    \\                            reverb
-    \\  --no-compressor           leave the mix's loudness as it is, only keeping its peaks in
-    \\                            check
-    \\  --no-sound                play without sound
-    \\
-;
+/// Everything `openreliant` takes on its command line, in the order the help page lists them.
+const Arg = enum {
+    @"--original",
+    @"--ship",
+    @"--view",
+    @"--music",
+    @"--fullscreen",
+    @"--size",
+    @"--fps",
+    @"--no-vsync",
+    @"--software",
+    @"--16-bit",
+    @"--msaa",
+    @"--filter",
+    @"--no-bloom",
+    @"--no-dither",
+    @"--no-pixel-lighting",
+    @"--no-smooth-motion",
+    @"--few-shot-lights",
+    @"--hrtf",
+    @"--no-hrtf",
+    @"--no-reverb",
+    @"--no-compressor",
+    @"--no-sound",
+    @"--screenshot",
+    @"--help",
+
+    /// The value it takes, as the help page shows it, or null for none.
+    fn value(arg: Arg) ?[]const u8 {
+        return docs.get(arg).value;
+    }
+};
+
+/// The help page's sections, in order.
+const Section = enum {
+    original,
+    sandbox,
+    display,
+    graphics,
+    sound,
+    other,
+
+    fn title(section: Section) []const u8 {
+        return switch (section) {
+            .original => "The original",
+            .sandbox => "The sandbox",
+            .display => "Display",
+            .graphics => "Graphics",
+            .sound => "Sound",
+            .other => "Other",
+        };
+    }
+};
+
+/// What the help page says of an option: its section, the value it takes, and what it does.
+const Doc = struct {
+    section: Section,
+    value: ?[]const u8 = null,
+    /// Another name for it, shown before it.
+    alias: ?[]const u8 = null,
+    text: []const u8,
+};
+
+/// Every option's help, which the compiler holds to having one for each.
+const docs: std.enums.EnumArray(Arg, Doc) = .init(.{
+    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks, lights from the latest shots only, and the sound mixed plainly in stereo" },
+    .@"--ship" = .{ .section = .sandbox, .value = "<type>", .text = "the ship type to fly, by its number in shipstats.bin; 0, the Predator, by default" },
+    .@"--view" = .{ .section = .sandbox, .value = "<0|1|2>", .text = "the view it starts in, as the game's settings keep it: 0 the cockpit, the default; 1 the chase view; 2 no cockpit" },
+    .@"--music" = .{ .section = .sandbox, .value = "<file>", .text = "the piece from the game's music folder it plays, or none; New_Mission01.wav by default" },
+    .@"--fullscreen" = .{ .section = .display, .text = "fill the display; Alt and Enter switch while playing" },
+    .@"--size" = .{ .section = .display, .value = "<width>x<height>", .text = "draw frames of this size in pixels whatever the window's, which shows them scaled; for a screenshot larger than the display" },
+    .@"--fps" = .{ .section = .display, .value = "<rate>", .text = "frames a second at most; without vsync, the display's rate by default; 0 for no limit" },
+    .@"--no-vsync" = .{ .section = .display, .text = "draw without waiting for the display" },
+    .@"--software" = .{ .section = .graphics, .text = "draw on the software device, the port's reference, rather than the GPU" },
+    .@"--16-bit" = .{ .section = .graphics, .text = "16-bit colour, dithered" },
+    .@"--msaa" = .{ .section = .graphics, .value = "<1|2|4|8>", .text = "samples a pixel, for smooth edges; 4 by default" },
+    .@"--filter" = .{ .section = .graphics, .value = "<original|trilinear|crisp>", .text = "how textures are filtered; crisp by default" },
+    .@"--no-bloom" = .{ .section = .graphics, .text = "draw without the bloom around bright things" },
+    .@"--no-dither" = .{ .section = .graphics, .text = "draw 32-bit colour without dithering" },
+    .@"--no-pixel-lighting" = .{ .section = .graphics, .text = "light each vertex rather than each pixel, as the original does" },
+    .@"--no-smooth-motion" = .{ .section = .graphics, .text = "move what moves on with the game's ticks, a hundred a second, as the original does, rather than on every frame" },
+    .@"--few-shot-lights" = .{ .section = .graphics, .text = "light only the latest two of the player's shots and the latest two of everyone else's, as the original does" },
+    .@"--hrtf" = .{ .section = .sound, .text = "place the sounds for headphones whatever the output; by default they are while the output is headphones" },
+    .@"--no-hrtf" = .{ .section = .sound, .text = "place the sounds for speakers whatever the output" },
+    .@"--no-reverb" = .{ .section = .sound, .text = "play the sounds around you and the cockpit's voice without reverb" },
+    .@"--no-compressor" = .{ .section = .sound, .text = "leave the mix's loudness as it is, only keeping its peaks in check" },
+    .@"--no-sound" = .{ .section = .sound, .text = "play without sound" },
+    .@"--screenshot" = .{ .section = .other, .value = "<file.png>", .text = "draw one frame, with the camera settled, to a PNG, and quit" },
+    .@"--help" = .{ .section = .other, .alias = "-h", .text = "show this page" },
+});
+
+/// `openreliant --help`.
+const help_page = page: {
+    var out: []const u8 = help.paragraph("OpenReliant plays StarLancer from an installed copy of the game.", 0) ++
+        \\
+        \\usage: openreliant [<game-directory>] [<option>...]
+        \\       openreliant install [--from <disc>] [--force] <directory>
+        \\       openreliant joysticks [<game-directory>] [--watch]
+        \\
+        \\
+    ++ help.table(&.{.{ .typed = "<game-directory>", .text = "where StarLancer is installed, with resource.hog and tcachehw.dat; the current directory by default" }});
+    for (std.enums.values(Section)) |section| {
+        out = out ++ "\n" ++ section.title() ++ ":\n";
+        if (section == .original) out = out ++ help.paragraph("OpenReliant improves on the original's look and sound. --original turns the improvements off, and an option after it turns one back on.", 2);
+        var rows: []const help.Row = &.{};
+        for (std.enums.values(Arg)) |arg| {
+            const doc = docs.get(arg);
+            if (doc.section != section) continue;
+            const named = (if (doc.alias) |alias| alias ++ ", " else "") ++ @tagName(arg);
+            rows = rows ++ .{help.Row{ .typed = if (doc.value) |shown| named ++ " " ++ shown else named, .text = doc.text }};
+        }
+        out = out ++ help.table(rows);
+    }
+    break :page out ++ "\nWhile playing:\n" ++
+        help.paragraph("The flight keys are the game's own, as starlancer.ini binds them. OpenReliant adds:", 2) ++
+        help.table(&.{
+            .{ .typed = "F2, F3", .text = "start again in the previous or next ship type" },
+            .{ .typed = "F4", .text = "bring in another wing" },
+            .{ .typed = "Alt+Enter", .text = "switch between the window and the full screen" },
+            .{ .typed = "Escape", .text = "quit" },
+        }) ++ "\nCommands:\n" ++
+        help.table(&.{
+            .{ .typed = "install", .text = "copy the game's files from StarLancer disc 1 into a directory" },
+            .{ .typed = "joysticks", .text = "list the joysticks and gamepads, and which one the game uses" },
+        }) ++ help.paragraph("Each command's --help shows its options.", 2);
+};
+
+/// What the command line asks for.
+const Command = union(enum) {
+    play: Options,
+    help,
+    wrong: Problem,
+};
+
+/// What is wrong with the command line.
+const Problem = union(enum) {
+    /// An option there is no such thing as.
+    unknown: []const u8,
+    /// An option with no value after it.
+    missing: Arg,
+    /// An option with a value it doesn't take.
+    bad: struct { arg: Arg, value: []const u8 },
+
+    pub fn format(problem: Problem, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        switch (problem) {
+            .unknown => |arg| try writer.print("unknown option '{s}'", .{arg}),
+            .missing => |arg| try writer.print("{s} takes a value, {s}", .{ @tagName(arg), arg.value().? }),
+            .bad => |wrong| try writer.print("{s} takes {s}, not '{s}'", .{ @tagName(wrong.arg), wrong.arg.value().?, wrong.value }),
+        }
+    }
+};
 
 const Options = struct {
     directory: []const u8 = ".",
@@ -102,9 +209,6 @@ const Options = struct {
 
     const default_music = "New_Mission01.wav";
 
-    const Flag = enum { @"--fullscreen", @"--original", @"--16-bit", @"--no-vsync", @"--no-bloom", @"--no-dither", @"--no-pixel-lighting", @"--no-smooth-motion", @"--few-shot-lights", @"--software", @"--hrtf", @"--no-hrtf", @"--no-reverb", @"--no-compressor", @"--no-sound" };
-    const Option = enum { @"--ship", @"--view", @"--screenshot", @"--size", @"--msaa", @"--filter", @"--fps", @"--music" };
-
     /// OpenAL Soft's settings, which a setting for it after `--original` plays with again.
     fn openAl(options: *Options) ?*platform.audio.openal.Settings {
         const sound = &(options.sound orelse return null);
@@ -112,82 +216,93 @@ const Options = struct {
         return &sound.player.openal;
     }
 
-    fn parse(args: []const [:0]const u8) error{Usage}!Options {
+    /// What `args` ask for: to play with these options, the help page, or what is wrong with them.
+    fn parse(args: []const [:0]const u8) Command {
         var options: Options = .{};
         var i: usize = 0;
         while (i < args.len) : (i += 1) {
-            const arg = args[i];
-            if (std.meta.stringToEnum(Flag, arg)) |flag| switch (flag) {
-                .@"--fullscreen" => options.fullscreen = true,
-                .@"--original" => {
-                    options.settings = .original;
-                    options.smooth_motion = false;
-                    options.shot_lights = .latest_two;
-                    if (options.sound) |*sound| sound.* = .{ .player = .software, .master = null };
-                },
-                .@"--16-bit" => options.settings.sixteen_bit = true,
-                .@"--no-vsync" => options.settings.vsync = false,
-                .@"--no-bloom" => options.settings.bloom = false,
-                .@"--no-dither" => options.settings.dither = false,
-                .@"--no-pixel-lighting" => options.settings.pixel_lighting = false,
-                .@"--no-smooth-motion" => options.smooth_motion = false,
-                .@"--few-shot-lights" => options.shot_lights = .latest_two,
-                .@"--software" => options.software = true,
-                .@"--hrtf" => if (options.openAl()) |settings| {
-                    settings.hrtf = .on;
-                },
-                .@"--no-hrtf" => if (options.openAl()) |settings| {
-                    settings.hrtf = .off;
-                },
-                .@"--no-reverb" => if (options.openAl()) |settings| {
-                    settings.reverb = false;
-                },
-                .@"--no-compressor" => if (options.sound) |*sound| {
-                    // The limiter stays.
-                    const master = if (sound.master) |*master| master else master: {
-                        sound.master = .{};
-                        break :master &sound.master.?;
-                    };
-                    master.ratio = 1;
-                    master.makeup = 0;
-                },
-                .@"--no-sound" => options.sound = null,
-            } else if (std.meta.stringToEnum(Option, arg)) |option| {
+            const text = args[i];
+            if (std.mem.eql(u8, text, "-h")) return .help;
+            const arg = std.meta.stringToEnum(Arg, text) orelse {
+                if (std.mem.startsWith(u8, text, "-")) return .{ .wrong = .{ .unknown = text } };
+                options.directory = text;
+                continue;
+            };
+            const value: [:0]const u8 = if (arg.value() == null) "" else value: {
                 i += 1;
-                if (i == args.len) return error.Usage;
-                const value = args[i];
-                switch (option) {
-                    .@"--ship" => {
-                        options.ship = std.fmt.parseInt(usize, value, 0) catch return error.Usage;
-                        if (options.ship >= game.create.models.ship_types.len) return error.Usage;
-                        if (game.create.models.ship_types[options.ship].model == null) return error.Usage;
-                    },
-                    .@"--view" => {
-                        const setting = std.fmt.parseInt(u32, value, 10) catch return error.Usage;
-                        if (setting > 2) return error.Usage;
-                        options.cockpit = @enumFromInt(setting);
-                    },
-                    .@"--screenshot" => options.screenshot = value,
-                    .@"--music" => options.music = if (std.mem.eql(u8, value, "none")) null else value,
-                    .@"--size" => options.settings.size = parseSize(value) orelse return error.Usage,
-                    .@"--msaa" => {
-                        options.settings.samples = std.fmt.parseInt(u8, value, 10) catch return error.Usage;
-                        if (std.mem.indexOfScalar(u8, &.{ 1, 2, 4, 8 }, options.settings.samples) == null) return error.Usage;
-                    },
-                    .@"--filter" => options.settings.filter = std.meta.stringToEnum(platform.gpu.Settings.Filter, value) orelse return error.Usage,
-                    .@"--fps" => {
-                        const fps = std.fmt.parseFloat(f32, value) catch return error.Usage;
-                        if (!(fps >= 0 and fps <= 10_000)) return error.Usage;
-                        options.fps = fps;
-                    },
-                }
-            } else if (std.mem.startsWith(u8, arg, "-")) {
-                return error.Usage;
-            } else {
-                options.directory = arg;
-            }
+                if (i == args.len) return .{ .wrong = .{ .missing = arg } };
+                break :value args[i];
+            };
+            options.apply(arg, value) catch return .{ .wrong = .{ .bad = .{ .arg = arg, .value = value } } };
+            if (arg == .@"--help") return .help;
         }
-        return options;
+        return .{ .play = options };
+    }
+
+    /// Takes in `arg`, with its value where it has one.
+    fn apply(options: *Options, arg: Arg, value: []const u8) error{BadValue}!void {
+        switch (arg) {
+            .@"--original" => {
+                options.settings = .original;
+                options.smooth_motion = false;
+                options.shot_lights = .latest_two;
+                if (options.sound) |*sound| sound.* = .{ .player = .software, .master = null };
+            },
+            .@"--ship" => {
+                const ship = std.fmt.parseInt(usize, value, 0) catch return error.BadValue;
+                if (ship >= game.create.models.ship_types.len) return error.BadValue;
+                if (game.create.models.ship_types[ship].model == null) return error.BadValue;
+                options.ship = ship;
+            },
+            .@"--view" => {
+                const setting = std.fmt.parseInt(u32, value, 10) catch return error.BadValue;
+                if (setting > 2) return error.BadValue;
+                options.cockpit = @enumFromInt(setting);
+            },
+            .@"--music" => options.music = if (std.mem.eql(u8, value, "none")) null else value,
+            .@"--fullscreen" => options.fullscreen = true,
+            .@"--size" => options.settings.size = parseSize(value) orelse return error.BadValue,
+            .@"--fps" => {
+                const fps = std.fmt.parseFloat(f32, value) catch return error.BadValue;
+                if (!(fps >= 0 and fps <= 10_000)) return error.BadValue;
+                options.fps = fps;
+            },
+            .@"--no-vsync" => options.settings.vsync = false,
+            .@"--software" => options.software = true,
+            .@"--16-bit" => options.settings.sixteen_bit = true,
+            .@"--msaa" => {
+                const samples = std.fmt.parseInt(u8, value, 10) catch return error.BadValue;
+                if (std.mem.indexOfScalar(u8, &.{ 1, 2, 4, 8 }, samples) == null) return error.BadValue;
+                options.settings.samples = samples;
+            },
+            .@"--filter" => options.settings.filter = std.meta.stringToEnum(platform.gpu.Settings.Filter, value) orelse return error.BadValue,
+            .@"--no-bloom" => options.settings.bloom = false,
+            .@"--no-dither" => options.settings.dither = false,
+            .@"--no-pixel-lighting" => options.settings.pixel_lighting = false,
+            .@"--no-smooth-motion" => options.smooth_motion = false,
+            .@"--few-shot-lights" => options.shot_lights = .latest_two,
+            .@"--hrtf" => if (options.openAl()) |settings| {
+                settings.hrtf = .on;
+            },
+            .@"--no-hrtf" => if (options.openAl()) |settings| {
+                settings.hrtf = .off;
+            },
+            .@"--no-reverb" => if (options.openAl()) |settings| {
+                settings.reverb = false;
+            },
+            .@"--no-compressor" => if (options.sound) |*sound| {
+                // The limiter stays.
+                const master = if (sound.master) |*master| master else master: {
+                    sound.master = .{};
+                    break :master &sound.master.?;
+                };
+                master.ratio = 1;
+                master.makeup = 0;
+            },
+            .@"--no-sound" => options.sound = null,
+            .@"--screenshot" => options.screenshot = value,
+            .@"--help" => {},
+        }
     }
 
     /// A size given as `<width>x<height>`, each from 1 to `max_size`.
@@ -231,9 +346,19 @@ pub fn main(init: std.process.Init) !u8 {
     const args = try init.minimal.args.toSlice(arena);
     if (args.len > 1 and std.mem.eql(u8, args[1], "install")) return install.main(init.io, arena, args[2..]);
     if (args.len > 1 and std.mem.eql(u8, args[1], "joysticks")) return joysticks.main(init.io, arena, args[2..]);
-    const options = Options.parse(args[1..]) catch {
-        std.debug.print("{s}", .{usage});
-        return 2;
+    const options = switch (Options.parse(args[1..])) {
+        .play => |options| options,
+        .help => {
+            var buffer: [4096]u8 = undefined;
+            var stdout: Io.File.Writer = .initStreaming(.stdout(), init.io, &buffer);
+            try stdout.interface.writeAll(help_page);
+            try stdout.interface.flush();
+            return 0;
+        },
+        .wrong => |problem| {
+            std.debug.print("openreliant: {f}\nRun 'openreliant --help' to see the options.\n", .{problem});
+            return 2;
+        },
     };
     run(init.io, init.gpa, arena, options) catch |err| switch (err) {
         error.MissingGameFiles => return 1,
@@ -1103,24 +1228,32 @@ test "the sandbox's Reliant flies at a crawl" {
     try std.testing.expectApproxEqAbs(crawl, math.length(game.gameobj.vector(object.velocity)), 0.01);
 }
 
+/// The options `args` play with, for the tests.
+fn play(args: []const [:0]const u8) error{Usage}!Options {
+    return switch (Options.parse(args)) {
+        .play => |options| options,
+        .help, .wrong => error.Usage,
+    };
+}
+
 test Options {
-    try std.testing.expectEqualStrings(".", (try Options.parse(&.{})).directory);
-    const given = try Options.parse(&.{ "game/install", "--ship", "3" });
+    try std.testing.expectEqualStrings(".", (try play(&.{})).directory);
+    const given = try play(&.{ "game/install", "--ship", "3" });
     try std.testing.expectEqualStrings("game/install", given.directory);
     try std.testing.expectEqual(3, given.ship);
     try std.testing.expectEqual(camera.CockpitSetting.cockpit, given.cockpit);
-    try std.testing.expectEqual(camera.CockpitSetting.chase, (try Options.parse(&.{ "--view", "1" })).cockpit);
-    try std.testing.expectError(error.Usage, Options.parse(&.{ "--view", "3" }));
-    try std.testing.expectError(error.Usage, Options.parse(&.{"--ship"}));
-    try std.testing.expectError(error.Usage, Options.parse(&.{ "--ship", "0x0E" }));
-    try std.testing.expectError(error.Usage, Options.parse(&.{"--bogus"}));
-    try std.testing.expectEqualStrings("shot.png", (try Options.parse(&.{ "--screenshot", "shot.png" })).screenshot.?);
+    try std.testing.expectEqual(camera.CockpitSetting.chase, (try play(&.{ "--view", "1" })).cockpit);
+    try std.testing.expectError(error.Usage, play(&.{ "--view", "3" }));
+    try std.testing.expectError(error.Usage, play(&.{"--ship"}));
+    try std.testing.expectError(error.Usage, play(&.{ "--ship", "0x0E" }));
+    try std.testing.expectError(error.Usage, play(&.{"--bogus"}));
+    try std.testing.expectEqualStrings("shot.png", (try play(&.{ "--screenshot", "shot.png" })).screenshot.?);
 
     // The improvements on by default; the original's look, and single settings after it.
-    const plain = try Options.parse(&.{});
+    const plain = try play(&.{});
     try std.testing.expectEqual(platform.gpu.Settings{}, plain.settings);
     try std.testing.expectEqual(null, plain.fps);
-    const retro = try Options.parse(&.{ "--original", "--msaa", "8", "--no-vsync", "--fps", "0" });
+    const retro = try play(&.{ "--original", "--msaa", "8", "--no-vsync", "--fps", "0" });
     try std.testing.expect(retro.settings.sixteen_bit);
     try std.testing.expectEqual(.original, retro.settings.filter);
     try std.testing.expectEqual(8, retro.settings.samples);
@@ -1128,35 +1261,60 @@ test Options {
     try std.testing.expectEqual(0, retro.fps.?);
     try std.testing.expect(!retro.smooth_motion);
     try std.testing.expectEqual(.latest_two, retro.shot_lights);
-    try std.testing.expect(!(try Options.parse(&.{"--no-smooth-motion"})).smooth_motion);
-    try std.testing.expectEqual(.latest_two, (try Options.parse(&.{"--few-shot-lights"})).shot_lights);
+    try std.testing.expect(!(try play(&.{"--no-smooth-motion"})).smooth_motion);
+    try std.testing.expectEqual(.latest_two, (try play(&.{"--few-shot-lights"})).shot_lights);
     // Sound is on, with the first mission's music, unless told otherwise.
-    try std.testing.expect((try Options.parse(&.{})).sound.?.player == .openal);
-    try std.testing.expectEqual(null, (try Options.parse(&.{"--no-sound"})).sound);
-    try std.testing.expectEqual(null, (try Options.parse(&.{ "--no-sound", "--hrtf" })).sound);
+    try std.testing.expect((try play(&.{})).sound.?.player == .openal);
+    try std.testing.expectEqual(null, (try play(&.{"--no-sound"})).sound);
+    try std.testing.expectEqual(null, (try play(&.{ "--no-sound", "--hrtf" })).sound);
     // The original's sound is the plain mixer with no master bus; OpenAL's settings bring OpenAL
     // back.
-    const original_sound = (try Options.parse(&.{"--original"})).sound.?;
+    const original_sound = (try play(&.{"--original"})).sound.?;
     try std.testing.expect(original_sound.player == .software and original_sound.master == null);
-    const headphones = (try Options.parse(&.{ "--original", "--hrtf", "--no-reverb" })).sound.?;
+    const headphones = (try play(&.{ "--original", "--hrtf", "--no-reverb" })).sound.?;
     try std.testing.expect(headphones.player.openal.hrtf == .on and !headphones.player.openal.reverb);
-    try std.testing.expectEqual(.auto, (try Options.parse(&.{})).sound.?.player.openal.hrtf);
-    try std.testing.expectEqual(.off, (try Options.parse(&.{"--no-hrtf"})).sound.?.player.openal.hrtf);
-    const uncompressed = (try Options.parse(&.{"--no-compressor"})).sound.?.master.?;
+    try std.testing.expectEqual(.auto, (try play(&.{})).sound.?.player.openal.hrtf);
+    try std.testing.expectEqual(.off, (try play(&.{"--no-hrtf"})).sound.?.player.openal.hrtf);
+    const uncompressed = (try play(&.{"--no-compressor"})).sound.?.master.?;
     try std.testing.expectEqual(1, uncompressed.ratio);
-    try std.testing.expectEqualStrings(Options.default_music, (try Options.parse(&.{})).music.?);
-    try std.testing.expectEqualStrings("New_Sim01.wav", (try Options.parse(&.{ "--music", "New_Sim01.wav" })).music.?);
-    try std.testing.expectEqual(null, (try Options.parse(&.{ "--music", "none" })).music);
-    try std.testing.expect((try Options.parse(&.{})).smooth_motion);
-    try std.testing.expectEqual([2]u32{ 3840, 2160 }, (try Options.parse(&.{ "--size", "3840x2160" })).settings.size.?);
+    try std.testing.expectEqualStrings(Options.default_music, (try play(&.{})).music.?);
+    try std.testing.expectEqualStrings("New_Sim01.wav", (try play(&.{ "--music", "New_Sim01.wav" })).music.?);
+    try std.testing.expectEqual(null, (try play(&.{ "--music", "none" })).music);
+    try std.testing.expect((try play(&.{})).smooth_motion);
+    try std.testing.expectEqual([2]u32{ 3840, 2160 }, (try play(&.{ "--size", "3840x2160" })).settings.size.?);
     for ([_][:0]const u8{ "3840", "0x100", "100x", "1x2x3", "99999x100" }) |bad| {
-        try std.testing.expectError(error.Usage, Options.parse(&.{ "--size", bad }));
+        try std.testing.expectError(error.Usage, play(&.{ "--size", bad }));
     }
-    const chosen = try Options.parse(&.{ "--filter", "trilinear", "--16-bit", "--software", "--fullscreen" });
+    const chosen = try play(&.{ "--filter", "trilinear", "--16-bit", "--software", "--fullscreen" });
     try std.testing.expectEqual(.trilinear, chosen.settings.filter);
     try std.testing.expect(chosen.settings.sixteen_bit and chosen.software and chosen.fullscreen);
-    try std.testing.expectError(error.Usage, Options.parse(&.{ "--msaa", "3" }));
-    try std.testing.expectError(error.Usage, Options.parse(&.{ "--filter", "sharp" }));
-    try std.testing.expectError(error.Usage, Options.parse(&.{ "--fps", "-1" }));
-    try std.testing.expectError(error.Usage, Options.parse(&.{ "--fps", "nan" }));
+    try std.testing.expectError(error.Usage, play(&.{ "--msaa", "3" }));
+    try std.testing.expectError(error.Usage, play(&.{ "--filter", "sharp" }));
+    try std.testing.expectError(error.Usage, play(&.{ "--fps", "-1" }));
+    try std.testing.expectError(error.Usage, play(&.{ "--fps", "nan" }));
+}
+
+test "Options asks for help, and says what is wrong" {
+    try std.testing.expectEqual(.help, std.meta.activeTag(Options.parse(&.{"--help"})));
+    try std.testing.expectEqual(.help, std.meta.activeTag(Options.parse(&.{ "game", "-h" })));
+    var buffer: [128]u8 = undefined;
+    const cases = [_]struct { []const [:0]const u8, []const u8 }{
+        .{ &.{"--bogus"}, "unknown option '--bogus'" },
+        .{ &.{"--msaa"}, "--msaa takes a value, <1|2|4|8>" },
+        .{ &.{ "--msaa", "3" }, "--msaa takes <1|2|4|8>, not '3'" },
+        .{ &.{ "--no-sound", "--view", "cockpit" }, "--view takes <0|1|2>, not 'cockpit'" },
+    };
+    for (cases) |case| {
+        const problem = Options.parse(case[0]).wrong;
+        try std.testing.expectEqualStrings(case[1], try std.fmt.bufPrint(&buffer, "{f}", .{problem}));
+    }
+}
+
+test help_page {
+    // Every option is on it, and it fits in 80 columns.
+    for (std.enums.values(Arg)) |arg| {
+        try std.testing.expect(std.mem.indexOf(u8, help_page, @tagName(arg)) != null);
+    }
+    var lines = std.mem.splitScalar(u8, help_page, '\n');
+    while (lines.next()) |line| try std.testing.expect(line.len <= help.width);
 }
