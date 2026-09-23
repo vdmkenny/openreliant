@@ -641,4 +641,3 @@ test avoid {
     mission.clock.frame_start = 11;
     try std.testing.expect(!avoid(fighter));
 }
-

@@ -770,4 +770,3 @@ test "a Sabre fights the player" {
     try std.testing.expect(nearest < 20000);
     try std.testing.expect(changes > 1);
 }
-
