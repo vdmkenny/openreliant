@@ -111,8 +111,9 @@ sticks on USB adapters, and Xbox, PlayStation, Nintendo and most other controlle
 controller.
 
 OpenReliant draws with the GPU at the display's own resolution, with anti-aliasing and sharper
-texture filtering than the original had; `--original` restores the original's look.
-[Platform](docs/port/platform.md) lists the options and keys, and
+texture filtering than the original had; `--original` restores the original's look and sound.
+`openreliant --help` lists the options and keys; [Platform](docs/port/platform.md) has them too,
+and
 [how the installer works](docs/port/platform.md#installing-the-games-files).
 
 ### Building from source
