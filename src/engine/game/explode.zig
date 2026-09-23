@@ -21,6 +21,7 @@ const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
 const libcmt = @import("../libcmt.zig");
 const matmanager = @import("matmanager.zig");
+const objects = @import("objects.zig");
 const particles = @import("particles.zig");
 const sound3d = @import("sound3d.zig");
 const xtrabits = @import("xtrabits.zig");
@@ -29,8 +30,7 @@ const Clock = @import("main.zig").Clock;
 /// What the explosions leave for the frames after them.
 pub const Explosions = struct {
     images: Images,
-    /// The options' detail (`0x005D54E0`), which the port starts at high.
-    detail: Detail = .high,
+    settings: Settings = .{},
     /// The pieces the bits are made of, which a mission loads as it starts.
     debris: Debris = .{},
     /// The bits flying (`explosion_bits`), as many as the detail holds: the next thrown
@@ -83,10 +83,10 @@ pub const Explosions = struct {
         return .{ .images = images };
     }
 
-    /// As a mission starts again: nothing flying or going off, and no marker, at the same detail;
-    /// the debris is loaded again (`Debris.load`).
+    /// As a mission starts again: nothing flying or going off, and no marker, with the same
+    /// settings; the debris is loaded again (`Debris.load`).
     pub fn reset(explosions: *Explosions) void {
-        explosions.* = .{ .images = explosions.images, .detail = explosions.detail };
+        explosions.* = .{ .images = explosions.images, .settings = explosions.settings };
     }
 
     /// `explosions_update` (`0x0046E480`), once a frame, as far as the port goes: the marker drifts
@@ -145,6 +145,7 @@ pub const Explosions = struct {
             .life = Bit.flight + @as(i32, @intFromFloat(random.centred() * Bit.flight_spread)),
             .object = .{
                 .flags = .{ .lit = true },
+                .light_mask = explosions.settings.bit_lights.mask(),
                 .position = at,
                 .scale = scale,
                 .radius = levels[0].mesh.radius,
@@ -153,7 +154,7 @@ pub const Explosions = struct {
             .velocity = velocity,
             .spin = spin,
         };
-        explosions.next_bit = (explosions.next_bit + 1) % explosions.detail.bits();
+        explosions.next_bit = (explosions.next_bit + 1) % explosions.settings.detail.bits();
     }
 
     /// `explosion_fireball` (`0x0046BD00`): sets a fireball off at `at`, into the first free slot,
@@ -164,6 +165,30 @@ pub const Explosions = struct {
             slot.* = .init(explosions.images, at, spec, clock, random);
             return;
         }
+    }
+};
+
+/// How the explosions are shown, which a mission's restart keeps.
+pub const Settings = struct {
+    /// The options' detail (`0x005D54E0`), which the port starts at high.
+    detail: Detail = .high,
+    bit_lights: BitLights = .like_ships,
+};
+
+/// Which of the backdrop's lights reach a bit.
+///
+/// **Improvement:** a bit takes the lights a ship's part takes, one of each pair. The game makes
+/// it with a light mask of 0, so both key lights and both fill lights reach it, and it shows
+/// washed out; `--original` restores that.
+pub const BitLights = enum {
+    like_ships,
+    every_light,
+
+    fn mask(lights: BitLights) u32 {
+        return switch (lights) {
+            .like_ships => objects.lightMask(false),
+            .every_light => 0,
+        };
     }
 };
 
@@ -711,7 +736,7 @@ test Bit {
     defer mesh.deinit(gpa);
     var explosions: Explosions = .init(testing.images());
     explosions.debris = testing.debris(&mesh);
-    explosions.detail = .low;
+    explosions.settings.detail = .low;
     var clock: Clock = .{};
     var random: libcmt.Rand = .{};
 
@@ -720,6 +745,7 @@ test Bit {
     explosions.throwBit(.{ 0, 0, 100 }, .{ 0, 0, 1 }, .{ .size = 0.4, .speed = 0.2 }, &clock, &random);
     const bit = &explosions.bits[0].?;
     try std.testing.expect(bit.object.flags.lit);
+    try std.testing.expectEqual(objects.lightMask(false), bit.object.light_mask);
     try std.testing.expectEqual(1500, bit.object.levels[0].until);
     try std.testing.expect(bit.velocity[2] > 0);
     const speed = math.length(bit.velocity);
@@ -738,10 +764,19 @@ test Bit {
     explosions.frame(&clock);
     try std.testing.expectEqual(null, explosions.bits[0]);
 
+    // As the original has it, every light reaches it.
+    explosions.settings.bit_lights = .every_light;
+    const index = explosions.next_bit;
+    explosions.throwBit(@splat(0), .{ 0, 0, 1 }, .{ .size = 1, .speed = 1 }, &clock, &random);
+    try std.testing.expectEqual(0, explosions.bits[index].?.object.light_mask);
+    explosions.reset();
+    try std.testing.expectEqual(.every_light, explosions.settings.bit_lights);
+    explosions.debris = testing.debris(&mesh);
+
     // The detail sets how many fly: at low, the 101st takes the first's place.
     for (0..Detail.low.bits() + 1) |_| explosions.throwBit(@splat(0), .{ 0, 0, 1 }, .{ .size = 1, .speed = 1 }, &clock, &random);
     try std.testing.expectEqual(Detail.low.bits(), testing.flying(&explosions));
-    try std.testing.expectEqual(2, explosions.next_bit);
+    try std.testing.expectEqual(1, explosions.next_bit);
 }
 
 test Debris {

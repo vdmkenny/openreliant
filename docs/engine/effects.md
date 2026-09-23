@@ -126,6 +126,12 @@ A ship with flag 24 set leaves only every other bit of its trail. The game can a
 (types `0x58` to `0x5B`) by a chance, or a rock chunk (types `0xB2` to `0xB6`), which none of these
 asks for.
 
+The game makes a bit with a light mask of 0, so every one of the backdrop's lights reaches it,
+both key lights and both fill lights, where a ship's part takes one of each pair.
+
+**Improvement:** a bit takes the lights a ship's part takes (`objects.lightMask`), so it is not
+washed out. `--original` restores every light.
+
 [`explode.zig`](../../src/engine/game/explode.zig) ports the bits as `Explosions.throwBit` and
 `Bit`, and [`aiexplode.zig`](../../src/engine/game/aiexplode.zig) the spin-out's trail. The port
 throws debris only, and leaves a piece out where the game has no model for it.

@@ -99,7 +99,7 @@ const Doc = struct {
 
 /// Every option's help, which the compiler holds to having one for each.
 const docs: std.enums.EnumArray(Arg, Doc) = .init(.{
-    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks, lights from the latest shots only, and the sound mixed plainly in stereo" },
+    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's bits lit by every light, and the sound mixed plainly in stereo" },
     .@"--ship" = .{ .section = .sandbox, .value = "<type>", .text = "the ship type to fly, by its number in shipstats.bin; 0, the Predator, by default" },
     .@"--view" = .{ .section = .sandbox, .value = "<0|1|2>", .text = "the view it starts in, as the game's settings keep it: 0 the cockpit, the default; 1 the chase view; 2 no cockpit" },
     .@"--music" = .{ .section = .sandbox, .value = "<file>", .text = "the piece from the game's music folder it plays, or none; New_Mission01.wav by default" },
@@ -202,6 +202,8 @@ const Options = struct {
     smooth_motion: bool = true,
     /// Which shots cast a light: every one, or the latest two of each side as the original does.
     shot_lights: game.guns.ShotLights = .every_shot,
+    /// Which lights reach an explosion's bits: a ship's, or every one as the original lets them.
+    bit_lights: game.explode.BitLights = .like_ships,
     /// How the sound plays, or null for none.
     sound: ?platform.audio.Options = .{},
     /// The piece of music the sandbox plays, from `music\`, or none.
@@ -246,6 +248,7 @@ const Options = struct {
                 options.settings = .original;
                 options.smooth_motion = false;
                 options.shot_lights = .latest_two;
+                options.bit_lights = .every_light;
                 if (options.sound) |*sound| sound.* = .{ .player = .software, .master = null };
             },
             .@"--ship" => {
@@ -533,6 +536,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     const hearing: game.hog_snd.Hearing = .{ .sound = sound, .camera = &view.place, .clock = &clock };
     // What the explosions leave for the frames after them, and the particles they send out.
     var explosions: game.explode.Explosions = .init(try .load(&textures));
+    explosions.settings.bit_lights = options.bit_lights;
     var particles: game.particles.Pool = try .load(gpa, &textures);
     defer particles.deinit();
     try sandbox.start(.{
@@ -1292,6 +1296,8 @@ test Options {
     try std.testing.expectEqual(0, retro.fps.?);
     try std.testing.expect(!retro.smooth_motion);
     try std.testing.expectEqual(.latest_two, retro.shot_lights);
+    try std.testing.expectEqual(.every_light, retro.bit_lights);
+    try std.testing.expectEqual(.like_ships, plain.bit_lights);
     try std.testing.expect(!(try play(&.{"--no-smooth-motion"})).smooth_motion);
     try std.testing.expectEqual(.latest_two, (try play(&.{"--few-shot-lights"})).shot_lights);
     // Sound is on, with the first mission's music, unless told otherwise.
