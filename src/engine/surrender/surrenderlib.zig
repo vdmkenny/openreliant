@@ -10,6 +10,7 @@ pub const srclip = @import("surrenderlib/srclip.zig");
 pub const srcore = @import("surrenderlib/srcore.zig");
 pub const srlight = @import("surrenderlib/srlight.zig");
 pub const srmesh = @import("surrenderlib/srmesh.zig");
+pub const srshadow = @import("surrenderlib/srshadow.zig");
 pub const srstars = @import("surrenderlib/srstars.zig");
 pub const srtexture = @import("surrenderlib/srtexture.zig");
 

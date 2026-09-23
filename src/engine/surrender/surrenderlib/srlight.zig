@@ -17,6 +17,9 @@ pub const Light = struct {
     /// The port's: added to each pixel of a lit mesh by a device that lights each pixel, rather
     /// than to each vertex (`srapi.Context.pixel_lighting`). The driver sets it for the frame.
     per_pixel: bool = false,
+    /// The port's: kept off what a caster shades from it, where the device draws shadows
+    /// (`srshadow`). Only a directional light added to each pixel is.
+    shadowed: bool = false,
 
     pub const Kind = union(enum) {
         /// Adds its colour everywhere.

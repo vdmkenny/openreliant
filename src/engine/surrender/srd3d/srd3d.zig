@@ -14,6 +14,7 @@ const srclip = @import("../surrenderlib/srclip.zig");
 const srlight = @import("../surrenderlib/srlight.zig");
 const srcore = @import("../surrenderlib/srcore.zig");
 const srmesh = @import("../surrenderlib/srmesh.zig");
+const srshadow = @import("../surrenderlib/srshadow.zig");
 const srstars = @import("../surrenderlib/srstars.zig");
 const srtexture = @import("../surrenderlib/srtexture.zig");
 const device = @import("device.zig");
@@ -197,7 +198,13 @@ pub const Driver = struct {
         .flush = flushBlended,
         .end = end,
         .overlay = overlayMark,
+        .shadows = shadows,
     };
+
+    /// The port's: hands the device the frame's shadows.
+    fn shadows(ptr: *anyopaque, frame: *const srshadow.Frame) void {
+        from(ptr).target.shadows(frame);
+    }
 
     fn from(ptr: *anyopaque) *Driver {
         return @ptrCast(@alignCast(ptr));
@@ -249,11 +256,13 @@ pub const Driver = struct {
                     .colour = @as(math.Vector, l.colour) * @as(math.Vector, @splat(l.intensity)),
                 } },
             };
-            try taken.append(driver.gpa, .{ .mask = l.mask, .kind = kind });
+            try taken.append(driver.gpa, .{ .mask = l.mask, .kind = kind, .shadowed = l.shadowed });
         }
         const count = @min(driver.target.lights(taken.items), wanted.items.len);
         for (wanted.items[0..count]) |w| list[w.index].per_pixel = true;
         context.pixel_lighting = count > 0;
+        // Shadows darken what the device adds to each pixel alone.
+        context.shadows = if (context.pixel_lighting) driver.target.shadowSettings() else null;
     }
 
     /// A light the device may add to each pixel, and how far it stands from the camera, squared;
@@ -285,6 +294,17 @@ pub const Driver = struct {
             },
             .depth = depth(layer, material.blend[pass]),
             .blend = factors(material.blend[pass]),
+            .receives = receives(layer),
+        };
+    }
+
+    /// The shadows a layer's pixels take: the world's the world's, the overlay's, which holds the
+    /// cockpit, the cockpit's, and the background's none.
+    fn receives(layer: Layer) device.Receives {
+        return switch (layer) {
+            .background => .nothing,
+            .world => .world,
+            .overlay => .cockpit,
         };
     }
 

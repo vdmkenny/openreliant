@@ -1128,6 +1128,17 @@ pub const Model = struct {
             try mount.model.draw(gpa, scene, layer, view);
         }
     }
+
+    /// The port's: adds each shown part's object, and those of the models it mounts, to the
+    /// scene's casters, which throw their shadows without being drawn (`srshadow`).
+    pub fn castShadows(model: *Model, gpa: Allocator, scene: *srcore.Scene) Allocator.Error!void {
+        for (model.parts) |*part| {
+            if (!part.hidden) try scene.casters.append(gpa, &part.object);
+        }
+        for (model.mounts) |*mount| {
+            if (!model.parts[mount.part].hidden) try mount.model.castShadows(gpa, scene);
+        }
+    }
 };
 
 /// What a model draws its attachments with: the sprites every light draws, the meshes the engine

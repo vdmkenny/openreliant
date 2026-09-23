@@ -75,10 +75,10 @@ pub const default_fill: [3]f32 = .{ 0, 0.5, 1 };
 pub fn initialLights() Lights {
     const key: [3]f32 = .{ 1, 1, 0.8 };
     return .init(.{
-        .key_01 = .{ .mask = 0x01, .intensity = 1, .colour = key, .kind = .{ .directional = sun_direction } },
+        .key_01 = .{ .mask = 0x01, .intensity = 1, .colour = key, .kind = .{ .directional = sun_direction }, .shadowed = true },
         .fill_02 = .{ .mask = 0x02, .intensity = 1, .colour = default_fill, .kind = .{ .directional = fill_direction } },
         .ambient_04 = .{ .mask = 0x04, .intensity = 1, .colour = @splat(0.04), .kind = .ambient },
-        .key_08 = .{ .mask = 0x08, .intensity = 1, .colour = key, .kind = .{ .directional = sun_direction } },
+        .key_08 = .{ .mask = 0x08, .intensity = 1, .colour = key, .kind = .{ .directional = sun_direction }, .shadowed = true },
         .fill_10 = .{ .mask = 0x10, .intensity = 0.7, .colour = default_fill, .kind = .{ .directional = fill_direction } },
         .ambient_20 = .{ .mask = 0x20, .intensity = 1, .colour = @splat(0.09), .kind = .ambient },
     });

@@ -1,5 +1,5 @@
-// The game's one shader: what Direct3D 7's fixed function did with the vertices Surrender's driver
-// hands over, for SDL's GPU interface. `make shaders` compiles the vertex stage, with VERTEX
+// The device's shader: what Direct3D 7's fixed function did with the vertices Surrender's driver
+// hands over, for SDL's GPU interface, with the port's lighting of each pixel and its shadows. `make shaders` compiles the vertex stage, with VERTEX
 // defined, and the fragment stage, with FRAGMENT, into SPIR-V, and from that into Metal's
 // language. The platform layer embeds what it makes (src/platform/gpu.zig).
 #version 450
@@ -19,6 +19,9 @@ layout(location = 3) in int layer;
 layout(location = 4) in vec3 view;
 layout(location = 5) in vec3 normal;
 layout(location = 6) in uint lightMask;
+// The shadows its pixels take: 0 none, 1 the world's cascades, 2 the cockpit's map (device.zig's
+// Receives).
+layout(location = 7) in uint receives;
 
 layout(set = 1, binding = 0) uniform Target {
     // The frame's width and height in pixels.
@@ -31,6 +34,7 @@ layout(location = 2) flat out int image;
 layout(location = 3) out vec3 place;
 layout(location = 4) out vec3 facing;
 layout(location = 5) flat out uint mask;
+layout(location = 6) flat out uint shade;
 
 void main() {
     // One over the reciprocal depth as the clip w makes colours and texture coordinates vary in
@@ -46,6 +50,7 @@ void main() {
     place = view;
     facing = normal;
     mask = lightMask;
+    shade = receives;
 }
 
 #endif
@@ -53,6 +58,9 @@ void main() {
 #ifdef FRAGMENT
 
 layout(set = 2, binding = 0) uniform sampler2DArray images;
+// The shadows' maps, a layer for each cascade and the cockpit's last, compared with a pixel's depth
+// (gpu/shadows.zig).
+layout(set = 2, binding = 1) uniform sampler2DArrayShadow shadowMaps;
 
 layout(set = 3, binding = 0) uniform Frame {
     // x: 1 to draw in 16-bit colour, dithered. y: 1 to magnify textures with a Catmull-Rom filter
@@ -63,13 +71,15 @@ layout(set = 3, binding = 0) uniform Frame {
 
 // The frame's directional and point lights, for lighting each pixel. A light's colour is its red,
 // green and blue; its vector, toward a directional light and as long as its intensity, or a point
-// light's place and its reach; its mask; and its kind, 0 directional or 1 point.
+// light's place and its reach; its mask; its kind, 0 directional or 1 point; and whether a caster
+// shades what it lights.
 struct Light {
     vec4 colour;
     vec4 vector;
     uint mask;
     uint kind;
-    uvec2 unused;
+    uint shadowed;
+    uint unused;
 };
 
 layout(set = 3, binding = 1) uniform Lighting {
@@ -83,22 +93,100 @@ layout(location = 2) flat in int image;
 layout(location = 3) in vec3 place;
 layout(location = 4) in vec3 facing;
 layout(location = 5) flat in uint mask;
+layout(location = 6) flat in uint shade;
 layout(location = 0) out vec4 result;
+
+// A map's box along the sun (srshadow.zig): where a point of the camera's frame falls in the map,
+// each row dotted with the point and 1, across and up from -1 to 1 and its depth from the sun's
+// side from 0 to 1.
+struct Box {
+    vec4 rows[3];
+    // For a cascade, the view depth it reaches to.
+    float far;
+    // A texel's width in the world, which a pixel's place is moved off its surface by.
+    float texel;
+    // How much of the sun a full shadow takes away.
+    float depth;
+    // How far apart the lookup's taps are, as a share of the map.
+    float step;
+};
+
+const int cascadeCount = 4;
+const int cockpitMap = cascadeCount;
+
+layout(set = 3, binding = 2) uniform Shadows {
+    Box boxes[cascadeCount + 1];
+    // 1 where the frame has shadows.
+    uint enabled;
+    // The lookup's taps across and down.
+    uint across;
+    // 1 where the cockpit has a map.
+    uint cockpit;
+    uint unused;
+} shadows;
+
+// How many texels a pixel's place is moved off its surface, along its normal, before its shadow
+// is looked up, so that a surface does not shade itself.
+const float normalOffset = 1.5;
+
+// How much of the sun reaches the pixel in map `map`, from its box's depth of shadow to 1: from a
+// square of taps around it, each comparing the four texels around it. Outside the map it is lit.
+float lookUp(int map, vec3 n) {
+    Box box = shadows.boxes[map];
+    vec4 p = vec4(place + n * (box.texel * normalOffset), 1.0);
+    vec3 at = vec3(dot(box.rows[0], p), dot(box.rows[1], p), dot(box.rows[2], p));
+    if (any(greaterThan(abs(at.xy), vec2(1.0)))) return 1.0;
+    vec2 uv = vec2(at.x, -at.y) * 0.5 + 0.5;
+    int across = int(shadows.across);
+    float middle = float(across - 1) * 0.5;
+    float sum = 0.0;
+    for (int y = 0; y < across; y++) {
+        for (int x = 0; x < across; x++) {
+            vec2 offset = (vec2(x, y) - middle) * box.step;
+            sum += texture(shadowMaps, vec4(uv + offset, float(map), at.z));
+        }
+    }
+    return 1.0 - box.depth * (1.0 - sum / float(across * across));
+}
+
+// How much of the sun reaches the pixel: the cockpit's in its own map, where there is one; the
+// world's in the first cascade that reaches as deep as it stands, fading to lit toward the last
+// cascade's end.
+float sunlit(vec3 n) {
+    if (shade == 2u) return shadows.cockpit != 0u ? lookUp(cockpitMap, n) : 1.0;
+    for (int i = 0; i < cascadeCount; i++) {
+        float far = shadows.boxes[i].far;
+        if (place.z > far) continue;
+        float lit = lookUp(i, n);
+        if (i == cascadeCount - 1) lit = mix(lit, 1.0, smoothstep(far * 0.8, far, place.z));
+        return lit;
+    }
+    return 1.0;
+}
 
 // The vertices' colour with the directional and point lights added for this pixel, as the
 // pipeline adds them for each vertex (srmesh.zig), each channel then held to 1. A vertex that comes
-// lit already, as every one does in the original's look, takes its colour as it stands.
+// lit already, as every one does in the original's look, takes its colour as it stands. A shadowed
+// light is scaled by how much of the sun reaches the pixel, looked up once, and only where such a
+// light faces it.
 vec4 lit(vec4 base) {
     float length = length(facing);
     if (mask == 0xFFFFFFFFu || length < 1e-6) return base;
     vec3 n = facing / length;
     vec3 sum = base.rgb;
+    bool shaded = shade != 0u && shadows.enabled != 0u;
+    float sun = -1.0;
     for (uint i = 0u; i < lighting.count.x; i++) {
         Light light = lighting.lights[i];
         if ((light.mask & mask) != 0u) continue;
         if (light.kind == 0u) {
             float amount = dot(n, light.vector.xyz);
-            if (amount > 0.0) sum += amount * light.colour.rgb;
+            if (amount <= 0.0) continue;
+            if (shaded && light.shadowed != 0u) {
+                if (sun < 0.0) sun = sunlit(n);
+                amount *= sun;
+            }
+            sum += amount * light.colour.rgb;
             continue;
         }
         vec3 d = light.vector.xyz - place;

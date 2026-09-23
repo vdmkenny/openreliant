@@ -51,6 +51,8 @@ const Arg = enum {
     @"--no-bloom",
     @"--no-dither",
     @"--no-pixel-lighting",
+    @"--shadows",
+    @"--no-cockpit-shadows",
     @"--no-smooth-motion",
     @"--few-shot-lights",
     @"--hrtf",
@@ -115,6 +117,8 @@ const docs: std.enums.EnumArray(Arg, Doc) = .init(.{
     .@"--no-bloom" = .{ .section = .graphics, .text = "draw without the bloom around bright things" },
     .@"--no-dither" = .{ .section = .graphics, .text = "draw 32-bit colour without dithering" },
     .@"--no-pixel-lighting" = .{ .section = .graphics, .text = "light each vertex rather than each pixel, as the original does" },
+    .@"--no-cockpit-shadows" = .{ .section = .graphics, .text = "leave the shadows out of the cockpit, keeping them on the ships" },
+    .@"--shadows" = .{ .section = .graphics, .value = "<off|low|high>", .text = "shadows from the sun: low is soft and light on older GPUs, high sharp and smooth; high by default, and none without lighting each pixel" },
     .@"--no-smooth-motion" = .{ .section = .graphics, .text = "move what moves on with the game's ticks, a hundred a second, as the original does, rather than on every frame" },
     .@"--few-shot-lights" = .{ .section = .graphics, .text = "light only the latest two of the player's shots and the latest two of everyone else's, as the original does" },
     .@"--hrtf" = .{ .section = .sound, .text = "place the sounds for headphones whatever the output; by default they are while the output is headphones" },
@@ -302,6 +306,8 @@ const Options = struct {
             .@"--no-bloom" => options.settings.bloom = false,
             .@"--no-dither" => options.settings.dither = false,
             .@"--no-pixel-lighting" => options.settings.pixel_lighting = false,
+            .@"--shadows" => options.settings.shadows = std.meta.stringToEnum(platform.gpu.Settings.Shadows, value) orelse return error.BadValue,
+            .@"--no-cockpit-shadows" => options.settings.cockpit_shadows = false,
             .@"--no-smooth-motion" => options.smooth_motion = false,
             .@"--few-shot-lights" => options.shot_lights = .latest_two,
             .@"--hrtf" => if (options.openAl()) |settings| {
@@ -756,6 +762,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         display.cockpit_mode = view.cockpit_mode;
         try game.main.drawFrame(arena, frame_arena.allocator(), &scene, &context, .{
             .objects = sandbox.objects,
+            .seat = if (slot.object.flags.hidden) sandbox.objects.player else null,
             .space = space,
             .sky = sky,
             .view = view.view,
@@ -1291,6 +1298,9 @@ test Options {
     try std.testing.expectEqual(null, plain.fps);
     const retro = try play(&.{ "--original", "--msaa", "8", "--no-vsync", "--fps", "0" });
     try std.testing.expect(retro.settings.sixteen_bit);
+    try std.testing.expectEqual(.off, retro.settings.shadows);
+    try std.testing.expectEqual(.low, (try play(&.{ "--shadows", "low" })).settings.shadows);
+    try std.testing.expect(!(try play(&.{"--no-cockpit-shadows"})).settings.cockpit_shadows);
     try std.testing.expectEqual(.original, retro.settings.filter);
     try std.testing.expectEqual(8, retro.settings.samples);
     try std.testing.expect(!retro.settings.vsync);

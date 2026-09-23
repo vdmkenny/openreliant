@@ -13,6 +13,7 @@ const srapiext = @import("srapiext.zig");
 const srbmo = @import("srbmo.zig");
 const srlight = @import("srlight.zig");
 const srmesh = @import("srmesh.zig");
+const srshadow = @import("srshadow.zig");
 const srstars = @import("srstars.zig");
 
 /// The scene's layers, drawn in order, each with what it puts aside last.
@@ -68,16 +69,21 @@ pub fn depthSort(deferred: []Deferred) void {
 pub const Scene = struct {
     layers: std.EnumArray(Layer, std.ArrayList(Object)) = .initFill(.empty),
     lights: std.ArrayList(srlight.Light) = .empty,
+    /// The port's: what casts shadows without being drawn, such as the ship the camera sits in
+    /// (`srshadow`).
+    casters: std.ArrayList(*srapiext.MeshObject) = .empty,
 
     pub fn deinit(scene: *Scene, gpa: Allocator) void {
         for (&scene.layers.values) |*list| list.deinit(gpa);
         scene.lights.deinit(gpa);
+        scene.casters.deinit(gpa);
     }
 
     /// Empties the lists, as `mission_frame` does each frame.
     pub fn clear(scene: *Scene) void {
         for (&scene.layers.values) |*list| list.clearRetainingCapacity();
         scene.lights.clearRetainingCapacity();
+        scene.casters.clearRetainingCapacity();
     }
 };
 
@@ -91,8 +97,11 @@ pub const Driver = struct {
         begin: *const fn (*anyopaque, *srapi.Context) void,
         /// The port's: the frame's lights, for a device that lights each pixel. The driver marks
         /// the lights the device adds to each pixel (`srlight.Light.per_pixel`), and sets
-        /// `srapi.Context.pixel_lighting` if there are any.
+        /// `srapi.Context.pixel_lighting` if there are any, and `shadows` for a device that draws
+        /// them.
         lights: *const fn (*anyopaque, []srlight.Light) Allocator.Error!void,
+        /// The port's: the frame's shadows, after the lights, for a device that draws them.
+        shadows: ?*const fn (*anyopaque, *const srshadow.Frame) void = null,
         /// Draws what is opaque now and puts the rest in `blended`.
         mesh: *const fn (*anyopaque, *const srmesh.Drawn, Layer, *Blended) Allocator.Error!void,
         sprites: *const fn (*anyopaque, *const srbmo.Drawn, Layer, *Blended) Allocator.Error!void,
@@ -133,6 +142,7 @@ pub fn render(arena: Allocator, context: *srapi.Context, scene: *Scene, driver: 
     const lights = try arena.dupe(srlight.Light, scene.lights.items);
     std.mem.reverse(srlight.Light, lights);
     try driver.vtable.lights(driver.ptr, lights);
+    try castShadows(arena, context.*, scene, lights, driver);
 
     var budget: srmesh.Budget = .{};
     for (std.enums.values(Layer)) |layer| {
@@ -169,6 +179,18 @@ pub fn render(arena: Allocator, context: *srapi.Context, scene: *Scene, driver: 
         try over.draw(over.context);
     }
     driver.vtable.end(driver.ptr);
+}
+
+/// The port's: hands the driver the frame's shadows, where its device draws them (`srshadow`).
+fn castShadows(arena: Allocator, context: srapi.Context, scene: *const Scene, lights: []const srlight.Light, driver: Driver) Allocator.Error!void {
+    const take = driver.vtable.shadows orelse return;
+    const settings = context.shadows orelse return;
+    const world = scene.layers.get(.world).items;
+    const overlay = scene.layers.get(.overlay).items;
+    const frame = try srshadow.gather(arena, context, lights, world, overlay, scene.casters.items, settings) orelse return;
+    const stored = try arena.create(srshadow.Frame);
+    stored.* = frame;
+    take(driver.ptr, stored);
 }
 
 test key {
