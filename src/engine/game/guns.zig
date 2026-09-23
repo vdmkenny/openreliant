@@ -1407,9 +1407,10 @@ test "a heard shot sounds, following it" {
     var ship: testing.Ship = undefined;
     try ship.init(gpa);
     defer ship.deinit(gpa);
-    var driver: mss.Driver = .init(22050);
+    var mixer: mss.Mixer = .init(22050);
+    const driver = mixer.driver();
     var sound: hog_snd.Sound = undefined;
-    sound.init(&driver, 4, null);
+    sound.init(driver, 4, null);
     const bank = comptime hog_snd.testing.bank(80);
     sound.open3D(try @import("../../formats/fat.zig").Bank.parse(&bank));
     const listener: @import("camera.zig").Place = .{ .position = @splat(0), .orientation = math.identity };

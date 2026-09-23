@@ -236,7 +236,7 @@ pub const Hearing = struct {
 pub const Sound = struct {
     /// Miles's digital driver (`0x00563A1C`), or null with none at all: every call then does
     /// nothing, as the game's do while `0x00565688` is clear.
-    driver: ?*mss.Driver = null,
+    driver: ?mss.Driver = null,
     voices: [max_voices]Voice = @splat(std.mem.zeroes(Voice)),
     voice_count: u8 = 0,
     /// The voices `pauseAll` stopped, for `resumeAll` (`0x00563A20`).
@@ -268,7 +268,7 @@ pub const Sound = struct {
     /// `sound_init` (`0x00481440`), as far as the port goes: up to 16 voices for the banks, each a
     /// sample of `driver`, and the timer that steps the fades. `driver` is null where the platform
     /// has no sound, which leaves the game silent.
-    pub fn init(sound: *Sound, driver: ?*mss.Driver, voice_count: u8, files: ?Files) void {
+    pub fn init(sound: *Sound, driver: ?mss.Driver, voice_count: u8, files: ?Files) void {
         sound.* = .{ .files = files };
         const opened = driver orelse return;
         for (sound.voices[0..@min(voice_count, max_voices)]) |*voice| {
@@ -338,6 +338,8 @@ pub const Sound = struct {
             log.warn("sound {d} of a bank cannot be played", .{index});
             return;
         }
+        // Not the game's: the cockpit's warnings play in the cockpit's cabin.
+        driver.setSampleRoom(voice.sample, if (sound.fromCockpit(bank)) .cockpit else .none);
         const rate = if (wave.Wave.parse(file)) |info| info.rate else |_| 0;
         if (pitch != 0) {
             const moved = @as(f32, @floatFromInt(rate)) * pitchFactor(pitch);
@@ -352,6 +354,12 @@ pub const Sound = struct {
         voice.rate = rate;
         voice.volume = volume;
         driver.startSample(voice.sample);
+    }
+
+    /// Whether `bank` is the cockpit's own, `betty.fat`.
+    fn fromCockpit(sound: *const Sound, bank: fat.Bank) bool {
+        const betty = sound.betty orelse return false;
+        return betty.bytes.ptr == bank.bytes.ptr;
     }
 
     /// `sound_voice_end` (`0x004823D0`).
@@ -570,6 +578,10 @@ pub const Sound = struct {
         const driver = sound.driver orelse return;
         if (sound.voice_3d_count == 0) return;
         sound3d.engineUpdate(sound, scene);
+        // Not the game's, which opens no listener: the listener moves with the player's ship, for
+        // the Doppler shifts. The software mixer's stays still.
+        const player = &scene.objects.slots[scene.objects.player].object;
+        driver.set3DListenerVelocity(miles(math.transformTransposed(scene.camera.orientation, vector(player.velocity)) * @as(Vector, @splat(velocity_scale))));
         const frame_start = scene.clock.frame_start;
         for (sound.voices_3d[0..sound.voice_3d_count], 0..) |*voice, index| {
             if (voice.owner == -1) continue;
@@ -811,9 +823,10 @@ test {
 }
 
 test "Sound.play takes a free voice, else the lowest priority below its own" {
-    var driver: mss.Driver = .init(22050);
+    var mixer: mss.Mixer = .init(22050);
+    const driver = mixer.driver();
     var sound: Sound = undefined;
-    sound.init(&driver, 3, null);
+    sound.init(driver, 3, null);
     const bytes = comptime testing.bank(4);
     const bank = try fat.Bank.parse(&bytes);
 
@@ -835,9 +848,10 @@ test "Sound.play takes a free voice, else the lowest priority below its own" {
 }
 
 test "Sound.timerTick steps the fades every five ticks" {
-    var driver: mss.Driver = .init(22050);
+    var mixer: mss.Mixer = .init(22050);
+    const driver = mixer.driver();
     var sound: Sound = undefined;
-    sound.init(&driver, 2, null);
+    sound.init(driver, 2, null);
     const bytes = comptime testing.bank(2);
     const bank = try fat.Bank.parse(&bytes);
     const v = sound.play(bank, 1, 127, 0, 64, 0).?;
@@ -855,9 +869,10 @@ test "Sound.timerTick steps the fades every five ticks" {
 }
 
 test "Sound pauses and resumes its voices" {
-    var driver: mss.Driver = .init(22050);
+    var mixer: mss.Mixer = .init(22050);
+    const driver = mixer.driver();
     var sound: Sound = undefined;
-    sound.init(&driver, 2, null);
+    sound.init(driver, 2, null);
     const bytes = comptime testing.bank(2);
     const bank = try fat.Bank.parse(&bytes);
     const v = sound.play(bank, 1, 127, 0, 64, 0).?;
@@ -867,10 +882,24 @@ test "Sound pauses and resumes its voices" {
     try std.testing.expectEqual(mss.Status.playing, driver.sampleStatus(sound.voices[v].sample));
 }
 
-test "Sound gathers positional sounds and plays them panned" {
-    var driver: mss.Driver = .init(22050);
+test "Sound knows the cockpit's bank" {
     var sound: Sound = undefined;
-    sound.init(&driver, 4, null);
+    sound.init(null, 0, null);
+    const bytes = comptime testing.bank(2);
+    // A copy of its own, at another address.
+    var other = bytes;
+    const bank = try fat.Bank.parse(&bytes);
+    try std.testing.expect(!sound.fromCockpit(bank));
+    sound.betty = bank;
+    try std.testing.expect(sound.fromCockpit(bank));
+    try std.testing.expect(!sound.fromCockpit(try fat.Bank.parse(&other)));
+}
+
+test "Sound gathers positional sounds and plays them panned" {
+    var mixer: mss.Mixer = .init(22050);
+    const driver = mixer.driver();
+    var sound: Sound = undefined;
+    sound.init(driver, 4, null);
     const bytes = comptime testing.bank(4);
     const bank = try fat.Bank.parse(&bytes);
     const view: camera.Place = .{ .position = @splat(0), .orientation = math.identity };

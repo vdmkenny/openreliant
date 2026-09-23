@@ -538,9 +538,10 @@ pub fn armorWarning(hearing: hog_snd.Hearing, object: *const gameobj.GameObject,
 
 test armorWarning {
     const mss = @import("../mss.zig");
-    var driver: mss.Driver = .init(22050);
+    var mixer: mss.Mixer = .init(22050);
+    const driver = mixer.driver();
     var sound: hog_snd.Sound = undefined;
-    sound.init(&driver, 2, null);
+    sound.init(driver, 2, null);
     const bytes = comptime hog_snd.testing.bank(2);
     sound.betty = try @import("../../formats/fat.zig").Bank.parse(&bytes);
     var clock: Clock = .{ .frame_start = 1000 };

@@ -167,6 +167,9 @@ address	kind	name	type	comment
 00524748	data	bank_ldsmp		ldsmp.fat
 0056654c	data	bank_betty		betty.fat: the cockpit's warnings
 0058cb10	data	bank_smp3d		smp3d.fat
+00507138	data	sound3d_eax_damping	float	EAX damping sound3d_init hands the 3D provider: 1
+0058cb5c	data	sound3d_eax_effect_volume	float	EAX effect volume sound3d_init hands the 3D provider; never set, so 0
+0058cb60	data	sound3d_eax_decay_time	float	EAX decay time sound3d_init hands the 3D provider; never set, so 0
 00587ce0	data	game_objects	GameObject *[400]	The GO array: every live object, a mission ship's at its index among the ship records
 005883fa	data	player_index	short	Slot of the player's own object in game_objects
 00466c10	function	create_object	uint __fastcall (int slot, uint type, int tier, float x, float y, float z)	Fills a slot of game_objects, the next for slot -1, with an object of a type at a place, and returns the slot: its fields, stats (another type's for a type that is that one under another number), side, model with its parts' startup tracks, pilot, shields and armour, guns and components; a type above 255 gets a stand-in
@@ -597,6 +600,9 @@ address	kind	name	type	comment
 00491030	function	language_string	char * __fastcall (int id)	The string of an id out of language_strings; stops the game with the fatal error 'id out of range' for an id past them
 0041b240	function	launch_run	void __fastcall (int slot)	Runs a launch a step at a time on its order state's timer. For the player it picks one of three cutaways (views 0x20 to 0x22) and starts the launch's typed text; at the last step it sets cockpit_mode from cockpit_mode_setting (0 the cockpit, 1 the chase view, any other none) and, from a launch cutaway, switches to view 0; then pops the order, makes the ship targetable and posts the Launched event
 00491e20	function	game_pause	void __fastcall (bool pause, bool quiet)	Pauses or resumes the mission. Pausing hands sr + 0x88 another overlay (0x004906F0) in place of hud_draw; resuming puts hud_draw back and, if cockpit_mode_setting changed meanwhile, switches to view 0
+004aab20	function	message_pump	int (void)	Pumps the window's messages; as the window goes inactive, pauses the music, the 3D voices and the voices and the mission (game_pause) and waits until it is active again, when the sound goes on; 0 on WM_QUIT
+005d6cac	data	app_active	bool	Whether the game's window is the active one, as WM_ACTIVATEAPP last said
+005d6cad	data	app_inactive_paused	bool	Whether message_pump has paused the game for the window going inactive
 0057dbbc	data	language_strings	char **	The strings language_init reads, by id less one
 0057dbc0	data	language_count	int	How many strings language_init read
 0057dbc8	data	language_module	void *	language.dll, as LoadLibraryA loads it

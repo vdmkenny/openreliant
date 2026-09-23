@@ -74,9 +74,20 @@ fn cone(placing: Placing, distance: f32) f32 {
 /// The listener stands still; a sample moving away along the line between them sounds lower.
 fn doppler(placing: Placing, distance: f32) f32 {
     if (distance == 0) return 1;
-    const away = @reduce(.Add, placing.velocity * placing.position) / distance;
-    const moving = std.math.clamp(away, -speed_of_sound / 2, speed_of_sound / 2);
-    return speed_of_sound / (speed_of_sound + moving);
+    const velocity = dopplerVelocity(placing.position, placing.velocity);
+    const away = @reduce(.Add, velocity * placing.position) / distance;
+    return speed_of_sound / (speed_of_sound + away);
+}
+
+/// The velocity a sample's Doppler shift is worked out from: its own, with the part along the line
+/// to the listener held within half the speed of sound either way.
+pub fn dopplerVelocity(position: Vector, velocity: Vector) Vector {
+    const distance = @sqrt(@reduce(.Add, position * position));
+    if (distance == 0) return velocity;
+    const line = position / @as(Vector, @splat(distance));
+    const away = @reduce(.Add, velocity * line);
+    const held = std.math.clamp(away, -speed_of_sound / 2, speed_of_sound / 2);
+    return velocity + line * @as(Vector, @splat(held - away));
 }
 
 test hear {
@@ -104,4 +115,13 @@ test hear {
     // Moving away, lower.
     const leaving = hear(.{ .position = .{ 0, 0, 10 }, .velocity = .{ 0, 0, 0.01 } }, 127);
     try std.testing.expect(leaving.pitch < 1);
+}
+
+test dopplerVelocity {
+    // Across the line, as it is; along it, held to half the speed of sound.
+    try std.testing.expectEqual(Vector{ 5, 0, 0 }, dopplerVelocity(.{ 0, 0, 10 }, .{ 5, 0, 0 }));
+    const held = dopplerVelocity(.{ 0, 0, 10 }, .{ 5, 0, 3 });
+    try std.testing.expectEqual(5, held[0]);
+    try std.testing.expectApproxEqAbs(speed_of_sound / 2, held[2], 1e-6);
+    try std.testing.expectEqual(Vector{ 0, 0, -0.1 }, dopplerVelocity(.{ 0, 0, 10 }, .{ 0, 0, -0.1 }));
 }

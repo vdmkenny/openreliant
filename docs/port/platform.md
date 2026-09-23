@@ -11,14 +11,16 @@ game's own code, under [`src/engine/`](../../src/engine), reaches the platform o
 | [`platform/gpu.zig`](../../src/platform/gpu.zig) | Direct3D 7's device, `IDirect3DDevice7`, which the driver draws with ([Renderer](renderer.md#the-gpu-device)) |
 | [`platform/keyboard.zig`](../../src/platform/keyboard.zig) | DirectInput's keyboard: SDL's scan codes as DirectInput's (`DIK_*`) |
 | [`platform/joystick.zig`](../../src/platform/joystick.zig) | DirectInput's joystick: SDL's joysticks and gamepads as the device the game reads into `DIJOYSTATE` |
-| [`platform/audio.zig`](../../src/platform/audio.zig) | The wave-out device Miles played through; the port's Miles mixes for it ([Sound](sound.md)) |
+| [`platform/audio.zig`](../../src/platform/audio.zig) | The wave-out device Miles played through; OpenAL Soft or the port's own mixer plays the game's sound into it ([Sound](sound.md)) |
+| [`platform/openal.zig`](../../src/platform/openal.zig) | Miles's 3D providers: the game's sound calls played by OpenAL Soft ([Sound](sound.md#openal-soft)) |
 | [`platform/macos.zig`](../../src/platform/macos.zig) | Nothing: what macOS needs before SDL starts |
 | [`openreliant/main.zig`](../../src/openreliant/main.zig) | `WinMain`: opening the game's files and running the frame loop |
 | [`openreliant/install.zig`](../../src/openreliant/install.zig) | The installer on disc 1, `SETUP.EXE`: unpacking `LANCER.CAB` and copying the disc's `GAME/CAB` files |
 
 SDL comes from the [castholm/SDL](https://github.com/castholm/SDL) package, which builds it from
 source for the target, so no SDL has to be installed. `build.zig` translates its header into the
-`sdl` module the platform layer imports.
+`sdl` module the platform layer imports. OpenAL Soft is built from source the same way, by
+[`deps/openal-soft`](../../deps/openal-soft/build.zig), into the `al` module.
 
 ## Running
 
@@ -41,7 +43,7 @@ files it says what it needs and exits.
 | `--screenshot <file.png>` | Draws one frame, with the camera settled, to a PNG and quits |
 | `--size <width>x<height>` | Draws frames of this size in pixels whatever the window's, which shows them scaled; for a screenshot larger than the display |
 | `--fullscreen` | Fills the display |
-| `--original` | The original's look: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks, lights from the latest shots only |
+| `--original` | The original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks, lights from the latest shots only, and sound mixed plainly in stereo with no master bus |
 | `--16-bit` | 16-bit colour, dithered |
 | `--msaa <1\|2\|4\|8>` | Samples a pixel; 4 by default |
 | `--filter <original\|trilinear\|crisp>` | How textures are filtered; `crisp` by default |
@@ -54,6 +56,10 @@ files it says what it needs and exits.
 | `--fps <rate>` | Frames a second at most; 0 for no limit |
 | `--software` | Draws on the software device, the port's reference, at the window's size in points |
 | `--music <file>` | The piece of `music\` the sandbox plays, or `none`; `New_Mission01.wav` by default |
+| `--hrtf` | Places the sounds for headphones, through a head-related transfer function, whatever the output; by default they are while the output is headphones |
+| `--no-hrtf` | Places the sounds for speakers, whatever the output |
+| `--no-reverb` | Plays the 3D sounds and the cockpit's warnings without reverb |
+| `--no-compressor` | Leaves the master bus's compressor out, keeping its limiter |
 | `--no-sound` | Runs without sound |
 
 It runs a sandbox of its own, drawn through the ported pipeline and driver with the GPU

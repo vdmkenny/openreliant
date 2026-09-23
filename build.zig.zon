@@ -11,6 +11,9 @@
         .libarchive = .{
             .path = "deps/libarchive",
         },
+        .openal_soft = .{
+            .path = "deps/openal-soft",
+        },
     },
     .paths = .{
         "build.zig",

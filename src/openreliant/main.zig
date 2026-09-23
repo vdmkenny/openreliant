@@ -47,9 +47,10 @@ const usage =
     \\  --size <width>x<height>   draw frames of this size in pixels whatever the window's, which
     \\                            shows them scaled; for a screenshot larger than the display
     \\  --fullscreen              fill the display; Alt and Enter switch while running
-    \\  --original                the original's look: 16-bit colour, one sample a pixel,
-    \\                            bilinear filtering, lighting each vertex, motion that moves on
-    \\                            with the game's ticks, and lights from the latest shots only
+    \\  --original                the original's look and sound: 16-bit colour, one sample a
+    \\                            pixel, bilinear filtering, lighting each vertex, motion that
+    \\                            moves on with the game's ticks, lights from the latest shots
+    \\                            only, and sound mixed plainly in stereo
     \\  --16-bit                  16-bit colour, dithered
     \\  --msaa <1|2|4|8>          samples a pixel; 4 by default
     \\  --filter <original|trilinear|crisp>
@@ -67,6 +68,13 @@ const usage =
     \\  --software                draw on the software device, the port's reference
     \\  --music <file>            the piece of music\\ the sandbox plays, or none; New_Mission01.wav
     \\                            by default
+    \\  --hrtf                    place the sounds for headphones, whatever the output; by
+    \\                            default they are while the output is headphones
+    \\  --no-hrtf                 place the sounds for speakers, whatever the output
+    \\  --no-reverb               play the sounds around you and the cockpit's voice without
+    \\                            reverb
+    \\  --no-compressor           leave the mix's loudness as it is, only keeping its peaks in
+    \\                            check
     \\  --no-sound                play without sound
     \\
 ;
@@ -87,14 +95,22 @@ const Options = struct {
     smooth_motion: bool = true,
     /// Which shots cast a light: every one, or the latest two of each side as the original does.
     shot_lights: game.guns.ShotLights = .every_shot,
-    sound: bool = true,
+    /// How the sound plays, or null for none.
+    sound: ?platform.audio.Options = .{},
     /// The piece of music the sandbox plays, from `music\`, or none.
     music: ?[]const u8 = default_music,
 
     const default_music = "New_Mission01.wav";
 
-    const Flag = enum { @"--fullscreen", @"--original", @"--16-bit", @"--no-vsync", @"--no-bloom", @"--no-dither", @"--no-pixel-lighting", @"--no-smooth-motion", @"--few-shot-lights", @"--software", @"--no-sound" };
+    const Flag = enum { @"--fullscreen", @"--original", @"--16-bit", @"--no-vsync", @"--no-bloom", @"--no-dither", @"--no-pixel-lighting", @"--no-smooth-motion", @"--few-shot-lights", @"--software", @"--hrtf", @"--no-hrtf", @"--no-reverb", @"--no-compressor", @"--no-sound" };
     const Option = enum { @"--ship", @"--view", @"--screenshot", @"--size", @"--msaa", @"--filter", @"--fps", @"--music" };
+
+    /// OpenAL Soft's settings, which a setting for it after `--original` plays with again.
+    fn openAl(options: *Options) ?*platform.audio.openal.Settings {
+        const sound = &(options.sound orelse return null);
+        if (sound.player == .software) sound.player = .{ .openal = .{} };
+        return &sound.player.openal;
+    }
 
     fn parse(args: []const [:0]const u8) error{Usage}!Options {
         var options: Options = .{};
@@ -107,6 +123,7 @@ const Options = struct {
                     options.settings = .original;
                     options.smooth_motion = false;
                     options.shot_lights = .latest_two;
+                    if (options.sound) |*sound| sound.* = .{ .player = .software, .master = null };
                 },
                 .@"--16-bit" => options.settings.sixteen_bit = true,
                 .@"--no-vsync" => options.settings.vsync = false,
@@ -116,7 +133,25 @@ const Options = struct {
                 .@"--no-smooth-motion" => options.smooth_motion = false,
                 .@"--few-shot-lights" => options.shot_lights = .latest_two,
                 .@"--software" => options.software = true,
-                .@"--no-sound" => options.sound = false,
+                .@"--hrtf" => if (options.openAl()) |settings| {
+                    settings.hrtf = .on;
+                },
+                .@"--no-hrtf" => if (options.openAl()) |settings| {
+                    settings.hrtf = .off;
+                },
+                .@"--no-reverb" => if (options.openAl()) |settings| {
+                    settings.reverb = false;
+                },
+                .@"--no-compressor" => if (options.sound) |*sound| {
+                    // The limiter stays.
+                    const master = if (sound.master) |*master| master else master: {
+                        sound.master = .{};
+                        break :master &sound.master.?;
+                    };
+                    master.ratio = 1;
+                    master.makeup = 0;
+                },
+                .@"--no-sound" => options.sound = null,
             } else if (std.meta.stringToEnum(Option, arg)) |option| {
                 i += 1;
                 if (i == args.len) return error.Usage;
@@ -345,18 +380,16 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     defer if (controller) |*open| open.close();
     connectController(arena, &devices, &controller, settings_file);
 
-    // Sound: the port's Miles, played through SDL3's audio, with the ten voices `WinMain` asks
-    // `sound_init` for, the volumes of `[Sound]`, and the 3D provider it opens; silent where
-    // there is no device, or with `--no-sound`.
-    const mixer = try arena.create(engine.mss.Driver);
-    mixer.* = .init(44100);
-    var output: ?platform.audio.Output = if (!options.sound) null else platform.audio.Output.open(mixer) catch |err| none: {
+    // Sound: Miles's calls, played by OpenAL Soft or the port's own mixer through SDL3's audio,
+    // with the ten voices `WinMain` asks `sound_init` for, the volumes of `[Sound]`, and the 3D
+    // provider it opens; silent where there is no device, or with `--no-sound`.
+    const output: ?*platform.audio.Output = if (options.sound) |chosen| platform.audio.Output.create(gpa, chosen) catch |err| none: {
         std.log.warn("playing without sound: {s}", .{@errorName(err)});
         break :none null;
-    };
-    defer if (output) |*open| open.close();
+    } else null;
+    defer if (output) |open| open.destroy();
     const sound = try arena.create(game.hog_snd.Sound);
-    sound.init(if (output != null) mixer else null, 10, .{ .gpa = gpa, .io = io, .dir = directory });
+    sound.init(if (output) |open| open.driver() else null, 10, .{ .gpa = gpa, .io = io, .dir = directory });
     defer sound.shutdown();
     sound.volumes = soundVolumes(settings_file);
     sound.objects = sandbox.objects;
@@ -418,12 +451,19 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     var frame_arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
     defer frame_arena.deinit();
 
+    // The window's activation, which a screenshot doesn't wait on.
+    var app: game.winmain.App = .{};
     while (true) {
         while (window.poll()) |event| switch (event) {
             .quit => return,
             .key => |key| devices.keyboard.down[key.scan] = key.down,
             .controllers => connectController(arena, &devices, &controller, settings_file),
+            .active => |active| app.active = active or frames_left != null,
         };
+        // While the window is inactive, the game and its sound are paused, as the message pump
+        // pauses them.
+        game.winmain.followActivation(&app, sound, &clock);
+        if (output) |open| open.update();
         // The timer's ticks since the last pass, then a game tick for each, as `mission_run` paces
         // them: the simulation steps on every fourth, reading the keyboard as it goes, and runs the
         // objects' updates. A screenshot takes one tick a frame so that the camera settles the same
@@ -495,10 +535,12 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         // The frame's sound, heard from where the camera now is: the fades `tick_timer` steps, the
         // music waiting its turn, the positional sounds gathered, and the 3D sounds placed again
         // (`mission_frame`).
-        sound.timerTick(clock.game_ticks);
-        sound.updateMusic();
-        sound.playBuffered(stdsmp);
-        sound.update3D(hearing.scene(world));
+        if (!app.paused) {
+            sound.timerTick(clock.game_ticks);
+            sound.updateMusic();
+            sound.playBuffered(stdsmp);
+            sound.update3D(hearing.scene(world));
+        }
 
         // The GPU draws at the display's own resolution; the software device at the window's size
         // in points, made again when it changes.
@@ -1089,8 +1131,19 @@ test Options {
     try std.testing.expect(!(try Options.parse(&.{"--no-smooth-motion"})).smooth_motion);
     try std.testing.expectEqual(.latest_two, (try Options.parse(&.{"--few-shot-lights"})).shot_lights);
     // Sound is on, with the first mission's music, unless told otherwise.
-    try std.testing.expect((try Options.parse(&.{})).sound);
-    try std.testing.expect(!(try Options.parse(&.{"--no-sound"})).sound);
+    try std.testing.expect((try Options.parse(&.{})).sound.?.player == .openal);
+    try std.testing.expectEqual(null, (try Options.parse(&.{"--no-sound"})).sound);
+    try std.testing.expectEqual(null, (try Options.parse(&.{ "--no-sound", "--hrtf" })).sound);
+    // The original's sound is the plain mixer with no master bus; OpenAL's settings bring OpenAL
+    // back.
+    const original_sound = (try Options.parse(&.{"--original"})).sound.?;
+    try std.testing.expect(original_sound.player == .software and original_sound.master == null);
+    const headphones = (try Options.parse(&.{ "--original", "--hrtf", "--no-reverb" })).sound.?;
+    try std.testing.expect(headphones.player.openal.hrtf == .on and !headphones.player.openal.reverb);
+    try std.testing.expectEqual(.auto, (try Options.parse(&.{})).sound.?.player.openal.hrtf);
+    try std.testing.expectEqual(.off, (try Options.parse(&.{"--no-hrtf"})).sound.?.player.openal.hrtf);
+    const uncompressed = (try Options.parse(&.{"--no-compressor"})).sound.?.master.?;
+    try std.testing.expectEqual(1, uncompressed.ratio);
     try std.testing.expectEqualStrings(Options.default_music, (try Options.parse(&.{})).music.?);
     try std.testing.expectEqualStrings("New_Sim01.wav", (try Options.parse(&.{ "--music", "New_Sim01.wav" })).music.?);
     try std.testing.expectEqual(null, (try Options.parse(&.{ "--music", "none" })).music);

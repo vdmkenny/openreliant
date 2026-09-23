@@ -183,6 +183,7 @@ pub fn play(sound: *Sound, scene: Scene, at: ?Vector, facing: ?Vector, owner: i3
     var position: Vector = @splat(0);
     var velocity: Vector = @splat(0);
     var direction: ?Vector = null;
+    var radius: f32 = 0;
     switch (definition.follows) {
         .shot => {
             if (owner < 0 or owner >= scene.objects.bullets.pool.len) return null;
@@ -203,6 +204,7 @@ pub fn play(sound: *Sound, scene: Scene, at: ?Vector, facing: ?Vector, owner: i3
             if (owner == scene.objects.player) position += math.transform(slot.drawn.orientation, .{ 0, 0, 200 });
             velocity = gameobj.vector(slot.object.velocity);
             direction = math.forward(slot.drawn.orientation);
+            if (slot.model) |model| radius = model.radius;
         },
     }
     const relative = (position - scene.camera.position) * @as(Vector, @splat(hog_snd.distance_scale));
@@ -237,6 +239,9 @@ pub fn play(sound: *Sound, scene: Scene, at: ?Vector, facing: ?Vector, owner: i3
     driver.set3DVelocity(voice.sample, hog_snd.miles(moving));
     driver.set3DSampleCone(voice.sample, definition.cone_inner, definition.cone_outer, @intFromFloat(@trunc(definition.cone_outer_volume)));
     driver.set3DSampleDistances(voice.sample, range, definition.min_distance * hog_snd.distance_scale);
+    // Not the game's: how far the sound of what it follows spreads, its model's radius, which the
+    // software mixer leaves out.
+    driver.set3DSampleRadius(voice.sample, radius * hog_snd.distance_scale);
     // Every sound plays at 22,050 Hz; the explosions somewhere between 18,050 and 25,050.
     const rate: u32 = switch (which) {
         .explosion01, .explosion02 => 18050 + @as(u32, @intFromFloat(@trunc(@as(f32, @floatFromInt(scene.random.rand())) * (1.0 / 32767.0) * 7000))),
@@ -428,7 +433,7 @@ const testing = struct {
     const bank_bytes = hog_snd.testing.bank(80);
 
     /// A sound on the port's Miles with its provider's 32 voices open, and the effects set up.
-    fn open(driver: *mss.Driver, sound: *Sound) !void {
+    fn open(driver: mss.Driver, sound: *Sound) !void {
         sound.init(driver, 4, null);
         sound.open3D(try fat.Bank.parse(&bank_bytes));
     }
@@ -445,9 +450,10 @@ const testing = struct {
 };
 
 test init {
-    var driver: mss.Driver = .init(22050);
+    var mixer: mss.Mixer = .init(22050);
+    const driver = mixer.driver();
     var sound: Sound = undefined;
-    try testing.open(&driver, &sound);
+    try testing.open(driver, &sound);
     // The port's provider has 32 voices, so each takes its class from the third row.
     try std.testing.expectEqual(mss.max_3d_samples, sound.voice_3d_count);
     try std.testing.expectEqual(sounds.classes[2][0], sound.effects.classes[0]);
@@ -456,9 +462,10 @@ test init {
 }
 
 test play {
-    var driver: mss.Driver = .init(22050);
+    var mixer: mss.Mixer = .init(22050);
+    const driver = mixer.driver();
     var sound: Sound = undefined;
-    try testing.open(&driver, &sound);
+    try testing.open(driver, &sound);
     var mission: gameobj.testing.Mission = undefined;
     try mission.init(std.testing.allocator);
     defer mission.deinit();
@@ -490,9 +497,10 @@ test engineSound {
 }
 
 test engineUpdate {
-    var driver: mss.Driver = .init(22050);
+    var mixer: mss.Mixer = .init(22050);
+    const driver = mixer.driver();
     var sound: Sound = undefined;
-    try testing.open(&driver, &sound);
+    try testing.open(driver, &sound);
     var mission: gameobj.testing.Mission = undefined;
     try mission.init(std.testing.allocator);
     defer mission.deinit();
@@ -521,9 +529,10 @@ test engineUpdate {
 }
 
 test "a fighter flying past the camera is heard" {
-    var driver: mss.Driver = .init(22050);
+    var mixer: mss.Mixer = .init(22050);
+    const driver = mixer.driver();
     var sound: Sound = undefined;
-    try testing.open(&driver, &sound);
+    try testing.open(driver, &sound);
     var mission: gameobj.testing.Mission = undefined;
     try mission.init(std.testing.allocator);
     defer mission.deinit();

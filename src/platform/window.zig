@@ -24,6 +24,8 @@ pub const Event = union(enum) {
     key: struct { scan: u8, down: bool },
     /// A joystick or gamepad was plugged in or out (`joystick`).
     controllers,
+    /// The window became the active one, or stopped being it (`WM_ACTIVATEAPP`).
+    active: bool,
 };
 
 pub const Window = struct {
@@ -83,6 +85,8 @@ pub const Window = struct {
                     return .{ .key = .{ .scan = scan, .down = event.key.down } };
                 },
                 c.SDL_EVENT_JOYSTICK_ADDED, c.SDL_EVENT_JOYSTICK_REMOVED => return .controllers,
+                c.SDL_EVENT_WINDOW_FOCUS_GAINED => return .{ .active = true },
+                c.SDL_EVENT_WINDOW_FOCUS_LOST => return .{ .active = false },
                 else => {},
             }
         }
