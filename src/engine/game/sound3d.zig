@@ -428,7 +428,7 @@ const testing = struct {
     const bank_bytes = hog_snd.testing.bank(80);
 
     /// A sound on the port's Miles with its provider's 32 voices open, and the effects set up.
-    fn open(driver: *mss.Driver, sound: *Sound) !void {
+    fn open(driver: mss.Driver, sound: *Sound) !void {
         sound.init(driver, 4, null);
         sound.open3D(try fat.Bank.parse(&bank_bytes));
     }
@@ -445,9 +445,10 @@ const testing = struct {
 };
 
 test init {
-    var driver: mss.Driver = .init(22050);
+    var mixer: mss.Mixer = .init(22050);
+    const driver = mixer.driver();
     var sound: Sound = undefined;
-    try testing.open(&driver, &sound);
+    try testing.open(driver, &sound);
     // The port's provider has 32 voices, so each takes its class from the third row.
     try std.testing.expectEqual(mss.max_3d_samples, sound.voice_3d_count);
     try std.testing.expectEqual(sounds.classes[2][0], sound.effects.classes[0]);
@@ -456,9 +457,10 @@ test init {
 }
 
 test play {
-    var driver: mss.Driver = .init(22050);
+    var mixer: mss.Mixer = .init(22050);
+    const driver = mixer.driver();
     var sound: Sound = undefined;
-    try testing.open(&driver, &sound);
+    try testing.open(driver, &sound);
     var mission: gameobj.testing.Mission = undefined;
     try mission.init(std.testing.allocator);
     defer mission.deinit();
@@ -490,9 +492,10 @@ test engineSound {
 }
 
 test engineUpdate {
-    var driver: mss.Driver = .init(22050);
+    var mixer: mss.Mixer = .init(22050);
+    const driver = mixer.driver();
     var sound: Sound = undefined;
-    try testing.open(&driver, &sound);
+    try testing.open(driver, &sound);
     var mission: gameobj.testing.Mission = undefined;
     try mission.init(std.testing.allocator);
     defer mission.deinit();
@@ -521,9 +524,10 @@ test engineUpdate {
 }
 
 test "a fighter flying past the camera is heard" {
-    var driver: mss.Driver = .init(22050);
+    var mixer: mss.Mixer = .init(22050);
+    const driver = mixer.driver();
     var sound: Sound = undefined;
-    try testing.open(&driver, &sound);
+    try testing.open(driver, &sound);
     var mission: gameobj.testing.Mission = undefined;
     try mission.init(std.testing.allocator);
     defer mission.deinit();

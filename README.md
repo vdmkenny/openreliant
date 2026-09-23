@@ -45,8 +45,11 @@ fly, each gun type drawn as the game draws it, and a fighter you hit loses its s
 armour. Shots still pass through capital ships.
 
 You hear it as the game sounds: your guns and theirs, your engine rising with the throttle and
-roaring on afterburner, fighters sweeping past, and the game's music. `--music` picks another piece
-from the game's `music` folder, or `none`; `--no-sound` turns it all off.
+roaring on afterburner, fighters sweeping past, and the game's music. The sounds are placed around
+you, in surround where you have the speakers for it, with a light reverb and a compressor that
+keeps loud fights clean. On headphones, `--hrtf` places them more convincingly. `--music` picks
+another piece from the game's `music` folder, or `none`; `--no-sound` turns it all off, and
+`--original` plays the sound plainly, as the original mixed it.
 
 Nothing can be destroyed yet, and there are no missiles or missions. The radio's voices and the
 display's beeps are still silent. See the [milestones](../../milestones) for what's planned.
@@ -114,7 +117,8 @@ texture filtering than the original had; `--original` restores the original's lo
 
 ### Building from source
 
-You only need [Zig](https://ziglang.org) 0.16; SDL3 and libarchive are built as part of the build.
+You only need [Zig](https://ziglang.org) 0.16; SDL3, OpenAL Soft and libarchive are built as part
+of the build.
 
 ```bash
 zig build -Doptimize=ReleaseFast
@@ -212,6 +216,11 @@ The code is licensed under the [Mozilla Public License 2.0](LICENSE): it can be 
 project, open or not, but changes to its files are shared under the same license. The
 documentation under `docs/` is licensed under
 [Creative Commons Attribution-ShareAlike 4.0](docs/LICENSE).
+
+The executables link [OpenAL Soft](https://github.com/kcat/openal-soft) statically, which is
+licensed under the GNU Lesser General Public License 2.1. The build fetches its source at the
+version [`deps/openal-soft`](deps/openal-soft/build.zig.zon) pins; building this repository against
+a changed copy of it relinks the executables with your own.
 
 StarLancer, its code and its assets belong to their owners, and neither license covers them. Parts
 of this repository reproduce what the game executable contains, and those parts are not ours to

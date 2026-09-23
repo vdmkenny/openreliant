@@ -103,12 +103,7 @@ pub const Voice = struct {
     /// The frame at a byte offset into the sound's data, for a stream's loop block and position:
     /// a whole block at a time for IMA ADPCM.
     pub fn frameAt(voice: Voice, offset: u32) u32 {
-        const sound = voice.decoder.wave;
-        const frame = switch (sound.format) {
-            .ima_adpcm => offset / sound.block_align * sound.frames_per_block,
-            else => offset / sound.block_align,
-        };
-        return @min(frame, voice.decoder.frames);
+        return voice.decoder.wave.frameAt(offset);
     }
 };
 

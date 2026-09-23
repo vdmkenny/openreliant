@@ -154,6 +154,17 @@ pub const Wave = struct {
         };
         return if (wave.frames) |stated| @min(stated, held) else held;
     }
+
+    /// The frame at a byte offset into the data, for a stream's loop block and position: a whole
+    /// block at a time for IMA ADPCM.
+    pub fn frameAt(wave: Wave, offset: u32) u32 {
+        if (wave.block_align == 0) return 0;
+        const frame = switch (wave.format) {
+            .ima_adpcm => offset / wave.block_align * wave.frames_per_block,
+            else => offset / wave.block_align,
+        };
+        return @min(frame, wave.frameCount());
+    }
 };
 
 /// Reads a wave's frames in order, as 16-bit samples, the one channel of a mono sound in both. IMA
@@ -305,6 +316,10 @@ test Wave {
     try std.testing.expectEqual(Wave.Format.ima_adpcm, adpcm.format);
     try std.testing.expectEqual(505, adpcm.frames_per_block);
     try std.testing.expectApproxEqAbs(@as(f64, 1.0), adpcm.seconds().?, 1e-9);
+    // An offset falls on the start of its block, and a PCM one on its frame.
+    try std.testing.expectEqual(0, adpcm.frameAt(255));
+    try std.testing.expectEqual(2, pcm.frameAt(5));
+    try std.testing.expectEqual(4, pcm.frameAt(1000));
 
     try std.testing.expectError(error.NotAWave, Wave.parse("RIFF\x04\x00\x00\x00AVI "));
 }

@@ -167,6 +167,9 @@ address	kind	name	type	comment
 00524748	data	bank_ldsmp		ldsmp.fat
 0056654c	data	bank_betty		betty.fat: the cockpit's warnings
 0058cb10	data	bank_smp3d		smp3d.fat
+00507138	data	sound3d_eax_damping	float	EAX damping sound3d_init hands the 3D provider: 1
+0058cb5c	data	sound3d_eax_effect_volume	float	EAX effect volume sound3d_init hands the 3D provider; never set, so 0
+0058cb60	data	sound3d_eax_decay_time	float	EAX decay time sound3d_init hands the 3D provider; never set, so 0
 00587ce0	data	game_objects	GameObject *[400]	The GO array: every live object, a mission ship's at its index among the ship records
 005883fa	data	player_index	short	Slot of the player's own object in game_objects
 00466c10	function	create_object	uint __fastcall (int slot, uint type, int tier, float x, float y, float z)	Fills a slot of game_objects, the next for slot -1, with an object of a type at a place, and returns the slot: its fields, stats (another type's for a type that is that one under another number), side, model with its parts' startup tracks, pilot, shields and armour, guns and components; a type above 255 gets a stand-in

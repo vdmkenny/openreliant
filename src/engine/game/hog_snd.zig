@@ -236,7 +236,7 @@ pub const Hearing = struct {
 pub const Sound = struct {
     /// Miles's digital driver (`0x00563A1C`), or null with none at all: every call then does
     /// nothing, as the game's do while `0x00565688` is clear.
-    driver: ?*mss.Driver = null,
+    driver: ?mss.Driver = null,
     voices: [max_voices]Voice = @splat(std.mem.zeroes(Voice)),
     voice_count: u8 = 0,
     /// The voices `pauseAll` stopped, for `resumeAll` (`0x00563A20`).
@@ -268,7 +268,7 @@ pub const Sound = struct {
     /// `sound_init` (`0x00481440`), as far as the port goes: up to 16 voices for the banks, each a
     /// sample of `driver`, and the timer that steps the fades. `driver` is null where the platform
     /// has no sound, which leaves the game silent.
-    pub fn init(sound: *Sound, driver: ?*mss.Driver, voice_count: u8, files: ?Files) void {
+    pub fn init(sound: *Sound, driver: ?mss.Driver, voice_count: u8, files: ?Files) void {
         sound.* = .{ .files = files };
         const opened = driver orelse return;
         for (sound.voices[0..@min(voice_count, max_voices)]) |*voice| {
@@ -811,9 +811,10 @@ test {
 }
 
 test "Sound.play takes a free voice, else the lowest priority below its own" {
-    var driver: mss.Driver = .init(22050);
+    var mixer: mss.Mixer = .init(22050);
+    const driver = mixer.driver();
     var sound: Sound = undefined;
-    sound.init(&driver, 3, null);
+    sound.init(driver, 3, null);
     const bytes = comptime testing.bank(4);
     const bank = try fat.Bank.parse(&bytes);
 
@@ -835,9 +836,10 @@ test "Sound.play takes a free voice, else the lowest priority below its own" {
 }
 
 test "Sound.timerTick steps the fades every five ticks" {
-    var driver: mss.Driver = .init(22050);
+    var mixer: mss.Mixer = .init(22050);
+    const driver = mixer.driver();
     var sound: Sound = undefined;
-    sound.init(&driver, 2, null);
+    sound.init(driver, 2, null);
     const bytes = comptime testing.bank(2);
     const bank = try fat.Bank.parse(&bytes);
     const v = sound.play(bank, 1, 127, 0, 64, 0).?;
@@ -855,9 +857,10 @@ test "Sound.timerTick steps the fades every five ticks" {
 }
 
 test "Sound pauses and resumes its voices" {
-    var driver: mss.Driver = .init(22050);
+    var mixer: mss.Mixer = .init(22050);
+    const driver = mixer.driver();
     var sound: Sound = undefined;
-    sound.init(&driver, 2, null);
+    sound.init(driver, 2, null);
     const bytes = comptime testing.bank(2);
     const bank = try fat.Bank.parse(&bytes);
     const v = sound.play(bank, 1, 127, 0, 64, 0).?;
@@ -868,9 +871,10 @@ test "Sound pauses and resumes its voices" {
 }
 
 test "Sound gathers positional sounds and plays them panned" {
-    var driver: mss.Driver = .init(22050);
+    var mixer: mss.Mixer = .init(22050);
+    const driver = mixer.driver();
     var sound: Sound = undefined;
-    sound.init(&driver, 4, null);
+    sound.init(driver, 4, null);
     const bytes = comptime testing.bank(4);
     const bank = try fat.Bank.parse(&bytes);
     const view: camera.Place = .{ .position = @splat(0), .orientation = math.identity };
