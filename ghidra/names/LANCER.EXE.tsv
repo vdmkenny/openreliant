@@ -888,6 +888,52 @@ address	kind	name	type	comment
 0049dcf0	function	sound3d_engine_update	void (void)	The player's engine pitched and loudened by its throttle, the afterburner's or reverse thrust's sound while either is on and its fade after, then the fighters heard flying past the camera
 0049e2f0	function	sound3d_pause	void (void)	Stops every 3D voice playing
 0049e330	function	sound3d_resume	void (void)	
+0049e370	function	shield_bubble_object		A shield bubble's scene object, named Shield mesh, over the finest level (flags 0x280800), its texture coordinates each vertex's x and y, scaled by the float on the stack
+0049e3d0	function	sphere_mesh_create	void * __fastcall (int around, int down, float radius)	A sphere of radius on a grid of around slices and down bands: a fan round each pole and two triangles a slice between, over shield128, lit and added
+0049e7d0	function	shield_bubble_update	void __fastcall (void *bubble, int ticks)	Moves a bubble on by ticks: each vertex's colour the sum of its eight hits' faded strengths through its tint's ramp, or a force field's grey flicker; then the texture swirls about the bubble's centre, which turns
+0049eb00	function	shield_ramp_friendly_colour		A friendly ship's ramp colour at a strength: cyan at 0.6, dark at 1 and below 0.35, grey without a hardware renderer, times 0.07
+0049ec30	function	shield_ramp_other_colour		The other sides' ramp colour at a strength: the friendly one's green and blue swapped, times 0.8 and 0.07
+0049ed60	function	shield_ramp_friendly_at		The friendly ramp's colour at a strength strictly between 0 and 1, else black
+0049edd0	function	shield_ramp_other_at		The other sides' ramp colour at a strength strictly between 0 and 1, else black
+0049ee40	function	shield_ramps_build	void (void)	Fills both ramps, 1024 steps each
+0049ee90	function	shield_levels_build	void (void)	The six levels' spheres from shield_level_grids, and their reaches by the detail
+0049eef0	function	shield_levels_free	void (void)	Frees the six levels' spheres
+0049ef10	function	shields_init	void (void)	The shields' textures, ramps and levels, and the capital shields' pool emptied
+0049ef60	function	shields_deinit	void (void)	Frees the capital shields still showing and the levels
+0049ef90	function	shield_bubble_create		A shield bubble, 0x48 bytes: kind 1, its scene object, the tick made, never struck, its texture centre at (0.3, 0.3), eight hits' strengths, and the side it glows for
+0049f070	function	shield_bubble_free	void __fastcall (void *bubble)	Frees a bubble's scene object and hits
+0049f0a0	function	shield_bubbles_draw	void (void)	Once a frame: each bubble struck in the last 100 ticks at the level of detail its distance gives, save the player's from its cockpit; stops at one past the last level; then the capital shields
+0049f1e0	function	shield_flare	void __fastcall (GameObject *object, Vec3 *at)	A ship's shields struck at a point while any holds anything: sparks of kind 3, and the bubble's next hit by each vertex's angle from the point
+0049f450	function	shield_bubble_drawn		The bubble object's callback as it is drawn: unless paused, shield_bubble_update by the ticks since its last
+0049f4a0	function	capshield_flare		A capital ship's shield struck on a node's polygon: a copy of the part's mesh lit round the polygon, or whole for a force field; 50 in a pool
+0049f790	function	capshield_create		A pool slot's Capshield mesh copy of a node's part, over shield128 or ffield, living 200 ticks
+0049f900	function	capshield_free	void __fastcall (int slot)	Frees a pool slot's copy and hits
+0049f950	function	capshields_draw	void (void)	Each capital shield still showing faded and drawn, three times as bright as a bubble, swirling about (0.5, 0.5); a force field's coordinates thrown at random
+0049fc70	function	part_is_force_field	bool __fastcall (void *part)	Whether a part's name holds FORCEFIELD
+0049fcd0	function	force_field_mark	void __fastcall (void *node)	Sets flag 0x20 on each node of a tree whose part is a force field
+004268c0	function	cosine_ease		From a to b as a share goes from 0 to 1, slow at each end: (b - a) * (cos(share * pi + pi) * 0.5 + 0.5) + a
+0058cb68	data	shield_texture		shield128, which the bubbles and capital shields are drawn over
+0059372c	data	force_field_texture		ffield, which a force field and a flickering bubble are drawn over
+0058cb6c	data	shield_ramp_friendly		A friendly ship's bubble colours, 1024 steps of three floats
+00590728	data	shield_ramp_other		The other sides' bubble colours, 1024 steps of three floats
+0059375c	data	shield_levels		The six levels' sphere meshes, finest first
+00593734	data	shield_level_reaches		How far from the camera each level is drawn out to, from shield_level_reaches_by_detail
+00593730	data	shield_level_count	int	The levels of detail, 6
+0050884c	data	shield_level_grids		Each level's slices around and bands down: 16 by 14, 12 by 10, 10 by 8, 8 by 6, 6 by 4, 4 by 4
+0050887c	data	shield_level_reaches_by_detail		The six reaches for each detail: from 1250 to 40000, 2500 to 80000, 10000 to 320000
+0058fb70	data	capshields		The capital shields showing, 50 of 0x3C bytes: the node, its copy, when it ends, when it last moved, eight hits, the next, a force field
+00593728	data	capshield_next	int	The capital shields' pool slot the next takes
+004a0310	function	shieldfx_create		What a hit leaves where it struck, 12 bytes, by kind: 2 a hull hit, an orange emitter facing out from the surface and ARMOUR01 at the point in the part's frame, or PLAYERHIT on the player's ship at most every 30 ticks; 3 a component hit, a burst of 20; 4 a grey emitter; 5 sound 71 and 0x00472780
+0049fef0	function	mesh_nearest_surface		The point of a node's mesh nearest a point in the world, by each front-facing polygon's nearest point (simplex_nearest_point), and the surface's normal there
+0049fd20	function	shieldfx_init	void (void)	Once: gunflare_sfxalpha1, and the orange and grey templates of what a hit leaves
+0049fea0	function	shieldfx_free		Frees what a hit left, and the emitter of kinds 2 to 4
+0049fec0	function	shieldfx_deinit	void (void)	Frees the two templates
+004992d0	function	node_add_effect		Hangs what a hit left from the node struck, as a node of kind 6 in a free child slot; for kind 3 it first clears nearby ones and the oldest past ten, and flares a shield generator's capital shield instead
+00593790	data	shieldfx_orange		The orange template of what a hit leaves: 100-tick particles growing from 50 to 100, fading from orange
+0059378c	data	shieldfx_grey		The grey template of what a hit leaves: 50-tick particles growing from 25 to 50
+00593794	data	player_hit_at	int	When a shot last sounded PLAYERHIT on the player's hull
+00593784	data	shieldfx_ready	byte	Set once shieldfx_init has run
+00593788	data	shieldfx_texture		gunflare_sfxalpha1
 004c1510	function	vec3_cosine	float __fastcall (Vec3 *a, Vec3 *b)	The cosine of the angle between two vectors
 00507140	data	sound3d_definitions	Sound3DDefinition[76]	The 3D sounds, closed by a record whose entry is -1
 005085b4	data	sound3d_class_rows	byte[96]	Each 3D voice's class, 32 to a row: for up to 14 voices, up to 30, and more

@@ -833,6 +833,18 @@ pub const ShieldReserves = struct {
             .left, .right => null,
         };
     }
+
+    /// A shot or a knock of `amount` on `quadrant`, taken off the reserve there while it holds
+    /// anything (`bullet_hit`, `collision_damage`): whether it held, sparing the shield. One that
+    /// runs out is emptied, and the shield takes the whole hit.
+    pub fn spare(reserves: *ShieldReserves, quadrant: collision.Quadrant, amount: f32) bool {
+        const reserve = reserves.of(quadrant) orelse return false;
+        if (!(reserve.* > 0)) return false;
+        reserve.* -= amount;
+        if (reserve.* > 0) return true;
+        reserve.* = 0;
+        return false;
+    }
 };
 
 test ShieldReserves {
@@ -840,6 +852,14 @@ test ShieldReserves {
     try std.testing.expectEqual(&reserves.fore, reserves.of(.fore).?);
     try std.testing.expectEqual(&reserves.aft, reserves.of(.aft).?);
     try std.testing.expectEqual(null, reserves.of(.left));
+
+    // A hit the fore reserve holds spares the shield; one it runs out on doesn't, and empties it.
+    try std.testing.expect(reserves.spare(.fore, 0.5));
+    try std.testing.expectEqual(0.5, reserves.fore);
+    try std.testing.expect(!reserves.spare(.fore, 1));
+    try std.testing.expectEqual(0, reserves.fore);
+    try std.testing.expect(!reserves.spare(.fore, 1));
+    try std.testing.expect(!reserves.spare(.left, 1));
 }
 
 /// `object_recharge_shields` (`0x00476FC0`), which `simulation_step` runs for every object after
@@ -955,6 +975,8 @@ pub const World = struct {
     particles: ?*@import("particles.zig").Pool = null,
     /// The shockwaves spreading (`shockwave.cpp`); null where none spread.
     shockwaves: ?*@import("shockwave.zig").Shockwaves = null,
+    /// The shields' bubbles' meshes and colours (`shield.cpp`); null where none are drawn.
+    shields: ?*@import("shield.zig").Shields = null,
     /// The sparks flying (`sparks.cpp`); null where none are thrown.
     sparks: ?*@import("sparks.zig").Sparks = null,
 };

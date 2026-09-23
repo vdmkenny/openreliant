@@ -264,6 +264,8 @@ pub const Sound = struct {
     betty: ?fat.Bank = null,
     /// When the player's armour last warned (`0x00588334`, `main.armorWarning`).
     armor_warned_at: i32 = 0,
+    /// When a shot last sounded on the player's hull (`0x00593794`, `shieldfx.hullHit`).
+    player_hit_at: i32 = 0,
 
     /// `sound_init` (`0x00481440`), as far as the port goes: up to 16 voices for the banks, each a
     /// sample of `driver`, and the timer that steps the fades. `driver` is null where the platform

@@ -1149,9 +1149,8 @@ pub fn moveBullets(world: gameobj.World) void {
 /// has struck something is tested no further.
 ///
 /// Not ported: how the shots are drawn, their colours fading with their life, and the lights they
-/// carry ([#154](https://github.com/vdmkenny/openreliant/issues/154)); the sparks and sounds an
-/// impact makes ([#41](https://github.com/vdmkenny/openreliant/issues/41)); what multiplayer makes
-/// of a hit.
+/// carry ([#154](https://github.com/vdmkenny/openreliant/issues/154)); a flak shell's burst
+/// ([#41](https://github.com/vdmkenny/openreliant/issues/41)); what multiplayer makes of a hit.
 pub fn bulletsFrame(world: gameobj.World, clock: *const Clock, fraction: f32) void {
     const bullets = &world.objects.bullets;
     for (&bullets.pool, 0..) |*bullet, index| {
@@ -1189,11 +1188,12 @@ pub fn bulletsFrame(world: gameobj.World, clock: *const Clock, fraction: f32) vo
 /// always goes through the shields. What the player has shifted fore or aft takes the hit
 /// before the quadrant does, and a turret's shot hurts a player's ship more. A ship with its
 /// spectral shields on takes nothing at all: the gun type they are tuned to is handed to the check
-/// and ignored, so every shot is turned.
+/// and ignored, so every shot is turned. Whatever becomes of a shot spent on a shield, the shield
+/// flares where it struck (`shield.flare`).
 ///
 /// Not ported: the parts of an object whose components are listed, which the game tests node by
-/// node ([#40](https://github.com/vdmkenny/openreliant/issues/40)); the cloak a hit reveals; the
-/// shield's flash.
+/// node ([#40](https://github.com/vdmkenny/openreliant/issues/40)); the cloak a hit reveals
+/// ([#89](https://github.com/vdmkenny/openreliant/issues/89)).
 fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
     const all = world.objects;
     const span = bullet.at - bullet.last;
@@ -1244,20 +1244,14 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
             hullHit(world, bullet, candidate.object, struck);
             return;
         }
+        defer shield.flare(world, candidate.object, point);
         if (!object.flags.spectral_shields and record.damage[0] > 0) {
             var value = record.damage[0];
             // What the player has shifted fore or aft takes the hit before the quadrant does, and
             // a hit it swallows whole leaves the shields alone.
-            const reserve = if (candidate.object != all.player) null else world.player.shield_reserves.of(struck);
-            if (reserve) |shifted| {
-                if (shifted.* > 0) {
-                    shifted.* -= value;
-                    if (shifted.* > 0) {
-                        bullet.dies_at = spent;
-                        return;
-                    }
-                    shifted.* = 0;
-                }
+            if (candidate.object == all.player and world.player.shield_reserves.spare(struck, value)) {
+                bullet.dies_at = spent;
+                return;
             }
             if (candidate.object < all.players and fromTurret(bullet.kind)) value *= turret_damage_to_players;
             collision.damage(world, candidate.object, struck, value, record.damage[1] / record.damage[0], bullet.owner, .bullet);
@@ -1275,14 +1269,12 @@ const hull_sparks_carry: f32 = 0.25;
 
 /// `0x00479940`: a shot that has passed an object's shields. It finds the last of the object's
 /// parts the segment crosses, by the box each part's mesh stands in, and wears the quadrant's
-/// armour by the type's second damage. Then it throws sparks from where it struck, unless the
-/// camera is in the object's cockpit.
+/// armour by the type's second damage. The hit is heard (`shieldfx.hullHit`), and it throws sparks
+/// from where it struck, unless the camera is in the object's cockpit.
 ///
 /// **Improvement:** the game takes where the shot struck in the part's own frame for where it
 /// stands in the world, so its sparks fly from near the world's origin, far from the hit; the
 /// port throws them from the hit.
-///
-/// Not ported: its sound ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
 fn hullHit(world: gameobj.World, bullet: *Bullet, index: u16, struck: collision.Quadrant) void {
     const all = world.objects;
     const slot = &all.slots[index];
@@ -1292,9 +1284,10 @@ fn hullHit(world: gameobj.World, bullet: *Bullet, index: u16, struck: collision.
     var value = record.damage[1];
     if (index < all.players and fromTurret(bullet.kind)) value *= turret_damage_to_players;
     collision.armorDamage(world, index, struck, value, bullet.owner, .bullet);
+    const at = bullet.last + (bullet.at - bullet.last) * @as(Vector, @splat(along));
+    shieldfx.hullHit(world, index, at);
     const inside = if (world.camera) |watching| watching.inside(index) else false;
     if (!inside) {
-        const at = bullet.last + (bullet.at - bullet.last) * @as(Vector, @splat(along));
         const carried = gameobj.vector(slot.object.velocity) * @as(Vector, @splat(hull_sparks_carry));
         sparks.spray(world, .hull, at, at - slot.drawn.position, carried, hull_sparks);
     }
@@ -2445,6 +2438,8 @@ test {
 const Allocator = std.mem.Allocator;
 const ai = @import("ai.zig");
 const collision = @import("collision.zig");
+const shield = @import("shield.zig");
+const shieldfx = @import("shieldfx.zig");
 const sparks = @import("sparks.zig");
 const create = @import("create.zig");
 const ShipTypes = create.Types;

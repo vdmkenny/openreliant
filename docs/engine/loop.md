@@ -114,10 +114,14 @@ shoved at its own centre and the hull at that point, so the hull turns about the
 does not.
 
 An impact also does damage, from the impulse the shove handed the pair: a fifth of it over the
-lighter of the two masses, halved, on the quadrant each was struck in (`0x00465CA0`). The shield
-there takes it first, and what passes through wears the armour, which sets the armour's conditions
-again. A collision does not count toward what a ship has taken lately, so it never sends one after
-its attacker; a shot does.
+lighter of the two masses, halved, on the quadrant each was struck in (`collision_damage`,
+`0x00465CA0`). The Ripper takes none. The player's fore or aft [shield
+reserve](controls.md#the-shield-balance) takes it first, and while it holds that is all. With the
+shield there down the armour takes it; with it up the shield takes it first, what passes through
+wears the armour, which sets the armour's conditions again, and the shield
+[flares](effects.md#shields). A ship meeting a hull takes it the same way, its reserve drawn by
+twice the damage. A collision does not count toward what a ship has taken lately, so it never
+sends one after its attacker; a shot does.
 
 Ported so far: the sweep, the pairs it passes over, the shove, setting two objects apart, the hull
 test and the damage ([`collision.zig`](../../src/engine/game/collision.zig)). A collision does no damage to a component: only a torpedo's hit and a ship destroying itself

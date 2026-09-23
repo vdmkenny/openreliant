@@ -101,6 +101,12 @@ pub const View = enum(u8) {
 
 /// What the cockpit view shows (`cockpit_mode`, `0x00539A9C`). The cockpit key cycles it while
 /// that view is up; the options set it at the start of a mission.
+/// Whether a view puts the camera in its ship's cockpit: one of the views from the cockpit, save
+/// the view ahead in the chase mode.
+pub fn inCockpit(view: View, mode: CockpitMode) bool {
+    return view.fromCockpit() and !(view == .cockpit and mode == .chase);
+}
+
 pub const CockpitMode = enum(u2) {
     /// From the eye, with no cockpit drawn.
     open = 0,
@@ -273,8 +279,7 @@ pub const Camera = struct {
     /// Whether `object` is not drawn because the camera is in its cockpit: `camera_set_view` sets
     /// the object's flag bit 0 then.
     pub fn inside(camera: Camera, object: u16) bool {
-        return camera.object == object and camera.view.fromCockpit() and
-            !(camera.view == .cockpit and camera.cockpit_mode == .chase);
+        return camera.object == object and inCockpit(camera.view, camera.cockpit_mode);
     }
 
     /// A camera key (`frame_controls`): the cockpit key, in the cockpit view, cycles the cockpit
