@@ -184,7 +184,7 @@ pub const Frame = struct {
 pub fn missionFrame(orders: aigeneric.Context, fraction: f32) void {
     aigeneric.ordersUpdate(orders);
     frameObjects(orders.world.objects, fraction);
-    guns.bulletsFrame(orders.world, orders.clock);
+    guns.bulletsFrame(orders.world, orders.clock, fraction);
 }
 
 /// `mission_frame`'s pass over the objects before the camera's frame: each live object, save
@@ -213,6 +213,7 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     var attachments = frame.attachments;
     attachments.scale = context.projection.scale[0];
     try drawObjects(gpa, scene, frame.objects, attachments);
+    try guns.drawBullets(gpa, scene, &frame.objects.bullets);
     try frame.space.frame(gpa, scene, context, frame.view, frame.cockpit_mode);
     if (context.hardware) try frame.sky.frame(gpa, scene, context);
     if (frame.view == .cockpit and frame.cockpit_mode == .cockpit and context.hardware) {

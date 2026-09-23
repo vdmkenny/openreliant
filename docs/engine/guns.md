@@ -104,17 +104,39 @@ segment first crosses the sphere of its radius:
 
 Either way the shot is spent and the frame that follows lets it go.
 
+### How a shot is drawn
+
+`guns_init` (`0x00478990`) builds each gun type's bolt once at start-up: a level set of two meshes,
+two quads crossed along the flight, one upright and one flat, for up to 15000 off, and the upright
+one alone up to 100000. A bolt is sized by its gun type's record: half its width at `+0x04`, half
+its height at `+0x08` and its length at `+0x0C`, from the muzzle on. It is drawn with the texture
+`gunflare\lasers` added to what stands behind it, unlit but for the Proton Cannon's, which takes
+colours of the shot's own.
+
+`bullet_build` (`0x0047D9A0`) gives a new shot a mesh object over its type's bolt, turned as the
+muzzle is, never culled, with texture coordinates of its own: the type's span across the texture
+(`0x00500FB0`, `0x00500FEC`, 32 texels out of 256 for most types) and along it the top half for any
+side but hostile and the bottom half for hostile, which is what gives a friendly shot and an enemy's
+their different colours. Other gun types are drawn with sprite sets, or several meshes and sprites
+hung off a frame.
+
+Each frame `bullets_frame` places the shot as far through the step as the frame is, between its
+last place and its next, before it tests what the shot has struck. A Proton Cannon's shot fades as
+it flies: over its life its colours go from white to blue for a friendly shot and to nothing for any
+other.
+
 ## The port
 
 [`guns.zig`](../../src/engine/game/guns.zig) holds the fitting (`fit`), the groups (`buildGroups`),
-the trigger (`fire`), the step (`step`) and the shots (`shoot`, `moveBullets`, `bulletsFrame`).
-`simulationStep` runs the step and moves the shots; `missionFrame` runs their frame pass; and
+the trigger (`fire`), the step (`step`), the shots (`shoot`, `moveBullets`, `bulletsFrame`) and how
+they are drawn (`Bolts`, `drawBullets`). `simulationStep` runs the step and moves the shots;
+`missionFrame` runs their frame pass; `drawFrame` adds them to the scene after the objects; and
 `playerControls` pulls the trigger from FIRE LASERS. `gun_stats` and the shots in flight live in
 `create.Objects`, and the executable's own half of each gun record is
 [`guns/stats.zig`](../../src/engine/game/guns/stats.zig), which `make gun-tables` derives from the
 payload.
 
-Not ported: how a shot is drawn, so nothing is seen leaving the muzzle
+Not ported: how the shots of gun types other than 1 and 4 are drawn, and the light a shot carries
 ([#154](https://github.com/vdmkenny/openreliant/issues/154)); the parts of an object whose components
 are listed, so shots pass through a capital ship
 ([#153](https://github.com/vdmkenny/openreliant/issues/153)); the sparks and sounds an impact makes

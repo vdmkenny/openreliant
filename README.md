@@ -41,8 +41,9 @@ with their keys but don't show anything yet.
 
 Your ship carries the guns its model holds. Hold the fire key and they fire, drawing on the gun
 charge the power ball feeds, at the rate and cost their type has in the game's own data. The shots
-fly, and a fighter you hit loses its shields and then its armour. You cannot see them yet: nothing
-is drawn leaving the muzzle, and shots still pass through capital ships.
+fly, and a fighter you hit loses its shields and then its armour. The Predator's shots are drawn
+as the game draws them; other ships' guns fire unseen for now, and shots still pass through
+capital ships.
 
 Nothing can be destroyed yet, and there are no missiles, missions or sound. See the
 [milestones](../../milestones) for what's planned.

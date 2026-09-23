@@ -18,12 +18,9 @@ pub const Kind = enum(i32) {
 pub const Gun = extern struct {
     /// What a shot costs the ship.
     kind: Kind,
-    /// **Unknown.** Always the same as `_unknown_08`.
-    _unknown_04: f32,
-    /// **Unknown.**
-    _unknown_08: f32,
-    /// **Unknown.** Between 50 and 1400.
-    _unknown_0c: f32,
+    /// How large a shot is drawn: half its width, half its height, and its length along its
+    /// flight (`boltMesh`).
+    bolt: [3]f32,
     /// The sound a shot makes (`bullet_fire`).
     sound: i32,
     /// `Gun.range`, truncated: the ticks a shot lives, which is what gives the gun its range.
@@ -58,9 +55,7 @@ pub const Stats = struct {
         var table: Stats = .{ .types = @splat(std.mem.zeroes(Gun)) };
         for (&table.types, gun_stats.gun_types) |*gun, static| {
             gun.kind = static.kind;
-            gun._unknown_04 = static._unknown_04;
-            gun._unknown_08 = static._unknown_08;
-            gun._unknown_0c = static._unknown_0c;
+            gun.bolt = static.bolt;
             gun.sound = static.sound;
         }
         break :built table;
@@ -805,6 +800,12 @@ pub const Bullet = struct {
     /// The objects it may reach (`+0x68`), as many as `candidate_count` (`+0x64`).
     candidates: [max_candidates]Candidate = @splat(.{}),
     candidate_count: u8 = 0,
+    /// What it is drawn with (`+0x3C`), where the port draws its type (`Bolts`).
+    drawn: ?srapiext.MeshObject = null,
+    /// The drawn bolt's own texture coordinates (`MeshObject.own_uv`), and its own colours where
+    /// its type fades them (`MeshObject.baked`).
+    uv: [bolt_quads * bolt_corners][2]f32 = @splat(.{ 0, 0 }),
+    colours: [bolt_quads * bolt_corners][4]f32 = @splat(.{ 1, 1, 1, 1 }),
 
     /// Its type's figures.
     pub fn stats(bullet: Bullet, table: *const Stats) Gun {
@@ -815,6 +816,8 @@ pub const Bullet = struct {
 /// The pool of shots (`0x00563148`).
 pub const Bullets = struct {
     pool: [max_bullets]Bullet = @splat(.{}),
+    /// What the shots are drawn with, where the caller has built it; without, they fly unseen.
+    bolts: ?*const Bolts = null,
 
     /// The first free record, as `bullet_fire` takes it, or null while every one is in flight.
     fn free(bullets: *Bullets) ?*Bullet {
@@ -832,8 +835,10 @@ pub const Bullets = struct {
 /// far it could travel meanwhile, the shot's path comes within. The frame pass tests only those
 /// (`bulletHit`).
 ///
-/// Not ported: how the shot is drawn and lit ([#154](https://github.com/vdmkenny/openreliant/issues/154)),
-/// its sound ([#47](https://github.com/vdmkenny/openreliant/issues/47)), the force feedback a
+/// The shot is drawn with its type's bolt where the port has one (`Bolts`).
+///
+/// Not ported: how the other gun types' shots are drawn, and the light a shot carries
+/// ([#154](https://github.com/vdmkenny/openreliant/issues/154)); its sound ([#47](https://github.com/vdmkenny/openreliant/issues/47)), the force feedback a
 /// player's shot gives ([#83](https://github.com/vdmkenny/openreliant/issues/83)), the aim a ship
 /// firing blind takes at its target, and the scatter of gun type 12.
 pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, gun: Fitted) void {
@@ -861,6 +866,21 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, gun: Fitted)
         .side = slot.object.side,
     };
     candidates(world, bullet, record);
+
+    // What it is drawn with (`bullet_build`, `0x0047D9A0`): its type's bolt, turned as the muzzle
+    // is, with its own span of the shot texture.
+    const bolts = all.bullets.bolts orelse return;
+    const bolt = bolts.of(bullet.kind) orelse return;
+    bullet.uv = boltTexture(bullet.kind, bullet.side);
+    bullet.drawn = .{
+        .flags = .{ .not_culled = true, .own_first = true, .baked_object = bolt.fades },
+        .position = at,
+        .orientation = turn,
+        .radius = bolt.meshes[0].radius,
+        .levels = &bolt.levels,
+    };
+    bullet.drawn.?.own_uv[0] = &bullet.uv;
+    if (bolt.fades) bullet.drawn.?.baked = &bullet.colours;
 }
 
 /// The objects `bullet_place` gives a new shot: those its path comes near enough to over its life,
@@ -918,9 +938,20 @@ pub fn moveBullets(world: gameobj.World) void {
 /// carry ([#154](https://github.com/vdmkenny/openreliant/issues/154)); the sparks and sounds an
 /// impact makes ([#41](https://github.com/vdmkenny/openreliant/issues/41)); what multiplayer makes
 /// of a hit.
-pub fn bulletsFrame(world: gameobj.World, clock: *const Clock) void {
+pub fn bulletsFrame(world: gameobj.World, clock: *const Clock, fraction: f32) void {
     for (&world.objects.bullets.pool) |*bullet| {
         if (!bullet.live) continue;
+        // It is drawn as far through the step as the frame is, between its last place and its
+        // next, and a shot that fades loses its colour as it flies: a friendly one down to blue,
+        // any other's to nothing.
+        if (bullet.drawn) |*drawn| {
+            drawn.position = bullet.last + (bullet.at - bullet.last) * @as(Vector, @splat(fraction));
+            if (drawn.flags.baked_object) {
+                const left = fade(bullet, clock, bullet.stats(&world.objects.gun_stats));
+                const blue = if (bullet.side == .friendly) 1 else left;
+                for (&bullet.colours) |*colour| colour.* = .{ left, left, blue, colour[3] };
+            }
+        }
         if (clock.frame_start < bullet.dies_at) {
             if (bullet.candidate_count > 0) bulletHit(world, bullet);
             // A hit marks it spent, which frees it below rather than flying on.
@@ -1125,7 +1156,7 @@ test bulletsFrame {
     try std.testing.expectEqual(target, bullet.candidates[0].object);
     bullet.last = .{ 0, 0, 0 };
     bullet.at = .{ 0, 0, 600 };
-    bulletsFrame(world, &ship.clock);
+    bulletsFrame(world, &ship.clock, 0);
     try std.testing.expectEqual(10, struck.recent_damage);
     try std.testing.expectEqual(0, flying(world));
 
@@ -1137,7 +1168,7 @@ test bulletsFrame {
     const next = &world.objects.bullets.pool[0];
     next.last = .{ 0, 0, 0 };
     next.at = .{ 0, 0, 600 };
-    bulletsFrame(world, &ship.clock);
+    bulletsFrame(world, &ship.clock, 0);
     try std.testing.expectEqual(4, struck.recent_damage);
     try std.testing.expect(@reduce(.Add, @as(@Vector(4, f32), armor)) > @reduce(.Add, @as(@Vector(4, f32), struck.armor)));
     try std.testing.expectEqual(0, flying(world));
@@ -1146,7 +1177,7 @@ test bulletsFrame {
     shoot(world, &ship.clock, ship.index, ship.guns()[0]);
     try std.testing.expectEqual(1, flying(world));
     ship.clock.frame_start += 1000;
-    bulletsFrame(world, &ship.clock);
+    bulletsFrame(world, &ship.clock, 0);
     try std.testing.expectEqual(0, flying(world));
 }
 
@@ -1170,7 +1201,7 @@ test "the player's shifted shields take a hit before the quadrant does" {
     bullet.candidates[0] = .{ .object = ship.all.player };
     bullet.candidate_count = 1;
     const shields = player.object.shields;
-    bulletsFrame(world, &ship.clock);
+    bulletsFrame(world, &ship.clock, 0);
     try std.testing.expectEqual(15, ship.controls.shield_reserves.fore);
     try std.testing.expectEqual(shields, player.object.shields);
 }
@@ -1187,6 +1218,254 @@ test crossesBox {
     try std.testing.expect(!crossesBox(.{ 0, 20, -50 }, .{ 0, 20, 50 }, bounds));
 }
 
+// --- How a shot is drawn -------------------------------------------------------------------------
+
+/// The texture the bolts are drawn with (`0x0056314C`, from `0x00501060`). Each gun type's bolt takes a span of it
+/// across (`gun_stats.atlas`), a friendly shot the top half and a hostile one the bottom.
+pub const bolt_texture = "gunflare\\lasers";
+
+/// The texels across the shot texture, which the spans are counted in (`0x004DC818` is one over
+/// it).
+const atlas_size: f32 = 256;
+
+/// The two halves of the shot texture, top and bottom, as `bullet_build` takes them: each stops a
+/// texel short of the half it ends at.
+const friendly_rows: [2]f32 = .{ 0, 127.0 / atlas_size };
+const hostile_rows: [2]f32 = .{ 0.5, 255.0 / atlas_size };
+
+/// How far off a bolt's near mesh gives way to its far one, and the far one to nothing
+/// (`0x00478460`).
+const bolt_distances: [2]f32 = .{ 15000, 100000 };
+
+/// The corners of a bolt's quads, and how many a near bolt has.
+const bolt_corners = 4;
+const bolt_quads = 2;
+
+/// A shot's bolt, as `0x00478460` and its fellows build one for a gun type: two quads crossed along
+/// its flight, one upright and one flat, the length of the shot from the muzzle on; and far off the
+/// upright one alone.
+pub const Bolt = struct {
+    meshes: [2]srapiext.Mesh,
+    levels: [2]srapiext.Level,
+    /// Its shots take colours of their own, which fade as they fly (`bulletsFrame`).
+    fades: bool,
+
+    fn deinit(bolt: *const Bolt, gpa: Allocator) void {
+        for (bolt.meshes) |mesh| mesh.deinit(gpa);
+    }
+};
+
+/// The bolts the port draws shots with, built once (`guns_init`, `0x00478990`).
+pub const Bolts = struct {
+    /// Gun type 1's (`0x00478460`): the Laser Cannon's, sized by its record.
+    laser: Bolt,
+    /// Gun type 4's (`0x0047F370`): the Proton Cannon's, lit by colours of the shot's own.
+    proton: Bolt,
+
+    pub fn create(gpa: Allocator, textures: *srtexture.Table, stats: *const Stats) (Allocator.Error || matmanager.Error)!*Bolts {
+        const bolts = try gpa.create(Bolts);
+        errdefer gpa.destroy(bolts);
+        const image = try matmanager.textureRequire(textures, bolt_texture);
+        try boltBuild(&bolts.laser, gpa, image, stats.types[1].bolt, false);
+        errdefer bolts.laser.deinit(gpa);
+        // The game writes the Proton Cannon's size into its builder, the same as its record's.
+        try boltBuild(&bolts.proton, gpa, image, stats.types[4].bolt, true);
+        return bolts;
+    }
+
+    pub fn destroy(bolts: *Bolts, gpa: Allocator) void {
+        bolts.laser.deinit(gpa);
+        bolts.proton.deinit(gpa);
+        gpa.destroy(bolts);
+    }
+
+    /// The bolt a shot of the type is drawn with, or null for one the port does not draw yet. The
+    /// shot keeps its type less one.
+    fn of(bolts: *const Bolts, kind: u4) ?*const Bolt {
+        return switch (kind) {
+            0 => &bolts.laser,
+            3 => &bolts.proton,
+            else => null,
+        };
+    }
+};
+
+/// Fills in a bolt of `size`, half its width, half its height and its length, which stands in place
+/// once `bolt` does not move.
+fn boltBuild(bolt: *Bolt, gpa: Allocator, image: *srtexture.Image, size: [3]f32, fades: bool) Allocator.Error!void {
+    const across, const up, const long = size;
+    // The upright quad, then the flat one.
+    const corners = [bolt_quads * bolt_corners]Vector{
+        .{ 0, up, 0 },     .{ 0, -up, 0 },     .{ 0, -up, long },     .{ 0, up, long },
+        .{ across, 0, 0 }, .{ -across, 0, 0 }, .{ -across, 0, long }, .{ across, 0, long },
+    };
+    bolt.fades = fades;
+    bolt.meshes[0] = try boltMesh(gpa, image, &corners, fades);
+    errdefer bolt.meshes[0].deinit(gpa);
+    bolt.meshes[1] = try boltMesh(gpa, image, corners[0..bolt_corners], fades);
+    for (&bolt.levels, &bolt.meshes, bolt_distances) |*level, *mesh, until| {
+        level.* = .{ .mesh = mesh, .until = until };
+    }
+}
+
+/// A mesh of quads, one for each four `corners`, drawn with the shot texture added to what stands
+/// behind it. The shot gives its own texture coordinates (`MeshObject.own_uv`).
+///
+/// `mesh_create` gives the mesh's one run of polygons as many as it has vertices, so the game walks
+/// the quads and then polygons with no corners, which draw nothing; the port's run holds the quads
+/// alone. **Unknown:** the Proton Cannon's mesh flag `0x400`.
+fn boltMesh(gpa: Allocator, image: *srtexture.Image, corners: []const Vector, lit: bool) Allocator.Error!srapiext.Mesh {
+    const quads = corners.len / bolt_corners;
+    const positions = try gpa.dupe(Vector, corners);
+    errdefer gpa.free(positions);
+    const normals = try gpa.alloc(Vector, corners.len);
+    errdefer gpa.free(normals);
+    @memset(normals, @splat(0));
+    const polygons = try gpa.alloc(srapiext.Polygon, quads);
+    errdefer gpa.free(polygons);
+    for (polygons, 0..) |*polygon, quad| {
+        polygon.* = .{ .kind = .triangle, .continues = 0, .first = @intCast(quad * bolt_corners), .count = bolt_corners };
+    }
+    const indices = try gpa.alloc(u16, corners.len);
+    errdefer gpa.free(indices);
+    for (indices, 0..) |*index, at| index.* = @intCast(at);
+    // Nothing gives the quads planes, so none of them is ever culled.
+    const planes = try gpa.alloc(srapiext.Plane, quads);
+    errdefer gpa.free(planes);
+    @memset(planes, .{ .normal = @splat(0), .distance = 0 });
+    const biases = try gpa.alloc(f32, quads);
+    errdefer gpa.free(biases);
+    @memset(biases, 0);
+    const surfaces = try gpa.alloc(srapiext.Surface, 1);
+    errdefer gpa.free(surfaces);
+    surfaces[0] = .{
+        .polygons = @intCast(quads),
+        .material = .{
+            .two_pass = false,
+            ._unknown_01 = 0,
+            .coordinates = .{ .generated, .none },
+            .lit = .{ lit, false },
+            .blend = .{ .add, .off },
+            .image = .{ .null, .null },
+        },
+        .textures = .{ .{ .image = image }, .none },
+    };
+    var mesh: srapiext.Mesh = .{
+        .positions = positions,
+        .normals = normals,
+        .polygons = polygons,
+        .indices = indices,
+        .uv = .{ null, null },
+        .planes = planes,
+        .biases = biases,
+        .surfaces = surfaces,
+        .bounds = undefined,
+        .radius = undefined,
+    };
+    srapi.findBoundingBox(&mesh);
+    return mesh;
+}
+
+/// The texture coordinates of a bolt's corners, from its gun type's span across the shot texture
+/// and its side's half (`bullet_build`): the span runs across each quad, and the half along it,
+/// from its foot at the muzzle to its end at the tip.
+fn boltTexture(kind: u4, side: gameobj.Side(i32)) [bolt_quads * bolt_corners][2]f32 {
+    const span = gun_stats.atlas[@as(u8, kind) + 1];
+    const left = @as(f32, @floatFromInt(span[0])) / atlas_size;
+    const right = @as(f32, @floatFromInt(span[0] + span[1])) / atlas_size;
+    const top, const bottom = if (side == .hostile) hostile_rows else friendly_rows;
+    const quad = [bolt_corners][2]f32{ .{ left, bottom }, .{ right, bottom }, .{ right, top }, .{ left, top } };
+    return quad ++ quad;
+}
+
+/// What a fading shot's colour has left: all of it as it leaves the muzzle, none at the end of its
+/// life.
+fn fade(bullet: *const Bullet, clock: *const Clock, record: Gun) f32 {
+    const flown: f32 = @floatFromInt(clock.frame_start - bullet.fired_at);
+    return @max(1 - flown / @as(f32, @floatFromInt(record.lifetime)), 0);
+}
+
+/// The shots in flight, added to the world's layer as `bullets_frame` adds them once it has placed
+/// them.
+pub fn drawBullets(gpa: Allocator, scene: *srcore.Scene, bullets: *Bullets) Allocator.Error!void {
+    for (&bullets.pool) |*bullet| {
+        if (!bullet.live) continue;
+        if (bullet.drawn) |*drawn| try xtrabits.sceneAdd(gpa, scene, .{ .mesh = drawn }, .world);
+    }
+}
+
+test boltTexture {
+    // Gun type 1 takes the first 32 texels across; a friendly shot the top half, a hostile one the
+    // bottom, each a texel short of where its half ends.
+    const friendly = boltTexture(0, .friendly);
+    try std.testing.expectEqual([2]f32{ 0, 127.0 / 256.0 }, friendly[0]);
+    try std.testing.expectEqual([2]f32{ 32.0 / 256.0, 0 }, friendly[2]);
+    const hostile = boltTexture(3, .hostile);
+    try std.testing.expectEqual([2]f32{ 64.0 / 256.0, 255.0 / 256.0 }, hostile[0]);
+    try std.testing.expectEqual([2]f32{ 96.0 / 256.0, 0.5 }, hostile[2]);
+    // Both quads take the same coordinates.
+    try std.testing.expectEqual(friendly[1], friendly[5]);
+}
+
+test Bolts {
+    const gpa = std.testing.allocator;
+    // The texture cache keeps the file's name, without the directory the game names it by.
+    const textures = try @import("backdrop.zig").testing.Textures.initNames(gpa, &.{"lasers"});
+    defer textures.deinit(gpa);
+    const bolts = try Bolts.create(gpa, &textures.table, &Stats.initial);
+    defer bolts.destroy(gpa);
+
+    // The Laser Cannon's bolt: two quads crossed along its flight near to, one far off, as long as
+    // its record says and as wide.
+    const laser = &bolts.laser;
+    try std.testing.expectEqual(8, laser.meshes[0].positions.len);
+    try std.testing.expectEqual(4, laser.meshes[1].positions.len);
+    try std.testing.expectEqual(@as(Vector, .{ 0, 30, 0 }), laser.meshes[0].positions[0]);
+    try std.testing.expectEqual(@as(Vector, .{ -30, 0, 1200 }), laser.meshes[0].positions[6]);
+    try std.testing.expectEqual(bolt_distances[0], laser.levels[0].until);
+    try std.testing.expect(!laser.fades);
+    // The Proton Cannon's is larger, and its shots fade.
+    try std.testing.expectEqual(@as(Vector, .{ 0, 0, 1400 }), bolts.proton.meshes[0].positions[7] * @as(Vector, .{ 0, 0, 1 }));
+    try std.testing.expect(bolts.proton.fades);
+    // The types the port does not draw yet have none.
+    try std.testing.expectEqual(null, bolts.of(1));
+    try std.testing.expectEqual(laser, bolts.of(0).?);
+}
+
+test "a shot is drawn where the frame has it, and fades as it flies" {
+    const gpa = std.testing.allocator;
+    var ship: testing.Ship = undefined;
+    try ship.init(gpa);
+    defer ship.deinit(gpa);
+    const world = ship.world();
+    // The texture cache keeps the file's name, without the directory the game names it by.
+    const textures = try @import("backdrop.zig").testing.Textures.initNames(gpa, &.{"lasers"});
+    defer textures.deinit(gpa);
+    const bolts = try Bolts.create(gpa, &textures.table, &Stats.initial);
+    defer bolts.destroy(gpa);
+    world.objects.bullets.bolts = bolts;
+
+    // A Proton Cannon's shot, halfway through its life and halfway through the step.
+    for (ship.guns()) |*gun| gun.type = 4;
+    world.objects.gun_stats.types[4].lifetime = 100;
+    shoot(world, &ship.clock, ship.index, ship.guns()[0]);
+    const bullet = &world.objects.bullets.pool[0];
+    try std.testing.expect(bullet.drawn != null);
+    try std.testing.expect(bullet.drawn.?.flags.own_first);
+    try std.testing.expectEqual(@as(?[][2]f32, &bullet.uv), bullet.drawn.?.own_uv[0]);
+    bullet.at = bullet.last + @as(Vector, .{ 0, 0, 400 });
+    ship.clock.frame_start += 50;
+    bulletsFrame(world, &ship.clock, 0.5);
+    try std.testing.expectEqual(bullet.last[2] - 400 + 200, bullet.drawn.?.position[2]);
+    // A friendly shot keeps its blue.
+    try std.testing.expectEqual([4]f32{ 0.5, 0.5, 1, 1 }, bullet.colours[0]);
+
+    var scene: srcore.Scene = .{};
+    defer scene.deinit(gpa);
+    try drawBullets(gpa, &scene, &world.objects.bullets);
+    try std.testing.expectEqual(1, scene.layers.get(.world).items.len);
+}
+
 test {
     std.testing.refAllDecls(@This());
 }
@@ -1199,8 +1478,14 @@ const formats = @import("../../formats/stats.zig");
 const gameobj = @import("gameobj.zig");
 const gun_stats = @import("guns/stats.zig");
 const libcmt = @import("../libcmt.zig");
+const matmanager = @import("matmanager.zig");
 const input = @import("../input.zig");
 const objects = @import("objects.zig");
 const math = @import("../surrender/math.zig");
 const Vector = math.Vector;
 const shp = @import("../../formats/shp.zig");
+const srapi = @import("../surrender/surrenderlib/srapi.zig");
+const srapiext = @import("../surrender/surrenderlib/srapiext.zig");
+const srcore = @import("../surrender/surrenderlib/srcore.zig");
+const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
+const xtrabits = @import("xtrabits.zig");
