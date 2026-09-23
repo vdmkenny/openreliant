@@ -832,7 +832,7 @@ pub const Bullets = struct {
 /// far it could travel meanwhile, the shot's path comes within. The frame pass tests only those
 /// (`bulletHit`).
 ///
-/// Not ported: how the shot is drawn and lit ([#65](https://github.com/vdmkenny/openreliant/issues/65)),
+/// Not ported: how the shot is drawn and lit ([#154](https://github.com/vdmkenny/openreliant/issues/154)),
 /// its sound ([#47](https://github.com/vdmkenny/openreliant/issues/47)), the force feedback a
 /// player's shot gives ([#83](https://github.com/vdmkenny/openreliant/issues/83)), the aim a ship
 /// firing blind takes at its target, and the scatter of gun type 12.
@@ -915,7 +915,7 @@ pub fn moveBullets(world: gameobj.World) void {
 /// has struck something is tested no further.
 ///
 /// Not ported: how the shots are drawn, their colours fading with their life, and the lights they
-/// carry ([#65](https://github.com/vdmkenny/openreliant/issues/65)); the sparks and sounds an
+/// carry ([#154](https://github.com/vdmkenny/openreliant/issues/154)); the sparks and sounds an
 /// impact makes ([#41](https://github.com/vdmkenny/openreliant/issues/41)); what multiplayer makes
 /// of a hit.
 pub fn bulletsFrame(world: gameobj.World, clock: *const Clock) void {

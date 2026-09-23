@@ -115,7 +115,7 @@ the trigger (`fire`), the step (`step`) and the shots (`shoot`, `moveBullets`, `
 payload.
 
 Not ported: how a shot is drawn, so nothing is seen leaving the muzzle
-([#65](https://github.com/vdmkenny/openreliant/issues/65)); the parts of an object whose components
+([#154](https://github.com/vdmkenny/openreliant/issues/154)); the parts of an object whose components
 are listed, so shots pass through a capital ship
 ([#153](https://github.com/vdmkenny/openreliant/issues/153)); the sparks and sounds an impact makes
 ([#41](https://github.com/vdmkenny/openreliant/issues/41),

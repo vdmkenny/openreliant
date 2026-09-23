@@ -458,8 +458,8 @@ address	kind	name	type	comment
 004c4090	function	mesh_texel_areas	void __fastcall (void *mesh)	For each polygon of a textured group, twice its area in texture space, in texels
 004c4040	function	triangle_area_xy	float __fastcall (Vec3 *a, Vec3 *b, Vec3 *c)	A triangle's signed area in the XY plane
 004a2fd0	function	fan_merges	bool __fastcall (void *faces, int face)	Whether a fan's records all have normals within a dot product of 0.999 of its first's, so mesh_build merges them into one polygon
-004ce830	function	line_pipe	int __fastcall (void *object)	The pipeline for scene objects of kind 5 (srline.cpp)
-004ce7b0	function	balls_pipe	int __fastcall (void *object)	The pipeline for scene objects of kind 6 (srballs.cpp)
+004ce830	function	line_pipe	int __fastcall (void *object)	The pipeline for scene objects of kind 5 (srline.cpp): projects the object's vertices, keeping a clip code for each, and marks each segment whose two ends are off the same side. Dead in the shipped game: nothing creates an object of kind 5, and the driver leaves sr+0x5C null
+004ce7b0	function	balls_pipe	int __fastcall (void *object)	The pipeline for scene objects of kind 6 (srballs.cpp): projects the object's place and scales its radius by the perspective. Dead in the shipped game: nothing creates an object of kind 6, and the driver leaves sr+0x60 null
 004cd6a0	function	streak_clip	int __fastcall (float *now, float *before)	Cuts a star's streak to the view's bounds; -1 when it lies wholly outside one
 004cd340	function	dust_streak_project	int __fastcall (float *now_screen, float *now, float *before_screen, float *before)	Cuts a mote's streak to the near plane, projects both ends, and cuts it to the view
 004c3330	function	sr_round	int __cdecl (float x)	x rounded to the nearest whole number

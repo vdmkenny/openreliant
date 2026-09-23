@@ -22,6 +22,14 @@ place of `IDirect3DDevice7`.
 | [`game/nebula.zig`](../../src/engine/game/nebula.zig), [`game/backdrop.zig`](../../src/engine/game/backdrop.zig) | `nebula.cpp`, backdrop | The sky dome, the nebula, the stars, the dust, the sun, the lights |
 | [`game/xtrabits.zig`](../../src/engine/game/xtrabits.zig) | `xtrabits.cpp` | `scene_add` |
 
+A scene object's kind picks its pipeline: 1 a mesh, 4 a sprite set, 7 a star field, and 2 and 5 are
+lights rather than things drawn. Kinds 5 and 6 are **dead in the shipped game**: `sr_draw_layers`
+would run them through `line_pipe` (`srline.cpp`) and `balls_pipe` (`srballs.cpp`) and then through
+the driver's entries at `sr + 0x5C` and `sr + 0x60`, but `SR_driver_init` fills every other entry
+and leaves those two null, the linker pulled only the two pipes out of their files, and nothing
+creates an object of either kind. The weapons' tracers are ordinary mesh objects and sprite sets
+([Guns](../engine/guns.md#shots)).
+
 The software device is the reference the GPU device is checked against: the same scene gives the
 same image. Pixel centres lie at whole numbers, as in Direct3D 7; screen positions are kept in
 sixteenths of a pixel, and a pixel whose centre lies on an edge belongs to the triangle whose top
@@ -106,4 +114,3 @@ Deliberate differences from the original, each marked **Improvement** where it i
 - What `node_draw` draws for the cloak and for nodes of kinds 4 and 6.
 - `backdrop_place`, which aims the sun, the lights and the nebula from a mission's markers, and the
   objects `backdrop_frame` turns and makes glow.
-- Scene objects of kinds 5 and 6.
