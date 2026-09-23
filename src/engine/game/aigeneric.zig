@@ -128,6 +128,20 @@ pub const Context = struct {
 /// hands back to its caller instead.
 pub const Error = error{OrderConflict};
 
+/// The sphere the action keeps to (`action_sphere_center`, `0x00515D78`, and
+/// `action_sphere_radius`, `0x00515D74`): a fighter that strays out of it with no player near flies
+/// back to the object at its centre.
+pub const ActionSphere = struct {
+    /// The object's slot.
+    centre: u16,
+    radius: f32,
+
+    /// Where the AI's setup (`0x0040C9B0`) puts it, around the first slot, and where
+    /// `SetActionCentre` puts it back when given no radius. Missions move it
+    /// ([#36](https://github.com/vdmkenny/openreliant/issues/36)).
+    pub const default: ActionSphere = .{ .centre = 0, .radius = 220000 };
+};
+
 /// How often `ordersUpdate` clears what each object has lately taken (`recent_damage`), in ticks.
 pub const damage_window: u32 = 500;
 
@@ -153,7 +167,7 @@ pub fn giveWay(ctx: Context, index: u16, order: ?Order) Error!bool {
     const all = ctx.world.objects;
     const slot = &all.slots[index];
     const object = &slot.object;
-    if (object.flags.exploding or object.flags.ejected or object.flags._unknown_28) return false;
+    if (object.flags.outOfAction()) return false;
     if (object.order_count == 0 or object.order_starting) return true;
     // Clearing reads the record before the table in the game, which is zero, so it is neither
     // one-shot nor of any priority.
@@ -332,9 +346,6 @@ const retaliation_damage: f32 = 6 * 0.7;
 /// sends it after whoever last hit it. Both ships must be of the fighter class, the attacker must
 /// be on the other side and not already the order's target, and a ship told not to be disturbed
 /// stays on its order.
-///
-/// Nothing sets `recent_damage` yet, so no ship retaliates until damage is ported
-/// ([#42](https://github.com/vdmkenny/openreliant/issues/42)).
 pub fn retaliate(ctx: Context, index: u16) void {
     const all = ctx.world.objects;
     const slot = &all.slots[index];
@@ -372,8 +383,7 @@ pub fn flyBackwards(ctx: Context, index: u16) void {
 }
 
 /// The `init` of the order, where the port runs it. The orders that aren't ported yet do nothing
-/// ([#30](https://github.com/vdmkenny/openreliant/issues/30),
-/// [#33](https://github.com/vdmkenny/openreliant/issues/33)).
+/// ([#30](https://github.com/vdmkenny/openreliant/issues/30)).
 fn runInit(ctx: Context, index: u16, info: orders.Info) void {
     switch (info.order) {
         .fly => aiorders.flyInit(ctx, index),
@@ -382,6 +392,7 @@ fn runInit(ctx: Context, index: u16, info: orders.Info) void {
         .random_spin_fast => aiorders.randomSpinInit(ctx, index, .fast),
         .explode => aiexplode.init(ctx, index),
         .eject_player => aieject.playerInit(ctx, index),
+        .fight => aifight.init(ctx, index),
         else => {},
     }
 }
@@ -399,6 +410,7 @@ fn runUpdate(ctx: Context, index: u16, info: orders.Info) void {
         .player_control => playerControl(ctx, index),
         .explode => aiexplode.update(ctx, index),
         .eject_player => aieject.player(ctx, index),
+        .fight => aifight.update(ctx, index),
         else => {},
     }
 }

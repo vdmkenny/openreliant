@@ -14,10 +14,10 @@ and the order's name, with `_init` and `_exit` for those two.
 Ported so far: the stack (`order_push`, `order_pop`, `orders_clear`, `orders_pop_all`), what runs it
 (`object_orders`, `orders_update`, `order_retaliate`), the steering (`ai_steer`, `ai_roll_upright`),
 and the orders Do Nothing, Fly, Run Away, Slow Rotate, the Random Spins, Match Speed, 44 and 45,
-with Player Control being the player's [controls](controls.md). An order the port does not run yet
-still holds its place on the stack, and pushing it still pops and starts what it should
-([#30](https://github.com/vdmkenny/openreliant/issues/30),
-[#33](https://github.com/vdmkenny/openreliant/issues/33)). Not ported: avoidance
+Explode, Eject Player and Fight with its [combat maneuvers](maneuvers.md), with Player Control
+being the player's [controls](controls.md). An order the port does not run yet still holds its
+place on the stack, and pushing it still pops and starts what it should
+([#30](https://github.com/vdmkenny/openreliant/issues/30)). Not ported: avoidance
 ([#140](https://github.com/vdmkenny/openreliant/issues/140)), and the orders other players' machines
 queue ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
 

@@ -896,8 +896,7 @@ const Sandbox = struct {
     const reliant_turn: f32 = 1.1;
     const reliant_speed: i32 = 10;
     /// A wing: four Sabres, `wing_ahead` in front of the player, beyond the Reliant, and
-    /// `wing_spacing` apart. A Sabre flies 300 a step, 7500 a second, so they take about 20
-    /// seconds to arrive; their models are drawn once they are within 25000, a fighter's last
+    /// `wing_spacing` apart. Their models are drawn once they are within 25000, a fighter's last
     /// level of detail.
     const wing_size = 4;
     const wing_ahead: f32 = 150000;
@@ -981,8 +980,7 @@ const Sandbox = struct {
     }
 
     /// A wing of fighters `wing_ahead` in front of the player, side by side and facing it, each
-    /// under a Fly order aimed at the player, which flies it in at full throttle and stops it once
-    /// it is there. A wing past the last slot is left out.
+    /// under a Fight order against the player. A wing past the last slot is left out.
     fn bringWing(sandbox: *Sandbox, orders: game.aigeneric.Context) void {
         const root = sandbox.player().object.root;
         const from = game.gameobj.vector(root.next_position);
@@ -996,8 +994,8 @@ const Sandbox = struct {
             };
             const slot = &sandbox.objects.slots[index];
             game.objects.setOrientation(&slot.object, &slot.drawn, facing);
-            _ = game.aigeneric.pushShip(orders, index, .fly, sandbox.objects.player, -1) catch |err| {
-                std.log.warn("a Sabre flies nowhere: {s}", .{@errorName(err)});
+            _ = game.aigeneric.pushShip(orders, index, .fight, sandbox.objects.player, -1) catch |err| {
+                std.log.warn("a Sabre won't fight: {s}", .{@errorName(err)});
             };
         }
     }

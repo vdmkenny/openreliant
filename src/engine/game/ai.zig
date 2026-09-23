@@ -78,21 +78,24 @@ test {
 pub const Aimed = struct {
     position: Vector,
     radius: f32,
+    /// How the part hanging from the root that it is, or hangs from, is turned; the object's own
+    /// turn for the object itself (`maneuver_new_attack_run_run`, which walks up to it).
+    orientation: math.Matrix,
 
-    fn ofPart(part: *const objects.Model.Part) Aimed {
-        return .{ .position = part.object.position, .radius = part.object.radius };
+    fn ofPart(model: *const objects.Model, part: *const objects.Model.Part) Aimed {
+        return .{ .position = part.object.position, .radius = part.object.radius, .orientation = model.topOf(part).object.orientation };
     }
 };
 
 pub fn aimedAt(all: *const create.Objects, target: aigeneric.Target) Aimed {
     const slot = &all.slots[@intCast(target.index)];
-    if (target.component >= 0 and target.component < slot.components.len) {
-        if (slot.components[@intCast(target.component)]) |part| return .ofPart(part);
+    if (slot.model) |*model| {
+        if (target.component >= 0 and target.component < slot.components.len) {
+            if (slot.components[@intCast(target.component)]) |part| return .ofPart(model, part);
+        }
+        if (slot.object.type.aimedChild()) |child| if (model.rootChild(child)) |part| return .ofPart(model, part);
     }
-    if (slot.object.type.aimedChild()) |child| if (slot.model) |*model| {
-        if (model.rootChild(child)) |part| return .ofPart(part);
-    };
-    return .{ .position = slot.drawn.position, .radius = slot.object.radius };
+    return .{ .position = slot.drawn.position, .radius = slot.object.radius, .orientation = slot.drawn.orientation };
 }
 
 /// How much further a Turret Flak's shot is led for, over its type's lifetime (`0x004DC3D8`), and
@@ -133,6 +136,29 @@ pub fn alongNose(place: math.Place, point: Vector, radius: f32) bool {
     const along = math.dot(math.forward(place.orientation), offset);
     if (!(along > 0)) return false;
     return math.lengthSquared(offset) - along * along < radius * radius;
+}
+
+/// How near a box of a hull has to be for `escapeDirection` to push away from it (`0x004DC444`).
+const escape_reach: f32 = 20000;
+
+/// `0x00402500`: which way lies clear of a ship's hull from `from`. Each box of the collision trees
+/// of the parts hanging from its root whose edge, taking it as a sphere as wide as its half-size, is
+/// within `escape_reach` of `from` pushes away from it, the harder the nearer it is; the sum,
+/// normalized.
+pub fn escapeDirection(slot: *const create.Slot, from: Vector) Vector {
+    var away: Vector = @splat(0);
+    const model = &(slot.model orelse return math.normalize(away));
+    const source = (slot.type orelse return math.normalize(away)).model;
+    const count = @min(model.parts.len, source.parts.len);
+    for (model.parts[0..count], source.parts[0..count]) |part, data| {
+        if (part.parent != null) continue;
+        for (data.nodes) |node| {
+            const toward = math.transform(part.object.orientation, gameobj.vector(node.centre)) + part.object.position - from;
+            const gap = math.length(toward) - math.length(gameobj.vector(node.half_size));
+            if (gap < escape_reach and gap > 0) away += math.normalize(toward) * @as(Vector, @splat(gap - escape_reach));
+        }
+    }
+    return math.normalize(away);
 }
 
 /// How much of the target's velocity the course is closed against (`0x00401980`), and the least

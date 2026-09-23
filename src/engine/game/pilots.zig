@@ -10,45 +10,71 @@ const stats = @import("../../formats/stats.zig");
 const GameObject = @import("gameobj.zig").GameObject;
 
 /// One pilot of `pilot_stats`. The loader fills every slot with defaults, then applies the
-/// records: each tier field sets a group of these, in `formats/stats.zig`'s preset tables.
+/// records: each tier field sets a group of these, in `formats/stats.zig`'s preset tables. The
+/// Fight order ([`aifight.zig`](aifight.zig)) and its maneuvers read them.
 pub const Pilot = extern struct {
-    /// The two floats `Pilot.tier_c` sets.
-    tier_c_values: [2]f32,
-    /// The 16-bit value `Pilot.tier_c` sets.
-    tier_c_count: u16,
+    /// How hard it turns: the most of each turning input it steers with (`Pilot.tier_c`'s first
+    /// float, `ai.steer`'s `limit`), which also scales the turns a maneuver sets.
+    turn_limit: f32,
+    /// How far it lets a turn swing (`tier_c`'s second float, `ai.steer`'s `ease`).
+    turn_ease: f32,
+    /// The ticks between its aims at its target (`tier_c`'s 16-bit value), which also sets how far
+    /// ahead it reckons the target's turn.
+    aim_interval: i16,
     _unknown_0a: u16,
-    /// The value `Pilot.tier_b` sets.
-    tier_b_value: f32,
-    /// The six values `Pilot.tier_a` sets. Level 2 of `tier_c` then replaces the last two.
-    tier_a_values: [6]u16,
+    /// How far off the line along its nose the aim point may be for it to fire, in the target's
+    /// radii (`Pilot.tier_b`).
+    fire_spread: f32,
+    /// How it times its guns, missiles and countermeasures (`Pilot.tier_a`).
+    timings: Timings,
     /// The low halves of the record's `values`, in the order 2, 1, 3, 0.
     values: [4]u16,
 
     /// What the loader fills every slot with before it reads the records.
     pub const default: Pilot = .{
-        .tier_c_values = .{ stats.tier_c_default[0], stats.tier_c_default[1] },
-        .tier_c_count = stats.tier_c_default[2],
+        .turn_limit = stats.tier_c_default[0],
+        .turn_ease = stats.tier_c_default[1],
+        .aim_interval = @bitCast(stats.tier_c_default[2]),
         ._unknown_0a = 0,
-        .tier_b_value = stats.tier_b_default,
-        .tier_a_values = stats.tier_a_default,
+        .fire_spread = stats.tier_b_default,
+        .timings = @bitCast(stats.tier_a_default),
         .values = @splat(1),
+    };
+
+    /// The six values `Pilot.tier_a` sets, in ticks, which the game reads as signed words.
+    pub const Timings = extern struct {
+        /// How long it holds the trigger once it has its aim.
+        burst: i16,
+        /// How long after it last had the chance to fire it looks again.
+        pause: i16,
+        /// The range the wait for its next missile falls in.
+        missiles: Range,
+        /// The range the wait for its next countermeasure falls in. Level 2 of `tier_c` sets
+        /// these.
+        countermeasures: Range,
+    };
+
+    pub const Range = extern struct {
+        least: i16,
+        most: i16,
     };
 
     /// Which of a record's `values` each of the pilot's takes.
     const value_order = [4]usize{ 2, 1, 3, 0 };
 
     /// The pilot a record makes of the defaults: each tier a preset where it names one, and the
-    /// four values copied through. `tier_c`'s level 2 also writes over the last two of `tier_a`'s.
+    /// four values copied through. `tier_c`'s level 2 also writes over `tier_a`'s countermeasures.
     fn of(record: stats.Pilot) Pilot {
         var pilot: Pilot = .default;
         for (&pilot.values, value_order) |*value, from| value.* = record.values[from].low;
-        if (record.tier_b.index()) |level| pilot.tier_b_value = stats.tier_b_presets[level];
-        if (record.tier_a.index()) |level| pilot.tier_a_values = stats.tier_a_presets[level];
+        if (record.tier_b.index()) |level| pilot.fire_spread = stats.tier_b_presets[level];
+        if (record.tier_a.index()) |level| pilot.timings = @bitCast(stats.tier_a_presets[level]);
         if (record.tier_c.index()) |level| {
             const preset = stats.tier_c_presets[level];
-            pilot.tier_c_values = .{ preset[0], preset[1] };
-            pilot.tier_c_count = preset[2];
-            if (level == 2) pilot.tier_a_values[4..].* = stats.tier_c_level_2_override;
+            pilot.turn_limit = preset[0];
+            pilot.turn_ease = preset[1];
+            pilot.aim_interval = @bitCast(preset[2]);
+            if (level == 2) pilot.timings.countermeasures = @bitCast(stats.tier_c_level_2_override);
         }
         return pilot;
     }
@@ -68,8 +94,10 @@ pub const Pilot = extern struct {
     pub const Skill = enum { low, medium, high, other };
 
     comptime {
-        assert(@offsetOf(Pilot, "tier_b_value") == 0x0C);
-        assert(@offsetOf(Pilot, "tier_a_values") == 0x10);
+        assert(@offsetOf(Pilot, "aim_interval") == 0x08);
+        assert(@offsetOf(Pilot, "fire_spread") == 0x0C);
+        assert(@offsetOf(Pilot, "timings") == 0x10);
+        assert(@sizeOf(Timings) == @sizeOf(@TypeOf(stats.tier_a_default)));
         assert(@offsetOf(Pilot, "values") == 0x1C);
         assert(@sizeOf(Pilot) == 0x24);
     }
@@ -109,9 +137,15 @@ test Table {
     // A preset for each tier named, the last two of tier A from tier C's level 2, tier B left at
     // its default, and the values reordered.
     const pilot = table.get(0);
-    try std.testing.expectEqual([6]u16{ 10, 40, 800, 1600, 50, 100 }, pilot.tier_a_values);
-    try std.testing.expectEqual(stats.tier_b_default, pilot.tier_b_value);
-    try std.testing.expectEqual(25, pilot.tier_c_count);
+    try std.testing.expectEqual(Pilot.Timings{
+        .burst = 10,
+        .pause = 40,
+        .missiles = .{ .least = 800, .most = 1600 },
+        .countermeasures = .{ .least = 50, .most = 100 },
+    }, pilot.timings);
+    try std.testing.expectEqual(stats.tier_b_default, pilot.fire_spread);
+    try std.testing.expectEqual(25, pilot.aim_interval);
+    try std.testing.expectEqual(1, pilot.turn_limit);
     try std.testing.expectEqual([4]u16{ 12, 11, 13, 10 }, pilot.values);
     try std.testing.expectEqual(Pilot.Skill.other, pilot.skill());
     // The rest keep the defaults.

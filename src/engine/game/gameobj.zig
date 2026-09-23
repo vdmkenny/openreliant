@@ -485,7 +485,7 @@ pub const GameObject = extern struct {
     last_attacker: i32,
     _unknown_698: u32,
     /// Fight's timers: until when it holds its fire, until when it holds its missiles, and until
-    /// when it holds its countermeasures, each from the pilot's `tier_a_values`.
+    /// when it holds its countermeasures, each from the pilot's `timings`.
     fire_at: i32,
     missile_at: i32,
     countermeasure_at: i32,
@@ -628,6 +628,13 @@ pub const GameObject = extern struct {
         /// what an object of a type above 255 is given: it takes no part in collisions, never
         /// moves, and the loops over the objects pass it over.
         pub const standing_in: Flags = .{ .no_collisions = true, .unpowered = true, .frozen = true, .stand_in = true };
+
+        /// Whether the object is out of the action: exploding, its pilot ejected, or being sent
+        /// off (`_unknown_28`). It takes no orders then, and the AI passes over a player's ship
+        /// that is.
+        pub fn outOfAction(flags: Flags) bool {
+            return flags.exploding or flags.ejected or flags._unknown_28;
+        }
     };
 
     comptime {

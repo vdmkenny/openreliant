@@ -653,6 +653,15 @@ pub const Model = struct {
         return if (parent < model.parts.len) parent else null;
     }
 
+    /// The part hanging from the root that `part` hangs from, however deep, or `part` itself where
+    /// it hangs from the root. Parents that run in a circle end the walk once it has taken as many
+    /// steps as there are parts.
+    pub fn topOf(model: *const Model, part: *const Part) *const Part {
+        var top = part;
+        for (model.parts) |_| top = &model.parts[top.parent orelse break];
+        return top;
+    }
+
     /// The part the root holds `child` of, counting only the parts hanging from the root, in the
     /// order they were linked. **Unverified:** the root lists nothing else before them.
     pub fn rootChild(model: *const Model, child: usize) ?*const Part {

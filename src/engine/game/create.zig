@@ -361,6 +361,8 @@ pub const Objects = struct {
     /// `0x005185AC`: the tick at which `aigeneric.ordersUpdate` next clears what every object has
     /// lately taken.
     damage_cleared_at: u32 = 0,
+    /// The sphere the action keeps to.
+    action_sphere: aigeneric.ActionSphere = .default,
 
     /// Every slot standing in, as a mission's start leaves them (`reset`), made in `gpa`.
     pub fn create(gpa: Allocator, random: *libcmt.Rand) Allocator.Error!*Objects {
