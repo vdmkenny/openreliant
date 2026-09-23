@@ -23,6 +23,7 @@ const libcmt = @import("../libcmt.zig");
 const matmanager = @import("matmanager.zig");
 const objects = @import("objects.zig");
 const particles = @import("particles.zig");
+const shockwave = @import("shockwave.zig");
 const sound3d = @import("sound3d.zig");
 const xtrabits = @import("xtrabits.zig");
 const Clock = @import("main.zig").Clock;
@@ -470,42 +471,51 @@ const Flames = struct {
     count: i32,
 };
 
-/// Sends `emitter` off from a ship at `at`, moving at `velocity`, carrying `carried` of it: `count`
-/// particles at once, as the camera sees them.
-fn send(world: gameobj.World, emitter: particles.Emitter, at: Vector, velocity: Vector, carried: f32, count: i32) void {
+/// Sends `count` particles out of `emitter` at once, as the camera sees them.
+fn burstFrom(world: gameobj.World, emitter: *particles.Emitter, count: i32) void {
     const pool = world.particles orelse return;
     const view = (world.camera orelse return).place;
-    var from = emitter;
-    from.place.position = at;
-    from.inherited = velocity * @as(Vector, @splat(carried));
-    pool.burst(&from, null, count, view, world.clock, world.random);
+    pool.burst(emitter, null, count, view, world.clock, world.random);
 }
 
-/// A burst of `flame`, spreading out mostly across the view: the emitter stands turned 60 degrees
-/// back and a random way about the camera's forward axis, from the camera's orientation.
-fn flames(world: gameobj.World, at: Vector, velocity: Vector, how: Flames) void {
-    const view = (world.camera orelse return).place;
+/// A burst of `flame` from a ship at `at`, moving at `velocity`, spreading out mostly across the
+/// view: the emitter stands turned 60 degrees back and a random way about the camera's forward
+/// axis, from the camera's orientation. Returns the emitter, whose place and carried velocity a
+/// blast's shockwave takes; none without a camera.
+fn flames(world: gameobj.World, at: Vector, velocity: Vector, how: Flames) ?particles.Emitter {
+    const view = (world.camera orelse return null).place;
     const turn = math.fromAngles(-std.math.pi / 3.0, 0, world.random.fraction() * std.math.tau);
-    const emitter: particles.Emitter = .{
+    var emitter: particles.Emitter = .{
         .born = world.clock.frame_start,
         .template = &flame,
-        .place = .{ .orientation = math.product(turn, view.orientation) },
+        .place = .{ .position = at, .orientation = math.product(turn, view.orientation) },
         .spread = .{ 1, 1, 0.2 },
         .speed = how.speed,
         .speed_range = how.speed_range,
+        .inherited = velocity * @as(Vector, @splat(how.carried.of(world.random))),
     };
-    send(world, emitter, at, velocity, how.carried.of(world.random), how.count);
+    burstFrom(world, &emitter, how.count);
+    return emitter;
 }
 
-/// A burst of 150 of `sparkle`, drifting every way.
+/// A burst of 150 of `sparkle` from a ship at `at`, moving at `velocity`, carrying `carried` of
+/// it, drifting every way.
 fn sparkles(world: gameobj.World, at: Vector, velocity: Vector, carried: f32) void {
-    const emitter: particles.Emitter = .{
+    var emitter: particles.Emitter = .{
         .born = world.clock.frame_start,
         .template = &sparkle,
+        .place = .{ .position = at },
         .spread = .{ 1, 1, 1 },
         .speed_range = 7,
+        .inherited = velocity * @as(Vector, @splat(carried)),
     };
-    send(world, emitter, at, velocity, carried, 150);
+    burstFrom(world, &emitter, 150);
+}
+
+/// Sets a fireball off at `at`, where the world has explosions.
+pub fn fireballAt(world: gameobj.World, at: Vector, spec: Fireball.Spec) void {
+    const explosions = world.explosions orelse return;
+    explosions.setOff(at, spec, world.clock, world.random);
 }
 
 /// A throw of bits every way: how many, and how.
@@ -529,12 +539,6 @@ pub fn throwBit(world: gameobj.World, at: Vector, direction: Vector, how: Bit.Th
     explosions.throwBit(at, direction, how, world.clock, world.random);
 }
 
-/// Sets a fireball off at `at`, where the world has explosions.
-pub fn fireballAt(world: gameobj.World, at: Vector, spec: Fireball.Spec) void {
-    const explosions = world.explosions orelse return;
-    explosions.setOff(at, spec, world.clock, world.random);
-}
-
 /// The fireballs a burst sets off about the ship, lit and each a little late, within
 /// `burst_spread` of its radius, 0.8 of it across (`0x004DC4C0`, `0x004DC410`).
 const burst_fireballs = 18;
@@ -548,11 +552,20 @@ const blast_bits: Scatter = .{ .count = 25, .throw = .{ .size = 0.4, .speed = 0.
 const small_blast_bits: Scatter = .{ .count = 5, .throw = .{ .size = 0.2, .speed = 0.1 } };
 const burst_bits: Scatter = .{ .count = 25, .throw = .{ .size = 0.2, .speed = 0.2 } };
 
+/// A blast sets a shockwave off one time in `blast_shockwave_odds`: `blast_shockwave_size` times
+/// the ship's radius across (`0x004DC520`), over `blast_shockwave_life` ticks and up to
+/// `blast_shockwave_life_range` more.
+const blast_shockwave_odds = 4;
+const blast_shockwave_size: f32 = 10;
+const blast_shockwave_life = 100;
+const blast_shockwave_life_range = 50;
+
 /// `0x0046C980`: a ship's blast at the end of its Explode order: burning bits thrown every way, a
-/// burst of flame, fast and wide, one of sparkle, a lit fireball of the ship's size drifting on
-/// with the sparkle, and the sound, heard on a sure voice close to the camera.
+/// burst of flame, fast and wide, now and then a shockwave standing and drifting as the flame's
+/// emitter does, one of sparkle, a lit fireball of the ship's size drifting on with the sparkle,
+/// and the sound, heard on a sure voice close to the camera.
 ///
-/// Not ported: the cloak dropped, the break-up, and the shockwave one blast in four.
+/// Not ported: the cloak dropped and the break-up.
 pub fn blast(world: gameobj.World, index: u16) void {
     const slot = &world.objects.slots[index];
     const at = slot.drawn.position;
@@ -562,7 +575,19 @@ pub fn blast(world: gameobj.World, index: u16) void {
         else => false,
     };
     scatter(world, at, if (small) small_blast_bits else blast_bits);
-    flames(world, at, velocity, .{ .speed = 200, .speed_range = 300, .carried = .{ .share_or_more = 0.25 }, .count = 400 });
+    const emitted = flames(world, at, velocity, .{ .speed = 200, .speed_range = 300, .carried = .{ .share_or_more = 0.25 }, .count = 400 });
+    const random = world.random;
+    if (random.rand() % blast_shockwave_odds == 0) {
+        const life = @as(i32, random.rand() % blast_shockwave_life_range) + blast_shockwave_life;
+        const kind = shockwave.Kind.blasts[random.rand() % shockwave.Kind.blasts.len];
+        if (emitted) |emitter| shockwave.setOff(world, emitter.place, .{
+            .kind = kind,
+            .size = slot.object.radius * blast_shockwave_size,
+            .life = life,
+            .velocity = emitter.inherited,
+            .owner = index,
+        });
+    }
     const carried = 0.25;
     sparkles(world, at, velocity, carried);
     fireballAt(world, at, .{ .size = slot.object.radius, .light = true, .velocity = velocity * @as(Vector, @splat(carried)) });
@@ -586,7 +611,7 @@ pub fn burst(world: gameobj.World, index: u16) void {
     if (index == world.objects.player) if (world.explosions) |explosions| {
         explosions.marker = .{ .position = at, .drift = velocity * @as(Vector, @splat(0.25)) };
     };
-    flames(world, at, velocity, .{ .speed = 20, .speed_range = 5, .carried = .{ .share = 0.25 }, .count = 200 });
+    _ = flames(world, at, velocity, .{ .speed = 20, .speed_range = 5, .carried = .{ .share = 0.25 }, .count = 200 });
     const carried = 0.5;
     sparkles(world, at, velocity, carried);
     const random = world.random;
@@ -816,4 +841,29 @@ test "a blast's bits" {
     try std.testing.expectEqual(blast_bits.count + small_blast_bits.count, testing.flying(&explosions));
     burst(world, ship);
     try std.testing.expectEqual(2 * blast_bits.count + small_blast_bits.count, testing.flying(&explosions));
+}
+
+test "a blast's shockwave" {
+    const gpa = std.testing.allocator;
+    var built: shockwave.testing.Built = try .init(gpa);
+    defer built.deinit(gpa);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(gpa);
+    defer mission.deinit();
+    var watching: @import("camera.zig").Camera = .{};
+    var world = mission.world();
+    world.camera = &watching;
+    world.shockwaves = &built.waves;
+    const ship = try mission.add(.sabre, @splat(0));
+    mission.objects.slots[ship].object.velocity = .{ .x = 0, .y = 0, .z = 8 };
+
+    // Now and then a blast sets one off, of one of its three looks, ten times the ship's radius
+    // across, drifting with the flame.
+    var blasts: usize = 0;
+    while (built.waves.waves[0] == null and blasts < 100) : (blasts += 1) blast(world, ship);
+    const wave = built.waves.waves[0].?;
+    try std.testing.expect(std.mem.indexOfScalar(shockwave.Kind, &shockwave.Kind.blasts, wave.kind) != null);
+    try std.testing.expectEqual(mission.objects.slots[ship].object.radius * blast_shockwave_size, wave.size);
+    try std.testing.expect(wave.life >= blast_shockwave_life and wave.life < blast_shockwave_life + blast_shockwave_life_range);
+    try std.testing.expect(wave.velocity[2] >= 2 and wave.velocity[2] <= 4);
 }

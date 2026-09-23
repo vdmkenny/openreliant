@@ -912,3 +912,14 @@ address	kind	name	type	comment
 005d5e88	data	volume_speech	int	Speechvolume
 0048f160	function	sound_settings_save	void (void)	Writes Fxvolume, Musicvolume, Speechvolume and Mastervolume to [Sound] of the settings file
 00588334	data	armor_warned_at	int	The frame_start the player's armour last warned at: object_armor_conditions warns no more than once in 500 ticks
+004a0d90	function	shockwave_init	void __fastcall (void)	Requires the ring textures rng_02, rng_03, rng_04, rng_01 and rng_06 into shockwave_textures, builds a ring over each into shockwave_meshes, and a sphere of 16 by 14 into shockwave_sphere, which nothing draws
+004a0b30	function	shockwave_ring_mesh	void * __fastcall (int ring)	A ring over shockwave_textures[ring]: 8 points a unit out and 8 a tenth out about Z, 16 triangles between them, textured by how far each corner lies across and up either way, at least 1/64, coloured and added
+004a16f0	function	sphere_mesh	void * __fastcall (int segments, int rings, float radius)	A sphere of the radius, segments round and rings from pole to pole, textured by 0x00593798 with generated coordinates, coloured and added
+004a0e40	function	shockwave_free	void __fastcall (int slot)	Frees a shockwave's ring object and its slot
+004a0e60	function	shockwave_deinit	void __fastcall (void)	Frees every shockwave, the meshes and the sphere, and releases the textures
+004a0f00	function	shockwaves_update	void __fastcall (void)	Once a frame after explosions_update: each shockwave drifts by its velocity times frame_duration, its ring's colours fade from 1 to 0 over its life and it spreads to its size times how far through its life it is; as it passes the player kinds 0 to 2 raise hit_shake, 7 and 8 damage the player's quadrants through the shield reserves; 5 pushes and 6 damages other sides' ships; kind 7 is not drawn
+004a15d0	function	shockwave_create	void __fastcall (Vec3 *at, float *orientation, Vec3 *velocity, int kind, float size, int life, char side, int owner)	Sets a shockwave off into the first free of shockwaves (asserting shockwave count exceeded where none is): its kind's ring, never culled and coloured by its own colours, at scale 0
+005937c8	data	shockwaves		Thirty shockwaves, 0x2C bytes each: kind, ring object, velocity a tick, size, birth, life, owner, side
+005937b4	data	shockwave_meshes	void *[5]	The rings shockwave_ring_mesh builds, one over each of shockwave_textures
+0059379c	data	shockwave_textures	void *[5]	rng_02, rng_03, rng_04, rng_01 and rng_06
+005937b0	data	shockwave_sphere	void *	The sphere shockwave_init builds, which nothing draws

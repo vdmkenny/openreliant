@@ -1227,11 +1227,7 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
             var value = record.damage[0];
             // What the player has shifted fore or aft takes the hit before the quadrant does, and
             // a hit it swallows whole leaves the shields alone.
-            const reserve: ?*f32 = if (candidate.object != all.player) null else switch (struck) {
-                .fore => &world.player.shield_reserves.fore,
-                .aft => &world.player.shield_reserves.aft,
-                else => null,
-            };
+            const reserve = if (candidate.object != all.player) null else world.player.shield_reserves.of(struck);
             if (reserve) |shifted| {
                 if (shifted.* > 0) {
                     shifted.* -= value;

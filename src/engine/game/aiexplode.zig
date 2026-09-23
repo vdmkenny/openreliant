@@ -9,10 +9,12 @@
 //! (`0x004E1740`, `0x004E174C`), and ends in a blast ([`explode.zig`](explode.zig)), after which
 //! the ship is retired (`create.retire`).
 //!
+//! The styles leave fireballs, burning bits and a torpedo's shockwave behind
+//! ([`explode.zig`](explode.zig), [`shockwave.zig`](shockwave.zig)).
+//!
 //! **Not ported:** the other modes, for a ship that lists components, one of its components, an
-//! asteroid and the limpet car; the effects the styles leave, fireballs, burning bits and
-//! shockwaves ([#41](https://github.com/vdmkenny/openreliant/issues/41)); and what a ship's end
-//! tells the mission, the kills' score and chatter (`0x00408500`), the pilots' records and the
+//! asteroid and the limpet car ([#41](https://github.com/vdmkenny/openreliant/issues/41)); and
+//! what a ship's end tells the mission, the kills' score and chatter (`0x00408500`), the pilots' records and the
 //! Destroyed event ([#37](https://github.com/vdmkenny/openreliant/issues/37)).
 
 const std = @import("std");
@@ -28,6 +30,7 @@ const camera = @import("camera.zig");
 const create = @import("create.zig");
 const explode = @import("explode.zig");
 const gameobj = @import("gameobj.zig");
+const shockwave = @import("shockwave.zig");
 const GameObject = gameobj.GameObject;
 const libcmt = @import("../libcmt.zig");
 const main = @import("main.zig");
@@ -241,7 +244,8 @@ fn burstInit(object: *GameObject, state: *State) void {
     object.yaw_input = 0;
 }
 
-/// `0x00408D20`: a halting ship stops dead and blows up at once.
+/// `0x00408D20`: a halting ship stops dead and blows up at once; a torpedo sets off its chain of
+/// fireballs and a shockwave that harms the player it passes.
 fn haltInit(ctx: Context, index: u16) void {
     const slot = &ctx.world.objects.slots[index];
     const state = &slot.state.explode;
@@ -252,17 +256,29 @@ fn haltInit(ctx: Context, index: u16) void {
     state.spin = randomSpin(ctx.world.random);
     goesUp(ctx.world, slot);
     switch (slot.object.type) {
-        .torpedo, .russian_torpedo => chain(ctx.world, slot.drawn.position),
+        .torpedo, .russian_torpedo => {
+            chain(ctx.world, slot.drawn.position);
+            shockwave.setOff(ctx.world, slot.drawn, .{
+                .kind = .torpedo,
+                .size = torpedo_shockwave_size,
+                .life = torpedo_shockwave_life,
+                .velocity = gameobj.vector(slot.object.velocity),
+                .owner = index,
+            });
+        },
         else => {},
     }
 }
+
+/// A halting torpedo's shockwave, which harms the player it passes: how far it spreads, over how
+/// many ticks.
+const torpedo_shockwave_size: f32 = 6000;
+const torpedo_shockwave_life = 100;
 
 /// A torpedo's chain of lit fireballs, `chain_length` of them `chain_step` ticks apart, each less a
 /// share of `chain_lag`, so up to 19 ticks later; within half of `chain_spread` of it on each axis,
 /// and `chain_size` and up to `chain_size_range` more across (`0x004DC4B8`, `0x004DC4CC`,
 /// `0x004DC44C`, `0x004DC4A8`).
-///
-/// Not ported: the shockwave it ends with.
 fn chain(world: gameobj.World, at: Vector) void {
     const random = world.random;
     for (0..chain_length) |n| {
@@ -372,6 +388,26 @@ test spin {
     const late = math.angles(slot.object.rotation);
     try std.testing.expect(@abs(late[2]) < @abs(early[2]));
     try std.testing.expectEqual(1, state.trail);
+}
+
+test "a halting torpedo's shockwave" {
+    const gpa = std.testing.allocator;
+    var built: shockwave.testing.Built = try .init(gpa);
+    defer built.deinit(gpa);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(gpa);
+    defer mission.deinit();
+    var ctx = mission.orders();
+    ctx.world.shockwaves = &built.waves;
+    _ = try mission.add(.predator, @splat(0));
+    const torpedo = try mission.add(.torpedo, .{ 0, 0, 1000 });
+
+    // It halts, and sets off a shockwave that harms the player it passes.
+    haltInit(ctx, torpedo);
+    const wave = built.waves.waves[0].?;
+    try std.testing.expectEqual(shockwave.Kind.torpedo, wave.kind);
+    try std.testing.expectEqual(torpedo_shockwave_size, wave.size);
+    try std.testing.expectEqual(torpedo, wave.owner);
 }
 
 test randomSpin {

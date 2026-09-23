@@ -416,7 +416,10 @@ pub const GameObject = extern struct {
     missile_homing: i32,
     /// The throttle of the last update.
     last_throttle: f32,
-    _unknown_654: [8]u8,
+    /// Until when a shockwave that harms what it passes leaves it alone, having harmed it
+    /// (`shockwave.Shockwave.harmPlayer`).
+    shockwave_until: i32,
+    _unknown_658: [4]u8,
     _unknown_65c: u32,
     _unknown_660: u8,
     _unknown_661: [3]u8,
@@ -776,7 +779,23 @@ pub const ShieldReserves = struct {
     fore: f32 = 0,
     /// Beyond the aft shield, `shields.aft` (`0x0051CF34`).
     aft: f32 = 0,
+
+    /// The reserve a hit on `quadrant` draws on before the shield does, where it has one.
+    pub fn of(reserves: *ShieldReserves, quadrant: collision.Quadrant) ?*f32 {
+        return switch (quadrant) {
+            .fore => &reserves.fore,
+            .aft => &reserves.aft,
+            .left, .right => null,
+        };
+    }
 };
+
+test ShieldReserves {
+    var reserves: ShieldReserves = .{ .fore = 1, .aft = 2 };
+    try std.testing.expectEqual(&reserves.fore, reserves.of(.fore).?);
+    try std.testing.expectEqual(&reserves.aft, reserves.of(.aft).?);
+    try std.testing.expectEqual(null, reserves.of(.left));
+}
 
 /// `object_recharge_shields` (`0x00476FC0`), which `simulation_step` runs for every object after
 /// its node update. Each shield gains its full charge, `6 * ShipCombat.shield_power - 1`, times
@@ -887,6 +906,8 @@ pub const World = struct {
     explosions: ?*@import("explode.zig").Explosions = null,
     /// The pool particles come from; null where none are sent out.
     particles: ?*@import("particles.zig").Pool = null,
+    /// The shockwaves spreading (`shockwave.cpp`); null where none spread.
+    shockwaves: ?*@import("shockwave.zig").Shockwaves = null,
 };
 
 /// `simulation_step` (`0x004774D0`): the work of every fourth tick, so 25 times a second, which

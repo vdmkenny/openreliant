@@ -1,7 +1,7 @@
 # Effects
 
-What the game shows besides its objects and their shots: for now, the particles, fireballs and
-burning bits of an explosion. [Destruction](objects.md#destruction) covers when a ship blows up.
+What the game shows besides its objects and their shots: for now, the particles, fireballs,
+burning bits and shockwaves of an explosion. [Destruction](objects.md#destruction) covers when a ship blows up.
 
 ## Particles
 
@@ -135,3 +135,49 @@ washed out. `--original` restores every light.
 [`explode.zig`](../../src/engine/game/explode.zig) ports the bits as `Explosions.throwBit` and
 `Bit`, and [`aiexplode.zig`](../../src/engine/game/aiexplode.zig) the spin-out's trail. The port
 throws debris only, and leaves a piece out where the game has no model for it.
+
+## Shockwaves
+
+`shockwave.cpp` keeps rings that spread out from an explosion. `shockwave_init` (`0x004A0D90`)
+builds five rings (`shockwave_ring_mesh`, `0x004A0B30`), one over each of the textures `rng_02`,
+`rng_03`, `rng_04`, `rng_01` and `rng_06`. A ring is eight points a unit out and eight a tenth out,
+every 45 degrees about its Z axis, with sixteen triangles between them. Each corner's texture
+coordinates are how far it lies across and how far up, either way and no less than 1/64, so the
+texture, a quarter of a ring, shows mirrored in each quarter. It is coloured by its own colours
+and added to what is behind it, and never culled. `shockwave_init` also builds a sphere
+(`0x004A16F0`), which nothing draws.
+
+`shockwave_create` (`0x004A15D0`) sets one off into the first free of thirty (`shockwaves`,
+`0x005937C8`) at a place and facing, with a kind, a size, a life in ticks, a velocity a tick, a
+side and an owner. The game fails an assertion where none is free. Once a frame after the
+explosions, `shockwaves_update` (`0x004A0F00`) moves each one on by its velocity times the frame's
+ticks, fades its colours from 1 to 0 over its life, and spreads it to its size times how far
+through its life it is, the ring's scale. What it passes, between how far it had spread and how
+far it has now, it acts on by its kind:
+
+| Kind | Ring | Set off by | As it passes |
+|---|---|---|---|
+| 0 to 2 | `rng_02` to `rng_04` | A blast, one time in four: a random one of the three, ten times the ship's radius across, over 100 to 149 ticks, standing and drifting as the blast's flame emitter does | The player's view shakes by ten times how far through its life it is, at most 2 |
+| 3 | `rng_01` | `0x00472AB0`, a pair | Nothing |
+| 4 | `rng_06` | Nothing | Nothing |
+| 5 | `rng_06` | A missile's end (`0x00495870`), for missile type 2: 50000 across over 500 ticks | Ships of other sides are pushed away (order `0x72`) |
+| 6 | `rng_01` | A missile's end, for missile type 7, likewise | Each quadrant of ships of other sides takes 50 more than its shield holds |
+| 7 | none, unseen | Nothing | The player takes damage by the owner's type |
+| 8 | `rng_01` | A halting torpedo, 6000 across over 100 ticks | The view shakes as for kind 0, and the player takes damage |
+
+A shockwave that harms passes over ships that list components, are stand-ins, exploding or
+disabled, or that another harmed less than 50 ticks before (`GameObject` `0x654`). Kind 8 does
+0.05 of its size times what is left of its life to each quadrant. The fore and aft shields' reserves
+take it first: a reserve that holds spares the shield, and one that runs out passes on to the
+shield what it held.
+
+The game names object 16 as kind 8's attacker, whatever its loop over the ring's colours left in
+a register.
+
+**Improvement:** the port names the shockwave's owner, the torpedo, instead.
+
+[`shockwave.zig`](../../src/engine/game/shockwave.zig) ports the rings, kinds 0 to 2 and 8, and
+[`explode.zig`](../../src/engine/game/explode.zig) and
+[`aiexplode.zig`](../../src/engine/game/aiexplode.zig) the blast's and the torpedo's. Not ported:
+kind 3's caller ([#41](https://github.com/vdmkenny/openreliant/issues/41)), and a missile's end,
+with what kinds 5 and 6 do ([#39](https://github.com/vdmkenny/openreliant/issues/39)).

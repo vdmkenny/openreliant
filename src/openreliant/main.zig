@@ -539,8 +539,10 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     explosions.settings.bit_lights = options.bit_lights;
     var particles: game.particles.Pool = try .load(gpa, &textures);
     defer particles.deinit();
+    var shockwaves: game.shockwave.Shockwaves = try .create(gpa, &textures);
+    defer shockwaves.deinit(gpa);
     try sandbox.start(.{
-        .world = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles },
+        .world = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .shockwaves = &shockwaves },
         .clock = &clock,
         .devices = &devices,
     }, @intCast(options.ship));
@@ -607,7 +609,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         if (frames_left != null) clock.advanceBy(now / platform.window.tick_nanoseconds, 1) else clock.advanceToFine(now, platform.window.tick_nanoseconds);
         // While the communications window is open the keys 1 to 8 are its menu's.
         devices.keyboard.numbers_taken = display.state.windows.status.get(.comms).phase == .open;
-        const world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles };
+        const world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .shockwaves = &shockwaves };
         const orders: game.aigeneric.Context = .{ .world = world, .clock = &clock, .devices = &devices };
         while (clock.nextTick(&devices, world)) |_| {}
         clock.frameBegin();
@@ -724,6 +726,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .kills_shown = devices.active(.display_kills, false),
             .particles = &particles,
             .explosions = &explosions,
+            .shockwaves = &shockwaves,
             .attachments = .{
                 .camera = view.place.position,
                 .frame_start = clock.frame_start,
@@ -926,6 +929,7 @@ const Sandbox = struct {
         if (orders.world.hearing) |hearing| game.sound3d.endAll(hearing.sound);
         orders.world.player.ending = .playing;
         if (orders.world.explosions) |explosions| explosions.reset();
+        if (orders.world.shockwaves) |waves| waves.reset();
         if (orders.world.particles) |pool| pool.reset();
         sandbox.objects.reset(sandbox.random);
         // The debris models, counted as used so the sweep below keeps them (`explosions_init`).
