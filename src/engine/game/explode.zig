@@ -3,9 +3,10 @@
 //! and what the explosions leave for the frames after.
 //!
 //! Ported so far: the final blasts' sound, their bursts of flame and sparkle
-//! ([`particles.zig`](particles.zig)), their fireballs and burning bits, and the point the camera
-//! watches a break-up from. **Not ported:** the shockwave, the break-up that cuts a ship's parts
-//! into pieces that fly apart (`0x0046C550`, `0x0046BF20`), and the rest of the explosions' update
+//! ([`particles.zig`](particles.zig)), their fireballs, burning bits and shockwaves
+//! ([`shockwave.zig`](shockwave.zig)), the break-up that cuts a ship's parts into pieces that fly
+//! apart ([`explode/breakup.zig`](explode/breakup.zig)), and the point the camera watches a
+//! break-up from. **Not ported:** the rest of the explosions' update
 //! ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
 
 const std = @import("std");
@@ -23,6 +24,7 @@ const libcmt = @import("../libcmt.zig");
 const matmanager = @import("matmanager.zig");
 const objects = @import("objects.zig");
 const particles = @import("particles.zig");
+pub const breakup = @import("explode/breakup.zig");
 const shockwave = @import("shockwave.zig");
 const sound3d = @import("sound3d.zig");
 const xtrabits = @import("xtrabits.zig");
@@ -41,6 +43,8 @@ pub const Explosions = struct {
     bits: [max_bits]?Bit = @splat(null),
     next_bit: usize = 0,
     moved_at: i32 = 0,
+    /// The pieces the ships' break-ups send flying (`0x0055AE88`).
+    pieces: breakup.Pieces,
     /// The fireballs going off (`explosion_fireballs`, `0x00553398`).
     fireballs: [max_fireballs]?Fireball = @splat(null),
     /// The point view `0x1B` watches (`0x0055AD0C`), which the player's ship's break-up leaves where
@@ -80,22 +84,29 @@ pub const Explosions = struct {
         }
     };
 
-    pub fn init(images: Images) Explosions {
-        return .{ .images = images };
+    pub fn init(gpa: Allocator, images: Images) Allocator.Error!Explosions {
+        return .{ .images = images, .pieces = try .create(gpa) };
+    }
+
+    pub fn deinit(explosions: *Explosions) void {
+        explosions.pieces.deinit();
     }
 
     /// As a mission starts again: nothing flying or going off, and no marker, with the same
     /// settings; the debris is loaded again (`Debris.load`).
     pub fn reset(explosions: *Explosions) void {
-        explosions.* = .{ .images = explosions.images, .settings = explosions.settings };
+        explosions.pieces.reset();
+        explosions.* = .{ .images = explosions.images, .settings = explosions.settings, .pieces = explosions.pieces };
     }
 
     /// `explosions_update` (`0x0046E480`), once a frame, as far as the port goes: the marker drifts
-    /// on, and each fireball plays on (`Fireball.frame`), until it is done.
+    /// on, the bits fly on, the pieces fly on (`breakup.Pieces.frame`), and each fireball plays on
+    /// (`Fireball.frame`), until it is done.
     ///
     /// **Improvement:** the marker drifts by `drift` a tick, where the game adds it once a frame,
     /// which comes to the same at a frame a tick.
-    pub fn frame(explosions: *Explosions, clock: *const Clock) void {
+    pub fn frame(explosions: *Explosions, world: gameobj.World) void {
+        const clock = world.clock;
         if (explosions.marker) |*marker| marker.position += marker.drift * @as(Vector, @splat(@floatFromInt(@max(clock.frame_duration, 0))));
         const seconds = @as(f32, @floatFromInt(clock.frame_start - explosions.moved_at)) * Bit.per_tick;
         for (&explosions.bits) |*slot| {
@@ -103,19 +114,21 @@ pub const Explosions = struct {
             if (bit.born + bit.life < clock.frame_start) slot.* = null else bit.fly(seconds);
         }
         explosions.moved_at = clock.frame_start;
+        explosions.pieces.frame(world);
         for (&explosions.fireballs) |*slot| {
             const fireball = &(slot.* orelse continue);
             if (!fireball.frame(explosions.images, clock)) slot.* = null;
         }
     }
 
-    /// The rest of `explosions_update`: each fireball showing goes into the world's layer, and its
-    /// light among the lights.
+    /// The rest of `explosions_update`: the bits and the pieces go into the world's layer, and
+    /// each fireball showing, with its light among the lights.
     pub fn draw(explosions: *Explosions, gpa: Allocator, scene: *srcore.Scene) Allocator.Error!void {
         for (&explosions.bits) |*slot| {
             const bit = &(slot.* orelse continue);
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &bit.object }, .world);
         }
+        try explosions.pieces.draw(gpa, scene);
         for (&explosions.fireballs) |*slot| {
             const fireball = &(slot.* orelse continue);
             if (!fireball.showing) continue;
@@ -146,7 +159,7 @@ pub const Explosions = struct {
             .life = Bit.flight + @as(i32, @intFromFloat(random.centred() * Bit.flight_spread)),
             .object = .{
                 .flags = .{ .lit = true },
-                .light_mask = explosions.settings.bit_lights.mask(),
+                .light_mask = explosions.settings.debris_lights.mask(objects.lightMask(false)),
                 .position = at,
                 .scale = scale,
                 .radius = levels[0].mesh.radius,
@@ -173,21 +186,22 @@ pub const Explosions = struct {
 pub const Settings = struct {
     /// The options' detail (`0x005D54E0`), which the port starts at high.
     detail: Detail = .high,
-    bit_lights: BitLights = .like_ships,
+    debris_lights: DebrisLights = .like_ships,
 };
 
-/// Which of the backdrop's lights reach a bit.
+/// Which of the backdrop's lights reach an explosion's debris: its bits and a ship's pieces.
 ///
-/// **Improvement:** a bit takes the lights a ship's part takes, one of each pair. The game makes
+/// **Improvement:** debris takes the lights a ship's part takes, one of each pair. The game makes
 /// it with a light mask of 0, so both key lights and both fill lights reach it, and it shows
 /// washed out; `--original` restores that.
-pub const BitLights = enum {
+pub const DebrisLights = enum {
     like_ships,
     every_light,
 
-    fn mask(lights: BitLights) u32 {
+    /// The mask for debris of a part whose own mask is `ship`.
+    pub fn mask(lights: DebrisLights, ship: u32) u32 {
         return switch (lights) {
-            .like_ships => objects.lightMask(false),
+            .like_ships => ship,
             .every_light => 0,
         };
     }
@@ -560,12 +574,12 @@ const blast_shockwave_size: f32 = 10;
 const blast_shockwave_life = 100;
 const blast_shockwave_life_range = 50;
 
-/// `0x0046C980`: a ship's blast at the end of its Explode order: burning bits thrown every way, a
-/// burst of flame, fast and wide, now and then a shockwave standing and drifting as the flame's
+/// `0x0046C980`: a ship's blast at the end of its Explode order: the ship broken up
+/// (`breakup.breakUp`), burning bits thrown every way, a burst of flame, fast and wide, now and then a shockwave standing and drifting as the flame's
 /// emitter does, one of sparkle, a lit fireball of the ship's size drifting on with the sparkle,
 /// and the sound, heard on a sure voice close to the camera.
 ///
-/// Not ported: the cloak dropped and the break-up.
+/// Not ported: the cloak dropped.
 pub fn blast(world: gameobj.World, index: u16) void {
     const slot = &world.objects.slots[index];
     const at = slot.drawn.position;
@@ -574,6 +588,7 @@ pub fn blast(world: gameobj.World, index: u16) void {
         .escape_pod, .other_escape_pod, .late_escape_pod, .other_late_escape_pod, .proximity_mine => true,
         else => false,
     };
+    breakup.breakUp(world, index, .blast);
     scatter(world, at, if (small) small_blast_bits else blast_bits);
     const emitted = flames(world, at, velocity, .{ .speed = 200, .speed_range = 300, .carried = .{ .share_or_more = 0.25 }, .count = 400 });
     const random = world.random;
@@ -598,15 +613,16 @@ pub fn blast(world: gameobj.World, index: u16) void {
 /// among the explosions. The player's leaves the marker the camera watches, drifting on at the
 /// ship's speed. **Unverified:** it lies after this file's known code.
 ///
-/// It throws small bits every way first. Its 18 fireballs, lit and each up to a tenth of a second
+/// It breaks the ship up and throws small bits every way first. Its 18 fireballs, lit and each up to a tenth of a second
 /// late, stand at random within 0.3 of its radius and drift on with the sparkle.
 ///
-/// Not ported: the cloak dropped and the break-up.
+/// Not ported: the cloak dropped.
 pub fn burst(world: gameobj.World, index: u16) void {
     const slot = &world.objects.slots[index];
     const at = slot.drawn.position;
     const velocity = gameobj.vector(slot.object.velocity);
     const radius = slot.object.radius;
+    breakup.breakUp(world, index, .burst);
     scatter(world, at, burst_bits);
     if (index == world.objects.player) if (world.explosions) |explosions| {
         explosions.marker = .{ .position = at, .drift = velocity * @as(Vector, @splat(0.25)) };
@@ -625,7 +641,7 @@ pub fn burst(world: gameobj.World, index: u16) void {
     sound(world, at, .explosions);
 }
 
-const testing = struct {
+pub const testing = struct {
     /// Textures that are never looked into, one for each frame, told apart by where they are.
     var bang: [16]srtexture.Image = undefined;
     var sheet: srtexture.Image = undefined;
@@ -647,55 +663,83 @@ const testing = struct {
         for (explosions.bits) |slot| count += @intFromBool(slot != null);
         return count;
     }
+
+    /// A mission with explosions over it, whose world reaches them.
+    pub const Stage = struct {
+        mission: gameobj.testing.Mission,
+        explosions: Explosions,
+
+        pub fn init(stage: *Stage) !void {
+            try stage.mission.init(std.testing.allocator);
+            errdefer stage.mission.deinit();
+            stage.explosions = try .init(std.testing.allocator, images());
+        }
+
+        pub fn deinit(stage: *Stage) void {
+            stage.explosions.deinit();
+            stage.mission.deinit();
+        }
+
+        pub fn world(stage: *Stage) gameobj.World {
+            var reached = stage.mission.world();
+            reached.explosions = &stage.explosions;
+            return reached;
+        }
+    };
 };
 
 test Explosions {
-    var explosions: Explosions = .init(testing.images());
-    var clock: Clock = .{};
-    clock.frame_duration = 10;
-    explosions.frame(&clock);
+    var stage: testing.Stage = undefined;
+    try stage.init();
+    defer stage.deinit();
+    const explosions = &stage.explosions;
+    stage.mission.clock.frame_duration = 10;
+    explosions.frame(stage.world());
     try std.testing.expectEqual(null, explosions.marker);
     explosions.marker = .{ .position = .{ 0, 0, 100 }, .drift = .{ 0, 0, 5 } };
-    explosions.frame(&clock);
+    explosions.frame(stage.world());
     try std.testing.expectEqual(Vector{ 0, 0, 150 }, explosions.marker.?.position);
 }
 
 test Fireball {
-    var explosions: Explosions = .init(testing.images());
-    var clock: Clock = .{};
+    var stage: testing.Stage = undefined;
+    try stage.init();
+    defer stage.deinit();
+    const explosions = &stage.explosions;
+    const clock = &stage.mission.clock;
     var random: libcmt.Rand = .{};
-    explosions.setOff(.{ 0, 0, 100 }, .{ .size = 40, .light = true, .delay = 10, .velocity = .{ 1, 0, 0 } }, &clock, &random);
+    explosions.setOff(.{ 0, 0, 100 }, .{ .size = 40, .light = true, .delay = 10, .velocity = .{ 1, 0, 0 } }, clock, &random);
     const bang = &explosions.fireballs[0].?;
     try std.testing.expectEqual(-40, bang.sprite[0].bias);
 
     // Waiting, it doesn't show.
     clock.frame_start = 5;
-    explosions.frame(&clock);
+    explosions.frame(stage.world());
     try std.testing.expect(!bang.showing);
 
     // Halfway through its life, the bang's middle frame, drifted on, its light half faded.
     clock.frame_start = 10 + 75;
     clock.frame_duration = 20;
-    explosions.frame(&clock);
+    explosions.frame(stage.world());
     try std.testing.expect(bang.showing);
     try std.testing.expectEqual(&testing.bang[8], bang.set.surface.textures[0].image);
     try std.testing.expectEqual(Vector{ 20, 0, 100 }, bang.sprite[0].offset);
     try std.testing.expectApproxEqAbs(5, bang.light.?.intensity, 1e-6);
 
     // The sheet steps through its cells, mirrored as its look says.
-    explosions.setOff(@splat(0), .{ .kind = .sheet, .size = 10, .life = 90 }, &clock, &random);
+    explosions.setOff(@splat(0), .{ .kind = .sheet, .size = 10, .life = 90 }, clock, &random);
     const sheet = &explosions.fireballs[1].?;
     sheet.look.mirror_u = true;
     sheet.look.mirror_v = false;
     clock.frame_start += 50;
-    explosions.frame(&clock);
+    explosions.frame(stage.world());
     const u = 2 * Fireball.sheet_step;
     const v = 1 * Fireball.sheet_step;
     try std.testing.expectEqual([4]f32{ u + Fireball.sheet_cell, u, v, v + Fireball.sheet_cell }, sheet.sprite[0].uv);
 
     // Done, it is gone.
     clock.frame_start += 200;
-    explosions.frame(&clock);
+    explosions.frame(stage.world());
     try std.testing.expectEqual(null, explosions.fireballs[0]);
     try std.testing.expectEqual(null, explosions.fireballs[1]);
 }
@@ -704,7 +748,8 @@ test burst {
     var mission: gameobj.testing.Mission = undefined;
     try mission.init(std.testing.allocator);
     defer mission.deinit();
-    var explosions: Explosions = .init(testing.images());
+    var explosions: Explosions = try .init(std.testing.allocator, testing.images());
+    defer explosions.deinit();
     var world = mission.world();
     world.explosions = &explosions;
     const player = try mission.add(.predator, .{ 0, 0, 0 });
@@ -732,7 +777,8 @@ test blast {
     var pool: particles.Pool = try .init(std.testing.allocator, 1000, &image);
     defer pool.deinit();
     var watching: @import("camera.zig").Camera = .{};
-    var explosions: Explosions = .init(testing.images());
+    var explosions: Explosions = try .init(std.testing.allocator, testing.images());
+    defer explosions.deinit();
     var world = mission.world();
     world.particles = &pool;
     world.camera = &watching;
@@ -759,15 +805,18 @@ test Bit {
     const gpa = std.testing.allocator;
     const mesh = try @import("../surrender/surrenderlib/srmesh.zig").testing.square(gpa);
     defer mesh.deinit(gpa);
-    var explosions: Explosions = .init(testing.images());
+    var stage: testing.Stage = undefined;
+    try stage.init();
+    defer stage.deinit();
+    const explosions = &stage.explosions;
     explosions.debris = testing.debris(&mesh);
     explosions.settings.detail = .low;
-    var clock: Clock = .{};
+    const clock = &stage.mission.clock;
     var random: libcmt.Rand = .{};
 
     // A bit is lit, keeps its detail further off, and leaves along its direction at 1500 to 4500
     // a second times its throw's speed, for 17.5 to 22.5 seconds.
-    explosions.throwBit(.{ 0, 0, 100 }, .{ 0, 0, 1 }, .{ .size = 0.4, .speed = 0.2 }, &clock, &random);
+    explosions.throwBit(.{ 0, 0, 100 }, .{ 0, 0, 1 }, .{ .size = 0.4, .speed = 0.2 }, clock, &random);
     const bit = &explosions.bits[0].?;
     try std.testing.expect(bit.object.flags.lit);
     try std.testing.expectEqual(objects.lightMask(false), bit.object.light_mask);
@@ -780,27 +829,27 @@ test Bit {
     // A second later it has flown a second's velocity, and turned.
     const from = bit.object.position;
     clock.frame_start = 100;
-    explosions.frame(&clock);
+    explosions.frame(stage.world());
     try std.testing.expect(math.distance(from + bit.velocity, bit.object.position) < 1e-3);
     try std.testing.expect(!std.meta.eql(math.identity, bit.object.orientation));
 
     // Past its life, it is gone.
     clock.frame_start = bit.born + bit.life + 1;
-    explosions.frame(&clock);
+    explosions.frame(stage.world());
     try std.testing.expectEqual(null, explosions.bits[0]);
 
     // As the original has it, every light reaches it.
-    explosions.settings.bit_lights = .every_light;
+    explosions.settings.debris_lights = .every_light;
     const index = explosions.next_bit;
-    explosions.throwBit(@splat(0), .{ 0, 0, 1 }, .{ .size = 1, .speed = 1 }, &clock, &random);
+    explosions.throwBit(@splat(0), .{ 0, 0, 1 }, .{ .size = 1, .speed = 1 }, clock, &random);
     try std.testing.expectEqual(0, explosions.bits[index].?.object.light_mask);
     explosions.reset();
-    try std.testing.expectEqual(.every_light, explosions.settings.bit_lights);
+    try std.testing.expectEqual(.every_light, explosions.settings.debris_lights);
     explosions.debris = testing.debris(&mesh);
 
     // The detail sets how many fly: at low, the 101st takes the first's place.
-    for (0..Detail.low.bits() + 1) |_| explosions.throwBit(@splat(0), .{ 0, 0, 1 }, .{ .size = 1, .speed = 1 }, &clock, &random);
-    try std.testing.expectEqual(Detail.low.bits(), testing.flying(&explosions));
+    for (0..Detail.low.bits() + 1) |_| explosions.throwBit(@splat(0), .{ 0, 0, 1 }, .{ .size = 1, .speed = 1 }, clock, &random);
+    try std.testing.expectEqual(Detail.low.bits(), testing.flying(explosions));
     try std.testing.expectEqual(1, explosions.next_bit);
 }
 
@@ -827,7 +876,8 @@ test "a blast's bits" {
     var mission: gameobj.testing.Mission = undefined;
     try mission.init(gpa);
     defer mission.deinit();
-    var explosions: Explosions = .init(testing.images());
+    var explosions: Explosions = try .init(std.testing.allocator, testing.images());
+    defer explosions.deinit();
     explosions.debris = testing.debris(&mesh);
     var world = mission.world();
     world.explosions = &explosions;

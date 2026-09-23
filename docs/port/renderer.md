@@ -107,7 +107,7 @@ Deliberate differences from the original, each marked **Improvement** where it i
   nothing and keeps a dark gradient, such as the nebula or a light's falloff, from banding. `--original` restores the
   original's look: 16-bit colour, dithered, into a 16-bit buffer where the GPU has one, with a
   16-bit depth buffer, one sample a pixel, bilinear filtering, lighting each vertex, lights
-  from the latest shots only and the burning bits lit by every light.
+  from the latest shots only and an explosion's debris lit by every light.
 
 ## Scene objects of kinds 5 and 6
 

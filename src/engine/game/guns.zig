@@ -2017,7 +2017,7 @@ fn dress(bullet: *Bullet, looks: *const Looks, random: *libcmt.Rand, turn: math.
         },
         // The game turns its bolt an eighth of a turn about the flight here, and `bullet_place`
         // then gives it the muzzle's turn in place of it, so it is drawn unturned.
-        .nova_cannon => one(&pieces, meshPiece(looks, .nova, .{ .not_culled = true, .own_first = true, ._unknown_14 = true })),
+        .nova_cannon => one(&pieces, meshPiece(looks, .nova, .{ .not_culled = true, .own_first = true, .owns_mesh = true })),
         .turret_flak => flak: {
             if (looks.shell == null) break :flak 0;
             const shell: *const [1]srapiext.Level = &looks.shell.?;

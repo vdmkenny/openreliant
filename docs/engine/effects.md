@@ -1,7 +1,7 @@
 # Effects
 
 What the game shows besides its objects and their shots: for now, the particles, fireballs,
-burning bits and shockwaves of an explosion. [Destruction](objects.md#destruction) covers when a ship blows up.
+burning bits, break-up and shockwaves of an explosion. [Destruction](objects.md#destruction) covers when a ship blows up.
 
 ## Particles
 
@@ -130,11 +130,60 @@ The game makes a bit with a light mask of 0, so every one of the backdrop's ligh
 both key lights and both fill lights, where a ship's part takes one of each pair.
 
 **Improvement:** a bit takes the lights a ship's part takes (`objects.lightMask`), so it is not
-washed out. `--original` restores every light.
+washed out. `--original` restores every light, for the bits and the break-up's pieces alike.
 
 [`explode.zig`](../../src/engine/game/explode.zig) ports the bits as `Explosions.throwBit` and
 `Bit`, and [`aiexplode.zig`](../../src/engine/game/aiexplode.zig) the spin-out's trail. The port
 throws debris only, and leaves a piece out where the game has no model for it.
+
+## Break-up
+
+A blast and a burst break the ship up first (`explode_break_up`, `0x0046C550`). It walks the
+model's hierarchy from the root, each part before the parts hanging from it, and cuts each part in
+four (`model_slice`, `0x0046BF20`).
+
+A cut draws a number of random planes through a frame's origin, each a normal of three numbers
+from -0.5 to 0.5. Each of the part's polygons, in its drawn level of detail, goes to the side of
+each plane that the sum of its corners, turned into the frame, lies on, so two planes give up to
+four sides. Each side that gets any polygons becomes a piece: a mesh of its own, with a corner of
+its own for each corner of its polygons, in the frame's orientation and centred on those corners'
+mean, where the piece stands. It is drawn with the part's object flags. The first cut's frame is
+the ship's own place, so its planes pass through the ship's centre.
+
+| Piece | What it does |
+|---|---|
+| First and fourth | Flies whole, away from the ship's centre at 14 to 24 a step, turning up to 0.02 radians a tick either way about each axis, for 200 to 499 ticks, and trails smoke |
+| Second | Is cut again, through its own centre, in two |
+| Third | Is cut again in four |
+
+A piece of a second cut flies away at 20 a step for each plane that cut it, turning up to that many
+times 0.025 radians a tick for a blast or 0.005 for a burst, for up to 299 ticks for a blast or 300
+to 599 for a burst. Every piece carries on with the ship's velocity, and moves at a quarter of what
+that comes to a tick.
+
+The smoke is a stream of particles that leaves the piece along its own Z axis at 5 to 7 a tick,
+straying up to an eighth either way across it:
+
+| Blast | Burst |
+|---|---|
+| `0x00553358`: 30 to 10 a tick in hundredths, 25 to 75 across, orange to nothing, a second each | `0x00553354`: 60 to 20 a tick in hundredths, 25 to 75 across, pale blue to nothing, five seconds each |
+
+The pieces go into a table of 500 (`0x0055AE88`), the next taking the place of the oldest
+(`debris_add`, `0x00472700`). Each frame, `explosions_update` moves each piece on by its velocity
+times the frame's ticks, turns it by its spin once for each tick, and streams its smoke. Once its
+time is up it goes up in a fireball of the sheet's, 1.2 times its mesh's radius in size, over 60
+ticks, drifting with it, and its smoke stops; 12 ticks later it is gone.
+
+The game makes each piece's polygons plain ones, which turns a strip's odd members inside out. It
+copies each polygon's plane normal unturned and leaves its distance at 0, so the faces show and
+hide by the wrong planes. It leaves the part's baked colours and second texture coordinates
+behind, and it creates the piece's object with a light mask of 0, so every light reaches it.
+
+**Improvement:** the port keeps each polygon's kind, works each piece's planes out from its own
+corners, and carries the baked colours and both sets of texture coordinates, so a piece looks as
+its part did. A piece takes the part's light mask; `--original` restores every light.
+
+[`explode/breakup.zig`](../../src/engine/game/explode/breakup.zig) ports the break-up.
 
 ## Shockwaves
 

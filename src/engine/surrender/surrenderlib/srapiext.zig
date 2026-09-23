@@ -136,7 +136,9 @@ pub const ObjectFlags = packed struct(u32) {
     always_drawn: bool = false,
     /// Not tested against the view, and always clipped (`0x004C5E20`).
     unbounded: bool = false,
-    _unknown_14: bool = false,
+    /// Its mesh is its own, freed with it (`0x004C4D50`): a piece of the break-up's
+    /// (`model_slice`).
+    owns_mesh: bool = false,
     /// Its triangles hide the sun, lessening its visibility (`0x10001FD0`).
     sun_occluder: bool = false,
     geomorph_positions: bool = false,

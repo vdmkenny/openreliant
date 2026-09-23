@@ -205,7 +205,7 @@ pub fn missionFrame(orders: aigeneric.Context, fraction: f32) void {
     frameObjects(orders.world.objects, fraction);
     guns.bulletsFrame(orders.world, orders.clock, fraction);
     if (orders.world.particles) |pool| pool.frame(orders.clock);
-    if (orders.world.explosions) |explosions| explosions.frame(orders.clock);
+    if (orders.world.explosions) |explosions| explosions.frame(orders.world);
     if (orders.world.shockwaves) |waves| waves.frame(orders.world);
 }
 

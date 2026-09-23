@@ -535,10 +535,9 @@ watching where it burst (view `0x1B`), and a halt from behind. `mission_ending` 
 [`explode.zig`](../../src/engine/game/explode.zig) the blasts, and
 [`create.zig`](../../src/engine/game/create.zig) `object_retire` as `retire`.
 
-The blasts' particles, fireballs, burning bits and shockwaves are in [Effects](effects.md). Not
-ported ([#41](https://github.com/vdmkenny/openreliant/issues/41)): the other effects and the
-break-up (`explode_break_up`, `0x0046C550`), which cuts each part's mesh into up to 2ⁿ pieces along random planes through its centre (`model_slice`,
-`0x0046BF20`) and sends every third off as debris with a smoke trail; the other modes; Eject Spin
+The blasts' break-up, particles, fireballs, burning bits and shockwaves are in
+[Effects](effects.md). Not ported: the other effects
+([#41](https://github.com/vdmkenny/openreliant/issues/41)); the other modes; Eject Spin
 and the other ejection orders ([#30](https://github.com/vdmkenny/openreliant/issues/30)); and what
 the end tells the mission, the kill and the radio's lines on it, and the Destroyed event
 ([#37](https://github.com/vdmkenny/openreliant/issues/37)).

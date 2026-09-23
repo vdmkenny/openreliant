@@ -218,7 +218,7 @@ pub const Sky = struct {
             made += 1;
             levels.* = .{.{ .mesh = mesh, .until = std.math.inf(f32) }};
             patch.* = .{
-                .flags = .{ ._unknown_14 = true, .not_culled = true },
+                .flags = .{ .owns_mesh = true, .not_culled = true },
                 .position = @splat(0),
                 .orientation = patch_orientation,
                 .radius = mesh.radius,
