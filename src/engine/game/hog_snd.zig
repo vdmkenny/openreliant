@@ -19,6 +19,7 @@ const wave = @import("../../formats/wave.zig");
 const math = @import("../surrender/math.zig");
 const Vector = math.Vector;
 const mss = @import("../mss.zig");
+const profile = @import("../profile.zig");
 const camera = @import("camera.zig");
 const Clock = @import("main.zig").Clock;
 const sound3d = @import("sound3d.zig");
@@ -132,10 +133,28 @@ pub const Volumes = struct {
     speech: i32 = 127,
 
     pub const section = "Sound";
+    /// The key of `[Sound]` each volume is kept under.
+    pub const keys: std.EnumArray(std.meta.FieldEnum(Volumes), []const u8) = .init(.{
+        .master = "Mastervolume",
+        .effects = "Fxvolume",
+        .music = "Musicvolume",
+        .speech = "Speechvolume",
+    });
+    pub const loudest = 127;
 
     /// The master volume's share, as the game multiplies by it (`0x004DC6B0`, `1 / 127`).
     pub fn masterShare(volumes: Volumes) f32 {
-        return @as(f32, @floatFromInt(volumes.master)) / 127;
+        return @as(f32, @floatFromInt(volumes.master)) / loudest;
+    }
+
+    /// The volumes `settings` keeps, each at most `loudest`, and the defaults for any it lacks.
+    pub fn read(settings: profile.Profile) Volumes {
+        var volumes: Volumes = .{};
+        inline for (comptime std.meta.fieldNames(Volumes)) |name| {
+            const kept = settings.int(section, keys.get(@field(std.meta.FieldEnum(Volumes), name)), @intCast(@field(volumes, name)));
+            @field(volumes, name) = @intCast(@min(kept, loudest));
+        }
+        return volumes;
     }
 };
 
@@ -819,6 +838,13 @@ pub const testing = struct {
 
     pub const sound_file = wave.testing.pcm(&std.mem.toBytes([4]i16{ 16384, 16384, 16384, 16384 }));
 };
+
+test "Volumes.read" {
+    // The file's volumes, within range, and the defaults for any it lacks.
+    const settings: profile.Profile = .{ .text = "[Sound]\nMastervolume=100\nFxvolume=300\n" };
+    try std.testing.expectEqual(Volumes{ .master = 100, .effects = 127, .music = 80, .speech = 127 }, Volumes.read(settings));
+    try std.testing.expectEqual(Volumes{}, Volumes.read(.empty));
+}
 
 test {
     std.testing.refAllDecls(@This());

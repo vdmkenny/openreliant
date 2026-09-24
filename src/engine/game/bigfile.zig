@@ -82,22 +82,7 @@ test Hog {
     defer tmp.cleanup();
 
     // One member, `Ship.SHP`, holding `hello`.
-    const name = "Ship.SHP";
-    const records_at = @sizeOf(hog.Header);
-    const name_at = records_at + @sizeOf(hog.Record);
-    const directory_end = name_at + name.len + 1;
-    var bytes: [directory_end + 5]u8 = undefined;
-    (try layout.viewMut(hog.Header, &bytes)).* = .{
-        .magic = hog.magic.*,
-        .archive_size = .of(bytes.len),
-        .entry_count = .of(1),
-        .data_offset = .of(directory_end),
-    };
-    (try layout.viewMut(hog.Record, bytes[records_at..])).* = .{ .offset = .of(directory_end), .size = .of(5) };
-    @memcpy(bytes[name_at..][0..name.len], name);
-    bytes[directory_end - 1] = 0;
-    @memcpy(bytes[directory_end..], "hello");
-    try tmp.dir.writeFile(io, .{ .sub_path = "resource.hog", .data = &bytes });
+    try testing.write(gpa, io, tmp.dir, resource_name, &.{.{ .name = "Ship.SHP", .data = "hello" }});
 
     var archive: Hog = try .open(gpa, io, tmp.dir, resource_name);
     defer archive.close(gpa);
@@ -105,3 +90,38 @@ test Hog {
     defer gpa.free(contents);
     try std.testing.expectEqualStrings("hello", contents);
 }
+
+pub const testing = struct {
+    pub const Member = struct { name: []const u8, data: []const u8 };
+
+    /// Writes an archive of `members`, stored as they are, to `path` in `dir`: its header, then
+    /// a record and a NUL-terminated name for each member, then their data.
+    pub fn write(gpa: Allocator, io: Io, dir: Io.Dir, path: []const u8, members: []const Member) !void {
+        var data_at: usize = @sizeOf(hog.Header);
+        var data_size: usize = 0;
+        for (members) |member| {
+            data_at += @sizeOf(hog.Record) + member.name.len + 1;
+            data_size += member.data.len;
+        }
+        const bytes = try gpa.alloc(u8, data_at + data_size);
+        defer gpa.free(bytes);
+        (try layout.viewMut(hog.Header, bytes)).* = .{
+            .magic = hog.magic.*,
+            .archive_size = .of(@intCast(bytes.len)),
+            .entry_count = .of(@intCast(members.len)),
+            .data_offset = .of(@intCast(data_at)),
+        };
+        var entry_at: usize = @sizeOf(hog.Header);
+        var datum_at = data_at;
+        for (members) |member| {
+            (try layout.viewMut(hog.Record, bytes[entry_at..])).* = .{ .offset = .of(@intCast(datum_at)), .size = .of(@intCast(member.data.len)) };
+            const name_at = entry_at + @sizeOf(hog.Record);
+            @memcpy(bytes[name_at..][0..member.name.len], member.name);
+            bytes[name_at + member.name.len] = 0;
+            entry_at = name_at + member.name.len + 1;
+            @memcpy(bytes[datum_at..][0..member.data.len], member.data);
+            datum_at += member.data.len;
+        }
+        try dir.writeFile(io, .{ .sub_path = path, .data = bytes });
+    }
+};

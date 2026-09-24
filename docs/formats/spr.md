@@ -48,8 +48,8 @@ being the identity, `00 01 02 ... FF`.
 
 | Offset | Type | Field |
 |---|---|---|
-| `0x00` | u32 | Two 16-bit values. Constant across a file in the ship schematics and unrelated to the bounds elsewhere. **Unknown.** |
-| `0x04` | u32 | **Unknown.** Equal to `(-x1, -y1)` in some shapes only, so not an origin in general. |
+| `0x00` | u16 x2 | What `VFX_shape_bounds` returns: a height in the low half and a width in the high. For the pause menu's shapes, `y2 + 1` and `x2 + 1`; constant across a file in the ship schematics |
+| `0x04` | u16 x2 | What `VFX_shape_origin` returns, down in the low half and across in the high, which the pause menu adds to where it draws a shape: (1, 1) for each of its shapes |
 | `0x08` | i32 x4 | `x1`, `y1`, `x2`, `y2`, inclusive |
 | `0x18` | | The rows |
 

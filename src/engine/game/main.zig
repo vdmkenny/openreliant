@@ -5,8 +5,9 @@
 //!
 //! Ported so far: the clocks and the pacing, how `mission_frame` frames the objects and puts the
 //! scene together and draws it, the damaged ships' smoke (`smoke`), what the mission's start
-//! (`0x004934F0`) fits the player's ship with, and the armour's conditions (`0x00492370`). Not yet:
-//! the rest of the effects and of what it adds to the scene.
+//! (`0x004934F0`) fits the player's ship with, the armour's conditions (`0x00492370`), and the pause
+//! (`game_pause`). Not yet: the rest of the effects and of what it adds to the scene, and
+//! `mission_paused_frame`, which `openreliant`'s loop stands in for.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -30,8 +31,11 @@ const particles = @import("particles.zig");
 const shield = @import("shield.zig");
 const shockwave = @import("shockwave.zig");
 const sparks = @import("sparks.zig");
+const bigfile = @import("bigfile.zig");
 const hog_snd = @import("hog_snd.zig");
 const hud = @import("hud.zig");
+const hudoptions = @import("hudoptions.zig");
+const sound3d = @import("sound3d.zig");
 const matmanager = @import("matmanager.zig");
 const nebula = @import("nebula.zig");
 const objects = @import("objects.zig");
@@ -213,6 +217,57 @@ pub const Frame = struct {
     /// Whether the game is paused, which holds the bubbles' colours still.
     paused: bool = false,
 };
+
+/// What `game_pause` pauses and resumes: the clocks, the voices, and the menu that stands in the
+/// display's place while paused.
+pub const Pausing = struct {
+    gpa: Allocator,
+    clock: *Clock,
+    sound: *hog_snd.Sound,
+    menu: *hudoptions.PauseMenu,
+    /// The archive the menu's fonts come from.
+    archive: bigfile.Hog,
+    /// The options' cockpit setting, and the camera, which resuming switches to view 0, following
+    /// the player's ship's slot, when the setting changed while paused.
+    view_setting: *const camera.CockpitSetting,
+    camera: *camera.Camera,
+    player: *const u16,
+};
+
+/// `game_pause` (`0x00491E20`): pauses or resumes the mission. Pausing, where it isn't paused yet,
+/// sets `paused`, which stops the ticks and the script clock, pauses the 3D voices and the voices,
+/// and opens the menu the display gives its place to. Resuming undoes it, and switches to view 0
+/// if the cockpit setting changed in the meantime. The music plays on through the pause. Pausing
+/// keeps the cockpit setting, even while already paused.
+///
+/// Not ported, as what they serve isn't: the chat line and the typed keys it empties, the speech
+/// sample it stops, the frame timing it holds, the pause it sends the other players, the paused
+/// frame's clock (`paused_clock`), the renderer's `sr + 0x78`, the window it restores, and
+/// `0x005DD524`. The radar's backing, which it shows again, the sandbox leaves out while paused.
+pub fn pause(pausing: Pausing, on: bool) !void {
+    const clock = pausing.clock;
+    const sound = pausing.sound;
+    const menu = pausing.menu;
+    if (on) {
+        if (!clock.paused) {
+            clock.paused = true;
+            sound3d.pause(sound, true);
+            sound.pauseAll();
+            try menu.open(pausing.gpa, pausing.archive);
+        }
+        menu.view_setting = pausing.view_setting.*;
+        return;
+    }
+    if (clock.paused) {
+        clock.paused = false;
+        sound3d.pause(sound, false);
+        sound.resumeAll();
+        menu.close();
+        if (menu.view_setting != pausing.view_setting.*) {
+            _ = pausing.camera.setView(.cockpit, pausing.player.*, false, true, @intCast(@max(clock.mission_ticks, 0)));
+        }
+    }
+}
 
 /// `mission_frame` (`0x004924B0`), as far as the objects go: every object's orders, which fly the
 /// ships and read the player's controls, then the frames they are drawn at, then the shots in

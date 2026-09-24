@@ -26,6 +26,12 @@ pub const Event = union(enum) {
     controllers,
     /// The window became the active one, or stopped being it (`WM_ACTIVATEAPP`).
     active: bool,
+    /// The pointer moved over the window, to a place given as fractions of its size.
+    pointer: [2]f32,
+    /// A mouse button went down or up: the left or the right one, which the game reads.
+    button: struct { which: Button, down: bool },
+
+    pub const Button = enum { left, right };
 };
 
 pub const Window = struct {
@@ -87,10 +93,31 @@ pub const Window = struct {
                 c.SDL_EVENT_JOYSTICK_ADDED, c.SDL_EVENT_JOYSTICK_REMOVED => return .controllers,
                 c.SDL_EVENT_WINDOW_FOCUS_GAINED => return .{ .active = true },
                 c.SDL_EVENT_WINDOW_FOCUS_LOST => return .{ .active = false },
+                c.SDL_EVENT_MOUSE_MOTION => {
+                    const points = window.size();
+                    return .{ .pointer = .{
+                        event.motion.x / @as(f32, @floatFromInt(points[0])),
+                        event.motion.y / @as(f32, @floatFromInt(points[1])),
+                    } };
+                },
+                c.SDL_EVENT_MOUSE_BUTTON_DOWN, c.SDL_EVENT_MOUSE_BUTTON_UP => {
+                    const which: Event.Button = switch (event.button.button) {
+                        c.SDL_BUTTON_LEFT => .left,
+                        c.SDL_BUTTON_RIGHT => .right,
+                        else => continue,
+                    };
+                    return .{ .button = .{ .which = which, .down = event.button.down } };
+                },
                 else => {},
             }
         }
         return null;
+    }
+
+    /// Shows the system's pointer over the window, or hides it where the game draws its own.
+    pub fn showPointer(window: Window, shown: bool) void {
+        _ = window;
+        _ = if (shown) c.SDL_ShowCursor() else c.SDL_HideCursor();
     }
 
     /// Puts a frame drawn in memory, rows of red, green, blue and alpha from the top, on the screen,

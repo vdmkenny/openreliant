@@ -465,11 +465,30 @@ pub const gamepad_buttons = [_]struct { controls.Action, GamepadButton }{
     .{ .radar_ranges, .back },
 };
 
-/// The input state the game keeps in globals: the keyboard and joystick states, the bindings and
-/// the input settings. Not yet ported: the mouse.
+/// The mouse as the platform last reported it, in place of DirectInput's mouse: where the pointer
+/// is over the window, as fractions of its size, and which buttons are down. The pause menu reads
+/// it (`menu_mouse_update`); steering by the mouse is not yet ported (#115).
+pub const Mouse = struct {
+    /// Null until the pointer has been over the window.
+    at: ?[2]f32 = null,
+    buttons: Buttons = .{},
+
+    pub const Buttons = packed struct(u2) {
+        left: bool = false,
+        right: bool = false,
+
+        pub fn any(buttons: Buttons) bool {
+            return buttons.left or buttons.right;
+        }
+    };
+};
+
+/// The input state the game keeps in globals: the keyboard, joystick and mouse states, the
+/// bindings and the input settings.
 pub const Devices = struct {
     keyboard: Keyboard = .{},
     joystick: Joystick = .{},
+    mouse: Mouse = .{},
     bindings: Bindings = defaultBindings(.joystick),
     settings: Settings = .{},
 

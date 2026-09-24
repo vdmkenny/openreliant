@@ -133,8 +133,11 @@ renders it and the master bus passes it through. Where OpenAL Soft cannot start,
 plays instead; where no device opens, the game runs silent.
 
 As the window goes inactive, the message pump's part in
-[`game/winmain.zig`](../../src/engine/game/winmain.zig) pauses the music, the 3D voices, the voices
-and the clock, and the frame's sound waits, until the window is active again ([Sound](../engine/sound.md#start-up)).
+[`game/winmain.zig`](../../src/engine/game/winmain.zig) pauses the music, and the game pauses into
+its [pause menu](../engine/pause-menu.md), which pauses the 3D voices, the voices and the clock.
+Active again, the music goes on; the rest waits for the menu's CONTINUE ([Sound](../engine/sound.md#start-up)).
+**Improvement:** the game pauses the mission for the window only in multiplayer, and in single
+player lets the timer's ticks pile up while the window is away.
 
 `openreliant` sets the sound up as `WinMain` does, with 10 voices, the volumes of `[Sound]` in
 `starlancer.ini`, `bank_stdsmp` and `smp3d.fat`, and runs the frame's sound once the camera is
