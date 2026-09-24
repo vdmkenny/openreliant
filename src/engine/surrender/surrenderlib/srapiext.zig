@@ -319,6 +319,45 @@ pub const Mesh = struct {
         }
     }
 
+    /// `mesh_copy` (`0x004C4710`): a copy with arrays of its own, in `gpa`. With `flagged` the copy
+    /// has flags for each polygon, cleared, even where the mesh has none.
+    pub fn copy(mesh: Mesh, gpa: Allocator, flagged: bool) Allocator.Error!Mesh {
+        var out: Mesh = .{
+            .positions = &.{},
+            .normals = &.{},
+            .polygons = &.{},
+            .indices = &.{},
+            .uv = .{ null, null },
+            .planes = &.{},
+            .biases = &.{},
+            .surfaces = &.{},
+            .bounds = mesh.bounds,
+            .radius = mesh.radius,
+        };
+        errdefer out.deinit(gpa);
+        out.positions = try gpa.dupe(Vector, mesh.positions);
+        out.normals = try gpa.dupe(Vector, mesh.normals);
+        if (mesh.morph_positions) |m| out.morph_positions = try gpa.dupe(Vector, m);
+        if (mesh.morph_normals) |m| out.morph_normals = try gpa.dupe(Vector, m);
+        if (mesh.baked) |b| out.baked = try gpa.dupe([4]f32, b);
+        out.polygons = try gpa.dupe(Polygon, mesh.polygons);
+        out.indices = try gpa.dupe(u16, mesh.indices);
+        if (mesh.uv[0]) |u| out.uv[0] = try gpa.dupe([2]f32, u);
+        // A light-mapped part's second coordinates are its first, and stay so.
+        if (mesh.uv[1]) |u| out.uv[1] = if (mesh.uv[0] != null and u.ptr == mesh.uv[0].?.ptr) out.uv[0] else try gpa.dupe([2]f32, u);
+        out.planes = try gpa.dupe(Plane, mesh.planes);
+        if (mesh.face_flags) |f| {
+            out.face_flags = try gpa.dupe(shp.Face.Flags, f);
+        } else if (flagged) {
+            const cleared = try gpa.alloc(shp.Face.Flags, mesh.polygons.len);
+            @memset(cleared, .{});
+            out.face_flags = cleared;
+        }
+        out.biases = try gpa.dupe(f32, mesh.biases);
+        out.surfaces = try gpa.dupe(Surface, mesh.surfaces);
+        return out;
+    }
+
     /// Frees what `gpa` allocated for it.
     pub fn deinit(mesh: Mesh, gpa: Allocator) void {
         gpa.free(mesh.positions);
@@ -471,6 +510,30 @@ test "Mesh.create" {
     mesh.numberPolygons(4);
     try std.testing.expectEqual(4, mesh.polygons[1].first);
     try std.testing.expectEqual(4, mesh.polygons[1].count);
+}
+
+test "Mesh.copy" {
+    const gpa = std.testing.allocator;
+    var mesh: Mesh = try .create(gpa, .{ .polygons = 2, .vertices = 4, .indices = 6 });
+    defer mesh.deinit(gpa);
+    const uv = try mesh.addCoordinates(gpa);
+    mesh.uv[1] = uv;
+    mesh.positions[2] = .{ 1, 2, 3 };
+
+    // Every array its own, but a light map's coordinates still the first pass's.
+    var copied = try mesh.copy(gpa, true);
+    defer copied.deinit(gpa);
+    try std.testing.expectEqual(@as(Vector, .{ 1, 2, 3 }), copied.positions[2]);
+    try std.testing.expect(copied.positions.ptr != mesh.positions.ptr);
+    try std.testing.expect(copied.uv[0].?.ptr != uv.ptr);
+    try std.testing.expectEqual(copied.uv[0].?.ptr, copied.uv[1].?.ptr);
+    // Flags for its polygons, where the mesh has none.
+    try std.testing.expectEqual(null, mesh.face_flags);
+    try std.testing.expectEqual(2, copied.face_flags.?.len);
+
+    // Where it fails part way, it leaves nothing behind.
+    var failing: std.testing.FailingAllocator = .init(gpa, .{ .fail_index = 5 });
+    try std.testing.expectError(error.OutOfMemory, mesh.copy(failing.allocator(), true));
 }
 
 test {

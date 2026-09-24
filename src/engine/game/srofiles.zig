@@ -3,6 +3,7 @@
 //! and material a surface of its own; `look` is its rule.
 
 const std = @import("std");
+const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
 const Pointer = @import("../../engine.zig").Pointer;
@@ -218,29 +219,21 @@ pub fn build(
         if (part_flags.geomorph_positions) flags.geomorph_positions = true;
     }
 
-    // Polygons and indices, as the faces will make them.
+    // Polygons and indices, as the faces will make them. A wire face counts one polygon more than
+    // it makes.
     var polygon_count: usize = 0;
     var index_count: usize = 0;
     var any_face_flags = false;
     {
-        var f: usize = 0;
-        while (f < faces.len) : (f += 1) {
-            const face = faces[f];
+        var walk: Polygons = .{ .faces = faces };
+        while (walk.next()) |step| {
+            const face = faces[step.face];
             const mode = @intFromEnum(face.shading.mode);
             if ((mode == 7 or mode == 8) and settings.light_maps) flags.normals_second = true;
             if (face.flags.cap or face.flags.two_sided) any_face_flags = true;
-            if (face.shading.mode == .wire) {
-                for (0..3) |edge| if (edgeDrawn(face, edge)) {
-                    polygon_count += 1;
-                    index_count += 2;
-                };
-            } else if (fanMerges(faces, f)) {
-                index_count += face.remaining + 3;
-                f += face.remaining;
-            } else {
-                index_count += 3;
-            }
-            polygon_count += 1;
+            const wire = face.shading.mode == .wire;
+            polygon_count += step.count + @intFromBool(wire);
+            index_count += if (wire) 2 * step.count else 3 + step.extra;
         }
     }
 
@@ -307,8 +300,10 @@ pub fn build(
     var polygon: usize = 0;
     var index: usize = 0;
     var last: ?struct { shading: u8, material: u32 } = null;
-    var f: usize = 0;
-    while (f < faces.len) : (f += 1) {
+    var walk: Polygons = .{ .faces = faces };
+    while (walk.next()) |step| {
+        assert(step.polygon == polygon);
+        const f = step.face;
         const face = faces[f];
         const shading: u8 = @truncate(@as(u32, @bitCast(face.shading)));
         if (last == null or last.?.shading != shading or last.?.material != face.material) {
@@ -338,9 +333,8 @@ pub fn build(
             }
             continue;
         }
-        const merged = fanMerges(faces, f);
-        const extra: u32 = if (merged) face.remaining else 0;
-        polygons[polygon] = if (merged)
+        const extra = step.extra;
+        polygons[polygon] = if (step.merged)
             .{ .kind = .triangle, .continues = 0, .first = @truncate(index), .count = @truncate(extra + 3) }
         else
             .{ .kind = @enumFromInt(@as(u16, @truncate(@intFromEnum(face.polygon)))), .continues = @truncate(face.remaining), .first = @truncate(index), .count = 3 };
@@ -355,11 +349,10 @@ pub fn build(
         }
         if (face_flags) |all| all[polygon] = faceFlags(face);
         biases[polygon] = bias;
-        if (merged and level == 0) renumber(face_lists, @intCast(polygon), extra);
+        if (step.merged and level == 0) renumber(face_lists, @intCast(polygon), extra);
         current.polygons += 1;
         polygon += 1;
         index += 3 + extra;
-        f += extra;
     }
 
     var mesh: srapiext.Mesh = .{
@@ -580,6 +573,47 @@ fn edgeDrawn(face: shp.Face, edge: usize) bool {
     return face.edge_mask & (@as(u32, 1) << @intCast(edge)) == 0;
 }
 
+/// The polygons `build` makes of a level's faces, face by face: a wire face makes one for each
+/// edge it draws, a fan that merges (`fanMerges`) one for all its records, and any other face one.
+pub const Polygons = struct {
+    faces: []const shp.Face,
+    face: usize = 0,
+    polygon: usize = 0,
+
+    pub const Step = struct {
+        /// The face, whether it merges with the records after it, and how many it takes in.
+        face: usize,
+        merged: bool,
+        extra: u32,
+        /// The first polygon it makes, and how many it makes.
+        polygon: usize,
+        count: usize,
+    };
+
+    pub fn next(walk: *Polygons) ?Step {
+        if (walk.face >= walk.faces.len) return null;
+        const face = walk.faces[walk.face];
+        const wire = face.shading.mode == .wire;
+        const merged = !wire and fanMerges(walk.faces, walk.face);
+        // A wire face draws each edge its mask's low three bits leave unset (`edgeDrawn`).
+        const count: usize = if (wire) @popCount(~face.edge_mask & 0b111) else 1;
+        const step: Step = .{ .face = walk.face, .merged = merged, .extra = if (merged) face.remaining else 0, .polygon = walk.polygon, .count = count };
+        walk.face += 1 + step.extra;
+        walk.polygon += count;
+        return step;
+    }
+};
+
+/// The polygon that face `face` of a level's `faces` goes into (`Polygons`), or null past the last
+/// face or for a wire face that draws no edge. A wire face goes into the first of its polygons.
+pub fn polygonOf(faces: []const shp.Face, face: usize) ?usize {
+    var walk: Polygons = .{ .faces = faces };
+    while (walk.next()) |step| {
+        if (face <= step.face + step.extra) return if (step.count > 0) step.polygon else null;
+    }
+    return null;
+}
+
 /// The cap and two-sided flags, all a polygon keeps of its face's.
 fn faceFlags(face: shp.Face) shp.Face.Flags {
     return .{ .cap = face.flags.cap, .two_sided = face.flags.two_sided };
@@ -762,6 +796,10 @@ test "build: surfaces, planes and a wire face's edges" {
     try std.testing.expectEqual(srapiext.Polygon{ .kind = .lines, .continues = 0, .first = 6, .count = 2 }, mesh.polygons[2]);
     try std.testing.expectEqualSlices(u16, &.{ 0, 2, 1, 0, 3, 2, 0, 1, 2, 0 }, mesh.indices);
     try std.testing.expectEqual(0, mesh.polygons[4].count);
+    // The wire face goes into the first of its lines; one that draws no edge, into none.
+    try std.testing.expectEqual(2, polygonOf(&faces, 2));
+    faces[2].edge_mask = 0b111;
+    try std.testing.expectEqual(null, polygonOf(&faces, 2));
 
     // The triangles face -Z; the lines keep their face's plane, which faces +Z.
     try std.testing.expectEqual(@as(Vector, .{ 0, 0, -1 }), mesh.planes[0].normal);
@@ -795,6 +833,9 @@ test "build: fans merge when flat, and the part's face lists follow" {
     try std.testing.expectEqual(srapiext.Polygon{ .kind = .triangle, .continues = 0, .first = 0, .count = 5 }, merged.polygons[0]);
     try std.testing.expectEqualSlices(u16, &.{ 0, 1, 2, 3, 4, 0, 1, 4 }, merged.indices[0..8]);
     try std.testing.expectEqualSlices(u32, &.{ 0, 0, 0, 1 }, &nodes);
+    // Each of the fan's records goes into its one polygon.
+    for ([_]usize{ 0, 0, 0, 1 }, 0..) |expected, face| try std.testing.expectEqual(expected, polygonOf(&faces, face));
+    try std.testing.expectEqual(null, polygonOf(&faces, 4));
 
     // A record turned by more than the tolerance, here about 5.7 degrees, keeps the fan's records
     // apart.

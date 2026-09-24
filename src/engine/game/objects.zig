@@ -26,6 +26,7 @@ const Clock = @import("main.zig").Clock;
 const aigeneric = @import("aigeneric.zig");
 const explode = @import("explode.zig");
 const sound3d = @import("sound3d.zig");
+const shield = @import("shield.zig");
 const Vector = math.Vector;
 
 /// A node of an object's model hierarchy (`objects.cpp`), allocated at `0x004991D0`: the object's
@@ -40,8 +41,9 @@ pub const Node = extern struct {
     /// `orientation`.
     frame: Pointer(Frame),
     _unknown_0c: u32,
-    /// **Unknown.** -1 when allocated.
-    _unknown_10: i32,
+    /// The capital shield showing on it, a slot of `capshields` (`capshield_create`); -1 for none,
+    /// as allocated.
+    capshield: i32,
     /// Relative to the node it hangs from: a part's origin in its parent part. An object's root
     /// holds the object's place in the world.
     position: shp.Vec3,
@@ -282,6 +284,15 @@ pub const PartRef = struct {
     pub fn rootBox(ref: PartRef) ?Box {
         const found = ref.data() orelse return null;
         return if (found.nodes.len > 0) .ofNode(found.nodes[0]) else null;
+    }
+
+    /// The polygon of its part's finest mesh that face `face` of its record goes into
+    /// (`srofiles.polygonOf`); the face's own number for a model with no file behind it. The game's
+    /// collision trees list the polygons themselves (`mesh_build`).
+    pub fn polygon(ref: PartRef, face: usize) ?usize {
+        const found = ref.data() orelse return face;
+        if (found.meshes.len == 0) return null;
+        return srofiles.polygonOf(found.meshes[0].faces, face);
     }
 
     /// Its part's record where it has a collision tree over a mesh to test.
@@ -1071,6 +1082,11 @@ pub const Model = struct {
         turret_slot: i32 = -1,
         /// Its node's `turret` flag: the base of a turret, which the turret fits mark.
         turret: bool = false,
+        /// Its part's name holds `FORCEFIELD` (`shield.isForceField`): the field round a capital
+        /// ship, which glows whole where it is struck and goes dark as the ship is lost.
+        force_field: bool = false,
+        /// Its node's `capshield`: the capital shield showing on it.
+        capshield: ?shield.CapitalSlot = null,
         /// The part its node hangs from (`object_link_part`), or null for one hanging from the
         /// root. A part names its parent by index, or -1 for none.
         parent: ?usize,
@@ -1278,6 +1294,7 @@ pub const Model = struct {
                 .turret_kind = source.part.turret_kind,
                 .turret_slot = source.part.turret_slot,
                 .link_id = source.part.link_id,
+                .force_field = shield.isForceField(source.part.name()),
                 .parent = parentOf(model, index),
                 .origin = @splat(0),
                 .object = .{
@@ -1710,6 +1727,16 @@ pub const Model = struct {
     /// hold.
     pub fn carried(model: Model) Carried {
         return .{ .mounts = model.mounts, .hung = model.hung };
+    }
+
+    /// Whether `other` is this model or one it carries, however deep.
+    pub fn holds(model: *const Model, other: *const Model) bool {
+        if (model == other) return true;
+        var each = model.carried();
+        while (each.next()) |mount| {
+            if (mount.model.holds(other)) return true;
+        }
+        return false;
     }
 
     /// The parts of assembly `link`, those whose part records share the link id, in part order,

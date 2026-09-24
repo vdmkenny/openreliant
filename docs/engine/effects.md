@@ -433,7 +433,7 @@ in four and dark on the rest, and its hits wait.
 **Improvements:** the sparks fly out from the ship's centre through the point struck, where the
 game takes the point itself as their direction, so they fly toward the world's origin; and a
 bubble past the last level's reach is left out, where the game stops the pass there, leaving out
-the bubbles in the slots after it. The port moves a bubble's colours on as it goes into the scene
+the bubbles in the slots after it and the capital shields. The port moves a bubble's colours on as it goes into the scene
 rather than as the renderer draws it, so one out of view still fades.
 
 **Improvement:** by default a bubble is drawn smooth; `--original` draws it as the game does. A
@@ -451,9 +451,42 @@ triangles.
 [`shield.zig`](../../src/engine/game/shield.zig) ports the bubbles, and
 [`guns.zig`](../../src/engine/game/guns.zig) and
 [`collision.zig`](../../src/engine/game/collision.zig) the shots and knocks that flare them. Not
-ported: a cloaked ship's shimmer where it is struck ([#89](https://github.com/vdmkenny/openreliant/issues/89)); and
-the shields of ships that list components, which flare on the part struck, with their force
-fields ([#179](https://github.com/vdmkenny/openreliant/issues/179)).
+ported: a cloaked ship's shimmer where it is struck ([#89](https://github.com/vdmkenny/openreliant/issues/89)).
+
+### Capital shields
+
+A ship that lists components has no bubble. When a shot or a missile strikes one of its components, and the ship has a shield generator and isn't exploding, the part struck glows round the hit instead (`node_add_effect`, `0x004992D0`, kind 3). A shot on a component of an asteroid, a turret asteroid or an asteroid hole leaves kind 5, which never glows. A force field, a part whose name holds `FORCEFIELD` in any case (`part_is_force_field`, `0x0049FC70`), glows whole when a shot or a knock strikes it, shield generator or not.
+
+Up to 50 glow at once (`capshields`, `0x0058FB70`, 0x3C bytes each). `capshield_flare` (`0x0049F4A0`) does nothing on an object whose `invulnerable` is 5, or on a force field of an object that is exploding. A part already glowing shows for 200 more ticks. Otherwise `capshield_create` (`0x0049F790`) takes the next slot in turn (`capshield_next`, `0x00593728`), letting go of whatever shows there:
+
+- It copies the part's finest mesh (`mesh_copy`, `0x004C4710`) and clears every polygon's `cap` flag, so all of them draw.
+- Every surface becomes a single pass, lit and added to what is behind it, over `shield128`, or `ffield` for a force field.
+- The copy stands where the part does and shows for 200 ticks. It keeps eight hits, each a strength for every vertex.
+
+Each hit takes the next of the eight:
+
+- On a force field, every vertex gets 1.
+- On any other part, each vertex within reach of the middle of the polygon struck gets twice its distance over the reach, and the rest get nothing. The reach is 0.3 of the way across the part's bounds, at most 8000. The glow spreads out from the middle of the polygon as it fades.
+- A polygon whose corners are all dark is marked `cap`, so it isn't drawn.
+
+Once a frame after the bubbles, `capshields_draw` (`0x0049F950`) lets go of each whose time is up and draws the rest where their parts stand:
+
+- Each vertex's hits fade by 0.025 a tick. Its colour is the sum of their colours through the friendly ramp, three times as bright, each channel held to 1.
+- A part's texture swirls, each coordinate turning about (0.5, 0.5) by 0.001 a tick over the square of how far it is from there.
+- A force field's coordinates are thrown anywhere at random every frame, and its green is added to its blue.
+
+The game hands `capshield_create` the object's side but never stores it, so every capital shield glows in the friendly ramp. When a capital ship loses its hull, `force_field_mark` (`0x0049FCD0`) hides its force fields ([Splits](#splits)).
+
+**Fixes:**
+
+- When the game finds a part already glowing, it makes that slot the next one in turn, so the next part struck replaces the glow struck last while other slots are free. The port leaves the next slot where it was.
+- The game marks the polygons the latest hit leaves dark and never draws them again, so a part struck again elsewhere loses the glow of its earlier hits. The port marks the polygons every hit leaves dark, each time the part is struck.
+
+**Improvement:** the swirl's sine and cosine come from `std.math` rather than the engine's tables.
+
+The game finds a part's glow by looking through every slot, and lets it go with the part's node (`0x00499CF0`). The port reads the slot the part's node names, and lets a glow go once the draw finds its part gone. The port's collision trees keep the file's face numbers, so a hit finds the polygon it struck through the faces' fans (`srofiles.polygonOf`); the game renumbers the trees to the polygons as it builds the mesh.
+
+[`shield.zig`](../../src/engine/game/shield.zig) ports the capital shields, and [`shieldfx.zig`](../../src/engine/game/shieldfx.zig) the hits that make them glow.
 
 ## Sparks
 
@@ -498,14 +531,14 @@ What a hit leaves where it struck (`shieldfx_create`, `0x004A0310`), which `node
 (`0x004992D0`) hangs from the part struck as a node of kind 6, is its sound
 ([Sound](sound.md#where-the-sounds-come-from)) and, for a shot through to a hull, an emitter of an
 orange template (`shieldfx_init`, `0x0049FD20`) on the part's surface nearest the point
-(`mesh_nearest_surface`, `0x0049FEF0`), facing out from it. A shot on a component leaves a burst of
-20 of the same template's particles. Nothing sends the hull's emitter's particles out: `node_draw`
+(`mesh_nearest_surface`, `0x0049FEF0`), facing out from it. A shot or a missile on a component leaves a burst of
+20 of the same template's particles, or, on a ship with a shield generator, its capital shield's glow ([Capital shields](#capital-shields)). Nothing sends the hull's emitter's particles out: `node_draw`
 updates a node of kind 6 through `0x00458AB0`, the one routine the build keeps of every routine that
 only returns 1, so it shows nothing. [`shieldfx.zig`](../../src/engine/game/shieldfx.zig) ports the
 sound.
 
 [`sparks.zig`](../../src/engine/game/sparks.zig) ports the sparks,
 [`guns.zig`](../../src/engine/game/guns.zig) the hull's, and [`shield.zig`](../../src/engine/game/shield.zig)
-a shield's ([Shields](#shields)). Not ported: the other callers, a shot striking a component
+a shield's ([Shields](#shields)). Not ported: the other callers, the burst a shot leaves on a component
 ([#40](https://github.com/vdmkenny/openreliant/issues/40)), and `0x004B02A0`
 ([#41](https://github.com/vdmkenny/openreliant/issues/41)).

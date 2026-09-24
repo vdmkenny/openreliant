@@ -188,7 +188,8 @@ against every object of type below 256 that collides, but its launcher, of any s
   ([`object_hit_test`](objects.md#the-hit-tests) with `missile_hull_test`, `0x004959A0`):
   within the boxes the segment meets, each face the segment starts in front of, no further off
   than it is long, is tested, and the last face crossed counts. But for a Havoc or an Imp, the part
-  struck takes the type's component damage.
+  struck glows where its ship has a shield generator
+  ([Capital shields](effects.md#capital-shields)), and takes the type's component damage.
 - Any other: whether the segment passes within its radius. A Havoc or an Imp just ends there.
   Otherwise, where it first meets the sphere, the quadrant (`0x00463CA0`):
   - With the quadrant's shield below 0, or `invulnerable` at 4: `missile_hit_hull` (`0x00495BB0`).

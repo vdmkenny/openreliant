@@ -2,9 +2,8 @@
 //! ripples out from where a shot or a knock struck them. **Unverified:** the bubble's meshes and
 //! colours (`0x0049E370` to `0x0049EF60`) lie before this file's path, after the 3D sounds' code.
 //!
-//! Not ported: the shields of a ship that lists components, which flare on the part struck, and
-//! its force fields (`0x0049F4A0` to `0x0049FCD0`)
-//! ([#179](https://github.com/vdmkenny/openreliant/issues/179)).
+//! A ship that lists components has no bubble: the part struck glows round the hit instead, and
+//! its force fields glow whole (`Capital`, `0x0049F4A0` to `0x0049FCD0`).
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -21,6 +20,7 @@ const Objects = @import("create.zig").Objects;
 const Detail = @import("explode.zig").Detail;
 const gameobj = @import("gameobj.zig");
 const matmanager = @import("matmanager.zig");
+const objects = @import("objects.zig");
 const sparks = @import("sparks.zig");
 const xtrabits = @import("xtrabits.zig");
 
@@ -202,8 +202,9 @@ fn rampAt(ramp: *const Ramp, strength: f32) Colour {
 /// A bubble's size over its ship's radius (`0x004DC7C4`).
 const bubble_scale: f32 = 1.1;
 
-/// How many hits a bubble keeps, the next taking the place of the oldest.
+/// How many hits a bubble or a capital shield keeps, the next taking the place of the oldest.
 const hit_slots = 8;
+const HitSlot = std.math.IntFittingRange(0, hit_slots - 1);
 
 /// What a hit leaves at a vertex: half at the point struck, one more for each 1.2 radians off it,
 /// out to `hit_reach` (`0x004DC9E0`) and no more than `max_strength` (`0x004DC480`). A vertex
@@ -226,6 +227,16 @@ fn strengthAt(angle: f32) ?f32 {
 /// past one; the port holds it to one.
 fn angleBetween(a: Vector, b: Vector) f32 {
     return std.math.acos(std.math.clamp(math.dot(a, b) / (math.length(a) * math.length(b)), -1, 1));
+}
+
+/// A vertex's hits faded by `ticks`, none below nothing, and the sum of what they show in `ramp`.
+fn fadeHits(hits: *[hit_slots]f32, ramp: *const Ramp, ticks: f32) Colour {
+    var sum: Colour = @splat(0);
+    for (hits) |*strength| {
+        strength.* = @max(strength.* - ticks * fade_per_tick, 0);
+        sum += rampAt(ramp, strength.*);
+    }
+    return sum;
 }
 
 /// A vertex's colour from the sum of what its hits show, each channel held to one.
@@ -263,6 +274,8 @@ pub const Shields = struct {
     /// as a force field is (`0x0059372C`).
     texture: *srtexture.Image,
     field: *srtexture.Image,
+    /// The capital ships' shields, made in `gpa`.
+    capital: Capital,
 
     /// `0x0049EF10`: the textures, each tint's ramp, and the levels' spheres (`0x0049EE90`), at the
     /// options' detail, in `style`. The ramps are grey without a hardware renderer.
@@ -283,12 +296,14 @@ pub const Shields = struct {
             .reaches = reaches.get(detail),
             .texture = texture,
             .field = field,
+            .capital = .{ .gpa = gpa },
         };
     }
 
     /// `0x0049EF60`: the meshes let go.
     pub fn deinit(shields: *Shields, gpa: Allocator) void {
         for (shields.meshes) |mesh| mesh.deinit(gpa);
+        shields.capital.deinit();
     }
 
     /// The level of detail for a bubble `distance` from the camera, or null past the last: in the
@@ -323,8 +338,10 @@ pub const Shields = struct {
     /// camera gives, save the player's while the camera is in its cockpit. Each bubble's colours and
     /// texture move on by the ticks since they last did (`0x0049F450`, `shield_bubble_update`).
     ///
+    /// Then the capital shields (`Capital.draw`).
+    ///
     /// **Improvement:** a bubble past the last level's reach is left out; the game stops the pass
-    /// there, leaving out every bubble in the slots after it.
+    /// there, leaving out every bubble in the slots after it and the capital shields.
     ///
     /// The game moves a bubble's colours on as the renderer draws it; the port as it goes into the
     /// scene, so one out of view still fades. In the smooth style each bubble's colours and texture
@@ -370,6 +387,7 @@ pub const Shields = struct {
             bubble.object.orientation = slot.drawn.orientation;
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &bubble.object }, .world);
         }
+        try shields.capital.draw(shields, gpa, scene, all, look);
     }
 };
 
@@ -474,7 +492,7 @@ pub const Bubble = struct {
         };
         const lit = numbers.rand() % flicker_odds == 0;
         for (colours) |*colour| {
-            const grey = @as(f32, @floatFromInt(numbers.rand())) / std.math.maxInt(u15);
+            const grey = numbers.fraction();
             colour.* = if (lit) .{ grey, grey, grey, 0 } else @splat(0);
         }
         return true;
@@ -492,8 +510,8 @@ pub const Kept = struct {
     centre: [2]f32 = start_centre,
     /// What each of its last hits leaves at each vertex (`+0x18`), and which the next takes
     /// (`+0x38`).
-    strengths: [hit_slots][max_vertices]f32 = @splat(@splat(0)),
-    next: std.math.IntFittingRange(0, hit_slots - 1) = 0,
+    strengths: [max_vertices][hit_slots]f32 = @splat(@splat(0)),
+    next: HitSlot = 0,
     /// The level of detail it is drawn at (`+0x3C`).
     level: usize = 0,
     /// Each vertex's texture coordinates, from where the finest level's vertex stands across the
@@ -522,10 +540,9 @@ pub const Kept = struct {
     /// each vertex of `mesh` lies.
     fn strike(kept: *Kept, mesh: *const srapiext.Mesh, place: math.Place, scale: f32, centre: Vector, at: Vector) void {
         const toward = at - centre;
-        const strengths = kept.strengths[kept.next][0..mesh.positions.len];
-        for (mesh.positions, strengths) |position, *strength| {
+        for (mesh.positions, kept.strengths[0..mesh.positions.len]) |position, *hits| {
             const out = math.transform(place.orientation, position * @as(Vector, @splat(scale))) + place.position - centre;
-            strength.* = strengthAt(angleBetween(toward, out)) orelse continue;
+            hits[kept.next] = strengthAt(angleBetween(toward, out)) orelse continue;
         }
         kept.next +%= 1;
     }
@@ -533,14 +550,7 @@ pub const Kept = struct {
     /// The colours part of `0x0049E7D0`: each of the first `vertices` colours the sum of what its
     /// hits' strengths, faded by `ticks`, show in `ramp`.
     fn fade(kept: *Kept, ramp: *const Ramp, vertices: usize, ticks: f32) void {
-        for (kept.colours[0..vertices], 0..) |*colour, vertex| {
-            var sum: Colour = @splat(0);
-            for (&kept.strengths) |*strengths| {
-                strengths[vertex] = @max(strengths[vertex] - ticks * fade_per_tick, 0);
-                sum += rampAt(ramp, strengths[vertex]);
-            }
-            colour.* = vertexColour(sum);
-        }
+        for (kept.colours[0..vertices], kept.strengths[0..vertices]) |*colour, *hits| colour.* = vertexColour(fadeHits(hits, ramp, ticks));
     }
 
     /// The texture part of `0x0049E7D0`: each of the first `vertices` coordinates turned about
@@ -596,10 +606,7 @@ pub const Recent = struct {
         recent.born = born;
         const age = now - born;
         const centre = turned(start_centre, age * centre_turn_per_tick);
-        for (mesh.positions, uv) |position, *coordinates| {
-            const off = swirled(.{ position[0], position[1] }, centre, age * swirl_per_tick);
-            coordinates.* = .{ off[0] + centre[0], off[1] + centre[1] };
-        }
+        for (mesh.positions, uv) |position, *coordinates| coordinates.* = swirledAbout(.{ position[0], position[1] }, centre, age * swirl_per_tick);
     }
 };
 
@@ -610,6 +617,12 @@ fn swirled(point: [2]f32, centre: [2]f32, amount: f32) [2]f32 {
     const off = [2]f32{ point[0] - centre[0], point[1] - centre[1] };
     const reach = off[0] * off[0] + off[1] * off[1];
     return turned(off, if (reach > 0) amount / reach else 0);
+}
+
+/// `point` swirled about `centre` (`swirled`), where it stands.
+fn swirledAbout(point: [2]f32, centre: [2]f32, amount: f32) [2]f32 {
+    const off = swirled(point, centre, amount);
+    return .{ off[0] + centre[0], off[1] + centre[1] };
 }
 
 /// `point` turned by `angle` about the origin.
@@ -650,6 +663,307 @@ pub fn flare(world: gameobj.World, index: u16, at: Vector) void {
     const shared = world.shields orelse return;
     // The game makes a bubble's hits with the bubble; where the port can't, it shows nothing.
     bubble.strike(world.objects.gpa, shared, slot.drawn, gameobj.vector(object.root.position), at, world.clock.frame_start) catch {};
+}
+
+// --- The capital ships' shields ------------------------------------------------------------------
+
+/// How many capital shields show at once (`capshields`, `0x0058FB70`), and how long one shows after
+/// it was last struck.
+const capital_slots = 50;
+const capital_shown_for = 200;
+
+/// A slot of the capital shields.
+pub const CapitalSlot = std.math.IntFittingRange(0, capital_slots - 1);
+
+/// How far a hit on a capital shield reaches round the centre of the polygon struck: 0.3 of the
+/// way across the part's bounds (`0x004DC4C0`), and no more than 8000 (`0x004DC9E4`). A vertex
+/// there takes twice its share of the reach, the more the further out.
+const capital_reach_share: f32 = 0.3;
+const capital_max_reach: f32 = 8000;
+
+/// Which ramp a capital shield glows in (`+0x34`). Nothing sets it: the game hands
+/// `capshield_create` the object's side and leaves it unread, so every capital shield glows in a
+/// friendly ship's colours.
+const capital_tint: Tint = .friendly;
+
+/// How much brighter a capital shield glows than its ramp, which a bubble glows in as it is, and
+/// where its texture swirls about, how fast, over the square of how far a coordinate is from there,
+/// a tick (`0x004DC418`).
+const capital_brightness: f32 = 3;
+const capital_centre: [2]f32 = .{ 0.5, 0.5 };
+const capital_swirl_per_tick: f32 = 1e-3;
+
+/// `part_is_force_field` (`0x0049FC70`): whether a part's name holds `FORCEFIELD`, whatever its
+/// case.
+pub fn isForceField(name: []const u8) bool {
+    return std.ascii.indexOfIgnoreCase(name, "FORCEFIELD") != null;
+}
+
+/// `force_field_mark` (`0x0049FCD0`): hides each part of `model` that is a force field, and of
+/// each model it carries, as the capital ship's hull is lost (`explode.loseComponent`).
+pub fn hideForceFields(model: *objects.Model) void {
+    for (model.parts) |*part| {
+        if (part.force_field) part.hidden = true;
+    }
+    var each = model.carried();
+    while (each.next()) |mount| hideForceFields(&mount.model);
+}
+
+/// The capital shields showing (`capshields`, `0x0058FB70`). A ship that lists components has no
+/// bubble. Where it is struck, a copy of the part struck glows round the hit instead, and a force
+/// field glows whole.
+pub const Capital = struct {
+    gpa: Allocator,
+    slots: [capital_slots]?*CapitalShield = @splat(null),
+    /// The slot the next one takes (`capshield_next`, `0x00593728`), round and round, whatever
+    /// shows there.
+    next: CapitalSlot = 0,
+
+    /// Lets every one go (`shields_deinit`).
+    pub fn deinit(capital: *Capital) void {
+        for (&capital.slots) |*slot| {
+            if (slot.*) |shown| shown.destroy(capital.gpa);
+            slot.* = null;
+        }
+    }
+
+    /// The one showing on part `ref`, where its node names one.
+    ///
+    /// The game looks through every slot for the node; the port reads the slot the node names.
+    fn find(capital: *const Capital, ref: objects.PartRef) ?CapitalSlot {
+        const at = ref.part().capshield orelse return null;
+        const shown = capital.slots[at] orelse return null;
+        return if (shown.part.model == ref.model and shown.part.index == ref.index) at else null;
+    }
+
+    /// `capshield_free` (`0x0049F900`): lets slot `at` go, and its part, where it still stands in
+    /// `all`, shows none.
+    fn free(capital: *Capital, all: *Objects, at: CapitalSlot) void {
+        const shown = capital.slots[at] orelse return;
+        if (shown.stands(all, at)) shown.part.part().capshield = null;
+        shown.destroy(capital.gpa);
+        capital.slots[at] = null;
+    }
+
+    /// `capshield_flare` (`0x0049F4A0`) once the owner is checked: part `ref` of the object in
+    /// slot `index` struck on `polygon` of the part's finest mesh at tick `now`. The part's
+    /// capital shield shows `capital_shown_for` more ticks; where it has none, one is made in the
+    /// next slot (`CapitalShield.create`), letting go of what shows there. Then it takes the hit.
+    ///
+    /// **Fix:** the game takes the slot it finds for the next one, so the next part struck
+    /// replaces the shield struck last while slots stand free; the port leaves the next slot where
+    /// it was.
+    fn flare(capital: *Capital, shields: *const Shields, all: *Objects, index: u16, ref: objects.PartRef, polygon: ?usize, now: i32) Allocator.Error!void {
+        const at = if (capital.find(ref)) |found| found: {
+            capital.slots[found].?.until = now + capital_shown_for;
+            break :found found;
+        } else made: {
+            const at = capital.next;
+            capital.free(all, at);
+            capital.slots[at] = try CapitalShield.create(capital.gpa, shields, index, ref, at, now);
+            capital.next = if (at == capital_slots - 1) 0 else at + 1;
+            break :made at;
+        };
+        capital.slots[at].?.strike(polygon);
+    }
+
+    /// `capshields_draw` (`0x0049F950`), once a frame after the bubbles: each capital shield
+    /// showing into the world's layer, where its part stands, with its colours and texture moved
+    /// on by the ticks since they last moved. One whose time is up is let go, as is one whose part
+    /// is gone, which the game lets go of with the part's node (`0x00499CF0`).
+    fn draw(capital: *Capital, shields: *const Shields, gpa: Allocator, scene: *srcore.Scene, all: *Objects, look: Shields.Look) Allocator.Error!void {
+        for (capital.slots, 0..) |maybe, index| {
+            const shown = maybe orelse continue;
+            const at: CapitalSlot = @intCast(index);
+            if (!(look.frame_start < shown.until) or !shown.stands(all, at)) {
+                capital.free(all, at);
+                continue;
+            }
+            const part = shown.part.part();
+            shown.object.position = part.object.position;
+            shown.object.orientation = part.object.orientation;
+            const ticks: f32 = @floatFromInt(look.frame_start -% shown.moved);
+            shown.fade(shields.ramps.getPtrConst(capital_tint), ticks);
+            if (shown.force_field) shown.flicker(look.random) else shown.swirl(ticks);
+            try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &shown.object }, .world);
+            shown.moved = look.frame_start;
+        }
+    }
+};
+
+/// A capital shield (`capshields`, 0x3C bytes): a copy of the part struck, over `shield128`, or
+/// `ffield` for a force field, which its last hits light.
+pub const CapitalShield = struct {
+    /// The part it shows on (`+0x00`), of the object in slot `owner`.
+    owner: u16,
+    part: objects.PartRef,
+    /// Its copy of the part's finest mesh, and the scene object that shows it (`+0x04`,
+    /// `Capshield mesh`), with its colours (object `+0x110`).
+    mesh: srapiext.Mesh,
+    level: [1]srapiext.Level = undefined,
+    object: srapiext.MeshObject = undefined,
+    colours: [][4]f32,
+    /// Until when it shows (`+0x08`), and when its colours last moved on (`+0x0C`).
+    until: i32,
+    moved: i32,
+    /// What each of its last hits leaves at each vertex (`+0x10`), and which the next takes
+    /// (`+0x30`).
+    strengths: [][hit_slots]f32,
+    next: HitSlot = 0,
+    /// Whether its part is a force field (`+0x38`).
+    force_field: bool,
+
+    /// `capshield_create` (`0x0049F790`): a capital shield on part `ref` of the object in slot
+    /// `owner`, in slot `at`, at tick `now`. The copy draws every polygon, `cap` faces too, lit and
+    /// adding to what is behind it, over the shield's texture.
+    fn create(gpa: Allocator, shields: *const Shields, owner: u16, ref: objects.PartRef, at: CapitalSlot, now: i32) Allocator.Error!*CapitalShield {
+        const part = ref.part();
+        var mesh = try part.object.levels[0].mesh.copy(gpa, true);
+        errdefer mesh.deinit(gpa);
+        for (mesh.face_flags.?) |*flags| flags.cap = false;
+        for (mesh.surfaces) |*surface| {
+            surface.material.two_pass = false;
+            surface.material.lit[0] = true;
+            surface.material.blend[0] = .add;
+            surface.textures[0] = .{ .image = if (part.force_field) shields.field else shields.texture };
+        }
+        const colours = try gpa.alloc([4]f32, mesh.positions.len);
+        errdefer gpa.free(colours);
+        @memset(colours, @splat(0));
+        const strengths = try gpa.alloc([hit_slots]f32, mesh.positions.len);
+        errdefer gpa.free(strengths);
+        @memset(strengths, @splat(0));
+        const shown = try gpa.create(CapitalShield);
+        shown.* = .{
+            .owner = owner,
+            .part = ref,
+            .mesh = mesh,
+            .colours = colours,
+            .until = now + capital_shown_for,
+            .moved = now,
+            .strengths = strengths,
+            .force_field = part.force_field,
+        };
+        shown.level = .{.{ .mesh = &shown.mesh, .until = std.math.inf(f32) }};
+        shown.object = .{
+            .flags = .{ .not_culled = true, .owns_mesh = true, .baked_object = true },
+            .position = part.object.position,
+            .orientation = part.object.orientation,
+            .scale = part.object.scale,
+            .radius = part.object.radius,
+            .levels = &shown.level,
+            .baked = colours,
+        };
+        part.capshield = at;
+        return shown;
+    }
+
+    fn destroy(shown: *CapitalShield, gpa: Allocator) void {
+        shown.mesh.deinit(gpa);
+        gpa.free(shown.colours);
+        gpa.free(shown.strengths);
+        gpa.destroy(shown);
+    }
+
+    /// Whether its part still stands in `all` and names slot `at`: its object's model holds the
+    /// part's, the part is not taken out, and its node names the slot. Only then is the part read.
+    fn stands(shown: *const CapitalShield, all: *const Objects, at: CapitalSlot) bool {
+        const model = if (all.slots[shown.owner].model) |*live| live else return false;
+        if (!model.holds(shown.part.model) or shown.part.index >= shown.part.model.parts.len) return false;
+        const part = shown.part.part();
+        return !part.removed and part.capshield == at;
+    }
+
+    /// The hit part of `capshield_flare`, into the next of its hits: a force field's every vertex
+    /// takes 1, which shows as it starts to fade. Any other part is lit round `polygon`, the one
+    /// struck, out to `capital_reach_share` of the way across its bounds: a vertex there takes
+    /// twice its share of the reach, so the glow spreads out from the polygon's middle as it fades.
+    /// A polygon it can't read leaves the hit dark; the game reads past the polygons.
+    fn strike(shown: *CapitalShield, polygon: ?usize) void {
+        const which = shown.next;
+        shown.next +%= 1;
+        const round = if (shown.force_field) null else shown.middle(polygon);
+        const reach = @min(math.distance(shown.mesh.bounds[1], shown.mesh.bounds[0]) * capital_reach_share, capital_max_reach);
+        for (shown.mesh.positions, shown.strengths) |position, *hits| {
+            hits[which] = if (shown.force_field) 1 else lit: {
+                const away = math.distance(position, round orelse break :lit 0);
+                break :lit if (away <= reach and reach > 0) @min(away / reach * 2, max_strength) else 0;
+            };
+        }
+        shown.cull();
+    }
+
+    /// The middle of the copy's `polygon`, where there is such a polygon with corners.
+    fn middle(shown: *const CapitalShield, polygon: ?usize) ?Vector {
+        const mesh = &shown.mesh;
+        const at = polygon orelse return null;
+        if (at >= mesh.polygons.len or mesh.polygons[at].count == 0) return null;
+        const struck = mesh.polygons[at];
+        var sum: Vector = @splat(0);
+        for (mesh.indices[struck.first..][0..struck.count]) |corner| sum += mesh.positions[corner];
+        return sum / @as(Vector, @splat(@floatFromInt(struck.count)));
+    }
+
+    /// The polygons of the copy that none of its hits lights are not drawn: their faces are
+    /// marked `cap`.
+    ///
+    /// **Fix:** the game marks those the latest hit leaves dark and never draws them again, so a
+    /// part struck once more elsewhere loses the glow of its earlier hits; the port marks those
+    /// every hit leaves dark, each time it is struck.
+    fn cull(shown: *CapitalShield) void {
+        const mesh = &shown.mesh;
+        for (mesh.polygons, mesh.face_flags.?) |polygon, *flags| {
+            flags.cap = for (mesh.indices[polygon.first..][0..polygon.count]) |corner| {
+                if (std.mem.max(f32, &shown.strengths[corner]) > 0) break false;
+            } else true;
+        }
+    }
+
+    /// The colours part of `capshields_draw`: each vertex's hits faded by `ticks`, and what they
+    /// show in `ramp`, `capital_brightness` times over.
+    fn fade(shown: *CapitalShield, ramp: *const Ramp, ticks: f32) void {
+        for (shown.colours, shown.strengths) |*colour, *hits| colour.* = vertexColour(fadeHits(hits, ramp, ticks) * @as(Colour, @splat(capital_brightness)));
+    }
+
+    /// A part's texture swirls about its middle by `ticks`, the faster the nearer it.
+    ///
+    /// **Improvement:** the sine and cosine come from `std.math` rather than the engine's tables
+    /// (`sr_sin`, `sr_cos`).
+    fn swirl(shown: *CapitalShield, ticks: f32) void {
+        const uv = shown.mesh.uv[0] orelse return;
+        for (uv) |*coordinates| coordinates.* = swirledAbout(coordinates.*, capital_centre, ticks * capital_swirl_per_tick);
+    }
+
+    /// A force field's texture coordinates each thrown anywhere at random, where there are the
+    /// runtime's numbers to throw them by, and its green turned blue.
+    fn flicker(shown: *CapitalShield, random: ?*libcmt.Rand) void {
+        if (random) |numbers| if (shown.mesh.uv[0]) |uv| for (uv) |*coordinates| {
+            const u = numbers.fraction();
+            coordinates.* = .{ u, numbers.fraction() };
+        };
+        for (shown.colours) |*colour| {
+            const blue = std.math.clamp(colour[2] + colour[1], 0, 1);
+            colour[1] = 0;
+            colour[2] = blue;
+        }
+    }
+};
+
+/// `capshield_flare` (`0x0049F4A0`): part `ref` of the object in slot `index`, which lists
+/// components, struck on `polygon` of the part's finest mesh (`objects.PartRef.polygon`), by a
+/// shot or a missile on a component (`shieldfx.componentHit`), or a force field struck by a shot
+/// or a knock, which lights whole whatever the polygon. Nothing shows on an object whose
+/// invulnerability is `_unknown_5`, nor on a force field of an object exploding.
+pub fn flareCapital(world: gameobj.World, index: u16, ref: objects.PartRef, polygon: ?usize) void {
+    const object = &world.objects.slots[index].object;
+    if (object.invulnerable == ._unknown_5) return;
+    const part = ref.part();
+    if (part.force_field and object.flags.exploding) return;
+    if (part.object.levels.len == 0) return;
+    const shields = world.shields orelse return;
+    // The game makes what a capital shield needs in its slot; where the port can't, it shows
+    // nothing.
+    shields.capital.flare(shields, world.objects, index, ref, polygon, world.clock.frame_start) catch {};
 }
 
 test {
@@ -746,9 +1060,9 @@ test "a hit ripples out from where it struck" {
     try std.testing.expectEqual(10, bubble.struck);
     const kept = bubble.hits.?.original;
     try std.testing.expectEqual(1, kept.next);
-    try std.testing.expectApproxEqAbs(0.5, kept.strengths[0][pole], 1e-5);
-    try std.testing.expectApproxEqAbs(0.5 + 4 * std.math.pi / 14.0 / 1.2, kept.strengths[0][near], 1e-5);
-    try std.testing.expectEqual(0, kept.strengths[0][equator]);
+    try std.testing.expectApproxEqAbs(0.5, kept.strengths[pole][0], 1e-5);
+    try std.testing.expectApproxEqAbs(0.5 + 4 * std.math.pi / 14.0 / 1.2, kept.strengths[near][0], 1e-5);
+    try std.testing.expectEqual(0, kept.strengths[equator][0]);
 
     // At first the pole glows and the ring four bands round, past one, is dark.
     kept.fade(ramp, vertices, 0);
@@ -894,4 +1208,145 @@ test "the smooth style" {
     const from = [2]f32{ mesh.positions[near][0] - centre[0], mesh.positions[near][1] - centre[1] };
     const now = [2]f32{ uv[near][0] - centre[0], uv[near][1] - centre[1] };
     try std.testing.expectApproxEqAbs(from[0] * from[0] + from[1] * from[1], now[0] * now[0] + now[1] * now[1], 1e-4);
+}
+
+test isForceField {
+    try std.testing.expect(isForceField("forcefield"));
+    try std.testing.expect(isForceField("bow_ForceField2"));
+    try std.testing.expect(!isForceField("force_field"));
+    try std.testing.expect(!isForceField("hull"));
+}
+
+/// A part of two triangles far apart, and a lone vertex 0.3 of the reach from the first one's
+/// middle, with a texture's coordinates.
+fn testingPartMesh(gpa: Allocator) !srapiext.Mesh {
+    var mesh: srapiext.Mesh = try .create(gpa, .{ .polygons = 2, .vertices = 7, .indices = 6 });
+    errdefer mesh.deinit(gpa);
+    @memcpy(mesh.positions, &[_]Vector{ .{ 0, 0, 0 }, .{ 30, 0, 0 }, .{ 0, 30, 0 }, .{ 1000, 0, 0 }, .{ 1000, 30, 0 }, .{ 970, 0, 0 }, @splat(0) });
+    @memcpy(mesh.indices, &[_]u16{ 0, 1, 2, 3, 4, 5 });
+    mesh.numberPolygons(3);
+    mesh.bounds = .{ @splat(0), .{ 1000, 30, 0 } };
+    const reach = math.length(mesh.bounds[1]) * capital_reach_share;
+    mesh.positions[6] = .{ 10 + 0.3 * reach, 10, 0 };
+    mesh.surfaces[0] = .{ .polygons = 2, .material = .onePass(.{ .coordinates = .mesh, .lit = false, .blend = .off }) };
+    const uv = try mesh.addCoordinates(gpa);
+    for (uv, 0..) |*coordinates, i| coordinates.* = .{ @as(f32, @floatFromInt(i)) / 6, 0.2 };
+    return mesh;
+}
+
+test "capital shields" {
+    const gpa = std.testing.allocator;
+    var built: testing.Built = try .init(gpa);
+    defer built.deinit(gpa);
+    const shields = &built.shields;
+    const capital = &shields.capital;
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(gpa);
+    defer mission.deinit();
+    var world = mission.world();
+    world.shields = shields;
+    mission.clock.frame_start = 100;
+    const index = try mission.add(.kamov, @splat(0));
+
+    const mesh = try testingPartMesh(gpa);
+    defer mesh.deinit(gpa);
+    const levels = [1]srapiext.Level{.{ .mesh = &mesh, .until = std.math.inf(f32) }};
+    var parts: [2]objects.Model.Part = @splat(.{ .hidden = false, .parent = null, .origin = @splat(0), .object = .{ .flags = .{}, .position = .{ 0, 0, 500 }, .radius = 1000, .levels = &levels } });
+    const slot = mission.slot(index);
+    const kept = slot.model;
+    slot.model = .{ .parts = &parts, .order = &.{}, .lights = &.{}, .glows = &.{}, .mounts = &.{} };
+    defer slot.model = kept;
+    const model = &slot.model.?;
+    const hull: objects.PartRef = .{ .model = model, .index = 0 };
+
+    // Struck on its first triangle: a copy of the part, over the shield's texture, lit round the
+    // triangle's middle and dark at the far one, which isn't drawn.
+    flareCapital(world, index, hull, 0);
+    const shown = capital.slots[0].?;
+    try std.testing.expectEqual(0, parts[0].capshield);
+    try std.testing.expectEqual(1, capital.next);
+    try std.testing.expectEqual(300, shown.until);
+    try std.testing.expectEqual(shields.texture, shown.mesh.surfaces[0].textures[0].image);
+    try std.testing.expectEqual(srapiext.Material.Blend.add, shown.mesh.surfaces[0].material.blend[0]);
+    try std.testing.expectApproxEqAbs(0.6, shown.strengths[6][0], 1e-4);
+    try std.testing.expect(shown.strengths[1][0] > 0);
+    try std.testing.expectEqual(0, shown.strengths[3][0]);
+    try std.testing.expect(!shown.mesh.face_flags.?[0].cap);
+    try std.testing.expect(shown.mesh.face_flags.?[1].cap);
+
+    // Struck again on the far one, later: the same copy shows longer, both triangles are drawn,
+    // and the next new one still takes the next slot.
+    mission.clock.frame_start = 150;
+    flareCapital(world, index, hull, 1);
+    try std.testing.expectEqual(shown, capital.slots[0].?);
+    try std.testing.expectEqual(350, shown.until);
+    try std.testing.expectEqual(1, capital.next);
+    try std.testing.expect(shown.strengths[3][1] > 0);
+    try std.testing.expect(!shown.mesh.face_flags.?[0].cap and !shown.mesh.face_flags.?[1].cap);
+
+    // Drawn where its part stands: the vertex at 0.6 glows, three times its ramp's brightest,
+    // and the texture swirls about its middle, each coordinate keeping its distance from there.
+    var scene: srcore.Scene = .{};
+    defer scene.deinit(gpa);
+    var look: Shields.Look = .{ .camera = @splat(0), .inside = false, .frame_start = 100, .random = null };
+    shown.moved = 100;
+    const before = shown.mesh.uv[0].?[1];
+    try capital.draw(shields, gpa, &scene, mission.objects, look);
+    try std.testing.expectEqual(1, scene.layers.get(.world).items.len);
+    try std.testing.expectEqual(@as(Vector, .{ 0, 0, 500 }), shown.object.position);
+    try std.testing.expectApproxEqAbs(ramp_brightness * capital_brightness, shown.colours[6][2], 1e-4);
+    try std.testing.expectEqual(0, shown.colours[3][2]);
+    for (before, shown.mesh.uv[0].?[1]) |was, is| try std.testing.expectApproxEqAbs(was, is, 1e-6);
+    look.frame_start = 110;
+    try capital.draw(shields, gpa, &scene, mission.objects, look);
+    const after = shown.mesh.uv[0].?[1];
+    try std.testing.expect(!std.meta.eql(before, after));
+    const from = [2]f32{ before[0] - 0.5, before[1] - 0.5 };
+    const to = [2]f32{ after[0] - 0.5, after[1] - 0.5 };
+    try std.testing.expectApproxEqAbs(from[0] * from[0] + from[1] * from[1], to[0] * to[0] + to[1] * to[1], 1e-5);
+    // Its strengths have faded ten ticks' worth.
+    try std.testing.expectApproxEqAbs(0.35, shown.strengths[6][0], 1e-4);
+
+    // Once its time is up it goes, and its part shows none.
+    look.frame_start = 350;
+    try capital.draw(shields, gpa, &scene, mission.objects, look);
+    try std.testing.expectEqual(null, capital.slots[0]);
+    try std.testing.expectEqual(null, parts[0].capshield);
+
+    // A force field glows whole over its own texture, and its colours come out blue; not on an
+    // object exploding, nor on one whose invulnerability is the fifth.
+    parts[1].force_field = true;
+    const field: objects.PartRef = .{ .model = model, .index = 1 };
+    capital.next = capital_slots - 1;
+    mission.clock.frame_start = 350;
+    flareCapital(world, index, field, null);
+    const glowing = capital.slots[capital_slots - 1].?;
+    try std.testing.expectEqual(0, capital.next);
+    try std.testing.expectEqual(shields.field, glowing.mesh.surfaces[0].textures[0].image);
+    for (glowing.strengths) |hits| try std.testing.expectEqual(1, hits[0]);
+    look.frame_start = 360;
+    try capital.draw(shields, gpa, &scene, mission.objects, look);
+    try std.testing.expectEqual(0, glowing.colours[0][1]);
+    try std.testing.expect(glowing.colours[0][2] > 0);
+    capital.deinit();
+    slot.object.flags.exploding = true;
+    flareCapital(world, index, field, null);
+    try std.testing.expectEqual(null, capital.slots[0]);
+    slot.object.flags.exploding = false;
+    slot.object.invulnerable = ._unknown_5;
+    flareCapital(world, index, hull, 0);
+    try std.testing.expectEqual(null, capital.slots[0]);
+    slot.object.invulnerable = .none;
+
+    // One whose object has gone is let go without its part being read.
+    flareCapital(world, index, hull, 0);
+    try std.testing.expect(capital.slots[0] != null);
+    slot.model = null;
+    try capital.draw(shields, gpa, &scene, mission.objects, look);
+    try std.testing.expectEqual(null, capital.slots[0]);
+    slot.model = .{ .parts = &parts, .order = &.{}, .lights = &.{}, .glows = &.{}, .mounts = &.{} };
+
+    // As the ship is lost its force fields go dark.
+    hideForceFields(&slot.model.?);
+    try std.testing.expect(parts[1].hidden and !parts[0].hidden);
 }
