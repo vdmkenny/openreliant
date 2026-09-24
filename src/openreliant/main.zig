@@ -649,6 +649,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     defer countermeasures.reset();
     const lock_rings: *game.main.lock.Rings = try .create(gpa, &textures);
     defer lock_rings.destroy(gpa);
+    const chase_objects: *game.hud.chase.Chase = try .create(gpa, &textures);
+    defer chase_objects.destroy(gpa);
     var sparks: game.sparks.Sparks = try .create(gpa, &textures);
     defer sparks.deinit();
     var shields: game.shield.Shields = try .create(gpa, &textures, explosions.settings.detail, context.hardware, options.shields);
@@ -921,6 +923,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .countermeasures = &countermeasures,
             .lock = &display.state.lock,
             .lock_rings = lock_rings,
+            .chase = chase_objects,
+            .display = &display.state,
             .shields = &shields,
             .rays = &rays,
             .flash = &flash,

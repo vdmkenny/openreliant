@@ -219,6 +219,38 @@ at the lead cursor's point (`hud_lead_point`, `0x0057C260`).
 The port draws all of it, and aims the player's shots at the lead cursor's point
 ([Guns](guns.md#shots)).
 
+### The chase view
+
+In place of the reticle, the chase view shows objects in the scene, which `hud_init` builds with
+`mesh_build_square` (`0x0044F000`): squares facing along Z, over the whole of their textures,
+added to what is drawn, never culled and always drawn.
+
+| Object | Size | Drawn |
+| --- | --- | --- |
+| `chase_sight_near` (`0x005799E4`) | 600 | at full strength |
+| `chase_sight_far` (`0x00566780`) | 600 | by its own colours, half grey |
+| `chase_blind_mark` (`0x00566784`) | 600 | by its own colours, white |
+| `chase_target_pointer` (`0x0057BC58`) | 200, 400 below its middle | at full strength |
+| `chase_nav_pointer` (`0x005667AC`) | 200, 400 below its middle | at full strength, `chasepointat` |
+
+`camera_chase` stands the sight's squares 6000 and 12000 ahead of the player's ship, turned as it
+is. In view 0 in the chase mode, `hud_missile_lock` gives the two squares `chasetarget2` while
+`target_under_reticle` is set and blind fire doesn't aim, and `chasetarget` otherwise; while blind
+fire aims, the mark stands 6000 from the ship toward `hud_lead_point`, turned as the ship is,
+with `chasetarget2` where `target_under_reticle` is set and `chasetarget` where it is not. It
+stands both pointers 6000 ahead, and adds all of them to the overlay, the mark only while blind
+fire aims.
+
+`hud_target` hides both pointers each frame. In the chase mode, for the target out of sight, and
+for the nav point, it shows the pointer and turns it as the ship is and then about its nose by the
+way's angle from straight up, going round to the right, and half a turn more (`chase_pointer_roll`,
+`0x00566788`, worked out a quadrant at a time with `sr_atan`), with `chasepointat2` for a hostile
+target and `chasepointat3` for the rest.
+
+The port draws them (`hud.chase`). **Improvement:** it computes the pointer's angle with
+`atan2`. Not ported: the nav point's pointer, which needs the nav points
+([#36](https://github.com/vdmkenny/openreliant/issues/36)).
+
 ## The target
 
 The player's target is the target of the player's Player Control order, wherever that order
@@ -283,7 +315,7 @@ off the screen or behind the camera:
   frame (`hud_pointer_direction`, `0x00489BC0`): three lines, the tip 32 from the middle and the
   wings 22 from it and 4 either side, in palette entry `0x26`, red, for a hostile target and
   `0x62`, green, for the rest. The chase view draws none, and shows a pointer in the scene instead
-  ([#182](https://github.com/vdmkenny/openreliant/issues/182));
+  ([The chase view](#the-chase-view));
 - a marker where a line from the arrow out the target's way leaves the screen (`line_clip`,
   `0x004AAFC0`), one of shapes `0x16C` to `0x16F` for a hostile target and `0x170` to `0x173` for
   the rest, for the bottom, the left, the right and the top, with the range in kilometres beside
@@ -824,7 +856,8 @@ draws the image with the rest of the display, so it scales with it.
 
 ## Turning it off
 
-No key turns the whole display off: the game binds none, and `hud_draw` has no guard for it.
+No key turns the whole display off: the game binds none. `hud_draw` returns at once while the byte
+`hud_on` (`0x00501C50`) is clear, which `hud_init` sets and nothing clears.
 Individual panels have their own keys, which open and close [the windows](#the-windows). The
 nearest thing to turning the display off is leaving the view ahead from the cockpit, which drops
 the instruments and the windows.
@@ -838,8 +871,6 @@ the instruments and the windows.
 - Why blind fire leaves the Nova Cannon alone.
 - What sets `0x0057BF34`, whose string view `0xD` shows, and `0x00529FB8`, which shows a line at
   the foot in every view.
-- Where the chase view's pointers to the target and the nav point are made, and their model
-  ([#182](https://github.com/vdmkenny/openreliant/issues/182)).
 - What `hud_palette_ramp` (`0x0048D590`) colours, and whether the display's text takes its palette
   from it rather than from the font.
 - How the display reaches the screen in the game, which is `vfx.dll`'s panes rather than anything

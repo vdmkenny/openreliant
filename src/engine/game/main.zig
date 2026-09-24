@@ -224,6 +224,10 @@ pub const Frame = struct {
     /// from the cockpit's views and the chase view.
     lock: ?*const lock.Lock = null,
     lock_rings: ?*lock.Rings = null,
+    /// The chase view's objects, and the display whose reticle, pointer and lead point they
+    /// follow.
+    chase: ?*hud.chase.Chase = null,
+    display: ?*const hud.State = null,
     /// The shields' bubbles, which go into the world's layer after the objects.
     shields: ?*shield.Shields = null,
     /// The electric rays, which go into the world's layer after the explosions.
@@ -416,6 +420,11 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     if (frame.countermeasures) |dropped| try dropped.draw(gpa, scene, attachments);
     if (frame.lock_rings) |rings| if (frame.lock) |held| if (@intFromEnum(frame.view) <= @intFromEnum(camera.View.chase)) {
         try rings.draw(gpa, scene, held, .{ .position = context.camera.position, .orientation = context.camera.orientation }, context.projection);
+    };
+    if (frame.chase) |seen_behind| if (frame.display) |display| if (frame.view == .cockpit and frame.cockpit_mode == .chase) {
+        const ship = &frame.objects.slots[frame.objects.player];
+        const aim: ?math.Vector = if (ship.object.blind_fire_aim != 0) display.lead_point else null;
+        try seen_behind.draw(gpa, scene, ship.drawn, display.reticle_bright, aim, display.chase_pointer);
     };
     if (frame.shields) |bubbles| try bubbles.draw(gpa, arena, scene, frame.objects, .{
         .camera = attachments.camera,

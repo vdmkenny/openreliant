@@ -1072,6 +1072,11 @@ address	kind	name	type	comment
 0051cf38	data	nav_point_count	int	The mission's nav points
 0051cf3c	data	nav_points	int	The first of the objects of the mission's nav points, nav_point_count of them, -1 for one gone
 0051cf08	data	nav_point_reaches	float[12]	How near the player's ship comes to each nav point for nav_point_next to pass on from it
+005799e4	data	chase_sight_near	void *	The chase view's near sight, a 600 square of chasetarget at full strength, which camera_chase stands 6000 ahead of the player's ship
+00566780	data	chase_sight_far	void *	The chase view's far sight, a 600 square of chasetarget half grey, which camera_chase stands 12000 ahead of the player's ship
+00566784	data	chase_blind_mark	void *	The chase view's mark of where blind fire aims, a 600 square, white, which hud_missile_lock stands 6000 from the ship toward hud_lead_point while blind fire aims
+00566788	data	chase_pointer_roll	float	The angle hud_target turns chase_target_pointer by about the ship's nose, less half a turn: the way to the target from straight up, going round to the right
+00501c50	data	hud_on	byte	While clear, hud_draw draws nothing and hud_missile_lock shows no chase view objects; hud_init sets it and nothing clears it
 0057bc58	data	chase_target_pointer	void *	The chase view's pointer to the target, a scene object turned with the player's ship; bit 0 of its +0x14 hides it
 005667ac	data	chase_nav_pointer	void *	The chase view's pointer to the nav point, as chase_target_pointer
 0059517c	data	font_small	void **	smlfont.fnt, opened: the range by hud_target's marker at the screen's edge
