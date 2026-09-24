@@ -190,6 +190,8 @@ pub const exported = [_]Export{
     .{ "ShpPart", shp.Part },
     .{ "ShpPartFlags", shp.Part.Flags },
     .{ "ShpPartClass", shp.Part.Class },
+    .{ "ShpPartTurretKind", shp.Part.TurretKind },
+    .{ "ShpFiringArc", shp.FiringArc },
     .{ "ShpAttachment", shp.Attachment },
     .{ "NodePlayMode", shp.PlayMode(i32) },
     .{ "ShpAttachmentKind", shp.Attachment.Kind },

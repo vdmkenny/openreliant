@@ -72,7 +72,8 @@ pub const Node = extern struct {
     animated_angles: shp.Vec3,
     /// Where the animation has the node moved, added to its part's origin.
     animated_offset: shp.Vec3,
-    /// The angles the node is turned by besides the animation's, which the turrets steer.
+    /// The angles a turret turns the node by besides the animation's (`node_turn`), which
+    /// `node_place` adds to them.
     angles: shp.Vec3,
     /// A component's counterpart of `GameObject.armor`, which `ship_damage_value` reads for it.
     armor: f32,
@@ -115,7 +116,9 @@ pub const Node = extern struct {
         component: bool,
         /// **Unknown.** `create_object` sets it on the root.
         _unknown_9: bool,
-        _unknown_10: bool,
+        /// The base of a turret, which the turret fits mark (`turret_fit_aimed`); destroying the
+        /// node stops the turret's gun for good (`node_forget`, `0x00499BB0`).
+        turret: bool,
         /// Set while the node or one hanging from it plays an animation track: `node_play` sets it
         /// up to the root, and `node_tree_update` descends only into children that have it.
         animating: bool,
@@ -142,7 +145,7 @@ pub const Node = extern struct {
         node.flags.unframed = true;
     }
 
-    /// A part node's pose: the animation's angles, plus the turret's, and its offset.
+    /// A part node's pose: the animation's angles plus the turret's, and its offset.
     pub const Pose = extern struct {
         angles: shp.Vec3,
         offset: shp.Vec3,
@@ -175,6 +178,7 @@ pub const Node = extern struct {
         assert(@bitOffsetOf(Flags, "targetable") == 13);
         assert(@bitOffsetOf(Flags, "posed") == 3);
         assert(@bitOffsetOf(Flags, "animating") == 11);
+        assert(@bitOffsetOf(Flags, "turret") == 10);
         assert(@offsetOf(Node, "position") == 0x14);
         assert(@offsetOf(Node, "pose") == 0x44);
         assert(@offsetOf(Node, "next_pose") == 0x8C);
@@ -182,6 +186,7 @@ pub const Node = extern struct {
         assert(@offsetOf(Node, "time") == 0xBC);
         assert(@offsetOf(Node, "speed") == 0xC0);
         assert(@offsetOf(Node, "animated_angles") == 0xC4);
+        assert(@offsetOf(Node, "angles") == 0xDC);
         assert(@offsetOf(Node, "orientation") == 0x20);
         assert(@offsetOf(Node, "part") == 0xA4);
         assert(@offsetOf(Node, "armor") == 0xE8);
@@ -882,6 +887,10 @@ pub const Model = struct {
         mount: Vector = @splat(0),
         orientation: math.Matrix = math.identity,
         still: [3]bool = @splat(false),
+        /// How far a turret turns the part about each of its axes, at least and at most, in
+        /// degrees (part `+0xD8`, `+0xE4`).
+        angles_min: Vector = @splat(0),
+        angles_max: Vector = @splat(0),
         /// The part's tracks, and which the loader filed under each name the game starts by.
         tracks: []const shp.Track = &.{},
         slots: std.EnumArray(Slot, ?usize) = .initFill(null),
@@ -893,6 +902,8 @@ pub const Model = struct {
         /// Where the track has the part (node `+0xC4`, `+0xD0`), which `node_animate` sets.
         angles: Vector = @splat(0),
         offset: Vector = @splat(0),
+        /// The angles a turret turns the node by besides the track's (node `+0xDC`, `swivel`).
+        turret: Vector = @splat(0),
         /// The place `node_place` worked out for the next step, and its pose (node `+0x5C` to
         /// `+0xA3`), and the ones `node_tree_update` committed from them (`+0x14` to `+0x5B`).
         next: Posed = .{},
@@ -984,7 +995,6 @@ pub const Model = struct {
             var radius: f32 = 0;
             for (part.meshes) |mesh| radius = @max(radius, mesh.radius);
             const at = source.part.position;
-            const still = source.part.unknown_c8;
             node.* = .{
                 .hidden = source.part.flags.damaged,
                 .flags = source.part.flags,
@@ -1007,7 +1017,9 @@ pub const Model = struct {
                     .mount = .{ source.part.mount_point.x, source.part.mount_point.y, source.part.mount_point.z },
                     .orientation = source.part.orientation,
                     // Three whole numbers, which the game tests as floats against zero.
-                    .still = .{ @as(u32, @bitCast(still.x)) != 0, @as(u32, @bitCast(still.y)) != 0, @as(u32, @bitCast(still.z)) != 0 },
+                    .still = source.part.still != @as(@Vector(3, u32), @splat(0)),
+                    .angles_min = .{ source.part.angles_min.x, source.part.angles_min.y, source.part.angles_min.z },
+                    .angles_max = .{ source.part.angles_max.x, source.part.angles_max.y, source.part.angles_max.z },
                     .tracks = source.tracks,
                     .slots = slotsOf(source.tracks),
                 },
@@ -1076,14 +1088,14 @@ pub const Model = struct {
     }
 
     /// `node_place` (`0x0049A140`): works part `index`'s next place out from its animation's
-    /// angles, less those about the axes it doesn't turn about, and its offset, and marks it
-    /// pending and posed. Its pose adds the turret's angles, which the port doesn't steer yet.
-    fn pose(model: *Model, index: usize) void {
+    /// angles, less those about the axes it doesn't turn about, plus the turret's, and its
+    /// offset, and marks it pending and posed.
+    pub fn pose(model: *Model, index: usize) void {
         const a = &model.parts[index].animation;
         inline for (0..3) |axis| {
             if (a.still[axis]) a.angles[axis] = 0;
         }
-        const posed: Pose = .{ .angles = a.angles, .offset = a.offset };
+        const posed: Pose = .{ .angles = a.angles + a.turret, .offset = a.offset };
         a.next = .{ .place = model.placeFor(index, posed), .pose = posed };
         a.pending = true;
         a.posed = true;
@@ -1106,6 +1118,29 @@ pub const Model = struct {
         lever = math.transform(turn, lever);
         at -= lever;
         return .{ .position = at, .orientation = turn };
+    }
+
+    /// `node_turn` (`0x0049B520`): turns part `index`'s node by `delta` about its axes besides
+    /// its animation, as a turret turns, and marks it animating. About an axis whose limits are
+    /// equal it comes round to within a half turn either way; about any other it stays within
+    /// them. `pose` places it so.
+    ///
+    /// **Improvement:** the game turns the limits' degrees to radians by a rounded 0.0174533, and
+    /// brings an angle round by 3.14159 and 6.28319; the port by `std.math.rad_per_deg`, π and 2π.
+    pub fn swivel(model: *Model, index: usize, delta: Vector) void {
+        const a = &model.parts[index].animation;
+        a.turret += delta;
+        model.markAnimating(index);
+        inline for (0..3) |axis| {
+            const least = a.angles_min[axis];
+            const most = a.angles_max[axis];
+            if (least == most) {
+                a.turret[axis] = math.halfTurn(a.turret[axis]);
+            } else {
+                if (a.turret[axis] < least * std.math.rad_per_deg) a.turret[axis] = least * std.math.rad_per_deg;
+                if (a.turret[axis] > most * std.math.rad_per_deg) a.turret[axis] = most * std.math.rad_per_deg;
+            }
+        }
     }
 
     /// `node_play` (`0x0049A2D0`): plays on part `index`'s node the track the loader filed under
@@ -1721,7 +1756,7 @@ test Model {
     data.part.volume = 2;
     data.part.density = 3;
     data.part.first_moments = .{ 0, 0, 20 };
-    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = (&data)[0..1], .tail_count = 0, .trailing_bytes = 0 };
+    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = (&data)[0..1], .trailing_bytes = 0 };
     gameobj.recentre(&model, &source);
     try std.testing.expectEqual(@as(Vector, .{ 0, 0, 110 }), model.centre);
     try std.testing.expectEqual(@as(Vector, .{ 0, 0, -10 }), parts[0].origin);
@@ -1865,7 +1900,7 @@ test "a model's lights: their sprites, and the light a blinking one casts" {
     var hull = [1]shp.PartData{testingPart()};
     hull[0].part.parent = -1;
     hull[0].attachments = &attachments;
-    const model: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &hull, .tail_count = 0, .trailing_bytes = 0 };
+    const model: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &hull, .trailing_bytes = 0 };
 
     var flare: srtexture.Image = .{ .levels = &.{} };
     var lamp: srtexture.Image = .{ .levels = &.{} };
@@ -2017,7 +2052,7 @@ test "a part hangs from the part it names" {
     data[1].part.parent = 2;
     data[2].part.position = .{ .x = 0, .y = 0, .z = 0 };
     data[2].part.parent = -1;
-    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &data, .tail_count = 0, .trailing_bytes = 0 };
+    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &data, .trailing_bytes = 0 };
 
     var levels = [_]srapiext.Level{.{ .mesh = &mesh, .until = std.math.inf(f32) }};
     var loaded_parts = [3]srofiles.LoadedPart{
@@ -2055,7 +2090,7 @@ test "a part whose parents run in a circle stands at the root" {
     var data = [2]shp.PartData{ testingPart(), testingPart() };
     data[0].part.parent = 1;
     data[1].part.parent = 0;
-    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &data, .tail_count = 0, .trailing_bytes = 0 };
+    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &data, .trailing_bytes = 0 };
     const order = try Model.linkOrder(gpa, &source);
     defer gpa.free(order);
     try std.testing.expectEqualSlices(usize, &.{ 0, 1 }, order);
@@ -2075,7 +2110,7 @@ test "a gun attachment mounts the model its id names" {
     gun_data[0].part.parent = -1;
     gun_data[0].part.volume = 1;
     gun_data[0].part.density = 1;
-    const gun: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &gun_data, .tail_count = 0, .trailing_bytes = 0 };
+    const gun: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &gun_data, .trailing_bytes = 0 };
 
     // A hull carrying one gun attachment, out along X, and one of a kind that mounts nothing.
     var attachments = [2]shp.Attachment{ std.mem.zeroes(shp.Attachment), std.mem.zeroes(shp.Attachment) };
@@ -2099,7 +2134,7 @@ test "a gun attachment mounts the model its id names" {
     var hull = [1]shp.PartData{testingPart()};
     hull[0].part.parent = -1;
     hull[0].attachments = &attachments;
-    const model: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &hull, .tail_count = 0, .trailing_bytes = 0 };
+    const model: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &hull, .trailing_bytes = 0 };
 
     const Answer = struct {
         gun: *const shp.Model,
@@ -2222,7 +2257,7 @@ const Animated = struct {
         }
         animated.data[1].tracks = tracks;
         animated.loaded = .{ .parts = &animated.loaded_parts };
-        animated.source = .{ .header = std.mem.zeroes(shp.Header), .parts = &animated.data, .tail_count = 0, .trailing_bytes = 0 };
+        animated.source = .{ .header = std.mem.zeroes(shp.Header), .parts = &animated.data, .trailing_bytes = 0 };
     }
 };
 
@@ -2304,6 +2339,40 @@ test "Model.placeFor" {
     const mount: Vector = .{ 10, 0, 0 };
     const pivot = math.transform(turned.orientation, mount) + turned.position;
     try std.testing.expect(math.length(pivot - (mount + @as(Vector, .{ 0, 0, 100 }))) < 1e-3);
+}
+
+test "Model.swivel" {
+    const gpa = std.testing.allocator;
+    const srmesh = @import("../surrender/surrenderlib/srmesh.zig");
+    const mesh = try srmesh.testing.square(gpa);
+    defer mesh.deinit(gpa);
+    var animated: Animated = undefined;
+    animated.init(&mesh, &.{});
+    // A turret's base, which turns freely about X, up to 60 degrees down about Y and not at all
+    // about Z.
+    animated.data[1].part.angles_min = .{ .x = 0, .y = -60, .z = 0 };
+    animated.data[1].part.angles_max = .{ .x = 0, .y = 0, .z = 0 };
+    var model: Model = try .create(gpa, &animated.source, &animated.loaded, .{});
+    defer model.deinit(gpa);
+    testingLink(&model);
+    const a = &model.parts[1].animation;
+
+    // Freely about X it comes round within a half turn; about Y it stops at its limit. It is
+    // marked animating, up to the root.
+    model.swivel(1, .{ 4, -2, 0 });
+    try std.testing.expectApproxEqAbs(4 - std.math.tau, a.turret[0], 1e-6);
+    try std.testing.expectApproxEqAbs(-60 * std.math.rad_per_deg, a.turret[1], 1e-6);
+    try std.testing.expect(a.animating and model.parts[0].animation.animating);
+    // Its pose adds the turret's angles to the track's.
+    a.angles = .{ 0, 0.25, 0 };
+    model.pose(1);
+    try std.testing.expectEqual(a.turret + @as(Vector, .{ 0, 0.25, 0 }), a.next.pose.angles);
+    try std.testing.expect(a.pending and a.posed);
+    // An axis whose limits are equal, but not zero, is free too.
+    a.angles_min[2] = 10;
+    a.angles_max[2] = 10;
+    model.swivel(1, .{ 0, 0, 0.5 });
+    try std.testing.expectEqual(0.5, a.turret[2]);
 }
 
 test "a part's first track poses it where it is linked" {

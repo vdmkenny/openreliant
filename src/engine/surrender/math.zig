@@ -58,6 +58,14 @@ pub fn lerp(a: f32, b: f32, t: f32) f32 {
     return (b - a) * t + a;
 }
 
+/// `angle` brought round to within a half turn either way: a turn less past a half turn, a turn
+/// more below one the other way, once, as the game's turret code does.
+pub fn halfTurn(angle: f32) f32 {
+    if (angle > std.math.pi) return angle - std.math.tau;
+    if (angle < -std.math.pi) return angle + std.math.tau;
+    return angle;
+}
+
 /// `v` scaled to a length of 1 (`vec3_normalize`, `0x004C1370`). The zero vector becomes a tiny
 /// one pointing forward.
 pub fn normalize(v: Vector) Vector {
@@ -299,6 +307,14 @@ test lerp {
     try std.testing.expectEqual(3, lerp(2, 6, 0.25));
     // In single precision the far end can miss `b` by the rounding of `b - a`, as the engine's does.
     try std.testing.expectEqual(0.100000024, lerp(1, 0.1, 1));
+}
+
+test halfTurn {
+    try std.testing.expectEqual(1, halfTurn(1));
+    try std.testing.expectApproxEqAbs(4 - std.math.tau, halfTurn(4), 1e-6);
+    try std.testing.expectApproxEqAbs(std.math.tau - 4, halfTurn(-4), 1e-6);
+    // Once only: two turns past, it comes round by one.
+    try std.testing.expectApproxEqAbs(8 - std.math.tau, halfTurn(8), 1e-6);
 }
 
 test normalize {

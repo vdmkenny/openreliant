@@ -181,7 +181,7 @@ A node (`objects.cpp`, `node_alloc` at `0x004991D0`) is `0x104` bytes:
 | Offset | Size | Field |
 |---|---|---|
 | `0x00` | 4 | Kind: 1 for a model part's node |
-| `0x04` | 4 | Flags, a `Node.Flags`: `0x1` a next place pending; `0x2` a new place committed this step, `0x4` one the frame hasn't taken up yet, and `0x8` a next place worked out from a pose, which [drawing between steps](#drawing-between-steps) reads; `0x800` animating, or carrying a node that is; `0x20` hidden; `0x40` a component's holder once `component_damage` (`0x004645C0`) takes the component's armor below zero; `0x100` listed among the components; `0x2000` targetable, for the parts whose part flag `0x1000` says so, and changed by `SetTargetable`. Cycling subtargets (`0x00414F90`) stops only at components that are targetable and have neither `0x10` nor `0x20` |
+| `0x04` | 4 | Flags, a `Node.Flags`: `0x1` a next place pending; `0x2` a new place committed this step, `0x4` one the frame hasn't taken up yet, and `0x8` a next place worked out from a pose, which [drawing between steps](#drawing-between-steps) reads; `0x800` animating, or carrying a node that is; `0x20` hidden; `0x40` a component's holder once `component_damage` (`0x004645C0`) takes the component's armor below zero; `0x100` listed among the components; `0x400` the base of a [turret](guns.md#turrets), whose gun stops for good when the node is destroyed (`node_forget`, `0x00499BB0`); `0x2000` targetable, for the parts whose part flag `0x1000` says so, and changed by `SetTargetable`. Cycling subtargets (`0x00414F90`) stops only at components that are targetable and have neither `0x10` nor `0x20` |
 | `0x08` | 4 | Its frame, the transform the renderer uses |
 | `0x14` | 12 | Position, relative to the node it hangs from |
 | `0x20` | 36 | Orientation, a 3x3 matrix, relative likewise |
@@ -197,7 +197,7 @@ A node (`objects.cpp`, `node_alloc` at `0x004991D0`) is `0x104` bytes:
 | `0xC0` | 4 | How far it moves on through the track each simulation step |
 | `0xC4` | 12 | The angles the track has it at |
 | `0xD0` | 12 | The offset the track has it at |
-| `0xDC` | 12 | Angles a turret is steered by, added to the track's |
+| `0xDC` | 12 | Angles a turret turns it by (`node_turn`), added to the track's |
 | `0xE8` | 4 | A component's counterpart of the object's armor |
 | `0xEC` | 4 | The node it hangs from; null for a root |
 | `0xF4` | 4 | Capacity of the child list: 100 once created |
@@ -280,6 +280,13 @@ takes off the pose's angles about any axis whose flag the part has at `+0xC8`, a
 parent's part or the object's centre, turned about the part's mount point by
 `Oᵀ · R · O`, where `O` is the part's orientation and `R` the turn `mat3_from_angles` makes of the
 angles. The part turns in its own frame, and with no angles stays unturned.
+
+`node_turn` (`0x0049B520`) turns a node by angles of its own, as a [turret](guns.md#turrets) turns:
+it adds them to `+0xDC` and marks the node animating. About each axis whose limits the part holds
+(`+0xD8` to `+0xEC`, in degrees) the angle then stays within them; about one whose two limits are
+equal it comes round to within a half turn either way. `node_place` places the node by them.
+**Improvement:** the game turns the degrees to radians by a rounded 0.0174533 and a half turn by
+3.14159; the port by the exact values.
 
 ## Drawing between steps
 

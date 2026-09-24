@@ -61,7 +61,7 @@ pub const Tag = enum(u16) {
     face_group = 0x0D,
     group_entry = 0x0E,
     trigger_polygon = 0x0F,
-    tail = 0x10,
+    firing_arc = 0x10,
     /// Ends the stream.
     end = 0xFFFF,
     _,
@@ -142,20 +142,22 @@ pub const Part = extern struct {
     mount_point: Vec3,
     /// Row-major 3x3; identity or a quarter turn in the shipped models.
     orientation: [9]f32,
-    unknown_c8: Vec3,
+    /// The axes the part's animation doesn't turn it about, a flag each for X, Y and Z, which
+    /// `node_place` tests as floats against zero.
+    still: [3]u32,
     /// Parts sharing a non-zero id belong to one assembly, such as a turret and its barrels.
     link_id: u32,
-    yaw_min: f32,
-    pitch_min: f32,
-    roll_min: f32,
-    yaw_max: f32,
-    pitch_max: f32,
-    roll_max: f32,
+    /// How far a turret's part turns about its own X, Y and Z axes, which the file calls yaw,
+    /// pitch and roll, in degrees: at least `angles_min` and at most `angles_max`. Equal limits
+    /// on an axis leave it free (`node_turn`).
+    angles_min: Vec3,
+    angles_max: Vec3,
     flags: Flags,
-    /// Read as a 16-bit value by the turret code.
-    turret_kind: u16,
-    _pad: u16,
-    turret_slot: u32,
+    /// The turret it makes of its assembly (`object_collect_guns`, which reads all four bytes).
+    turret_kind: TurretKind,
+    /// Which of its turret's parts it is: the base, the barrels and so on, by turret kind; -1 for
+    /// none.
+    turret_slot: i32,
     _reserved_fc: [8]u8,
     /// What the part takes before it is destroyed, where it is a component: `node_add_part` gives
     /// its node this much armour. The Reliant's turrets hold 100 and its body 20000.
@@ -191,6 +193,19 @@ pub const Part = extern struct {
     pub fn name(part: *const Part) []const u8 {
         return sliceName(&part.name_bytes);
     }
+
+    /// The turret a part with a turret's class makes of its assembly (part `+0xF4`).
+    pub const TurretKind = enum(u32) {
+        /// No turret: its muzzles are fixed guns.
+        fixed = 0,
+        /// A turret that turns to aim at its own target and fires by its barrels' `fire` tracks.
+        aimed = 1,
+        /// A gun whose barrels spin up while it fires.
+        spin = 2,
+        /// A missile turret, which launches Screamers.
+        missile = 3,
+        _,
+    };
 
     /// Applies the part's orientation, which is stored row-major.
     pub fn orient(part: *const Part, v: Vec3) Vec3 {
@@ -240,8 +255,13 @@ pub const Part = extern struct {
     comptime {
         assert(@offsetOf(Part, "class") == 0x40);
         assert(@offsetOf(Part, "parent") == 0x94);
+        assert(@offsetOf(Part, "still") == 0xC8);
         assert(@offsetOf(Part, "link_id") == 0xD4);
+        assert(@offsetOf(Part, "angles_min") == 0xD8);
+        assert(@offsetOf(Part, "angles_max") == 0xE4);
         assert(@offsetOf(Part, "flags") == 0xF0);
+        assert(@offsetOf(Part, "turret_kind") == 0xF4);
+        assert(@offsetOf(Part, "turret_slot") == 0xF8);
         assert(@offsetOf(Part, "component_armor") == 0x104);
         assert(@sizeOf(Part) == 312);
     }
@@ -266,6 +286,28 @@ pub const TreeNode = extern struct {
         assert(@offsetOf(TreeNode, "half_size") == 0x28);
         assert(@offsetOf(TreeNode, "children") == 0x40);
         assert(@sizeOf(TreeNode) == 72);
+    }
+};
+
+/// Tag `0x10`. One for each of the model's components, in the order the object lists them: the
+/// directions a turret standing on that component may fire in (`turret_fit_aimed`,
+/// `0x00479160`; `turret_aim_angles`, `0x0047CB10`). Some exporters wrote 12-byte records, with
+/// no mask, which the loader leaves zeroed: nowhere to fire.
+pub const FiringArc = extern struct {
+    /// **Unknown.** Nothing reads it; (0, -1, 0) or (0, 1, 0) in the shipped models.
+    _unknown_00: Vec3,
+    /// 32 rows about the component's Y axis by 16 columns from it, a bit a direction, set where a
+    /// turret may fire.
+    rows: [32]u16,
+
+    /// Whether the direction in `row` and `column` is open.
+    pub fn open(arc: *const FiringArc, row: u5, column: u4) bool {
+        return arc.rows[row] >> column & 1 != 0;
+    }
+
+    comptime {
+        assert(@offsetOf(FiringArc, "rows") == 0x0C);
+        assert(@sizeOf(FiringArc) == 0x4C);
     }
 };
 
@@ -672,7 +714,8 @@ pub const PartData = struct {
 pub const Model = struct {
     header: Header,
     parts: []PartData,
-    tail_count: usize,
+    /// Its components' firing arcs (model `+0x64`, counted at `+0x60`).
+    firing_arcs: []FiringArc = &.{},
     /// Bytes after the terminator, which should be zero.
     trailing_bytes: usize,
 
@@ -680,7 +723,7 @@ pub const Model = struct {
     ///
     ///     header, parts, then per part: levels, nodes, attachments, clips, groups, triggers,
     ///     then per level: vertices, faces, materials, then per node, clip and group their own
-    ///     lists, and finally the tail.
+    ///     lists, and finally the firing arcs.
     pub fn parse(gpa: Allocator, data: []const u8) !Model {
         var reader: Reader = .init(data);
 
@@ -735,7 +778,7 @@ pub const Model = struct {
             };
         }
 
-        const tail = try reader.take(.tail);
+        const firing_arcs = try reader.takeRecords(FiringArc, gpa, .firing_arc);
 
         // The terminator should be the last thing in the file.
         var scan: Reader = .init(data);
@@ -745,7 +788,7 @@ pub const Model = struct {
         return .{
             .header = headers[0],
             .parts = out,
-            .tail_count = if (tail) |chunk| chunk.count else 0,
+            .firing_arcs = firing_arcs,
             .trailing_bytes = data.len - @min(end, data.len),
         };
     }
@@ -829,6 +872,12 @@ fn buildTestModel(buffer: []u8) []u8 {
     @memcpy(material.name_bytes[0..6], "Yank_1");
     pos += @sizeOf(Material);
 
+    pos = put.chunk(buffer, pos, .firing_arc, @sizeOf(FiringArc), 1);
+    const arc: *align(1) FiringArc = @ptrCast(buffer[pos..][0..@sizeOf(FiringArc)]);
+    arc.* = std.mem.zeroes(FiringArc);
+    arc.rows[3] = 1 << 5;
+    pos += @sizeOf(FiringArc);
+
     pos = put.chunk(buffer, pos, .end, 0, 0);
     return buffer[0..pos];
 }
@@ -866,6 +915,12 @@ test "parses a model" {
     const lo, const hi = mesh.bounds();
     try std.testing.expectEqual(@as(f32, 0), lo.x);
     try std.testing.expectEqual(@as(f32, 2), hi.x);
+
+    // The firing arc opens the one direction its mask sets.
+    try std.testing.expectEqual(@as(usize, 1), model.firing_arcs.len);
+    try std.testing.expect(model.firing_arcs[0].open(3, 5));
+    try std.testing.expect(!model.firing_arcs[0].open(3, 4));
+    try std.testing.expect(!model.firing_arcs[0].open(4, 5));
 }
 
 test "a missing chunk does not move the cursor" {
@@ -917,7 +972,7 @@ test "record sizes and field offsets match the format" {
     try std.testing.expectEqual(@as(usize, 80), @sizeOf(Face));
     try std.testing.expectEqual(@as(usize, 64), @sizeOf(Material));
     try std.testing.expectEqual(@as(usize, 0x44), @offsetOf(Part, "position"));
-    try std.testing.expectEqual(@as(usize, 0xD8), @offsetOf(Part, "yaw_min"));
+    try std.testing.expectEqual(@as(usize, 0xD8), @offsetOf(Part, "angles_min"));
     try std.testing.expectEqual(@as(usize, 24), @offsetOf(Face, "u"));
 }
 
@@ -1004,7 +1059,7 @@ fn testPart(name: []const u8, component: bool, attachments: []Attachment) PartDa
 fn testModel(parts: []PartData, list_components: bool) Model {
     var header = std.mem.zeroes(Header);
     header.flags.components = list_components;
-    return .{ .header = header, .parts = parts, .tail_count = 0, .trailing_bytes = 0 };
+    return .{ .header = header, .parts = parts, .trailing_bytes = 0 };
 }
 
 fn testAttachment(kind: Attachment.Kind, id: u32) Attachment {

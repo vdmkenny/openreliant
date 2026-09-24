@@ -1027,7 +1027,7 @@ pub const testing = struct {
             model.node_faces = .{&model.faces};
             model.data[0].part.volume = 2;
             model.data[0].part.density = 3;
-            model.source = .{ .header = std.mem.zeroes(shp.Header), .parts = &model.data, .tail_count = 0, .trailing_bytes = 0 };
+            model.source = .{ .header = std.mem.zeroes(shp.Header), .parts = &model.data, .trailing_bytes = 0 };
             model.loaded = .{ .parts = &model.loaded_parts };
             model.type = .{ .model = &model.source, .loaded = &model.loaded };
         }
@@ -1166,7 +1166,7 @@ test collectComponents {
     }
     data[2].part.flags.targetable = true;
     var loaded_parts: [4]srofiles.LoadedPart = @splat(.{ .flags = .{}, .levels = &.{}, .meshes = &.{} });
-    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &data, .tail_count = 0, .trailing_bytes = 0 };
+    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &data, .trailing_bytes = 0 };
     const loaded: srofiles.Loaded = .{ .parts = &loaded_parts };
     var kind: Type = .{ .model = &source, .loaded = &loaded };
 
@@ -1196,7 +1196,7 @@ test collectComponents {
         part.part.parent = -1;
         part.part.flags.component = true;
     }
-    const crowded: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &many, .tail_count = 0, .trailing_bytes = 0 };
+    const crowded: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &many, .trailing_bytes = 0 };
     const crowded_loaded: srofiles.Loaded = .{ .parts = &many_loaded };
     var crowded_kind: Type = .{ .model = &crowded, .loaded = &crowded_loaded };
     slot.model.?.deinit(gpa);

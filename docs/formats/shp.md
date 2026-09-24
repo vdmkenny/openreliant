@@ -55,7 +55,7 @@ order the loader asks for them, because a miss never rewinds.
 | `0x0D` | face group | 4 | part |
 | `0x0E` | group entry | 20 | group |
 | `0x0F` | trigger polygon | 16 | part |
-| `0x10` | tail | 76, 12 | model |
+| `0x10` | firing arc | 76, 12 | model |
 
 ### Order
 
@@ -66,7 +66,7 @@ header, parts, then for each part:
     for each node:   face list
     for each clip:   keyframes, events
     for each group:  entries
-tail
+firing arcs
 ```
 
 Every model follows this order and ends with the terminator at the last byte of the file.
@@ -106,10 +106,11 @@ carries its own levels of detail.
 | `0xA4` | f32[9] | Orientation, row-major 3x3: the frame the part's animation turns it in, often a quarter turn about X from the model's |
 | `0xC8` | u32[3] | Axes the part's animation doesn't turn it about, one flag each for X, Y and Z |
 | `0xD4` | u32 | Link id. Parts sharing a non-zero id form one assembly, such as a turret and its barrels |
-| `0xD8`, `0xE4` | f32 | Yaw minimum and maximum, in degrees, bounding a turret's traverse |
-| `0xDC`, `0xE8` | f32 | Pitch minimum and maximum |
+| `0xD8` | f32[3] | How far a turret's part turns at least about its own X, Y and Z axes, which the file calls yaw, pitch and roll, in degrees |
+| `0xE4` | f32[3] | And at most. Equal limits leave the axis free |
 | `0xF0` | u32 | Flags (below) |
-| `0xF4` | u16 | Turret kind, 0 to 3 |
+| `0xF4` | u32 | [Turret](../engine/guns.md#turrets) kind: 0 none, 1 aimed, 2 spinning, 3 missile turret |
+| `0xF8` | i32 | Which of its turret's parts it is, by turret kind; -1 for none |
 | `0x104` | i32 | What the part takes as a [component](../engine/objects.md#components) before it is destroyed, which `node_add_part` (`0x00499430`) gives its node. The Reliant's turrets hold 100 and its body 20000 |
 
 Part flags at `0xF0`:
@@ -175,6 +176,17 @@ Older exporters wrote 8-byte records, which stop two bytes into the name.
 | `0x00` | i32 | Time |
 | `0x04` | i32 | Kind: 0 fires the part's muzzle flashes, 2 puffs particles from its attachments of kind 7. The engine's update ignores any other kind, such as 3 |
 | `0x08` | i32 | **Unknown.** `node_tree_update` doesn't read it |
+
+### Firing arc (tag `0x10`)
+
+One for each of the model's [components](../engine/objects.md#components), in the order the
+object lists them: the directions a turret standing on the component may fire in. Some exporters
+wrote 12-byte records, with no mask, which the loader leaves zeroed.
+
+| Off | Type | Field |
+|---|---|---|
+| `0x00` | vec3 | Unknown; nothing reads it. (0, -1, 0) or (0, 1, 0) in the shipped models |
+| `0x0C` | u16[32] | 32 rows about the component's Y axis by 16 columns from it, a bit a direction, set where a turret may fire |
 
 ### Level of detail (tag `0x02`)
 
