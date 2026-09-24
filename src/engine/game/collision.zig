@@ -449,13 +449,17 @@ const shielded_hit: f32 = 1000;
 /// is one the ship lists, the player's target and subtarget, or else the ship alone, unless it is
 /// already the target of the player's current order.
 ///
+/// The part struck may be one of a model mounted on the object's: its assembly and the part it
+/// hangs from are that model's.
+///
 /// Not ported: the invulnerability a component may carry, the score a player's hit is worth, and
 /// what multiplayer makes of it.
-pub fn componentDamage(world: gameobj.World, index: u16, component: *objects.Model.Part, value: f32, attacker: u16, kind: Kind) void {
+pub fn componentDamage(world: gameobj.World, index: u16, struck_part: objects.PartRef, value: f32, attacker: u16, kind: Kind) void {
     const all = world.objects;
     const slot = &all.slots[index];
     const object = &slot.object;
-    const model = if (slot.model) |*live| live else return;
+    const model = struck_part.model;
+    const component = struck_part.part();
     if (object.flags.jumping or kind == .collision or component.flags.damaged) return;
     var share = byDifficulty(world, index, kind, value);
 
@@ -542,17 +546,14 @@ const hull_passes = 9;
 fn hullHit(world: gameobj.World, ship: u16, hull: u16, pass: u8) bool {
     const all = world.objects;
     const model = if (all.slots[hull].model) |*live| live else return false;
-    const source = if (all.slots[hull].type) |kind| kind.model else return false;
     const object = &all.slots[hull].object;
 
     // The hull stands where this step is taking it, as the ship's sphere does.
-    model.place(object.nextPosition(), object.root.next_orientation);
     const at = all.slots[ship].object.nextPosition();
-    const found = objects.hitSphere(model, source, at, all.slots[ship].object.radius) orelse return false;
+    const found = objects.hitSphere(model, object.placeAt(.next), at, all.slots[ship].object.radius) orelse return false;
 
-    const part = model.parts[found.part].object;
-    const contact = math.transform(part.orientation, found.point) + part.position;
-    const normal = math.transform(part.orientation, found.normal);
+    const contact = math.transform(found.place.orientation, found.point) + found.place.position;
+    const normal = math.transform(found.place.orientation, found.normal);
     // The ship takes the shove at its own centre, the hull at the face it was hit on. The game
     // works the hull's lever out in the part's frame; the port uses the object's, which differs
     // only for a part its model animates.
@@ -896,28 +897,29 @@ test componentDamage {
     _ = try mission.add(.kamov, @splat(0));
     const index = try create.createObject(all, &mission.tables, model.types(), null, .predator, 0, @splat(0), &mission.random);
     const part = &all.slots[index].model.?.parts[0];
+    const struck: objects.PartRef = .{ .model = &all.slots[index].model.?, .index = 0 };
     try std.testing.expectEqual(100, part.armor);
 
     // A collision does none, whatever it lands on.
-    componentDamage(world, index, part, 40, 1, .collision);
+    componentDamage(world, index, struck, 40, 1, .collision);
     try std.testing.expectEqual(100, part.armor);
 
     // A shot wears it down, and the attacker is recorded.
-    componentDamage(world, index, part, 40, 1, .bullet);
+    componentDamage(world, index, struck, 40, 1, .bullet);
     try std.testing.expectEqual(60, part.armor);
     try std.testing.expectEqual(1, all.slots[index].object.last_attacker);
 
     // Past its armour, the part it hangs from is marked destroyed; this one hangs from the root.
-    componentDamage(world, index, part, 100, 1, .bullet);
+    componentDamage(world, index, struck, 100, 1, .bullet);
     try std.testing.expect(part.armor < 0);
     try std.testing.expect(all.slots[index].model.?.destroyed);
 
     // A part with armour to spare takes only a heavy hit of a kind that can hurt it.
     part.component_armor = 20000;
     part.armor = 20000;
-    componentDamage(world, index, part, 100, 1, .bullet);
+    componentDamage(world, index, struck, 100, 1, .bullet);
     try std.testing.expectEqual(20000, part.armor);
-    componentDamage(world, index, part, 600, 1, .crash);
+    componentDamage(world, index, struck, 600, 1, .crash);
     try std.testing.expectEqual(19400, part.armor);
 }
 

@@ -102,8 +102,12 @@ shields, even where they are down.
 
 The shot is then given the objects it may reach: each object whose radius, widened by how far it
 could move meanwhile, its path comes within over its whole life, up to 20 of them. An object whose
-components are listed is listed component by component instead. Nothing else is ever tested, so a
-ship that flies into a shot's path after it was fired is not hit.
+components are listed is listed part by part instead ([The hit tests](objects.md#the-hit-tests)):
+along the path its life gives it from the muzzle, as it moves against the object, each part whose
+collision tree's root box that path meets, or that plays a track, is a candidate of its own, the
+object with the part's node's number (`bullet_candidate_test`, `0x0047BC90`). The object's
+velocity it takes off is a step's worth, where the shot's is a tick's. Nothing else is ever tested,
+so a ship that flies into a shot's path after it was fired is not hit.
 
 `bullets_move` (`0x0047A4E0`) moves every shot on by its velocity each simulation step, after the
 objects move. Once a frame `bullets_frame` (`0x0047A510`) draws them, tests them and lets the spent
@@ -123,6 +127,18 @@ segment first crosses the sphere of its radius:
   struck.
 - A ship with its spectral shields on takes nothing at all. The gun type they are tuned to is
   handed to the check and ignored, so every shot is turned.
+
+An object that lists components is struck part by part instead. Where the segment meets its
+bounding box, each of its run of candidates the segment passes within the radius of, as it is
+drawn, is crossed at its next place (`node_hit_test` with `missile_hull_test`), and the last face
+crossed of them all is struck. The shot is spent there. A Huge Gun's sets off a lit fireball 5000
+across for 150 ticks, 40 of its own [sparks](effects.md#sparks) along the face's normal and the
+sound `EXPLOSION01`, and does no damage. Any other throws 10 sparks of kind 1 along the normal, and
+the part takes the gun type's second damage (`component_damage`). One that crosses no part flies
+on. Not ported: a force field's flare, and the shield generator's
+([#179](https://github.com/vdmkenny/openreliant/issues/179)); what the hit leaves hanging from the
+part (`node_add_effect`, `0x004992D0`, [#40](https://github.com/vdmkenny/openreliant/issues/40));
+and the cloak a hit reveals ([#89](https://github.com/vdmkenny/openreliant/issues/89)).
 
 Either way the shot is spent and the frame that follows lets it go. A shot spent on a shield,
 whatever became of it, makes the shield [flare](effects.md#shields) where it struck, unless the
@@ -299,8 +315,6 @@ payload.
 
 Not ported: the Huge Guns' trails of particles, the sparks an impact makes and a flak shell's
 burst, which is only heard ([#41](https://github.com/vdmkenny/openreliant/issues/41)); the muzzle flashes
-([#63](https://github.com/vdmkenny/openreliant/issues/63)); the parts of an object whose components
-are listed, so shots pass through a capital ship
-([#153](https://github.com/vdmkenny/openreliant/issues/153)); the Nova Cannon's charge
+([#63](https://github.com/vdmkenny/openreliant/issues/63)); the Nova Cannon's charge
 ([#150](https://github.com/vdmkenny/openreliant/issues/150)); and the gunnery keys that
 choose a group or fire them all ([#92](https://github.com/vdmkenny/openreliant/issues/92)).

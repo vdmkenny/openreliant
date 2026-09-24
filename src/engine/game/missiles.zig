@@ -839,8 +839,8 @@ fn hitHull(world: gameobj.World, at: u8, index: u16, struck: collision.Quadrant)
 }
 
 /// `missile_hit_components` (`0x00495AC0`): for an object that lists components, the face of its
-/// parts the segment meets (`objects.hitSegment`); the part struck takes the type's component
-/// damage, but a Havoc's or an Imp's, and the missile stops and ends.
+/// parts, or of the models mounted on it, the segment meets (`objects.hitSegment`); the part struck
+/// takes the type's component damage, but a Havoc's or an Imp's, and the missile stops and ends.
 ///
 /// Not ported: the burst the component gives off ([#40](https://github.com/vdmkenny/openreliant/issues/40)).
 fn hitComponents(world: gameobj.World, at: u8, index: u16) bool {
@@ -848,10 +848,9 @@ fn hitComponents(world: gameobj.World, at: u8, index: u16) bool {
     const missile = all.missiles.get(at) orelse return false;
     const slot = &all.slots[index];
     const model = if (slot.model) |*live| live else return false;
-    const source = if (slot.type) |kind| kind.model else return false;
-    const hit = objects.hitSegment(model, source, missile.slot.drawn.position, gameobj.vector(missile.object().root.next_position)) orelse return false;
+    const hit = objects.hitSegment(model, slot.object.placeAt(.next), missile.slot.drawn.position, gameobj.vector(missile.object().root.next_position)) orelse return false;
     if (missile.type.shockwave() == null) {
-        collision.componentDamage(world, index, &model.parts[hit.part], missile.stats(&all.missile_stats).component_damage, missile.launcher, damageKind(missile.type));
+        collision.componentDamage(world, index, hit.part, missile.stats(&all.missile_stats).component_damage, missile.launcher, damageKind(missile.type));
     }
     return stop(world, at);
 }

@@ -42,7 +42,14 @@ pub const Vec3 = extern struct {
     pub fn max(a: Vec3, b: Vec3) Vec3 {
         return .{ .x = @max(a.x, b.x), .y = @max(a.y, b.y), .z = @max(a.z, b.z) };
     }
+
+    pub fn add(a: Vec3, b: Vec3) Vec3 {
+        return .{ .x = a.x + b.x, .y = a.y + b.y, .z = a.z + b.z };
+    }
 };
+
+/// The corners of a box along the axes: its least and its greatest.
+pub const Bounds = struct { Vec3, Vec3 };
 
 /// Chunk tags, in the order the loader requests them.
 pub const Tag = enum(u16) {
@@ -679,12 +686,12 @@ pub const Mesh = struct {
     faces: []Face,
     materials: []Material,
 
-    pub fn bounds(mesh: Mesh) struct { Vec3, Vec3 } {
+    pub fn bounds(mesh: Mesh) Bounds {
         return mesh.boundsIn(null);
     }
 
     /// Extent of the mesh, optionally after applying `part`'s orientation.
-    pub fn boundsIn(mesh: Mesh, part: ?*const Part) struct { Vec3, Vec3 } {
+    pub fn boundsIn(mesh: Mesh, part: ?*const Part) Bounds {
         if (mesh.vertices.len == 0) return .{ .zero, .zero };
         const place = struct {
             fn at(p: ?*const Part, v: Vec3) Vec3 {
@@ -800,6 +807,19 @@ pub const Model = struct {
             .firing_arcs = firing_arcs,
             .trailing_bytes = data.len - @min(end, data.len),
         };
+    }
+
+    /// The box the model's parts stand in at rest, by each part's first level of detail put at the
+    /// part's origin; null for a model with no vertices.
+    pub fn bounds(model: Model) ?Bounds {
+        var box: ?Bounds = null;
+        for (model.parts) |part| {
+            if (part.meshes.len == 0 or part.meshes[0].vertices.len == 0) continue;
+            const lo, const hi = part.meshes[0].bounds();
+            const placed: Bounds = .{ lo.add(part.part.position), hi.add(part.part.position) };
+            box = if (box) |so_far| .{ Vec3.min(so_far[0], placed[0]), Vec3.max(so_far[1], placed[1]) } else placed;
+        }
+        return box;
     }
 
     pub fn vertexCount(model: Model) usize {
@@ -924,6 +944,11 @@ test "parses a model" {
     const lo, const hi = mesh.bounds();
     try std.testing.expectEqual(@as(f32, 0), lo.x);
     try std.testing.expectEqual(@as(f32, 2), hi.x);
+
+    // The model's box is its one part's, put at the part's origin, the origin here.
+    const box = model.bounds().?;
+    try std.testing.expectEqual(@as(f32, 0), box[0].x);
+    try std.testing.expectEqual(@as(f32, 2), box[1].x);
 
     // The firing arc opens the one direction its mask sets.
     try std.testing.expectEqual(@as(usize, 1), model.firing_arcs.len);

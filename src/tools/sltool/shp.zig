@@ -90,11 +90,19 @@ fn listComponents(ctx: Context, path: []const u8) !void {
         return;
     }
     const list = try shp.components(ctx.arena, model, name, &library);
-    try ctx.stdout.writeAll("index  part  class  link  model                 name\n");
+    try ctx.stdout.writeAll("index  part  class  link  armor  model                 name\n");
     for (list, 0..) |component, index| {
-        try ctx.stdout.print("{d:>5}  {d:>4}  {d:>5}  {d:>4}  {s:<20}  {s}\n", .{
-            index,                  component.part_index, @intFromEnum(component.part.class),
-            component.part.link_id, component.model,      component.part.name(),
+        // A signed number given a width takes a plus sign, so the armour is padded as text, in a
+        // buffer that holds any i32.
+        var armor: [std.fmt.count("{d}", .{std.math.minInt(i32)})]u8 = undefined;
+        try ctx.stdout.print("{d:>5}  {d:>4}  {d:>5}  {d:>4}  {s:>5}  {s:<20}  {s}\n", .{
+            index,
+            component.part_index,
+            @intFromEnum(component.part.class),
+            component.part.link_id,
+            std.fmt.bufPrint(&armor, "{d}", .{component.part.component_armor}) catch unreachable,
+            component.model,
+            component.part.name(),
         });
     }
     if (list.len > shp.max_components) {
@@ -117,19 +125,28 @@ fn chunks(ctx: Context, data: []const u8) !void {
 fn info(ctx: Context, model: shp.Model) !void {
     try ctx.stdout.print(
         \\version:  {d}
-        \\flags:    cloak={}
+        \\flags:    components={} cloak={}
         \\parts:    {d}
         \\vertices: {d}
         \\faces:    {d}
-        \\
+        \\arcs:     {d}
         \\
     , .{
         model.header.version,
+        model.header.flags.components,
         model.header.flags.cloak,
         model.parts.len,
         model.vertexCount(),
         model.faceCount(),
+        model.firing_arcs.len,
     });
+    if (model.bounds()) |box| {
+        const lo, const hi = box;
+        try ctx.stdout.print("bounds:   ({d:.0},{d:.0},{d:.0}) to ({d:.0},{d:.0},{d:.0}), {d:.0} x {d:.0} x {d:.0}\n", .{
+            lo.x, lo.y, lo.z, hi.x, hi.y, hi.z, hi.x - lo.x, hi.y - lo.y, hi.z - lo.z,
+        });
+    }
+    try ctx.stdout.writeByte('\n');
 
     for (model.parts, 0..) |entry, index| {
         const part = entry.part;

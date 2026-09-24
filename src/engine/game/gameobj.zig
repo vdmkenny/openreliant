@@ -209,6 +209,8 @@ pub const Type = enum(u32) {
     sabre = 0x2B,
     kamov = 0x2D,
     scimitar = 0x30,
+    /// The Badanov (`cs_badanov.shp`), the smallest of the Coalition's capital ships.
+    badanov = 0x37,
     /// The Kurgan (`rus_kurgan.shp`).
     kurgan = 0x3C,
     /// The Gurevich (`rmc_gurevich.shp`).
@@ -278,6 +280,7 @@ pub const Type = enum(u32) {
             .{ .sabre, "rus_sabre.shp" },
             .{ .kamov, "rus_kamov.shp" },
             .{ .scimitar, "scimitar.shp" },
+            .{ .badanov, "cs_badanov.shp" },
             .{ .kurgan, "rus_kurgan.shp" },
             .{ .gurevich, "rmc_gurevich.shp" },
             .{ .troop_car, "rus_troopcar.shp" },
@@ -410,12 +413,17 @@ pub const GameObject = extern struct {
     /// hardpoints and each launch takes from.
     rack_count: i16,
     component_count: i16,
-    _unknown_154: [4]u8,
+    /// For an object that lists components, how many part nodes it has, its model's and those of
+    /// the models mounted on it (`object_number_parts`).
+    part_count: i16,
+    _unknown_156: [2]u8,
     racks: [max_racks]Rack,
     /// The parts of its model whose flags mark them as components, in the order `0x00468760`
     /// finds them: each node's marked children, then each child's in turn.
     components: [max_components]Component,
-    _unknown_518: u32,
+    /// For an object that lists components, its part nodes by their numbers (`object_number_parts`),
+    /// which a shot's candidates name its parts by; null for any other.
+    part_nodes: Pointer(Pointer(objects.Node)),
     /// How many knocks, from collisions and explosions, the object has taken since its last move
     /// (`knock`). The next `object_move` applies them in place of the object's own motion
     /// (`applyKnocks`).
@@ -775,6 +783,8 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "gun_charge") == 0x140);
         assert(@offsetOf(GameObject, "gun_mode") == 0x144);
         assert(@offsetOf(GameObject, "component_count") == 0x152);
+        assert(@offsetOf(GameObject, "part_count") == 0x154);
+        assert(@offsetOf(GameObject, "part_nodes") == 0x518);
         assert(@offsetOf(GameObject, "components") == 0x248);
         assert(@offsetOf(GameObject, "engines") == 0x5D0);
         assert(@offsetOf(GameObject, "afterburner_fuel") == 0x5E8);
