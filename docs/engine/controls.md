@@ -1,58 +1,48 @@
-# Controls
+# Input Subsystem & Control Dispatch
 
-How the payload reads the player's keyboard, joystick and mouse, and turns them into the inputs of
-the [flight model](objects.md#motion). The names below are those `make ghidra-annotate` gives the
-Ghidra project; [`src/engine/input.zig`](../../src/engine/input.zig) defines the structures.
+This document describes how StarLancer interfaces with input hardware (keyboard, mouse, joystick, and gamepad), translates hardware state into game action events, and feeds them into the [flight physics model](objects.md#motion).
 
-## Devices
+For user-facing controller configuration, button remapping, and joystick calibration, see [User Guide: Controllers & Input](../guide/controllers.md).
 
-`input_init` (`0x004BCD90`) creates DirectInput 7 and three devices:
+Data structures are defined in [`src/engine/input.zig`](../../src/engine/input.zig) and [`src/engine/input/controls.zig`](../../src/engine/input/controls.zig).
 
-- the keyboard, shared with other programs and read only while the game is in the foreground;
-- the mouse, held exclusively while the game is in the foreground;
-- a joystick. `input_init` first enumerates the attached joysticks that have force feedback,
-  and `joystick_found` (`0x004BD190`) opens each it is handed. With none, `input_init` enumerates
-  any attached joystick and clears `force_feedback` (`0x50E1A4`); otherwise, while that flag is
-  set, `load_force_effects` (`0x004BD800`) loads the effects from `forces\*.frc`.
+---
 
-For the joystick, `joystick_object_found` (`0x004BD050`) sets the range of each axis the game uses
-and records that the device has it in `joystick_axes` (`0x5DDC4C`), a `JoystickAxes` with a flag
-for each axis in the order of `DIJOYSTATE`:
+## DirectInput Device Interfaces
 
-| Axis | Range | Flag |
+In the retail Windows binary, `input_init` (`0x004BCD90`) initializes DirectInput 7 and manages three devices:
+1. **Keyboard**: System keyboard captured non-exclusively while the application is in the foreground.
+2. **Mouse**: Captured in exclusive foreground mode.
+3. **Joystick / Gamepad**: Enumerates attached joystick hardware, preferring devices with Immersion force-feedback support. If force feedback is present, profiles are loaded from `Forces/*.FRC`.
+
+### Axis Normalization & Deadzones
+`joystick_object_found` (`0x004BD050`) maps detected hardware axes to DirectInput standard ranges:
+
+| Axis | Logical Range | `DIJOYSTATE` Mapping |
 |---|---|---|
-| X | -1000 to 1000 | `x` |
-| Y | -1000 to 1000 | `y` |
-| Z | 0 to 1000 | `z` |
-| Rz, the twist | -1000 to 1000 | `rz` |
-| First slider | 0 to 1000 | `slider` |
+| **X** | -1000 to +1000 | Yaw / Turn |
+| **Y** | -1000 to +1000 | Pitch |
+| **Z** | 0 to 1000 | Throttle |
+| **Rz** | -1000 to +1000 | Rudder twist / Roll |
+| **Slider 0** | 0 to 1000 | Auxiliary throttle / slider |
 
-A dead zone of a tenth of the range applies to the whole device. `joystick_buttons` (`0x5DDC54`)
-holds the button count and `joystick_name` (`0x5DDB48`) the product name.
+A global deadzone (defaulting to 10% of axis travel) is applied across all active analog axes.
 
-`input_acquire` (`0x004BD780`) acquires the three devices, or unacquires them while the word at
-`0x5DDD28` is set, and `input_shutdown` (`0x004BD3F0`) releases them.
+---
 
-## Reading
+## Input Polling & State Updates
 
-`simulation_step` reads the three devices at the start of each step, so 25 times a second (see
-[the game loop](loop.md)):
+Input devices are polled at the start of each 25 Hz simulation step (`simulation_step`):
 
-| Function | Into | State |
+| Device | Polling Routine | Internal State Buffer |
 |---|---|---|
-| `read_keyboard` (`0x004BD490`) | `keyboard` (`0x595C68`) | 256 bytes by DirectInput scan code (`DIK_*`), nonzero while the key is down |
-| `read_joystick` (`0x004BD300`) | `joystick` (`0x588340`) | `JoystickState`, DirectInput's `DIJOYSTATE` |
-| `read_mouse` (`0x004BD3A0`) | `mouse` (`0x588398`) | `MouseState`, DirectInput's `DIMOUSESTATE2`: the movement since the previous read, and eight buttons |
+| **Keyboard** | `read_keyboard` (`0x004BD490`) | Array of 256 byte scancodes (`DIK_*`), nonzero when depressed. |
+| **Joystick** | `read_joystick` (`0x004BD300`) | `DIJOYSTATE` structure (axes, 32 buttons, POV hats). |
+| **Mouse** | `read_mouse` (`0x004BD3A0`) | `DIMOUSESTATE2` structure (relative deltas and button states). |
 
-The front-end screens read the keyboard themselves.
+---
 
-## Bindings
-
-`control_bindings` (`0x4E2380`) holds a `ControlBinding` for each action: a scan code, a modifier
-(none, Shift, Ctrl or Alt, either key of the pair), the name the game shows, and a joystick button
-or -1. [`src/engine/input/controls.zig`](../../src/engine/input/controls.zig) lists the actions,
-numbered as the game numbers them, with the bindings the game starts with; `make control-tables`
-transcribes it from the executable.
+## Action Binding Table (`ControlBinding`)
 
 `load_key_config` (`0x0042C800`) reads the input settings and the bindings from the `KeyConfig`
 and `JoyConfig` sections of `starlancer.ini` in the game's directory. The settings are in

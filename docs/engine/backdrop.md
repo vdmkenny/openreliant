@@ -1,150 +1,96 @@
-# Backdrop
+# Space Backdrop & Environmental Lighting
 
-What lies behind a mission, as the hardware renderers draw it. Everything is centred on the camera
-and drawn on the background layer, except the lens flares, which go on the overlay layer
-([Rendering](rendering.md#frame)).
+This document describes the background rendering pipeline in StarLancer, including the sky dome, volumetric nebulae, starfield, floating space dust, sun flares, and global directional lighting.
 
-| Element | From | Drawn |
-|---|---|---|
-| Sky dome | `starref12.tga` | Untextured, opaque |
-| Nebula | `neb01` to `neb07` | Textured, unlit, added |
-| Stars | `space.tga` | Points and streaks, added |
-| Dust | Random | Points and streaks, added |
-| Sun | `sunlayer1` to `sunlayer3` | Sprites, added |
-| Lens flares | `sunflare1` to `sunflare4` | Sprites, added |
+Backdrop elements are centered on the active camera position and rendered into the background pass, with the exception of screen-space lens flares which render into the overlay pass ([Rendering](rendering.md#frame)).
 
-`backdrop_create` (`0x004A4E70`) and `nebula_create` (`0x00498B30`) build them at start-up;
-`backdrop_frame` (`0x004A5CD0`) and `nebula_frame` (`0x00498E10`) add them to the scene each frame.
-The dome is the one opaque object, so it is drawn first and the rest add over it.
-[`src/engine/game/backdrop.zig`](../../src/engine/game/backdrop.zig) and
-[`nebula.zig`](../../src/engine/game/nebula.zig) port the functions below.
+---
 
-## Sky dome
+## Backdrop Elements
 
-A band of 15 by 8 vertices around the camera (`nebula_dome`, `0x00498810`). For column `c` and row
-`r`, with `u = c / 14` and `v = r / 7`:
-
-- position: `(sin 2πu, 5 * (v - 0.5), cos 2πu)`, scaled to a length of 5000, so the band stops about
-  22 degrees short of either pole;
-- colour: the pixel of `starref12.tga` at `(255u, 255v)`, rounded down, top row first, over 256.
-
-Each row of quads is one strip of triangles, split along the diagonal from each quad's first
-corner to the one below its next. The mesh holds no texture coordinates, normals or bounds. Its
-object has flags `0x800`, so none is culled, `0x1000`, so it is not tested against the view and is
-always clipped, and `0x80000`, so each vertex takes the object's own colour and no light reaches
-it. `backdrop_place` turns it with the sun marker. The software renderer builds a different dome.
-
-## Nebula
-
-A patch of 11 by 11 vertices on a sphere of radius 5000 (`sky_patch_create`, `0x00498EA0`), 90
-degrees across each way, or 72 for nebula 5, with the texture across it once. Across the columns a
-vertex turns evenly from -45 to 45 degrees about `X`, down the rows about `Y`; `u = c / 10`,
-`v = r / 10`. Each quad is two triangles, split along the diagonal from column `c`, row `r` to
-column `c + 1`, row `r + 1`, and none is culled. Its orientation is the nebula marker's, or a yaw of
--90 degrees without one, which faces it toward `-X`.
-
-A script picks the nebula with `SetEnvironmentFXNebula` (0 to 6), which takes effect at the next jump
-or on `UpdateEnvironmentFXState` (`nebula_select`, `0x00498D00`). Each nebula also colours the fill
-lights:
-
-| Nebula | Texture | Fill light |
-|---|---|---|
-| 0 | `neb01` | 0.24, 0.5, 1 |
-| 1 | `neb02` | 0, 1, 0.8 |
-| 2 | `neb03` | 0.33, 0.46, 1 |
-| 3 | `neb04` | 0.74, 1, 0.32 |
-| 4 | `neb05` | 0, 0.75, 1 |
-| 5 | `neb06` | 0.92, 0.66, 0.33 |
-| 6 | `neb07` | 0, 1, 1 |
-
-Nebula 0 is shown until a script picks another.
-
-## Stars
-
-`space.tga` is a 360-pixel square map of half the sky, half a degree to a pixel, with a grey star on
-black at each pixel that is not black. It is cut into 100 fields of 36 by 36 pixels. Field row `i`,
-column `j` is centred on the axis at polar angle `θ = 9 + 18i` degrees from `+Y` and azimuth
-`φ = 9 + 18j` degrees from `+X` toward `+Z`:
-
-```
-axis = (cos φ sin θ, cos θ, sin φ sin θ)
-```
-
-A star at pixel `(x, y)` of its field lies at `(sin b, sin a, 1)` in the field's frame, `a` and `b`
-being `x - 18` and `y - 18` half degrees: the pixel's row gives `x` and its column `y`. The field's
-frame is turned about `Y`, then `X`, to face the axis (`mat3_look_at`, `0x004C1940`). A star takes
-the pixel's bytes as the file stores them, blue first, and the driver draws the first as red, so the
-map's few tinted stars show with red and blue swapped.
-The fields cover the half of the sky where `z` is positive; a field behind the camera is drawn
-mirrored through it, so they cover the other half too.
-
-Each frame (`stars_project`, `0x004C5380`):
-
-- a field is drawn only while its axis, or its opposite, is within a cosine of 0.6 of the view axis;
-- a star is drawn only while its direction is within a cosine of 0.6 of the view axis this frame and
-  last, and of 0.7 in one of them;
-- a star moving more than a pixel since last frame is a line back to where it was, the tail at half
-  brightness, cut to 0.1 view units (position over depth, before the viewport's scale); otherwise a
-  point;
-- its brightness is `1 / (100m + 1)`, `m` its motion in view units, `|dx| + |dy|`.
-
-After a camera cut, `backdrop_reset_streaks` (`0x004A5C80`) stops the next frame drawing streaks.
-
-## Dust
-
-200 motes in a cube of side 8191, placed by the C runtime's `rand`, grey at half brightness. They are fixed in the world,
-repeating every 8192 units: each frame a mote is placed within 4096 of the camera on each axis. Its
-brightness is `16 * (0.25 - d² / 8191²) / (100m + 1)`, clamped to 0 to 1, with `d` its distance, so
-motes fade out by 4096 away. They streak like stars.
-
-## Sun and lens flares
-
-The sun's direction comes from the sun marker's orientation, or is `(1, -0.5, 0.2)`, normalized,
-without one. The sun and the flares are sprites (see [Rendering](rendering.md#sprites)), textured,
-coloured grey and added. `backdrop_frame` sizes each to reach its texture's width and height times
-`z / 768` from its centre, with `z` its depth, then scales the sun's: on screen a sprite reaches its
-texture's size times the view's scale over 768, in pixels, whatever the distance.
-
-| Sprite | Size | Drawn | Grey |
+| Element | Asset Source | Render Mode | Notes |
 |---|---|---|---|
-| `sunlayer1` | 0.5 | Always | 1 |
-| `sunlayer3` | 2 | While the sun's visibility is above 0.5 | `0.15f + 0.1` below `f = 0.8`, `0.3f` from there |
-| `sunlayer2` | 2 | While `f` is above 0; hardware renderers only | `min(2f, 1)` |
+| **Sky Dome** | `starref12.tga` | Untextured, opaque | Ambient gradient sphere enclosing the scene. |
+| **Nebula** | `neb01` – `neb07` | Additive textured mesh | Spherical billboard patch representing local nebulae. |
+| **Stars** | `space.tga` | Additive points/streaks | Partitioned celestial star map with motion streaking. |
+| **Space Dust** | Procedural | Additive points/streaks | Floating particles near the ship to provide velocity cues. |
+| **Sun** | `sunlayer1` – `sunlayer3` | Additive billboards | Multi-layer solar corona and glare sprites. |
+| **Lens Flares** | `sunflare1` – `sunflare4` | Additive overlays | Dynamic screen-space lens flare artifacts. |
 
-`f` is the flares' brightness, `(0.5 + 0.05v) * (1 - min(1, s))`, with `s` the sun's offset from the
-middle of the view in view units, position over depth, and `v` its visibility. The greys are set
-only while `f` is above 0. The sun's visibility is its distance in pixels from the nearest edge of
-the screen, at most 10 and 0 off it, less again for each triangle of an object flagged `0x8000`
-that covers the sun's point on screen. It is worked out after the sprites are placed, so a frame
-uses the last frame's.
+Backdrop creation is managed by `backdrop_create` (`0x004A4E70`) and `nebula_create` (`0x00498B30`). Per-frame updates are dispatched by `backdrop_frame` (`0x004A5CD0`) and `nebula_frame` (`0x00498E10`).
 
-The six flares are drawn on the overlay layer on the line through the sun and the middle of the
-view, at a multiple of the sun's offset from the middle: `sunflare2` at 0.5, `sunflare1` at 0.33,
-`sunflare3` at 0.2, `sunflare2` at -0.2, `sunflare3` at -0.6 and `sunflare4` at -0.5, each at size 1
-and grey `f`, while `f` is above 0. They show in every view but the cockpit's ahead, and in that
-one too while the cockpit mode is the chase view and any of the sun shows (`camera_view`,
-`0x00539A34`; `cockpit_mode`, `0x00539A9C`). Each sorts as if at the near plane.
+---
 
-## Lights
+## Sky Dome Geometry
 
-`backdrop_create` makes six lights; `backdrop_place` (`0x004A5A00`) aims the key lights along the
-sun and the fill lights along the nebula marker's forward axis, or `(-1, 0.5, 0)` without one.
+The background sky dome (`nebula_dome`, `0x00498810`) forms a 15x8 vertex cylindrical band centered at the camera:
+- **Geometry**: Vertices are placed at radius 5,000, spanning polar angles up to approximately 68° from the equator (terminating 22° short of the poles).
+- **Coloration**: Colors are sampled directly from `starref12.tga`.
+- **Render Flags**: Rendered with culling and lighting disabled (`flags = 0x81800`), providing the foundational background color for the scene.
 
-| Mask | Kind | Intensity | Colour |
-|---|---|---|---|
-| `0x01` | Key, directional | 1 | 1, 1, 0.8 |
-| `0x02` | Fill, directional | 1 | The nebula's; 0, 0.5, 1 at first |
-| `0x04` | Ambient | 1 | 0.04, 0.04, 0.04 |
-| `0x08` | Key, directional | 1 | 1, 1, 0.8 |
-| `0x10` | Fill, directional | 0.7 | The nebula's; 0, 0.5, 1 at first |
-| `0x20` | Ambient | 1 | 0.09, 0.09, 0.09 |
+---
 
-A light reaches an object unless their masks share a bit. A part's object has mask `0x18` when its
-model lists components and `0x03` otherwise (`node_add_part`), so models that list components take
-the full fill light and the rest take it at 0.7; both take the key light and both ambients.
+## Nebulae & Environmental Lighting
 
-## Environment effects
+Nebulae render as an 11x11 spherical mesh patch with radius 5,000 (`sky_patch_create`, `0x00498EA0`), spanning 90° across the sky (72° for Nebula 5).
 
-`SetEnvironmentFX` sets or clears an effect's bit (`environment_effect_set`, `0x00469C60`), applied
-at the next jump or on `UpdateEnvironmentFXState`. The table of effects at `0x004FF808` names two,
-Ice Field and Planet Bombard, with no handlers: switching them does nothing.
+Missions configure the active nebula via script command `SetEnvironmentFXNebula(0..6)`. Selecting a nebula automatically tints the mission's ambient fill lights to complement the cloud's coloration:
+
+| Nebula Index | Texture Asset | Fill Light Color (R, G, B) |
+|---|---|---|
+| `0` | `neb01` | `(0.24, 0.50, 1.00)` |
+| `1` | `neb02` | `(0.00, 1.00, 0.80)` |
+| `2` | `neb03` | `(0.33, 0.46, 1.00)` |
+| `3` | `neb04` | `(0.74, 1.00, 0.32)` |
+| `4` | `neb05` | `(0.00, 0.75, 1.00)` |
+| `5` | `neb06` | `(0.92, 0.66, 0.33)` |
+| `6` | `neb07` | `(0.00, 1.00, 1.00)` |
+
+---
+
+## Starfield Projection & Streaking
+
+The celestial sphere is generated from `space.tga` (a 360x360 map where each non-black pixel represents a star):
+- **Spatial Partitioning**: The texture is divided into 100 angular sectors (36x36 pixels each). Each sector represents an 18° polar by 18° azimuthal field in the celestial sphere.
+- **Frustum Culling**: Fields outside the camera's field of view (cosine < 0.6) are culled before rendering.
+- **Motion Streaking**: During high angular velocities or afterburner acceleration, stars moving more than one screen pixel between consecutive frames are drawn as velocity lines trailing back toward their previous screen coordinates.
+- **Camera Cut Protection**: When camera views switch, `backdrop_reset_streaks` (`0x004A5C80`) clears historical positions to prevent full-screen streak artifacts.
+
+---
+
+## Space Dust Particles
+
+To provide visual feedback for ship speed and drift in open space, the engine distributes 200 dust motes in an 8,192-unit cubic volume around the camera:
+- Mote coordinates wrap periodically as the ship moves.
+- Brightness attenuates with distance from the camera, fading completely by 4,096 units.
+- Motes streak along velocity vectors when flying at high speeds or boosting with afterburners.
+
+---
+
+## Sun & Screen-Space Lens Flares
+
+The sun direction vector is defined by the mission sun marker orientation (or defaults to normalized `(1.0, -0.5, 0.2)`).
+
+The sun renders as three concentric additive billboard layers:
+- `sunlayer1`: Primary bright core (always drawn).
+- `sunlayer2` & `sunlayer3`: Corona and secondary glare, scaling in brightness based on sun visibility and angle to camera center.
+
+### Occlusion & Lens Flares
+Sun visibility (`0.0` to `1.0`) is evaluated by testing whether geometry obscures the sun's screen-space position. When the sun is visible and unoccluded:
+- Four flare sprites (`sunflare1` through `sunflare4`) render along the axis connecting the sun's screen position to the screen center.
+- Flares fade out when the sun passes behind ship hulls, stations, or off the screen edges.
+
+---
+
+## Scene Lighting Rig
+
+`backdrop_create` sets up a standard six-light lighting rig for the mission environment:
+
+| Mask | Type | Intensity | Base Color | Role |
+|---|---|---|---|---|
+| `0x01` | Directional | 1.0 | `(1.00, 1.00, 0.80)` | Primary sun key light |
+| `0x02` | Directional | 1.0 | *(Active Nebula)* | Nebula diffuse fill light |
+| `0x04` | Ambient | 1.0 | `(0.04, 0.04, 0.04)` | Deep shadow ambient floor |
+| `0x08` | Directional | 1.0 | `(1.00, 1.00, 0.80)` | Secondary key light |
+| `0x10` | Directional | 0.7 | *(Active Nebula)* | Secondary fill light |
+| `0x20` | Ambient | 1.0 | `(0.09, 0.09, 0.09)` | Secondary ambient fill |

@@ -1,63 +1,53 @@
-# The C runtime
+# The C Runtime (LIBCMT)
 
-The payload links Visual C++ 6.0's static multithreaded C runtime, `LIBCMT`.
+The StarLancer executable statically links the Visual C++ 6.0 multithreaded C runtime library (`LIBCMT`).
 
-| Part | Range |
-|---|---|
-| Code | `0x004CF23A` to `0x004DB99A`, between the `srmemory.dll` import thunks and the game's unwind funclets |
-| Initialized data | `0x00514AA8` to the end of `.data`'s file contents |
-| Zero-filled data | `0x006235B0` to the end of `.data` |
+---
 
-[`ghidra/names/LANCER.EXE.runtime.tsv`](../../ghidra/names/LANCER.EXE.runtime.tsv) names every
-function and global of it. Names are the linker's symbols, with the C compiler's leading underscore
-(`_sprintf` is `sprintf`, `__lock` is `_lock`); labels and funclets without a symbol have descriptive
-names (`acos_start`, `CallCatchBlock_finally`). Functions the game calls carry C signatures;
-[`src/engine/libcmt.zig`](../../src/engine/libcmt.zig) defines `FILE`.
+## Memory Layout
 
-## Build
+| Segment | Virtual Address Range | Description |
+|---|---|---|
+| **Code** | `0x004CF23A` – `0x004DB99A` | Runtime routines positioned between `srmemory.dll` import thunks and C++ exception unwind funclets. |
+| **Initialized Data** | `0x00514AA8` – end of `.data` | Static runtime data structures, locks, and file tables. |
+| **BSS (Zero-filled)** | `0x006235B0` – end of `.data` | Uninitialized runtime state. |
 
-From the Rich header: the game's C++ objects are from compiler build 8447; the C objects and the
-other C++ objects, the runtime's among them, are from build 8168, Visual C++ 6.0's first release;
-the assembly is from MASM 6.13.
+Symbol names in [`ghidra/names/LANCER.EXE.runtime.tsv`](../../ghidra/names/LANCER.EXE.runtime.tsv) follow standard MSVC runtime conventions (e.g., `_sprintf` for `sprintf`, `__lock` for internal critical section locks). Unnamed helper funclets and structured exception labels are assigned descriptive identifiers.
 
-## Contents
+---
 
-**Start-up and exit.** `_WinMainCRTStartup` (`0x004D1210`), the entry point, creates the heap, the
-per-thread data and the file table, reads the command line and environment, runs the initializers
-and calls `WinMain` (`0x004A8B10`). `__cinit` runs the C initializers (`___xi_a` to `___xi_z`) and
-the C++ ones (`___xc_a` to `___xc_z`, the game's static constructors). `_doexit` runs the `atexit`
-functions, last first, then the terminators, then `ExitProcess`.
+## Compiler Toolchain Signatures
 
-**Threads.** Each thread has a `_tiddata` block in a TLS slot, made by `__getptd` on first use:
-`errno` at `+0x08`, the `rand` seed at `+0x14`. Locks are critical sections numbered in
-`__locktable`, made by `__lock` on first use; the streams of `__iob` use locks `0x1C` on.
+Analysis of the executable's MSVC Rich Header reveals:
+- **Game C++ Objects**: Compiled with MSVC compiler build 8447 (Visual C++ 6.0 Service Pack 3).
+- **Runtime Objects**: Compiled with MSVC compiler build 8168 (Visual C++ 6.0 RTM).
+- **Assembly Routines**: Assembled with MASM 6.13.
 
-**Heap.** `malloc` rounds up to 16 bytes. Requests up to `___sbh_threshold` (1016) come from the
-small-block heap: 1 MB regions, committed in 32 KB groups. Larger ones come from the Win32 heap
-`__crtheap`. `operator new` is `malloc` with the new handler; `operator delete` is `free`.
+---
 
-**Streams.** A `FILE` is 32 bytes. `__iob` holds the first twenty: stdin, stdout, stderr, then
-`fopen`'s. `___piob` points at every stream. `fread`, `fwrite`, `fseek` and the like lock the stream
-and call an `_lk` twin. A file handle indexes the table at `___pioinfo`: blocks of 32 entries of
-`0x24` bytes (Win32 handle, flags, lock). `__output` formats for the `printf` family; `sprintf` runs
-it on a stack stream over the caller's buffer.
+## Key Subsystems
 
-**Numbers.** `rand`: the seed times 214013 plus 2531011, returning bits 16 to 30. `__ftol`, the
-compiler's float-to-int cast, truncates. `floor` and the intrinsics `__CIpow`, `__CIacos` and
-`__CIasin` (x87 stack arguments) are the math library's. `__fpmath` tests for the Pentium FDIV flaw
-and sets 53-bit precision.
+### Startup & Shutdown
+- `_WinMainCRTStartup` (`0x004D1210`) initializes heap allocators, TLS storage, and file tables, parses command-line arguments, runs static C/C++ constructors via `__cinit`, and invokes `WinMain` (`0x004A8B10`).
+- `_doexit` evaluates `atexit` callbacks in LIFO order and calls `ExitProcess`.
 
-**C++ exceptions.** Functions with objects to unwind register `___CxxFrameHandler`; functions with
-`__try` register `__except_handler3`. `terminate` calls the thread's handler, if set, then `abort`.
+### Memory Allocation
+- **Small-Block Heap (SBH)**: Allocations up to 1,016 bytes (`___sbh_threshold`) are serviced from 1 MB memory arenas segmented into 32 KB groups.
+- **Large Allocations**: Requests exceeding the threshold delegate directly to the Win32 process heap (`__crtheap`).
+- Default allocation alignment is 16 bytes.
 
-**Code pages.** No `setlocale` is linked: the locale is the C locale. `___initmbctable` loads the
-system ANSI code page into `__mbctype`, which the path and command-line functions use.
+### Threading & Concurrency
+- Thread Local Storage (TLS) holds per-thread `_tiddata` records (`errno`, pseudo-random generator state).
+- Thread synchronization relies on Win32 `CRITICAL_SECTION` objects indexed in `__locktable`.
 
-Identical functions share one copy: `fgetc` and `getc`, `fputc` and `putc`, `_itoa` and `_ltoa`,
-`_CallMemberFunction0` and `_CallMemberFunction1`. The table names the first.
+### File I/O Streams
+- File streams are tracked in `__iob` (standard I/O handles plus open `FILE` streams).
+- High-level I/O calls (`fread`, `fwrite`, `fseek`) acquire stream-level locks before calling low-level `_lk` routines.
 
-## Identification
+### Math & Float Casting
+- Float-to-integer conversion uses `__ftol`, performing truncating casts on the x87 FPU.
+- Transcendental functions (`__CIpow`, `__CIacos`, `__CIasin`) operate directly on the x87 stack.
+- `__fpmath` detects the Pentium FDIV erratum and configures 53-bit precision.
 
-Ghidra's Function ID "Visual Studio 1998" libraries are Visual C++ 4.2's. Only assembly routines
-unchanged since then match (`_strlen`, `_memset`, `__aulldiv`). The rest is identified by behaviour,
-callees and neighbours: an object's functions are contiguous.
+### Exception Handling
+- Structured Exception Handling (SEH) frames register `___CxxFrameHandler` for C++ object destruction and `__except_handler3` for `__try`/`__except` blocks.

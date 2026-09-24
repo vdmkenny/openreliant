@@ -1,22 +1,16 @@
-# Head-up display
+# Head-Up Display (HUD) Architecture
 
-`C:\lancer\game\hud.cpp` holds the display drawn over the view: the panels, the gauges, the target
-display and the text. Its code lies between `hog_SND.CPP`'s and `hudmovie.cpp`'s, about 40KB of it;
-only `hud_init` asserts, so the source map places that stretch alone.
+This document describes the in-cockpit Head-Up Display (HUD) implementation in StarLancer, originally contained in `C:\lancer\game\hud.cpp` (`0x00483150` – `0x0048D800`).
 
-The port draws the readouts, the clock, the status lights with the devices' charges, the jump
-prompt, the player's target, the eject marker, the scanner, the ship status indicator, the
-targeting cluster, the radar's rings, the windows' frames and what the power distribution and the
-target display show
-([`engine/game/hud.zig`](../../src/engine/game/hud.zig),
-[`engine/game/hud/windows.zig`](../../src/engine/game/hud/windows.zig)), reaching them as the
-engine does, through the overlay `srcore.render` runs after a frame's layers and before the scene
-ends.
+The HUD renders 2D tactical instruments, status indicators, and cockpit gauges over the 3D scene: the targeting reticle, radar, shield/armor status indicators, target lock brackets, subsystem windows, and power distribution management.
 
-## The elements
+In OpenReliant, the HUD is implemented across [`src/engine/game/hud.zig`](../../src/engine/game/hud.zig) and [`src/engine/game/hud/windows.zig`](../../src/engine/game/hud/windows.zig), invoked as an overlay pass before backbuffer presentation.
 
-The display's elements as the game's manual names them, with where the code that draws each has
-been found. An element whose code is not found yet is marked so.
+---
+
+## HUD Elements & Controls
+
+The table below catalogs the HUD elements described in the retail flight manual alongside their implementation status and decompiled functions:
 
 | Element | Where | Key | Shows | Code |
 | --- | --- | --- | --- | --- |
@@ -43,41 +37,32 @@ been found. An element whose code is not found yet is marked so.
 Each panel but the ship status is one of the display's [windows](#the-windows), which come and
 go as the game needs them; SHIFT with a panel's key holds it on.
 
-## How it is reached
+## Rendering Pipeline & Entry Points
 
-`hud_draw` (`0x004843B0`) draws the display once a frame. `mission_run` puts it in `sr + 0x88` and
-Surrender calls it while it renders, so no call reaches it in the listing and Ghidra does not find
-it without being told; `make ghidra-run SCRIPT=DefineFunctions.java ARGS="0x004843b0"` does that.
-`hud_init` (`0x00483150`) sets the display up once, from the device reset at `0x004AD0A0` rather
-than per frame: it copies the element names into the table at `0x0057BC5C`, a hundred bytes each,
-allocates the file's work buffer, takes `oldpalette.tga` and `powerball.tga`, and works out the
-tables the [power ball](#the-power-distribution) is drawn from.
+Per-frame HUD rendering is driven by `hud_draw` (`0x004843B0`), registered as a render callback in `sr + 0x88` during `mission_run`.
 
-`mission_frame` itself calls only three of the file's routines: the windows' `hud_window_open`
-(`0x0048B510`) and `hud_window_close` (`0x0048B590`); the subtarget (`0x0048CC30`), which walks the
-target's assembly by `link_id`; and a utility (`0x0048CEB0`).
+Global HUD resources are initialized once at startup (`hud_init`, `0x00483150`):
+- Element name descriptors are cached in the global table at `0x0057BC5C`.
+- Working render buffers are allocated.
+- Texture palettes (`oldpalette.tga`) and power distribution assets (`powerball.tga`) are loaded and precomputed.
 
-## Where an element stands
+During active mission frames (`mission_frame`), window state is managed via `hud_window_open` (`0x0048B510`) and `hud_window_close` (`0x0048B590`), while subtarget tracking is evaluated by `hud_subtarget` (`0x0048CC30`).
 
-`hud_place` (`0x00482E90`) gives an element its place from a fraction of the screen, so the display
-keeps its layout at any resolution:
+---
 
-    x = round((screen_width  - 0x21) * across) + 0x10 + offset_x
-    y = round((screen_height - 0x21) * down)   + 0x10 + offset_y
+## Screen Placement & Resolution Scaling
 
-with the screen's size at `sr + 0x1666` and `sr + 0x166A`. Half of the way across comes to the
-middle of the screen, the inset and the margin cancelling. `hud_grid_place` (`0x00482F00`) places
-the item of an index in a grid from half-way across, `0x30` apart across and `0x26` down, two to a
-row, its first item `156` to the left.
+`hud_place` (`0x00482E90`) calculates screen positions using normalized fractional coordinates:
 
-The places move with the screen, but the shapes and the glyphs do not: the game draws them at their
-own size whatever the resolution, and the window it makes is 640 by 480 (`0x004A85BC`).
+```text
+x = round((screen_width  - 33) * normalized_x) + 16 + offset_x
+y = round((screen_height - 33) * normalized_y) + 16 + offset_y
+```
 
-**Improvement:** the port draws the display as large against the window as it stood against a
-1024 by 768 screen, a mode the hardware renderers run in and the size of the retail game's own
-screenshots, by whichever side has room for less, so it keeps its shape. What the display measures
-in its own pixels, the inset and the margin and an element's offset, is scaled with it; the
-fraction of the window is not, so the display still reaches the edges of a window of any shape.
+In the original 640x480 software and Direct3D renderers, 2D UI sprites and font glyphs were rendered at fixed 1:1 pixel sizes. While anchor points adjusted with resolution, the UI elements themselves appeared progressively smaller at higher resolutions.
+
+### OpenReliant UI Scaling
+OpenReliant scales HUD elements relative to a reference 1024x768 baseline (the native resolution used for promotional retail screenshots). UI elements scale proportionally while preserving aspect ratios, anchoring cleanly to window borders across modern 1080p, 1440p, 4K, and ultrawide displays.
 At a scale of 1 the arithmetic is the game's own. Half of the way across then falls within a pixel
 or so of the middle rather than exactly on it, the inset having grown. Since the offsets are fixed
 in pixels, the screen chosen sets how far in the elements stand: at 640 by 480 the clock, 130

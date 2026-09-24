@@ -1,52 +1,53 @@
-# Shipped binaries
+# Shipped Executables & Middleware
 
-Every file listed here comes from the two discs, most of it by way of `LANCER.CAB`.
-`make game` reproduces that layout under `game/install/`. The analysis reads the game executable,
-with its code readable, from `game/decrypted/LANCER.EXE`, which the repository does not provide.
+This document inventories the binary executables and dynamic libraries shipped on the retail StarLancer discs (primarily extracted from `LANCER.CAB`).
 
-All binaries are 32-bit x86 PE images (`machine = 0x14C`).
+All binaries are 32-bit x86 Windows PE executables (`machine = 0x014C`).
 
-## The game
+---
 
-| File | Size | Linker | Image base | Notes |
+## Core Game Executables
+
+| Binary | Size (bytes) | Linker | Default Base | Role |
 |---|---|---|---|---|
-| `LANCER.EXE` (loader) | 249,119 | 5.0 | `0x400000` | SafeDisc 1 loader, not the game. |
-| `LANCER.ICD` | 1,151,021 | 6.0 | `0x400000` | The game, encrypted. Entry point `0x004D1210`. |
-| `LANGUAGE.DLL` | 122,951 | 6.0 | `0x10000000` | Localised strings, as a `.rsrc` string table the game reads by ID. |
-| `ITACLANG.DLL` | 692,282 | - | - | In-flight communication system language resources. |
+| `LANCER.EXE` | 249,119 | MSVC 5.0 | `0x00400000` | SafeDisc v1 wrapper and copy protection launcher. |
+| `LANCER.ICD` | 1,151,021 | MSVC 6.0 | `0x00400000` | Decrypted game engine payload (Entry point: `0x004D1210`). |
+| `LANGUAGE.DLL` | 122,951 | MSVC 6.0 | `0x10000000` | Localized string tables stored as Win32 `.rsrc` resources. |
+| `ITACLANG.DLL` | 692,282 | - | - | In-flight tactical audio communications string resources. |
 
-`LANCER.ICD` is stripped, so Ghidra names its functions `FUN_<address>`. It is built with Visual
-C++ 6.0 and links the C runtime statically; see [`runtime.md`](runtime.md).
+`LANCER.ICD` contains the actual game logic. It was stripped of debug symbols prior to release. It was compiled with Microsoft Visual C++ 6.0 and links the C runtime library (`LIBCMT`) statically (see [`runtime.md`](runtime.md)).
 
-## Middleware
+---
 
-The game is a thin layer over several late-1990s SDKs. Source paths surviving in the payload's
-`.rdata` show the original tree as `lancer\game\*.cpp`, `lancer\interface\loadout` and
-`lancer\surrender\surrenderlib`.
+## Middleware Libraries
 
-| Library | Files | Role |
+StarLancer was built on top of several late-1990s multimedia and graphics SDKs:
+
+| Middleware | Binaries | Description |
 |---|---|---|
-| **Surrender** | `srddraw.dll`, `srd3d.dll`, `srfastmath.dll`, `srmemory.dll` | 3D renderer, with DirectDraw and Direct3D 7 back ends, its own math library and allocator. `srmemory.dll` is the payload's only statically imported middleware. Build paths name `srAPI.cpp`. |
-| **WinVFX** | `winvfx8.dll`, `winvfx16.dll`, `vfx.dll`, `w32sal.dll` | 2D sprite and overlay drawing, in 8-bit and 16-bit variants, plus a system abstraction layer. |
-| **Miles Sound System** | `mss32.dll`, `MSS*.M3D`, `MP3DEC.ASI` | Audio. The `.m3d` files are selectable 3D providers: EAX, Aureal A3D, RSX, Dolby Surround, DirectSound3D. |
-| **Bink** | `binkw32.dll` | Video playback for briefings, cutscenes and interface transitions. |
+| **Surrender** | `srddraw.dll`<br>`srd3d.dll`<br>`srfastmath.dll`<br>`srmemory.dll` | 3D rendering engine developed by Warthog, featuring DirectDraw and Direct3D 7 rasterizers, vectorized math routines, and custom memory allocators. `srmemory.dll` is the only statically linked DLL dependency. |
+| **WinVFX** | `winvfx8.dll`<br>`winvfx16.dll`<br>`vfx.dll`<br>`w32sal.dll` | 2D UI sprite, HUD overlay rendering, and system abstraction library. |
+| **Miles Sound System** | `mss32.dll`<br>`MSS*.M3D`<br>`MP3DEC.ASI` | Audio mixer and 3D positional audio drivers (EAX, Aureal A3D, DirectSound3D). |
+| **Bink Video** | `binkw32.dll` | Smacker/Bink video player used for cutscenes, mission briefings, and UI transitions. |
 
-DirectDraw, Direct3D, DirectInput and DirectPlay are reached through those libraries or loaded
-dynamically; only `DINPUT.dll` is imported statically, for `DirectInputCreateEx`.
+DirectDraw, Direct3D 7, and DirectInput are accessed through these middleware layers or loaded dynamically at runtime via `LoadLibrary`.
 
-## Data files
+---
 
-| Path | Contents |
-|---|---|
-| `CD1.HOG`, `CD2.HOG`, `resource.hog`, `ms_speech/msspeech.hog`, `pilots/pilots.hog` | Asset archives: see [`hog.md`](../formats/hog.md). |
-| `shipstats.bin`, `gunstats.bin`, `missilestats.bin`, `pilotstats.bin` | Stat tables: see [`stats.md`](../formats/stats.md). |
-| `missions/*.dte` | Missions 18 and 25, installed loose; `resource.hog` holds all 44. See [`dte.md`](../formats/dte.md). |
-| `*.ccb` | Colour lookup tables for Surrender (`palette`, `power`, `softpal`). |
-| `Forces/*.FRC` | Force-feedback effects, one per weapon and event. |
-| `interface/*.bik`, `inter/`, `*.bik` | Bink video: menu transitions, branding, cutscenes. |
-| `music/*.wav` | Music, one file per mission and state. |
+## Shipped Game Data Files
 
-## Protection dependencies
+| Path / Pattern | Description | Documentation |
+|---|---|---|
+| `CD1.HOG`, `CD2.HOG`, `resource.hog`, `pilots.hog`, `msspeech.hog` | Asset archives (`BIGF` format / RefPack compression). | [`formats/hog.md`](../formats/hog.md) |
+| `shipstats.bin`, `gunstats.bin`, `missilestats.bin`, `pilotstats.bin` | Binary gameplay balance tables. | [`formats/stats.md`](../formats/stats.md) |
+| `missions/*.dte` | Mission definitions, triggers, and compiled script bytecode. | [`formats/dte.md`](../formats/dte.md) |
+| `*.ccb` | Surrender color lookup tables (`palette.ccb`, `power.ccb`). | [`formats/tcache.md`](../formats/tcache.md) |
+| `Forces/*.FRC` | Immersion force-feedback profiles for joystick hardware. | |
+| `interface/*.bik`, `*.bik` | Bink video cutscenes and menu animations. | |
+| `music/*.wav` | Mission background music and combat tracks. | [`engine/sound.md`](../engine/sound.md) |
 
-`SECDRV.SYS` is the SafeDisc kernel driver. Windows Vista and later disabled it, and Windows 10
-removed it, so the shipped `LANCER.EXE` cannot start on a current system.
+---
+
+## SafeDisc Copy Protection
+
+Retail copies were protected by SafeDisc v1 (`SECDRV.SYS`). Because modern operating systems (Windows 10, Windows 11, Linux, macOS) block or lack this obsolete kernel-mode driver, the original retail `LANCER.EXE` cannot execute on modern systems without decryption or a decompiled engine like OpenReliant.

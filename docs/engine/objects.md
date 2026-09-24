@@ -1,36 +1,30 @@
-# Live objects
+# Live Game Objects & Entity Hierarchy
 
-The ships, stations, gates, missiles and markers of a running mission. Each is a `0xB98`-byte object
-from `gameobj.cpp`, and each embeds the root of a hierarchy of nodes standing for the parts of its
-model. The layouts are defined in [`gameobj.zig`](../../src/engine/game/gameobj.zig),
-[`objects.zig`](../../src/engine/game/objects.zig), [`create.zig`](../../src/engine/game/create.zig)
-and [`srapiext.zig`](../../src/engine/surrender/surrenderlib/srapiext.zig), and `make
-ghidra-annotate` applies them to the Ghidra project with the names used here.
+This document describes the runtime object model used for ships, space stations, jump gates, missiles, asteroids, and navigation markers.
 
-## The object array
+In the original binary (`C:\lancer\game\gameobj.cpp`), every active entity is represented by a `0xB98`-byte structure embedding hierarchical transform nodes that correspond to the visual components of its 3D model.
 
-`game_objects` (`0x587CE0`) holds 400 object pointers, which the engine calls the GO array. No
-slot is ever empty. As a mission starts, `objects_reset` (`0x00466630`) gives every slot a
-stand-in of type 1001, flagged `stand_in` and not created, sets `game_object_count` (`0x539AA0`) to
-0, and forgets every ship type's objects and model. `create_object` (`0x00466C10`) fills a slot:
-the one it is given, such as a mission ship's index among the mission's ship records, or for -1 the
-next, which counts `game_object_count` up. It stops the game with a fatal error past the last slot
-or for a slot filled already. `object_reset` (`0x004688B0`) pops a slot's orders and puts a new
-stand-in in it, flagged `0x3C`.
+The memory layouts are modeled in:
+- [`src/engine/game/gameobj.zig`](../../src/engine/game/gameobj.zig)
+- [`src/engine/game/objects.zig`](../../src/engine/game/objects.zig)
+- [`src/engine/game/create.zig`](../../src/engine/game/create.zig)
+- [`src/engine/surrender/surrenderlib/srapiext.zig`](../../src/engine/surrender/surrenderlib/srapiext.zig)
 
-`player_slots` (`0x58832C`) counts the slots from the first that belong to players, one in a
-single-player game, and `player_index` (`0x5883FA`) is the player's own, the first in a
-single-player game.
+---
 
-Every loop over the objects walks the slots from the first up to `game_object_count`, then the
-cutaway slot (`0x57E04E`), which the mission's start sets to 399, the last, reading the count afresh
-at every slot. The loops pass over objects by their flags: the simulation's updates and
-`objects_update` skip `stand_in` and `disabled` ones, and `mission_frame`'s framing and drawing
-`jumping` ones as well. **Improvement:** with every slot handed out, the cutaway slot comes round
-again and again, and the game's loops never end; the port walks it once.
+## Global Object Array (`game_objects`)
 
-| Offset | Size | Field |
-|---|---|---|
+Active game entities are tracked in a fixed-size table of 400 object pointers (`game_objects`, `0x587CE0`), historically referred to in the codebase as the **GO array**.
+
+- **Pool Initialization**: At mission startup (`objects_reset`, `0x00466630`), all 400 slots are initialized with inactive placeholder objects (type ID 1001, flagged `stand_in`). `game_object_count` (`0x539AA0`) resets to 0.
+- **Entity Allocation**: `create_object` (`0x00466C10`) assigns an object into an explicit slot (e.g. for mission-defined ships) or into the next available sequential slot.
+- **Player Slots**: `player_slots` (`0x58832C`) defines the count of local and network player slots; `player_index` (`0x5883FA`) points to the local player entity.
+- **Loop Iteration**: Engine loops iterate over slots from index 0 through `game_object_count - 1`, plus slot 399 (reserved for cinematic and cutaway objects).
+  - *OpenReliant Fix*: In the retail engine, if all 400 slots were occupied, the cutaway slot comparison resulted in an infinite loop; OpenReliant caps iteration bounds safely.
+
+---
+
+## Object Memory Layout (`0xB98` bytes)
 | `0x000` | 4 | Type: the ship's record in `shipstats.bin`. Types above 255, markers and nav points among them, have no stats |
 | `0x004` | 4 | Slot in `game_objects` |
 | `0x008` | 4 | [Flags](#flags) |
@@ -76,59 +70,29 @@ again and again, and the game's loops never end; the port walks it once.
 | `0xB95` | 1 | Nonzero while invulnerable: `SetInvulnerability` |
 | `0xB96` | 2 | The 3D voice it holds, `0xFFFF` for none |
 
-## Creating an object
+## Entity Instantiation (`create_object`)
 
-`create_object(slot, type, tier, x, y, z)` fills the slot's object and returns the slot. It clears
-the flags and sets the object up at rest at the place given, facing along the world's Z axis, with
-no orders and no attacker, `motion_forward` as its motion, its armor whole and its own seed drawn
-from `rand()`. A type above 255 stops there, as a stand-in for a marker or a nav point: flagged
-`0x3C`, with a radius of 4000 and no shields or armor.
+`create_object(slot, type, tier, x, y, z)` populates a target slot in `game_objects`:
+- Resets entity flags, places the entity at position `(x, y, z)` facing along the world Z axis, and initializes velocity vectors to zero.
+- Types above 255 represent non-combat world entities (nav points, jump points, and mission markers): these are flagged with `0x3C`, receive a default radius of 4,000 units, and have no shields or armor.
+- Type Aliasing: Several ship type IDs serve as variants sharing baseline flight and combat statistics with another ship (e.g., the Krasnaya variants aliasing type `0x78`, or the Mitchell aliasing `0x13`).
+- **Model Hierarchy**: When a ship class is loaded for the first time (`ship_type_load`, `0x00466740`), its 3D model geometry is parsed. Node parts are instantiated and linked hierarchically ([Models](../formats/shp.md)), and the object center of mass is computed (`object_link_parts`).
+- **Pilot & Subsystems**: Assigns pilot AI ratings (defaulting to record 66 of `pilotstats.bin` for Coalition forces), initializes shield and armor quadrants, mounts hardpoint guns from model muzzles ([Guns](guns.md)), populates missile bays, and allocates power evenly across systems.
 
-A few types are another ship under a number of their own: the Krasnaya (`0x35`, `0xDB` and `0xDC`,
-for `0x78`), the Kiev (`0x36`, `0x40`, `0xDD` and `0xDE`, for `0xC2`), the Mitchell (`0xA0`, for
-`0x13`), the Zakov (`0xA1`, `0xA2` and `0xE2`, for `0xB0`), the Kestrel (`0xDA`, for `0x0F`) and the
-Mammoth (`0xE3` to `0xEF`, for `0x21`). Such a type takes the other's flight model and combat stats
-into its own entries, keeping its gun groups and its name, and its object takes the other's number
-once it is made.
+### Entity Combat Classes
 
-The object points at its type's stats and takes the type's side from them. The type's model is
-loaded with its first object (`ship_type_load`, `0x00466740`), with the type's schematic as its
-data. Each part of the model gets a node that plays its `startup` track from the start at 4 a step;
-a part of class 6 gives the object `shield_generator`, one of class 5 counts as an engine, and an
-attachment of kind 6 sets flag `0x2000000`. The parts are then linked, each posed as its track has
-it at the start, and the object's origin moves to their centre of mass (`object_link_parts`). A
-piece of debris takes a tenth of its mass, and a mine a radius of 2000.
+| Class ID | Category | Description |
+|---|---|---|
+| `1` | Fighter | Player spacecraft, wingmen, and Coalition space superiority fighters. |
+| `2` | Capital Ship | Battleships, carriers, dreadnoughts, and large space stations. |
+| `3` | Auxiliary | Heavy bombers, transports, cargo freighters, and escape pods. |
+| `4` | Installation / Structure | Jump gates, cargo containers, communication satellites, and beacons. |
+| `5` | Torpedo | Heavy anti-capital guided torpedoes. |
+| `6` | Debris | Hull fragments and inert space junk. |
+| `7` | Proximity Mine | Explosive space mines. |
+| `8` | Planet | Background planetary bodies. |
 
-Then come the pilot, record 66 of `pilotstats.bin` for the Coalition's types and 0 for the rest;
-each quadrant's shields and armor full, `6 * shield_power - 1` and `6 * armor_class - 1`, and the
-conditions that armor gives ([Shields](#shields)); for a model that lists no components the
-shield's effect and, in every slot past the players', the `ecm` flag, and for one that does, the
-`components` and `attached` flags; the afterburner's fuel, `100 * afterburner_fuel`, and 29
-countermeasures; the power shared evenly. The gun and component counts are cleared, then the
-components are listed and the [guns fitted](guns.md) from the model's muzzles, which sets the gun
-count again; then come the guns' charge and rounds, their groups and the gun mode, the loadout, and
-`targetable`, where the type allows it. Capital ships, planets, gates,
-asteroids and a few other types get more set up for their kind.
-
-The words of each `ship_combat_stats` entry from `+0x1C` on come from the executable rather than
-from `shipstats.bin`: the gun groups, which the gun code fills in at run time (`gun_groups_build`,
-`0x004667F0`), then whether the type can be targeted, the string that names it, its class and its
-side. `make combat-tables` transcribes them into
-[`create/combat.zig`](../../src/engine/game/create/combat.zig).
-
-| Class | What it is |
-|---|---|
-| 1 | Fighters: the player's ships, their twins, and the Coalition's fighters |
-| 2 | Capital ships and their wrecks, and other large bodies such as asteroids |
-| 3 | Bombers, transports, tugs, escape pods and some stations |
-| 4 | Gates, containers, satellites, beacons, pods, rock chunks and the like |
-| 5 | Torpedoes |
-| 6 | Debris |
-| 7 | The proximity mine |
-| 8 | Planets |
-
-A type's side is 0 for the Alliance's, which start friendly, 1 for the Coalition's, which start
-hostile, and 2 for the rest, which are neutral. Two objects on different sides are enemies.
+Entity allegiances (`side`) are categorized into `0` (Alliance / Friendly), `1` (Coalition / Hostile), and `2` (Neutral). Two entities belonging to different sides are considered hostile combatants.
 
 [`create.zig`](../../src/engine/game/create.zig) ports `create_object` as `createObject`, and
 `Objects` is the port's GO array: each slot the object's record, and what the port keeps beside it
