@@ -8,9 +8,10 @@
 //! pitch and volume. Samples play by their pan from ahead, streams stereo straight to the
 //! speakers. **Improvements:** OpenAL's band-limited sinc resampler and its smoothing of every
 //! change; UHJ stereo, or HRTF for headphones, where Miles panned left and right; as many speakers as
-//! the device has; a listener that moves, sounds with a size, high frequencies fading with
-//! distance, a subwoofer; a reverb on the 3D sounds, of the generic room the game asks EAX for
-//! with its effect volume at nothing, and one of a cabin on the cockpit's own voice.
+//! the device has; a listener that moves, a stronger Doppler shift, sounds with a size, high
+//! frequencies fading with distance, a subwoofer; a reverb on the 3D sounds, of the generic room
+//! the game asks EAX for with its effect volume at nothing, and one of a cabin on the cockpit's own
+//! voice.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -51,6 +52,12 @@ const resampler_name = "23rd order Sinc";
 /// Miles's units are metres; its velocities are a millisecond's, OpenAL's a second's.
 const velocity_scale: f32 = 1000;
 const speed_of_sound: f32 = 343.3;
+/// **Improvement:** the Doppler shift ten times as strong as the game's velocities make it. Turned
+/// into Miles's metres, a missile flies at a few metres a second, which shifts a sound by a
+/// hundredth or two, where at the models' scale, about a centimetre a unit, it flies at over a
+/// hundred; ten times goes a good part of the way there. The velocities are held within half the
+/// speed of sound over this, so the shift keeps within the bounds it had.
+const doppler_factor: f32 = 10;
 
 /// A sound decoded into an OpenAL buffer.
 const Buffer = struct {
@@ -287,7 +294,7 @@ pub const Renderer = struct {
         // The listener stands still at the origin, looking ahead: the game places every sound
         // from the camera.
         c.alDistanceModel(c.AL_INVERSE_DISTANCE_CLAMPED);
-        c.alDopplerFactor(1);
+        c.alDopplerFactor(doppler_factor);
         c.alSpeedOfSound(speed_of_sound);
         c.alListener3f(c.AL_POSITION, 0, 0, 0);
         c.alListener3f(c.AL_VELOCITY, 0, 0, 0);
@@ -601,7 +608,7 @@ pub const Renderer = struct {
     pub fn set3DListenerVelocity(renderer: *Renderer, velocity: mss.Vector) void {
         _ = renderer;
         const speed = @sqrt(@reduce(.Add, velocity * velocity));
-        const most = speed_of_sound / velocity_scale / 2;
+        const most = speed_of_sound / velocity_scale / 2 / doppler_factor;
         const held = if (speed > most) velocity * @as(mss.Vector, @splat(most / speed)) else velocity;
         const moving = openAl(held) * @as(mss.Vector, @splat(velocity_scale));
         c.alListener3f(c.AL_VELOCITY, moving[0], moving[1], moving[2]);
@@ -798,9 +805,11 @@ fn openAl(v: mss.Vector) mss.Vector {
     return .{ v[0], v[1], -v[2] };
 }
 
-/// A 3D sample's velocity, held along the line to the listener as the software mixer holds it.
+/// A 3D sample's velocity, held along the line to the listener as the software mixer holds it, for
+/// a shift `doppler_factor` times as strong.
 fn setVelocity(voice: *Voice) void {
-    const held = mss.positional.dopplerVelocity(voice.position, voice.velocity);
+    const factor: mss.Vector = @splat(doppler_factor);
+    const held = mss.positional.dopplerVelocity(voice.position, voice.velocity * factor) / factor;
     const moving = openAl(held) * @as(mss.Vector, @splat(velocity_scale));
     c.alSource3f(voice.source, c.AL_VELOCITY, moving[0], moving[1], moving[2]);
 }
@@ -914,6 +923,26 @@ test Renderer {
     driver.startStream(music);
     try std.testing.expectEqual(mss.Status.playing, driver.streamStatus(music));
     driver.closeStream(music);
+}
+
+test "Doppler" {
+    const renderer = Renderer.create(std.testing.allocator, 22050, 2, .{}, false) catch return error.SkipZigTest;
+    defer renderer.destroy();
+    const driver = renderer.driver();
+    try std.testing.expectEqual(doppler_factor, c.alGetFloat(c.AL_DOPPLER_FACTOR));
+
+    // A sample flying off ahead faster than the shift allows is held to half the speed of sound
+    // over the factor, in OpenAL's frame, where ahead is `-z`.
+    const placed = driver.allocate3DSample().?;
+    driver.set3DPosition(placed, .{ 0, 0, 10 });
+    driver.set3DVelocity(placed, .{ 0, 0, 1 });
+    var velocity: [3]c.ALfloat = undefined;
+    c.alGetSource3f(renderer.sample3D(placed).source, c.AL_VELOCITY, &velocity[0], &velocity[1], &velocity[2]);
+    try std.testing.expectApproxEqAbs(-speed_of_sound / 2 / doppler_factor, velocity[2], 1e-3);
+    // A slow one keeps its velocity.
+    driver.set3DVelocity(placed, .{ 0, 0, 0.005 });
+    c.alGetSource3f(renderer.sample3D(placed).source, c.AL_VELOCITY, &velocity[0], &velocity[1], &velocity[2]);
+    try std.testing.expectApproxEqAbs(-0.005 * velocity_scale, velocity[2], 1e-3);
 }
 
 test "HRTF" {

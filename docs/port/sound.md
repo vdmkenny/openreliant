@@ -95,8 +95,11 @@ count but once loops it for ever.
   output is looked at again every second, and HRTF turns on or off as it changes. `--hrtf` and
   `--no-hrtf` have it whatever the output. A device with 4, 6 or 8 channels gets them all.
 - The listener moves with the player's ship, so a sound's Doppler shift comes of how the two move
-  against each other, and the player's own engine is not shifted. The listener's speed is held
-  within half the speed of sound.
+  against each other, and the player's own engine is not shifted.
+- The Doppler shift is ten times what the game's velocities give. In Miles's metres a missile flies
+  at a few metres a second, where at the models' scale, about a centimetre a unit, it flies at over
+  a hundred. The listener's speed, and a sound's along the line to it, are held within half the
+  speed of sound over that.
 - A sound that follows an object spreads around the listener as it comes within the object's
   model's radius (`AL_SOURCE_RADIUS`), so a capital ship close by fills the space rather than
   sitting at a point.
