@@ -163,6 +163,8 @@ both key lights and both fill lights, where a ship's part takes one of each pair
 **Improvement:** a bit takes the lights a ship's part takes (`objects.lightMask`), so it is not
 washed out. `--original` restores every light, for the bits and the break-up's pieces alike.
 
+**Improvement:** the port keeps room for 4000 bits whatever the detail, and a thrown bit flies on until its place is needed instead of going after about 20 seconds. A capital ship's split throws hundreds, which the original's pool lets go of within seconds. A stream's spark still goes after its few seconds. `--original` restores the original's pool and times (`explode.BitPool`).
+
 [`explode.zig`](../../src/engine/game/explode.zig) ports the bits as `Explosions.throwBit`,
 `Explosions.throwSpark` and `Bit`, and [`aiexplode.zig`](../../src/engine/game/aiexplode.zig) the
 spin-out's trail. The port

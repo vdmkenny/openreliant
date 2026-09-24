@@ -106,7 +106,7 @@ const Doc = struct {
 
 /// Every option's help, which the compiler holds to having one for each.
 const docs: std.enums.EnumArray(Arg, Doc) = .init(.{
-    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, light worked out on encoded colours, no shadows, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings and particles as few and plain as the original's, a damaged ship's smoke as even as the original's, the shields' bubbles as coarse as the original's, the levels of detail changing as near as the original's, the marker for a target out of sight placed as the original misplaces it, a missile's sound left where it was launched, and the sound mixed plainly in stereo" },
+    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, light worked out on encoded colours, no shadows, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings, particles and burning bits as few, plain and brief as the original's, a damaged ship's smoke as even as the original's, the shields' bubbles as coarse as the original's, the levels of detail changing as near as the original's, the marker for a target out of sight placed as the original misplaces it, a missile's sound left where it was launched, and the sound mixed plainly in stereo" },
     .@"--ship" = .{ .section = .sandbox, .value = "<type>", .text = "the ship type to fly, by its number in shipstats.bin; 0, the Predator, by default" },
     .@"--view" = .{ .section = .sandbox, .value = "<0|1|2>", .text = "the view it starts in, as the game's settings keep it: 0 the cockpit; 1 the chase view; 2 no cockpit. The settings' own by default, which the pause menu's video screen changes" },
     .@"--difficulty" = .{ .section = .sandbox, .value = "<easy|medium|hard>", .text = "the game's difficulty: how hard hits land on your ship, and shots on the enemy; medium by default, as in the game" },
@@ -224,6 +224,8 @@ const Options = struct {
     shot_lights: game.guns.ShotLights = .every_shot,
     /// Which lights reach an explosion's debris: a ship's, or every one as the original lets them.
     debris_lights: game.explode.DebrisLights = .like_ships,
+    /// How many burning bits the explosions keep flying, and for how long.
+    bit_pool: game.explode.BitPool = .lasting,
     /// How full the explosions look: their fireballs, their shockwaves' rings, and the particles
     /// sent far from the camera.
     fireballs: game.explode.Fireballs = .fuller,
@@ -289,6 +291,7 @@ const Options = struct {
                 options.smooth_motion = false;
                 options.shot_lights = .latest_two;
                 options.debris_lights = .every_light;
+                options.bit_pool = .original;
                 options.fireballs = .original;
                 options.rings = .octagon;
                 options.distant = .thinned;
@@ -611,6 +614,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     var explosions: game.explode.Explosions = try .init(gpa, try .load(&textures));
     defer explosions.deinit();
     explosions.settings.debris_lights = options.debris_lights;
+    explosions.settings.bit_pool = options.bit_pool;
     explosions.settings.fireballs = options.fireballs;
     var particles: game.particles.Pool = try .load(gpa, &textures, .standard, .{ .distant = options.distant });
     defer particles.deinit();
@@ -1487,6 +1491,8 @@ test Options {
     try std.testing.expectEqual(.stays, retro.missile_sound);
     try std.testing.expectEqual(.every_light, retro.debris_lights);
     try std.testing.expectEqual(.like_ships, plain.debris_lights);
+    try std.testing.expectEqual(.lasting, plain.bit_pool);
+    try std.testing.expectEqual(.original, retro.bit_pool);
     try std.testing.expectEqual(.original, retro.fireballs);
     try std.testing.expectEqual(.octagon, retro.rings);
     try std.testing.expectEqual(.thinned, retro.distant);
