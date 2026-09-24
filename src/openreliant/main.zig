@@ -832,7 +832,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
                 .multiplayer = false,
                 .world = world,
             });
-            engine.input.frameKeys(&display.state, &player, &devices, &slot.object, view.view, display.clock.game_ticks, false);
+            engine.input.frameKeys(&display.state, &player, &devices, slot, view.view, display.clock.game_ticks, false);
             // What moves the cockpit's model: the ship's rates of turn over its full ones, and its
             // speed over its cruise speed.
             const cockpit_input: ?camera.Cockpit.Input = if (sandbox.cockpit) |*cockpit| input: {

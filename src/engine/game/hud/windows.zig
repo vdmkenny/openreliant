@@ -288,6 +288,8 @@ pub fn bufferClip(window: Window, at: [2]i32, size: f32) hud.Clip {
 
 /// What the windows show, for those the port draws the contents of.
 pub const Contents = struct {
+    /// Window 1's.
+    gunnery: ?hud.gunnery.Shown = null,
     /// Window 2's.
     missiles: ?hud.missile_display.Shown = null,
     /// Window 7's.
@@ -360,6 +362,7 @@ fn draw(
     }
     const inside: Inside = .{ .at = at, .size = size, .clip = clip };
     switch (window) {
+        .gunnery => if (contents.gunnery) |gunnery| try hud.gunnery.draw(gunnery, art, gpa, target, inside, colour),
         .missiles => if (contents.missiles) |missiles| try hud.missile_display.draw(missiles, art, gpa, target, inside, colour),
         .power => if (contents.power) |power| try hud.power.draw(power, art, gpa, target, inside, colour),
         else => if (hud.target_display.Form.of(window)) |form| if (contents.target_display) |scene| {

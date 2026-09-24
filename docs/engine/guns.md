@@ -30,7 +30,7 @@ Turrets store additional data in remaining fields ([Turrets](#turrets)). The wor
 
 ## The trigger
 
-`object_fire_guns` (`0x0047B1F0`) holds the trigger for firing guns by setting each gun's `+0x0C` to `frame_start` plus the requested ticks. `FIRE LASERS` holds it for one tick, so player guns fire during the current frame and stop unless the key remains held into the next frame; the script Fire command holds it for 20 or 100 ticks. With `FULL GUNS`, every gun fires except aimed turrets; otherwise the two guns of the selected group fire. A muzzle of gun type 11 (Nova Cannon) is skipped either way because it charges up instead ([#150](https://github.com/vdmkenny/openreliant/issues/150)). A ship whose guns are disabled fires nothing.
+`object_fire_guns` (`0x0047B1F0`) holds the trigger for firing guns by setting each gun's `+0x0C` to `frame_start` plus the requested ticks. `FIRE LASERS` holds it for one tick, so player guns fire during the current frame and stop unless the key remains held into the next frame; the script Fire command holds it for 20 or 100 ticks. With `FULL GUNS`, every gun fires except aimed turrets; otherwise the two guns of the selected group fire ([Head-up display](hud.md#the-gunnery-display)). A pair fires together, or with `synchronised` cleared (SYNCHRONISE GUNS) in turn, one gun a shot. A muzzle of gun type 11 (Nova Cannon) is skipped either way because it charges up instead ([#150](https://github.com/vdmkenny/openreliant/issues/150)). A ship whose guns are disabled fires nothing.
 
 ## The step
 
@@ -181,4 +181,4 @@ Gun groups exclude kinds 1 and 3, and `FULL GUNS` excludes kind 1 ([The trigger]
 
 The muzzle flashes are [`guns/flash.zig`](../../src/engine/game/guns/flash.zig)'s, which every model's muzzles draw (`objects.Model.flashes`).
 
-Not ported: Huge Gun particle trails, impact sparks and audible flak bursts ([#41](https://github.com/vdmkenny/openreliant/issues/41)), Nova Cannon charging ([#150](https://github.com/vdmkenny/openreliant/issues/150)), and gunnery selection hotkeys ([#92](https://github.com/vdmkenny/openreliant/issues/92)).
+Not ported: Huge Gun particle trails, impact sparks and audible flak bursts ([#41](https://github.com/vdmkenny/openreliant/issues/41)), and Nova Cannon charging ([#150](https://github.com/vdmkenny/openreliant/issues/150)). Choosing a group and FULL GUNS are the gunnery display's keys ([Head-up display](hud.md#the-gunnery-display)).
