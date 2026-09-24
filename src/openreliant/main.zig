@@ -1056,6 +1056,17 @@ const Sandbox = struct {
     /// The Badanov, the smallest of the Coalition's capital ships, which the sandbox starts beyond
     /// the wing, crawling alongside the Reliant: turned as it is, flying as fast.
     const badanov_at: math.Vector = .{ 6000, -9000, 190000 };
+    /// A little field of rocks beyond the Badanov, outside the action's sphere: `field_rows` rows of
+    /// `field_columns`, `field_spacing` apart about `field_centre`, each strayed up to `field_stray`
+    /// along and across and `field_height` up or down.
+    const field_centre: math.Vector = .{ 6000, -9000, 250000 };
+    const field_rows = 3;
+    const field_columns = 4;
+    const field_spacing: f32 = 26000;
+    const field_stray: f32 = 7000;
+    const field_height: f32 = 12000;
+    /// Each rock is the asteroid this many on from the last, so neighbours differ.
+    const field_step = 3;
     /// A wing: four Sabres, `wing_ahead` in front of the player, beyond the Reliant, and
     /// `wing_spacing` apart. Their models are drawn once they are within 75000, where a fighter's
     /// last level of detail ends at the high detail setting.
@@ -1142,6 +1153,7 @@ const Sandbox = struct {
         };
         sandbox.crawl(orders, .reliant, "Reliant", reliant_at);
         sandbox.crawl(orders, .badanov, "Badanov", badanov_at);
+        sandbox.scatterRocks(orders);
         sandbox.bringWing(orders);
         sandbox.types.sweep(&sandbox.objects.types);
         if (sandbox.player_type != ship_type or sandbox.cockpit == null) try sandbox.loadCockpit(ship_type);
@@ -1162,6 +1174,30 @@ const Sandbox = struct {
         if (game.aigeneric.push(orders, index, .fly, .none) catch false) {
             if (game.aigeneric.current(sandbox.objects, index)) |entry| entry.data.fly = crawl_speed;
         }
+    }
+
+    /// The field of rocks: each of the seven asteroids in turn, turned at random and tumbling
+    /// slowly (Random Spin Slow). The rocks past the last slot are left out.
+    fn scatterRocks(sandbox: *Sandbox, orders: game.aigeneric.Context) void {
+        for (0..field_rows * field_columns) |n| {
+            const at = rockPlace(n, sandbox.random);
+            const index = sandbox.create(.asteroid(n * field_step), at) catch |err| {
+                std.log.warn("the rocks are left out: {s}", .{@errorName(err)});
+                return;
+            };
+            const slot = &sandbox.objects.slots[index];
+            game.objects.setOrientation(&slot.object, &slot.drawn, math.fromAngleVector(sandbox.random.fractionVector(@splat(std.math.tau))));
+            _ = game.aigeneric.push(orders, index, .random_spin_slow, .none) catch {};
+        }
+    }
+
+    /// Where rock `n` of the field stands: its place on the grid, strayed at random.
+    fn rockPlace(n: usize, random: *engine.libcmt.Rand) math.Vector {
+        const column: f32 = @floatFromInt(n % field_columns);
+        const row: f32 = @floatFromInt(n / field_columns);
+        const middle: [2]f32 = .{ @as(f32, field_columns - 1) / 2, @as(f32, field_rows - 1) / 2 };
+        const on_grid: math.Vector = .{ (column - middle[0]) * field_spacing, 0, (row - middle[1]) * field_spacing };
+        return field_centre + on_grid + random.centredVector(.{ 2 * field_stray, 2 * field_height, 2 * field_stray });
     }
 
     fn create(sandbox: *Sandbox, ship_type: game.gameobj.Type, at: math.Vector) game.create.Error!u16 {
@@ -1441,6 +1477,25 @@ test nextShipType {
     const last = nextShipType(0, -1);
     try std.testing.expect(game.create.models.ship_types[last].model != null);
     try std.testing.expectEqual(0, nextShipType(last, 1));
+}
+
+test "the sandbox's rocks lie beyond the action's sphere, apart" {
+    var random: engine.libcmt.Rand = .{};
+    var places: [Sandbox.field_rows * Sandbox.field_columns]math.Vector = undefined;
+    for (&places, 0..) |*at, n| at.* = Sandbox.rockPlace(n, &random);
+    const sphere = game.aigeneric.ActionSphere.default.radius;
+    for (places, 0..) |at, n| {
+        try std.testing.expect(math.length(at) > sphere);
+        // No two stand closer than the grid's spacing less both strays, across and along.
+        for (places[n + 1 ..]) |other| {
+            const off = at - other;
+            try std.testing.expect(@max(@abs(off[0]), @abs(off[2])) >= Sandbox.field_spacing - 2 * Sandbox.field_stray);
+        }
+    }
+    // Every one of the seven asteroids is among them.
+    var seen = std.StaticBitSet(7).initEmpty();
+    for (0..places.len) |n| seen.set(game.gameobj.Type.asteroid(n * Sandbox.field_step).number() - game.gameobj.Type.asteroid(0).number());
+    try std.testing.expectEqual(7, seen.count());
 }
 
 test "the sandbox's Reliant flies at a crawl" {
