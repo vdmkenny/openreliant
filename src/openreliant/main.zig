@@ -106,7 +106,7 @@ const Doc = struct {
 
 /// Every option's help, which the compiler holds to having one for each.
 const docs: std.enums.EnumArray(Arg, Doc) = .init(.{
-    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, light worked out on encoded colours, no shadows, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings, particles and burning bits as few, plain and brief as the original's, a damaged ship's smoke as even as the original's, the shields' bubbles as coarse as the original's, the levels of detail changing as near as the original's, the marker for a target out of sight placed as the original misplaces it, a missile's sound left where it was launched, and the sound mixed plainly in stereo" },
+    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, light worked out on encoded colours, no shadows, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings, particles and burning bits as few, plain and brief as the original's, a damaged ship's smoke as even as the original's, the shields' bubbles as coarse as the original's, the levels of detail changing as near as the original's, as little drawn a frame as the original allows, the marker for a target out of sight placed as the original misplaces it, a missile's sound left where it was launched, and the sound mixed plainly in stereo" },
     .@"--ship" = .{ .section = .sandbox, .value = "<type>", .text = "the ship type to fly, by its number in shipstats.bin; 0, the Predator, by default" },
     .@"--view" = .{ .section = .sandbox, .value = "<0|1|2>", .text = "the view it starts in, as the game's settings keep it: 0 the cockpit; 1 the chase view; 2 no cockpit. The settings' own by default, which the pause menu's video screen changes" },
     .@"--difficulty" = .{ .section = .sandbox, .value = "<easy|medium|hard>", .text = "the game's difficulty: how hard hits land on your ship, and shots on the enemy; medium by default, as in the game" },
@@ -237,6 +237,8 @@ const Options = struct {
     shields: game.shield.Style = .smooth,
     /// How far the finer levels of detail reach.
     detail_reach: game.main.DetailReach = .far,
+    /// How much a frame may draw.
+    draw_budget: game.main.DrawBudget = .roomy,
     /// Where the line starts that places the marker for a target out of sight.
     edge_line: game.hud.EdgeLine = .from_tip,
     /// How the sound plays, or null for none.
@@ -298,6 +300,7 @@ const Options = struct {
                 options.smoke = .alike;
                 options.shields = .original;
                 options.detail_reach = .original;
+                options.draw_budget = .original;
                 options.edge_line = .original;
                 if (options.sound) |*sound| sound.* = .{ .player = .software, .master = null };
                 options.missile_sound = .stays;
@@ -529,6 +532,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         .projection = (camera.Camera{}).projection(1280, 720),
         .detail = game.main.high_detail,
         .finer = options.detail_reach.finer(),
+        .budget = options.draw_budget.limit(),
     };
     var rand: engine.libcmt.Rand = .{};
     const space = try game.backdrop.Backdrop.create(arena, &textures, try tga.decode(arena, try resources.readFile(arena, game.backdrop.star_map_name)), &rand, context.projection.near);
@@ -627,6 +631,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     defer trails.deinit();
     var rays: game.erayfx.Rays = try .init(gpa, &textures);
     defer rays.deinit();
+    var flash: game.main.flash.Flash = .{};
     // The countermeasures' model, read once for the whole run, as `decoys_init` reads it.
     var effects_library: Library = .{ .gpa = arena, .resources = &resources, .textures = &textures };
     var countermeasures: game.cloak.Countermeasures = .init(gpa, effects_library.mounts());
@@ -638,7 +643,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     var shields: game.shield.Shields = try .create(gpa, &textures, explosions.settings.detail, context.hardware, options.shields);
     defer shields.deinit(gpa);
     // What the objects run in, the camera's view brought up to date each frame.
-    var world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .difficulty = options.difficulty, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .smoke = &smoke, .shockwaves = &shockwaves, .trails = &trails, .countermeasures = &countermeasures, .sparks = &sparks, .shields = &shields, .rays = &rays, .spawn = .{ .tables = sandbox.tables, .types = sandbox.types.interface() } };
+    var world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .difficulty = options.difficulty, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .smoke = &smoke, .shockwaves = &shockwaves, .trails = &trails, .countermeasures = &countermeasures, .sparks = &sparks, .shields = &shields, .rays = &rays, .flash = &flash, .spawn = .{ .tables = sandbox.tables, .types = sandbox.types.interface() } };
     try sandbox.start(.{ .world = world, .clock = &clock, .devices = &devices }, @intCast(options.ship));
     // The music, as a mission's script starts it (`cmd_PlayMusic`): from `music\`, for ever, at 80.
     if (options.music) |name| {
@@ -886,6 +891,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .lock_rings = lock_rings,
             .shields = &shields,
             .rays = &rays,
+            .flash = &flash,
+            .ticks = @intCast(@max(clock.frame_duration, 0)),
             .paused = clock.paused,
             .attachments = .{
                 .camera = view.place.position,
@@ -1115,6 +1122,7 @@ const Sandbox = struct {
         sandbox.objects.missiles.reset(sandbox.objects.gpa);
         if (orders.world.trails) |trails| trails.reset();
         if (orders.world.rays) |rays| rays.reset();
+        if (orders.world.flash) |lit| lit.* = .{};
         if (orders.world.countermeasures) |dropped| dropped.reset();
         sandbox.objects.reset(sandbox.random);
         // The Turret Flak's shell and the debris models, counted as used so the sweep below keeps
@@ -1507,6 +1515,8 @@ test Options {
     try std.testing.expectEqual(.original, retro.shields);
     try std.testing.expectEqual(.far, plain.detail_reach);
     try std.testing.expectEqual(.original, retro.detail_reach);
+    try std.testing.expectEqual(.roomy, plain.draw_budget);
+    try std.testing.expectEqual(.original, retro.draw_budget);
     try std.testing.expect(!(try play(&.{"--no-smooth-motion"})).smooth_motion);
     try std.testing.expectEqual(.latest_two, (try play(&.{"--few-shot-lights"})).shot_lights);
     // Sound is on, with the first mission's music, unless told otherwise.

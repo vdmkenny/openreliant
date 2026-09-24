@@ -172,16 +172,15 @@ pub const Explosions = struct {
         }
     }
 
-    /// `explosion_bit` (`0x004717D0`): throws a piece of debris out of `at` along `direction`, in
-    /// the place of the oldest bit. It leaves at 1500 to 4500 a second times `how`'s speed, a
-    /// little off its direction, turns a random way each frame, and flies for 17.5 to 22.5 seconds.
+    /// `explosion_bit` (`0x004717D0`): throws a piece of debris, or a body by `how`'s chance
+    /// (`Debris.pickFor`), out of `at` along `direction`, in the place of the oldest bit. It leaves
+    /// at 1500 to 4500 a second times `how`'s speed, a little off its direction, turns a random
+    /// way each frame, and flies for 17.5 to 22.5 seconds.
     ///
-    /// The game can also throw a body, by a chance, or a chunk of rock, which no caller asks for;
-    /// the port throws debris only, and draws the chance's number all the same. A piece the game
-    /// has no model for is not thrown.
+    /// The game can also throw a chunk of rock, which no caller asks for. A piece the game has no
+    /// model for is not thrown.
     pub fn throwBit(explosions: *Explosions, at: Vector, direction: Vector, how: Bit.Throw, clock: *const Clock, random: *libcmt.Rand) void {
-        _ = random.rand();
-        const piece = explosions.debris.pick(how.size, random) orelse return;
+        const piece = explosions.debris.pickFor(how, random) orelse return;
         const leaving = direction * @as(Vector, @splat((random.fraction() + 0.5) * Bit.speed));
         const stray = random.centredVector(@splat(Bit.stray));
         const velocity = math.transform(math.fromAngleVector(stray), leaving) * @as(Vector, @splat(how.speed));
@@ -434,21 +433,50 @@ pub const Levels = struct {
 };
 
 /// The pieces of debris the bits are made of (`explosions_init`): the ten debris types' models,
-/// their distances stretched by half again (`0x004DC4E0`).
+/// their distances stretched by half again (`0x0055AE60`, `0x004DC4E0`); and the bodies, the four
+/// crewmen's, stretched by two and a half times (`0x00553388`, `0x004DC59C`).
 pub const Debris = struct {
     pieces: [count]Levels = @splat(.{}),
+    bodies: [body_count]Levels = @splat(.{}),
 
     const count = 10;
     const stretch: f32 = 1.5;
+    const body_count = 4;
+    const body_stretch: f32 = 2.5;
+
+    /// A body is drawn 2.5 times as large, or three quarters as large for a bit no larger than a
+    /// tenth (`0x004DC420`).
+    const body_scale: f32 = 2.5;
+    const small_body_scale: f32 = 0.75;
+    const small_body: f32 = 0.1;
 
     /// Each type's model, counted as used so that it stays loaded (`ship_type_first_levels`).
     pub fn load(all: *create.Objects, types: create.Types) Debris {
         var debris: Debris = .{};
-        for (&debris.pieces, 0..) |*piece_levels, n| {
-            const levels = xtrabits.firstLevels(all, types, @intCast(gameobj.Type.debris.number() + n)) orelse continue;
-            piece_levels.* = .of(levels, stretch);
-        }
+        loadEach(&debris.pieces, all, types, gameobj.Type.debris, stretch);
+        loadEach(&debris.bodies, all, types, gameobj.Type.crewman, body_stretch);
         return debris;
+    }
+
+    /// Each of `into` from the types from `first` on, stretched by `by`.
+    fn loadEach(into: []Levels, all: *create.Objects, types: create.Types, first: gameobj.Type, by: f32) void {
+        for (into, 0..) |*levels, n| {
+            const found = xtrabits.firstLevels(all, types, @intCast(first.number() + n)) orelse continue;
+            levels.* = .of(found, by);
+        }
+    }
+
+    /// A piece for a bit thrown `how` (`explosion_bit`): a body by its chance, one of the first
+    /// three crewmen at random, drawn at `body_scale` or, for a small bit, `small_body_scale`;
+    /// otherwise a piece of debris (`pick`). A chance of one is a body without a draw. The game
+    /// picks the crewman as a draw times -3 back from the first, which comes to the same; a draw of
+    /// exactly one picks the fourth.
+    fn pickFor(debris: *const Debris, how: Bit.Throw, random: *libcmt.Rand) ?Picked {
+        if (!(how.bodies == 1 or random.fraction() < how.bodies)) return debris.pick(how.size, random);
+        const which: usize = @intFromFloat(random.fraction() * (body_count - 1));
+        const levels = debris.bodies[which].slice();
+        if (levels.len == 0) return null;
+        return .{ .levels = levels, .scale = if (how.size > small_body) body_scale else small_body_scale };
     }
 
     /// A piece picked for a bit, and how large it is drawn.
@@ -489,10 +517,11 @@ pub const Bit = struct {
     velocity: Vector,
     spin: Vector,
 
-    /// How a bit is thrown: its size and its speed.
+    /// How a bit is thrown: its size, its speed, and the chance it is a body.
     pub const Throw = struct {
         size: f32,
         speed: f32,
+        bodies: f32 = 0,
     };
 
     /// How fast it leaves, a second, before its throw's speed: half this to half again
@@ -954,7 +983,7 @@ pub fn burst(world: gameobj.World, index: u16) void {
 /// together; and the root sends out a burst of flame and the explosion's sound.
 ///
 /// Not ported: what it sets off first for a few types
-/// ([#225](https://github.com/vdmkenny/openreliant/issues/225)).
+/// ([#238](https://github.com/vdmkenny/openreliant/issues/238)).
 pub fn componentLost(world: gameobj.World, index: u16, model: *const objects.Model, root: math.Place, link: u32) void {
     const slot = &world.objects.slots[index];
     var reach: f32 = 0;
@@ -1144,10 +1173,10 @@ pub const testing = struct {
         return found;
     }
 
-    /// Every piece of debris the one mesh, at two levels.
+    /// Every piece of debris and every body the one mesh, at two levels.
     fn debris(mesh: *const srapiext.Mesh) Debris {
         const levels = [_]srapiext.Level{ .{ .mesh = mesh, .until = 1000 }, .{ .mesh = mesh, .until = 5000 } };
-        return .{ .pieces = @splat(.of(&levels, Debris.stretch)) };
+        return .{ .pieces = @splat(.of(&levels, Debris.stretch)), .bodies = @splat(.of(&levels, Debris.body_stretch)) };
     }
 
     /// How many of the pool's particles are in use.
@@ -1501,6 +1530,25 @@ test blast {
     pool.settings.distant = .thinned;
     blast(world, ship);
     try std.testing.expectEqual(400 + 112, testing.sent(&pool));
+}
+
+test "a bit may be a body" {
+    const gpa = std.testing.allocator;
+    const mesh = try @import("../surrender/surrenderlib/srmesh.zig").testing.square(gpa);
+    defer mesh.deinit(gpa);
+    const debris = testing.debris(&mesh);
+    var random: libcmt.Rand = .{};
+
+    // Sure to be a body, it is two and a half times as large, and keeps its detail two and a half
+    // times as far; a small one is three quarters as large.
+    const body = debris.pickFor(.{ .size = 0.4, .speed = 1, .bodies = 1 }, &random).?;
+    try std.testing.expectEqual(Debris.body_scale, body.scale);
+    try std.testing.expectEqual(2500, body.levels[0].until);
+    try std.testing.expectEqual(Debris.small_body_scale, debris.pickFor(.{ .size = 0.1, .speed = 1, .bodies = 1 }, &random).?.scale);
+    // With no chance of one, it is a piece of debris, half to one and a half times its size.
+    const piece = debris.pickFor(.{ .size = 0.4, .speed = 1 }, &random).?;
+    try std.testing.expect(piece.scale >= 0.2 and piece.scale <= 0.6);
+    try std.testing.expectEqual(1500, piece.levels[0].until);
 }
 
 test Bit {

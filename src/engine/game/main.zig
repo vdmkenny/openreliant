@@ -34,6 +34,7 @@ const explode = @import("explode.zig");
 const particles = @import("particles.zig");
 const shield = @import("shield.zig");
 const erayfx = @import("erayfx.zig");
+pub const flash = @import("main/flash.zig");
 const shockwave = @import("shockwave.zig");
 const sparks = @import("sparks.zig");
 const bigfile = @import("bigfile.zig");
@@ -227,6 +228,10 @@ pub const Frame = struct {
     shields: ?*shield.Shields = null,
     /// The electric rays, which go into the world's layer after the explosions.
     rays: ?*erayfx.Rays = null,
+    /// The screen's flash, which goes into the overlay's layer, and the ticks the frame spans
+    /// (`frame_duration`), which it counts down.
+    flash: ?*flash.Flash = null,
+    ticks: i32 = 0,
     /// Whether the game is paused, which holds the bubbles' colours still.
     paused: bool = false,
 };
@@ -422,6 +427,7 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     if (frame.smoke) |pools| try pools.draw(gpa, scene, frame.ahead);
     if (frame.explosions) |explosions| try explosions.draw(gpa, scene, frame.ahead);
     if (frame.rays) |rays| if (attachments.random) |random| try rays.draw(gpa, scene, frame.objects, attachments.frame_start, random);
+    if (frame.flash) |lit| if (!frame.paused) try lit.draw(gpa, scene, .{ .position = context.camera.position, .orientation = context.camera.orientation }, context.projection, frame.ticks);
     if (frame.shockwaves) |waves| try waves.draw(gpa, scene, frame.ahead);
     try frame.space.frame(gpa, scene, context, frame.view, frame.cockpit_mode);
     if (context.hardware) try frame.sky.frame(gpa, scene, context);
@@ -457,6 +463,25 @@ pub const DetailReach = enum {
         return switch (reach) {
             .far => 8,
             .original => 1,
+        };
+    }
+};
+
+/// How much a frame may draw (`srapi.Context.budget`).
+pub const DrawBudget = enum {
+    /// **Improvement:** ten times the original's, 200000 vertices and as many polygons, which
+    /// a current computer draws with ease. The port keeps up to 4000 burning bits where the
+    /// original keeps 500 (`explode.BitPool`), and a view full of them and of a split's bodies
+    /// takes the original's budget; since the layers are drawn from what went in last, the bits
+    /// then crowd out the ships' parts, which vanish while the view is full.
+    roomy,
+    /// The original's, 19999 of each (`srapi.original_budget`).
+    original,
+
+    pub fn limit(budget: DrawBudget) usize {
+        return switch (budget) {
+            .roomy => 200_000,
+            .original => srapi.original_budget,
         };
     }
 };

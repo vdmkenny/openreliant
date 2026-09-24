@@ -153,9 +153,7 @@ at 0.1 of the size, flying at the velocity it is given, turning as a bit does, f
 ticks. One whose flight is over before it starts is let go before it is drawn, having still taken
 the oldest bit's place.
 
-The game can also throw a body
-(types `0x58` to `0x5B`) by a chance, or a rock chunk (types `0xB2` to `0xB6`), which none of these
-asks for.
+A throw can also ask for a body by a chance: a split's bits take its sequence's `bodies`, 0.05 for most sweeps ([Splits](#splits)), and the Ulysses' 0.1. A body is one of the crewmen, types `0x58` to `0x5B` (`0x00553388`), which `explosions_init` loads drawn 2.5 times as far before a coarser level. It is picked by one number `r` from 0 to 1 as the first three, `3r` rounded down, with the fourth only at exactly 1; the game works that out as `r` times -3 back from the first. It is drawn 2.5 times as large, or 0.75 for a throw of size 0.1 or less. A chance of 1 is a body without drawing a number. The game can also throw a rock chunk (types `0xB2` to `0xB6`), which no caller asks for.
 
 The game makes a bit with a light mask of 0, so every one of the backdrop's lights reaches it,
 both key lights and both fill lights, where a ship's part takes one of each pair.
@@ -167,8 +165,7 @@ washed out. `--original` restores every light, for the bits and the break-up's p
 
 [`explode.zig`](../../src/engine/game/explode.zig) ports the bits as `Explosions.throwBit`,
 `Explosions.throwSpark` and `Bit`, and [`aiexplode.zig`](../../src/engine/game/aiexplode.zig) the
-spin-out's trail. The port
-throws debris only, and leaves a piece out where the game has no model for it.
+spin-out's trail. The port leaves a piece out where the game has no model for it.
 
 ## Break-up
 
@@ -253,13 +250,16 @@ When a capital ship loses its hull (`explode_capship_component`, `0x0046F820`), 
 
 `split_update` (`0x00470030`) runs each split once a frame:
 
-- **A sweep** moves the cut through the points over the split's time. The ship is held where it split, shaking by up to 10 on each axis. The portals stand at the last point reached, turned with the ship, and are in the scene until the last step (never for a Latov). Each step sets off a lit fireball of `(0.5r + 0.75)` times the sequence's size and `bits` burning bits, heading out from the ship or back along it. Every 14 to 16 steps an explosion is heard, and one step in 30 adds a bigger burst halfway to the bow. The other half is free to move.
-- **Bursts** start after a second. One frame in ten, or five for a Stalag, sets off two lit fireballs and four times `bits` burning bits at a random point, with an explosion's sound. A Latov's or a Stalag's bursts shake the view.
+- **A sweep** moves the cut through the points over the split's time. The ship is held where it split, shaking by up to 10 on each axis. The portals stand at the last point reached, turned with the ship, and are in the scene until the last step (never for a Latov). Each step sets off a lit fireball of `(0.5r + 0.75)` times the sequence's size and `bits` burning bits, heading out from the ship or back along it. A Latov throws rock chunks instead (`0x00472780`), and flashes the view at its 29th, 35th and 80th steps. Every 14 to 16 steps an explosion is heard, and one step in 30 adds a bigger burst halfway to the bow. The other half is free to move.
+- **Bursts** start after a second. One frame in ten, or five for a Stalag, sets off two lit fireballs and four times `bits` burning bits at a random point, with an explosion's sound. A Latov's or a Stalag's bursts shake the view, and a Stalag's flash it one frame in 40.
+
+Every burning bit of a split may be a body, by the sequence's chance ([Burning bits](#burning-bits)).
 
 When the time is up, the split ends once (`GameObject` `0x610` bit 1) and the portals go, so nothing is cut any more:
 
 - After a sweep, the other half drifts away by its type, and all the ship's parts but the wreck disappear.
-- After bursts, every point gets a fireball and burning bits, the intact parts disappear and the wreck shows.
+- After bursts, every point gets a fireball and burning bits, the intact parts disappear and the wreck shows. A Latov or a Stalag flashes the view.
+- Either way, the view flashes where the camera stands within five of the ship's radii (`explode_flash_near`, `0x00471D70`).
 - Either way, the ship drifts at `(2, 1.4, -5)` a step and turns slowly; a few types stop dead instead. `CAPEXP` is heard from it, it is recentred on what is left (`object_recentre`), and three fireballs go off at its hull's `fireballs` points, 50 ticks apart.
 
 `object_draw` leaves out the engine glows of a ship that is splitting.
@@ -273,7 +273,9 @@ When the time is up, the split ends once (`GameObject` `0x610` bit 1) and the po
 - A burst with no points is skipped, where the game divides by zero, and the end reads only as many fireball points as the hull has.
 - When all ten slots are taken, the split whose slot is reused is stopped first, so its parts are no longer cut.
 
-[`explode/split.zig`](../../src/engine/game/explode/split.zig) ports the splits. Not ported: the Dark Reign's hat, the Krasnaya's arms and the Boridin breakaway's core, which a split takes apart first; the screen's flash (`explode_flash_near`, `0x00471D70`); and the bodies among the burning bits ([#225](https://github.com/vdmkenny/openreliant/issues/225)). The Ulysses' own routine is [#232](https://github.com/vdmkenny/openreliant/issues/232).
+The flash (`0x00587CC8`) lasts 100 ticks. Once a frame, `mission_frame` draws it and counts it down by the frame's ticks (`0x00494940`): a sprite over the whole view, just beyond the near plane in the overlay's layer, untextured and added to what is drawn, white at 0.012 for each tick left, at most 1. So it holds white for 17 ticks and fades out over the rest. The same sprite shows red while the player's display is shaken by a hit ([#236](https://github.com/vdmkenny/openreliant/issues/236)).
+
+[`explode/split.zig`](../../src/engine/game/explode/split.zig) ports the splits, and [`main/flash.zig`](../../src/engine/game/main/flash.zig) the flash. Not ported: the Dark Reign's hat, the Krasnaya's arms and the Boridin breakaway's core, which a split takes apart first ([#238](https://github.com/vdmkenny/openreliant/issues/238)); a Latov's rock chunks ([#41](https://github.com/vdmkenny/openreliant/issues/41)), in whose place it throws nothing. The Ulysses' own routine is [#232](https://github.com/vdmkenny/openreliant/issues/232).
 
 ### Burning wrecks
 

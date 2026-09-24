@@ -1193,6 +1193,8 @@ pub const World = struct {
     shields: ?*@import("shield.zig").Shields = null,
     /// The electric rays (`erayfx.cpp`); null where none are made.
     rays: ?*@import("erayfx.zig").Rays = null,
+    /// The screen's flash (`main.cpp`); null where nothing flashes.
+    flash: ?*@import("main/flash.zig").Flash = null,
     /// The sparks flying (`sparks.cpp`); null where none are thrown.
     sparks: ?*@import("sparks.zig").Sparks = null,
     /// The head-up display's state (`hud.cpp`'s globals), which smart targeting and the target
