@@ -85,6 +85,12 @@ pub fn build(b: *std.Build) void {
         }),
     });
     openreliant.root_module.linkLibrary(archive_library);
+    // The version Release Please keeps in build.zig.zon, and where the checkout is past its last
+    // release, for `openreliant --version` (`src/openreliant/version.zig`).
+    const build_options = b.addOptions();
+    build_options.addOption([]const u8, "version", @import("build.zig.zon").version);
+    build_options.addOption([]const u8, "describe", describe(b));
+    openreliant.root_module.addOptions("build_options", build_options);
     b.installArtifact(openreliant);
 
     const play_step = b.step("play", "Run the game");
@@ -175,4 +181,12 @@ fn addMacosSdk(b: *std.Build, module: *std.Build.Module, sdk: []const u8) void {
     module.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "usr/include" }) });
     module.addSystemFrameworkPath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "System/Library/Frameworks" }) });
     module.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "usr/lib" }) });
+}
+
+/// `git describe` of the checkout against the release tags, such as `v0.2.0-12-gabc1234-dirty`, or
+/// nothing where there is no git or no tag, as in a source archive.
+fn describe(b: *std.Build) []const u8 {
+    var code: u8 = undefined;
+    const out = b.runAllowFail(&.{ "git", "-C", b.build_root.path orelse ".", "describe", "--tags", "--match", "v*", "--long", "--dirty", "--abbrev=7" }, &code, .ignore) catch return "";
+    return std.mem.trimEnd(u8, out, "\n");
 }
