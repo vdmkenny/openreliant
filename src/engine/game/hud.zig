@@ -2849,7 +2849,7 @@ pub fn drawTarget(
     const range = rangeText(&buffer, kilometres(all, index));
 
     const part = ai.targetPart(all, state.shown);
-    const node: math.Place = if (part) |found| .{ .position = found.object.position, .orientation = found.object.orientation } else struck.drawn;
+    const node: math.Place = if (part) |found| found.drawn() else struck.drawn;
     const seen = sight.view(node.position);
     if (!sight.onScreen(sight.pixel(seen)) or seen[2] < 0) {
         try drawOffScreen(art, &fonts.small, gpa, target, sight, pointerDirection(ship.drawn, node.position), hostile, range, scene.mode, edge_line, colour, scale);

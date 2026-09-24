@@ -348,14 +348,10 @@ pub fn launchFromTurret(world: gameobj.World, ship: u16, model: *const objects.M
     const carrier = &all.slots[ship];
     if (carrier.object.flags.missiles_disabled or all.missiles.full()) return;
     const top = if (carrier.model) |*carried| carried else return;
-    const root = &carrier.object.root;
-    const now = top.mountedAt(.{ .position = gameobj.vector(root.position), .orientation = root.orientation }, model, .now) orelse return;
-    const next = top.mountedAt(.{ .position = gameobj.vector(root.next_position), .orientation = root.next_orientation }, model, .next) orelse return;
-    const drawn = &model.parts[launcher].object;
     const places: Places = .{
-        .now = model.partPlace(launcher, .now).within(now),
-        .next = model.partPlace(launcher, .next).within(next),
-        .drawn = .{ .position = drawn.position, .orientation = drawn.orientation },
+        .now = top.partAt(carrier.object.placeAt(.now), model, launcher, .now) orelse return,
+        .next = top.partAt(carrier.object.placeAt(.next), model, launcher, .next) orelse return,
+        .drawn = model.parts[launcher].drawn(),
     };
     const held = create.models.attachment(.missile, comptime Type.screamer.index().?) orelse return;
     const built = (buildModel(all.gpa, carrier, held.second_model orelse return) catch return) orelse return;
@@ -407,10 +403,9 @@ fn startTrail(world: gameobj.World, at: u8) void {
 
 /// Where the pod or missile a rack holds stands.
 fn hungPlaces(carrier: *const create.Slot, model: *const objects.Model, hung: *const objects.Model.Mount) Places {
-    const root = &carrier.object.root;
     return .{
-        .now = model.mountRoot(hung, .{ .position = gameobj.vector(root.position), .orientation = root.orientation }, .now),
-        .next = model.mountRoot(hung, .{ .position = gameobj.vector(root.next_position), .orientation = root.next_orientation }, .next),
+        .now = model.mountRoot(hung, carrier.object.placeAt(.now), .now),
+        .next = model.mountRoot(hung, carrier.object.placeAt(.next), .next),
         .drawn = .{ .position = hung.model.position, .orientation = hung.model.orientation },
     };
 }
@@ -975,7 +970,7 @@ test launchFromTurret {
     try std.testing.expectEqual(target, missile.target);
     try std.testing.expectEqual(ship, missile.launcher);
     try std.testing.expectEqual(30, missile.object().velocity.z);
-    const next = model.partPlace(0, .next).within(.{ .position = slot.object.nextPosition(), .orientation = slot.object.root.next_orientation });
+    const next = model.partPlace(0, .next).within(slot.object.placeAt(.next));
     try std.testing.expectEqual(next.position, gameobj.vector(missile.object().root.next_position));
     // A ship whose missiles are disabled launches none.
     slot.object.flags.missiles_disabled = true;

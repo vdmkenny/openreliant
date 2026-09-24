@@ -740,6 +740,14 @@ pub const GameObject = extern struct {
         return vector(object.root.next_position);
     }
 
+    /// Where its root stands at `step`: its committed place, or its next.
+    pub fn placeAt(object: *const GameObject, step: objects.Model.Step) math.Place {
+        return switch (step) {
+            .now => .{ .position = vector(object.root.position), .orientation = object.root.orientation },
+            .next => .{ .position = object.nextPosition(), .orientation = object.root.next_orientation },
+        };
+    }
+
     /// Its racks, `rack_count` of them.
     pub fn fittedRacks(object: *const GameObject) []const Rack {
         return object.racks[0..@intCast(@max(object.rack_count, 0))];

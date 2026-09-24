@@ -41,10 +41,21 @@ pub const Aimed = struct {
     /// When it next looks for a target while it has none (`+0x4C`).
     looks_at: i32 = 0,
     /// The yaw and pitch it has still to turn toward its aim (`+0x50`, `+0x54`).
-    turn: [2]f32 = .{ 0, 0 },
+    to_turn: Angles = .{},
+    /// Its muzzle faces away from its aim of no yaw and no pitch (`facesBack`), as every fighter's
+    /// rear turret's does. **Fix:** the port turns such a turret in its parts' frames turned a
+    /// half turn about their X axis, so it aims along its muzzle; the game's never fires
+    /// ([#219](https://github.com/vdmkenny/openreliant/issues/219)).
+    reversed: bool = false,
     /// The directions it may fire in (`+0x58`), where a part of its assembly is a component of the
     /// object with a firing arc.
     arc: ?*const shp.FiringArc = null,
+};
+
+/// A turret's yaw, about its base's X axis, and pitch, about its pitching part's Y, in radians.
+pub const Angles = struct {
+    yaw: f32 = 0,
+    pitch: f32 = 0,
 };
 
 /// A gun whose barrels spin up while its trigger is held (kind 2).
@@ -120,14 +131,22 @@ pub fn fit(model: *objects.Model, index: usize, ship: Ship) ?guns.Turret {
     }
     const base = slots[0] orelse return null;
     const turret: guns.Turret = switch (model.parts[index].turret_kind) {
-        .aimed => .{ .aimed = .{
-            .barrel = barrelOf(muzzle orelse return null),
-            .model = model,
-            .base = base,
-            .pitch = slots[1] orelse base,
-            .slots = slots[2..].*,
-            .arc = arc,
-        } },
+        .aimed => aimed: {
+            const at = muzzle orelse return null;
+            const reversed = facesBack(model, base, at);
+            if (reversed) for (slots) |slot| if (slot) |part| {
+                model.parts[part].animation.reversed = true;
+            };
+            break :aimed .{ .aimed = .{
+                .barrel = barrelOf(at),
+                .model = model,
+                .base = base,
+                .pitch = slots[1] orelse base,
+                .slots = slots[2..].*,
+                .arc = arc,
+                .reversed = reversed,
+            } };
+        },
         .spin => .{ .spin = .{
             .barrel = barrelOf(muzzle orelse return null),
             .model = model,
@@ -144,6 +163,14 @@ pub fn fit(model: *objects.Model, index: usize, ship: Ship) ?guns.Turret {
     };
     model.parts[base].turret = true;
     return turret;
+}
+
+/// Whether an aimed turret's `muzzle` faces away from its aim of no yaw and no pitch, which lies
+/// along -Z of its base's frame (`aimAngles`): along the frame's +Z, as every fighter's rear
+/// turret's does ([#219](https://github.com/vdmkenny/openreliant/issues/219)).
+fn facesBack(model: *const objects.Model, base: usize, muzzle: guns.Muzzle) bool {
+    const aim = math.transform(model.parts[base].animation.orientation, .{ 0, 0, -1 });
+    return math.dot(math.forward(muzzle.attachment.orientation), aim) < 0;
 }
 
 /// Slots a turret's record holds its parts in.
@@ -210,20 +237,21 @@ fn aimedStep(world: gameobj.World, index: u16, gun: *guns.Fitted, aimed: *Aimed)
         track(world, index, gun, aimed);
         const rate = @as(f32, @floatFromInt(clock.frame_duration)) * turn_rate;
         const model = aimed.model;
-        model.swivel(aimed.base, .{ std.math.clamp(aimed.turn[0], -rate, rate), 0, 0 });
-        model.pose(aimed.base);
-        const pitch = std.math.clamp(aimed.turn[1], -rate, rate);
-        model.swivel(aimed.pitch, .{ 0, pitch, 0 });
-        model.pose(aimed.pitch);
-        if (aimed.slots[0]) |part| {
-            model.swivel(part, .{ 0, pitch, 0 });
-            model.pose(part);
-        }
+        turn(model, aimed.base, .{ std.math.clamp(aimed.to_turn.yaw, -rate, rate), 0, 0 });
+        const pitch: Vector = .{ 0, std.math.clamp(aimed.to_turn.pitch, -rate, rate), 0 };
+        turn(model, aimed.pitch, pitch);
+        if (aimed.slots[0]) |part| turn(model, part, pitch);
     }
     if (aimed.looks_at < clock.frame_start) {
         if (aimed.target.index < 0) pickTarget(world, index, aimed);
         aimed.looks_at = clock.frame_start + look_least + @rem(world.random.rand(), look_spread);
     }
+}
+
+/// Turns part `index` of `model` by `delta` (`node_turn`), and places it so (`node_place`).
+fn turn(model: *objects.Model, index: usize, delta: Vector) void {
+    model.swivel(index, delta);
+    model.pose(index);
 }
 
 /// How far a target's ECM throws an aimed turret's lead off: to between `ecm_lead_least` and that
@@ -242,9 +270,7 @@ const fire_speed: f32 = 2;
 /// the `fire` track of each of its parts playing none, whose events fire it
 /// (`guns.clipEventMuzzles`). A target it can't lead or aim at, or no longer valid, it drops.
 ///
-/// **Quirk:** the muzzle points along its own nose, from where the base stands. Every fighter's
-/// rear turret has its muzzle facing opposite its aim, and so never fires
-/// ([#219](https://github.com/vdmkenny/openreliant/issues/219)).
+/// **Quirk:** the muzzle points along its own nose, from where the base stands.
 fn track(world: gameobj.World, index: u16, gun: *guns.Fitted, aimed: *Aimed) void {
     const all = world.objects;
     if (aimed.target.index < 0 or !ai.targetValid(all, aimed.target, .{})) return drop(aimed);
@@ -254,16 +280,16 @@ fn track(world: gameobj.World, index: u16, gun: *guns.Fitted, aimed: *Aimed) voi
     const base = &model.parts[aimed.base];
     const aim = ai.leadAimWithGun(all, base.object.position, aimed.target, aimed.barrel.type, lead) orelse return drop(aimed);
     const angles = aimAngles(aimed, aim) orelse return drop(aimed);
-    aimed.turn = .{
-        math.halfTurn(angles[0] - base.animation.turret[0]),
-        math.halfTurn(angles[1] - model.parts[aimed.pitch].animation.turret[1]),
+    aimed.to_turn = .{
+        .yaw = math.halfTurn(angles.yaw - base.animation.turret[0]),
+        .pitch = math.halfTurn(angles.pitch - model.parts[aimed.pitch].animation.turret[1]),
     };
 
     const slot = &all.slots[index];
     const top = if (slot.model) |*own| own else return;
-    const root: math.Place = .{ .position = slot.object.nextPosition(), .orientation = slot.object.root.next_orientation };
-    const muzzle = aimed.barrel.muzzle.at(top, root, .next);
-    const from = model.partPlace(aimed.base, .next).within(top.mountedAt(root, model, .next) orelse root);
+    const root = slot.object.placeAt(.next);
+    const muzzle = aimed.barrel.muzzle.at(top, root, .next) orelse return;
+    const from = top.partAt(root, model, aimed.base, .next) orelse return;
     if (!ai.alongNose(.{ .position = from.position, .orientation = muzzle.orientation }, aim, struck.object.radius + struck.object.radius)) return;
     gun.firing_until = world.clock.frame_start + 1;
     for ([_]?usize{ aimed.base, aimed.pitch } ++ aimed.slots) |each| {
@@ -285,57 +311,61 @@ const huge_overshoot: f32 = 20;
 /// the yaw about X, then the pitch about Y. Null where they fall outside the base's yaw limits,
 /// where it has any, or the pitching part's pitch limits, or where the direction from the pitching
 /// part falls outside the turret's firing arc. A Huge Gun aimed up to `huge_overshoot` past a
-/// pitch limit aims at the limit.
+/// pitch limit aims at the limit. A turret whose muzzle faces back aims in its base's frame turned
+/// a half turn about X (`Aimed.reversed`).
 ///
 /// **Improvement:** the game turns radians to degrees and back by a rounded 57.2958 and 0.0174533,
 /// and a turn by 6.28319; the port by the exact values.
 ///
+/// **Fix:** the game finds the angle from Y of the direction in the arc by dividing across by the
+/// sine of its angle about Y, which is nothing for a direction straight ahead or behind; the port
+/// takes the length across itself.
+///
 /// Not ported: the Stalag's turrets fire anywhere while the byte at `0x005883F8` is set, which the
 /// hull's triggers set, perhaps with the player inside it
 /// ([#220](https://github.com/vdmkenny/openreliant/issues/220)).
-fn aimAngles(aimed: *const Aimed, aim: Vector) ?[2]f32 {
+fn aimAngles(aimed: *const Aimed, aim: Vector) ?Angles {
     const model = aimed.model;
     const base = &model.parts[aimed.base];
-    const v = math.transformTransposed(base.animation.orientation, math.transformTransposed(model.orientation, aim - base.object.position));
+    const in_base = math.transformTransposed(base.animation.orientation, math.transformTransposed(model.orientation, aim - base.object.position));
+    const v: Vector = if (aimed.reversed) .{ in_base[0], -in_base[1], -in_base[2] } else in_base;
     const yaw = std.math.atan2(v[1], -v[2]);
     const along = @cos(yaw) * v[2] - @sin(yaw) * v[1];
     var pitch = math.halfTurn(-std.math.atan2(v[0], -along));
-    const yaw_limits = .{ base.animation.angles_min[0], base.animation.angles_max[0] };
-    if (yaw_limits[0] != yaw_limits[1]) {
+    const yaw_least = base.animation.angles_min[0];
+    const yaw_most = base.animation.angles_max[0];
+    if (yaw_least != yaw_most) {
         const degrees = math.halfTurn(yaw) * std.math.deg_per_rad;
-        if (degrees > yaw_limits[1] or degrees < yaw_limits[0]) return null;
+        if (degrees > yaw_most or degrees < yaw_least) return null;
     }
 
     const pitching = &model.parts[aimed.pitch];
     const least = pitching.animation.angles_min[1];
     const most = pitching.animation.angles_max[1];
     var degrees = pitch * std.math.deg_per_rad;
-    switch (aimed.barrel.type) {
-        .allied_huge_gun, .coalition_huge_gun => {
-            if (most < degrees and degrees < most + huge_overshoot) {
-                degrees = most;
-                pitch = most * std.math.rad_per_deg;
-            }
-            if (degrees < least and least - huge_overshoot < degrees) {
-                degrees = least;
-                pitch = least * std.math.rad_per_deg;
-            }
-        },
-        else => {},
+    if (aimed.barrel.type.huge()) {
+        if (most < degrees and degrees < most + huge_overshoot) {
+            degrees = most;
+            pitch = most * std.math.rad_per_deg;
+        }
+        if (degrees < least and least - huge_overshoot < degrees) {
+            degrees = least;
+            pitch = least * std.math.rad_per_deg;
+        }
     }
     if (degrees > most or degrees < least) return null;
 
     if (aimed.arc) |arc| {
         const w = math.transformTransposed(model.orientation, aim - pitching.object.position);
         const around = std.math.atan2(w[0], w[2]);
-        const from = std.math.atan2(w[0] / @sin(around), w[1]);
+        const from = std.math.atan2(@sqrt(w[0] * w[0] + w[2] * w[2]), w[1]);
         const row: u32 = @bitCast(math.round((around + std.math.tau) * (16.0 / std.math.pi) - 0.5));
         const column: i32 = math.round((from + std.math.tau) * (32.0 / std.math.pi) - 0.5);
         const rows = [2]u5{ @truncate(row), @truncate(row +% 1) };
         const columns = [2]u4{ @truncate(@as(u32, @bitCast(-%column))), @truncate(@as(u32, @bitCast(1 -% column))) };
         for (rows) |r| for (columns) |c| if (!arc.open(r, c)) return null;
     }
-    return .{ math.halfTurn(yaw), pitch };
+    return .{ .yaw = math.halfTurn(yaw), .pitch = pitch };
 }
 
 /// `turret_pick_target` (`0x0047D1F0`): the first object, in slot order, that an aimed turret can
@@ -345,19 +375,18 @@ fn aimAngles(aimed: *const Aimed, aim: Vector) ?[2]f32 {
 /// whose own object lists components and is not a Kurgan, an Antanov, a Nanny or a Prowler, at its
 /// first component the turret can reach. None found, the turret has no target.
 ///
-/// **Quirk:** nothing asks whether the object is valid to aim at, so an exploding, cloaked or
-/// untargetable one early in the slots can be picked, and dropped by the next track.
+/// **Fix:** the game doesn't ask whether the object is valid to aim at, so an exploding, cloaked or
+/// untargetable one early in the slots is picked, dropped by the next track and picked again,
+/// keeping the turret from any other; the port passes over what the track would drop
+/// (`ai.targetValid`).
 ///
 /// Not ported: in a multiplayer game, the player who last hurt the turret's object is passed over
 /// ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
 fn pickTarget(world: gameobj.World, index: u16, aimed: *Aimed) void {
     const all = world.objects;
     const own = &all.slots[index].object;
-    aimed.turn = .{ 0, 0 };
-    const huge = switch (aimed.barrel.type) {
-        .allied_huge_gun, .coalition_huge_gun => true,
-        else => false,
-    };
+    aimed.to_turn = .{};
+    const huge = aimed.barrel.type.huge();
     const from = aimed.model.parts[aimed.base].object.position;
     const components_aimed = own.flags.components and switch (own.type) {
         .kurgan, .antanov, .nanny, .prowler => false,
@@ -382,8 +411,10 @@ fn pickTarget(world: gameobj.World, index: u16, aimed: *Aimed) void {
     aimed.target = .none;
 }
 
-/// Whether an aimed turret can lead its target from `from` and aim at where it leads it.
+/// Whether an aimed turret can lead its target, where it is valid, from `from`, and aim at where it
+/// leads it.
 fn reaches(all: *const create.Objects, aimed: *const Aimed, from: Vector) bool {
+    if (!ai.targetValid(all, aimed.target, .{})) return false;
     const aim = ai.leadAimWithGun(all, from, aimed.target, aimed.barrel.type, 1) orelse return false;
     return aimAngles(aimed, aim) != null;
 }
@@ -473,7 +504,7 @@ fn missileStep(world: gameobj.World, index: u16, launcher: *Launcher) void {
     const all = world.objects;
     const now = world.clock.frame_start;
     const model = launcher.model;
-    const from = model.parts[launcher.launcher].object;
+    const from = model.parts[launcher.launcher].drawn();
     const reach = all.missile_stats.of(.screamer).?.lock_range;
     switch (launcher.state) {
         .searching => {
@@ -487,13 +518,10 @@ fn missileStep(world: gameobj.World, index: u16, launcher: *Launcher) void {
                 const flags = slot.object.flags;
                 if (flags.components or flags.stand_in or flags.exploding or flags.disabled or !flags.targetable) continue;
                 if (slot.object.side == own.side) continue;
-                const toward = slot.object.nextPosition() - from.position;
-                const distance = math.length(toward);
-                if (distance > reach) continue;
-                const local = math.transformTransposed(from.orientation, toward);
-                if (@abs(local[1]) > distance * missile_cone) continue;
-                if (distance * best < local[2]) {
-                    best = local[2] / distance;
+                const seen: Bearing = .of(from, slot.object.nextPosition());
+                if (seen.distance > reach or !seen.level()) continue;
+                if (seen.distance * best < seen.local[2]) {
+                    best = seen.local[2] / seen.distance;
                     launcher.target.index = @intCast(candidate);
                 }
             }
@@ -502,20 +530,11 @@ fn missileStep(world: gameobj.World, index: u16, launcher: *Launcher) void {
         .tracking => {
             if (launcher.missiles == 0) return empty(launcher, now);
             if (!ai.targetValid(all, launcher.target, .{})) return lose(launcher, now);
-            const toward = all.slots[@intCast(launcher.target.index)].object.nextPosition() - from.position;
-            const distance = math.length(toward);
-            if (distance > reach * keep_range) return lose(launcher, now);
-            const local = math.transformTransposed(from.orientation, toward);
-            if (@abs(local[1]) > distance * missile_cone) return lose(launcher, now);
-            if (local[0] < distance * -missile_band) {
-                model.swivel(launcher.base, .{ 0, -missile_turn, 0 });
-                model.pose(launcher.base);
-            }
-            if (local[0] > distance * missile_band) {
-                model.swivel(launcher.base, .{ 0, missile_turn, 0 });
-                model.pose(launcher.base);
-            }
-            if (local[2] <= distance * missile_cone or launcher.until >= now) return;
+            const seen: Bearing = .of(from, all.slots[@intCast(launcher.target.index)].object.nextPosition());
+            if (seen.distance > reach * keep_range or !seen.level()) return lose(launcher, now);
+            if (seen.local[0] < seen.distance * -missile_band) turn(model, launcher.base, .{ 0, -missile_turn, 0 });
+            if (seen.local[0] > seen.distance * missile_band) turn(model, launcher.base, .{ 0, missile_turn, 0 });
+            if (seen.local[2] <= seen.distance * missile_cone or launcher.until >= now) return;
             if (world.random.fraction() < launch_odds) {
                 missiles.launchFromTurret(world, index, model, launcher.launcher, launcher.target);
                 launcher.missiles -= 1;
@@ -538,6 +557,23 @@ fn missileStep(world: gameobj.World, index: u16, launcher: *Launcher) void {
         },
     }
 }
+
+/// Where a missile turret's launcher, standing at `from`, sees what stands at `point`: how far off,
+/// and in its frame.
+const Bearing = struct {
+    distance: f32,
+    local: Vector,
+
+    fn of(from: math.Place, point: Vector) Bearing {
+        const toward = point - from.position;
+        return .{ .distance = math.length(toward), .local = math.transformTransposed(from.orientation, toward) };
+    }
+
+    /// Whether it stands within `missile_cone` of the distance up or down.
+    fn level(seen: Bearing) bool {
+        return @abs(seen.local[1]) <= seen.distance * missile_cone;
+    }
+};
 
 /// A missile turret out of missiles waits to reload.
 fn empty(launcher: *Launcher, now: i32) void {
@@ -742,7 +778,9 @@ test aimAngles {
     defer stage.deinit();
     stage.parts.turret(0, .turret, .aimed, 1, 0);
     stage.parts.member(1, 1, 1);
+    // A muzzle facing along the turret's aim of no yaw and no pitch, -Z.
     var barrels = [_]shp.Attachment{testing.muzzle(13)};
+    barrels[0].orientation = math.rotation(.y, std.math.pi);
     stage.parts.data[1].attachments = &barrels;
     stage.parts.data[1].part.angles_min.y = -60;
     stage.parts.data[1].part.angles_max.y = 60;
@@ -751,13 +789,14 @@ test aimAngles {
 
     // Its zero aim is along -Z of its base's frame; it yaws toward Y about X, and pitches toward X
     // about Y.
-    try std.testing.expectEqual([2]f32{ 0, 0 }, aimAngles(aimed, .{ 0, 0, -1000 }).?);
+    try std.testing.expect(!aimed.reversed);
+    try std.testing.expectEqual(Angles{}, aimAngles(aimed, .{ 0, 0, -1000 }).?);
     const up = aimAngles(aimed, .{ 0, 1000, -1000 }).?;
-    try std.testing.expectApproxEqAbs(std.math.pi / 4.0, up[0], 1e-6);
-    try std.testing.expectApproxEqAbs(0, up[1], 1e-6);
+    try std.testing.expectApproxEqAbs(std.math.pi / 4.0, up.yaw, 1e-6);
+    try std.testing.expectApproxEqAbs(0, up.pitch, 1e-6);
     const aside = aimAngles(aimed, .{ 1000, 0, -1000 }).?;
-    try std.testing.expectApproxEqAbs(0, aside[0], 1e-6);
-    try std.testing.expectApproxEqAbs(-std.math.pi / 4.0, aside[1], 1e-6);
+    try std.testing.expectApproxEqAbs(0, aside.yaw, 1e-6);
+    try std.testing.expectApproxEqAbs(-std.math.pi / 4.0, aside.pitch, 1e-6);
     // Past the pitching part's limit it can't aim; nor past its base's, where it has any.
     try std.testing.expectEqual(null, aimAngles(aimed, .{ 3000, 0, -1000 }));
     aimed.model.parts[0].animation.angles_min[0] = -30;
@@ -766,11 +805,68 @@ test aimAngles {
     // A Huge Gun up to 20 degrees past its pitch limit aims at the limit.
     aimed.barrel.type = .allied_huge_gun;
     const past = aimAngles(aimed, .{ 1000, 0, -500 }).?;
-    try std.testing.expectApproxEqAbs(-60 * std.math.rad_per_deg, past[1], 1e-6);
-    // A firing arc with nothing open lets it fire nowhere.
-    const closed = std.mem.zeroes(shp.FiringArc);
-    aimed.arc = &closed;
+    try std.testing.expectApproxEqAbs(-60 * std.math.rad_per_deg, past.pitch, 1e-6);
+    aimed.barrel.type = .turret_lasers;
+    aimed.model.parts[0].animation.angles_min[0] = 0;
+    aimed.model.parts[0].animation.angles_max[0] = 0;
+    // A firing arc with nothing open lets it fire nowhere; one open straight back from Z, toward
+    // the turret's aim, lets it fire there, where the game divides nothing by nothing.
+    var arc = std.mem.zeroes(shp.FiringArc);
+    aimed.arc = &arc;
     try std.testing.expectEqual(null, aimAngles(aimed, .{ 0, 0, -1000 }));
+    arc.rows[16] = 0b11;
+    arc.rows[17] = 0b11;
+    try std.testing.expect(aimAngles(aimed, .{ 0, 0, -1000 }) != null);
+}
+
+test "a turret whose muzzle faces back aims along it" {
+    var stage: Stage = undefined;
+    try stage.init(std.testing.allocator);
+    defer stage.deinit();
+    // A fighter's rear turret: one part, its muzzle along +Z, where its aim of no yaw and no pitch
+    // is along -Z.
+    stage.parts.turret(0, .turret, .aimed, 1, 0);
+    var tail = [_]shp.Attachment{testing.muzzle(1)};
+    stage.parts.data[0].attachments = &tail;
+    stage.parts.data[0].part.angles_min = .{ .x = -90, .y = -60, .z = 0 };
+    stage.parts.data[0].part.angles_max = .{ .x = 90, .y = 60, .z = 0 };
+    try stage.arm();
+    const aimed = &stage.gun().turret.aimed;
+    try std.testing.expect(aimed.reversed);
+    try std.testing.expect(aimed.model.parts[0].animation.reversed);
+
+    // It aims along its muzzle, and turns its pitch the other way round as it poses.
+    try std.testing.expectEqual(Angles{}, aimAngles(aimed, .{ 0, 0, 1000 }).?);
+    const aside = aimAngles(aimed, .{ 1000, 0, 1000 }).?;
+    try std.testing.expectApproxEqAbs(-std.math.pi / 4.0, aside.pitch, 1e-6);
+    aimed.model.swivel(0, .{ 0, aside.pitch, 0 });
+    aimed.model.pose(0);
+    try std.testing.expectApproxEqAbs(std.math.pi / 4.0, aimed.model.parts[0].animation.next.pose.angles[1], 1e-6);
+    // So posed, its muzzle points at what it aimed at.
+    const muzzle = aimed.barrel.muzzle.at(&stage.mission.slot(stage.ship).model.?, .{}, .next).?;
+    try std.testing.expect(ai.alongNose(.{ .orientation = muzzle.orientation }, .{ 1000, 0, 1000 }, 10));
+}
+
+test "an aimed turret passes over a ship the track would drop" {
+    var stage: Stage = undefined;
+    try stage.init(std.testing.allocator);
+    defer stage.deinit();
+    stage.parts.turret(0, .turret, .aimed, 1, 0);
+    var barrels = [_]shp.Attachment{testing.muzzle(13)};
+    stage.parts.data[0].attachments = &barrels;
+    try stage.arm();
+    const aimed = &stage.gun().turret.aimed;
+    // An untargetable hostile ship before the target in the slots is passed over.
+    const hidden = try stage.mission.add(.sabre, .{ 0, 0, 2000 });
+    stage.mission.slot(hidden).object.side = .hostile;
+    stage.mission.slot(hidden).object.flags.targetable = false;
+    const later = try stage.mission.add(.sabre, .{ 0, 0, 2500 });
+    stage.mission.slot(later).object.side = .hostile;
+    stage.mission.slot(later).object.flags.targetable = true;
+    stage.mission.slot(later).drawn.position = .{ 0, 0, 2500 };
+    stage.mission.slot(stage.target).object.flags.targetable = false;
+    pickTarget(stage.mission.world(), stage.ship, aimed);
+    try std.testing.expectEqual(@as(i16, @intCast(later)), aimed.target.index);
 }
 
 test "an aimed turret fires where its muzzle points, and turns toward its target" {
@@ -799,8 +895,12 @@ test "an aimed turret fires where its muzzle points, and turns toward its target
     try std.testing.expectEqual(1001, stage.gun().firing_until);
     try std.testing.expectEqual(0, aimed.model.parts[1].animation.track);
     try std.testing.expect(aimed.model.parts[1].animation.mode == .once);
-    // Its zero aim is along -Z, so it turns a half turn toward the target, 0.02 a tick.
-    try std.testing.expectApproxEqAbs(0.2, aimed.model.parts[0].animation.turret[0], 1e-6);
+    // It aims along its muzzle already, so it doesn't turn; toward a target off to the side it
+    // turns at most 0.02 a tick.
+    try std.testing.expectApproxEqAbs(0, aimed.model.parts[0].animation.turret[0], 1e-6);
+    stage.mission.slot(stage.target).drawn.position = .{ 0, 3000, 3000 };
+    step(world, stage.ship);
+    try std.testing.expectApproxEqAbs(0.2, @abs(aimed.model.parts[0].animation.turret[0]), 1e-6);
 
     // A target that is no longer valid is dropped.
     stage.mission.slot(stage.target).object.flags.targetable = false;

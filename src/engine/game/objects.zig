@@ -866,6 +866,11 @@ pub const Model = struct {
         object: srapiext.MeshObject,
         /// Its node's animation, and what `node_place` reads of its part.
         animation: Animation = .{},
+
+        /// Where it stands as it was last drawn: its node's frame.
+        pub fn drawn(part: *const Part) math.Place {
+            return .{ .position = part.object.position, .orientation = part.object.orientation };
+        }
     };
 
     /// How a node plays its animation track (node `+0xB4`).
@@ -918,6 +923,10 @@ pub const Model = struct {
         offset: Vector = @splat(0),
         /// The angles a turret turns the node by besides the track's (node `+0xDC`, `swivel`).
         turret: Vector = @splat(0),
+        /// A part of a turret whose muzzle faces back, which turns in its frame turned a half turn
+        /// about X: its turret's angles about Y and Z count the other way. **Fix:** the game's
+        /// never fires ([#219](https://github.com/vdmkenny/openreliant/issues/219)).
+        reversed: bool = false,
         /// The place `node_place` worked out for the next step, and its pose (node `+0x5C` to
         /// `+0xA3`), and the ones `node_tree_update` committed from them (`+0x14` to `+0x5B`).
         next: Posed = .{},
@@ -1119,7 +1128,8 @@ pub const Model = struct {
         inline for (0..3) |axis| {
             if (a.still[axis]) a.angles[axis] = 0;
         }
-        const posed: Pose = .{ .angles = a.angles + a.turret, .offset = a.offset };
+        const turret: Vector = if (a.reversed) .{ a.turret[0], -a.turret[1], -a.turret[2] } else a.turret;
+        const posed: Pose = .{ .angles = a.angles + turret, .offset = a.offset };
         a.next = .{ .place = model.placeFor(index, posed), .pose = posed };
         a.pending = true;
         a.posed = true;
@@ -1395,8 +1405,7 @@ pub const Model = struct {
         }
         var each = model.carried();
         while (each.next()) |mount| {
-            const carrier = model.parts[mount.part].object;
-            const at = mount.rootAt(.{ .position = carrier.position, .orientation = carrier.orientation });
+            const at = mount.rootAt(model.parts[mount.part].drawn());
             mount.model.place(at.position, at.orientation);
         }
     }
@@ -1417,6 +1426,13 @@ pub const Model = struct {
             at = model.parts[parent].parent;
         }
         return stands;
+    }
+
+    /// Where part `index` of `held`, this model or one it carries however deep, stands in the world
+    /// at `step`, with this model's root at `root` (`node_world_place`, `node_next_place`); null
+    /// where it carries no such model.
+    pub fn partAt(model: *const Model, root: math.Place, held: *const Model, index: usize, step: Step) ?math.Place {
+        return held.partPlace(index, step).within(model.mountedAt(root, held, step) orelse return null);
     }
 
     /// Where the root of `held`, this model or one it carries however deep, stands at `step`, with

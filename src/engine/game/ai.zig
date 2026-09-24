@@ -115,8 +115,8 @@ pub fn playerControlEntry(all: *create.Objects) ?*aigeneric.Entry {
     return null;
 }
 
-/// How much further a Turret Flak's shot is led for, over the Laser Cannon's lifetime
-/// (`0x004DC3D8`), and the share of a gun's life within which a shot is led at all (`0x004DC3D4`).
+/// How much further a Turret Flak's shot is led for, over its lifetime (`0x004DC3D8`), and the
+/// share of a gun's life within which a shot is led at all (`0x004DC3D4`).
 const flak_lead: f32 = 3;
 const lead_range: f32 = 0.25;
 
@@ -146,14 +146,13 @@ pub fn leadAim(all: *const create.Objects, index: u16, target: aigeneric.Target,
 /// flies to it. Null where that takes longer than a quarter of the gun's life, when the caller
 /// aims at it unled or not at all.
 ///
-/// **Quirk:** a Turret Flak's shot is led within three times the Laser Cannon's lifetime, the
-/// table's first gun's, rather than its own.
+/// A Turret Flak's shot is led within three times its gun's lifetime.
+///
+/// **Fix:** the game takes the Laser Cannon's lifetime there, the table's first gun's, which leads
+/// flak past the life of its own shells; the port the flak's own.
 pub fn leadAimWithGun(all: *const create.Objects, from: Vector, target: aigeneric.Target, gun: guns.GunType, lead: f32) ?Vector {
     const record = gun.stats(&all.gun_stats);
-    const lifetime: f32 = switch (gun) {
-        .turret_flak => @as(f32, @floatFromInt(guns.GunType.laser_cannon.stats(&all.gun_stats).lifetime)) * flak_lead,
-        else => @floatFromInt(record.lifetime),
-    };
+    const lifetime = @as(f32, @floatFromInt(record.lifetime)) * @as(f32, if (gun == .turret_flak) flak_lead else 1);
     const aimed = aimedAt(all, target);
     const flight = math.distance(from, aimed.position) / record.speed;
     if (!(flight <= lifetime * lead_range)) return null;
@@ -825,13 +824,12 @@ test "aiming at a target" {
     try std.testing.expectApproxEqAbs(100, led[0], 1e-3);
     try std.testing.expectApproxEqAbs(1000, led[2], 1e-3);
 
-    // A Turret Flak's shot is led within three of the Laser Cannon's lifetimes, not its own.
+    // A Turret Flak's shot is led within three of its lifetimes.
     const flak = &all.gun_stats.types[guns.GunType.turret_flak.number()];
     flak.speed = 100;
-    flak.lifetime = 1;
-    laser.lifetime = 13;
+    flak.lifetime = 13;
     try std.testing.expectEqual(null, leadAimWithGun(all, @splat(0), aimed, .turret_flak, 1));
-    laser.lifetime = 14;
+    flak.lifetime = 14;
     try std.testing.expect(leadAimWithGun(all, @splat(0), aimed, .turret_flak, 1) != null);
 }
 

@@ -226,8 +226,10 @@ where they are not equal, and outside the pitching part's pitch limits, which ha
 exception; a Huge Gun aimed up to 20 degrees past a pitch limit aims at the limit. Where the turret
 has a firing arc, the direction from the pitching part, in the root's frame, picks a row by its
 angle about Y (32 to a turn) and a column by its angle from Y (16, wrapping twice round the half
-turn), and four neighbouring bits must be set. Not ported: the Stalag's turrets fire anywhere while
-the byte at `0x005883F8` is set ([#220](https://github.com/vdmkenny/openreliant/issues/220)). **Improvement:** the port turns radians, degrees and turns by the
+turn), and four neighbouring bits must be set. The game finds the angle from Y by dividing the
+direction's X by the sine of its angle about Y, which is nothing straight ahead or behind;
+**Fix:** the port takes the length across directly. Not ported: the Stalag's turrets fire anywhere
+while the byte at `0x005883F8` is set ([#220](https://github.com/vdmkenny/openreliant/issues/220)). **Improvement:** the port turns radians, degrees and turns by the
 exact values, where the game has 57.2958, 0.0174533, 3.14159 and 6.28319.
 
 `turret_pick_target` (`0x0047D1F0`) takes the first object, in slot order, it can lead from its
@@ -236,14 +238,18 @@ one; for a Huge Gun only a ship that lists components. An object that lists no c
 for a Huge Gun, is aimed at whole; any other only by a turret whose own object lists components and
 is not a Kurgan, an Antanov, a Nanny or a Prowler, at the first of its components the turret can
 reach. It doesn't ask whether the object is valid, so an exploding, cloaked or untargetable one
-early in the slots is picked and dropped in turn. In a multiplayer game it passes over the player
+early in the slots is picked, dropped by the next track and picked again, keeping the turret from
+any other; **Fix:** the port passes over what the track would drop. In a multiplayer game it passes
+over the player
 who last hurt its object (`+0x10`), which the port leaves out
 ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
 
 Every fighter's rear turret, the Predator's tail gun among them, has its muzzle facing back, while
-its base's frame puts its aim of no yaw and no pitch ahead: its muzzle never points at what it aims
-at, and it never fires ([#219](https://github.com/vdmkenny/openreliant/issues/219)). A capital
-ship's turrets face along their aim.
+its base's frame puts its aim of no yaw and no pitch ahead: in the game its muzzle never points at
+what it aims at, and it never fires. A capital ship's turrets face along their aim. **Fix:** a
+turret whose muzzle faces away from its aim turns, and aims, in its parts' frames turned a half turn
+about their X axis, so its yaw and pitch limits cover the way its muzzle faces and it fires
+([#219](https://github.com/vdmkenny/openreliant/issues/219)).
 
 **Spinning, `turret_spin_step` (`0x0047C9B0`).** Its barrels loop their `fire` track, from a
 standstill at first. While its trigger is held, through the tick it is held until, they spin up by

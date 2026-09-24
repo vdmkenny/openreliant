@@ -72,6 +72,14 @@ pub const GunType = enum(u4) {
         return @enumFromInt(named - 1);
     }
 
+    /// Whether it is one of the Huge Guns, which the turrets aim by rules of their own.
+    pub fn huge(gun_type: GunType) bool {
+        return switch (gun_type) {
+            .allied_huge_gun, .coalition_huge_gun => true,
+            else => false,
+        };
+    }
+
     /// The number a muzzle names it by, and its record in `gun_stats`.
     pub fn number(gun_type: GunType) u8 {
         return @as(u8, @intFromEnum(gun_type)) + 1;
@@ -177,15 +185,13 @@ pub const Muzzle = struct {
 
     /// Where it stands as its part is drawn (its node's frame).
     pub fn drawn(muzzle: Muzzle) math.Place {
-        const part = &muzzle.model.parts[muzzle.part].object;
-        return muzzle.onPart().within(.{ .position = part.position, .orientation = part.orientation });
+        return muzzle.onPart().within(muzzle.model.parts[muzzle.part].drawn());
     }
 
     /// Where it stands at `when`, with `top`, its object's model, standing at `root`
-    /// (`node_world_place`, `node_next_place`).
-    pub fn at(muzzle: Muzzle, top: *const objects.Model, root: math.Place, when: objects.Model.Step) math.Place {
-        const held = top.mountedAt(root, muzzle.model, when) orelse root;
-        return muzzle.onPart().within(muzzle.model.partPlace(muzzle.part, when).within(held));
+    /// (`node_world_place`, `node_next_place`); null where `top` doesn't carry it.
+    pub fn at(muzzle: Muzzle, top: *const objects.Model, root: math.Place, when: objects.Model.Step) ?math.Place {
+        return muzzle.onPart().within(top.partAt(root, muzzle.model, muzzle.part, when) orelse return null);
     }
 
     fn onPart(muzzle: Muzzle) math.Place {
@@ -1090,7 +1096,7 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, barrel: Barr
     const record = kind.stats(&all.gun_stats);
 
     // The muzzle stands where the step is taking the ship, on the part that carries it.
-    const muzzle = barrel.muzzle.at(model, .{ .position = slot.object.nextPosition(), .orientation = slot.object.root.next_orientation }, .next);
+    const muzzle = barrel.muzzle.at(model, slot.object.placeAt(.next), .next) orelse return;
     const at = muzzle.position;
     const turn = muzzle.orientation;
 
