@@ -12,14 +12,14 @@ those `make ghidra-annotate` gives the Ghidra project, which names each order's 
 and the order's name, with `_init` and `_exit` for those two.
 
 Ported so far: the stack (`order_push`, `order_pop`, `orders_clear`, `orders_pop_all`), what runs it
-(`object_orders`, `orders_update`, `order_retaliate`), the steering (`ai_steer`, `ai_roll_upright`),
+(`object_orders`, `orders_update`, `order_retaliate`), the steering (`ai_steer`, `ai_roll_upright`)
+with its avoidance,
 and the orders Do Nothing, Fly, Run Away, Slow Rotate, the Random Spins, Match Speed, 44 and 45,
 Explode, Eject Player and Fight with its [combat maneuvers](maneuvers.md), with Player Control
 being the player's [controls](controls.md). An order the port does not run yet still holds its
 place on the stack, and pushing it still pops and starts what it should
-([#30](https://github.com/vdmkenny/openreliant/issues/30)). Not ported: avoidance
-([#140](https://github.com/vdmkenny/openreliant/issues/140)), and the orders other players' machines
-queue ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
+([#30](https://github.com/vdmkenny/openreliant/issues/30)). Not ported: the orders other players'
+machines queue ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
 
 The port keeps each object's stack and order state in its slot rather than allocating them with its
 first order, and hands a fatal "Cannot set ai" back to its caller as an error.
@@ -166,8 +166,40 @@ radians of where it wants it. A ship flying backwards turns toward the other way
 | `0x8` | Pitch stays at 0.2 or more. |
 
 When avoidance moves the point, `ai_steer` steers with a limit of 1, no ease and without flag
-`0x8`, and returns true. The lists are what [`avoidance_scan`](#the-order-table) builds, and a ship
-with `no_avoidance` avoids nothing.
+`0x8`, and returns true. The lists are what [`avoidance_scan`](#avoidance) builds, and a ship with
+`no_avoidance` avoids nothing.
+
+### Avoidance
+
+`avoidance_scan` (`0x00492190`) runs for each object in `mission_frame`'s pass that draws them, the
+ones it draws, while the object's current order has the `avoidance` flag and it has no
+`no_avoidance`. It empties the ship's two lists (`GameObject + 0x6B4` and `+0x6E0`, a count and ten
+slots each) and fills them from the objects that are not standing in, disabled or jumping, not
+planets, not the ship itself or what it fights, and where neither names the other in its first
+pass-through slot:
+
+- an object that lists components goes on the first list while its sphere, 10000 wider than the two
+  radii, overlaps the ship's where the step takes them both;
+- any other goes on the second, where the ship lists no components, while the ship is on course to
+  hit it within 50 steps by 2000 (`ai_collision_course`, `0x00401980`).
+
+`avoid_near` (`0x004028F0`) works the first list, from the line between where the ship goes next
+and the point it steers at. For each object not standing in, exploding or disabled, not farther
+behind along that line than both radii, closing along it, and to be met within 250 steps: it
+takes the object's box where it will then be, widened by the ship's radius, in the object's frame
+and scaled by its visibility. Where the line crosses it, the point moves onto the box widened again
+by the ship's radius: onto the face nearest where the line enters, at whichever is nearest the point
+of four spots of it, each at the entry along one of the face's two axes and at an edge of the box
+along the other. The point is scaled by the visibility again on its way back to the world, rather
+than unscaled. The heading stays the one to the first point, but each object after the first tests
+the line to the point the one before moved.
+
+`avoid_ahead` (`0x00402DC0`), for a ship that lists no components, works the second list: each
+object is taken where it will be once the ship has flown to where it is now at the ship's cruise
+speed. Where the line to the point passes within 1000 of it, or 500 for an object of another side,
+the point moves as far ahead of the ship as the object will be, and above or below the ship, away
+from the object along the ship's own up and down axis, by both radii and 2000, or 1000 for another
+side's.
 
 ## The orders
 

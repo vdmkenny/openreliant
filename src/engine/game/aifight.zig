@@ -180,7 +180,7 @@ pub const Fighter = struct {
 
     /// Steers at `at` the pilot's way, with its limit and its ease.
     pub fn steer(fighter: Fighter, at: Vector, flags: ai.Steering) void {
-        _ = ai.steer(fighter.slot, at, fighter.pilot.turn_limit, fighter.pilot.turn_ease, flags, fighter.ctx.clock.frame_duration);
+        _ = ai.steer(fighter.ctx.world, fighter.index, at, fighter.pilot.turn_limit, fighter.pilot.turn_ease, flags);
     }
 
     /// The ship's own random number from 0 to 1 (`object_random`).

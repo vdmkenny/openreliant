@@ -22,6 +22,7 @@ const srcore = @import("../surrender/surrenderlib/srcore.zig");
 const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
 const backdrop = @import("backdrop.zig");
 const camera = @import("camera.zig");
+const ai = @import("ai.zig");
 const aigeneric = @import("aigeneric.zig");
 const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
@@ -298,28 +299,75 @@ pub fn missionFrame(orders: aigeneric.Context, fraction: f32) void {
     if (orders.world.particles) |pool| pool.frame(orders.clock);
     if (orders.world.smoke) |pools| pools.frame(orders.clock);
     smoke.frame(orders.world);
+    objectsPass(orders.world);
     if (orders.world.explosions) |explosions| explosions.frame(orders.world);
     if (orders.world.countermeasures) |dropped| dropped.frame(orders.world);
     if (orders.world.shockwaves) |waves| waves.frame(orders.world);
     if (orders.world.display) |display| {
-        display.enemy_lock = enemyLock(orders);
         // Only from the cockpit's views and the chase view.
         if (@intFromEnum(orders.world.view) < @intFromEnum(camera.View.chase) + 1) display.lock.frame(orders.world, &display.missiles);
     }
 }
 
-/// Whether an enemy has a missile locked on the player (`mission_frame`'s pass that draws the
-/// objects): a ship drawn this frame, fighting the player, whose missile is ready.
-fn enemyLock(orders: aigeneric.Context) bool {
-    const all = orders.world.objects;
+/// `mission_frame`'s pass that draws the objects, beyond drawing them: over each object drawn
+/// this frame, whether one fights the player with its missile ready, which lights the display's
+/// enemy lock, and each one's avoidance lists (`avoidanceScan`). The damaged ships' smoke is
+/// `smoke.frame`'s.
+fn objectsPass(world: gameobj.World) void {
+    const all = world.objects;
+    var enemy_lock = false;
     var walk = all.walk();
     while (walk.next()) |index| {
         const slot = &all.slots[index];
-        if (slot.object.flags.outOfFrame() or slot.object.order_count == 0) continue;
-        const order = slot.orders[0];
-        if (order.order == .fight and order.target.index == all.player and slot.state.fight.missile_ready) return true;
+        if (slot.object.flags.outOfFrame()) continue;
+        if (slot.object.order_count > 0) {
+            const order = slot.orders[0];
+            if (order.order == .fight and order.target.index == all.player and slot.state.fight.missile_ready) enemy_lock = true;
+        }
+        avoidanceScan(world, index);
     }
-    return false;
+    if (world.display) |display| display.enemy_lock = enemy_lock;
+}
+
+/// How much wider than the two objects' spheres an object that lists components is watched for
+/// (`0x004DC43C`), and how far ahead, in steps, and how near, the others are
+/// (`ai.collisionCourse`).
+const avoid_widening: f32 = 10000;
+const avoid_steps: f32 = 50;
+const avoid_margin: f32 = 2000;
+
+/// `avoidance_scan` (`0x00492190`): for a ship whose current order avoids (`orders.Flags.avoidance`)
+/// and that has no `no_avoidance`, the objects it could hit, for the avoidance code
+/// (`ai.avoidNear`, `ai.avoidAhead`), up to ten of each: those that list components whose spheres,
+/// 10000 wider, overlap its own where the step takes them both; and, where the ship lists none
+/// itself, the rest it is on course to hit within 50 steps by 2000. It passes over stand-ins,
+/// disabled and jumping objects, planets, the ship itself, what it fights, and what either passes
+/// through the other.
+///
+/// Not ported: in a multiplayer game, the other players' ships a ship passes by.
+fn avoidanceScan(world: gameobj.World, index: u16) void {
+    const all = world.objects;
+    const slot = &all.slots[index];
+    const ship = &slot.object;
+    if (ship.flags.no_avoidance or ship.order_count == 0) return;
+    const info = ai.orders.info(slot.orders[0].order) orelse return;
+    if (!info.flags.avoidance) return;
+    ship.avoid_near.count = 0;
+    ship.avoid_ahead.count = 0;
+    for (all.slots[0..all.count], 0..) |*other_slot, other_index| {
+        const other: u16 = @intCast(other_index);
+        const object = &other_slot.object;
+        if (object.flags.stand_in or object.flags.disabled or object.flags.jumping or other == index) continue;
+        if (other_slot.combat) |combat| if (combat.class == .planet) continue;
+        if (@intFromEnum(ship.passes_through[0]) == other or ship.fighting == other) continue;
+        if (@intFromEnum(object.passes_through[0]) == index) continue;
+        if (object.flags.components) {
+            const reach = object.radius + ship.radius + avoid_widening;
+            if (math.lengthSquared(ship.nextPosition() - object.nextPosition()) < reach * reach) ship.avoid_near.add(other);
+        } else if (!ship.flags.components and ai.collisionCourse(world, index, other, avoid_steps, avoid_margin)) {
+            ship.avoid_ahead.add(other);
+        }
+    }
 }
 
 /// `mission_frame`'s pass over the objects before the camera's frame: each live object, save
@@ -1001,4 +1049,29 @@ test "a frame faster than the tick runs none, and a slow one runs the lot" {
     try std.testing.expectEqual(6, clock.runTicks(&devices, mission.world()));
     clock.frameBegin();
     try std.testing.expectEqual(25, clock.frame_duration);
+}
+
+test avoidanceScan {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const world = mission.world();
+    const ship = try mission.addOther(@splat(0));
+    const hull = try mission.addOther(.{ 0, 0, 10000 });
+    const ahead = try mission.addOther(.{ 0, 0, 3000 });
+    const far = try mission.addOther(.{ 0, 0, 900000 });
+    // The player's ship, which `addOther` puts first, out of the way.
+    objects.setPosition(&mission.slot(0).object, &mission.slot(0).drawn, .{ 500000, 0, 0 });
+    mission.slot(hull).object.flags.components = true;
+    mission.slot(hull).object.radius = 1000;
+    mission.slot(ship).object.velocity = .{ .x = 0, .y = 0, .z = 50 };
+    // Without an order that avoids, nothing is listed.
+    avoidanceScan(world, ship);
+    try std.testing.expectEqual(0, mission.slot(ship).object.avoid_near.count);
+    // Flying, the hull within its widened reach and the ship ahead it would meet are, but not the
+    // far one.
+    _ = try aigeneric.pushShip(mission.orders(), ship, .fly, far, -1);
+    avoidanceScan(world, ship);
+    try std.testing.expectEqualSlices(i32, &.{hull}, mission.slot(ship).object.avoid_near.list());
+    try std.testing.expectEqualSlices(i32, &.{ahead}, mission.slot(ship).object.avoid_ahead.list());
 }
