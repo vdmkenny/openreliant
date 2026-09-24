@@ -104,9 +104,10 @@ It runs a sandbox of its own, drawn through the ported pipeline and driver with 
 ([Renderer](renderer.md)): the player's ship at the origin, facing along Z, the Reliant ahead of it
 and turned across its way, and a wing of four Sabres beyond it. Each flies under an order of
 its own ([Orders](../engine/orders.md)): the player's ship under Player Control, which is its own
-controls, the Sabres under Fly aimed at the player, which brings them in and cuts their throttle
-within 2000 of it, though they drift on, and the Reliant under Fly at a tenth of its speed, which
-has it crawl across the player's way. The game's own bindings drive the camera ([Controls](../engine/controls.md),
+controls, the Sabres under Fight against the player, and the Reliant under Fly at a tenth of its
+speed, which has it crawl across the player's way. The Sabres' pilot is record 42 of
+`pilotstats.bin`, one of its weakest, where `create_object` gives a Sabre the sharp pilot of record
+66, so the player's missiles mostly get past their countermeasures. The game's own bindings drive the camera ([Controls](../engine/controls.md),
 [Camera](../engine/camera.md)): the keys 1 to 8 pick the cockpit, left, right, rear, flyby,
 target, external and missile views, the cockpit key cycles the cockpit mode while in it, and in the
 target and external views the arrow keys orbit and Shift with up or down zooms. Added for the port:

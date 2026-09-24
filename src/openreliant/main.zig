@@ -1036,6 +1036,12 @@ const Sandbox = struct {
     const wing_size = 4;
     const wing_ahead: f32 = 150000;
     const wing_spacing: f32 = 3000;
+    /// The wing's pilot, record 42 of `pilotstats.bin` (`Jackel Plt`), where a mission names each
+    /// ship's own and `create_object` gives a Sabre the sharp pilot of record 66: one of the
+    /// file's weakest, who drops a countermeasure every 300 to 600 ticks while a missile homes
+    /// on it, with no sharp pilot's bonus to draw the missile away, so the player's missiles
+    /// mostly reach it.
+    const wing_pilot = 42;
 
     fn init(gpa: Allocator, tables: *game.create.Stats, gun_stats: []align(1) const stats.Gun, missile_stats: []align(1) const stats.Missile, pilot_stats: []align(1) const stats.Pilot, random: *engine.libcmt.Rand, types: TypeCache) !Sandbox {
         const cache = try gpa.create(TypeCache);
@@ -1137,6 +1143,7 @@ const Sandbox = struct {
             };
             const slot = &sandbox.objects.slots[index];
             game.objects.setOrientation(&slot.object, &slot.drawn, facing);
+            game.pilots.setPilot(&slot.object, wing_pilot);
             _ = game.aigeneric.pushShip(orders, index, .fight, sandbox.objects.player, -1) catch |err| {
                 std.log.warn("a Sabre won't fight: {s}", .{@errorName(err)});
             };
