@@ -1306,6 +1306,9 @@ pub const State = struct {
     /// Where blind fire's sight stands (`0x00566628`, `0x0056662C`), which `hud_init` puts at
     /// the middle of the screen; null until the port first draws it there.
     sight: ?[2]i32 = null,
+    /// Where the lead cursor last stood in the scene (`hud_lead_point`, `0x0057C260`), which blind
+    /// fire aims the player's shots at (`guns.shoot`).
+    lead_point: Vector = @splat(0),
     /// The radar's rings (`0x0057BC50`).
     radar_rings: u16 = Radar.first_rings,
     /// The radar's range (`radar_range`, `0x0057BE00`), 0 the closest.
@@ -2824,8 +2827,8 @@ pub fn pointerDirection(ship: math.Place, at: Vector) [2]f32 {
 /// and a marker where a line its way leaves the screen, with the range in kilometres. One on the
 /// screen gets four brackets at the corners of its box, the component's for a subtarget, as the
 /// camera sees it, with the range under them; and, if it lists no components and is not friendly,
-/// the lead cursor where to aim with the guns (`ai.leadAim`) and a line from it toward the target,
-/// in red.
+/// the lead cursor where to aim with the guns (`ai.leadAim`), which it keeps (`State.lead_point`),
+/// and a line from it toward the target, in red.
 ///
 /// Not yet ported: the corners it marks on the object the radio's window names (`0x0048B0F0`);
 /// the pointer to the next nav point (`GameObject.nav_point`), which needs the mission's
@@ -2891,6 +2894,7 @@ pub fn drawTarget(
 
     if (struck.object.flags.components or struck.object.side == .friendly) return null;
     const lead = ai.leadAim(all, all.player, state.shown, 1) orelse return null;
+    state.lead_point = lead;
     const aim: Point = sight.projection.project(sight.view(lead));
     const cursor: [2]i32 = .{ round(aim[0]), round(aim[1]) };
     try drawShape(art, gpa, target, lead_shape, cursor, colour, scale);
@@ -3249,6 +3253,41 @@ test pointerDirection {
     try std.testing.expectEqual([2]f32{ 0, 1 }, pointerDirection(.{}, .{ 0, 0, -10 }));
 }
 
+/// What `drawTarget`'s tests draw with: no shapes, a font, and a device that counts the lines.
+const TargetDrawing = struct {
+    lines: usize = 0,
+    art: Art,
+    fonts: TargetFonts,
+
+    fn init(drawing: *TargetDrawing, gpa: Allocator) !void {
+        const empty = comptime std.mem.toBytes(spr.Header{ .version = spr.magic.*, .shape_count = 0 });
+        const font = try fnt.Font.parse(comptime fnt.testing.font(true));
+        drawing.* = .{
+            .art = try .init(gpa, try .parse(&empty), null),
+            .fonts = .{ .small = .open(font, null), .new = .open(font, null) },
+        };
+    }
+
+    fn deinit(drawing: *TargetDrawing, gpa: Allocator) void {
+        drawing.art.deinit(gpa);
+        drawing.fonts.small.deinit(gpa);
+        drawing.fonts.new.deinit(gpa);
+    }
+
+    /// Draws `state`'s target in `scene`, and says where the lead cursor stands.
+    fn draw(drawing: *TargetDrawing, gpa: Allocator, state: *State, scene: TargetScene) !?[2]i32 {
+        const into: device.Device = .{ .ptr = drawing, .vtable = &.{ .begin = ignore, .end = ignore, .draw = count, .overlay = ignore } };
+        return drawTarget(state, &drawing.art, &drawing.fonts, gpa, into, scene, .from_tip, .{ 1, 1, 1, 1 }, 1);
+    }
+
+    fn ignore(_: *anyopaque) void {}
+
+    fn count(context: *anyopaque, state: device.State, _: device.Primitive, _: []const device.Vertex, _: ?[]const u16) void {
+        const drawing: *TargetDrawing = @ptrCast(@alignCast(context));
+        if (state.texture == null) drawing.lines += 1;
+    }
+};
+
 test "a target out of sight gets an arrow and a marker" {
     var t: TargetingTest = undefined;
     try t.init();
@@ -3256,38 +3295,44 @@ test "a target out of sight gets an arrow and a marker" {
     const all = t.mission.objects;
     const behind = try t.add(.sabre, .{ 0, 0, -5000 });
     input.setPlayerTarget(&t.state, all, @intCast(behind), -1, false);
-
     const gpa = std.testing.allocator;
-    const Counter = struct {
-        lines: usize = 0,
-        fn begin(_: *anyopaque) void {}
-        fn end(_: *anyopaque) void {}
-        fn mark(_: *anyopaque) void {}
-        fn record(context: *anyopaque, state: device.State, _: device.Primitive, _: []const device.Vertex, _: ?[]const u16) void {
-            const self: *@This() = @ptrCast(@alignCast(context));
-            if (state.texture == null) self.lines += 1;
-        }
-    };
-    var counter: Counter = .{};
-    const into: device.Device = .{ .ptr = &counter, .vtable = &.{ .begin = Counter.begin, .end = Counter.end, .draw = Counter.record, .overlay = Counter.mark } };
-    const empty = std.mem.toBytes(spr.Header{ .version = spr.magic.*, .shape_count = 0 });
-    var art: Art = try .init(gpa, try .parse(&empty), null);
-    defer art.deinit(gpa);
-    const font = try fnt.Font.parse(comptime fnt.testing.font(true));
-    var fonts: TargetFonts = .{ .small = .open(font, null), .new = .open(font, null) };
-    defer fonts.small.deinit(gpa);
-    defer fonts.new.deinit(gpa);
+    var drawing: TargetDrawing = undefined;
+    try drawing.init(gpa);
+    defer drawing.deinit(gpa);
 
     // From the cockpit, three lines of the arrow, and no lead cursor.
     const scene: TargetScene = .{ .sight = testSight(), .all = all, .mode = .cockpit };
-    try std.testing.expectEqual(null, try drawTarget(&t.state, &art, &fonts, gpa, into, scene, .from_tip, .{ 1, 1, 1, 1 }, 1));
-    try std.testing.expectEqual(3, counter.lines);
+    try std.testing.expectEqual(null, try drawing.draw(gpa, &t.state, scene));
+    try std.testing.expectEqual(3, drawing.lines);
     // The chase view draws none.
-    counter.lines = 0;
+    drawing.lines = 0;
     var chase = scene;
     chase.mode = .chase;
-    _ = try drawTarget(&t.state, &art, &fonts, gpa, into, chase, .from_tip, .{ 1, 1, 1, 1 }, 1);
-    try std.testing.expectEqual(0, counter.lines);
+    _ = try drawing.draw(gpa, &t.state, chase);
+    try std.testing.expectEqual(0, drawing.lines);
+}
+
+test "a hostile target ahead gets the lead cursor, whose point blind fire aims at" {
+    var t: TargetingTest = undefined;
+    try t.init();
+    defer t.deinit();
+    const all = t.mission.objects;
+    // The player's guns lead a target up to 100 ticks of flight away.
+    const laser = &all.gun_stats.types[guns.GunType.laser_cannon.number()];
+    laser.speed = 100;
+    laser.lifetime = 400;
+    const ahead = try t.add(.sabre, .{ 0, 0, 5000 });
+    all.slots[ahead].object.side = .hostile;
+    all.slots[ahead].object.speed = 20;
+    input.setPlayerTarget(&t.state, all, @intCast(ahead), -1, false);
+    const gpa = std.testing.allocator;
+    var drawing: TargetDrawing = undefined;
+    try drawing.init(gpa);
+    defer drawing.deinit(gpa);
+
+    const scene: TargetScene = .{ .sight = testSight(), .all = all, .mode = .cockpit };
+    try std.testing.expect(try drawing.draw(gpa, &t.state, scene) != null);
+    try std.testing.expectEqual(ai.leadAim(all, all.player, t.state.shown, 1).?, t.state.lead_point);
 }
 
 test "the radar's contacts" {

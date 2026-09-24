@@ -32,10 +32,8 @@ const full_guns_name = 0x297;
 /// The string naming gun type `kind`, for the types the display names: the fighters' guns, the
 /// Laser Cannon to the Nova Cannon.
 fn gunName(kind: guns.GunType) ?u16 {
-    return switch (kind) {
-        .turret_flak, .turret_lasers, .allied_huge_gun, .coalition_huge_gun => null,
-        else => first_gun_name + @as(u16, @intFromEnum(kind)),
-    };
+    if (kind.onTurrets()) return null;
+    return first_gun_name + @as(u16, @intFromEnum(kind));
 }
 
 /// The shapes that show a pair of guns firing together and firing in turn.

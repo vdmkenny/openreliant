@@ -51,18 +51,13 @@ pub const Guns = enum {
 
     /// How long a flash lasts after a shot of `kind` (`gun_flash_ticks`).
     fn ticks(which: Guns, kind: guns.GunType) i32 {
-        if (which == .turrets_too and fromTurret(kind)) return turret_ticks;
+        if (which == .turrets_too and kind.onTurrets()) return turret_ticks;
         return stats.flash_ticks[kind.number()];
     }
 };
 
 /// How long a turret's flash lasts, where they flash: as long as most guns' do.
 const turret_ticks = 50;
-
-/// Whether `kind` is one of the turrets' own guns.
-fn fromTurret(kind: guns.GunType) bool {
-    return kind == .turret_flak or kind == .turret_lasers or kind.huge();
-}
 
 /// What a flash is drawn with: every gun type's flare but one, that one's sheet, and the turrets'.
 pub const Look = enum {
@@ -79,7 +74,7 @@ pub const Look = enum {
     /// The look of a flash of `gun_type`, where `which` guns flash. `guns_init` builds a mesh for
     /// each type, all alike but the Gattling Plasma Cannon's; the port builds the ones that differ.
     pub fn of(gun_type: guns.GunType, which: Guns) Look {
-        if (which == .turrets_too and fromTurret(gun_type)) return .turret;
+        if (which == .turrets_too and gun_type.onTurrets()) return .turret;
         return if (gun_type == .gattling_plasma_cannon) .sheet else .flare;
     }
 

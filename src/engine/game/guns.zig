@@ -81,6 +81,15 @@ pub const GunType = enum(u4) {
         };
     }
 
+    /// Whether it is one of the turrets' own guns, the Turret Flak, the Turret Lasers and the Huge
+    /// Guns, rather than one of the fighters', the Laser Cannon to the Nova Cannon.
+    pub fn onTurrets(gun_type: GunType) bool {
+        return switch (gun_type) {
+            .turret_flak, .turret_lasers, .allied_huge_gun, .coalition_huge_gun => true,
+            else => false,
+        };
+    }
+
     /// The number a muzzle names it by, and its record in `gun_stats`.
     pub fn number(gun_type: GunType) u8 {
         return @as(u8, @intFromEnum(gun_type)) + 1;
@@ -1042,6 +1051,39 @@ test "a ship aiming blind fires more slowly" {
     for (ship.guns()) |gun| try std.testing.expectEqual(ship.mission.clock.frame_start + 27, gun.next_shot);
 }
 
+test blindAim {
+    const gpa = std.testing.allocator;
+    var ship: testing.Ship = undefined;
+    try ship.init(gpa);
+    defer ship.deinit(gpa);
+    var world = ship.world();
+    var display: hud.State = .{};
+    display.lead_point = .{ 0, 1000, 1000 };
+    world.display = &display;
+    const barrel = ship.guns()[0].turret.fixed;
+    const pool = &world.objects.bullets.pool;
+    const speed = barrel.type.stats(&world.objects.gun_stats).speed;
+
+    // Not aiming blind, the shot flies along its muzzle.
+    try std.testing.expectEqual(null, blindAim(world, ship.index, barrel.type));
+    shoot(world, &ship.mission.clock, ship.index, barrel, false);
+    try std.testing.expectEqual(Vector{ 0, 0, speed }, pool[0].velocity);
+
+    // Aiming blind, the player's shot flies at the lead cursor's point, as fast as ever.
+    ship.object().blind_fire_aim = 1;
+    shoot(world, &ship.mission.clock, ship.index, barrel, false);
+    const aimed = pool[1];
+    const toward = math.normalize(display.lead_point - aimed.at) * @as(Vector, @splat(speed));
+    inline for (0..3) |axis| try std.testing.expectApproxEqAbs(toward[axis], aimed.velocity[axis], 1e-3);
+
+    // The Nova Cannon and the turrets' guns fire along their muzzles, and so does another ship.
+    try std.testing.expectEqual(null, blindAim(world, ship.index, .nova_cannon));
+    try std.testing.expectEqual(null, blindAim(world, ship.index, .turret_flak));
+    const other = try ship.add(@enumFromInt(testing.ship_type), .{ 0, 0, 1000 });
+    world.objects.slots[other].object.blind_fire_aim = 1;
+    try std.testing.expectEqual(null, blindAim(world, other, barrel.type));
+}
+
 test fires {
     const gpa = std.testing.allocator;
     var ship: testing.Ship = undefined;
@@ -1238,10 +1280,11 @@ fn shotColour(player: bool, side: gameobj.Side(i32)) [3]f32 {
 /// scatters up to `flak_scatter` about each axis; a Huge Gun's shot is given the objects its path
 /// comes within `hugeReach` of as well.
 ///
+/// A ship aiming blind turns the shot from its muzzle to fly at where it aims (`blindAim`).
+///
 /// Not ported: how the other gun types' shots are drawn
-/// ([#154](https://github.com/vdmkenny/openreliant/issues/154)); its sound ([#47](https://github.com/vdmkenny/openreliant/issues/47)), and the aim a
-/// ship firing blind takes at its target
-/// ([#183](https://github.com/vdmkenny/openreliant/issues/183)).
+/// ([#154](https://github.com/vdmkenny/openreliant/issues/154)); its sound
+/// ([#47](https://github.com/vdmkenny/openreliant/issues/47)).
 pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, barrel: Barrel, is_heard: bool) void {
     const all = world.objects;
     const slot = &all.slots[owner];
@@ -1255,10 +1298,11 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, barrel: Barr
     if (kind == .turret_flak and @rem(world.random.rand(), 5) < 2) kind = .turret_lasers;
     const record = kind.stats(&all.gun_stats);
 
-    // The muzzle stands where the step is taking the ship, on the part that carries it.
+    // The muzzle stands where the step is taking the ship, on the part that carries it. A shot
+    // aimed blind faces where it is aimed, unrolled.
     const muzzle = barrel.muzzle.at(model, slot.object.placeAt(.next), .next) orelse return;
     const at = muzzle.position;
-    const turn = muzzle.orientation;
+    const turn = if (blindAim(world, owner, kind)) |aim| math.lookAt(aim - at) else muzzle.orientation;
 
     bullet.* = .{
         .live = true,
@@ -1305,6 +1349,23 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, barrel: Barr
     if (player) if (world.forces) |forces| forces.start(forceEffect(kind), clock.frame_start);
     candidates(world, bullet, record, lifetime);
     if (barrel.muzzle.flashOf()) |lit| lit.fire(kind, clock.frame_start, shotColour(player, bullet.side));
+}
+
+/// `bullet_place`'s aim for a shot of type `kind` from the ship in slot `owner`, while the ship
+/// aims blind (`GameObject.blind_fire_aim`, which the display sets as it draws the reticle): a
+/// shot of the player's flies at the point the lead cursor last stood on
+/// (`hud.State.lead_point`). Null for a shot that flies along its muzzle: from a ship not aiming
+/// blind, or of the Nova Cannon or a turret's gun.
+///
+/// Not ported: another player's ship in a multiplayer game, which aims blind at the target of its
+/// order (`ai.leadAim`), or along its muzzle where it can't be aimed at.
+fn blindAim(world: gameobj.World, owner: u16, kind: GunType) ?Vector {
+    const all = world.objects;
+    if (all.slots[owner].object.blind_fire_aim == 0) return null;
+    if (kind == .nova_cannon or kind.onTurrets()) return null;
+    if (owner != all.player) return null;
+    const display = world.display orelse return null;
+    return display.lead_point;
 }
 
 /// The game's own effects of the events the tracks of the model of the object in slot `owner`
@@ -1438,8 +1499,9 @@ const Listing = struct {
 /// What a turret's shot does to a player's ship, over what it does to any other (`0x004DC59C`).
 const turret_damage_to_players: f32 = 2.5;
 
-/// Whether the shot came from a turret's gun, which hits a player's ship harder.
-fn fromTurret(kind: GunType) bool {
+/// Whether the shot is a Turret Flak's or a Turret Lasers', which hurts a player's ship more
+/// (`turret_damage_to_players`); a Huge Gun's does not.
+fn hurtsPlayersMore(kind: GunType) bool {
     return kind == .turret_flak or kind == .turret_lasers;
 }
 
@@ -1581,7 +1643,7 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
                 bullet.dies_at = spent;
                 return;
             }
-            if (candidate.object < all.players and fromTurret(bullet.kind)) value *= turret_damage_to_players;
+            if (candidate.object < all.players and hurtsPlayersMore(bullet.kind)) value *= turret_damage_to_players;
             collision.damage(world, candidate.object, struck, value, record.damage.hullShare(), bullet.owner, .bullet);
         }
         bullet.dies_at = spent;
@@ -1670,7 +1732,7 @@ fn hullHit(world: gameobj.World, bullet: *Bullet, index: u16, struck: collision.
     const along = objects.partEntry(model, bullet.last, bullet.at, .last_shown) orelse return;
     const record = bullet.stats(&world.objects.gun_stats);
     var value = record.damage.hull;
-    if (index < all.players and fromTurret(bullet.kind)) value *= turret_damage_to_players;
+    if (index < all.players and hurtsPlayersMore(bullet.kind)) value *= turret_damage_to_players;
     collision.armorDamage(world, index, struck, value, bullet.owner, .bullet);
     const at = bullet.last + (bullet.at - bullet.last) * @as(Vector, @splat(along));
     shieldfx.hullHit(world, index, at);
@@ -3009,6 +3071,7 @@ const Objects = create.Objects;
 const formats = @import("../../formats/stats.zig");
 const gameobj = @import("gameobj.zig");
 const gun_stats = @import("guns/stats.zig");
+const hud = @import("hud.zig");
 const libcmt = @import("../libcmt.zig");
 const matmanager = @import("matmanager.zig");
 const input = @import("../input.zig");
