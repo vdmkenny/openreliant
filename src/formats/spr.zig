@@ -46,10 +46,13 @@ pub const DirectoryEntry = extern struct {
 
 /// The fixed part of a shape, followed immediately by its rows.
 pub const ShapeHeader = extern struct {
-    /// Two 16-bit values. Constant across a file in the ship schematics and unrelated to the
-    /// bounds elsewhere, so their meaning is **unknown**.
-    unknown_00: u32,
-    unknown_04: u32,
+    /// What `VFX_shape_bounds` returns, a width and a height, which the pause menu places a shape
+    /// by and finds the pointer on it with. For the menu's shapes they are `x2 + 1` and `y2 + 1`;
+    /// the ship schematics hold the same pair throughout a file.
+    bounds: Size,
+    /// What `VFX_shape_origin` returns, which the pause menu adds to where it draws a shape: (1, 1)
+    /// for each of its shapes, which with their `x1` and `y1` of -1 starts the pixels at the point.
+    origin: Size,
     /// Bounds, inclusive, in a frame whose origin is the shape's own anchor. They can be
     /// negative, which is how a sprite is centred on its hotspot.
     x1: i32,
@@ -64,6 +67,12 @@ pub const ShapeHeader = extern struct {
     pub fn height(header: ShapeHeader) i64 {
         return @as(i64, header.y2) - header.y1 + 1;
     }
+
+    /// Two 16-bit values as VFX reads them from a word: the second in the low half.
+    pub const Size = packed struct(u32) {
+        down: u16,
+        across: u16,
+    };
 
     comptime {
         assert(@sizeOf(ShapeHeader) == 24);

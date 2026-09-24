@@ -19,6 +19,7 @@ pub const deathmatch = @import("game/deathmatch.zig");
 pub const environfx = @import("game/environfx.zig");
 pub const explode = @import("game/explode.zig");
 pub const hud = @import("game/hud.zig");
+pub const hudoptions = @import("game/hudoptions.zig");
 pub const executor = @import("game/executor.zig");
 pub const gameflow = @import("game/gameflow.zig");
 pub const gameobj = @import("game/gameobj.zig");

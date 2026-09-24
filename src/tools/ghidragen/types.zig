@@ -102,6 +102,16 @@ pub const exported = [_]Export{
     .{ "ControlAction", engine.input.controls.Action },
     .{ "ControlMode", engine.input.ControlMode },
 
+    // The pause menu.
+    .{ "MenuItem", engine.game.hudoptions.menu.Item },
+    .{ "MenuPlace", engine.game.hudoptions.menu.Place },
+    .{ "MenuEdge", engine.game.hudoptions.menu.Place.Edge },
+    .{ "MenuShape", engine.game.hudoptions.menu.Shape },
+    .{ "MenuFont", engine.game.hudoptions.menu.Font },
+    .{ "MenuString", engine.game.hudoptions.menu.String },
+    .{ "MenuItemStyle", engine.game.hudoptions.menu.Item.Style },
+    .{ "MenuAlignment", engine.game.hudoptions.menu.Alignment },
+
     // Orders.
     .{ "Order", engine.game.ai.orders.Order },
     .{ "OrderRecord", engine.game.ai.Record },

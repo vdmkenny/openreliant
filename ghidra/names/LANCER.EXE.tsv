@@ -600,7 +600,7 @@ address	kind	name	type	comment
 0048b6b0	function	hud_target_keys	void (void)	The targeting and missile keys, which frame_controls runs after the camera's: TARGET TORPEDO, the nearest and next targets, the subtargets, TARGET UNDER RETICULE, MISSILE WINDOW, the missile ring, and SMART TARGET, which flips smart_targeting
 0048cc30	function	hud_subtarget	void (void)	The subtarget: walks the target's assembly by link_id. Not read in full
 0048ce70	function	hud_beep	void __fastcall (int sound)	Plays the display's sound n, sample 15 + n of bank_stdsmp, while the camera is in one of the four cockpit views; 4 and 5 are a device turning on and off
-0048d590	function	hud_palette_ramp	void __fastcall (uint rgb)	Sets entries 1 to 15 of VFX's global palette, or on an 8-bit pane a table at 0x0057DAD8, to a ramp of a colour. Unknown: what draws with them
+0048d590	function	hud_palette_ramp	void __fastcall (uint rgb)	Sets entries 1 to 15 of VFX's global palette, or on an 8-bit pane menu_text_remap, to a ramp of a colour: entry i is the colour times i/15 times palette_ramp_brightness. The pause menu's text draws with them
 0048d780	function	hud_colour	uint __fastcall (int red, int green, int blue)	A colour as the display's pane holds one: looked up through the renderer's 6-6-6 table on an 8-bit pane, or shifted into the pixel format
 00494890	function	hud_interference_start	void (void)	Sets hud_interference to 0.3 and, no more than every 15 to 29 ticks, plays sound 12 at the player's ship through 0x00482160. Called from 0x00463EE0 and 0x004641F0
 004948f0	function	hud_interference_fade	void (void)	Lowers hud_interference by 0.005 for each tick since it last ran, to nothing
@@ -645,9 +645,9 @@ address	kind	name	type	comment
 00490dc0	function	language_init	void (void)	Loads language.dll and reads its string table with LoadStringA, from id 1 up to the first id with no string or an empty one, into language_strings; then reads the module's version language into 0x00563A14
 00491030	function	language_string	char * __fastcall (int id)	The string of an id out of language_strings; stops the game with the fatal error 'id out of range' for an id past them
 0041b240	function	launch_run	void __fastcall (int slot)	Runs a launch a step at a time on its order state's timer. For the player it picks one of three cutaways (views 0x20 to 0x22) and starts the launch's typed text; at the last step it sets cockpit_mode from cockpit_mode_setting (0 the cockpit, 1 the chase view, any other none) and, from a launch cutaway, switches to view 0; then pops the order, makes the ship targetable and posts the Launched event
-00491e20	function	game_pause	void __fastcall (bool pause, bool quiet)	Pauses or resumes the mission. Pausing hands sr + 0x88 another overlay (0x004906F0) in place of hud_draw; resuming puts hud_draw back and, if cockpit_mode_setting changed meanwhile, switches to view 0
+00491e20	function	game_pause	void __fastcall (bool pause, bool quiet)	Pauses or resumes the mission. Pausing sets paused, holds the frame timing, pauses the voices, hands sr + 0x88 pause_menu_draw in place of hud_draw, opens the menu and, in a session unless quiet, sends the pause; resuming undoes it, puts hud_draw back and, if cockpit_mode_setting changed meanwhile, switches to view 0. The music goes on
 004aab20	function	message_pump	int (void)	Pumps the window's messages; as the window goes inactive, pauses the music, the 3D voices and the voices and the mission (game_pause) and waits until it is active again, when the sound goes on; 0 on WM_QUIT
-005d6cac	data	app_active	bool	Whether the game's window is the active one, as WM_ACTIVATEAPP last said
+005d6cac	data	app_active	bool	Whether the renderer runs: renderer_start sets it and 0x004AD3E0 clears it. The message pump pauses only while it is set
 005d6cad	data	app_inactive_paused	bool	Whether message_pump has paused the game for the window going inactive
 0057dbbc	data	language_strings	char **	The strings language_init reads, by id less one
 0057dbc0	data	language_count	int	How many strings language_init read
@@ -1070,3 +1070,109 @@ address	kind	name	type	comment
 005d6a28	data	cd1_folder	char[256]	In a full install, where cd1.hog is: the installation directory
 005d6928	data	cd2_folder	char[256]	In a full install, where cd2.hog is: the installation directory
 005202d4	data	cd_hog	void *	The open disc's cd%d.hog (cd_hog_open)
+0048d820	function	menu_box_draw	void __fastcall (int x0, int y0, int x1, int y1)	Outlines a rectangle on hud_pane in direct-colour reds: top and left 205, right and bottom 102.5, and a rectangle one pixel inside at 164. The pause menu frames its dialog and key lists with it
+0048d9f0	function	menu_mouse_update	void (void)	Moves menu_cursor_x and menu_cursor_y by the mouse, within the screen, puts the system cursor back near the window corner after a move, and sets menu_mouse_down, menu_mouse_pressed and menu_mouse_released from the left or right button
+0048db00	function	menu_draw	int __fastcall (int count, void *shapes, MenuItem *items, MenuString title, int mouse)	Draws a pause menu title in optfnt over a red rule and count items of 0x30 bytes, each shape placed by screen fractions and offsets with its hover shape under the cursor, then each string white when highlighted, else orange; returns the item under the cursor or -1, testing none when mouse is 0
+0048df20	function	pause_screen_quit	void (void)	Pause screen 0, which nothing selects: four QUIT buttons going to screens 1, 6, 5 and 7; Escape goes to 6
+0048e140	function	pause_screen_debug	void (void)	Pause screen 8, which nothing reaches: lists the mission ships, sync states and globals on screen and appends them to c:\mission.txt every frame
+0048e370	function	pause_session_lost	void (void)	Pause screen 9 once mission_ending is 9: a dialog saying the session was terminated for a bad connection, whose OK leaves the mission as the button is released
+0048e440	function	pause_multiplayer_enter	void (void)	Entering pause screen 9: clears the scoreboard rows and lag flags, no player to drop, and makes menu_dialog_pane
+0048e500	function	pause_multiplayer_exit	void (void)	Leaving pause screen 9: destroys menu_dialog_pane
+0048e510	function	pause_screen_multiplayer	void (void)	Pause screen 9: PAUSED, LEAVE MISSION (7) and CONTINUE (6), the deathmatch scores with a drop button for each player lagging past 100, the message log, the chat line and who paused or why; Escape goes to 6
+0048e8d0	function	pause_screen_main	void (void)	Pause screen 1: SELECT AN OPTION, icons AUDIO (3), CONTROL DEVICES (2) and VIDEO (4), buttons LEAVE MISSION (7), RESTART (5) and CONTINUE (6); Escape goes to 6
+0048ec20	function	pause_audio_enter	void (void)	Entering pause screen 3: keeps the four volumes for Cancel Changes and ends any drag
+0048ec70	function	pause_screen_audio	void (void)	Pause screen 3, SOUND CONFIGURATION: speech, effects, music and master sliders 0 to 127 dragged by their knobs, a test sound as the effects knob is let go, OK (1), RESTART (5), CONTINUE (6), RESET DEFAULTS and CANCEL CHANGES; Escape goes to 1
+0048f230	function	pause_video_enter	void (void)	Entering pause screen 4: keeps cockpit_mode_setting and the brightness at sr + 0x15FA for Cancel Changes
+0048f260	function	pause_screen_video	void (void)	Pause screen 4, GRAPHICS CONFIGURATION: a BRIGHTNESS slider 0.5 to 2 while sr + 0x38 has bit 0, DEFAULT VIEW cycling cockpit, chase and no cockpit, OK (1), RESTART (5), CONTINUE (6), RESET DEFAULTS and CANCEL CHANGES; Escape goes to 1
+0048f5a0	function	video_settings_save	void (void)	Leaving pause screen 4: writes [Device] gamma, the brightness in hundredths, and [Device] View to the settings file
+0048f620	function	pause_controls_enter	void (void)	Entering pause screen 2: makes its three panes, reloads the bindings (key_config_defaults, load_key_config), numbers controls_list and keeps the settings and control_bindings for Cancel Changes
+0048f860	function	pause_controls_draw	int (void)	Draws pause screen 2: its items with the current check boxes and dimming, and the scrolled action and binding lists; returns the item under the cursor, 100 plus the action for a list row, or -1
+0048fd60	function	pause_controls_conflict	void (void)	Pause screen 2's dialog for a key or button already bound: YES takes it from the other action, NO keeps waiting, as the button is released
+0048fef0	function	pause_screen_controls	void (void)	Pause screen 2, CONTROL CONFIGURATION: controller and joystick settings, rebinding an action by clicking its row then pressing a key or joystick button, scrolling, OK (1), RESTART (5), CONTINUE (6), RESET DEFAULTS and CANCEL CHANGES; Escape goes to 1
+004905c0	function	pause_controls_exit	void (void)	Leaving pause screen 2: destroys its panes and calls save_key_config
+00490600	function	pause_menu_open	void (void)	As the game pauses: opens optfnt.fnt and smlfnt2.fnt from resource.hog into menu_fonts, fills menu_text_remap, starts on screen 9 in a multiplayer session or 1 otherwise, and ends the missile lock tone
+004906d0	function	pause_menu_close	void (void)	As the game resumes: frees the two fonts pause_menu_open opened
+004906f0	function	pause_menu_draw	void (void)	The overlay in sr + 0x88 while paused, in place of hud_draw: runs the enter routine of a new pause_screen, the screen, the leave routine of the one left, then draws the cursor, shape 0x17E of hud_shapes
+00491fc0	function	mission_paused_frame	int (void)	mission_run's work for each frame while paused: music, network, keyboard, joystick, menu_mouse_update and a render, then acts on pause_screen 5 (restart), 6 (resume) or 7 (leave, mission_ending 4); nonzero ends mission_run
+00480fd0	function	hud_text_wrapped	int __fastcall (void *pane, int x, int y, void **font, char *text, byte *remap, int align, int width, int line_height, int max_lines)	Draws text with hud_text in lines at most width wide, breaking at a line feed, a space, a hyphen, or mid-word with a hyphen added; returns the lines drawn
+00480df0	function	font_close	void __fastcall (void **font)	Frees a font font_open made and the file it wraps
+0042caa0	function	key_config_defaults	void (void)	Sets the input settings to their defaults and reads each binding from the KeyConfig section of default.txt in the installation directory
+0042c630	function	save_key_config	void (void)	Writes the input settings and every binding to the KeyConfig and JoyConfig sections of starlancer.ini
+0042c5f0	function	control_binding_find	int __fastcall (int except, int key, int modifier)	The action other than except bound to a key with a modifier, or -1
+004baae0	function	net_send_pause	void __fastcall (bool pause)	Sends packet 0x27 to the other players: the pause flag and pause_reason
+0049cfd0	function	frame_timing_hold	void __fastcall (bool hold)	Stops (1) or restarts (0) the timing of the frame's current section, nesting
+004aada0	function	typed_keys_clear	void (void)	Empties the queue of typed characters at 0x005D547C
+0057daa4	data	pause_screen	int	The pause menu's screen: 1 main, 2 controls, 3 audio, 4 video, 9 multiplayer, 0 and 8 unreachable; 5, 6 and 7 are outcomes mission_paused_frame acts on: restart, resume, leave
+0057dabc	data	pause_screen_entered	int	The screen whose enter routine pause_menu_draw last ran; -1 as the pause opens
+00502780	data	menu_cursor_x	int	The pause menu cursor across in screen pixels: 320 at start, kept between pauses
+00502784	data	menu_cursor_y	int	The pause menu cursor down: 240 at start
+0057daa8	data	menu_mouse_down	int	Whether the left or right mouse button is down
+0057dbac	data	menu_mouse_pressed	int	Set in the paused frame a mouse button went down: what the pause screens act on
+0057dac4	data	menu_mouse_released	int	Set in the paused frame the buttons went up: what the pause dialogs act on
+0057dad8	data	menu_text_remap	byte[16]	The remap table pause menu text is drawn through: 0xFF for level 0 and each level 1 to 15 itself, which hud_palette_ramp colours
+005202f0	data	palette_ramp_brightness	float	What hud_palette_ramp scales its ramp by: 1, or 0.5 for a dimmed item
+0057da64	data	menu_fonts	void **[3]	The fonts a menu item picks by index: hud_font, smlfnt2.fnt, optfnt.fnt
+0057db50	data	menu_font_large	void **	optfnt.fnt, opened: titles and icon labels
+0057dac8	data	menu_font_small	void **	smlfnt2.fnt, opened: buttons, lists and dialog text
+0057dba4	data	menu_font_large_file	void *	optfnt.fnt as hog_load read it
+0057dab0	data	menu_font_small_file	void *	smlfnt2.fnt as hog_load read it
+0057da74	data	menu_dialog_pane	void *	The VFX pane, 480 by 120 about the middle, that the pause dialogs draw into
+0057da7c	data	controls_actions_pane	void *	Pause screen 2's pane of action names
+0057da78	data	controls_keys_pane	void *	Pause screen 2's pane of bindings
+00502940	data	audio_menu_items	MenuItem[13]	Pause screen 3's 13 menu items; the knobs' x offsets follow the volumes
+00502bb0	data	video_menu_items	MenuItem[11]	Pause screen 4's 11 menu items; the knob offset and the view string are set each frame
+00502dc0	data	conflict_menu_items	MenuItem[2]	YES and NO of pause screen 2's dialog
+00502e20	data	controls_menu_items	MenuItem[15]	Pause screen 2's 15 menu items; check boxes and dimming are set each frame
+00502788	data	session_lost_items	MenuItem[1]	The OK of pause_session_lost
+005027c0	data	drop_player_items	MenuItem[8]	Pause screen 9's drop buttons, one per lagging player, at scoreboard_row_y
+005027b8	data	drop_player_slot	int	The player slot whose drop button was clicked, which mission_paused_frame drops; -1 for none
+0057da60	data	audio_saved_music	int	volume_music as pause screen 3 opened
+0057dae8	data	audio_saved_effects	int	volume_effects as pause screen 3 opened; its low byte is also menu_text_remap's entry for level 16
+0057db98	data	audio_saved_speech	int	volume_speech as pause screen 3 opened
+0057dba8	data	audio_saved_master	int	volume_master as pause screen 3 opened
+0057dad6	data	drag_effects	byte	Set while the effects knob, or on screen 4 the brightness knob, is dragged
+0057dad4	data	drag_music	byte	Set while the music knob is dragged
+0057dad5	data	drag_speech	byte	Set while the speech knob is dragged
+0057dad7	data	drag_master	byte	Set while the master knob is dragged
+0057c3c8	data	drag_effects_last	byte	drag_effects in the previous paused frame; its fall plays the test sound
+0057db9c	data	video_saved_view	int	cockpit_mode_setting as pause screen 4 opened
+0057db90	data	video_saved_brightness	float	sr + 0x15FA as pause screen 4 opened
+004e75e8	data	controls_list	short[80]	Pause screen 2's rows: -1 a divider, else an action, numbered in order by pause_controls_enter; actions 0 to 72
+004e5cd0	data	key_names	byte[3204]	The 89 keys pause screen 2 binds, 0x24 bytes each: a DirectInput scan code (u32) and its name
+0057c3d0	data	saved_control_bindings	ControlBinding[74]	control_bindings as pause screen 2 opened
+0057dacc	data	saved_joystick_invert	int	The joystick's pitch inversion as pause screen 2 opened
+0057dac0	data	saved_control_mode	ControlMode	control_mode as pause screen 2 opened
+0057dab4	data	saved_force_feedback	int	The force feedback setting as pause screen 2 opened
+0057dad0	data	saved_hat_enabled	int	The hat setting as pause screen 2 opened
+0057dab8	data	saved_twist_setting	int	The twist setting as pause screen 2 opened
+0057db4c	data	saved_twist_enabled	int	Whether twist was enabled as pause screen 2 opened
+0057db58	data	controls_redefining	int	The action pause screen 2 waits for a key or button for, or -1
+0057db0c	data	controls_old_key	int	The binding being redefined, as it was
+0057daac	data	controls_old_button	int	The joystick button of the binding being redefined, as it was
+0057db14	data	controls_old_key_name	char[30]	The key name of the binding being redefined, as it was
+0057dba0	data	controls_old_modifier	int	The modifier of the binding being redefined, as it was
+0051d5f8	data	controls_conflict_open	int	Set while pause screen 2's dialog is up
+0051d900	data	controls_conflict_text	char[256]	The dialog's text
+0057da70	data	controls_conflict_action	int	The action already holding the key or button
+0057da5c	data	controls_conflict_button	int	The joystick button in dispute, or -1 for a key
+0057daa0	data	controls_conflict_key	int	The key in dispute
+0057db54	data	controls_conflict_modifier	int	The modifier of the key in dispute
+0057db5c	data	controls_conflict_key_name	char[32]	The name of the key in dispute
+0057db94	data	controls_scroll	int	How far pause screen 2's list is scrolled, in pixels
+0057db48	data	controls_scroll_row	int	The 15-pixel row the list settles on
+0057db10	data	controls_scroll_direction	int	-1, 0 or 1 as the list scrolls. Unknown: its reader
+0057daec	data	scoreboard_row_y	int[8]	Each player's row of the deathmatch scores, as 0x004AF650 draws them
+0057dbb0	data	player_lagging	byte[8]	Whether each player has lagged past 100 since pause screen 9 opened
+0057da80	data	drop_player_of_item	int[8]	The player slot of each drop button
+005db830	data	pause_reason	int	Why a multiplayer game is paused: 0 a player paused it, 1 a bad connection; sent with the pause
+00588720	data	pause_player	short	The player who paused
+00529c70	data	chat_input	char[64]	The chat line being typed; game_pause empties it
+00529fb8	data	chat_typing	byte	Set while a chat line is being typed
+00582e88	data	pause_view_setting	int	cockpit_mode_setting as the game paused
+00587cc0	data	paused_clock	uint	The clock mission_paused_frame measures frame_duration against
+005d60b9	data	mission_restart	byte	Set for Restart: WinMain ends the mission and starts it again
+00566644	data	missile_lock_tone	int	The voice of the missile lock tone, stdsmp sound 0x15, held while a lock is complete in view 0; -1 for none
+00588734	data	mission_loaded	byte	Set from the end of mission_start to mission_end
+005dc1e8	data	net_session	int	Nonzero in a multiplayer session
+005ddd28	data	window_suspended	int	Set while the game's window is put away, from 0x004A8260 until input_init clears it; the message pump pauses the sound, and in a multiplayer session the mission, while it is set and the renderer runs. Unverified: what putting the window away is
+004a8260	function	window_suspend	void (void)	Unverified name: where the window is full-screen (0x004F634C), saves its style and placement, changes them and sets window_suspended; then acquires the input again

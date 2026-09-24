@@ -21,11 +21,15 @@ a 3D voice for each sample the provider supports, up to 64, and sets the effects
 with a damping of 1 and an effect volume and decay time of 0, and each 3D sound it plays gets an
 effects level of 0, with no obstruction or occlusion: the room's reverb is never heard.
 
-As the game's window goes inactive (`app_active`, `0x005D6CAC`, from `WM_ACTIVATEAPP`), the message
+As the game's window is put away (`window_suspended`, `0x005DDD28`, which `0x004A8260` sets and
+`input_init` clears) while the renderer runs (`app_active`, `0x005D6CAC`), the message
 pump (`message_pump`, `0x004AAB20`) pauses the music, the 3D voices and the voices, where no video is
-playing, and the mission (`game_pause`), and waits on the window's messages; active again, it
-resumes the sound, and leaves the mission in its pause menu. `app_inactive_paused` (`0x005D6CAD`)
-remembers that it paused.
+playing, and waits on the window's messages; once the window is back, it resumes the sound.
+`app_inactive_paused` (`0x005D6CAD`) remembers that it paused. Only in a multiplayer session with a
+mission loaded does it pause the mission too (`game_pause`), which then stays in its
+[pause menu](pause-menu.md). In single player the mission isn't paused, and the timer's ticks go on
+while the pump waits. **Unverified:** that the mission runs the ticks it missed once the window is
+active again.
 
 ## Volumes
 

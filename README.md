@@ -107,6 +107,9 @@ OpenReliant plays the files of StarLancer, which it installs from your own discs
    ./openreliant StarLancer
    ```
 
+   The game starts in its pause menu, where the audio and video settings are; CONTINUE, or Escape,
+   starts flying, and Escape brings the menu back.
+
 The manual is on disc 2 as `DOCS/MAUNAL.PDF` (misspelled on the disc), and the quick reference
 card as `DOCS/QRC.PDF`.
 
