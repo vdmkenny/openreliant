@@ -158,8 +158,12 @@ pub const Context = struct {
     projection: Projection,
     /// Depths are divided by this before choosing a level of detail (`detail_divisor`,
     /// `0x005E829A`). `mission_frame` moves it with the frame time, within bounds the detail setting
-    /// sets.
+    /// sets (`game.main.high_detail`).
     detail: f32 = 1,
+    /// **Improvement:** how many times further than `detail` has them the finer levels of detail
+    /// reach, so that an object keeps a finer mesh from further off; its last level still ends
+    /// where `detail` has it, and the object leaves sight there. 1 is the original's.
+    finer: f32 = 1,
     /// A hardware renderer (`sr + 0x1AC`).
     hardware: bool = true,
     /// The sun's point on the screen (`sr + 0x173E`), and how much of it shows (`sr + 0x1746`):

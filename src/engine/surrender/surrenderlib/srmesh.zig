@@ -196,7 +196,8 @@ fn sphereTest(projection: srapi.Projection, object: *const MeshObject, relative:
 
 /// Picks the level of detail by depth, and how far toward the next it has moved; then, for an
 /// object that may need clipping, tests the level's bounding box (`0x004C5FB0`). Null when the
-/// object is past its last level or wholly outside a plane.
+/// object is past its last level or wholly outside a plane. The finer levels reach
+/// `context.finer` times further than the depth has them, the last one not.
 fn chooseLevel(
     context: *const srapi.Context,
     object: *MeshObject,
@@ -208,13 +209,15 @@ fn chooseLevel(
     morph.* = .{};
     if (!object.flags.finest) {
         const depth = relative[2] / context.detail;
+        const count = object.levels.len;
+        if (count == 0 or !(depth < object.levels[count - 1].until)) return null;
+        const reach = depth / context.finer;
         var level: usize = 0;
-        while (level < object.levels.len and !(depth < object.levels[level].until)) : (level += 1) {}
-        if (level >= object.levels.len) return null;
+        while (level + 1 < count and !(reach < object.levels[level].until)) : (level += 1) {}
         object.level = level;
-        if (level + 1 < object.levels.len) {
+        if (level + 1 < count) {
             const start: f32 = if (level == 0) 0 else object.levels[level - 1].until;
-            const along = (depth - start) / (object.levels[level].until - start);
+            const along = (reach - start) / (object.levels[level].until - start);
             const moved: f32 = if (0.75 <= along) (along - 0.75) * 4 else 0;
             if (object.flags.geomorph_normals) morph.normals = moved;
             if (object.flags.geomorph_positions) morph.positions = moved;
@@ -528,6 +531,30 @@ test pipe {
     try std.testing.expect(!near.visible[0].clip.near);
     object.position = .{ 0, 0, 50 };
     try std.testing.expectEqual(null, try pipe(arena, &context, &object, &lights, &budget));
+}
+
+test "the finer levels of detail reach further, the last one not" {
+    const gpa = std.testing.allocator;
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const mesh = try testing.square(gpa);
+    defer mesh.deinit(gpa);
+    const levels = [_]srapiext.Level{ .{ .mesh = &mesh, .until = 1000 }, .{ .mesh = &mesh, .until = 5000 } };
+    var object: MeshObject = .{ .flags = .{}, .position = .{ 0, 0, 3000 }, .radius = mesh.radius, .levels = &levels };
+    var context: srapi.Context = .{ .projection = .init(1024, 768, srapi.full_screen, .{ 0.6, 0.8 }), .detail = 2 };
+    var budget: Budget = .{};
+
+    // Halved by the divisor, the depth is past the first level's end and within the second's.
+    _ = (try pipe(arena, &context, &object, &.{}, &budget)).?;
+    try std.testing.expectEqual(1, object.level);
+    // Reaching twice as far, the first level holds out; the last still ends where it did.
+    context.finer = 2;
+    _ = (try pipe(arena, &context, &object, &.{}, &budget)).?;
+    try std.testing.expectEqual(0, object.level);
+    object.position = .{ 0, 0, 11000 };
+    try std.testing.expectEqual(null, try pipe(arena, &context, &object, &.{}, &budget));
 }
 
 test "pipe for a device that lights each pixel" {

@@ -106,7 +106,7 @@ const Doc = struct {
 
 /// Every option's help, which the compiler holds to having one for each.
 const docs: std.enums.EnumArray(Arg, Doc) = .init(.{
-    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, light worked out on encoded colours, no shadows, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings and particles as few and plain as the original's, a damaged ship's smoke as even as the original's, the shields' bubbles as coarse as the original's, the marker for a target out of sight placed as the original misplaces it, a missile's sound left where it was launched, and the sound mixed plainly in stereo" },
+    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, light worked out on encoded colours, no shadows, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings and particles as few and plain as the original's, a damaged ship's smoke as even as the original's, the shields' bubbles as coarse as the original's, the levels of detail changing as near as the original's, the marker for a target out of sight placed as the original misplaces it, a missile's sound left where it was launched, and the sound mixed plainly in stereo" },
     .@"--ship" = .{ .section = .sandbox, .value = "<type>", .text = "the ship type to fly, by its number in shipstats.bin; 0, the Predator, by default" },
     .@"--view" = .{ .section = .sandbox, .value = "<0|1|2>", .text = "the view it starts in, as the game's settings keep it: 0 the cockpit; 1 the chase view; 2 no cockpit. The settings' own by default, which the pause menu's video screen changes" },
     .@"--difficulty" = .{ .section = .sandbox, .value = "<easy|medium|hard>", .text = "the game's difficulty: how hard hits land on your ship, and shots on the enemy; medium by default, as in the game" },
@@ -233,6 +233,8 @@ const Options = struct {
     smoke: game.particles.Pool.Variety = .varied,
     /// How the shields' bubbles are drawn.
     shields: game.shield.Style = .smooth,
+    /// How far the finer levels of detail reach.
+    detail_reach: game.main.DetailReach = .far,
     /// Where the line starts that places the marker for a target out of sight.
     edge_line: game.hud.EdgeLine = .from_tip,
     /// How the sound plays, or null for none.
@@ -292,6 +294,7 @@ const Options = struct {
                 options.distant = .thinned;
                 options.smoke = .alike;
                 options.shields = .original;
+                options.detail_reach = .original;
                 options.edge_line = .original;
                 if (options.sound) |*sound| sound.* = .{ .player = .software, .master = null };
                 options.missile_sound = .stays;
@@ -519,7 +522,11 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     defer driver.deinit();
     var pacer: platform.window.Pacer = .{};
 
-    var context: srapi.Context = .{ .projection = (camera.Camera{}).projection(1280, 720) };
+    var context: srapi.Context = .{
+        .projection = (camera.Camera{}).projection(1280, 720),
+        .detail = game.main.high_detail,
+        .finer = options.detail_reach.finer(),
+    };
     var rand: engine.libcmt.Rand = .{};
     const space = try game.backdrop.Backdrop.create(arena, &textures, try tga.decode(arena, try resources.readFile(arena, game.backdrop.star_map_name)), &rand, context.projection.near);
     const sky = try game.nebula.Sky.create(arena, &textures, try tga.decode(arena, try resources.readFile(arena, game.nebula.dome_image_name)));
@@ -1036,8 +1043,8 @@ const Sandbox = struct {
     /// the wing, crawling alongside the Reliant: turned as it is, flying as fast.
     const badanov_at: math.Vector = .{ 6000, -9000, 190000 };
     /// A wing: four Sabres, `wing_ahead` in front of the player, beyond the Reliant, and
-    /// `wing_spacing` apart. Their models are drawn once they are within 25000, a fighter's last
-    /// level of detail.
+    /// `wing_spacing` apart. Their models are drawn once they are within 75000, where a fighter's
+    /// last level of detail ends at the high detail setting.
     const wing_size = 4;
     const wing_ahead: f32 = 150000;
     const wing_spacing: f32 = 3000;
@@ -1488,6 +1495,8 @@ test Options {
     try std.testing.expectEqual(.fuller, plain.fireballs);
     try std.testing.expectEqual(.smooth, plain.shields);
     try std.testing.expectEqual(.original, retro.shields);
+    try std.testing.expectEqual(.far, plain.detail_reach);
+    try std.testing.expectEqual(.original, retro.detail_reach);
     try std.testing.expect(!(try play(&.{"--no-smooth-motion"})).smooth_motion);
     try std.testing.expectEqual(.latest_two, (try play(&.{"--few-shot-lights"})).shot_lights);
     // Sound is on, with the first mission's music, unless told otherwise.
