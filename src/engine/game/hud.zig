@@ -47,6 +47,7 @@ const guns = @import("guns.zig");
 const objects = @import("objects.zig");
 const libcmt = @import("../libcmt.zig");
 const collision = @import("collision.zig");
+const sound3d = @import("sound3d.zig");
 const Clock = @import("main.zig").Clock;
 const Vector = math.Vector;
 
@@ -805,6 +806,7 @@ pub fn draw(state: *State, resources: *Resources, frame: Frame) (spr.Error || Al
     try drawViewName(&resources.font, frame.gpa, frame.target, frame.screen, frame.last_view, frame.strings.*, colour, scale);
     if (ahead) try state.drawInstruments(resources, frame, lead, colour, scale);
     const contents: windows.Contents = .{
+        .missiles = .{ .ring = &state.missiles, .font = &resources.font, .strings = frame.strings },
         .power = .{
             .ball = resources.ball,
             .object = live,
@@ -1723,6 +1725,8 @@ pub const Keys = struct {
     /// How much larger than its own art the display is drawn (`scaleFor`).
     scale: f32,
     multiplayer: bool,
+    /// The world the keys' sounds are heard in; null where nothing is heard.
+    world: ?gameobj.World = null,
 };
 
 /// `hud_target_keys` (`0x0048B6B0`), which `frame_controls` runs after the camera's keys. It
@@ -1741,11 +1745,14 @@ pub const Keys = struct {
 ///   (`input.cycleSubtarget`).
 /// - TARGET UNDER RETICULE takes the object under the reticle as the target of the player's
 ///   current order, and brings up its form of the target display.
-/// - MISSILE WINDOW opens the missile window held and, pressed again once it is open, closes it;
-///   outside a multiplayer game the keys that turn the missile ring open it held too.
+/// - MISSILE WINDOW opens the missile window held and, pressed again once it is open, closes it.
+/// - Outside a multiplayer game, ROTATE MISSILES CLOCKWISE and ANTICLOCKWISE open it held too and
+///   turn the missile ring (`missile_display.Ring.turn`): where it turns, `MISSILESELECT` sounds at
+///   the player's ship and the display beeps, and where it cannot, the display refuses; then Betty
+///   says the armed missile's name.
 ///
 /// All but the nearest and the subtarget keys, and SMART TARGET, stop MATCH SPEED; PREVIOUS
-/// FRIENDLY TARGET does not. Not yet ported: turning the missile ring, the display's sounds
+/// FRIENDLY TARGET does not. Not yet ported: the rest of the display's sounds
 /// ([#101](https://github.com/vdmkenny/openreliant/issues/101)), the radio's menu while its window
 /// is open, and what the game does while `0x00529FB8` is set, which leaves out every key after
 /// the search under the reticle.
@@ -1800,11 +1807,24 @@ pub fn targetKeys(state: *State, keys: Keys) void {
         }
     }
     if (keys.multiplayer) return;
-    for ([_]input.controls.Action{ .rotate_missiles_clockwise, .rotate_missiles_anticlockwise }) |action| {
-        if (!devices.active(action, true)) continue;
+    for (ring_keys) |key| {
+        if (!devices.active(key.action, true)) continue;
         if (state.windows.open(.missiles, keys.multiplayer)) missiles.held = true;
+        const turned = state.missiles.turn(key.turn);
+        const world = keys.world orelse continue;
+        if (turned) if (world.hearing) |hearing| {
+            _ = sound3d.play(hearing.sound, hearing.scene(world), null, null, all.player, .missileselect, 1, .not_reserved);
+        };
+        beep(world, if (turned) .done else .refused);
+        if (world.hearing) |hearing| state.missiles.sayName(hearing.sound);
     }
 }
+
+/// The keys that turn the missile ring, and which way each does.
+const ring_keys = [_]struct { action: input.controls.Action, turn: missile_display.Turn }{
+    .{ .action = .rotate_missiles_clockwise, .turn = .clockwise },
+    .{ .action = .rotate_missiles_anticlockwise, .turn = .anticlockwise },
+};
 
 /// The nearest target keys, and the side each looks for.
 const nearest_keys = [_]struct { action: input.controls.Action, side: gameobj.Side(i32) }{

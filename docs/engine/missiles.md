@@ -410,7 +410,32 @@ nothing reads it.
 | Name | `0x124` | `0x123` | `0x121` | `0x11E` | `0x127` | `0x126` | `0x125` | `0x120` | `0x122` |
 
 The table's own words, overwritten before anything reads them, hold a test ring of four halfwords
-an entry. Turning the ring and drawing it are [#93](https://github.com/vdmkenny/openreliant/issues/93).
+an entry.
+
+Outside a multiplayer game, ROTATE MISSILES CLOCKWISE and ANTICLOCKWISE (`hud_target_keys`,
+`0x0048B6B0`, once a press) open the missile display held and turn the ring:
+
+- clockwise, where the entry after the armed one is live, every live entry moves one place on, 9
+  coming round to 0, and the one reaching 0 is armed;
+- anticlockwise, where the armed entry is not the first, every live entry moves one place back, 0
+  going round to 9, and the one reaching 0 is armed.
+
+The ring doesn't wrap: the keys walk from the first entry to the last. Where it turned,
+`MISSILESELECT` (3D sound `0x4B`) sounds at the player's ship and the display beeps (`hud_beep` 0);
+where it could not, the display refuses (`hud_beep` 3). Then, where the armed entry is live, Betty
+says its name, ending the name she said last (`missile_name_voice`, `0x00566660`):
+
+| Type | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|---|
+| `betty.fat` sound | 2 | 8 | 3 | 4 | 7 | 5 | 10 | 6 | 9 |
+
+`0x0057BF3C` counts 150 ticks from each name, and nothing reads it. A turn loses the lock, which
+began on the type armed before ([The lock](#the-lock)).
+
+In the view ahead, `hud_window_draw` draws the window (`0x00486E8F`): for each live entry in the
+ring's order, the armed one's count at `(-1, 0x43)` and its name at `(0, 1)` from the window's
+place, both centred in the display's font; and each one's shape, its first shape and its place, at
+`(0, 0x47)`, the shapes standing round the ring by their own offsets.
 
 ### The player's
 
