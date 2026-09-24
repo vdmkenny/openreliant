@@ -1925,7 +1925,7 @@ pub const Model = struct {
             const carrier = model.parts[glow.part].object;
             glow.object.position = math.transform(carrier.orientation, glow.origin) + carrier.position;
             // The plume stands as its attachment does, drawn to the size it gives it.
-            const scale: math.Matrix = .{ glow.size[0], 0, 0, 0, glow.size[1], 0, 0, 0, burning * glow.size[2] };
+            const scale = math.scaling(glow.size * Vector{ 1, 1, burning });
             glow.object.orientation = math.product(math.product(carrier.orientation, glow.orientation), scale);
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &glow.object }, layer);
         }

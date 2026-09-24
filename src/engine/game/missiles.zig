@@ -114,9 +114,8 @@ pub const Stats = extern struct {
     launch_sound: i32,
     /// `Missile.flight_time`, in ticks: `100 * ` the file's seconds, truncated.
     flight_time: i32,
-    /// What a hit does to a shield, to a hull, and to a component of a ship that lists them.
-    shield_damage: f32,
-    hull_damage: f32,
+    /// What a hit does to a shield and to a hull, and to a component of a ship that lists them.
+    damage: formats.Damage,
     component_damage: f32,
     /// The guidance it flies under once its launch is over.
     order: Order,
@@ -156,8 +155,7 @@ pub const Table = struct {
                     .torpedo, .fuel_pod => 12000,
                     else => 1000,
                 },
-                .shield_damage = 290,
-                .hull_damage = 180,
+                .damage = .{ .shield = 290, .hull = 180 },
                 .component_damage = 180,
                 .order = switch (missile) {
                     .torpedo => .pod_launch,
@@ -206,8 +204,7 @@ pub const Table = struct {
             flight.yaw_rate = missile.turn_rate;
             flight.roll_rate = missile.turn_rate;
             record.flight_time = std.math.lossyCast(i32, missile.flight_time * 100);
-            record.shield_damage = missile.damage[0];
-            record.hull_damage = missile.damage[1];
+            record.damage = missile.damage;
             record.component_damage = missile.component_damage;
             record.lock_time = std.math.lossyCast(i32, missile.lock_time);
             record.decoy_chance = std.math.lossyCast(i32, missile.decoy_chance);
@@ -790,9 +787,9 @@ fn collide(world: gameobj.World, at: u8) bool {
         const struck = collision.quadrant(object, math.transformTransposed(slot.drawn.orientation, point - slot.drawn.position));
         if (object.shields.get(struck) < 0 or object.invulnerable == ._unknown_4) return hitHull(world, at, index, struck);
         const stats = missile.stats(&all.missile_stats);
-        if (stats.shield_damage > 0) {
-            const reaches = index != all.player or !world.player.shield_reserves.spare(struck, stats.shield_damage);
-            if (reaches) collision.damage(world, index, struck, stats.shield_damage, stats.hull_damage / stats.shield_damage, missile.launcher, damageKind(missile.type));
+        if (stats.damage.shield > 0) {
+            const reaches = index != all.player or !world.player.shield_reserves.spare(struck, stats.damage.shield);
+            if (reaches) collision.damage(world, index, struck, stats.damage.shield, stats.damage.hullShare(), missile.launcher, damageKind(missile.type));
         }
         if (!object.flags.cloaked) shield.flare(world, index, point);
         return stop(world, at);
@@ -838,7 +835,7 @@ fn hitHull(world: gameobj.World, at: u8, index: u16, struck: collision.Quadrant)
     const to = gameobj.vector(missile.object().root.next_position);
     const entry = objects.partEntry(model, from, to, .first) orelse return false;
     if (missile.type.shockwave() == null) {
-        collision.armorDamage(world, index, struck, missile.stats(&all.missile_stats).hull_damage, missile.launcher, damageKind(missile.type));
+        collision.armorDamage(world, index, struck, missile.stats(&all.missile_stats).damage.hull, missile.launcher, damageKind(missile.type));
         shieldfx.hullHit(world, index, from + (to - from) * @as(Vector, @splat(entry)));
     }
     return stop(world, at);
@@ -882,7 +879,7 @@ test "Table.load" {
     record.speed = 500;
     record.turn_rate = 0.2;
     record.flight_time = 50.009;
-    record.damage = .{ 250, 200 };
+    record.damage = .{ .shield = 250, .hull = 200 };
     record.lock_time = 300.9;
     record.decoy_chance = 30.5;
     record.lock_range = 160000;
@@ -1168,7 +1165,7 @@ test collide {
     launch(world, enemy, 0, .none);
     var theirs: u8 = all.missiles.newest.?;
     missile = armed.missile(theirs);
-    const damage = missile.stats(&all.missile_stats).shield_damage;
+    const damage = missile.stats(&all.missile_stats).damage.shield;
     reserves.fore = damage * 2;
     missile.slot.drawn.position = .{ 0, 0, 300 };
     missile.object().root.next_position = .{ .x = 0, .y = 0, .z = -300 };

@@ -85,6 +85,13 @@ fn printHeading(ctx: Context, comptime field: std.builtin.Type.StructField) !voi
         .array => |array| inline for (0..array.len) |i| {
             try ctx.stdout.print(" {s:>14}", .{std.fmt.comptimePrint("{s}[{d}]", .{ label, i })});
         },
+        // A record of named values, such as the damage to a shield and to a hull: a column each.
+        .@"struct" => |info| switch (info.layout) {
+            .@"extern" => inline for (info.fields) |inner| {
+                try ctx.stdout.print(" {s:>14}", .{label ++ "." ++ inner.name});
+            },
+            else => try ctx.stdout.print(" {s:>14}", .{label}),
+        },
         else => try ctx.stdout.print(" {s:>14}", .{label}),
     }
 }
@@ -96,10 +103,14 @@ fn printValue(ctx: Context, value: anytype) !void {
         .int => try ctx.stdout.print(" {d:>14}", .{value}),
         .array => for (value) |element| try printValue(ctx, element),
         // A packed value the engine reads only part of: show the part it reads.
-        .@"struct" => |info| if (info.layout == .@"packed" and @hasField(T, "low"))
-            try printValue(ctx, value.low)
-        else
-            @compileError("no column format for " ++ @typeName(T)),
+        .@"struct" => |info| switch (info.layout) {
+            .@"packed" => if (@hasField(T, "low"))
+                try printValue(ctx, value.low)
+            else
+                @compileError("no column format for " ++ @typeName(T)),
+            .@"extern" => inline for (info.fields) |inner| try printValue(ctx, @field(value, inner.name)),
+            .auto => @compileError("no column format for " ++ @typeName(T)),
+        },
         .@"enum" => {
             // Render into a buffer first: `formatTag` does not pad, and the column must.
             var buffer: [16]u8 = undefined;

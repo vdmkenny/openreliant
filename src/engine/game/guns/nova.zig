@@ -21,7 +21,6 @@ const objects = @import("../objects.zig");
 const shield = @import("../shield.zig");
 const shieldfx = @import("../shieldfx.zig");
 const xtrabits = @import("../xtrabits.zig");
-const Clock = @import("../main.zig").Clock;
 
 /// How much each hold of the trigger charges the cannon for each share of the power the guns take
 /// (`0x004DC888`).
@@ -76,7 +75,7 @@ const ion_blades = 4;
 const ion_radius: f32 = 150;
 const ion_half_length: f32 = 20000;
 const ion_offset: Vector = .{ 0, 50, 20680 };
-const ion_corners = ion_blades * 4;
+const ion_corners = ion_blades * guns.blade_corners;
 
 /// How fast each blade's texture runs along the beam, for each blade from the first, a tick
 /// (`0x004DC518`): the first stands still.
@@ -91,12 +90,12 @@ const strand_image = "laser2";
 const strand_count = 30;
 const strand_blades = 2;
 const strand_radius: f32 = 150;
-const strand_corners = strand_blades * 4;
+const strand_corners = strand_blades * guns.blade_corners;
 
-/// The helix the strands follow (`nova_helix`, `0x0047B100`): `helix_radius` about the beam, `helix_turns` a
-/// unit along it, reaching `helix_length` a unit and starting `helix_start` ahead of the ship, but
-/// never nearer than `helix_nearest`. Its points stand `helix_step` apart, from `helix_lead`
-/// behind where the beam has got to.
+/// The helix the strands follow (`nova_helix`, `0x0047B100`): `helix_radius` about the beam,
+/// `helix_turns` a unit along it, reaching `helix_length` a unit and starting `helix_start` ahead
+/// of the ship, but never nearer than `helix_nearest`. Its points stand `helix_step` apart, from
+/// `helix_lead` behind where the beam has got to.
 ///
 /// **Improvement:** six turns a unit exactly, where the game rounds the angle to 37.6991.
 const helix_radius: f32 = 100;
@@ -145,14 +144,14 @@ pub const Beam = struct {
     ion: srapiext.MeshObject,
     ion_level: [1]srapiext.Level,
     ion_uv: [ion_corners][2]f32 = @splat(.{ 0, 0 }),
-    ion_colours: [ion_corners][4]f32 = @splat(.{ 0, 0, 0, 1 }),
+    ion_colours: [ion_corners][4]f32 = @splat(grey(0)),
     /// Its strands, which show after a full charge.
     strands: ?[strand_count]Strand,
 
     pub const Strand = struct {
         object: srapiext.MeshObject,
         level: [1]srapiext.Level,
-        colours: [strand_corners][4]f32 = @splat(.{ 0, 0, 0, 1 }),
+        colours: [strand_corners][4]f32 = @splat(grey(0)),
     };
 
     /// Whether it fired with the full charge.
@@ -180,23 +179,26 @@ pub const Beam = struct {
         return beam;
     }
 
-    /// `nova_beams_frame` for one beam, `now`, the ship standing at `ship`: the beam stands as the ship is
-    /// turned, `ion_offset` from it, narrowed by the square of the charge; each blade's texture
-    /// runs along it by `scroll_per_blade` a tick more than the blade before's, and it is lit at
-    /// the ship's end and dark at the far one, fading over the last `fade_share` of its time. After
-    /// a full charge, the strands follow the helix as far as the beam has got (`strandsAt`).
+    /// `nova_beams_frame` for one beam, `now`, the ship standing at `ship`: the beam stands as the
+    /// ship is turned, `ion_offset` from it, narrowed by the square of the charge; each blade's
+    /// texture runs along it by `scroll_per_blade` a tick more than the blade before's, and it is
+    /// lit at the ship's end and dark at the far one, fading over the last `fade_share` of its
+    /// time. After a full charge, the strands follow the helix as far as the beam has got
+    /// (`strandsAt`).
     fn place(beam: *Beam, ship: math.Place, now: i32) void {
         const left = @as(f32, @floatFromInt(beam.until - now)) / beam_ticks;
         const narrow = beam.charge * beam.charge;
         beam.ion.position = ship.position + math.transform(ship.orientation, ion_offset);
-        beam.ion.orientation = math.product(ship.orientation, .{ narrow, 0, 0, 0, narrow, 0, 0, 0, 1 });
+        beam.ion.orientation = math.product(ship.orientation, math.scaling(.{ narrow, narrow, 1 }));
         const bright = @min(left / fade_share, 1);
         for (0..ion_blades) |blade| {
+            // The whole texture across the blade, and one length of it along, run on by the tick.
             const along = -@as(f32, @floatFromInt(now)) * @as(f32, @floatFromInt(blade)) * scroll_per_blade;
-            beam.ion_uv[blade * 4 ..][0..4].* = .{ .{ 1, along }, .{ 1, along + 1 }, .{ 0, along + 1 }, .{ 0, along } };
-            const near: [4]f32 = .{ bright, bright, bright, 1 };
-            const far: [4]f32 = .{ 0, 0, 0, 1 };
-            beam.ion_colours[blade * 4 ..][0..4].* = .{ near, far, far, near };
+            const corners = blade * guns.blade_corners;
+            beam.ion_uv[corners..][0..guns.blade_corners].* = guns.bladeCorners(.{ .{ 0, along + 1 }, .{ 1, along } });
+            const near = grey(bright);
+            const far = grey(0);
+            beam.ion_colours[corners..][0..guns.blade_corners].* = .{ near, far, far, near };
         }
         if (beam.strands) |*strands| strandsAt(strands, ship, 1 - left);
     }
@@ -237,10 +239,14 @@ fn strandsAt(strands: *[strand_count]Beam.Strand, ship: math.Place, through: f32
     for (strands, points[0..strand_count], points[1..]) |*strand, from, to| {
         const length = math.distance(from, to);
         strand.object.position = from;
-        strand.object.orientation = math.product(math.lookAt(to - from), .{ 1, 0, 0, 0, 1, 0, 0, 0, length });
-        const lit: [4]f32 = .{ bright, bright, bright, 1 };
-        strand.colours[0..4].* = @splat(lit);
+        strand.object.orientation = math.product(math.lookAt(to - from), math.scaling(.{ 1, 1, length }));
+        strand.colours[0..guns.blade_corners].* = @splat(grey(bright));
     }
+}
+
+/// A colour as bright as `level` on each of red, green and blue, and opaque.
+fn grey(level: f32) [4]f32 {
+    return .{ level, level, level, 1 };
 }
 
 /// `ease_rise_fall` (`0x00426950`) from nothing to one and back: up as the square root of how far
@@ -289,15 +295,16 @@ pub const Beams = struct {
     }
 };
 
-/// `nova_release` (`0x0047B3D0`), as the player lets the trigger go with the cannon charged:
-/// where a beam is free, a release short of `least_charge` only loses the charge. Otherwise the
-/// blast sounds from the ship, the controller plays the Nova Cannon's effect, the beam strikes
-/// (`strike`) and shows for `beam_ticks`, and the charge is spent. With every beam showing,
-/// nothing happens, and the charge waits.
+/// `nova_release` (`0x0047B3D0`), as the player lets the trigger go with the cannon charged, on
+/// the frame `world.clock` has begun: where a beam is free, a release short of `least_charge` only
+/// loses the charge. Otherwise the blast sounds from the ship, the controller plays the Nova
+/// Cannon's effect, the beam strikes (`strike`) and shows for `beam_ticks`, and the charge is
+/// spent. With every beam showing, nothing happens, and the charge waits.
 ///
 /// Not ported: what a multiplayer game sends of it (`0x004BB9C0`), and the release it runs for
 /// another player's ship.
-pub fn release(world: gameobj.World, clock: *const Clock, index: u16) void {
+pub fn release(world: gameobj.World, index: u16) void {
+    const now = world.clock.frame_start;
     const all = world.objects;
     const slot = all.bullets.beams.free() orelse return;
     const ship = &all.slots[index];
@@ -307,16 +314,16 @@ pub fn release(world: gameobj.World, clock: *const Clock, index: u16) void {
     if (world.hearing) |hearing| {
         hearing.sound.bufferAt(blast_sound, ship.drawn.position, hearing.camera.*, ship.object.radius * blast_loudness);
     }
-    if (world.forces) |forces| forces.start(.nc, clock.frame_start);
+    if (world.forces) |forces| forces.start(.nc, now);
     strike(world, index, fired);
     const looks = all.bullets.looks orelse return;
-    slot.* = .init(&looks.nova, index, clock.frame_start + beam_ticks, fired);
+    slot.* = .init(&looks.nova, index, now + beam_ticks, fired);
 }
 
 /// The beam's strike: every object but the ship itself, the stand-ins and the disabled ones, whose
 /// bounding box the beam meets, `beam_reach` straight ahead of the ship. One listing no components
-/// takes the cannon's first damage times the ship's gun condition and the charge, on the quadrant
-/// the beam enters, its second damage over its first passing through, and its shields flare there
+/// takes the cannon's shield damage times the ship's gun condition and the charge, on the quadrant
+/// the beam enters, its hull damage over that passing through, and its shields flare there
 /// unless it is cloaked. One listing components takes it part by part (`strikeParts`).
 ///
 /// **Fix:** the game takes where the beam enters the box, in the object's own frame, for a point in
@@ -342,12 +349,12 @@ fn strike(world: gameobj.World, owner: u16, fired: f32) void {
         const local_to = slot.drawn.inverse(to);
         const along = objects.boxEntry(local_from, local_to, .{ gameobj.vector(object.bounds_min), gameobj.vector(object.bounds_max) }) orelse continue;
         if (object.flags.components) {
-            strikeParts(world, index, owner, model, from, to, record.damage[1] * fired);
+            strikeParts(world, index, owner, model, from, to, record.damage.hull * fired);
             continue;
         }
         const entry = local_from + (local_to - local_from) * @as(Vector, @splat(along));
-        const value = strength * record.damage[0];
-        collision.damage(world, index, collision.quadrant(object, entry), value, record.damage[1] / record.damage[0], owner, .bullet);
+        const value = strength * record.damage.shield;
+        collision.damage(world, index, collision.quadrant(object, entry), value, record.damage.hullShare(), owner, .bullet);
         if (!object.flags.cloaked) shield.flare(world, index, from + (to - from) * @as(Vector, @splat(along)));
     }
 }
@@ -355,10 +362,11 @@ fn strike(world: gameobj.World, owner: u16, fired: f32) void {
 /// The most leaves of a part's tree the beam strikes at once.
 const max_leaves = 64;
 
-/// `nova_strike_parts` (`0x0047B840`): the beam through the parts of `model`, of the object in slot `index`, one listing
-/// components, and of the models it carries: each part whose mesh's box the beam meets takes
-/// `value` against its component for each leaf of its collision tree whose faces the beam crosses
-/// (`objects.leafCrossings`), leaving a hit's burst there (`shieldfx.componentHit`).
+/// `nova_strike_parts` (`0x0047B840`): the beam through the parts of `model`, of the object in
+/// slot `index`, one listing components, and of the models it carries: each part whose mesh's box
+/// the beam meets takes `value` against its component for each leaf of its collision tree whose
+/// faces the beam crosses (`objects.leafCrossings`), leaving a hit's burst there
+/// (`shieldfx.componentHit`).
 ///
 /// Not ported: the shimmer of a cloaked object struck (`0x00463AF0`,
 /// [#89](https://github.com/vdmkenny/openreliant/issues/89)); and the object's `visibility`,

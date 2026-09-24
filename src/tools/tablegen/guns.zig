@@ -71,7 +71,7 @@ fn parse(record: guns.Gun, period: i32, atlas: [2]i32, empty: bool) Error!Static
     } else {
         if (record.kind != .energy and record.kind != .rounds) return error.NotKind;
         if (record.lifetime != loaded.lifetime or record.speed != loaded.speed) return error.NotLoaded;
-        if (record.damage[0] != loaded.damage[0] or record.damage[1] != loaded.damage[1]) return error.NotLoaded;
+        if (!std.meta.eql(record.damage, loaded.damage)) return error.NotLoaded;
         if (record.shot_energy != loaded.shot_energy) return error.NotLoaded;
         if (period < 1) return error.NotPeriod;
     }
@@ -93,7 +93,7 @@ const loaded: guns.Gun = .{
     .sound = 0,
     .lifetime = 200,
     .speed = 800,
-    .damage = .{ 1, 4 },
+    .damage = .{ .shield = 1, .hull = 4 },
     .refire_interval = 20,
     .shot_energy = 1,
 };
@@ -208,9 +208,9 @@ test parse {
     record.kind = @enumFromInt(4);
     try std.testing.expectError(error.NotKind, parse(record, 4, .{ 0, 32 }, false));
     record.kind = .energy;
-    record.damage[1] = 9;
+    record.damage.hull = 9;
     try std.testing.expectError(error.NotLoaded, parse(record, 4, .{ 0, 32 }, false));
-    record.damage[1] = loaded.damage[1];
+    record.damage.hull = loaded.damage.hull;
     try std.testing.expectError(error.NotPeriod, parse(record, 0, .{ 0, 32 }, false));
 }
 

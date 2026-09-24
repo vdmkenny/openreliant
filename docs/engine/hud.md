@@ -486,7 +486,7 @@ same twelve. The same switch picks the cockpit's frame model ([`main.zig`](../..
 - SPECTRAL SHIELDS, outside a multiplayer game, does the same through
   `player_spectral_shields_set` (`0x00415430`) and flag `0x8000000`. Turning the shields on also
   tunes them, into the object's `+0x670`, to the gun type most dangerous near the ship: it counts
-  the guns of each hostile ship in range, weights each type's count by its first damage value, and
+  the guns of each hostile ship in range, weights each type's count by its shield damage, and
   takes the highest, leaving out types 13 and 14. Betty says which.
 - CLOAK SHIP is read by `player_controls`; `player_cloak_set` (`0x004153E0`) cloaks or uncloaks the
   ship through `object_set_cloak`, which sets `cloak_state` for the player.

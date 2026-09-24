@@ -1039,7 +1039,7 @@ pub fn playerWeapons(world: gameobj.World, devices: *Devices, index: u16) void {
             guns.fire(object, trigger, guns.held_ticks);
         }
     } else if (!object.flags.jumping and object.nova_charge > 0 and object.type.carriesNova()) {
-        guns.nova.release(world, world.clock, index);
+        guns.nova.release(world, index);
     }
     if (devices.active(.launch_missile, true)) launchMissile(world, index);
     if (devices.active(.countermeasures, true) and world.player.ending == .playing) {
