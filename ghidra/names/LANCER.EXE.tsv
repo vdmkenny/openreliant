@@ -1060,3 +1060,13 @@ address	kind	name	type	comment
 00588708	data	smoke_pool_light	void *	The pool of the smoke's level 1 (smoke_template_create); smoke_pool_heavy and smoke_pool_burning follow
 0058870c	data	smoke_pool_heavy	void *	The pool of the smoke's level 2
 00588710	data	smoke_pool_burning	void *	The pool of the smoke's level 3
+004ad480	function	install_paths_read	void (void)	Reads the install's paths from HKLM Software\Microsoft\Microsoft Games\Starlancer\1.0: PID, InstallType, CDPath with game appended (cd_path) and InstallationDirectory with a backslash (install_directory). InstallType 3, a full install, sets full_install and both discs' folders to the installation directory. Without the key or either path, the current directory stands for all of them, as a full install
+004ac6c0	function	cd_in_drive	int (void)	Which disc is in the drive: 1 or 2 by which of cd1.bin and cd2.bin is in cd_path, or -1 for neither. In a full install cd_path is first set to the current disc's folder. Looks from cd_path and moves back into install_directory
+0042fe00	function	cd_hog_open	void __fastcall (int disc)	Opens the disc's cd%d.hog (cd_hog) from cd_path. In a full install cd_path is first set to that disc's folder; otherwise, with the other disc in the drive (cd_in_drive), it closes the hog and waits with an overlay (0x00430110) for the disc to be changed. Can't open HOG resource file is fatal
+005d62c4	data	full_install	int	Whether the hogs of both discs are read from folders of their own rather than the drive: an InstallType of 3, or no install in the registry (install_paths_read)
+005d62c0	data	cd_current	int	The disc whose hog is open, 1 or 2 (cd_hog_open)
+005d60ec	data	cd_path	char[256]	Where the disc's hog is read from: the drive's game folder, or in a full install the current disc's folder
+005d6b38	data	install_directory	char[256]	The installation directory, with a backslash, which the game works in
+005d6a28	data	cd1_folder	char[256]	In a full install, where cd1.hog is: the installation directory
+005d6928	data	cd2_folder	char[256]	In a full install, where cd2.hog is: the installation directory
+005202d4	data	cd_hog	void *	The open disc's cd%d.hog (cd_hog_open)

@@ -124,26 +124,39 @@ from `xcrun`.
 
 ## Installing the game's files
 
-`openreliant install [--from <disc>] [--force] <directory>` does the same job as the installer on
-disc 1: it unpacks `LANCER.CAB` into the directory, without the cabinet's top-level `CAB` folder,
-and copies the files from the disc's `GAME/CAB` folder next to them. The result is the directory
-`openreliant` runs from, and it's the same on every system. `make game` uses it to create
+`openreliant install [--from <disc>]... [--force] <directory>` makes the same install as a full
+install with the original installer, without writing to the registry or the system's folders:
+
+1. From disc 1, it unpacks `LANCER.CAB` into the directory, without the cabinet's top-level `CAB`
+   folder, and copies the files from the disc's `GAME/CAB` folder next to them.
+2. It copies disc 1's archive, `GAME/CD1.HOG`, next to them as `CD1.HOG`.
+3. It copies disc 2's archive, `GAME/CD2.HOG`, as `CD2.HOG`.
+
+The result is the directory `openreliant` runs from, and it's the same on every system. The discs'
+archives hold the videos, the music and the later missions. `make game` uses the installer to create
 `game/install`.
 
-The disc can be a disc image, raw (`.bin`) or cooked (`.iso`), which is read with the project's own
+A disc can be a disc image, raw (`.bin`) or cooked (`.iso`), which is read with the project's own
 readers ([Disc images](../formats/disc-images.md)), or a folder with the disc's files, which is how
-a mounted disc appears. File names on the disc are matched case-insensitively, as on Windows,
-because Linux shows discs without Joliet names, like StarLancer's, in lower case. The files copied
-from `GAME/CAB` get upper-case names, as on the disc, so the engine finds `LANGUAGE.DLL` on every
-system.
+a mounted disc appears. `--from` names one, and is given once for each disc, in either order. File
+names on a disc are matched case-insensitively, as on Windows, because Linux shows discs without
+Joliet names, like StarLancer's, in lower case. The files copied from the discs get upper-case
+names, as on the discs, so the engine finds `LANGUAGE.DLL` on every system.
 
-Without `--from`, the installer searches for disc 1:
+Without `--from`, the installer searches the drives for the discs:
 
 | System | Where it looks |
 |---|---|
 | Windows | CD drives that contain a disc, including mounted disc images |
 | Linux | Mount points of ISO 9660 and UDF file systems, read from `/proc/self/mounts` |
 | macOS | The volumes in `/Volumes` |
+
+It installs from disc 1, then looks for disc 2. When disc 2 isn't in a drive and the installer runs
+in a terminal, it asks for disc 2 and looks again each time Enter is pressed, until disc 2 is found
+or `skip` is typed. At a terminal, copying an archive shows how far it has got.
+
+Without disc 2, the install goes on without its archive and says how to add it: disc 2 alone, named
+or in a drive, adds its archive to the install already in the directory.
 
 It identifies the discs by their files:
 
@@ -153,9 +166,16 @@ It identifies the discs by their files:
 | Disc 1 of another release | `LANCER.CAB` with any other size; only installed with `--force` |
 | Disc 2 | The volume label `SL_CD2`, or `GAME/CD2.HOG` |
 
-The install stops if a file name in the cabinet would end up outside the target directory. At the
-end, the installer checks that the files the engine needs at startup are present, and reports the
-first one that's missing.
+With disc 1 in more than one drive, one of a known release is used over one of another release.
+
+The install stops if a file name in the cabinet would end up outside the target directory. Once
+disc 1 is installed, the installer checks that the files the engine needs at startup are present,
+and reports the first one that's missing.
+
+The original game reads its paths from the registry key
+`HKLM\Software\Microsoft\Microsoft Games\Starlancer\1.0` (`install_paths_read`). For a full
+install, `InstallType` 3, and without the key, it opens `cd1.hog` and `cd2.hog` from the
+installation directory (`cd_hog_open`) rather than from the disc in the drive.
 
 The cabinet is unpacked with [libarchive](https://libarchive.org), which
 [`deps/libarchive`](../../deps/libarchive) builds from source for the target, using the build

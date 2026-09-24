@@ -142,7 +142,7 @@ const help_page = page: {
     var out: []const u8 = help.paragraph("OpenReliant " ++ version.string ++ " plays StarLancer from an installed copy of the game.", 0) ++
         \\
         \\usage: openreliant [<game-directory>] [<option>...]
-        \\       openreliant install [--from <disc>] [--force] <directory>
+        \\       openreliant install [--from <disc>]... [--force] <directory>
         \\       openreliant joysticks [<game-directory>] [--watch]
         \\
         \\
@@ -168,7 +168,7 @@ const help_page = page: {
             .{ .typed = "Escape", .text = "quit" },
         }) ++ "\nCommands:\n" ++
         help.table(&.{
-            .{ .typed = "install", .text = "copy the game's files from StarLancer disc 1 into a directory" },
+            .{ .typed = "install", .text = "install the game's files from the StarLancer discs into a directory" },
             .{ .typed = "joysticks", .text = "list the joysticks and gamepads, and which one the game uses" },
         }) ++ help.paragraph("Each command's --help shows its options.", 2);
 };
