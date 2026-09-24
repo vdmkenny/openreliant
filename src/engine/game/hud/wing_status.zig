@@ -7,32 +7,30 @@
 //! [#236](https://github.com/vdmkenny/openreliant/issues/236)).
 
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 
-const spr = @import("../../../formats/spr.zig");
-const math = @import("../../surrender/math.zig");
-const device = @import("../../surrender/srd3d/device.zig");
 const create = @import("../create.zig");
 const gameobj = @import("../gameobj.zig");
 const hud = @import("../hud.zig");
-const language = @import("../language.zig");
 const mission = @import("../mission.zig");
 
 /// The window's title, THE 45TH, right-aligned where it stands from the window's place.
 const title = 0xA6;
 const title_at = [2]i32{ -3, -78 };
 
+/// An offset in the display's own pixels, across and down.
+const Offset = @Vector(2, i32);
+
 /// Where each slot's bar stands from the window's place: three across, two down. The game keeps
 /// the grid's places and takes 24 across and 71 up off each.
-const bars_at = [mission.wing_size][2]i32{
+const bars_at = [mission.wing_size]Offset{
     .{ -135, -54 }, .{ -88, -54 }, .{ -41, -54 },
     .{ -135, -8 },  .{ -88, -8 },  .{ -41, -8 },
 };
 
 /// Where a bar's shapes, its ship's icon and its number stand from the bar.
-const shapes_offset = [2]i32{ -1, 1 };
-const icon_offset = [2]i32{ 6, 1 };
-const number_offset = [2]i32{ 6, -2 };
+const shapes_offset: Offset = .{ -1, 1 };
+const icon_offset: Offset = .{ 6, 1 };
+const number_offset: Offset = .{ 6, -2 };
 
 /// A bar: `bar_height` of the display's own pixels at full armour (`0x004DC914`), and a pane
 /// `bar_reach` more across than its left edge. The armour left shows in `level_shape`, and what is
@@ -46,7 +44,7 @@ const bar_reach = 3;
 /// stands, the rows lost from the bar's top, and its icon, if it has one.
 pub const Entry = struct {
     number: u8,
-    bar_at: [2]i32,
+    bar_at: Offset,
     lost: i32,
     icon: ?u16,
 };
@@ -75,50 +73,30 @@ pub fn entries(all: *const create.Objects, out: *[mission.wing_size]Entry) []Ent
     return out[0..count];
 }
 
-/// The rows a bar loses from its top: its height less the weakest quadrant's share of `full`
-/// armour, and none for armour above full.
+/// The rows a bar loses from its top (`windows.unlitRows`) for the weakest quadrant's share of
+/// `full` armour, and none for armour above full.
 pub fn lostRows(armor: gameobj.Quadrants, full: f32) i32 {
-    return bar_height - math.round(@min(armor.weakest(), full) / full * bar_height);
+    return hud.windows.unlitRows(@min(armor.weakest(), full) / full, bar_height);
 }
 
-/// What the window shows a frame: the objects, in the display's font and the game's strings.
+/// What the window shows a frame: the objects.
 pub const Shown = struct {
     all: *const create.Objects,
-    font: *hud.Opened,
-    strings: *const language.Language,
 };
 
 /// `hud_window_draw`'s window 13, in the view ahead: the title, then each of the window's
 /// `entries`: its bar, the armour left below what is lost, then its icon and its number.
-pub fn draw(
-    shown: Shown,
-    art: *hud.Art,
-    gpa: Allocator,
-    target: device.Device,
-    placed: hud.windows.Inside,
-    colour: [4]f32,
-) (spr.Error || Allocator.Error)!void {
-    const size = placed.size;
-    if (shown.strings.string(title)) |text| {
-        _ = try hud.drawText(shown.font, gpa, target, placed.place(title_at), text, colour, .right, size);
-    }
+pub fn draw(shown: Shown, canvas: hud.windows.Canvas) hud.windows.Canvas.Error!void {
+    try canvas.string(title, title_at, .right);
     var buffer: [mission.wing_size]Entry = undefined;
     for (entries(shown.all, &buffer)) |entry| {
         const at = entry.bar_at;
-        const left = at[0] + shapes_offset[0];
-        const shapes = placed.place(.{ left, at[1] + shapes_offset[1] });
-        const level: hud.Draw = .{ .clip = placed.pane(.{ left, at[1] + entry.lost, left + bar_reach, at[1] + bar_height }) };
-        try hud.drawShapeWith(art, gpa, target, level_shape, shapes, colour, size, level);
-        if (entry.lost != 0) {
-            const lost: hud.Draw = .{ .clip = placed.pane(.{ left, at[1], left + bar_reach, at[1] + entry.lost }) };
-            try hud.drawShapeWith(art, gpa, target, lost_shape, shapes, colour, size, lost);
-        }
-        if (entry.icon) |icon| {
-            try hud.drawShapeWith(art, gpa, target, icon, placed.place(.{ at[0] + icon_offset[0], at[1] + icon_offset[1] }), colour, size, .{ .clip = placed.clip });
-        }
-        var digits: [4]u8 = undefined;
-        const text = std.fmt.bufPrint(&digits, "{d}", .{entry.number}) catch continue;
-        _ = try hud.drawText(shown.font, gpa, target, placed.place(.{ at[0] + number_offset[0], at[1] + number_offset[1] }), text, colour, .left, size);
+        const shapes = at + shapes_offset;
+        const left = shapes[0];
+        try canvas.shapeIn(level_shape, shapes, .{ left, at[1] + entry.lost, left + bar_reach, at[1] + bar_height });
+        if (entry.lost != 0) try canvas.shapeIn(lost_shape, shapes, .{ left, at[1], left + bar_reach, at[1] + entry.lost });
+        if (entry.icon) |icon| try canvas.shape(icon, at + icon_offset);
+        try canvas.print("{d}", .{entry.number}, at + number_offset, .left);
     }
 }
 

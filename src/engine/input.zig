@@ -740,6 +740,7 @@ const create = @import("game/create.zig");
 const camera = @import("game/camera.zig");
 const guns = @import("game/guns.zig");
 const hud = @import("game/hud.zig");
+const hog_snd = @import("game/hog_snd.zig");
 const ai = @import("game/ai.zig");
 const aigeneric = @import("game/aigeneric.zig");
 const objects = @import("game/objects.zig");
@@ -1045,18 +1046,13 @@ pub fn playerWeapons(world: gameobj.World, devices: *Devices, index: u16) void {
     if (devices.active(.countermeasures, true) and world.player.ending == .playing) {
         const left = world.objects.slots[index].object.countermeasures;
         if (world.hearing) |hearing| switch (left) {
-            0 => hearing.sound.say(countermeasures_gone),
-            2, 4, 6 => hearing.sound.say(countermeasures_low),
+            0 => _ = hearing.sound.say(.countermeasures_gone),
+            2, 4, 6 => _ = hearing.sound.say(.countermeasures_low),
             else => {},
         };
         if (world.countermeasures) |dropped| dropped.spend(world, index);
     }
 }
-
-/// Betty's warnings: the armed missile run out, countermeasures running low, and gone.
-const missiles_gone = 0;
-const countermeasures_low = 0xD;
-const countermeasures_gone = 0xF;
 
 /// The display's sound for a launch refused (`bank_stdsmp`).
 const refused_sample = 1;
@@ -1090,13 +1086,15 @@ pub fn launchMissile(world: gameobj.World, index: u16) void {
             _ = player.play(bank, refused_sample, 127, 1, 64, 0);
         };
         if (armed.count != 0 or world.clock.game_ticks <= ring.empty_warned_until) return;
-        if (sound) |player| player.say(missiles_gone);
+        if (sound) |player| _ = player.say(.missiles_gone);
         ring.empty_warned_until = world.clock.game_ticks + gone_pause;
         return;
     }
     if (ship.flags.cloaked) return;
     if (display.windows.open(.missiles, false)) display.windows.status.getPtr(.missiles).held = true;
-    if (armed.count == 0) if (sound) |player| player.say(missiles_gone);
+    if (armed.count == 0) if (sound) |player| {
+        _ = player.say(.missiles_gone);
+    };
     for (ship.fittedRacks(), 0..) |rack, at| {
         if (rack.type != armed.type or rack.count < 1) continue;
         const target: aigeneric.Target = if (locked and ship.order_count > 0) all.slots[index].orders[0].target else .none;
@@ -1387,27 +1385,23 @@ pub const FrameKeys = struct {
     /// The world the keys' sounds are heard in; null where nothing is heard.
     world: ?gameobj.World = null,
 
-    fn beep(keys: FrameKeys, which: hud.Beep) void {
-        if (keys.world) |world| hud.beep(world, which);
-    }
-
-    fn say(keys: FrameKeys, line: usize) void {
+    fn say(keys: FrameKeys, line: hog_snd.Betty) void {
         const world = keys.world orelse return;
-        if (world.hearing) |hearing| hearing.sound.say(line);
+        if (world.hearing) |hearing| _ = hearing.sound.say(line);
     }
 };
 
-/// Betty's word as a device turns on and as it turns off (`bank_betty`).
+/// Betty's word as a device turns on and as it turns off.
 const Said = struct {
-    on: usize,
-    off: usize,
+    on: hog_snd.Betty,
+    off: hog_snd.Betty,
 
-    fn of(said: Said, on: bool) usize {
+    fn of(said: Said, on: bool) hog_snd.Betty {
         return if (on) said.on else said.off;
     }
 };
-const blind_fire_said: Said = .{ .on = 0x12, .off = 0x13 };
-const spectral_shields_said: Said = .{ .on = 0x14, .off = 0x15 };
+const blind_fire_said: Said = .{ .on = .blind_fire_on, .off = .blind_fire_off };
+const spectral_shields_said: Said = .{ .on = .spectral_shields_on, .off = .spectral_shields_off };
 
 /// The keys `frame_controls` reads after the targeting's, in its order, each with the display's
 /// sound (`hud.Beep`): most with `done`, a device turning on or off with `on` or `off`.
@@ -1459,7 +1453,7 @@ pub fn frameKeys(keys: FrameKeys) void {
         keys.say(blind_fire_said.of(display.blind_fire));
     }
     if (devices.active(.comms_window, true)) {
-        keys.beep(.done);
+        hud.beep(keys.world, .done);
         const comms = windows.status.getPtr(.comms);
         switch (comms.phase) {
             .shut => if (windows.open(.comms, multiplayer)) {
@@ -1474,7 +1468,7 @@ pub fn frameKeys(keys: FrameKeys) void {
     }
     for ([_]controls.Action{ .wing_status_window, .wing_status_window_locked }) |action| {
         if (!devices.active(action, true)) continue;
-        if (action == .wing_status_window) keys.beep(.done);
+        if (action == .wing_status_window) hud.beep(keys.world, .done);
         if (windows.up(.objectives)) windows.close(.objectives);
         if (windows.up(.wing_status)) {
             windows.close(.wing_status);
@@ -1483,7 +1477,7 @@ pub fn frameKeys(keys: FrameKeys) void {
         }
     }
     if (devices.active(.gunnery_window, true)) {
-        keys.beep(.done);
+        hud.beep(keys.world, .done);
         _ = windows.open(.gunnery, multiplayer);
         guns.nextGroup(object, groups);
     }
@@ -1497,16 +1491,16 @@ pub fn frameKeys(keys: FrameKeys) void {
     if (devices.active(.synchronise_guns, true)) {
         _ = windows.open(.gunnery, multiplayer);
         object.gun_mode.synchronised = !object.gun_mode.synchronised;
-        keys.beep(if (object.gun_mode.synchronised) .on else .off);
+        hud.beep(keys.world, if (object.gun_mode.synchronised) .on else .off);
     }
     if (devices.active(.ecm, true) and display.devices.get(.ecm).setting != .absent) {
         const on = !object.flags.ecm;
-        keys.beep(if (on) .on else .off);
+        hud.beep(keys.world, if (on) .on else .off);
         setEcm(display, object, on);
     }
     for ([_]controls.Action{ .damage_window, .damage_window_locked }) |action| {
         if (!devices.active(action, true)) continue;
-        if (action == .damage_window) keys.beep(.done);
+        if (action == .damage_window) hud.beep(keys.world, .done);
         if (windows.up(.damage)) {
             windows.close(.damage);
         } else if (windows.open(.damage, multiplayer) and action == .damage_window_locked) {
@@ -1514,22 +1508,22 @@ pub fn frameKeys(keys: FrameKeys) void {
         }
     }
     if (devices.active(.full_guns, true) and guns.fullGuns(object, slot.guns, slot.gun_groups, groups)) {
-        keys.beep(.done);
+        hud.beep(keys.world, .done);
         if (windows.open(.gunnery, multiplayer) and devices.keyboard.shift()) windows.status.getPtr(.gunnery).held = true;
     }
     if (devices.active(.objectives_window, true)) {
-        keys.beep(.done);
+        hud.beep(keys.world, .done);
         if (windows.up(.wing_status)) windows.close(.wing_status);
         if (windows.status.get(.objectives).phase != .open) _ = windows.open(.objectives, multiplayer);
     }
     const balancing = devices.active(.shield_balancing, false);
-    if (balancing and !player.balancing_shields) keys.beep(.done);
+    if (balancing and !player.balancing_shields) hud.beep(keys.world, .done);
     player.balancing_shields = balancing;
-    if (devices.active(.radar_ranges, true) and hud.nextRadarRange(display, keys.view, keys.game_ticks)) keys.beep(.done);
+    if (devices.active(.radar_ranges, true) and hud.nextRadarRange(display, keys.view, keys.game_ticks)) hud.beep(keys.world, .done);
     if (windows.status.get(.comms).phase == .shut) {
         for (power_keys) |key| {
             if (!devices.active(key.action, false)) continue;
-            if (devices.active(key.action, true)) keys.beep(.done);
+            if (devices.active(key.action, true)) hud.beep(keys.world, .done);
             power.choose(object, key.preset);
             _ = windows.open(.power, multiplayer);
         }
@@ -1537,7 +1531,7 @@ pub fn frameKeys(keys: FrameKeys) void {
     const power_held = devices.active(.powerball_window, false);
     if (power_held) {
         _ = windows.open(.power, multiplayer);
-        if (!player.power_held) keys.beep(.done);
+        if (!player.power_held) hud.beep(keys.world, .done);
     }
     player.power_held = power_held;
     if (devices.active(.powerball_window_locked, true)) {
@@ -1552,7 +1546,7 @@ pub fn frameKeys(keys: FrameKeys) void {
         display.devices.get(.spectral_shields).setting != .absent)
     {
         const on = !object.flags.spectral_shields;
-        keys.beep(if (on) .on else .off);
+        hud.beep(keys.world, if (on) .on else .off);
         keys.say(spectral_shields_said.of(on));
         setSpectralShields(display, object, on);
     }

@@ -98,10 +98,11 @@ pub fn playBeep(sound: *hog_snd.Sound, view: camera.View, which: Beep) void {
     _ = sound.play(bank, Beep.first_sample + @as(usize, @intFromEnum(which)), Beep.volume, 1, Beep.pan, 0);
 }
 
-/// `playBeep` in `world`, where anything is heard.
-pub fn beep(world: gameobj.World, which: Beep) void {
-    const hearing = world.hearing orelse return;
-    playBeep(hearing.sound, world.view, which);
+/// `playBeep` in `world`, where there is one and anything is heard in it.
+pub fn beep(world: ?gameobj.World, which: Beep) void {
+    const heard = world orelse return;
+    const hearing = heard.hearing orelse return;
+    playBeep(hearing.sound, heard.view, which);
 }
 
 /// The display's sounds asked for where no world is at hand, which `draw` plays later in the same
@@ -853,21 +854,15 @@ pub fn draw(state: *State, resources: *Resources, frame: Frame) (spr.Error || Al
     try drawViewName(&resources.font, frame.gpa, frame.target, frame.screen, frame.last_view, frame.strings.*, colour, scale);
     if (ahead) try state.drawInstruments(resources, frame, lead, colour, scale);
     const contents: windows.Contents = .{
-        .gunnery = .{ .slot = slot, .wire_frame = state.wire_frame, .font = &resources.font, .strings = frame.strings },
-        .damage = .{ .object = live, .font = &resources.font, .strings = frame.strings },
-        .missiles = .{ .ring = &state.missiles, .font = &resources.font, .strings = frame.strings },
-        .power = .{
-            .ball = resources.ball,
-            .object = live,
-            .hit_shake = frame.hit_shake,
-            .random = frame.random,
-            .font = &resources.font,
-            .strings = frame.strings,
-        },
-        .target_display = .{ .state = state, .all = frame.all, .strings = frame.strings, .font = &resources.font },
-        .wing_status = .{ .all = frame.all, .font = &resources.font, .strings = frame.strings },
+        .gunnery = .{ .slot = slot, .wire_frame = state.wire_frame },
+        .damage = .{ .object = live },
+        .missiles = .{ .ring = &state.missiles },
+        .power = .{ .ball = resources.ball, .object = live, .hit_shake = frame.hit_shake, .random = frame.random },
+        .target_display = .{ .state = state, .all = frame.all },
+        .wing_status = .{ .all = frame.all },
     };
-    try state.windows.frame(art, frame.gpa, frame.target, frame.screen, frame.last_view, frame_duration, contents, colour, scale);
+    const pen: windows.Pen = .{ .art = art, .font = &resources.font, .strings = frame.strings, .gpa = frame.gpa, .target = frame.target, .colour = colour };
+    try state.windows.frame(pen, frame.screen, frame.last_view, frame_duration, contents, scale);
     state.windows.beeps.play(frame.sound, frame.view);
 }
 
@@ -1805,11 +1800,6 @@ pub const Keys = struct {
     multiplayer: bool,
     /// The world the keys' sounds are heard in; null where nothing is heard.
     world: ?gameobj.World = null,
-
-    /// The display's sound `which` (`beep`), where the keys are heard.
-    fn sound(keys: Keys, which: Beep) void {
-        if (keys.world) |world| beep(world, which);
-    }
 };
 
 /// `hud_target_keys` (`0x0048B6B0`), which `frame_controls` runs after the camera's keys. It
@@ -1850,9 +1840,9 @@ pub fn targetKeys(state: *State, keys: Keys) void {
 
     if (devices.active(.target_torpedo, true)) {
         if (ai.playerControlEntry(all)) |entry| {
-            keys.sound(.done);
+            beep(keys.world, .done);
             if (input.seekTarget(all, &entry.target, .next, .torpedo)) state.targetChanged(all, keys.multiplayer);
-        } else keys.sound(.refused);
+        } else beep(keys.world, .refused);
     }
     const current = &all.slots[all.player].orders[0];
     const controlled = current.order == .player_control;
@@ -1860,13 +1850,13 @@ pub fn targetKeys(state: *State, keys: Keys) void {
     for (nearest_keys) |key| {
         if (!devices.active(key.action, true) or !looking or !controlled) continue;
         if (nearest(all, key.side)) |index| {
-            keys.sound(.done);
+            beep(keys.world, .done);
             input.setPlayerTarget(state, all, @intCast(index), -1, keys.multiplayer);
-        } else keys.sound(.refused);
+        } else beep(keys.world, .refused);
     }
     if (devices.active(.smart_target, true)) {
         state.smart_targeting = !state.smart_targeting;
-        keys.sound(if (state.smart_targeting) .on else .off);
+        beep(keys.world, if (state.smart_targeting) .on else .off);
     }
     for (step_keys) |key| {
         if (!devices.active(key.action, true) or !controlled) continue;
@@ -1878,23 +1868,23 @@ pub fn targetKeys(state: *State, keys: Keys) void {
                 break :subtarget listsComponents(all, current.target);
             },
         };
-        keys.sound(if (found) .done else .refused);
+        beep(keys.world, if (found) .done else .refused);
     }
     if (devices.active(.target_under_reticule, true)) {
         const found: aigeneric.Target = .{ .kind = .ship, .index = if (state.under_reticle) |index| @intCast(index) else -1, .component = -1 };
         if (ai.targetValid(all, found, .{})) {
-            keys.sound(.done);
+            beep(keys.world, .done);
             if (controlled) {
                 current.target.index = found.index;
                 current.target.component = -1;
                 _ = state.bringUp(targetWindow(&all.slots[@intCast(found.index)]), keys.multiplayer);
             }
-        } else keys.sound(.refused);
+        } else beep(keys.world, .refused);
     }
 
     const missiles = state.windows.status.getPtr(.missiles);
     if (devices.active(.missile_window, true)) {
-        keys.sound(.done);
+        beep(keys.world, .done);
         switch (missiles.phase) {
             .shut => if (state.windows.open(.missiles, keys.multiplayer)) {
                 missiles.held = true;
@@ -1915,7 +1905,7 @@ pub fn targetKeys(state: *State, keys: Keys) void {
         if (turned) if (world.hearing) |hearing| {
             _ = sound3d.play(hearing.sound, hearing.scene(world), null, null, all.player, .missileselect, 1, .not_reserved);
         };
-        keys.sound(if (turned) .done else .refused);
+        beep(keys.world, if (turned) .done else .refused);
         if (world.hearing) |hearing| state.missiles.sayName(hearing.sound);
     }
 }

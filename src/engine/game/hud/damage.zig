@@ -6,14 +6,10 @@
 //! [#236](https://github.com/vdmkenny/openreliant/issues/236)).
 
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 
-const spr = @import("../../../formats/spr.zig");
 const math = @import("../../surrender/math.zig");
-const device = @import("../../surrender/srd3d/device.zig");
 const gameobj = @import("../gameobj.zig");
 const hud = @import("../hud.zig");
-const language = @import("../language.zig");
 
 /// The window's title, DAMAGE, right-aligned where it stands from the window's place.
 const title = 0x28D;
@@ -60,10 +56,11 @@ const rule_shape = 0x160;
 /// ends, `bar_length` of the display's own pixels along it at a level of 1 (`0x004DC91C`).
 const level_shape = 0xE0;
 const lost_shape = 0xDF;
-const bar_length: f32 = 77;
+const bar_length = 77;
 
-/// How far the right and bottom edges of `lost_shape`'s pane stand from its left and top ones.
-const lost_reach = [2]i32{ 0x4D, 6 };
+/// How far the right and bottom edges of `lost_shape`'s pane stand from its left and top ones:
+/// the bar's length across, and 6 down.
+const lost_reach = [2]i32{ bar_length, 6 };
 
 /// `hud_damage_bar` (`0x00488B30`)'s pane for `lost_shape`, for a bar standing at `at` at `level`:
 /// its left, top, right and bottom edges, inclusive, from a pixel before and above where the
@@ -74,42 +71,24 @@ pub fn lostPane(at: [2]i32, level: f32) [4]i32 {
     return .{ left, top, left + lost_reach[0], top + lost_reach[1] };
 }
 
-/// What the window shows a frame: the player's ship, in the display's font and the game's strings.
+/// What the window shows a frame: the player's ship.
 pub const Shown = struct {
     object: *const gameobj.GameObject,
-    font: *hud.Opened,
-    strings: *const language.Language,
 };
 
 /// `hud_window_draw`'s window 4, in the view ahead: the title, each row's icon and name, the
 /// rules, then the bars (`hud_damage_bar`).
-pub fn draw(
-    shown: Shown,
-    art: *hud.Art,
-    gpa: Allocator,
-    target: device.Device,
-    placed: hud.windows.Inside,
-    colour: [4]f32,
-) (spr.Error || Allocator.Error)!void {
-    const size = placed.size;
-    const cut: hud.Draw = .{ .clip = placed.clip };
-    if (shown.strings.string(title)) |text| {
-        _ = try hud.drawText(shown.font, gpa, target, placed.place(title_at), text, colour, .right, size);
-    }
+pub fn draw(shown: Shown, canvas: hud.windows.Canvas) hud.windows.Canvas.Error!void {
+    try canvas.string(title, title_at, .right);
     for (rows.values) |row| {
-        try hud.drawShapeWith(art, gpa, target, row.icon, placed.place(row.icon_at), colour, size, cut);
-        if (shown.strings.string(row.name)) |text| {
-            _ = try hud.drawText(shown.font, gpa, target, placed.place(row.name_at), text, colour, .left, size);
-        }
+        try canvas.shape(row.icon, row.icon_at);
+        try canvas.string(row.name, row.name_at, .left);
     }
-    for (rows.values) |row| {
-        try hud.drawShapeWith(art, gpa, target, rule_shape, placed.place(row.rule_at), colour, size, cut);
-    }
+    for (rows.values) |row| try canvas.shape(rule_shape, row.rule_at);
     for (std.enums.values(System)) |system| {
         const at = rows.get(system).bar_at;
-        const lost: hud.Draw = .{ .clip = placed.pane(lostPane(at, system.condition(shown.object))) };
-        try hud.drawShapeWith(art, gpa, target, level_shape, placed.place(at), colour, size, cut);
-        try hud.drawShapeWith(art, gpa, target, lost_shape, placed.place(at), colour, size, lost);
+        try canvas.shape(level_shape, at);
+        try canvas.shapeIn(lost_shape, at, lostPane(at, system.condition(shown.object)));
     }
 }
 

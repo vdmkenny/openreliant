@@ -8,14 +8,10 @@
 //! [#236](https://github.com/vdmkenny/openreliant/issues/236)).
 
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 
-const spr = @import("../../../formats/spr.zig");
-const device = @import("../../surrender/srd3d/device.zig");
 const create = @import("../create.zig");
 const guns = @import("../guns.zig");
 const hud = @import("../hud.zig");
-const language = @import("../language.zig");
 
 /// Where each piece stands from the window's place.
 const frame_at = [2]i32{ 11, -134 };
@@ -54,13 +50,10 @@ pub const Item = union(enum) {
     rounds: struct { count: i32, at: [2]i32 },
 };
 
-/// What the window shows a frame: the player's ship, the wire frame for its type, in the display's
-/// font and the game's strings.
+/// What the window shows a frame: the player's ship, and the wire frame for its type.
 pub const Shown = struct {
     slot: *const create.Slot,
     wire_frame: ?u16,
-    font: *hud.Opened,
-    strings: *const language.Language,
 };
 
 /// The pieces of the window for the player's ship in `slot`, whose wire frame is `wire_frame`,
@@ -118,25 +111,12 @@ pub fn items(slot: *const create.Slot, wire_frame: ?u16, out: *[max_items]Item) 
 
 /// `hud_window_draw`'s window 1, in the view ahead: each of the window's `items`, the text
 /// left-aligned.
-pub fn draw(
-    shown: Shown,
-    art: *hud.Art,
-    gpa: Allocator,
-    target: device.Device,
-    placed: hud.windows.Inside,
-    colour: [4]f32,
-) (spr.Error || Allocator.Error)!void {
+pub fn draw(shown: Shown, canvas: hud.windows.Canvas) hud.windows.Canvas.Error!void {
     var buffer: [max_items]Item = undefined;
     for (items(shown.slot, shown.wire_frame, &buffer)) |item| switch (item) {
-        .shape => |shape| try hud.drawShapeWith(art, gpa, target, shape.index, placed.place(shape.at), colour, placed.size, .{ .clip = placed.clip }),
-        .string => |string| if (shown.strings.string(string.id)) |text| {
-            _ = try hud.drawText(shown.font, gpa, target, placed.place(string.at), text, colour, .left, placed.size);
-        },
-        .rounds => |rounds| {
-            var digits: [12]u8 = undefined;
-            const text = std.fmt.bufPrint(&digits, "{d}", .{rounds.count}) catch continue;
-            _ = try hud.drawText(shown.font, gpa, target, placed.place(rounds.at), text, colour, .left, placed.size);
-        },
+        .shape => |shape| try canvas.shape(shape.index, shape.at),
+        .string => |string| try canvas.string(string.id, string.at, .left),
+        .rounds => |rounds| try canvas.print("{d}", .{rounds.count}, rounds.at, .left),
     };
 }
 
