@@ -34,6 +34,7 @@ const explode = @import("explode.zig");
 const particles = @import("particles.zig");
 const shield = @import("shield.zig");
 const erayfx = @import("erayfx.zig");
+pub const flash = @import("main/flash.zig");
 const shockwave = @import("shockwave.zig");
 const sparks = @import("sparks.zig");
 const bigfile = @import("bigfile.zig");
@@ -227,6 +228,10 @@ pub const Frame = struct {
     shields: ?*shield.Shields = null,
     /// The electric rays, which go into the world's layer after the explosions.
     rays: ?*erayfx.Rays = null,
+    /// The screen's flash, which goes into the overlay's layer, and the ticks the frame spans
+    /// (`frame_duration`), which it counts down.
+    flash: ?*flash.Flash = null,
+    ticks: i32 = 0,
     /// Whether the game is paused, which holds the bubbles' colours still.
     paused: bool = false,
 };
@@ -422,6 +427,7 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     if (frame.smoke) |pools| try pools.draw(gpa, scene, frame.ahead);
     if (frame.explosions) |explosions| try explosions.draw(gpa, scene, frame.ahead);
     if (frame.rays) |rays| if (attachments.random) |random| try rays.draw(gpa, scene, frame.objects, attachments.frame_start, random);
+    if (frame.flash) |lit| if (!frame.paused) try lit.draw(gpa, scene, .{ .position = context.camera.position, .orientation = context.camera.orientation }, context.projection, frame.ticks);
     if (frame.shockwaves) |waves| try waves.draw(gpa, scene, frame.ahead);
     try frame.space.frame(gpa, scene, context, frame.view, frame.cockpit_mode);
     if (context.hardware) try frame.sky.frame(gpa, scene, context);

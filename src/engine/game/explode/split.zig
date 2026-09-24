@@ -9,11 +9,13 @@
 //! other half the split makes, only behind it, so that in a sweep the ship comes apart from the
 //! stern forward, the cut stepping through the points of its parts' `cut` point lists.
 //!
-//! The other half, where it is a wreck, burns as it is made (`create.wreckMade`).
+//! The other half, where it is a wreck, burns as it is made (`create.wreckMade`). The view
+//! flashes (`main/flash.zig`) as the split ends near the camera, and at moments of a Latov's and a
+//! Stalag's, and a split's burning bits may be bodies.
 //!
 //! Not ported: the Dark Reign's hat, the Krasnaya's arms and the Boridin breakaway's core, which
-//! the split takes apart first; the screen's flash (`explode_flash_near`, `0x00471D70`); and the
-//! bodies among the burning bits ([#225](https://github.com/vdmkenny/openreliant/issues/225)).
+//! the split takes apart first ([#225](https://github.com/vdmkenny/openreliant/issues/225)); and a
+//! Latov's rock chunks ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -201,15 +203,24 @@ pub const Split = struct {
     }
 
     /// One step's burst, at the point the cut reaches: a lit fireball, burning bits heading out
-    /// from the ship or back along it, and one step in fourteen to sixteen an explosion's sound.
+    /// from the ship or back along it, and one step in fourteen to sixteen an explosion's sound. A
+    /// Latov throws no bits but flashes the view at its 29th, 35th and 80th steps.
+    ///
+    /// Not ported: the rock chunks a Latov throws in place of its bits (`0x00472780`,
+    /// [#41](https://github.com/vdmkenny/openreliant/issues/41)).
     fn stepBurst(split: *Split, world: gameobj.World) void {
         const random = world.random;
         const sequence = split.sequence;
         const at = split.worldPoint(world, split.step);
         explode.fireballAt(world, at, .{ .size = (random.fraction() * 0.5 + 0.75) * sequence.fireball, .light = true });
         const root = split.rootPlace(world);
-        const direction = if (random.rand() % 2 == 0) math.normalize(at - root.position) else -math.forward(world.objects.slots[split.object].object.root.orientation);
-        for (0..@intCast(@max(sequence.bits, 0))) |_| explode.throwBit(world, at, direction, .{ .size = sequence.bit_size, .speed = 1 });
+        const object = &world.objects.slots[split.object].object;
+        const direction = if (random.rand() % 2 == 0) math.normalize(at - root.position) else -math.forward(object.root.orientation);
+        if (object.type == .latov) {
+            if (sequence.bits > 0 and std.mem.indexOfScalar(usize, &latov_flash_steps, split.step) != null) flash(world);
+        } else {
+            for (0..@intCast(@max(sequence.bits, 0))) |_| explode.throwBit(world, at, direction, .{ .size = sequence.bit_size, .speed = 1, .bodies = sequence.bodies });
+        }
         split.step += 1;
         const skew: i32 = @intFromFloat(random.centred() * -3);
         if (@mod(@as(i32, @intCast(split.step)), 15 - skew) != 0) return;
@@ -236,8 +247,11 @@ pub const Split = struct {
         const stray = math.fromAngles(random.centred() * big_stray, random.centred() * big_stray, random.centred() * big_stray);
         const direction = math.normalize(math.transform(stray, at - split.rootPlace(world).position));
         const bits: usize = @intFromFloat(@as(f32, @floatFromInt(sequence.bits)) * @as(f32, @floatFromInt(count)) * 0.05);
-        for (0..bits) |_| explode.throwBit(world, at, direction, .{ .size = sequence.bit_size, .speed = 2 });
+        for (0..bits) |_| explode.throwBit(world, at, direction, .{ .size = sequence.bit_size, .speed = 2, .bodies = sequence.bodies });
     }
+
+    /// The steps of a Latov's sweep that flash the view.
+    const latov_flash_steps = [_]usize{ 29, 35, 80 };
 
     /// One step in this many is a bigger burst (`split_update`); its fireball is this share of
     /// the ship's radius where the sequence names no size (`0x004DC838`); its bits stray up to
@@ -248,8 +262,9 @@ pub const Split = struct {
 
     /// A sweep's end, once (`GameObject.Ends.split_ended`): the portals go and nothing is cut;
     /// the other half drifts off by its type; the ship's parts all go but its wreck, and it drifts
-    /// and turns slowly, or stops dead for a few types; its explosion is heard, and it is
-    /// recentred on what is left; and fireballs go off at its hull's `fireballs` points.
+    /// and turns slowly, or stops dead for a few types; the view flashes where the camera is near
+    /// (`flashNear`); its explosion is heard, and it is recentred on what is left; and fireballs
+    /// go off at its hull's `fireballs` points.
     fn sweepEnd(split: *Split, world: gameobj.World) void {
         const all = world.objects;
         const slot = &all.slots[split.object];
@@ -275,6 +290,7 @@ pub const Split = struct {
             .latov => {},
             else => object.rotation = math.fromAngles(tumble[0], tumble[1], tumble[2]),
         }
+        flashNear(world, split.object);
         split.ending(world);
     }
 
@@ -318,14 +334,16 @@ pub const Split = struct {
         if (split.other) |other| if (all.slots[other].model) |*model| clipTree(model, null);
     }
 
-    /// A bursts split's frame: after its first second, one frame in ten, or five for a Stalag, a
-    /// burst about the ship, which shakes the player's view for a Latov or a Stalag; once the
-    /// time is up, the end (`burstsEnd`).
+    /// A bursts split's frame: a Stalag flashes the view one frame in `stalag_flash_odds`; after
+    /// its first second, one frame in ten, or five for a Stalag, a burst about the ship, which
+    /// shakes the player's view for a Latov or a Stalag; once the time is up, the end
+    /// (`burstsEnd`).
     fn burstFrame(split: *Split, world: gameobj.World) bool {
         const all = world.objects;
         const object = &all.slots[split.object].object;
         const elapsed = world.clock.frame_start - split.started;
         const random = world.random;
+        if (object.type == .stalag and random.rand() % stalag_flash_odds == 0) flash(world);
         if (elapsed > bursts_after) {
             const odds: u15 = if (object.type == .stalag) 5 else 10;
             if (random.rand() % odds == 0) {
@@ -337,6 +355,9 @@ pub const Split = struct {
         split.burstsEnd(world);
         return true;
     }
+
+    /// A Stalag's bursts flash the view one frame in this many.
+    const stalag_flash_odds = 40;
 
     /// Bursts start this many ticks into a bursts split, and shake the view this hard for a Latov
     /// or a Stalag.
@@ -360,7 +381,7 @@ pub const Split = struct {
         explode.fireballAt(world, at, .{ .size = (random.fraction() + 1) * sequence.fireball, .light = true, .delay = late });
         const direction = math.normalize(at - split.rootPlace(world).position);
         for (0..@intCast(@max(sequence.bits * 4, 0))) |_| {
-            explode.throwBit(world, at + random.fractionVector(@splat(burst_scatter)), direction, .{ .size = sequence.bit_size, .speed = bit_speed });
+            explode.throwBit(world, at + random.fractionVector(@splat(burst_scatter)), direction, .{ .size = sequence.bit_size, .speed = bit_speed, .bodies = sequence.bodies });
         }
         if (heard) explode.sound(world, at, .explosions);
     }
@@ -370,16 +391,18 @@ pub const Split = struct {
     const burst_late = 150;
     const burst_scatter: f32 = 50;
 
-    /// A bursts split's end: its explosion heard; a fireball at each of its points, up to 75
-    /// ticks late, with burning bits; then, once, the portals go, the other half drifts off, the
-    /// ship's intact parts go and its wreck shows, and it drifts and turns slowly, or stops dead
-    /// for a Latov or a Stalag, whose other half stops too.
+    /// A bursts split's end: the view flashes where the camera is near (`flashNear`); its
+    /// explosion is heard; a fireball at each of its points, up to 75 ticks late, with burning
+    /// bits; then, once, the portals go, the other half drifts off, the ship's intact parts go and
+    /// its wreck shows, and it drifts and turns slowly, or stops dead for a Latov or a Stalag,
+    /// which flashes the view, and whose other half stops too.
     fn burstsEnd(split: *Split, world: gameobj.World) void {
         const all = world.objects;
         const slot = &all.slots[split.object];
         const object = &slot.object;
         const random = world.random;
         const sequence = split.sequence;
+        flashNear(world, split.object);
         if (world.hearing) |hearing| _ = sound3d.play(hearing.sound, hearing.scene(world), null, null, split.object, .capexp, 1, .player_fx);
         for (0..split.points.len) |n| {
             const at = split.worldPoint(world, n);
@@ -387,7 +410,7 @@ pub const Split = struct {
             explode.fireballAt(world, at, .{ .size = (random.fraction() + 1) * 0.5 * sequence.fireball, .light = true, .delay = late });
             const direction = math.normalize(at - split.rootPlace(world).position);
             for (0..@intCast(@max(sequence.bits, 0))) |_| {
-                explode.throwBit(world, at + random.fractionVector(@splat(burst_scatter)), direction, .{ .size = sequence.bit_size, .speed = sequence.bit_size * 0.5 });
+                explode.throwBit(world, at + random.fractionVector(@splat(burst_scatter)), direction, .{ .size = sequence.bit_size, .speed = sequence.bit_size * 0.5, .bodies = sequence.bodies });
             }
         }
         if (object.ends.split_ended) return;
@@ -421,6 +444,7 @@ pub const Split = struct {
         }
         explode.sound(world, slot.drawn.position, .explosions);
         split.ending(world);
+        if (object.type == .latov or object.type == .stalag) flash(world);
         if (split.other) |other| {
             const half = &all.slots[other].object;
             switch (object.type) {
@@ -443,6 +467,18 @@ pub const Split = struct {
     /// Which way a ship splits: always the first, as every sequence has only the one.
     const variant = 0;
 };
+
+/// Lights the view for a moment (`0x00587CC8`), where there is a flash.
+fn flash(world: gameobj.World) void {
+    if (world.flash) |lit| lit.start();
+}
+
+/// `explode_flash_near` (`0x00471D70`) for the ship in slot `index`, as the camera stands.
+fn flashNear(world: gameobj.World, index: u16) void {
+    const lit = world.flash orelse return;
+    const seen = world.camera orelse return;
+    lit.near(&world.objects.slots[index].object, seen.place.position);
+}
 
 /// How a sweep's other half drifts off at its end, by its type, a step in the ship's frame, and
 /// turns, a step.
@@ -653,6 +689,11 @@ test "a capital ship sweeps apart" {
     const ship = try create.createObject(mission.objects, &mission.tables, fixture.types(), null, .badanov, 0, .{ 0, 0, 5000 }, &mission.random);
     var world = stage.world();
     world.spawn = .{ .tables = &mission.tables, .types = fixture.types() };
+    var lit: @import("../main/flash.zig").Flash = .{};
+    var watching: @import("../camera.zig").Camera = .{};
+    watching.place.position = .{ 0, 0, 5000 };
+    world.flash = &lit;
+    world.camera = &watching;
     const splits = &stage.explosions.splits;
 
     // Its points go from the stern; its other half is made, still and disabled, and cut by the
@@ -675,13 +716,16 @@ test "a capital ship sweeps apart" {
     try std.testing.expect(split.cutting);
     try std.testing.expectEqual(first, split.portals[0].position);
     try std.testing.expect(!half.object.flags.disabled);
-    // Past its time, the halves part: nothing is cut, the hull goes, and the split is over.
+    // Past its time, the halves part: nothing is cut, the hull goes, and the split is over. The
+    // camera stands by, so the view flashes.
     mission.clock.frame_start = split.sequence.duration + 1;
+    try std.testing.expectEqual(0, lit.left);
     splits.frame(world);
     try std.testing.expectEqual(null, splits.slots[0]);
     try std.testing.expect(hull.hidden and hull.object.portal == null);
     const object = &mission.objects.slots[ship].object;
     try std.testing.expect(object.ends.split_ended and object.flags.unpowered);
+    try std.testing.expectEqual(@import("../main/flash.zig").flash_ticks, lit.left);
 }
 
 test "a capital ship bursts apart" {

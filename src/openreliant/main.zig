@@ -627,6 +627,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     defer trails.deinit();
     var rays: game.erayfx.Rays = try .init(gpa, &textures);
     defer rays.deinit();
+    var flash: game.main.flash.Flash = .{};
     // The countermeasures' model, read once for the whole run, as `decoys_init` reads it.
     var effects_library: Library = .{ .gpa = arena, .resources = &resources, .textures = &textures };
     var countermeasures: game.cloak.Countermeasures = .init(gpa, effects_library.mounts());
@@ -638,7 +639,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     var shields: game.shield.Shields = try .create(gpa, &textures, explosions.settings.detail, context.hardware, options.shields);
     defer shields.deinit(gpa);
     // What the objects run in, the camera's view brought up to date each frame.
-    var world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .difficulty = options.difficulty, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .smoke = &smoke, .shockwaves = &shockwaves, .trails = &trails, .countermeasures = &countermeasures, .sparks = &sparks, .shields = &shields, .rays = &rays, .spawn = .{ .tables = sandbox.tables, .types = sandbox.types.interface() } };
+    var world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .difficulty = options.difficulty, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .smoke = &smoke, .shockwaves = &shockwaves, .trails = &trails, .countermeasures = &countermeasures, .sparks = &sparks, .shields = &shields, .rays = &rays, .flash = &flash, .spawn = .{ .tables = sandbox.tables, .types = sandbox.types.interface() } };
     try sandbox.start(.{ .world = world, .clock = &clock, .devices = &devices }, @intCast(options.ship));
     // The music, as a mission's script starts it (`cmd_PlayMusic`): from `music\`, for ever, at 80.
     if (options.music) |name| {
@@ -886,6 +887,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .lock_rings = lock_rings,
             .shields = &shields,
             .rays = &rays,
+            .flash = &flash,
+            .ticks = @intCast(@max(clock.frame_duration, 0)),
             .paused = clock.paused,
             .attachments = .{
                 .camera = view.place.position,
@@ -1115,6 +1118,7 @@ const Sandbox = struct {
         sandbox.objects.missiles.reset(sandbox.objects.gpa);
         if (orders.world.trails) |trails| trails.reset();
         if (orders.world.rays) |rays| rays.reset();
+        if (orders.world.flash) |lit| lit.* = .{};
         if (orders.world.countermeasures) |dropped| dropped.reset();
         sandbox.objects.reset(sandbox.random);
         // The Turret Flak's shell and the debris models, counted as used so the sweep below keeps
