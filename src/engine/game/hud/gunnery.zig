@@ -85,7 +85,7 @@ pub fn items(slot: *const create.Slot, wire_frame: ?u16, out: *[max_items]Item) 
     count += 1;
     const mode = object.gun_mode;
     if (!mode.all) {
-        const lead = hud.groupLeadOf(slot, mode.group);
+        const lead = slot.groupLead(mode.group);
         if (lead) |kind| if (gunName(kind)) |name| {
             out[count] = .{ .string = .{ .id = name, .at = name_at } };
             count += 1;
@@ -102,7 +102,7 @@ pub fn items(slot: *const create.Slot, wire_frame: ?u16, out: *[max_items]Item) 
         out[count] = .{ .string = .{ .id = full_guns_name, .at = name_at } };
         count += 1;
         if (groups > 1) for (0..@min(groups, guns.max_groups)) |group| {
-            if (hud.groupLeadOf(slot, group) == .nova_cannon) continue;
+            if (slot.groupLead(group) == .nova_cannon) continue;
             out[count] = .{ .shape = .{ .index = frame + group + 1, .at = frame_at } };
             count += 1;
         };

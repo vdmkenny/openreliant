@@ -194,9 +194,8 @@ rests within 2 of it, bright while the lead cursor stands within `0x10` of the m
 object's `blind_fire_aim` (`+0x674`) says whether blind fire aims, and the player's guns then aim
 at the lead cursor's point (`hud_lead_point`, `0x0057C260`).
 
-The port draws all of it. Nothing charges the Nova Cannon yet
-([#150](https://github.com/vdmkenny/openreliant/issues/150)), and the guns do not yet aim at the
-lead cursor's point ([#183](https://github.com/vdmkenny/openreliant/issues/183)).
+The port draws all of it. The guns do not yet aim at the lead cursor's point
+([#183](https://github.com/vdmkenny/openreliant/issues/183)).
 
 ## The target
 

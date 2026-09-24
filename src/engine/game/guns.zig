@@ -220,6 +220,7 @@ pub const Muzzle = struct {
 
 pub const turrets = @import("guns/turrets.zig");
 pub const flash = @import("guns/flash.zig");
+pub const nova = @import("guns/nova.zig");
 
 /// Which of its group's two guns a gun is, as `create_object` marks them (`+0x14`), and which
 /// fires next while a ship fires one group out of step (`GameObject.gun_turn`).
@@ -337,6 +338,16 @@ pub const Group = struct {
 pub fn gunAt(fitted: []Fitted, place: ?usize) ?*Fitted {
     const at = place orelse return null;
     return if (at < fitted.len) &fitted[at] else null;
+}
+
+/// The gun type of the first gun of group `group` of `table`, which blind fire, the charge arc,
+/// the gunnery display and the Nova Cannon's charge look at; null for a group of none, or led by
+/// a gun that fires no shots.
+pub fn groupLead(fitted: []Fitted, table: *const [max_groups]Group, group: usize) ?GunType {
+    if (group >= max_groups) return null;
+    const first = gunAt(fitted, table[group].lead()) orelse return null;
+    const barrel = first.barrel() orelse return null;
+    return barrel.type;
 }
 
 /// The barrel of a gun `gun_groups_build` groups: a fixed gun's or a spinning gun's, not an
@@ -489,9 +500,8 @@ const condition_margin: f32 = 0.1;
 /// The interval between the shots of a ship aiming blind, over a hundred (`0x00477464`).
 const blind_refire: i32 = 135;
 
-/// The gun type that charges up before it fires, the Nova Cannon. The trigger passes it over: it
-/// is held by `GameObject.nova_charge` instead, which isn't ported
-/// ([#150](https://github.com/vdmkenny/openreliant/issues/150)).
+/// The gun type that charges up before it fires, the Nova Cannon. The trigger passes it over and
+/// charges it instead (`nova.charge`), and it fires as the trigger is let go (`nova.release`).
 const charging_type: GunType = .nova_cannon;
 
 const Clock = @import("main.zig").Clock;
@@ -504,6 +514,9 @@ pub const Trigger = struct {
     groups: *const [max_groups]Group,
     /// `frame_start`: the tick this frame began.
     frame_start: i32,
+    /// The player's view's shake, which the Nova Cannon's charge shakes (`nova.charge`); null for
+    /// any other ship.
+    shake: ?*f32 = null,
 };
 
 /// GUNNERY WINDOW's turn (`frame_controls`, `0x00414060`): out of firing every group, where the
@@ -608,15 +621,16 @@ pub const held_ticks: i32 = 1;
 ///
 /// With FULL GUNS every gun fires but an aimed turret's; otherwise the two guns of the chosen
 /// group do. A muzzle of the charging type is passed over either way, as is a ship whose guns are
-/// disabled.
+/// disabled. On a Phoenix firing the group a Nova Cannon leads, the trigger charges it first
+/// (`nova.charges`, `nova.charge`).
 ///
 /// **Fix:** the game reads a missile turret's gun type, of a muzzle it has none of, and a
 /// destroyed turret's; the port passes over a gun with no barrel.
 ///
-/// Not ported: the charge the trigger builds up for a gun of the charging type
-/// ([#150](https://github.com/vdmkenny/openreliant/issues/150)); `0x004BA780` for the player.
+/// Not ported: `0x004BA780`, which the player's trigger runs last.
 pub fn fire(object: *gameobj.GameObject, trigger: Trigger, ticks: i32) void {
     if (object.flags.guns_disabled or object.gun_count == 0) return;
+    if (nova.charges(object, trigger)) nova.charge(object, trigger.shake);
     const until = trigger.frame_start + ticks;
     var chosen: Chosen = .of(object, trigger.fitted, trigger.groups);
     while (chosen.next()) |gun| {
@@ -1130,6 +1144,8 @@ pub const Bullets = struct {
     /// What the shots are drawn with, where the caller has built it; without, they fly unseen and
     /// draw none of the numbers their looks would.
     looks: ?*Looks = null,
+    /// The Nova Cannon's beams showing (`0x00563190`).
+    beams: nova.Beams = .{},
     /// Which shots cast a light.
     shot_lights: ShotLights = .latest_two,
     /// The shots that cast a light under `latest_two`: the player's latest two (`0x0056317C`), and
@@ -1491,6 +1507,7 @@ pub fn bulletsFrame(world: gameobj.World, clock: *const Clock, fraction: f32) vo
         };
         bullets.release(@intCast(index));
     }
+    bullets.beams.frame(world.objects, clock.frame_start);
 }
 
 /// `0x00479B40`: what a shot strikes between where it stood last frame and where it stands now. It
@@ -1792,6 +1809,75 @@ test "Turret.base" {
     try std.testing.expectEqual(3, launcher.base().?.index);
     try std.testing.expect(launcher.base().?.model == &model);
     try std.testing.expectEqual(null, (Turret{ .gone = {} }).base());
+}
+
+test "the Nova Cannon strikes what stands ahead, and its beam shows" {
+    const gpa = std.testing.allocator;
+    const fixture: test_looks.Fixture = try .init(gpa);
+    defer fixture.deinit(gpa);
+    var ship: testing.Ship = undefined;
+    try ship.init(gpa);
+    defer ship.deinit(gpa);
+    const world = ship.world();
+    const mission = &ship.mission;
+    const all = mission.objects;
+    all.bullets.looks = fixture.looks;
+    all.gun_stats.types[GunType.nova_cannon.number()].damage = .{ 40, 20 };
+    const shooter = ship.object();
+    shooter.gun_condition = 1;
+    // A ship straight ahead, and one off to the side.
+    const ahead = try ship.add(@enumFromInt(testing.ship_type), .{ 0, 0, 5000 });
+    const aside = try ship.add(@enumFromInt(testing.ship_type), .{ 5000, 0, 5000 });
+    const untouched = all.slots[ahead].object.shields.values();
+
+    // Short of half a charge, nothing fires, and the charge is lost.
+    shooter.nova_charge = 0.4;
+    nova.release(world, &mission.clock, ship.index);
+    try std.testing.expectEqual(0, shooter.nova_charge);
+    try std.testing.expectEqual(null, all.bullets.beams.slots[0]);
+    try std.testing.expectEqual(untouched, all.slots[ahead].object.shields.values());
+
+    // A full charge strikes the ship ahead and not the one aside, and shows its beam, strands and
+    // all.
+    shooter.nova_charge = 1;
+    nova.release(world, &mission.clock, ship.index);
+    try std.testing.expectEqual(0, shooter.nova_charge);
+    const struck = all.slots[ahead].object.shields.values();
+    try std.testing.expect(@reduce(.Add, @as(@Vector(4, f32), struck)) < @reduce(.Add, @as(@Vector(4, f32), untouched)));
+    try std.testing.expectEqual(untouched, all.slots[aside].object.shields.values());
+    try std.testing.expect(all.bullets.beams.slots[0].?.full());
+
+    // Its time over, it goes.
+    all.bullets.beams.frame(all, mission.clock.frame_start + nova.beam_ticks + 1);
+    try std.testing.expectEqual(null, all.bullets.beams.slots[0]);
+}
+
+test "the Nova Cannon strikes a ship's components leaf by leaf" {
+    const gpa = std.testing.allocator;
+    var ship: testing.Ship = undefined;
+    try ship.init(gpa);
+    defer ship.deinit(gpa);
+    const world = ship.world();
+    const mission = &ship.mission;
+    mission.objects.gun_stats.types[GunType.nova_cannon.number()].damage = .{ 40, 20 };
+    // A ship that lists its one part as a component: a square facing the shooter, 500 ahead.
+    var hull: create.testing.Model = undefined;
+    try hull.init(gpa);
+    defer hull.deinit(gpa);
+    hull.withHull();
+    hull.source.header.flags.components = true;
+    hull.data[0].part.flags.component = true;
+    hull.data[0].part.component_armor = 100;
+    const target = try create.createObject(mission.objects, &mission.tables, hull.types(), null, @enumFromInt(9), 0, .{ 0, 0, 500 }, &mission.random);
+    const slot = &mission.objects.slots[target];
+    slot.model.?.place(slot.drawn.position, slot.drawn.orientation);
+    const part = &slot.model.?.parts[0];
+    const armor = part.armor;
+
+    // Its square's one leaf is crossed: the component takes the second damage times the charge.
+    ship.object().nova_charge = 1;
+    nova.release(world, &mission.clock, ship.index);
+    try std.testing.expect(part.armor < armor);
 }
 
 test "a shot strikes a component of a ship that lists them" {
@@ -2209,6 +2295,8 @@ pub const Built = struct {
 pub const Looks = struct {
     shapes: std.EnumArray(Shape, Built),
     images: std.EnumArray(Image, *srtexture.Image),
+    /// The Nova Cannon's beam and its strands.
+    nova: nova.Looks,
     /// The Turret Flak's shell (`loadShell`): the first mesh of the first part of ship type
     /// `shell_type`'s model, drawn at every distance. Null until it is loaded, or where the model
     /// cannot be, and a Turret Flak shot is then not drawn.
@@ -2226,6 +2314,7 @@ pub const Looks = struct {
             try build(looks.shapes.getPtr(shape), gpa, recipes.get(shape), &looks.images);
             made += 1;
         }
+        looks.nova = try .create(gpa, textures);
         looks.shell = null;
         return looks;
     }
@@ -2240,6 +2329,7 @@ pub const Looks = struct {
 
     pub fn destroy(looks: *Looks, gpa: Allocator) void {
         for (&looks.shapes.values) |*built| built.deinit(gpa);
+        looks.nova.deinit(gpa);
         gpa.destroy(looks);
     }
 };
@@ -2254,20 +2344,7 @@ fn build(built: *Built, gpa: Allocator, recipe: Recipe, images: *const std.EnumA
         .bolt => |bolt| try buildBolt(built, gpa, lasers, bolt, null),
         .ringed => |ringed| try buildBolt(built, gpa, lasers, ringed.bolt, ringed.ring),
         .star => |star| {
-            var corners: [max_corners]Vector = undefined;
-            var uv: [max_corners][2]f32 = undefined;
-            var faces: [max_corners / 4][4]u16 = undefined;
-            for (0..star.blades) |blade| {
-                const angle = @as(f32, @floatFromInt(blade)) * std.math.pi / @as(f32, @floatFromInt(star.blades));
-                const across: Vector = .{ @sin(angle) * star.radius, @cos(angle) * star.radius, 0 };
-                const along: Vector = .{ 0, 0, star.half_length };
-                corners[blade * 4 ..][0..4].* = .{ -across - along, -across + along, across + along, across - along };
-                const low, const high = star.span;
-                uv[blade * 4 ..][0..4].* = .{ .{ high[0], high[1] }, .{ high[0], low[1] }, .{ low[0], low[1] }, .{ low[0], high[1] } };
-                faces[blade] = quadFace(blade);
-            }
-            const count = star.blades * 4;
-            built.meshes[0] = try meshOf(4, gpa, corners[0..count], faces[0..star.blades], uv[0..count], meshMaterial(true), lasers);
+            built.meshes[0] = try starMesh(gpa, star.blades, star.radius, .{ -star.half_length, star.half_length }, star.span, meshMaterial(true), lasers);
             built.levels[0] = .{ .mesh = &built.meshes[0], .until = tachyon_until };
             built.count = 1;
         },
@@ -2296,6 +2373,34 @@ fn build(built: *Built, gpa: Allocator, recipe: Recipe, images: *const std.EnumA
             built.count = 1;
         },
     }
+}
+
+/// The most blades a star is built with.
+const max_blades = max_corners / 4;
+
+/// `mesh_build_star` (`0x004ADF90`): blades through the Z axis, spread evenly over half a turn,
+/// each a quad `radius` wide either side of the axis and running from `along[0]` to `along[1]`
+/// on it, drawn with `material` over `image`: the texture's `span` across each blade, or the
+/// object's own coordinates where it has none.
+pub fn starMesh(gpa: Allocator, blades: u8, radius: f32, along: [2]f32, span: ?[2][2]f32, material: srapiext.Material, image: *srtexture.Image) Allocator.Error!srapiext.Mesh {
+    assert(blades <= max_blades);
+    var corners: [max_corners]Vector = undefined;
+    var uv: [max_corners][2]f32 = undefined;
+    var faces: [max_blades][4]u16 = undefined;
+    for (0..blades) |blade| {
+        const angle = @as(f32, @floatFromInt(blade)) * std.math.pi / @as(f32, @floatFromInt(blades));
+        const across: Vector = .{ @sin(angle) * radius, @cos(angle) * radius, 0 };
+        const near: Vector = .{ 0, 0, along[0] };
+        const far: Vector = .{ 0, 0, along[1] };
+        corners[blade * 4 ..][0..4].* = .{ near - across, far - across, far + across, near + across };
+        if (span) |given| {
+            const low, const high = given;
+            uv[blade * 4 ..][0..4].* = .{ .{ high[0], high[1] }, .{ high[0], low[1] }, .{ low[0], low[1] }, .{ low[0], high[1] } };
+        }
+        faces[blade] = quadFace(blade);
+    }
+    const count = @as(usize, blades) * 4;
+    return meshOf(4, gpa, corners[0..count], faces[0..blades], if (span != null) uv[0..count] else null, material, image);
 }
 
 /// Builds a bolt, with its two diamonds at `ring` and `far_ring` of its length where it has them.
@@ -2333,12 +2438,12 @@ fn quadFace(index: usize) [4]u16 {
 
 /// A material drawn with the shot's own texture coordinates (`MeshObject.own_uv`), added to what
 /// stands behind it.
-fn ownMaterial(lit: bool) srapiext.Material {
+pub fn ownMaterial(lit: bool) srapiext.Material {
     return .onePass(.{ .coordinates = .generated, .lit = lit, .blend = .add });
 }
 
 /// A material drawn with the mesh's own texture coordinates, added to what stands behind it.
-fn meshMaterial(lit: bool) srapiext.Material {
+pub fn meshMaterial(lit: bool) srapiext.Material {
     var material = ownMaterial(lit);
     material.coordinates[0] = .mesh;
     return material;
@@ -2687,6 +2792,7 @@ pub fn drawBullets(gpa: Allocator, scene: *srcore.Scene, bullets: *Bullets, ligh
             try xtrabits.sceneAdd(gpa, scene, .{ .light = light }, .world);
         }
     }
+    try bullets.beams.draw(gpa, scene);
 }
 
 /// A texture table holding every image the shots are drawn with, and the looks built over it, for
@@ -2698,8 +2804,10 @@ const test_looks = struct {
 
         fn init(gpa: Allocator) !Fixture {
             // The texture cache keeps each file's name, without the directory the game names it by.
-            var names: [std.enums.values(Image).len][]const u8 = undefined;
-            for (&names, std.enums.values(Image)) |*name, image| name.* = std.fs.path.basenameWindows(image.name());
+            const shots = std.enums.values(Image);
+            var names: [shots.len + nova.images.len][]const u8 = undefined;
+            for (names[0..shots.len], shots) |*name, image| name.* = std.fs.path.basenameWindows(image.name());
+            names[shots.len..].* = nova.images;
             const textures = try @import("backdrop.zig").testing.Textures.initNames(gpa, &names);
             errdefer textures.deinit(gpa);
             return .{ .textures = textures, .looks = try .create(gpa, &textures.table) };

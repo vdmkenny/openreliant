@@ -365,6 +365,11 @@ pub const Type = enum(u32) {
         return object_type.number() < create.ship_type_count;
     }
 
+    /// Whether it is a Phoenix, the ship that carries the Nova Cannon, or its twin.
+    pub fn carriesNova(object_type: Type) bool {
+        return object_type == .phoenix or object_type == .t_phoenix;
+    }
+
     /// What rock it is, if any.
     pub fn rock(object_type: Type) ?Rock {
         const n = object_type.number();

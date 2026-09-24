@@ -501,17 +501,45 @@ fn descend(data: shp.PartData, part: usize, query: anytype) void {
             }
             continue;
         }
-        for (faces) |face| {
-            if (face >= level.faces.len) continue;
-            const record = level.faces[face];
-            const triangle: [3]Vector = .{
-                corner(level, record.vertices[0]) orelse continue,
-                corner(level, record.vertices[1]) orelse continue,
-                corner(level, record.vertices[2]) orelse continue,
-            };
-            query.face(part, face, triangle, gameobj.vector(record.normal));
+        visitFaces(level, faces, part, query);
+    }
+}
+
+/// Hands `query` each of a leaf's `faces` of `level`, as a triangle with its normal.
+fn visitFaces(level: shp.Mesh, faces: []const u32, part: usize, query: anytype) void {
+    for (faces) |face| {
+        if (face >= level.faces.len) continue;
+        const record = level.faces[face];
+        const triangle: [3]Vector = .{
+            corner(level, record.vertices[0]) orelse continue,
+            corner(level, record.vertices[1]) orelse continue,
+            corner(level, record.vertices[2]) orelse continue,
+        };
+        query.face(part, face, triangle, gameobj.vector(record.normal));
+    }
+}
+
+/// `tree_leaf_segment_test` (`0x0049BAE0`) over every leaf of part `ref`'s collision tree, the
+/// part standing at `place`: for each leaf whose box the segment from `from` to `to` meets, the
+/// last of its faces the segment crosses (`Crosser`), into `out` as far as it has room.
+pub fn leafCrossings(ref: PartRef, place: math.Place, from: Vector, to: Vector, out: []Crossing) []Crossing {
+    const data = ref.tree() orelse return out[0..0];
+    var segment: Crosser = .init(from, to);
+    segment.ref = ref;
+    segment.local_from = place.inverse(from);
+    segment.local_to = place.inverse(to);
+    var count: usize = 0;
+    for (data.nodes, data.node_faces) |node, faces| {
+        if (count == out.len) break;
+        if (faces.len == 0 or !segment.reaches(node)) continue;
+        segment.hit = null;
+        visitFaces(data.meshes[0], faces, ref.index, &segment);
+        if (segment.hit) |hit| {
+            out[count] = hit;
+            count += 1;
         }
     }
+    return out[0..count];
 }
 
 /// Where the segment from `from` to `to` crosses a triangle, or null where it misses it
