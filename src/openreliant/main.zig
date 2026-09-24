@@ -106,7 +106,7 @@ const Doc = struct {
 
 /// Every option's help, which the compiler holds to having one for each.
 const docs: std.enums.EnumArray(Arg, Doc) = .init(.{
-    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, light worked out on encoded colours, no shadows, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings and particles as few and plain as the original's, a damaged ship's smoke as even as the original's, the shields' bubbles as coarse as the original's, the marker for a target out of sight placed as the original misplaces it, and the sound mixed plainly in stereo" },
+    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, light worked out on encoded colours, no shadows, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings and particles as few and plain as the original's, a damaged ship's smoke as even as the original's, the shields' bubbles as coarse as the original's, the marker for a target out of sight placed as the original misplaces it, a missile's sound left where it was launched, and the sound mixed plainly in stereo" },
     .@"--ship" = .{ .section = .sandbox, .value = "<type>", .text = "the ship type to fly, by its number in shipstats.bin; 0, the Predator, by default" },
     .@"--view" = .{ .section = .sandbox, .value = "<0|1|2>", .text = "the view it starts in, as the game's settings keep it: 0 the cockpit; 1 the chase view; 2 no cockpit. The settings' own by default, which the pause menu's video screen changes" },
     .@"--difficulty" = .{ .section = .sandbox, .value = "<easy|medium|hard>", .text = "the game's difficulty: how hard hits land on your ship, and shots on the enemy; medium by default, as in the game" },
@@ -237,6 +237,8 @@ const Options = struct {
     edge_line: game.hud.EdgeLine = .from_tip,
     /// How the sound plays, or null for none.
     sound: ?platform.audio.Options = .{},
+    /// Where a missile's sound is heard from.
+    missile_sound: game.sound3d.MissileSound = .follows,
     /// The piece of music the sandbox plays, from `music\`, or none.
     music: ?[]const u8 = default_music,
 
@@ -292,6 +294,7 @@ const Options = struct {
                 options.shields = .original;
                 options.edge_line = .original;
                 if (options.sound) |*sound| sound.* = .{ .player = .software, .master = null };
+                options.missile_sound = .stays;
             },
             .@"--ship" => {
                 const ship = std.fmt.parseInt(usize, value, 0) catch return error.BadValue;
@@ -578,6 +581,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     defer sound.shutdown();
     sound.volumes = .read(settings_file.profile);
     sound.objects = sandbox.objects;
+    sound.missile_sound = options.missile_sound;
     // `bank_stdsmp`, which the positional sounds of a frame play from, and `smp3d.fat`, which the
     // 3D sounds do.
     const stdsmp = try openreliant.fat.Bank.parse(try resources.readFile(arena, "stdsmp.fat"));
@@ -1449,6 +1453,7 @@ test Options {
     try std.testing.expectEqual(0, retro.fps.?);
     try std.testing.expect(!retro.smooth_motion);
     try std.testing.expectEqual(.latest_two, retro.shot_lights);
+    try std.testing.expectEqual(.stays, retro.missile_sound);
     try std.testing.expectEqual(.every_light, retro.debris_lights);
     try std.testing.expectEqual(.like_ships, plain.debris_lights);
     try std.testing.expectEqual(.original, retro.fireballs);

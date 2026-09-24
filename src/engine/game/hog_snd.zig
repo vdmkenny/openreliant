@@ -288,6 +288,8 @@ pub const Sound = struct {
     armor_warned_at: i32 = 0,
     /// When a shot last sounded on the player's hull (`0x00593794`, `shieldfx.hullHit`).
     player_hit_at: i32 = 0,
+    /// Where a missile's sound is heard from.
+    missile_sound: sound3d.MissileSound = .follows,
 
     /// `sound_init` (`0x00481440`), as far as the port goes: up to 16 voices for the banks, each a
     /// sample of `driver`, and the timer that steps the fades. `driver` is null where the platform
@@ -583,7 +585,11 @@ pub const Sound = struct {
                 .missile => if (all.missiles.get(@intCast(voice.owner))) |missile| &missile.slot.object else null,
                 else => null,
             };
-            if (followed) |object| object.sound_voice = 0xFFFF;
+            // The game lets go of the object's voice whichever it is; only a missile's sound that
+            // follows it gives it one (`sound3d.MissileSound`).
+            if (followed) |object| if (object.sound_voice == v) {
+                object.sound_voice = 0xFFFF;
+            };
         }
         voice.priority = 0;
         voice._unknown_0c = 0;
@@ -635,7 +641,20 @@ pub const Sound = struct {
             var face = true;
             var move = true;
             switch (voice.follows) {
-                .shot, .missile, .none, _ => {
+                .shot, .none, _ => {
+                    place = false;
+                    face = false;
+                    move = false;
+                },
+                // Where missiles' sounds follow them, one moves with its missile while the voice
+                // is still that missile's.
+                .missile => follow: {
+                    if (sound.missile_sound == .follows) if (scene.objects.missiles.get(@intCast(voice.owner))) |missile| if (missile.slot.object.sound_voice == v) {
+                        position = missile.slot.drawn.position;
+                        velocity = vector(missile.slot.object.velocity);
+                        direction = math.forward(missile.slot.drawn.orientation);
+                        break :follow;
+                    };
                     place = false;
                     face = false;
                     move = false;

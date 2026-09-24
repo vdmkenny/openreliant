@@ -123,6 +123,8 @@ ship whose missiles are disabled, or with no record free.
   It takes the launcher's velocity and side.
 - Its launch sound (`stats + 0x04`) plays at its next place, facing the way it moves, on a sure
   voice for the player's missile. The voice follows it no further, and ends with its length.
+  **Improvement:** the port's follows the missile and ends with it
+  ([Sound](sound.md#playing)).
 - One fewer is left in the rack. A pod's missile flies the pod launch and a rail's the rail launch,
   each with its trail; a fuel pod and an empty pod are jettisoned. Then it takes its target.
 - A pod whose last missile this was is launched too, at nothing, and so jettisoned.
