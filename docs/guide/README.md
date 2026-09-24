@@ -1,16 +1,11 @@
-# OpenReliant User Guide
+# User guide
 
-Welcome to the OpenReliant User Guide. These documents cover installing, configuring, and playing the game.
+This guide covers installing, configuring, and playing OpenReliant.
 
-## Table of Contents
+## Table of contents
 
-- [**Installation & Quickstart**](installation.md)
-  Requirements, installing from retail StarLancer discs or disc images, and running the game.
-- [**Controllers & Input**](controllers.md)
-  Setting up gamepads, flight sticks, and HOTAS hardware, default bindings, and troubleshooting axis calibration.
-- [**Configuration & Options**](configuration.md)
-  Command-line arguments, graphics and audio settings, difficulty levels, and `starlancer.ini` configuration.
+- [Installation](installation.md): Requirements, installing from retail StarLancer discs or disc images, and running the game.
+- [Controllers and input](controllers.md): Setting up gamepads, flight sticks, and HOTAS hardware, default bindings, and settings.
+- [Configuration and options](configuration.md): Command-line options, graphics and sound settings, difficulty levels, and starlancer.ini.
 
----
-
-For technical information on file formats, reverse engineering, and engine architecture, see the [Developer Documentation](../README.md).
+For technical information on file formats, reverse engineering, and engine architecture, see the [developer documentation](../README.md).

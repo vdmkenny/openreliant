@@ -1,10 +1,7 @@
-# Mission Definition (`.DTE`) Format
+# `.DTE` missions
 
-Each of StarLancer's 44 campaign and scenario missions is distributed as a `.DTE` mission file defining initial world entities (ships, stations, waypoints), global state variables, mission triggers, and compiled script bytecode.
-
----
-
-## Tooling Quickstart
+Each of the 44 missions is one image: the ships it places, the globals it seeds, the triggers it
+arms, and the script they run.
 
 ```bash
 sltool dte info <mission>        # counts and sizes

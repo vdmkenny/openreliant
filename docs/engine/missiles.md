@@ -1,12 +1,10 @@
-# Missiles & Countermeasures
+# Missiles
 
-This document details the missile physics, guidance models, target lock acquisition, and countermeasures simulation in StarLancer (`C:\lancer\game\missiles.cpp`).
+`missiles.cpp` keeps the missiles in flight, their trails and their stats; the launchers, the lock and the loadout live in the files that call it. The port is [`game/missiles.zig`](../../src/engine/game/missiles.zig).
 
-In OpenReliant, missile logic is implemented in [`src/engine/game/missiles.zig`](../../src/engine/game/missiles.zig).
+**Unverified:** the file's extent. The assertions name its path from `0x00494CB0` to `0x00496B0E`; the strings and the data its code uses (`missilestats.bin`, `MissileTrail BMO`, `Missilebursttrail mesh`) place `stats_load_missiles` (`0x00494BC0`) and everything to `0x00498443`, `order_torpedo` among it, in it too.
 
----
-
-## Missile Types & Hardpoints
+## Types
 
 A missile's type is the id of the missile hardpoint (attachment kind 0) that holds it, the type of
 its object, and its index into every missile table.

@@ -1,22 +1,10 @@
-# Mission Script Virtual Machine (VM)
+# The script VM at run time
 
-This document details the runtime architecture of StarLancer's mission script virtual machine: thread scheduling, bytecode interpretation, function calls, timer management, and event queues.
+How the payload runs mission scripts: threads, the interpreter loop, calls, commands, the clock, timers and events. The bytecode, and the triggers and parts that point into it, are described with the [mission format](../formats/dte.md#script). The structures below are defined in [`src/engine/vm.zig`](../../src/engine/vm.zig), and `make ghidra-annotate` applies them to the Ghidra project together with the names used here.
 
-Bytecode encoding, triggers, and part structures are specified in [Mission Format (`.DTE`)](../formats/dte.md#script). VM data structures are implemented in [`src/engine/vm.zig`](../../src/engine/vm.zig).
+## Threads
 
----
-
-## Thread Execution & State Management
-
-Mission scripts execute concurrently across virtual threads. The engine allocates thread contexts from a fixed global pool of 32 slots (`vm_thread_pool`, `0x537590`).
-
-When a trigger fires or a script block is initiated (`vm_thread_start`, `0x0045B8D0`):
-- A free thread context (`0xB8` bytes) is claimed.
-- The instruction pointer (`IP`) is initialized past the block header.
-- The thread begins execution immediately or registers a wake timestamp on the VM clock.
-- If all 31 execution slots are active, new thread allocation requests are queued.
-
-### Thread Context (`0xB8` bytes)
+Every block runs on a thread, a `0xB8`-byte context from the pool at `vm_thread_pool` (`0x537590`), which holds 32. `vm_thread_start` (`0x0045B8D0`) takes a block, points the thread's instruction pointer past the block's length halfword and its block end at `block + length`, and runs it at once unless told to defer it. It starts none while 31 are running.
 
 | Offset | Size | Field |
 |---|---|---|

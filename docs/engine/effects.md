@@ -1,20 +1,14 @@
-# Visual Effects & Particle Systems
+# Effects
 
-This document details StarLancer's particle systems, explosion sequences, hull smoke trails, shield impact flares, and ricochet sparks.
+What the game shows besides its objects and their shots: for now, the particles, fireballs, burning bits, break-up and shockwaves of an explosion, the smoke a damaged ship trails, a ship's shields flaring as they are struck, and the sparks a hit throws. [Destruction](objects.md#destruction) covers when a ship blows up.
 
-Entity destruction mechanics are covered in [Objects: Destruction](objects.md#destruction).
+## Drawn between the ticks
 
----
+The game moves its effects on by the ticks, a hundred a second, and draws each where the last tick left it, so at a display rate the ticks don't divide evenly, they move on unevenly.
 
-## Inter-Frame Motion Interpolation
+**Improvement:** each is drawn as far past its tick as the frame is, the share of a tick the clock keeps (`objects.pastTick`): a particle, a spark, a bit, a fireball and its light, a piece of the break-up and a shockwave all that much further along by their velocities, a piece turned that much further by its spin, and a shockwave's ring spread that much further. What they do stays on the ticks. `--no-smooth-motion` and `--original` draw them where the ticks leave them.
 
-The original retail engine updated particle physics at a fixed 100 Hz simulation rate. On modern high-refresh displays, rendering un-interpolated 100 Hz positions causes noticeable visual stutter.
-
-OpenReliant interpolates particle positions, fireball radii, debris spins, and shockwave expansions between simulation ticks (`objects.pastTick`). Effects move smoothly across display refreshes while maintaining identical underlying physics. Use `--no-smooth-motion` or `--original` to revert to authentic 100 Hz stepped updates.
-
----
-
-## Particle System Architecture (`particles.cpp`)
+## Particles
 
 `particles.cpp` keeps particles: sprites that fly off an emitter and change size and colour over
 their life. A particle comes from one of the ten `particle_pools` (`0x0058A948`), which

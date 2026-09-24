@@ -1,32 +1,30 @@
-# In-Game Pause & Options Menu
+# Pause menu
 
-When a mission is paused, the engine renders an interactive configuration menu in place of the in-flight HUD. The menu includes screens for audio, video, controller bindings, and multiplayer sessions. It is driven primarily by mouse input, with Escape used to cancel or return to previous screens.
+While a mission is paused, the game draws a configuration menu in place of the head-up display. The menu has a main screen and screens for audio, video and control settings; multiplayer has its own screen. The mouse drives the menu, and Escape backs out of it.
 
-In the original binary, the menu routines (`0x0048D820` – `0x004906F0`) reside between `hudmovie.cpp` and `language.cpp`. The OpenReliant codebase implements this subsystem in `src/engine/game/hudoptions.zig`.
+**Unverified:** the source file's name. The menu's code (`0x0048D820` to `0x004906F0`) and its data lie between `hudmovie.cpp`'s and `language.cpp`'s in link order ([Source files](../binary/sources.md)), and no assertion names the file. The port calls it `hudoptions.cpp`: it sorts between those two, and the menu draws through the display's pane in `hud_draw`'s place. `game_pause` and `mission_paused_frame` lie between `language.cpp` and `main.cpp`'s first placed function, and `paused` among `main.cpp`'s variables, so they are taken to be `main.cpp`'s.
 
----
+## In the port
 
-## Architecture & Implementation
+[`game/hudoptions.zig`](../../src/engine/game/hudoptions.zig) holds the menu and its screens, with the items, their drawing and the widgets the screens share in [`hudoptions/menu.zig`](../../src/engine/game/hudoptions/menu.zig) and the screens in [`hudoptions/screens.zig`](../../src/engine/game/hudoptions/screens.zig); `game_pause` is in [`game/main.zig`](../../src/engine/game/main.zig). Ported so far: pausing and resuming, the paused frame's outcomes, the menu's items and pointer, and the main, audio and video screens, which save to `starlancer.ini` as the game does. Not yet: the controls screen and F1 ([#210](https://github.com/vdmkenny/openreliant/issues/210)), the multiplayer screen ([#211](https://github.com/vdmkenny/openreliant/issues/211)), and the brightness slider, which stays hidden as it does where hardware cannot set it ([#209](https://github.com/vdmkenny/openreliant/issues/209)). The sandbox's RESTART starts the sandbox again and its LEAVE MISSION quits.
 
-The subsystem is organized across three primary source files:
-- [`game/hudoptions.zig`](../../src/engine/game/hudoptions.zig): Menu state management, pause transitions, and lifecycle hooks.
-- [`hudoptions/menu.zig`](../../src/engine/game/hudoptions/menu.zig): Common UI widgets, button hit-testing, slider controls, and rendering.
-- [`hudoptions/screens.zig`](../../src/engine/game/hudoptions/screens.zig): Screen-specific layouts (Main, Audio, Video, Controls, Multiplayer).
+**Improvements**, each marked so in the code:
 
-### Modern Enhancements
-- **Dynamic UI Scaling**: UI elements scale proportionally on high-resolution displays via `hud.scaleFor`.
-- **Native OS Cursor Integration**: Uses native window cursor coordinates instead of accumulated relative DirectInput deltas.
-- **Auto-Pause on Focus Loss**: Switching away from the game window automatically pauses the simulation.
-- **Version Display**: Current OpenReliant build metadata renders unobtrusively in the lower right corner.
+- The menu is drawn `hud.scaleFor` times larger, as the display is, so it keeps its proportions on a larger screen.
+- The pointer is where the system's is over the window, rather than DirectInput's motion added up.
+- Losing the window's focus pauses into the menu in single player too.
+- OpenReliant's version is written, dimmed, in the bottom right corner.
+- With no front end yet, the sandbox starts in the menu; `--no-pause-menu` starts it flying.
 
-### Retail Engine Bug Fixes
-- **Font Remap Table Out-of-Bounds**: Corrected a buffer overrun where font coverage level 16 read into adjacent memory.
-- **Audio Slider Preview Volume**: Sound effects slider previews now play at the newly configured volume instead of the pre-adjusted volume.
-- **Default View Restoration**: "Reset Defaults" in the video screen properly sets the intended default cockpit view mode.
+**Fixes** of the game's bugs, each marked so in the code:
 
----
+- Coverage level 16 of the fonts is drawn as 15, where the game reads past its remap table.
+- The effects' test sound plays at the volume set, where the game plays it at what the pointer's place works out to.
+- The video screen's RESET DEFAULTS sets the cockpit mode the setting stands for.
 
-## Pause Triggers
+W and H below are the screen's size in pixels (`sr + 0x1666`, `sr + 0x166A`). The layout is in pixels about fractions of the screen, and does not scale.
+
+## Pausing
 
 | What | Where | Pauses with |
 |---|---|---|

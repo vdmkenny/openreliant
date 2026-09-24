@@ -1,97 +1,102 @@
-# Configuration & Command-Line Options
+# Configuration and options
 
-OpenReliant provides flexible command-line arguments and configuration file options to adjust graphics, sound, gameplay settings, and controls.
-
----
-
-## Command-Line Options
-
-Pass options when launching the executable:
+Pass options when running `openreliant`:
 
 ```bash
-./openreliant [options] [game-directory]
+./openreliant [<game-directory>] [<option>...]
 ```
 
-*(If omitted, `game-directory` defaults to the current working directory or `StarLancer`.)*
+If omitted, `game-directory` defaults to the current working directory `.`.
 
-### General Options
+## The original
 
-| Option | Description |
-|---|---|
-| `-h`, `--help` | Show available command-line arguments and in-game key bindings. |
-| `--version` | Display the current OpenReliant version. |
-| `--original` | Disable modern enhancements and run with authentic 2000 settings: 16-bit color, 1x MSAA, bilinear texture filtering, per-vertex lighting, 100 Hz stepped motion, and uncompressed stereo sound. |
-
-### Sandbox & Gameplay Options
+OpenReliant improves on the original's look and sound. `--original` turns the improvements off, and an option after it turns one back on.
 
 | Option | Description |
 |---|---|
-| `--ship <id>` | Select player ship by ID from `shipstats.bin` (default: `0`, the Predator light fighter). |
-| `--view <0\|1\|2>` | Starting camera perspective: `0` = cockpit (default), `1` = chase camera, `2` = forward view without cockpit geometry. |
-| `--difficulty <level>` | Combat difficulty: `easy`, `medium` (default), or `hard`. Controls weapon damage scaling. |
-| `--music <file>` | Track to play from the `music/` folder (default: `New_Mission01.wav`), or `none` to disable music. |
-| `--no-pause-menu` | Skip the startup pause menu and jump straight into flight. |
+| `--original` | The original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, light worked out on encoded colours, no shadows, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings and particles as few and plain as the original's, a damaged ship's smoke as even as the original's, the shields' bubbles as coarse as the original's, the levels of detail changing as near as the original's, the marker for a target out of sight placed as the original misplaces it, a missile's sound left where it was launched, and the sound mixed plainly in stereo |
 
-### Display & Window Options
+## The sandbox
 
 | Option | Description |
 |---|---|
-| `--fullscreen` | Launch in fullscreen mode. Press **Alt + Enter** in-game to toggle. |
-| `--size <W>x<H>` | Internal rendering resolution in pixels (e.g., `1920x1080`). Independent of window size; useful for taking high-resolution screenshots. |
-| `--fps <rate>` | Frame rate cap. Set to `0` for uncapped. |
-| `--no-vsync` | Disable vertical synchronization. |
+| `--ship <type>` | The ship type to fly, by its number in `shipstats.bin`; 0, the Predator, by default |
+| `--view <0\|1\|2>` | The view it starts in, as the game's settings keep it: 0 the cockpit; 1 the chase view; 2 no cockpit. The settings' own by default, which the pause menu's video screen changes, or 0 without them |
+| `--difficulty <easy\|medium\|hard>` | The game's difficulty: how hard hits land on your ship, and shots on the enemy; medium by default, as in the game |
+| `--music <file>` | The piece from the game's music folder it plays, or none; `New_Mission01.wav` by default |
+| `--no-pause-menu` | Start flying immediately, where the sandbox otherwise starts in the game's pause menu |
 
-### Graphics Options
-
-| Option | Description |
-|---|---|
-| `--filter <mode>` | Texture filtering: `crisp` (default, sharp modern mipmapping), `trilinear`, or `original` (bilinear). |
-| `--msaa <1\|2\|4\|8>` | Multi-sample anti-aliasing sample count (default: `4`). |
-| `--16-bit` | Render in 16-bit dithered color instead of 32-bit. |
-| `--no-bloom` | Disable the glow/bloom shader effect around lights and engines. |
-| `--no-dither` | Disable color dithering in 32-bit output. |
-| `--no-pixel-lighting` | Use original per-vertex lighting instead of per-pixel lighting. |
-| `--no-smooth-motion` | Update positions at the original 100 Hz simulation rate rather than interpolating smoothly on every rendered frame. |
-| `--few-shot-lights` | Limit dynamic lights to the latest two shots from the player and enemies (matches retail engine limits). |
-| `--software` | Render using the built-in software rasterizer reference device instead of the GPU. |
-| `--screenshot <file.png>` | Render one settled frame to a PNG image and exit immediately. |
-
-### Audio Options
+## Display
 
 | Option | Description |
 |---|---|
-| `--hrtf` | Force Head-Related Transfer Function (HRTF) 3D audio processing for headphones, regardless of output device. (Enabled automatically when headphones are detected.) |
-| `--no-hrtf` | Force standard stereo/surround speaker panning without headphone HRTF filtering. |
-| `--no-reverb` | Disable environmental reverb effects. |
-| `--no-compressor` | Disable dynamic range compression on the master audio bus. |
-| `--no-sound` | Disable all audio output. |
+| `--fullscreen` | Fill the display; Alt and Enter switch while playing |
+| `--size <width>x<height>` | Draw frames of this size in pixels whatever the window's, which shows them scaled; for a screenshot larger than the display |
+| `--fps <rate>` | Frames a second at most; without vsync, the display's rate by default; 0 for no limit |
+| `--no-vsync` | Draw without waiting for the display |
 
----
+## Graphics
 
-## In-Flight Controls
+| Option | Description |
+|---|---|
+| `--software` | Draw on the software device, the port's reference, rather than the GPU |
+| `--16-bit` | 16-bit colour, dithered |
+| `--msaa <1\|2\|4\|8>` | Samples a pixel, for smooth edges; 4 by default |
+| `--filter <original\|trilinear\|crisp>` | How textures are filtered; `crisp` by default (trilinear, sixteen times anisotropic, and magnified with a Catmull-Rom filter) |
+| `--no-bloom` | Draw without the bloom around bright things |
+| `--no-dither` | Draw 32-bit colour without dithering |
+| `--no-pixel-lighting` | Light each vertex rather than each pixel, as the original does |
+| `--gamma-space` | Light, blend and filter the encoded colours, as the original does, rather than in linear light |
+| `--shadows <off\|low\|high>` | Shadows from the sun: low is soft and light on older GPUs, high sharp and smooth; high by default, and none without lighting each pixel |
+| `--no-cockpit-shadows` | Leave the shadows out of the cockpit, keeping them on the ships |
+| `--no-smooth-motion` | Move what moves on with the game's ticks, a hundred a second, as the original does, rather than on every frame |
+| `--few-shot-lights` | Light only the latest two of the player's shots and the latest two of everyone else's, as the original does |
 
-During sandbox flight, the following keys are available:
+## Sound
+
+| Option | Description |
+|---|---|
+| `--hrtf` | Place the sounds for headphones whatever the output; by default they are while the output is headphones |
+| `--no-hrtf` | Place the sounds for speakers whatever the output |
+| `--no-reverb` | Play the sounds around you and the cockpit's voice without reverb |
+| `--no-compressor` | Leave the mix's loudness as it is, only keeping its peaks in check |
+| `--no-sound` | Play without sound |
+
+## Other options
+
+| Option | Description |
+|---|---|
+| `--screenshot <file.png>` | Draw one frame, with the camera settled, to a PNG, and quit |
+| `--screenshot-ticks <ticks>` | With `--screenshot`, how many game ticks to run first, one a frame, so that the scene plays out; 2 by default |
+| `--version` | Show the version |
+| `-h`, `--help` | Show the help page |
+
+## Commands
+
+| Command | Description |
+|---|---|
+| `openreliant install` | Install the game's files from the StarLancer discs into a directory |
+| `openreliant joysticks` | List the joysticks and gamepads, and which one the game uses |
+
+Each command's `--help` shows its options.
+
+## In-flight keys
+
+The flight keys are the game's own, as `starlancer.ini` binds them. OpenReliant adds:
 
 | Key | Action |
 |---|---|
-| **Escape** | Open or close the pause options menu. |
-| **Alt + Enter** | Toggle between windowed and fullscreen display. |
-| **F2** / **F3** | Switch to the previous or next ship model. |
-| **F4** | Spawn a new wave of enemy fighters. |
-| **1** | Cockpit view (press repeatedly to cycle cockpit visual modes). |
-| **2** / **3** / **4** | Left, right, and rear cockpit views. |
-| **5** | Flyby camera. |
-| **6** | Target tracking camera. |
-| **7** | External chase camera (use arrow keys to orbit, Shift + Up/Down to zoom). |
-| **8** | Missile tracking camera. |
+| F2, F3 | Start again in the previous or next ship type |
+| F4 | Bring in another wing |
+| Alt+Enter | Switch between windowed and fullscreen mode |
+| Escape | Open the pause menu, whose LEAVE MISSION quits and RESTART restarts |
+| 1 to 8 | Camera views: 1 cockpit, 2 left, 3 right, 4 rear, 5 flyby, 6 target, 7 external, 8 missile |
 
----
+In the target view (6) and external view (7), arrow keys orbit around the object and Shift with Up or Down zooms.
 
-## Configuration File (`starlancer.ini`)
+## Configuration file (starlancer.ini)
 
-Game settings are saved in `starlancer.ini` inside your game installation folder. If the file is missing, you can create it with a standard text editor.
-
-Example configuration:
+Settings are read from `starlancer.ini` in the game directory:
 
 ```ini
 [KeyConfig]
@@ -108,4 +113,4 @@ TwistAxis=2
 ThrottleInvert=0
 ```
 
-For detailed controller configuration, deadzone tuning, and button remapping, see [Controllers & Input](controllers.md).
+See [Controllers and input](controllers.md) for detailed controller options.

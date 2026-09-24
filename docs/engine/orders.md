@@ -1,18 +1,14 @@
-# AI Order System Architecture
+# Orders
 
-This document describes StarLancer's AI order evaluation subsystem, which governs behavior states for both autonomous non-player entities and the player ship (formation flight, escorts, docking sequences, combat dogfighting, and destruction).
+What each object is doing: flying in formation, escorting, docking, exploding, or following the player's controls. An object keeps a stack of orders, the current one on top, which the AI, the mission scripts and the player's controls push and pop, and `object_orders` runs the current one.
 
-Each entity maintains an order stack with the active behavior on top. Orders can be pushed, popped, and overridden by mission scripts, AI state transitions, or player controls.
+[`aigeneric.zig`](../../src/engine/game/aigeneric.zig) holds the stack and runs the orders, [`ai.zig`](../../src/engine/game/ai.zig) the steering they turn by, [`aiorders.zig`](../../src/engine/game/aiorders.zig) the orders that fly a ship, and [`ai/orders.zig`](../../src/engine/game/ai/orders.zig) lists every order with its flags, priorities and routines; `make order-tables` transcribes that table from the executable. The names below are those `make ghidra-annotate` gives the Ghidra project, which names each order's routines `order_` and the order's name, with `_init` and `_exit` for those two.
 
-In the codebase:
-- [`src/engine/game/aigeneric.zig`](../../src/engine/game/aigeneric.zig): Order stack evaluation and lifecycle hooks.
-- [`src/engine/game/ai.zig`](../../src/engine/game/ai.zig): Steering calculations, obstacle avoidance, and flight physics integration.
-- [`src/engine/game/aiorders.zig`](../../src/engine/game/aiorders.zig): Specific flight order behaviors (`Fly`, `Fight`, `MatchSpeed`, etc.).
-- [`src/engine/game/ai/orders.zig`](../../src/engine/game/ai/orders.zig): Order metadata lookup tables (priorities, flags, and callback pointers).
+Ported so far: the stack (`order_push`, `order_pop`, `orders_clear`, `orders_pop_all`), what runs it (`object_orders`, `orders_update`, `order_retaliate`), the steering (`ai_steer`, `ai_roll_upright`) with its avoidance, and the orders Do Nothing, Fly, Run Away, Slow Rotate, the Random Spins, Match Speed, 44 and 45, Explode, Eject Player and Fight with its [combat maneuvers](maneuvers.md), with Player Control being the player's [controls](controls.md). An order the port does not run yet still holds its place on the stack, and pushing it still pops and starts what it should ([#30](https://github.com/vdmkenny/openreliant/issues/30)). Not ported: the orders other players' machines queue ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
 
----
+The port keeps each object's stack and order state in its slot rather than allocating them with its first order, and hands a fatal "Cannot set ai" back to its caller as an error.
 
-## Order Table Layout
+## The order table
 
 `order_groups` (`0x4E06E0`) points at the records of each hundred order numbers: order `n` is
 record `n % 100` of group `n / 100`. Group 0 holds orders 0 to 45, group 1 orders 100 to 122, and

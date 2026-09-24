@@ -1,15 +1,10 @@
-# Combat Maneuvers & Tactical AI
+# Combat maneuvers
 
-This document describes the dogfighting AI scripting engine used by StarLancer. When an entity executes the `Fight` order (order ID 105), it evaluates combat maneuvers ("loop the loop", "defend dodge1", "attack pursue", etc.) against its assigned target.
+How a ship fights. The [order](orders.md) Fight (105) runs one maneuver after another against its target: "loop the loop", "defend dodge1", "attack pursue" and seven more. Each maneuver is a script in a small language of the developers' own, which the payload compiles line by line as it first runs each line, and a table picks the next maneuver by where the two ships are.
 
-Maneuvers are written in a domain-specific scripting language that the retail engine compiles line-by-line at runtime. In OpenReliant:
-- [`src/engine/game/aidefend.zig`](../../src/engine/game/aidefend.zig) and [`aifight.zig`](../../src/engine/game/aifight.zig): Tactical state machine structures.
-- [`src/engine/game/aidefend/maneuvers.zig`](../../src/engine/game/aidefend/maneuvers.zig): Maneuver scripts and opcode dispatchers extracted from the binary via `make maneuver-tables`.
-- [`src/engine/game/aidefend/script.zig`](../../src/engine/game/aidefend/script.zig): Compiles and validates scripts at compile time.
+[`aidefend.zig`](../../src/engine/game/aidefend.zig) and [`aifight.zig`](../../src/engine/game/aifight.zig) define the structures, [`aidefend/maneuvers.zig`](../../src/engine/game/aidefend/maneuvers.zig) holds the maneuvers, their scripts and the handlers of each opcode, which `make maneuver-tables` transcribes from the executable, and [`aidefend/script.zig`](../../src/engine/game/aidefend/script.zig) compiles the scripts as the payload does. The build compiles every script, so a script the compiler cannot read fails it. The names below are those `make ghidra-annotate` gives the Ghidra project; the source file the asserts name is `aidefend.cpp`.
 
----
-
-## Maneuver Structure (`ManeuverRecord`)
+## The maneuvers
 
 `maneuvers` (`0x4E1070`) holds a 16-byte `ManeuverRecord` for each maneuver:
 
