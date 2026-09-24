@@ -2460,7 +2460,7 @@ test "an engine glow burns with the throttle" {
 test "a model draws the muzzle flashes a shot has lit" {
     const gpa = std.testing.allocator;
     const srmesh = @import("../surrender/surrenderlib/srmesh.zig");
-    const built: flash.testing.Built = try .init(gpa, .cast);
+    const built: flash.testing.Built = try .init(gpa, .{});
     defer built.deinit(gpa);
     const mesh = try srmesh.testing.square(gpa);
     defer mesh.deinit(gpa);
@@ -2489,7 +2489,7 @@ test "a model draws the muzzle flashes a shot has lit" {
     try std.testing.expectEqual(0, scene.layers.get(.world).items.len);
 
     // Lit, it stands on its muzzle, in the world's layer whatever the part's, and casts its light.
-    flashes[0].fire(.laser_cannon, 10);
+    flashes[0].fire(.laser_cannon, 10, .{ 0, 0.5, 1 });
     try model.draw(gpa, &scene, .overlay, .{ .frame_start = 10 });
     try std.testing.expectEqual(1, scene.layers.get(.world).items.len);
     try std.testing.expectEqual(@as(Vector, .{ 0, 0, 1050 }), flashes[0].object.position);

@@ -119,7 +119,11 @@ A type whose flash lasts no time shows none: the game divides by its ticks and t
 
 `guns_init` builds a flash mesh for each gun type (`muzzle_flash_mesh_build`, `0x004786E0`), all the same shape: a plume, as an engine glow's ([Effects](effects.md)), twice as wide and as high as the Laser Cannon's bolt and half as long, 120 across and 600 long. The quad across the muzzle draws `matflarea3` and the three down the flare `matflareb3`, added and unlit, with the flash's own texture coordinates, a texel in from each edge (`muzzle_flash_create`, `0x0047B150`). The Gattling Plasma Cannon's draws `gunflare\sfxalpha1` for both, a sheet of three frames 32 texels apart, one a tick: the quad across the muzzle takes a frame 30 texels square from a quarter of the way down, the others 30 across and 62 high from the top. The port builds the two meshes that differ.
 
-**Improvement:** a flash casts a point light while it lasts, reaching 1500 at its brightest and dimming and drawing in as the flare shrinks, so that each shot lights the hull round the gun (`flash.Lights.cast`). Its colour is its flares' own: what their textures add where the flash draws from them, brought up to full brightness. `--original` leaves the flashes unlit.
+**Improvement:** a flash casts a point light while it lasts, reaching two and a half times the flare's length at its brightest and dimming and drawing in as the flare shrinks, so that each shot lights the hull round the gun (`flash.Lights.cast`). Its colour is its flares' own: what their textures add where the flash draws from them, brought up to full brightness.
+
+**Improvement:** the turrets' guns flash too, the Turret Flak, the Turret Lasers and both Huge Guns (`flash.Guns.turrets_too`). A turret's flash lasts 50 ticks and is sized by the Turret Lasers' bolt as the others are by the Laser Cannon's: 800 across and 1200 long. It draws the white flares, `matflarea7` and `matflareb7`, in the colour of its shot's light, blue, or orange from a hostile ship unless the player fired it, paler across the muzzle; its light takes the same colour.
+
+`--original` leaves the flashes unlit and the turrets' guns without them.
 
 ## Turrets
 

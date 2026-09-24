@@ -1076,6 +1076,11 @@ const shot_light_range: f32 = 1000;
 const shot_light: [3]f32 = .{ 0, 0.5, 1 };
 const hostile_shot_light: [3]f32 = .{ 1, 0.5, 0 };
 
+/// The colour of the light of a shot fired from the side `side`, by the player or not.
+fn shotColour(player: bool, side: gameobj.Side(i32)) [3]f32 {
+    return if (!player and side == .hostile) hostile_shot_light else shot_light;
+}
+
 /// `bullet_fire` (`0x0047C5F0`) with `bullet_place` (`0x0047BDB0`): the shot a gun takes. It
 /// leaves the muzzle where the step is taking it, flying along the muzzle's nose at the type's
 /// speed, and lives for the type's `lifetime` ticks. Nothing is fired while every record is in
@@ -1090,8 +1095,8 @@ const hostile_shot_light: [3]f32 = .{ 1, 0.5, 0 };
 /// It casts a light while it is one of the latest two of its ring (`Bullets.Ring`), or for its
 /// whole flight under `ShotLights.every_shot`.
 ///
-/// It lights the muzzle's flash, where the muzzle has one, for the shot's type's ticks
-/// (`flash.Flash.fire`).
+/// It lights the muzzle's flash, where the muzzle has one, for the shot's type's ticks, in the
+/// colour of its light (`flash.Flash.fire`).
 ///
 /// A few gun types have rules of their own: two Turret Flak shots in five are Turret Lasers shots,
 /// and a Turret Flak shot lives a random share of its type's life, from a fifth to all of it, and
@@ -1143,7 +1148,7 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, barrel: Barr
     bullet.light = .{
         .mask = 0,
         .intensity = 1,
-        .colour = if (!player and bullet.side == .hostile) hostile_shot_light else shot_light,
+        .colour = shotColour(player, bullet.side),
         .kind = .{ .point = .{ .position = at, .range = shot_light_range } },
     };
 
@@ -1164,7 +1169,7 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, barrel: Barr
     }
     if (is_heard) shotSound(world, @intCast(index), kind, record.sound, owner == all.player);
     candidates(world, bullet, record, lifetime);
-    if (barrel.muzzle.flashOf()) |lit| lit.fire(kind, clock.frame_start);
+    if (barrel.muzzle.flashOf()) |lit| lit.fire(kind, clock.frame_start, shotColour(player, bullet.side));
 }
 
 /// The game's own effects of the events the tracks of the model of the object in slot `owner`
@@ -1575,7 +1580,7 @@ test shoot {
 
 test "a shot lights its muzzle's flash" {
     const gpa = std.testing.allocator;
-    const built: flash.testing.Built = try .init(gpa, .cast);
+    const built: flash.testing.Built = try .init(gpa, .{});
     defer built.deinit(gpa);
     var ship: testing.Ship = undefined;
     try ship.init(gpa);
@@ -2035,8 +2040,12 @@ fn gattlingPlasma(comptime index: f32) Recipe {
 /// The Turret Lasers' bolt (`0x0047EF80`), its first ring where the set has it: 0.6 of its length
 /// for the player's side (`0x004DC4B4`), 0.15 for the rest (`0x004DC450`).
 fn turretLasers(comptime ring: f32) Recipe {
-    return .{ .ringed = .{ .bolt = .{ .size = .{ 200, 200, 2400 }, .until = .{ 60000, 100000 } }, .ring = ring } };
+    return .{ .ringed = .{ .bolt = .{ .size = turret_lasers_bolt, .until = .{ 60000, 100000 } }, .ring = ring } };
 }
+
+/// The Turret Lasers' bolt's half width, half height and length, which the turrets' muzzle flashes
+/// are sized by (`flash.Look.turret`).
+pub const turret_lasers_bolt: [3]f32 = .{ 200, 200, 2400 };
 
 /// The most corners of any mesh a shot is drawn with: a ringed bolt's.
 const max_corners = 16;
