@@ -132,6 +132,12 @@ pub const Quadrants = extern struct {
         return .{ quadrants.left, quadrants.right, quadrants.fore, quadrants.aft };
     }
 
+    /// The four added together.
+    pub fn total(quadrants: Quadrants) f32 {
+        const each = quadrants.values();
+        return @reduce(.Add, @as(@Vector(each.len, f32), each));
+    }
+
     comptime {
         for (std.enums.values(collision.Quadrant), @typeInfo(Quadrants).@"struct".fields) |quadrant, field| {
             assert(std.mem.eql(u8, @tagName(quadrant), field.name));
@@ -363,6 +369,11 @@ pub const Type = enum(u32) {
     /// Whether it has a record in the ship tables.
     pub fn hasStats(object_type: Type) bool {
         return object_type.number() < create.ship_type_count;
+    }
+
+    /// Whether it is a Phoenix, the ship that carries the Nova Cannon, or its twin.
+    pub fn carriesNova(object_type: Type) bool {
+        return object_type == .phoenix or object_type == .t_phoenix;
     }
 
     /// What rock it is, if any.
@@ -1739,6 +1750,7 @@ test Quadrants {
     try std.testing.expectEqual(2, shields.aft);
     try std.testing.expectEqual(5, shields.get(.fore));
     try std.testing.expectEqual([4]f32{ 5, 5, 5, 2 }, shields.values());
+    try std.testing.expectEqual(17, shields.total());
 }
 
 test "a knock pushes and turns an object" {

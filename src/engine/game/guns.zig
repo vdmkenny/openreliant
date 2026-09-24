@@ -27,7 +27,8 @@ pub const Gun = extern struct {
     lifetime: i32,
     /// `Gun.speed`: how fast a shot flies.
     speed: f32,
-    damage: [2]f32,
+    /// `Gun.damage`: what a shot does to a shield, and to a hull or a component.
+    damage: formats.Damage,
     /// `100 / Gun.fire_rate`, truncated: the interval between shots.
     refire_interval: i32,
     /// `Gun.shot_energy`, truncated: what a shot draws from the guns' charge, for a gun of kind
@@ -220,6 +221,7 @@ pub const Muzzle = struct {
 
 pub const turrets = @import("guns/turrets.zig");
 pub const flash = @import("guns/flash.zig");
+pub const nova = @import("guns/nova.zig");
 
 /// Which of its group's two guns a gun is, as `create_object` marks them (`+0x14`), and which
 /// fires next while a ship fires one group out of step (`GameObject.gun_turn`).
@@ -285,14 +287,14 @@ test Stats {
     var file: [2]formats.Gun = @splat(std.mem.zeroes(formats.Gun));
     file[0].range = 1500.7;
     file[0].fire_rate = 8;
-    file[0].damage = .{ 30, 40 };
+    file[0].damage = .{ .shield = 30, .hull = 40 };
     file[0].speed = 1200;
     file[0].shot_energy = 3.5;
     stats.load(&file);
     // The file's first record is gun type 1; type 0 stays the no gun it starts as.
     try std.testing.expectEqual(1500, stats.types[1].lifetime);
     try std.testing.expectEqual(12, stats.types[1].refire_interval);
-    try std.testing.expectEqual(30, stats.types[1].damage[0]);
+    try std.testing.expectEqual(30, stats.types[1].damage.shield);
     try std.testing.expectEqual(1200, stats.types[1].speed);
     try std.testing.expectEqual(3, stats.types[1].shot_energy);
     try std.testing.expectEqual(0, stats.types[0].lifetime);
@@ -337,6 +339,16 @@ pub const Group = struct {
 pub fn gunAt(fitted: []Fitted, place: ?usize) ?*Fitted {
     const at = place orelse return null;
     return if (at < fitted.len) &fitted[at] else null;
+}
+
+/// The gun type of the first gun of group `group` of `table`, which blind fire, the charge arc,
+/// the gunnery display and the Nova Cannon's charge look at; null for a group of none, or led by
+/// a gun that fires no shots.
+pub fn groupLead(fitted: []Fitted, table: *const [max_groups]Group, group: usize) ?GunType {
+    if (group >= max_groups) return null;
+    const first = gunAt(fitted, table[group].lead()) orelse return null;
+    const barrel = first.barrel() orelse return null;
+    return barrel.type;
 }
 
 /// The barrel of a gun `gun_groups_build` groups: a fixed gun's or a spinning gun's, not an
@@ -489,9 +501,8 @@ const condition_margin: f32 = 0.1;
 /// The interval between the shots of a ship aiming blind, over a hundred (`0x00477464`).
 const blind_refire: i32 = 135;
 
-/// The gun type that charges up before it fires, the Nova Cannon. The trigger passes it over: it
-/// is held by `GameObject.nova_charge` instead, which isn't ported
-/// ([#150](https://github.com/vdmkenny/openreliant/issues/150)).
+/// The gun type that charges up before it fires, the Nova Cannon. The trigger passes it over and
+/// charges it instead (`nova.charge`), and it fires as the trigger is let go (`nova.release`).
 const charging_type: GunType = .nova_cannon;
 
 const Clock = @import("main.zig").Clock;
@@ -504,6 +515,9 @@ pub const Trigger = struct {
     groups: *const [max_groups]Group,
     /// `frame_start`: the tick this frame began.
     frame_start: i32,
+    /// The player's view's shake, which the Nova Cannon's charge shakes (`nova.charge`); null for
+    /// any other ship.
+    shake: ?*f32 = null,
 };
 
 /// GUNNERY WINDOW's turn (`frame_controls`, `0x00414060`): out of firing every group, where the
@@ -608,15 +622,16 @@ pub const held_ticks: i32 = 1;
 ///
 /// With FULL GUNS every gun fires but an aimed turret's; otherwise the two guns of the chosen
 /// group do. A muzzle of the charging type is passed over either way, as is a ship whose guns are
-/// disabled.
+/// disabled. On a Phoenix firing the group a Nova Cannon leads, the trigger charges it first
+/// (`nova.charges`, `nova.charge`).
 ///
 /// **Fix:** the game reads a missile turret's gun type, of a muzzle it has none of, and a
 /// destroyed turret's; the port passes over a gun with no barrel.
 ///
-/// Not ported: the charge the trigger builds up for a gun of the charging type
-/// ([#150](https://github.com/vdmkenny/openreliant/issues/150)); `0x004BA780` for the player.
+/// Not ported: `0x004BA780`, which the player's trigger runs last.
 pub fn fire(object: *gameobj.GameObject, trigger: Trigger, ticks: i32) void {
     if (object.flags.guns_disabled or object.gun_count == 0) return;
+    if (nova.charges(object, trigger)) nova.charge(object, trigger.shake);
     const until = trigger.frame_start + ticks;
     var chosen: Chosen = .of(object, trigger.fitted, trigger.groups);
     while (chosen.next()) |gun| {
@@ -862,7 +877,7 @@ const testing = struct {
             stats.refire_interval = 20;
             stats.speed = 500;
             stats.lifetime = 100;
-            stats.damage = .{ 10, 4 };
+            stats.damage = .{ .shield = 10, .hull = 4 };
             ship.index = try ship.add(@enumFromInt(ship_type), @splat(0));
             // Its guns hold 100 and charge fully in four seconds, so a step gives them one.
             ship.mission.tables.combat[ship_type].gun_recharge = 4;
@@ -1130,6 +1145,8 @@ pub const Bullets = struct {
     /// What the shots are drawn with, where the caller has built it; without, they fly unseen and
     /// draw none of the numbers their looks would.
     looks: ?*Looks = null,
+    /// The Nova Cannon's beams showing (`0x00563190`).
+    beams: nova.Beams = .{},
     /// Which shots cast a light.
     shot_lights: ShotLights = .latest_two,
     /// The shots that cast a light under `latest_two`: the player's latest two (`0x0056317C`), and
@@ -1491,6 +1508,7 @@ pub fn bulletsFrame(world: gameobj.World, clock: *const Clock, fraction: f32) vo
         };
         bullets.release(@intCast(index));
     }
+    bullets.beams.frame(world.objects, clock.frame_start);
 }
 
 /// `0x00479B40`: what a shot strikes between where it stood last frame and where it stands now. It
@@ -1498,7 +1516,7 @@ pub fn bulletsFrame(world: gameobj.World, clock: *const Clock, fraction: f32) vo
 ///
 /// An object is struck where the segment first crosses the sphere of its radius, widened for a Huge
 /// Gun's shot (`hugeReach`). With a shield up in that quadrant the shot spends itself on the shield
-/// (`object_damage` with the type's first damage, and its second over its first as the share that
+/// (`object_damage` with the type's shield damage, and its hull damage over that as the share that
 /// passes through); with the shield down the shot reaches the hull (`hullHit`), though a Huge Gun's
 /// always goes through the shields. What the player has shifted fore or aft takes the hit
 /// before the quadrant does, and a turret's shot hurts a player's ship more. A ship with its
@@ -1555,8 +1573,8 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
             return;
         }
         defer shield.flare(world, candidate.object, point);
-        if (!object.flags.spectral_shields and record.damage[0] > 0) {
-            var value = record.damage[0];
+        if (!object.flags.spectral_shields and record.damage.shield > 0) {
+            var value = record.damage.shield;
             // What the player has shifted fore or aft takes the hit before the quadrant does, and
             // a hit it swallows whole leaves the shields alone.
             if (candidate.object == all.player and world.player.shield_reserves.spare(struck, value)) {
@@ -1564,7 +1582,7 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
                 return;
             }
             if (candidate.object < all.players and fromTurret(bullet.kind)) value *= turret_damage_to_players;
-            collision.damage(world, candidate.object, struck, value, record.damage[1] / record.damage[0], bullet.owner, .bullet);
+            collision.damage(world, candidate.object, struck, value, record.damage.hullShare(), bullet.owner, .bullet);
         }
         bullet.dies_at = spent;
         return;
@@ -1611,7 +1629,7 @@ const huge_fireball_life = 150;
 /// force field glows whole (`shield.flareCapital`), and the hit leaves what it leaves on the part
 /// (`shieldfx.componentHit`). A Huge Gun's shot sets off a lit fireball there, its own sparks
 /// along the face's normal and an explosion's sound, and does no damage; any other throws sparks
-/// along the normal, and the part takes the type's second damage (`collision.componentDamage`).
+/// along the normal, and the part takes the type's hull damage (`collision.componentDamage`).
 ///
 /// Not ported: the cloak a hit reveals ([#89](https://github.com/vdmkenny/openreliant/issues/89)).
 fn componentHit(world: gameobj.World, bullet: *Bullet, index: u16, crossing: objects.Crossing) void {
@@ -1634,12 +1652,12 @@ fn componentHit(world: gameobj.World, bullet: *Bullet, index: u16, crossing: obj
     }
     sparks.spray(world, .component, at, normal, @splat(0), component_sparks);
     const record = bullet.stats(&world.objects.gun_stats);
-    collision.componentDamage(world, index, crossing.part, record.damage[1], bullet.owner, .bullet);
+    collision.componentDamage(world, index, crossing.part, record.damage.hull, bullet.owner, .bullet);
 }
 
 /// `0x00479940`: a shot that has passed an object's shields. It finds the last of the object's
 /// parts the segment crosses, by the box each part's mesh stands in, and wears the quadrant's
-/// armour by the type's second damage. The hit is heard (`shieldfx.hullHit`), and it throws sparks
+/// armour by the type's hull damage. The hit is heard (`shieldfx.hullHit`), and it throws sparks
 /// from where it struck, unless the camera is in the object's cockpit.
 ///
 /// **Improvement:** the game takes where the shot struck in the part's own frame for where it
@@ -1651,7 +1669,7 @@ fn hullHit(world: gameobj.World, bullet: *Bullet, index: u16, struck: collision.
     const model = if (slot.model) |*live| live else return;
     const along = objects.partEntry(model, bullet.last, bullet.at, .last_shown) orelse return;
     const record = bullet.stats(&world.objects.gun_stats);
-    var value = record.damage[1];
+    var value = record.damage.hull;
     if (index < all.players and fromTurret(bullet.kind)) value *= turret_damage_to_players;
     collision.armorDamage(world, index, struck, value, bullet.owner, .bullet);
     const at = bullet.last + (bullet.at - bullet.last) * @as(Vector, @splat(along));
@@ -1753,7 +1771,7 @@ test bulletsFrame {
     slot.drawn = .{ .position = .{ 0, 0, 500 }, .orientation = math.identity };
     const struck = &slot.object;
 
-    // A shot whose path crosses the ship: its shields take the type's first damage, and it is
+    // A shot whose path crosses the ship: its shields take the type's shield damage, and it is
     // spent.
     shoot(world, &ship.mission.clock, ship.index, ship.guns()[0].turret.fixed, false);
     const bullet = &world.objects.bullets.pool[0];
@@ -1765,7 +1783,7 @@ test bulletsFrame {
     try std.testing.expectEqual(10, struck.recent_damage);
     try std.testing.expectEqual(0, flying(world));
 
-    // With its shields down the next shot reaches the hull, which takes the second damage.
+    // With its shields down the next shot reaches the hull, which takes the hull damage.
     struck.shields = .all(0);
     struck.recent_damage = 0;
     const armor = struck.armor;
@@ -1775,7 +1793,7 @@ test bulletsFrame {
     next.at = .{ 0, 0, 600 };
     bulletsFrame(world, &ship.mission.clock, 0);
     try std.testing.expectEqual(4, struck.recent_damage);
-    try std.testing.expect(@reduce(.Add, @as(@Vector(4, f32), armor.values())) > @reduce(.Add, @as(@Vector(4, f32), struck.armor.values())));
+    try std.testing.expect(armor.total() > struck.armor.total());
     try std.testing.expectEqual(0, flying(world));
 
     // A shot that reaches the end of its life is let go.
@@ -1794,6 +1812,74 @@ test "Turret.base" {
     try std.testing.expectEqual(null, (Turret{ .gone = {} }).base());
 }
 
+test "the Nova Cannon strikes what stands ahead, and its beam shows" {
+    const gpa = std.testing.allocator;
+    const fixture: test_looks.Fixture = try .init(gpa);
+    defer fixture.deinit(gpa);
+    var ship: testing.Ship = undefined;
+    try ship.init(gpa);
+    defer ship.deinit(gpa);
+    const world = ship.world();
+    const mission = &ship.mission;
+    const all = mission.objects;
+    all.bullets.looks = fixture.looks;
+    all.gun_stats.types[GunType.nova_cannon.number()].damage = .{ .shield = 40, .hull = 20 };
+    const shooter = ship.object();
+    shooter.gun_condition = 1;
+    // A ship straight ahead, and one off to the side.
+    const ahead = try ship.add(@enumFromInt(testing.ship_type), .{ 0, 0, 5000 });
+    const aside = try ship.add(@enumFromInt(testing.ship_type), .{ 5000, 0, 5000 });
+    const untouched = all.slots[ahead].object.shields;
+
+    // Short of half a charge, nothing fires, and the charge is lost.
+    shooter.nova_charge = 0.4;
+    nova.release(world, ship.index);
+    try std.testing.expectEqual(0, shooter.nova_charge);
+    try std.testing.expectEqual(null, all.bullets.beams.slots[0]);
+    try std.testing.expectEqual(untouched, all.slots[ahead].object.shields);
+
+    // A full charge strikes the ship ahead and not the one aside, and shows its beam, strands and
+    // all.
+    shooter.nova_charge = 1;
+    nova.release(world, ship.index);
+    try std.testing.expectEqual(0, shooter.nova_charge);
+    try std.testing.expect(all.slots[ahead].object.shields.total() < untouched.total());
+    try std.testing.expectEqual(untouched, all.slots[aside].object.shields);
+    try std.testing.expect(all.bullets.beams.slots[0].?.full());
+
+    // Its time over, it goes.
+    all.bullets.beams.frame(all, mission.clock.frame_start + nova.beam_ticks + 1);
+    try std.testing.expectEqual(null, all.bullets.beams.slots[0]);
+}
+
+test "the Nova Cannon strikes a ship's components leaf by leaf" {
+    const gpa = std.testing.allocator;
+    var ship: testing.Ship = undefined;
+    try ship.init(gpa);
+    defer ship.deinit(gpa);
+    const world = ship.world();
+    const mission = &ship.mission;
+    mission.objects.gun_stats.types[GunType.nova_cannon.number()].damage = .{ .shield = 40, .hull = 20 };
+    // A ship that lists its one part as a component: a square facing the shooter, 500 ahead.
+    var hull: create.testing.Model = undefined;
+    try hull.init(gpa);
+    defer hull.deinit(gpa);
+    hull.withHull();
+    hull.source.header.flags.components = true;
+    hull.data[0].part.flags.component = true;
+    hull.data[0].part.component_armor = 100;
+    const target = try create.createObject(mission.objects, &mission.tables, hull.types(), null, .reaper, 0, .{ 0, 0, 500 }, &mission.random);
+    const slot = &mission.objects.slots[target];
+    slot.model.?.place(slot.drawn.position, slot.drawn.orientation);
+    const part = &slot.model.?.parts[0];
+    const armor = part.armor;
+
+    // Its square's one leaf is crossed: the component takes the hull damage times the charge.
+    ship.object().nova_charge = 1;
+    nova.release(world, ship.index);
+    try std.testing.expect(part.armor < armor);
+}
+
 test "a shot strikes a component of a ship that lists them" {
     const gpa = std.testing.allocator;
     var ship: testing.Ship = undefined;
@@ -1809,7 +1895,7 @@ test "a shot strikes a component of a ship that lists them" {
     hull.data[0].part.flags.component = true;
     hull.data[0].part.component_armor = 100;
     const mission = &ship.mission;
-    const target = try create.createObject(mission.objects, &mission.tables, hull.types(), null, @enumFromInt(9), 0, .{ -50, 0, 500 }, &mission.random);
+    const target = try create.createObject(mission.objects, &mission.tables, hull.types(), null, .reaper, 0, .{ -50, 0, 500 }, &mission.random);
     const slot = &mission.objects.slots[target];
     try std.testing.expect(slot.object.flags.components);
     slot.model.?.place(slot.drawn.position, slot.drawn.orientation);
@@ -2035,8 +2121,8 @@ test "a Huge Gun's shot reaches farther, and always through the shields" {
     bullet.last = .{ 0, 0, 0 };
     bullet.at = .{ 0, 0, 1000 };
     bulletsFrame(world, &ship.mission.clock, 0);
-    // It struck the ship with its shields down and still took the shield's way: the first damage,
-    // then the share of it that passes to the armour. A hull hit would have counted the second
+    // It struck the ship with its shields down and still took the shield's way: the shield damage,
+    // then the share of it that passes to the armour. A hull hit would have counted the hull
     // damage alone, 4.
     try std.testing.expectEqual(10 + 4, slot.object.recent_damage);
 }
@@ -2209,6 +2295,8 @@ pub const Built = struct {
 pub const Looks = struct {
     shapes: std.EnumArray(Shape, Built),
     images: std.EnumArray(Image, *srtexture.Image),
+    /// The Nova Cannon's beam and its strands.
+    nova: nova.Looks,
     /// The Turret Flak's shell (`loadShell`): the first mesh of the first part of ship type
     /// `shell_type`'s model, drawn at every distance. Null until it is loaded, or where the model
     /// cannot be, and a Turret Flak shot is then not drawn.
@@ -2226,6 +2314,7 @@ pub const Looks = struct {
             try build(looks.shapes.getPtr(shape), gpa, recipes.get(shape), &looks.images);
             made += 1;
         }
+        looks.nova = try .create(gpa, textures);
         looks.shell = null;
         return looks;
     }
@@ -2240,6 +2329,7 @@ pub const Looks = struct {
 
     pub fn destroy(looks: *Looks, gpa: Allocator) void {
         for (&looks.shapes.values) |*built| built.deinit(gpa);
+        looks.nova.deinit(gpa);
         gpa.destroy(looks);
     }
 };
@@ -2254,20 +2344,7 @@ fn build(built: *Built, gpa: Allocator, recipe: Recipe, images: *const std.EnumA
         .bolt => |bolt| try buildBolt(built, gpa, lasers, bolt, null),
         .ringed => |ringed| try buildBolt(built, gpa, lasers, ringed.bolt, ringed.ring),
         .star => |star| {
-            var corners: [max_corners]Vector = undefined;
-            var uv: [max_corners][2]f32 = undefined;
-            var faces: [max_corners / 4][4]u16 = undefined;
-            for (0..star.blades) |blade| {
-                const angle = @as(f32, @floatFromInt(blade)) * std.math.pi / @as(f32, @floatFromInt(star.blades));
-                const across: Vector = .{ @sin(angle) * star.radius, @cos(angle) * star.radius, 0 };
-                const along: Vector = .{ 0, 0, star.half_length };
-                corners[blade * 4 ..][0..4].* = .{ -across - along, -across + along, across + along, across - along };
-                const low, const high = star.span;
-                uv[blade * 4 ..][0..4].* = .{ .{ high[0], high[1] }, .{ high[0], low[1] }, .{ low[0], low[1] }, .{ low[0], high[1] } };
-                faces[blade] = quadFace(blade);
-            }
-            const count = star.blades * 4;
-            built.meshes[0] = try meshOf(4, gpa, corners[0..count], faces[0..star.blades], uv[0..count], meshMaterial(true), lasers);
+            built.meshes[0] = try starMesh(gpa, star.blades, star.radius, .{ -star.half_length, star.half_length }, star.span, meshMaterial(true), lasers);
             built.levels[0] = .{ .mesh = &built.meshes[0], .until = tachyon_until };
             built.count = 1;
         },
@@ -2296,6 +2373,43 @@ fn build(built: *Built, gpa: Allocator, recipe: Recipe, images: *const std.EnumA
             built.count = 1;
         },
     }
+}
+
+/// The corners of a star's blade, a quad.
+pub const blade_corners = 4;
+
+/// The most blades a star is built with.
+const max_blades = max_corners / blade_corners;
+
+/// `mesh_build_star` (`0x004ADF90`): blades through the Z axis, spread evenly over half a turn,
+/// each a quad `radius` wide either side of the axis and running from `along[0]` to `along[1]`
+/// on it, drawn with `material` over `image`: the texture's `span` across each blade
+/// (`bladeCorners`), or the object's own coordinates where it has none. No more than `max_blades`
+/// are built.
+pub fn starMesh(gpa: Allocator, wanted: u8, radius: f32, along: [2]f32, span: ?[2][2]f32, material: srapiext.Material, image: *srtexture.Image) Allocator.Error!srapiext.Mesh {
+    const blades: usize = @min(wanted, max_blades);
+    var corners: [max_corners]Vector = undefined;
+    var uv: [max_corners][2]f32 = undefined;
+    var faces: [max_blades][blade_corners]u16 = undefined;
+    for (0..blades) |blade| {
+        const angle = @as(f32, @floatFromInt(blade)) * std.math.pi / @as(f32, @floatFromInt(blades));
+        const across: Vector = .{ @sin(angle) * radius, @cos(angle) * radius, 0 };
+        const near: Vector = .{ 0, 0, along[0] };
+        const far: Vector = .{ 0, 0, along[1] };
+        corners[blade * blade_corners ..][0..blade_corners].* = .{ near - across, far - across, far + across, near + across };
+        if (span) |given| uv[blade * blade_corners ..][0..blade_corners].* = bladeCorners(given);
+        faces[blade] = quadFace(blade);
+    }
+    const count = blades * blade_corners;
+    return meshOf(blade_corners, gpa, corners[0..count], faces[0..blades], if (span != null) uv[0..count] else null, material, image);
+}
+
+/// The texture coordinates of a star's blade's four corners (`starMesh`), for the texture's `span`
+/// from its low corner to its high one: the near end the high `v`, the far the low, and the one
+/// side the high `u`, the other the low.
+pub fn bladeCorners(span: [2][2]f32) [blade_corners][2]f32 {
+    const low, const high = span;
+    return .{ .{ high[0], high[1] }, .{ high[0], low[1] }, .{ low[0], low[1] }, .{ low[0], high[1] } };
 }
 
 /// Builds a bolt, with its two diamonds at `ring` and `far_ring` of its length where it has them.
@@ -2333,12 +2447,12 @@ fn quadFace(index: usize) [4]u16 {
 
 /// A material drawn with the shot's own texture coordinates (`MeshObject.own_uv`), added to what
 /// stands behind it.
-fn ownMaterial(lit: bool) srapiext.Material {
+pub fn ownMaterial(lit: bool) srapiext.Material {
     return .onePass(.{ .coordinates = .generated, .lit = lit, .blend = .add });
 }
 
 /// A material drawn with the mesh's own texture coordinates, added to what stands behind it.
-fn meshMaterial(lit: bool) srapiext.Material {
+pub fn meshMaterial(lit: bool) srapiext.Material {
     var material = ownMaterial(lit);
     material.coordinates[0] = .mesh;
     return material;
@@ -2687,6 +2801,7 @@ pub fn drawBullets(gpa: Allocator, scene: *srcore.Scene, bullets: *Bullets, ligh
             try xtrabits.sceneAdd(gpa, scene, .{ .light = light }, .world);
         }
     }
+    try bullets.beams.draw(gpa, scene);
 }
 
 /// A texture table holding every image the shots are drawn with, and the looks built over it, for
@@ -2698,8 +2813,10 @@ const test_looks = struct {
 
         fn init(gpa: Allocator) !Fixture {
             // The texture cache keeps each file's name, without the directory the game names it by.
-            var names: [std.enums.values(Image).len][]const u8 = undefined;
-            for (&names, std.enums.values(Image)) |*name, image| name.* = std.fs.path.basenameWindows(image.name());
+            const shots = std.enums.values(Image);
+            var names: [shots.len + nova.images.len][]const u8 = undefined;
+            for (names[0..shots.len], shots) |*name, image| name.* = std.fs.path.basenameWindows(image.name());
+            names[shots.len..].* = nova.images;
             const textures = try @import("backdrop.zig").testing.Textures.initNames(gpa, &names);
             errdefer textures.deinit(gpa);
             return .{ .textures = textures, .looks = try .create(gpa, &textures.table) };

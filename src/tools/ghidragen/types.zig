@@ -75,6 +75,7 @@ pub const exported = [_]Export{
     .{ "ShipClass", engine.game.create.ShipCombat.Class },
     .{ "TargetDisplay", engine.game.create.ShipCombat.TargetDisplay },
     .{ "ShipSide", engine.game.gameobj.Side(i16) },
+    .{ "Damage", openreliant.stats.Damage },
     .{ "GunStats", engine.game.guns.Gun },
     .{ "GunKind", engine.game.guns.Kind },
     .{ "MissileStats", engine.game.missiles.Stats },

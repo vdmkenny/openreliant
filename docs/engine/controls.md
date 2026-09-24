@@ -245,7 +245,7 @@ Feedback SDK (`force_effects_read`, `0x004BDB10`), and downloads the missile's. 
 
 | File | Played by |
 |---|---|
-| `lc`, `pc`, `mb`, `gl`, `tc`, `np`, `cg`, `gp`, `vb`, `nc` | The player's shot of that gun type, from the Laser Cannon to the Nova Cannon (`bullet_place`); `nc` also as the Nova Cannon releases its charge (`object_release_guns`) |
+| `lc`, `pc`, `mb`, `gl`, `tc`, `np`, `cg`, `gp`, `vb`, `nc` | The player's shot of that gun type, from the Laser Cannon to the Nova Cannon (`bullet_place`); `nc` also as the Nova Cannon releases its charge (`nova_release`) |
 | `prc` | Nothing: `bullet_place`'s switch has no case for the Proton Cannon, whose shot plays `lc` |
 | `Missile` | The player's missile launch (`missile_launch`) |
 | `Shake` | A shot striking the player's ship, and each frame while the camera shakes from hits by more than 0.1 (`force_shake`, `0x004BE000`), unless it is playing |
@@ -288,9 +288,6 @@ would ([#244](https://github.com/vdmkenny/openreliant/issues/244)).
 
 `--original` plays the game's own effects alone, and shakes the camera for blows only while the
 controller rumbles.
-
-Not ported: the Nova Cannon's release of its charge
-([#150](https://github.com/vdmkenny/openreliant/issues/150)).
 
 ## Porting
 

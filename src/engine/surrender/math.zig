@@ -9,6 +9,16 @@ pub const Matrix = [9]f32;
 
 pub const identity: Matrix = .{ 1, 0, 0, 0, 1, 0, 0, 0, 1 };
 
+/// A matrix that stretches along each axis by `by`'s figure for it.
+pub fn scaling(by: Vector) Matrix {
+    return .{ by[0], 0, 0, 0, by[1], 0, 0, 0, by[2] };
+}
+
+test scaling {
+    try std.testing.expectEqual(identity, scaling(@splat(1)));
+    try std.testing.expectEqual(@as(Vector, .{ 2, 3, 4 }), transform(scaling(.{ 2, 3, 4 }), @splat(1)));
+}
+
 /// Where something stands and which way it faces: a position, and an orientation whose columns
 /// are its right, down and forward axes.
 pub const Place = struct {

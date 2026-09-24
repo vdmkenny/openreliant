@@ -91,8 +91,8 @@ ships it lists: the Alliance fighters the player can fly, and in a second list C
 |---|---|---|---|---|
 | `0x40` | Range | truncated | `+0x14` | The ticks a shot lives, which is what gives the gun its range. Mods |
 | `0x44` | Speed | float | `+0x18` | How fast a shot flies (`bullet_place`) |
-| `0x48` | Damage | float | `+0x1C` | Weighted by the threat check below. Mods: DamageMin |
-| `0x4C` | Damage | float | `+0x20` | Mods: DamageMax |
+| `0x48` | Shield damage | float | `+0x1C` | What a hit does to a shield (`object_damage`). Weighted by the threat check below. Mods: DamageMin |
+| `0x4C` | Hull damage | float | `+0x20` | What a hit does to a hull or a component. Of what gets through a shield, the hull takes this over the shield damage. Mods: DamageMax |
 | `0x50` | Fire rate | `100 / x`, truncated | `+0x24` | The ticks between shots. Mods: CyclicRate |
 | `0x54` | Shot energy | truncated | `+0x28` | What a shot draws from the guns' charge (`guns_step`). Zero in every gun that fires rounds. Mods: energy or heat per shot |
 
@@ -105,10 +105,10 @@ first five words are the executable's own and say what a shot costs the ship (en
 [`guns/stats.zig`](../../src/engine/game/guns/stats.zig), which `make gun-tables` derives from the
 executable.
 
-The two damage values are **not a minimum and a maximum**: in several guns the first is the larger.
-`player_spectral_shields_set` (`0x00415430`) uses the first alone: turning the spectral shields
-on, it counts each gun type among the hostile ships nearby, weights each count by that damage,
-and tunes the shields to the most dangerous type other than the two capital-ship guns.
+The two damage values are **not a minimum and a maximum**: in several guns the shield damage is the
+larger. `player_spectral_shields_set` (`0x00415430`) uses the shield damage alone: turning the
+spectral shields on, it counts each gun type among the hostile ships nearby, weights each count by
+that damage, and tunes the shields to the most dangerous type other than the two capital-ship guns.
 
 ## Missiles
 

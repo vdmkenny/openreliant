@@ -179,6 +179,18 @@ pub const Ship = extern struct {
     }
 };
 
+/// What a hit does to a shield, and to a hull.
+pub const Damage = extern struct {
+    shield: f32,
+    hull: f32,
+
+    /// The share of what gets through a shield that the hull takes (`object_damage`): the hull's
+    /// damage over the shield's.
+    pub fn hullShare(damage: Damage) f32 {
+        return damage.hull / damage.shield;
+    }
+};
+
 /// One gun. The loader reads until the end of the file into `gun_stats`, whose first record is
 /// no gun: the file's 15 records are the gun types 1 to 15 a muzzle can name.
 pub const Gun = extern struct {
@@ -187,10 +199,9 @@ pub const Gun = extern struct {
     range: f32,
     /// How fast a shot flies.
     speed: f32,
-    /// Two damage values. The first is also what the engine weights nearby guns by when it picks
-    /// the most dangerous gun type around the player. They are not a minimum and a maximum: the
-    /// first is the larger in several shipped guns.
-    damage: [2]f32,
+    /// What a hit does to a shield, and to a hull or a component. The shield's is also what the
+    /// engine weights nearby guns by when it picks the most dangerous gun type around the player.
+    damage: Damage,
     /// Shots per unit time. The loader stores `100 / fire_rate`, truncated, which is the interval
     /// between shots.
     fire_rate: f32,
@@ -233,9 +244,8 @@ pub const Missile = extern struct {
     /// **Range** on the loadout screen is `speed * flight_time`. The loader stores the field
     /// multiplied by 100, truncated.
     flight_time: f32,
-    /// **Damage** on the loadout screen is the sum of the two. The first is what a hit does to a
-    /// shield, the second to a hull (`missile_collide`).
-    damage: [2]f32,
+    /// **Damage** on the loadout screen is the sum of the two (`missile_collide`).
+    damage: Damage,
     /// Shown as **Locking Time**, in hundredths of a second: the screen multiplies it by 0.01 and
     /// labels the result in seconds. Truncated to an integer on load.
     lock_time: f32,

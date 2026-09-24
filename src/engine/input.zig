@@ -1018,7 +1018,8 @@ pub fn setPlayerTarget(display: *hud.State, all: *create.Objects, index: i16, co
 /// FIRE LASERS, LAUNCH MISSILE and COUNTERMEASURES, which `player_controls` reads after the
 /// steering and the throttle (`0x00413BB5`, `0x00413BE7`, `0x00413E80`). FIRE LASERS, held, while
 /// the ship isn't jumping, opens the gunnery display and holds the guns' trigger for the frame
-/// (`guns.fire`). The others each act once a press: the one launches the armed missile
+/// (`guns.fire`), which charges a Phoenix's Nova Cannon; let go, the Phoenix, not jumping, lets
+/// its charge go (`guns.nova.release`). The others each act once a press: the one launches the armed missile
 /// (`launchMissile`); the other, outside a mission's ending, drops a countermeasure, Betty
 /// warning as they run out: at 6, 4 and 2 left, and with none. `aigeneric.playerControl` runs it
 /// after `matchSpeed`, since nothing between reads what it does.
@@ -1029,9 +1030,16 @@ pub fn setPlayerTarget(display: *hud.State, all: *create.Objects, index: i16, co
 /// message, which leaves them unread.
 pub fn playerWeapons(world: gameobj.World, devices: *Devices, index: u16) void {
     const slot = &world.objects.slots[index];
-    if (devices.active(.fire_lasers, false) and !slot.object.flags.jumping) {
-        if (world.display) |display| _ = display.windows.open(.gunnery, false);
-        guns.fire(&slot.object, slot.trigger(world.clock.frame_start), guns.held_ticks);
+    const object = &slot.object;
+    if (devices.active(.fire_lasers, false)) {
+        if (!object.flags.jumping) {
+            if (world.display) |display| _ = display.windows.open(.gunnery, false);
+            var trigger = slot.trigger(world.clock.frame_start);
+            trigger.shake = world.shake;
+            guns.fire(object, trigger, guns.held_ticks);
+        }
+    } else if (!object.flags.jumping and object.nova_charge > 0 and object.type.carriesNova()) {
+        guns.nova.release(world, index);
     }
     if (devices.active(.launch_missile, true)) launchMissile(world, index);
     if (devices.active(.countermeasures, true) and world.player.ending == .playing) {

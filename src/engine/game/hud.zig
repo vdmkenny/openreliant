@@ -827,16 +827,7 @@ pub fn draw(state: *State, resources: *Resources, frame: Frame) (spr.Error || Al
 /// The first gun of the group the ship has chosen (`GunMode.group`), which blind fire and the
 /// charge arc look at, or null for none.
 fn groupLead(slot: *const create.Slot) ?guns.GunType {
-    return groupLeadOf(slot, slot.object.gun_mode.group);
-}
-
-/// The gun type of the first gun of the ship's group `group`, or null for a group of none or of a
-/// gun that fires no shots.
-pub fn groupLeadOf(slot: *const create.Slot, group: usize) ?guns.GunType {
-    if (group >= guns.max_groups) return null;
-    const first = guns.gunAt(slot.guns, slot.gun_groups[group].lead()) orelse return null;
-    const barrel = first.barrel() orelse return null;
-    return barrel.type;
+    return slot.groupLead(slot.object.gun_mode.group);
 }
 
 /// What blind fire does for the ship of `slot` this frame: nothing where it is not carried or not
@@ -853,7 +844,7 @@ pub fn blindFire(state: *const State, slot: *const create.Slot) BlindFire {
 /// cannon leads.
 pub fn novaShown(slot: *const create.Slot) bool {
     const object = &slot.object;
-    if (object.type != .phoenix and object.type != .t_phoenix) return false;
+    if (!object.type.carriesNova()) return false;
     return !object.gun_mode.all and groupLead(slot) == .nova_cannon;
 }
 

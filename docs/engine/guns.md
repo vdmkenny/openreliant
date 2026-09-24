@@ -30,7 +30,7 @@ Turrets store additional data in remaining fields ([Turrets](#turrets)). The wor
 
 ## The trigger
 
-`object_fire_guns` (`0x0047B1F0`) holds the trigger for firing guns by setting each gun's `+0x0C` to `frame_start` plus the requested ticks. `FIRE LASERS` holds it for one tick, so player guns fire during the current frame and stop unless the key remains held into the next frame; the script Fire command holds it for 20 or 100 ticks. With `FULL GUNS`, every gun fires except aimed turrets; otherwise the two guns of the selected group fire ([Head-up display](hud.md#the-gunnery-display)). A pair fires together, or with `synchronised` cleared (SYNCHRONISE GUNS) in turn, one gun a shot. A muzzle of gun type 11 (Nova Cannon) is skipped either way because it charges up instead ([#150](https://github.com/vdmkenny/openreliant/issues/150)). A ship whose guns are disabled fires nothing.
+`object_fire_guns` (`0x0047B1F0`) holds the trigger for firing guns by setting each gun's `+0x0C` to `frame_start` plus the requested ticks. `FIRE LASERS` holds it for one tick, so player guns fire during the current frame and stop unless the key remains held into the next frame; the script Fire command holds it for 20 or 100 ticks. With `FULL GUNS`, every gun fires except aimed turrets; otherwise the two guns of the selected group fire ([Head-up display](hud.md#the-gunnery-display)). A pair fires together, or with `synchronised` cleared (SYNCHRONISE GUNS) in turn, one gun a shot. A muzzle of gun type 11 (Nova Cannon) is skipped either way because it charges up instead ([The Nova Cannon](#the-nova-cannon)). A ship whose guns are disabled fires nothing.
 
 ## The step
 
@@ -125,6 +125,24 @@ A type whose flash lasts no time shows none: the game divides by its ticks and t
 
 `--original` leaves the flashes unlit and the turrets' guns without them.
 
+## The Nova Cannon
+
+The Phoenix's Nova Cannon charges while the trigger is held and strikes when it is let go. Holding the trigger with one group chosen whose first gun is a Nova Cannon (`object_fire_guns`) adds 0.0025 times the guns' share of the power to the ship's `nova_charge` (`+0x148`), up to 1. Past 0.5 the player's view shakes at 0.3, and full at 0.6. The guns' charge doesn't recharge while `nova_charge` holds any.
+
+`player_controls` lets it go once the trigger is up, for a Phoenix that isn't jumping (`nova_release`, `0x0047B3D0`). It takes the first of eight beams free (`nova_beams`, `0x00563190`); with none free, nothing happens and the charge waits. Below 0.5 the charge is lost. Otherwise:
+
+- the blast sounds from the ship, positional sound 13 as loud as 2000 times the ship's radius, and the controller plays `nc` ([Controls](controls.md#force-feedback));
+- the beam strikes every object but the ship, the stand-ins and the disabled ones, whose bounding box it meets up to 40000 straight ahead. One listing no components takes the cannon's shield damage times the ship's gun condition and the charge, on the quadrant the beam enters, its hull damage over that passing through, and its shields flare there unless it is cloaked. One listing components is struck part by part (`nova_strike_parts`, `0x0047B840`): each part whose mesh's box the beam meets takes the cannon's hull damage times the charge against its component for each leaf of its collision tree the beam crosses, with a hit's burst there ([Effects](effects.md#sparks));
+- the beam shows for 80 ticks, and the charge is spent.
+
+Each frame `bullets_frame` places the beams (`nova_beams_frame`, `0x00480690`). The beam is four blades on `ionc`, 150 wide either side narrowed by the square of the charge and 40000 long, standing 50 above and 20680 ahead of the ship, turned with it. Each blade's texture runs along it at 0.01 a tick more than the blade before's, and the blades are lit at the ship's end, dark at the far one, fading out over the last fifth of the beam's time. After a full charge 30 strands follow a helix along it (`nova_helix`), each two blades on `laser2` from one point of the helix to the next, radius 100, six turns a unit and 15000 long a unit from 600 ahead, the points 0.03 apart from 0.3 behind how far through its time the beam is. The strands rise and fall in brightness over the beam's time (`ease_rise_fall`); the game lights their first blades alone.
+
+**Fix:** the game takes where the beam enters an object's box, which is in the object's frame, for a point in the world's, so the quadrant struck and the flare land wherever that puts them; the port takes the point where it enters. The game also keeps drawing a beam from a ship that has gone.
+
+**Improvement:** the helix turns six times a unit exactly, where the game rounds its angle.
+
+Not ported: the multiplayer game's release for another player's ship, and its quarter damage.
+
 ## Turrets
 
 A turret part of kind 1, 2 or 3 forms a turret assembly: visible parts of its model sharing its link id, placed in slots defined at `+0xF8`. Setup initializes the gun record, sets node flag `0x400` on slot 0 (the base), and stores the model pointer at `+0x34` (`+0x30` for kind 2). The muzzle is the last part of the assembly; slot indices reference model parts.
@@ -181,4 +199,4 @@ Gun groups exclude kinds 1 and 3, and `FULL GUNS` excludes kind 1 ([The trigger]
 
 The muzzle flashes are [`guns/flash.zig`](../../src/engine/game/guns/flash.zig)'s, which every model's muzzles draw (`objects.Model.flashes`).
 
-Not ported: Huge Gun particle trails, impact sparks and audible flak bursts ([#41](https://github.com/vdmkenny/openreliant/issues/41)), and Nova Cannon charging ([#150](https://github.com/vdmkenny/openreliant/issues/150)). Choosing a group and FULL GUNS are the gunnery display's keys ([Head-up display](hud.md#the-gunnery-display)).
+Not ported: Huge Gun particle trails, impact sparks and audible flak bursts ([#41](https://github.com/vdmkenny/openreliant/issues/41)). Choosing a group and FULL GUNS are the gunnery display's keys ([Head-up display](hud.md#the-gunnery-display)).

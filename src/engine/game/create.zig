@@ -369,6 +369,11 @@ pub const Slot = struct {
         return combat.gun_groups;
     }
 
+    /// The gun type leading its group `group` (`guns.groupLead`).
+    pub fn groupLead(slot: *const Slot, group: usize) ?guns.GunType {
+        return guns.groupLead(slot.guns, slot.gun_groups, group);
+    }
+
     /// Its guns and their groups, for firing them from `frame_start` (`guns.fire`).
     pub fn trigger(slot: *const Slot, frame_start: i32) guns.Trigger {
         return .{ .fitted = slot.guns, .groups = slot.gun_groups, .frame_start = frame_start };
