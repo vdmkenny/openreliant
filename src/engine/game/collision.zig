@@ -466,10 +466,10 @@ pub fn componentDamage(world: gameobj.World, index: u16, struck_part: objects.Pa
     // The assembly's first part that still has armour takes the hit.
     var struck = component;
     if (component.link_id != 0) {
-        for (model.parts) |*part| {
-            if (part.removed or part.link_id != component.link_id) continue;
-            if (part.component_armor <= 0) continue;
-            struck = part;
+        var each = model.assembly(component.link_id);
+        while (each.next()) |at| {
+            if (model.parts[at].component_armor <= 0) continue;
+            struck = &model.parts[at];
             break;
         }
     }

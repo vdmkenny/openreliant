@@ -1360,39 +1360,96 @@ const Windows = struct {
     }
 };
 
-/// The part nodes' share of `node_tree_update` (`updateTree`), once each simulation step: it
-/// visits each part node that is animating, shown, and hangs from the root or from a node it
-/// visited, which leaves out a hidden part and all that hangs from it. A visit commits the
-/// place the last step worked out, moves the node on through its track, poses the part for
-/// the next step, and sets off the track's events it passes. A node stays marked as animating
-/// while it plays a track or one it goes on into does. The models the parts mount are updated
-/// along with them. Returns whether any part standing at the root is animating, which marks
-/// the root.
+/// The part nodes' share of `node_tree_update` (`updateTree`), once each simulation step. It keeps
+/// a stack of nodes: the root pushes each of its children that is shown and animating, which is
+/// every part whatever it is linked to, in part order; the node on top is taken off and visited,
+/// and pushes in turn the roots of the models it carries that are animating, and each of those its
+/// own parts. So the nodes are visited depth first, the last pushed first. A visit commits the
+/// place the last step worked out, moves the node on through its track, poses the part for the
+/// next step, and sets off the track's events it passes; a node playing no track stops animating,
+/// but one that pushes an animating node stays marked. Returns whether the root pushed any part,
+/// which keeps the root marked.
 ///
-/// The port visits the parts parents first, where the game keeps a stack of them, so the events
-/// of different parts go off in another order, and a node that sets no spans of its own, one
-/// whose track has no length or plays in a mode past 3, checks the spans of another node.
+/// The game marks a node animating and every node it hangs from, up through a model's root to the
+/// part carrying it (`node_mark_animating`); the port marks up to a model's root
+/// (`objects.Model.markAnimating`), and takes a part as animating, or a model's root, while it
+/// carries a model that has an animating part.
 fn walk(model: *objects.Model, events: ?Events) bool {
     var windows: Windows = .{};
-    var visited: std.StaticBitSet(walk_room) = .initEmpty();
-    var any = false;
-    for (model.order) |index| {
-        const part = &model.parts[index];
-        if (index >= walk_room or part.hidden or !part.animation.animating) continue;
-        if (part.parent) |parent| {
-            if (!visited.isSet(parent)) continue;
-        } else any = true;
-        visited.set(index);
-        visit(model, index, &windows, events);
-        for (model.parts) |child| {
-            if (child.parent == index and !child.hidden and child.animation.animating) {
-                part.animation.animating = true;
-                break;
+    var stack: Stack = .{};
+    const any = stack.pushParts(model);
+    while (stack.pop()) |node| switch (node) {
+        .root => |held| _ = stack.pushParts(held),
+        .part => |at| {
+            visit(at.model, at.index, &windows, events);
+            var each = at.model.carriedBy(at.index);
+            while (each.next()) |mount| {
+                if (!rootAnimating(&mount.model)) continue;
+                stack.push(.{ .root = &mount.model });
+                at.model.parts[at.index].animation.animating = true;
             }
-        }
-    }
-    for (model.mounts) |*mount| _ = walk(&mount.model, events);
+        },
+    };
     return any;
+}
+
+/// `node_tree_update`'s stack of nodes still to visit (`walk_room` of them): a model's root, or one
+/// of its parts. A node past its room is passed over, where the game writes past the stack.
+const Stack = struct {
+    nodes: [walk_room]Entry = undefined,
+    count: usize = 0,
+
+    const Entry = union(enum) {
+        root: *objects.Model,
+        part: objects.PartRef,
+    };
+
+    fn push(stack: *Stack, node: Entry) void {
+        if (stack.count == walk_room) return;
+        stack.nodes[stack.count] = node;
+        stack.count += 1;
+    }
+
+    fn pop(stack: *Stack) ?Entry {
+        if (stack.count == 0) return null;
+        stack.count -= 1;
+        return stack.nodes[stack.count];
+    }
+
+    /// A root's visit: each of its parts, in order, that is shown and animating. Whether it pushed
+    /// any.
+    fn pushParts(stack: *Stack, model: *objects.Model) bool {
+        var any = false;
+        for (0..model.parts.len) |index| {
+            if (!pushed(model, index)) continue;
+            stack.push(.{ .part = .{ .model = model, .index = index } });
+            any = true;
+        }
+        return any;
+    }
+};
+
+/// Whether its root pushes part `index` of `model`: one that is shown and animating, or carries a
+/// model whose root is.
+fn pushed(model: *const objects.Model, index: usize) bool {
+    const part = &model.parts[index];
+    return !part.hidden and (part.animation.animating or carriesAnimating(model, index));
+}
+
+/// Whether a model's root is marked animating: while it pushes any of its parts.
+fn rootAnimating(model: *const objects.Model) bool {
+    for (0..model.parts.len) |index| {
+        if (pushed(model, index)) return true;
+    }
+    return false;
+}
+
+fn carriesAnimating(model: *const objects.Model, index: usize) bool {
+    var each = model.carriedBy(index);
+    while (each.next()) |mount| {
+        if (rootAnimating(&mount.model)) return true;
+    }
+    return false;
 }
 
 /// One part node's visit in `node_tree_update`.

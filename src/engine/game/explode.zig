@@ -823,12 +823,10 @@ pub fn burst(world: gameobj.World, index: u16) void {
 pub fn componentLost(world: gameobj.World, index: u16, model: *const objects.Model, root: math.Place, link: u32) void {
     const slot = &world.objects.slots[index];
     var reach: f32 = 0;
-    for (model.parts) |*part| {
-        if (!part.removed and part.link_id == link) reach += part.object.radius;
-    }
-    for (model.parts, 0..) |*part, at| {
-        if (!part.removed and part.link_id == link) breakup.burstTree(world, slot, model, at, reach);
-    }
+    var parts = model.assembly(link);
+    while (parts.next()) |at| reach += model.parts[at].object.radius;
+    parts = model.assembly(link);
+    while (parts.next()) |at| breakup.burstTree(world, slot, model, at, reach);
     _ = flames(world, root.position, gameobj.vector(slot.object.velocity), burst_flames);
     sound(world, root.position, .explosions);
 }

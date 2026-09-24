@@ -259,9 +259,11 @@ which is how the radar dishes of some capital ships and stations turn from the s
 
 `node_tree_update`, once a simulation step, walks from the object's root into the children that are
 animating, not hidden and not flagged `0x80`, as the nodes of lights, engine glows and muzzle
-flashes are.
-A node it visits commits its pending place. One that plays no track, or plays at no speed, loses
-its mark, which it keeps while it goes on into a child that has one. One that plays moves its time
+flashes are. It keeps them on a stack of 500: a node pushes those of its children, in order, and
+the last pushed is visited next. The root's children are every part of the model, whatever part
+each is linked to, so a part is visited while its parent part is hidden; a part's own children are
+the roots of the models it carries. A node it visits commits its pending place. One that plays no
+track, or plays at no speed, loses its mark, which it keeps while it pushes a child that has one. One that plays moves its time
 on by its speed and, for a track of some length:
 
 - **Once** (1): stopping at the end, time and speed then set to the length and zero, or at the
@@ -303,7 +305,10 @@ place. A node posed by `node_place` is drawn between its two poses, the angles t
 way round, so a dish that loops a full turn doesn't spin back at the end of its track. Any other,
 an object's root among them, moves along the straight line between its places and turns by that
 share of the angles that turn one into the other (`mat3_angles`). The camera follows the root's
-frame, so it moves with the object as drawn. A node no step has moved keeps its frame.
+frame, so it moves with the object as drawn. A node no step has moved keeps its frame. The walk
+(`node_tree_frames`) goes into each child that is neither hidden nor flagged `0x80`: the root's
+children are every part of the model, so a part is drawn between steps while the part it is linked
+to is hidden, and a hidden part's own children, the models it carries, keep their frames.
 
 In a multiplayer game another player's ship is drawn between the places its last two messages gave
 it (`+0x768`, `+0x798`) instead.

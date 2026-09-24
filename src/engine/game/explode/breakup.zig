@@ -100,6 +100,11 @@ pub const Source = struct {
     place: math.Place,
     flags: srapiext.ObjectFlags,
     light_mask: u32,
+
+    /// A piece this source was cut into, for cutting again: drawn as the source is.
+    fn of(source: Source, piece: *const Piece) Source {
+        return .{ .mesh = &piece.mesh, .place = piece.place(), .flags = source.flags, .light_mask = source.light_mask };
+    }
 };
 
 /// How many planes a cut makes, and so up to how many pieces: two to the power of it.
@@ -413,37 +418,60 @@ fn trailFrom(kind: Kind, born: i32) particles.Emitter {
 }
 
 /// `explode_break_up` (`0x0046C550`): cuts each of the ship's parts in four and sends the pieces
-/// flying, the parts in the order the model's hierarchy holds them, each before those hanging from
-/// it. Its pieces show as the part does, lit as the debris setting says.
+/// flying (`cutTree`). Its pieces show as the part does, lit as the debris setting says.
 pub fn breakUp(world: gameobj.World, index: u16, kind: Kind) void {
     const explosions = world.explosions orelse return;
     const slot = &world.objects.slots[index];
     const model = &(slot.model orelse return);
-    breakUpFrom(explosions, world, slot, model, null, kind);
+    for (0..model.parts.len) |at| cutTree(explosions, world, slot, model, at, .{ .ship = kind });
 }
 
-fn breakUpFrom(explosions: *explode.Explosions, world: gameobj.World, slot: *const create.Slot, model: *const objects.Model, parent: ?usize, kind: Kind) void {
-    for (model.parts, 0..) |*part, at| {
-        if (!std.meta.eql(part.parent, parent)) continue;
-        breakUpPart(explosions, world, slot, part, kind);
-        breakUpFrom(explosions, world, slot, model, at, kind);
+/// How a part is cut up: as its ship breaks up, in a blast or a burst; or as a destroyed
+/// component's assembly goes up, the assembly's parts measuring so much across together.
+const Cutting = union(enum) {
+    ship: Kind,
+    component: f32,
+};
+
+/// Part `index` of `model` cut up as `how` says, then each part of each model it carries, and
+/// theirs in turn: the game walks the root's child list, every part in order whatever it is linked
+/// to, and each part's own children, the roots of what it carries, shown or not. A part taken out
+/// is passed over with all it carries.
+fn cutTree(explosions: *explode.Explosions, world: gameobj.World, slot: *const create.Slot, model: *const objects.Model, index: usize, how: Cutting) void {
+    const part = &model.parts[index];
+    if (part.removed) return;
+    const source = sourceOf(explosions, part);
+    switch (how) {
+        .ship => |kind| if (source) |whole| breakUpPart(explosions, world, slot, whole, kind),
+        .component => |reach| burstPart(explosions, world, slot, part, source, reach),
+    }
+    var each = model.carriedBy(index);
+    while (each.next()) |mount| {
+        for (0..mount.model.parts.len) |at| cutTree(explosions, world, slot, &mount.model, at, how);
     }
 }
 
-fn breakUpPart(explosions: *explode.Explosions, world: gameobj.World, slot: *const create.Slot, part: *const objects.Model.Part, kind: Kind) void {
+/// What a part's cut takes: its drawn level's mesh, where it stands, drawn as the part is and lit
+/// as the debris setting says; none for a part with no mesh.
+fn sourceOf(explosions: *const explode.Explosions, part: *const objects.Model.Part) ?Source {
     const shown = part.object.levels;
-    if (shown.len == 0) return;
-    const gpa = explosions.pieces.gpa;
-    const random = world.random;
-    const now = world.clock.frame_start;
-    const centre = slot.drawn.position;
-    const carried = gameobj.vector(slot.object.velocity);
-    const source: Source = .{
+    if (shown.len == 0) return null;
+    return .{
         .mesh = shown[@min(part.object.level, shown.len - 1)].mesh,
         .place = part.drawn(),
         .flags = part.object.flags,
         .light_mask = explosions.settings.debris_lights.mask(part.object.light_mask),
     };
+}
+
+/// A part broken up with its ship: cut in four through the ship's centre, each piece flying off
+/// whole or cut again as its place among them says.
+fn breakUpPart(explosions: *explode.Explosions, world: gameobj.World, slot: *const create.Slot, source: Source, kind: Kind) void {
+    const gpa = explosions.pieces.gpa;
+    const random = world.random;
+    const now = world.clock.frame_start;
+    const centre = slot.drawn.position;
+    const carried = gameobj.vector(slot.object.velocity);
     var pieces = cut(gpa, slot.drawn, source, .two, random) catch return;
     for (&pieces, 0..) |*maybe, at| {
         var piece = maybe.* orelse continue;
@@ -465,7 +493,7 @@ fn breakUpPart(explosions: *explode.Explosions, world: gameobj.World, slot: *con
             continue;
         };
         defer piece.deinit(gpa);
-        var smaller = cut(gpa, piece.place(), .{ .mesh = &piece.mesh, .place = piece.place(), .flags = source.flags, .light_mask = source.light_mask }, cuts, random) catch continue;
+        var smaller = cut(gpa, piece.place(), source.of(&piece), cuts, random) catch continue;
         const count: f32 = @floatFromInt(@intFromEnum(cuts));
         for (&smaller) |*small| {
             const flying = small.* orelse continue;
@@ -500,26 +528,19 @@ const part_tumble: f32 = 0.005;
 const part_flight = 100;
 const part_flight_range = 20;
 
-/// `0x0046CCF0` for part `index` of `model` and, after it, each part of each model mounted on it,
-/// however deep: each goes up (`burstPart`). A part taken out of its model is passed over with
-/// what it carries.
+/// `0x0046CCF0` for part `index` of `model` and, after it, each part of each model it carries
+/// (`cutTree`): each goes up (`burstPart`), the assembly's parts measuring `reach` across together.
 pub fn burstTree(world: gameobj.World, slot: *const create.Slot, model: *const objects.Model, index: usize, reach: f32) void {
-    if (model.parts[index].removed) return;
-    burstPart(world, slot, &model.parts[index], reach);
-    var each = model.carried();
-    while (each.next()) |mount| {
-        if (mount.part != index) continue;
-        for (0..mount.model.parts.len) |at| burstTree(world, slot, &mount.model, at, reach);
-    }
+    const explosions = world.explosions orelse return;
+    cutTree(explosions, world, slot, model, index, .{ .component = reach });
 }
 
 /// A part of a destroyed component's assembly going up: a lit fireball its size where it stands,
-/// burning bits thrown from about it, and its drawn mesh cut in four through the ship's centre,
-/// each quarter cut again in two, four, eight and two. Each piece flies away from the ship, the
-/// faster the more the assembly's parts measure across together (`reach`), and a lit fireball its
-/// size waits for it where it will end.
-fn burstPart(world: gameobj.World, slot: *const create.Slot, part: *const objects.Model.Part, reach: f32) void {
-    const explosions = world.explosions orelse return;
+/// burning bits thrown from about it, and its drawn mesh, `source`, cut in four through the ship's
+/// centre, each quarter cut again in two, four, eight and two. Each piece flies away from the ship,
+/// the faster the more the assembly's parts measure across together (`reach`), and a lit fireball
+/// its size waits for it where it will end.
+fn burstPart(explosions: *explode.Explosions, world: gameobj.World, slot: *const create.Slot, part: *const objects.Model.Part, source: ?Source, reach: f32) void {
     const random = world.random;
     const at = part.drawn();
     const radius = part.object.radius;
@@ -529,25 +550,17 @@ fn burstPart(world: gameobj.World, slot: *const create.Slot, part: *const object
         if (n % 3 == 0) explode.throwBit(world, at.position + out, math.normalize(out), part_bit);
     }
 
-    const shown = part.object.levels;
-    if (shown.len == 0) return;
+    const whole = source orelse return;
     const gpa = explosions.pieces.gpa;
     const now = world.clock.frame_start;
     const centre = slot.drawn.position;
     const carried = gameobj.vector(slot.object.velocity);
-    const source: Source = .{
-        .mesh = shown[@min(part.object.level, shown.len - 1)].mesh,
-        .place = at,
-        .flags = part.object.flags,
-        .light_mask = explosions.settings.debris_lights.mask(part.object.light_mask),
-    };
-    var quarters = cut(gpa, slot.drawn, source, .two, random) catch return;
+    var quarters = cut(gpa, slot.drawn, whole, .two, random) catch return;
     for (&quarters, 0..) |*maybe, n| {
         var quarter = maybe.* orelse continue;
         defer quarter.deinit(gpa);
         const cuts: Cuts = @enumFromInt(n % 3 + 1);
-        const again: Source = .{ .mesh = &quarter.mesh, .place = quarter.place(), .flags = source.flags, .light_mask = source.light_mask };
-        var pieces = cut(gpa, quarter.place(), again, cuts, random) catch continue;
+        var pieces = cut(gpa, quarter.place(), whole.of(&quarter), cuts, random) catch continue;
         const count: f32 = @floatFromInt(@intFromEnum(cuts));
         for (&pieces) |*small| {
             const piece = small.* orelse continue;
@@ -675,6 +688,48 @@ test Pieces {
     clock.frame_start = 11 + Flight.lingers + 1;
     pieces.frame(stage.world());
     try std.testing.expectEqual(null, pieces.flights.slots[0]);
+}
+
+test "a part's burst takes in the models it carries" {
+    const gpa = std.testing.allocator;
+    const srofiles = @import("../srofiles.zig");
+    var stage: explode.testing.Stage = undefined;
+    try stage.init();
+    defer stage.deinit();
+    var gun: create.testing.Model = undefined;
+    try gun.init(gpa);
+    defer gun.deinit(gpa);
+    const mission = &stage.mission;
+    const index = try create.createObject(mission.objects, &mission.tables, gun.types(), null, .predator, 0, @splat(0), &mission.random);
+
+    // A part with no mesh of its own, carrying the gun's model on an attachment.
+    var attachments = [1]shp.Attachment{std.mem.zeroes(shp.Attachment)};
+    attachments[0].kind = .gun;
+    attachments[0].orientation = math.identity;
+    var data = [1]shp.PartData{objects.testing.part()};
+    data[0].part.parent = -1;
+    data[0].attachments = &attachments;
+    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &data, .trailing_bytes = 0 };
+    var loaded_parts = [1]srofiles.LoadedPart{.{ .flags = .{}, .levels = &.{}, .meshes = &.{} }};
+    const loaded: srofiles.Loaded = .{ .parts = &loaded_parts };
+    const Answer = struct {
+        fn load(context: *anyopaque, _: []const u8) ?objects.Mounts.Mounted {
+            const fixture: *create.testing.Model = @ptrCast(@alignCast(context));
+            return .{ .model = &fixture.source, .loaded = &fixture.loaded };
+        }
+    };
+    var built: objects.Model = try .create(gpa, &source, &loaded, .{ .mounts = .{ .context = &gun, .load = Answer.load } });
+    defer built.deinit(gpa);
+    built.place(@splat(0), math.identity);
+
+    // The mounted model's part goes up with the part carrying it; taken out, it doesn't.
+    const slot = &mission.objects.slots[index];
+    burstTree(stage.world(), slot, &built, 0, 100);
+    try std.testing.expect(stage.explosions.pieces.flights.slots[0] != null);
+    stage.explosions.pieces.reset();
+    built.mounts[0].model.parts[0].removed = true;
+    burstTree(stage.world(), slot, &built, 0, 100);
+    for (stage.explosions.pieces.flights.slots) |flight| try std.testing.expectEqual(null, flight);
 }
 
 test breakUp {

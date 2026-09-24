@@ -306,10 +306,8 @@ fn walkHits(model: *Model, root: math.Place, query: anytype, carried_moving: boo
         if (part.hidden) continue;
         const moving = carried_moving or model.moving(index);
         query.part(.{ .model = model, .index = index }, model.partPlace(index, .next).within(root), moving);
-        for (model.mounts) |*mount| {
-            if (mount.part != index) continue;
-            walkHits(&mount.model, model.mountRoot(mount, root, .next), query, moving);
-        }
+        var each = model.carriedBy(index);
+        while (each.next()) |mount| walkHits(&mount.model, model.mountRoot(mount, root, .next), query, moving);
     }
 }
 
@@ -544,10 +542,10 @@ pub const Segment = struct {
 pub const PartWalk = enum {
     /// Every shown part; the last met (`bullet_hull_hit`, `0x00479940`).
     last_shown,
-    /// The parts hanging from the root; the first met (`missile_hit_hull`, `0x00495BB0`, which
-    /// walks on with the segment cut short in the frame of the part met, not the world's, so no
-    /// part after it is truly tested).
-    first_at_root,
+    /// Every part, the root's child list, hidden or not; the first met (`missile_hit_hull`,
+    /// `0x00495BB0`, which walks on with the segment cut short in the frame of the part met, not
+    /// the world's, so no part after it is truly tested).
+    first,
 };
 
 /// How far along the segment from `from` to `to` it enters the box a part of the model stands in,
@@ -558,7 +556,7 @@ pub fn partEntry(model: *const Model, from: Vector, to: Vector, walk: PartWalk) 
     for (model.parts) |*part| {
         switch (walk) {
             .last_shown => if (part.hidden) continue,
-            .first_at_root => if (part.parent != null) continue,
+            .first => if (part.removed) continue,
         }
         if (part.object.levels.len == 0) continue;
         const mesh = part.object.levels[0].mesh;
@@ -567,7 +565,7 @@ pub fn partEntry(model: *const Model, from: Vector, to: Vector, walk: PartWalk) 
         const end = math.transformTransposed(part.object.orientation, to - part.object.position);
         if (boxEntry(start, end, mesh.bounds)) |along| {
             entry = along;
-            if (walk == .first_at_root) break;
+            if (walk == .first) break;
         }
     }
     return entry;
@@ -771,10 +769,8 @@ fn loseIn(ctx: aigeneric.Context, index: u16, model: *Model, root: math.Place) v
     if (model.destroyed) loseRoot(ctx, index, model, root);
     for (model.parts, 0..) |*part, at| {
         if (part.hidden) continue;
-        var each = model.carried();
-        while (each.next()) |mount| {
-            if (mount.part == at) loseIn(ctx, index, &mount.model, mount.rootAt(part.drawn()));
-        }
+        var each = model.carriedBy(at);
+        while (each.next()) |mount| loseIn(ctx, index, &mount.model, mount.rootAt(part.drawn()));
     }
 }
 
@@ -794,8 +790,9 @@ fn loseRoot(ctx: aigeneric.Context, index: u16, model: *Model, root: math.Place)
         }
         const link = part.link_id;
         explode.componentLost(world, index, model, root, link);
-        for (model.parts, 0..) |*piece, at| {
-            if (piece.removed or piece.link_id != link) continue;
+        var each = model.assembly(link);
+        while (each.next()) |at| {
+            const piece = &model.parts[at];
             if (piece.hidden) {
                 piece.hidden = false;
                 continue;
@@ -832,9 +829,8 @@ pub fn destroyPart(slot: *create.Slot, ref: PartRef) void {
     for (&slot.components) |*entry| {
         if (entry.* == part) entry.* = null;
     }
-    var each = ref.model.carried();
+    var each = ref.model.carriedBy(ref.index);
     while (each.next()) |mount| {
-        if (mount.part != ref.index) continue;
         for (0..mount.model.parts.len) |at| destroyPart(slot, .{ .model = &mount.model, .index = at });
     }
 }
@@ -1216,16 +1212,12 @@ pub const Model = struct {
         }
     };
 
-    /// The part the root holds `child` of, counting only the parts hanging from the root, in the
-    /// order they were linked. **Unverified:** the root lists nothing else before them.
+    /// The node at `child` in the root's child list, where each part's node stays at its part's
+    /// number whatever part it is linked to: that part, or null past the parts or where it has been
+    /// taken out.
     pub fn rootChild(model: *const Model, child: usize) ?*const Part {
-        var seen: usize = 0;
-        for (model.parts) |*part| {
-            if (part.parent != null) continue;
-            if (seen == child) return part;
-            seen += 1;
-        }
-        return null;
+        if (child >= model.parts.len or model.parts[child].removed) return null;
+        return &model.parts[child];
     }
 
     /// The parts in an order that puts each after the one it hangs from, so that placing them in
@@ -1458,45 +1450,46 @@ pub const Model = struct {
     /// node it hangs from up to the root, unless it is marked already.
     pub fn markAnimating(model: *Model, index: usize) void {
         if (model.parts[index].animation.animating) return;
-        var at: ?usize = index;
-        while (at) |part| : (at = model.parts[part].parent) model.parts[part].animation.animating = true;
+        var up = model.lineage(index);
+        while (up.next()) |part| model.parts[part].animation.animating = true;
     }
 
-    /// `node_frame_update` (`0x0049A460`) for each part node, and each mounted object's, once a
-    /// frame before it is drawn, `fraction` of the way through the simulation's step: a node
-    /// that the last step committed a new place for is drawn between that place and the next.
-    /// One the step posed moves between the two poses, which turns it the short way round; one
-    /// that moved otherwise moves in a straight line and turns by a share of the turn between.
-    /// Hidden parts, and all that hangs from them, keep their frames. The models the parts mount
-    /// are drawn between their steps along with them.
+    /// `node_tree_frames` (`0x0049A880`) for the model's part nodes and those of the models they
+    /// carry, once a frame before it is drawn, `fraction` of the way through the simulation's
+    /// step: it walks the root's child list, every part in order whatever it is linked to, and
+    /// each shown part's own children, the models it carries. A hidden part keeps its frame, and
+    /// so does all it carries.
     pub fn frame(model: *Model, fraction: f32) void {
-        var walked: std.StaticBitSet(gameobj.walk_room) = .initEmpty();
-        for (model.order) |index| {
-            const part = &model.parts[index];
-            if (index >= gameobj.walk_room or part.hidden) continue;
-            if (part.parent) |parent| {
-                if (!walked.isSet(parent)) continue;
-            }
-            walked.set(index);
-            const a = &part.animation;
-            if (!a.committed and !a.unframed) continue;
-            a.unframed = false;
-            const local: Local = if (fraction == 0) a.now.place else if (!a.posed) between(a.now.place, a.next.place, fraction) else posed: {
-                const f: Vector = @splat(fraction);
-                const offset = (a.next.pose.offset - a.now.pose.offset) * f + a.now.pose.offset;
-                var turned = a.next.pose.angles - a.now.pose.angles;
-                inline for (0..3) |axis| {
-                    if (std.math.pi < turned[axis]) turned[axis] -= std.math.tau;
-                    if (turned[axis] < -std.math.pi) turned[axis] += std.math.tau;
-                }
-                const angles = turned * f + a.now.pose.angles;
-                break :posed model.placeFor(index, .{ .angles = angles, .offset = offset });
-            };
-            part.origin = local.position;
-            part.turn = local.orientation;
+        for (model.parts, 0..) |*part, index| {
+            if (part.hidden) continue;
+            model.framePart(index, fraction);
+            var each = model.carriedBy(index);
+            while (each.next()) |mount| mount.model.frame(fraction);
         }
-        var each = model.carried();
-        while (each.next()) |mount| mount.model.frame(fraction);
+    }
+
+    /// `node_frame_update` (`0x0049A460`) for part `index`: a node that the last step committed a
+    /// new place for is drawn between that place and the next. One the step posed moves between
+    /// the two poses, which turns it the short way round; one that moved otherwise moves in a
+    /// straight line and turns by a share of the turn between.
+    fn framePart(model: *Model, index: usize, fraction: f32) void {
+        const part = &model.parts[index];
+        const a = &part.animation;
+        if (!a.committed and !a.unframed) return;
+        a.unframed = false;
+        const local: Local = if (fraction == 0) a.now.place else if (!a.posed) between(a.now.place, a.next.place, fraction) else posed: {
+            const f: Vector = @splat(fraction);
+            const offset = (a.next.pose.offset - a.now.pose.offset) * f + a.now.pose.offset;
+            var turned = a.next.pose.angles - a.now.pose.angles;
+            inline for (0..3) |axis| {
+                if (std.math.pi < turned[axis]) turned[axis] -= std.math.tau;
+                if (turned[axis] < -std.math.pi) turned[axis] += std.math.tau;
+            }
+            const angles = turned * f + a.now.pose.angles;
+            break :posed model.placeFor(index, .{ .angles = angles, .offset = offset });
+        };
+        part.origin = local.position;
+        part.turn = local.orientation;
     }
 
     /// One light for each attachment of kind `light` a part carries, at its place in the model
@@ -1719,11 +1712,50 @@ pub const Model = struct {
         return .{ .mounts = model.mounts, .hung = model.hung };
     }
 
+    /// The parts of assembly `link`, those whose part records share the link id, in part order,
+    /// leaving out any taken out of the model.
+    pub fn assembly(model: *const Model, link: u32) Assembly {
+        return .{ .parts = model.parts, .link = link };
+    }
+
+    pub const Assembly = struct {
+        parts: []const Part,
+        link: u32,
+        /// The part after the one handed out last.
+        at: usize = 0,
+
+        pub fn next(each: *Assembly) ?usize {
+            while (each.at < each.parts.len) {
+                const index = each.at;
+                each.at += 1;
+                const part = &each.parts[index];
+                if (!part.removed and part.link_id == each.link) return index;
+            }
+            return null;
+        }
+    };
+
+    /// Each model part `index` carries, in the order `carried` has them: the roots among its
+    /// node's children.
+    pub fn carriedBy(model: Model, index: usize) Carried {
+        return .{ .mounts = model.mounts, .hung = model.hung, .on = index };
+    }
+
     pub const Carried = struct {
         mounts: []Mount,
         hung: []?Mount,
+        /// The part whose models alone it hands out; every part's where null.
+        on: ?usize = null,
 
         pub fn next(each: *Carried) ?*Mount {
+            while (each.take()) |mount| {
+                if (each.on) |on| if (mount.part != on) continue;
+                return mount;
+            }
+            return null;
+        }
+
+        fn take(each: *Carried) ?*Mount {
             if (each.mounts.len > 0) {
                 defer each.mounts = each.mounts[1..];
                 return &each.mounts[0];
@@ -2868,12 +2900,15 @@ test "Model.lineage" {
     try std.testing.expectEqualSlices(usize, &.{ 2, 1, 0 }, seen.items);
     try std.testing.expect(model.topOf(&model.parts[2]) == &model.parts[0]);
 
-    // Parents that run in a circle end the walk after as many steps as there are parts.
+    // Parents that run in a circle end the walk after as many steps as there are parts, and
+    // marking one animating marks them all.
     model.parts[0].parent = 2;
     seen.clearRetainingCapacity();
     up = model.lineage(2);
     while (up.next()) |index| try seen.append(gpa, index);
     try std.testing.expectEqualSlices(usize, &.{ 2, 1, 0 }, seen.items);
+    model.markAnimating(1);
+    for (model.parts) |part| try std.testing.expect(part.animation.animating);
 }
 
 test "a segment strikes a part of a model mounted on another" {
@@ -3018,13 +3053,13 @@ test "a track plays once, round and round, and back and forth" {
     try std.testing.expectEqual(0, a.speed);
     try std.testing.expectEqual(2, fired.count);
     try std.testing.expectEqual(gameobj.EventKind.puff, fired.kinds[1]);
-    // Each step commits the place the last worked out. Stopped, the part clears its mark on its
-    // next visit, the part it hangs from on the one after, and the root on the one after that.
+    // Each step commits the place the last worked out. The part it is linked to, a child of the
+    // root as every part is, plays nothing and cleared its mark on its first visit. Stopped, the
+    // part clears its own on its next visit, and the root on the one after.
     try std.testing.expectEqual(@as(Vector, .{ 0, 0, 80 }), a.now.pose.offset);
+    try std.testing.expect(!model.parts[0].animation.animating);
     gameobj.updateTree(&root, &model, fired.events());
-    try std.testing.expect(!a.animating and model.parts[0].animation.animating);
-    gameobj.updateTree(&root, &model, fired.events());
-    try std.testing.expect(!model.parts[0].animation.animating and root.flags.animating);
+    try std.testing.expect(!a.animating and root.flags.animating);
     gameobj.updateTree(&root, &model, fired.events());
     try std.testing.expect(!root.flags.animating);
 
@@ -3047,9 +3082,13 @@ test "a track plays once, round and round, and back and forth" {
     try std.testing.expectEqual(70, a.time);
     try std.testing.expectEqual(0, fired.count);
 
-    // A hidden part isn't visited, and neither is what hangs from it.
+    // A part linked to a hidden one is still visited, as a child of the root; a hidden one isn't.
     model.parts[0].hidden = true;
-    const was = a.time;
+    var was = a.time;
+    gameobj.updateTree(&root, &model, fired.events());
+    try std.testing.expect(a.time != was);
+    model.parts[1].hidden = true;
+    was = a.time;
     gameobj.updateTree(&root, &model, fired.events());
     try std.testing.expectEqual(was, a.time);
 }
@@ -3093,6 +3132,85 @@ test "Model.frame" {
     const offset = (a.next.pose.offset - a.now.pose.offset) * @as(Vector, @splat(0.5)) + a.now.pose.offset;
     const short = model.placeFor(1, .{ .angles = .{ 0, -std.math.pi, 0 }, .offset = offset });
     for (short.orientation, part.turn) |want, got| try std.testing.expectApproxEqAbs(want, got, 1e-5);
+
+    // The part it is linked to hidden, it is framed still, a child of the root as every part is;
+    // hidden itself, it keeps its frame.
+    model.parts[0].hidden = true;
+    a.unframed = true;
+    model.frame(0);
+    try std.testing.expectEqual(a.now.place.position, part.origin);
+    part.hidden = true;
+    part.origin = @splat(0);
+    a.unframed = true;
+    model.frame(0);
+    try std.testing.expectEqual(@as(Vector, @splat(0)), part.origin);
+}
+
+test "Model.assembly" {
+    const gpa = std.testing.allocator;
+    const srmesh = @import("../surrender/surrenderlib/srmesh.zig");
+    const mesh = try srmesh.testing.square(gpa);
+    defer mesh.deinit(gpa);
+    var animated: Animated = undefined;
+    animated.init(&mesh, &.{});
+    var model: Model = try .create(gpa, &animated.source, &animated.loaded, .{});
+    defer model.deinit(gpa);
+
+    // The parts sharing a link id, in part order, but for one taken out.
+    for (model.parts, [_]u32{ 4, 7, 4 }) |*part, link| part.link_id = link;
+    var each = model.assembly(4);
+    try std.testing.expectEqual(0, each.next());
+    try std.testing.expectEqual(2, each.next());
+    try std.testing.expectEqual(null, each.next());
+    model.parts[0].removed = true;
+    each = model.assembly(4);
+    try std.testing.expectEqual(2, each.next());
+    try std.testing.expectEqual(null, each.next());
+}
+
+test "Model.rootChild" {
+    const gpa = std.testing.allocator;
+    const srmesh = @import("../surrender/surrenderlib/srmesh.zig");
+    const mesh = try srmesh.testing.square(gpa);
+    defer mesh.deinit(gpa);
+    var animated: Animated = undefined;
+    animated.init(&mesh, &.{});
+    var model: Model = try .create(gpa, &animated.source, &animated.loaded, .{});
+    defer model.deinit(gpa);
+    testingLink(&model);
+
+    // The root's child list holds each part at its number, linked to another or not.
+    try std.testing.expect(model.rootChild(2) == &model.parts[2]);
+    try std.testing.expectEqual(null, model.rootChild(3));
+    model.parts[2].removed = true;
+    try std.testing.expectEqual(null, model.rootChild(2));
+}
+
+test partEntry {
+    const gpa = std.testing.allocator;
+    const srmesh = @import("../surrender/surrenderlib/srmesh.zig");
+    const mesh = try srmesh.testing.square(gpa);
+    defer mesh.deinit(gpa);
+    var animated: Animated = undefined;
+    animated.init(&mesh, &.{});
+    var model: Model = try .create(gpa, &animated.source, &animated.loaded, .{});
+    defer model.deinit(gpa);
+    testingLink(&model);
+    model.place(@splat(0), math.identity);
+
+    // Three squares in a row along Z, each linked to the one before; a segment along Z through
+    // them all meets the first first and the last last.
+    const from: Vector = .{ 0, 0, -50 };
+    const to: Vector = .{ 0, 0, 250 };
+    try std.testing.expectApproxEqAbs(50.0 / 300.0, partEntry(&model, from, to, .first).?, 1e-4);
+    try std.testing.expectApproxEqAbs(250.0 / 300.0, partEntry(&model, from, to, .last_shown).?, 1e-4);
+    // A hidden part counts for a missile, not for a shot; one taken out, for neither.
+    model.parts[0].hidden = true;
+    try std.testing.expectApproxEqAbs(50.0 / 300.0, partEntry(&model, from, to, .first).?, 1e-4);
+    model.parts[0].removed = true;
+    try std.testing.expectApproxEqAbs(150.0 / 300.0, partEntry(&model, from, to, .first).?, 1e-4);
+    model.parts[2].hidden = true;
+    try std.testing.expectApproxEqAbs(150.0 / 300.0, partEntry(&model, from, to, .last_shown).?, 1e-4);
 }
 
 test "Node.framePlace" {

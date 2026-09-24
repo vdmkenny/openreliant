@@ -816,8 +816,8 @@ fn stop(world: gameobj.World, at: u8) bool {
     return true;
 }
 
-/// `missile_hit_hull` (`0x00495BB0`): the part of the object's hull the missile reaches, the nearest
-/// of the parts at its root whose box the segment meets; the quadrant's armour takes the type's
+/// `missile_hit_hull` (`0x00495BB0`): the part of the object's hull the missile reaches, the first
+/// of its parts, hidden or not, whose box the segment meets; the quadrant's armour takes the type's
 /// hull damage, but a Havoc's or an Imp's, and the hit is heard (`shieldfx.hullHit`), and the
 /// missile stops and ends.
 ///
@@ -830,7 +830,7 @@ fn hitHull(world: gameobj.World, at: u8, index: u16, struck: collision.Quadrant)
     const model = if (all.slots[index].model) |*live| live else return false;
     const from = missile.slot.drawn.position;
     const to = gameobj.vector(missile.object().root.next_position);
-    const entry = objects.partEntry(model, from, to, .first_at_root) orelse return false;
+    const entry = objects.partEntry(model, from, to, .first) orelse return false;
     if (missile.type.shockwave() == null) {
         collision.armorDamage(world, index, struck, missile.stats(&all.missile_stats).hull_damage, missile.launcher, damageKind(missile.type));
         shieldfx.hullHit(world, index, from + (to - from) * @as(Vector, @splat(entry)));

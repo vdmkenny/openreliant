@@ -173,8 +173,8 @@ pub fn alongNose(place: math.Place, point: Vector, radius: f32) bool {
 const escape_reach: f32 = 20000;
 
 /// `0x00402500`: which way lies clear of a ship's hull from `from`. Each box of the collision trees
-/// of the parts hanging from its root whose edge, taking it as a sphere as wide as its half-size, is
-/// within `escape_reach` of `from` pushes away from it, the harder the nearer it is; the sum,
+/// of its parts, the root's child list, whose edge, taking it as a sphere as wide as its half-size,
+/// is within `escape_reach` of `from` pushes away from it, the harder the nearer it is; the sum,
 /// normalized.
 pub fn escapeDirection(slot: *const create.Slot, from: Vector) Vector {
     var away: Vector = @splat(0);
@@ -182,7 +182,7 @@ pub fn escapeDirection(slot: *const create.Slot, from: Vector) Vector {
     const source = (slot.type orelse return math.normalize(away)).model;
     const count = @min(model.parts.len, source.parts.len);
     for (model.parts[0..count], source.parts[0..count]) |part, data| {
-        if (part.parent != null) continue;
+        if (part.removed) continue;
         for (data.nodes) |node| {
             const toward = math.transform(part.object.orientation, gameobj.vector(node.centre)) + part.object.position - from;
             const gap = math.length(toward) - math.length(gameobj.vector(node.half_size));

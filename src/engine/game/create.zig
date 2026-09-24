@@ -723,10 +723,8 @@ pub const Hardpoint = struct {
     attachment: *const shp.Attachment,
 };
 
-/// The missile hardpoints the loadout walks, in turn: those of the parts that hang from the root,
-/// each part's in order. **Unverified:** that the root lists its parts in the order the model does.
-/// The hardpoints of a part that hangs from another part are passed over, as the game's walk never
-/// reaches them.
+/// The missile hardpoints the loadout walks, in turn (`object_fit_missiles`): those of each part in
+/// the root's child list, every part in order whatever it is linked to, each part's in order.
 pub fn hardpoints(model: *const objects.Model) Hardpoints {
     return .{ .parts = model.parts };
 }
@@ -742,7 +740,7 @@ pub const Hardpoints = struct {
             each.attachment = 0;
         }) {
             const part = &each.parts[each.part];
-            if (part.parent != null) continue;
+            if (part.removed) continue;
             while (each.attachment < part.attachments.len) {
                 const attachment = &part.attachments[each.attachment];
                 each.attachment += 1;
@@ -1226,6 +1224,29 @@ test settledTier {
     try std.testing.expectEqual(3, settledTier(3, .predator, 2));
     // What isn't a fighter keeps what it was asked for.
     try std.testing.expectEqual(0, settledTier(0, .sabre, 2));
+}
+
+test hardpoints {
+    const srapiext = @import("../surrender/surrenderlib/srapiext.zig");
+    var points: [2]shp.Attachment = @splat(std.mem.zeroes(shp.Attachment));
+    for (&points) |*point| point.kind = .missile;
+    const shown: srapiext.MeshObject = .{ .flags = .{}, .position = @splat(0), .radius = 0, .levels = &.{} };
+    var parts = [_]objects.Model.Part{
+        .{ .hidden = false, .parent = null, .origin = @splat(0), .object = shown, .attachments = points[0..1] },
+        .{ .hidden = false, .parent = 0, .origin = @splat(0), .object = shown, .attachments = points[1..2] },
+    };
+    const model: objects.Model = .{ .parts = &parts, .order = &.{}, .lights = &.{}, .glows = &.{}, .mounts = &.{} };
+
+    // A part linked to another is in the root's child list as well, and its hardpoints are walked.
+    var each = hardpoints(&model);
+    try std.testing.expectEqual(0, each.next().?.part);
+    try std.testing.expectEqual(1, each.next().?.part);
+    try std.testing.expectEqual(null, each.next());
+    // One taken out of the model is not.
+    parts[1].removed = true;
+    each = hardpoints(&model);
+    try std.testing.expectEqual(0, each.next().?.part);
+    try std.testing.expectEqual(null, each.next());
 }
 
 test "a ship's racks are fitted by its tier" {

@@ -125,9 +125,10 @@ timer in the state, `min + random * (max - min)` ticks after `frame_start`, whic
 | `RunToShip` | Flies to the friendly ship chosen for it. By a ship with components it ends within 5000 units of the ship's edge; by one without, it matches the ship's speed along its nose and closes by the distance past 5000. |
 | `EndScript` | Ends the maneuver: it sets the maneuver's end to the tick before, so Fight chooses another. |
 
-`ai_escape_direction` sums, over each box of the collision trees of the parts hanging from the
-ship's root, taken as a sphere as wide as its half-size, a push away from the box for each whose
-edge is within 20000 units of the point, the harder the nearer, and normalizes the sum.
+`ai_escape_direction` sums, over each box of the collision trees of the parts in the ship's root's
+child list, every part whatever it is linked to, taken as a sphere as wide as its half-size, a push
+away from the box for each whose edge is within 20000 units of the point, the harder the nearer, and
+normalizes the sum.
 
 The commands that fly to a point (`maneuver_steer_to_point`, `0x00405C60`) go at full throttle
 and steer with [`ai_steer`](orders.md#steering) at the pilot's turn limit and no ease, flags `0xB`,
