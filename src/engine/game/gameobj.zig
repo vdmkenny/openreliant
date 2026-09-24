@@ -374,6 +374,12 @@ pub const Type = enum(u32) {
         return object_type.rock() == .asteroid;
     }
 
+    /// Asteroid `n`, from `ast_1.shp`, round and round the seven.
+    pub fn asteroid(n: usize) Type {
+        const range = rocks.get(.asteroid);
+        return @enumFromInt(range[0] + n % (range[1] - range[0] + 1));
+    }
+
     /// The child of the root the AI aims at on an object of this type, where it aims at a part
     /// rather than the whole (`0x004018F0`): the Saladin's and the troop car's twenty-first, the
     /// Kronstadt's eighteenth, the Boridin's twentieth.
@@ -947,6 +953,9 @@ test "Type.rock" {
     try std.testing.expectEqual(null, Type.rock(@enumFromInt(0x80)));
     try std.testing.expectEqual(null, Type.predator.rock());
     try std.testing.expect(!Type.isAsteroid(@enumFromInt(0x85)));
+    try std.testing.expectEqual(0x79, Type.asteroid(0).number());
+    try std.testing.expectEqual(0x7F, Type.asteroid(6).number());
+    try std.testing.expectEqual(0x79, Type.asteroid(7).number());
 }
 
 test GunMode {
