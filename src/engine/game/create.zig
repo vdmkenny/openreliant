@@ -688,7 +688,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
         loadoutByTier(object, model, settledTier(tier, ship_type, all.campaign_tier));
         try fitRacks(all.gpa, object, model, if (slot.type) |loaded| loaded.effects else .{});
     }
-    for (object.racks[0..@intCast(object.rack_count)]) |rack| {
+    for (object.fittedRacks()) |rack| {
         if (rack.type == .fuel_pod) object.afterburner_fuel += fuel_pod_fuel;
     }
     ai.setTargetable(object, combat, true);

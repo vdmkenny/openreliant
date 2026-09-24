@@ -11,6 +11,7 @@ const assert = std.debug.assert;
 
 const gameobj = @import("../gameobj.zig");
 const missiles = @import("../missiles.zig");
+const Type = missiles.Type;
 
 /// How many entries the ring holds.
 pub const max_entries = 10;
@@ -26,7 +27,7 @@ pub const Entry = extern struct {
     shape: i16 = 0,
     /// Its name's text.
     name: i16 = 0,
-    type: missiles.Type = .none,
+    type: Type = .none,
 
     comptime {
         assert(@sizeOf(Entry) == 10);
@@ -54,7 +55,7 @@ pub const Ring = struct {
     pub fn build(ring: *Ring, object: *const gameobj.GameObject) void {
         ring.entries = @splat(.{});
         var count: usize = 0;
-        for (object.racks[0..@intCast(@max(object.rack_count, 0))]) |rack| {
+        for (object.fittedRacks()) |rack| {
             if (rack.type == .fuel_pod) continue;
             const left: i16 = @truncate(rack.count);
             for (ring.entries[0..count]) |*entry| {
@@ -92,7 +93,7 @@ test "Ring.build" {
     var object = gameobj.testing.object();
     // Screamers on two racks, a fuel pod, a Havoc and a Raptor pod.
     object.rack_count = 5;
-    const loadout = [_]struct { missiles.Type, i32 }{ .{ .screamer, 20 }, .{ .fuel_pod, 1 }, .{ .havoc, 1 }, .{ .screamer, 20 }, .{ .raptor, 3 } };
+    const loadout = [_]struct { Type, i32 }{ .{ .screamer, 20 }, .{ .fuel_pod, 1 }, .{ .havoc, 1 }, .{ .screamer, 20 }, .{ .raptor, 3 } };
     for (loadout, 0..) |rack, i| object.racks[i] = .{ .type = rack[0], .count = rack[1] };
     var ring: Ring = .{};
     ring.build(&object);
@@ -110,5 +111,3 @@ test "Ring.build" {
     try std.testing.expectEqual(0x24, ring.armedEntry().shape);
     try std.testing.expectEqual(0x121, ring.armedEntry().name);
 }
-
-const Type = missiles.Type;

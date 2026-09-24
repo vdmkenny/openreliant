@@ -704,6 +704,11 @@ pub const GameObject = extern struct {
         return vector(object.root.next_position);
     }
 
+    /// Its racks, `rack_count` of them.
+    pub fn fittedRacks(object: *const GameObject) []const Rack {
+        return object.racks[0..@intCast(@max(object.rack_count, 0))];
+    }
+
     /// The way its nose will point at the next step.
     pub fn nextHeading(object: *const GameObject) Vector {
         return math.forward(object.root.next_orientation);

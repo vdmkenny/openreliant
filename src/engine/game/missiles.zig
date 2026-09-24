@@ -23,8 +23,9 @@ const gameobj = @import("gameobj.zig");
 const objects = @import("objects.zig");
 const shield = @import("shield.zig");
 const shieldfx = @import("shieldfx.zig");
-const shockwave = @import("shockwave.zig");
+const shockwave_mod = @import("shockwave.zig");
 const sound3d = @import("sound3d.zig");
+const Linked = @import("table.zig").Linked;
 pub const trail = @import("missiles/trail.zig");
 const FlightModel = create.FlightModel;
 const GameObject = gameobj.GameObject;
@@ -64,6 +65,16 @@ pub const Type = enum(i16) {
         return switch (missile) {
             .raptor, .havoc, .jack_hammer, .bandit, .vagabond, .imp, .hawk => true,
             else => false,
+        };
+    }
+
+    /// The shockwave a Havoc's or an Imp's end sets off, which does all it does: their hits do
+    /// no damage, and they end where they touch anything.
+    pub fn shockwave(missile: Type) ?shockwave_mod.Kind {
+        return switch (missile) {
+            .havoc => .havoc,
+            .imp => .imp,
+            else => null,
         };
     }
 
@@ -210,6 +221,17 @@ pub const Table = struct {
     }
 };
 
+/// Within this of the launcher's nose a missile locks on (`0x004DC484`).
+const lock_cone: f32 = 0.7;
+
+/// Whether what lies `toward` a launcher whose nose points along `nose` is where a missile of
+/// `stats` can lock on: within its lock range, and within 0.7 of the nose. The player's lock and
+/// the Fight order's both ask it (`missile_lock_possible`, `fight_fire`).
+pub fn inLockReach(stats: *const Stats, toward: Vector, nose: Vector) bool {
+    if (math.lengthSquared(toward) > stats.lock_range * stats.lock_range) return false;
+    return math.dot(math.normalize(toward), nose) >= lock_cone;
+}
+
 // --- In flight -------------------------------------------------------------------------------
 
 /// How many missiles fly at once (`missiles_init`, `0x00494CB0`).
@@ -245,6 +267,11 @@ pub const Missile = struct {
         return &missile.slot.object;
     }
 
+    /// Lets go of its object's model.
+    pub fn release(missile: *Missile, gpa: Allocator) void {
+        missile.slot.release(gpa);
+    }
+
     fn flight(missile: *const Missile) *const FlightModel {
         return missile.slot.flight.?;
     }
@@ -255,72 +282,10 @@ pub const Missile = struct {
     }
 };
 
-/// The missiles in flight (`missiles`, `missile_list`, `0x005887F4`), which the game keeps in
-/// `missiles.cpp`'s globals; the port keeps them with the objects they fly among.
-pub const Missiles = struct {
-    records: [max_missiles]?Missile = @splat(null),
-    /// The newest live missile, the head of their list.
-    newest: ?u8 = null,
-
-    /// `missiles_reset` (`0x00494D80`), as a mission ends: every missile let go, its model with
-    /// it.
-    pub fn reset(missiles: *Missiles, gpa: Allocator) void {
-        for (&missiles.records) |*record| {
-            if (record.*) |*missile| missile.slot.release(gpa);
-            record.* = null;
-        }
-        missiles.newest = null;
-    }
-
-    /// The live missile at `index`, or null.
-    pub fn get(missiles: *Missiles, index: usize) ?*Missile {
-        if (index >= max_missiles) return null;
-        return if (missiles.records[index]) |*missile| missile else null;
-    }
-
-    /// Each live missile's index, newest first. The walk takes the next before it hands one out,
-    /// so a missile that ends on the way doesn't end the walk.
-    pub fn walk(missiles: *const Missiles) Walk {
-        return .{ .missiles = missiles, .at = missiles.newest };
-    }
-
-    pub const Walk = struct {
-        missiles: *const Missiles,
-        at: ?u8,
-
-        pub fn next(w: *Walk) ?u8 {
-            const index = w.at orelse return null;
-            w.at = if (w.missiles.records[index]) |missile| missile.older else null;
-            return index;
-        }
-    };
-
-    /// The first record free, where one is.
-    fn free(missiles: *const Missiles) ?u8 {
-        for (missiles.records, 0..) |record, index| {
-            if (record == null) return @intCast(index);
-        }
-        return null;
-    }
-
-    /// Puts the new missile at `index` at the head of the list.
-    fn link(missiles: *Missiles, index: u8) void {
-        const missile = &missiles.records[index].?;
-        missile.older = missiles.newest;
-        missile.newer = null;
-        if (missiles.newest) |head| missiles.records[head].?.newer = index;
-        missiles.newest = index;
-    }
-
-    /// Takes the missile at `index` out of the list and frees its record.
-    fn unlink(missiles: *Missiles, gpa: Allocator, index: u8) void {
-        const missile = &missiles.records[index].?;
-        if (missile.newer) |newer| missiles.records[newer].?.older = missile.older else missiles.newest = missile.older;
-        if (missile.older) |older| missiles.records[older].?.newer = missile.newer;
-        missile.slot.release(gpa);
-        missiles.records[index] = null;
-    }
-};
+/// The missiles in flight (`missiles`, and `missile_list`, `0x005887F4`, the newest), which the
+/// game keeps in `missiles.cpp`'s globals. `reset` is `missiles_reset` (`0x00494D80`), as a mission
+/// ends.
+pub const Missiles = Linked(Missile, max_missiles);
 
 /// `missile_launch` (`0x00496290`): a missile from the launcher's rack at `rack`, at `target`,
 /// where the launcher may launch them and a record is free. A pod launches a missile of its own,
@@ -338,8 +303,7 @@ pub fn launch(world: gameobj.World, launcher: u16, rack: usize, target: aigeneri
     const all = world.objects;
     const missiles = &all.missiles;
     const carrier = &all.slots[launcher];
-    if (carrier.object.flags.missiles_disabled) return;
-    const at = missiles.free() orelse return;
+    if (carrier.object.flags.missiles_disabled or missiles.full()) return;
     const racked = &carrier.object.racks[rack];
     const number = racked.type.index() orelse return;
     const model = if (carrier.model) |*carried| carried else return;
@@ -370,8 +334,7 @@ pub fn launch(world: gameobj.World, launcher: u16, rack: usize, target: aigeneri
     object.root.flags.committed = true;
     object.root.flags.unframed = true;
     slot.drawn = places.drawn;
-    missiles.records[at] = .{ .slot = slot, .launcher = launcher, .type = racked.type };
-    missiles.link(at);
+    const at = missiles.add(.{ .slot = slot, .launcher = launcher, .type = racked.type }).?;
 
     if (world.hearing) |hearing| {
         const class: sound3d.Class = if (launcher == all.player) .guaranteed else .not_reserved;
@@ -730,12 +693,7 @@ pub fn end(world: gameobj.World, at: u8) void {
     const missile = all.missiles.get(at) orelse return;
     const object = missile.object();
     if (object.sound_voice != 0xFFFF) if (world.hearing) |hearing| hearing.sound.end3D(@intCast(object.sound_voice));
-    const wave: ?shockwave.Kind = switch (missile.type) {
-        .havoc => .havoc,
-        .imp => .imp,
-        else => null,
-    };
-    if (wave) |kind| shockwave.setOff(world, missile.slot.drawn, .{
+    if (missile.type.shockwave()) |kind| shockwave_mod.setOff(world, missile.slot.drawn, .{
         .kind = kind,
         .size = end_wave_size,
         .life = end_wave_life,
@@ -746,7 +704,7 @@ pub fn end(world: gameobj.World, at: u8) void {
     if (missile.trail) |left| if (world.trails) |trails| if (trails.get(left)) |fading| {
         fading.follows = .nothing;
     };
-    all.missiles.unlink(all.gpa, at);
+    all.missiles.remove(all.gpa, at);
 }
 
 /// The shockwave a Havoc's or an Imp's end sets off: how far across, and for how long.
@@ -766,8 +724,9 @@ const end_wave_life = 500;
 ///
 /// The player's shields take it only on the fore quadrant, and only as it empties a shield reserve:
 /// the fore's while it holds any, else the aft's (`ShieldReserves.missileHit`). On any other
-/// quadrant, with its shield up, a missile does the player's ship no harm. **Unverified** in play;
-/// the port keeps it as the code has it.
+/// quadrant, with its shield up, a missile does the player's ship no harm. **Unverified** in play
+/// ([#214](https://github.com/vdmkenny/openreliant/issues/214)); the port keeps it as the code has
+/// it.
 ///
 /// Not ported: in a multiplayer mission, the shield damage five times over.
 fn collide(world: gameobj.World, at: u8) bool {
@@ -788,7 +747,7 @@ fn collide(world: gameobj.World, at: u8) bool {
         const to = slot.drawn.position - from;
         const when = std.math.clamp(math.dot(span, to) * along, 0, 1);
         if (math.lengthSquared(span * @as(Vector, @splat(when)) - to) >= object.radius * object.radius) continue;
-        if (missile.type == .havoc or missile.type == .imp) return stop(world, at);
+        if (missile.type.shockwave() != null) return stop(world, at);
         const point = from + span * @as(Vector, @splat(sphereEntry(span, to, object.radius)));
         const struck = collision.quadrant(object, math.transformTransposed(slot.drawn.orientation, point - slot.drawn.position));
         if (object.shields.get(struck) < 0 or object.invulnerable == ._unknown_4) return hitHull(world, at, index, struck);
@@ -840,7 +799,7 @@ fn hitHull(world: gameobj.World, at: u8, index: u16, struck: collision.Quadrant)
     const from = missile.slot.drawn.position;
     const to = gameobj.vector(missile.object().root.next_position);
     const entry = objects.partEntry(model, from, to, .first_at_root) orelse return false;
-    if (missile.type != .havoc and missile.type != .imp) {
+    if (missile.type.shockwave() == null) {
         collision.armorDamage(world, index, struck, missile.stats(&all.missile_stats).hull_damage, missile.launcher, damageKind(missile.type));
         shieldfx.hullHit(world, index, from + (to - from) * @as(Vector, @splat(entry)));
     }
@@ -859,7 +818,7 @@ fn hitComponents(world: gameobj.World, at: u8, index: u16) bool {
     const model = if (slot.model) |*live| live else return false;
     const source = if (slot.type) |kind| kind.model else return false;
     const hit = objects.hitSegment(model, source, missile.slot.drawn.position, gameobj.vector(missile.object().root.next_position)) orelse return false;
-    if (missile.type != .havoc and missile.type != .imp) {
+    if (missile.type.shockwave() == null) {
         collision.componentDamage(world, index, &model.parts[hit.part], missile.stats(&all.missile_stats).component_damage, missile.launcher, damageKind(missile.type));
     }
     return stop(world, at);

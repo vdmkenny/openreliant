@@ -523,9 +523,7 @@ fn fire(fighter: Fighter) void {
     counterMissiles(fighter);
 }
 
-/// Within this of the ship's nose a missile locks on (`0x004DC484`), and the odds of launching one
-/// ready each time the wait for it comes round (`0x004DC3F8`).
-const lock_cone: f32 = 0.7;
+/// The odds of launching a missile ready each time the wait for it comes round (`0x004DC3F8`).
 const launch_odds: f32 = 0.2;
 
 /// `fight_fire`'s missiles: of the first rack with missiles left but for Jack Hammers, which the
@@ -541,13 +539,10 @@ fn aimMissile(fighter: Fighter) void {
     const state = fighter.state;
     state.missile_ready = false;
     const now = fighter.now();
-    for (ship.racks[0..@intCast(@max(ship.rack_count, 0))], 0..) |rack, at| {
+    for (ship.fittedRacks(), 0..) |rack, at| {
         if (rack.count <= 0 or rack.type == .jack_hammer) continue;
         const stats = all.missile_stats.of(rack.type) orelse break;
-        const toward = fighter.aimed().position - fighter.position();
-        const in_reach = math.lengthSquared(toward) <= stats.lock_range * stats.lock_range and
-            math.dot(math.normalize(toward), fighter.heading()) >= lock_cone;
-        if (!in_reach) state.locked_at = stats.lock_time + now;
+        if (!missiles.inLockReach(stats, fighter.aimed().position - fighter.position(), fighter.heading())) state.locked_at = stats.lock_time + now;
         if (state.locked_at < now) state.missile_ready = true;
         if (state.missile_ready and ship.missile_at < now) {
             if (fighter.ctx.world.random.fraction() < launch_odds) missiles.launch(fighter.ctx.world, fighter.index, at, fighter.target());

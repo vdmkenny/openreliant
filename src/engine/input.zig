@@ -1046,7 +1046,7 @@ pub fn launchMissile(world: gameobj.World, index: u16) void {
     if (ship.flags.cloaked) return;
     if (display.windows.open(.missiles, false)) display.windows.status.getPtr(.missiles).held = true;
     if (armed.count == 0) if (sound) |player| player.say(missiles_gone);
-    for (ship.racks[0..@intCast(@max(ship.rack_count, 0))], 0..) |rack, at| {
+    for (ship.fittedRacks(), 0..) |rack, at| {
         if (rack.type != armed.type or rack.count < 1) continue;
         const target: aigeneric.Target = if (locked and ship.order_count > 0) all.slots[index].orders[0].target else .none;
         missiles.launch(world, index, at, target);

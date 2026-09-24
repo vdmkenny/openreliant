@@ -206,7 +206,7 @@ pub fn launchJackHammer(ctx: Context, index: u16) void {
 fn launchFrom(ctx: Context, index: u16, jack_hammer: bool) void {
     const slot = &ctx.world.objects.slots[index];
     const ship = &slot.object;
-    for (ship.racks[0..@intCast(@max(ship.rack_count, 0))], 0..) |rack, at| {
+    for (ship.fittedRacks(), 0..) |rack, at| {
         if (rack.count < 1 or (rack.type == .jack_hammer) != jack_hammer) continue;
         missiles.launch(ctx.world, index, at, slot.orders[0].target);
         return;

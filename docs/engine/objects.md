@@ -40,16 +40,21 @@ again and again, and the game's loops never end; the port walks it once.
 | `0x01C` | 4 | Data kept for the type and shared by its objects |
 | `0x020` | 4 | The renderer's object for it, or null |
 | `0x028` | `0x104` | The root node of its model hierarchy |
+| `0x150` | 2 | [Missile racks](missiles.md#the-loadout) fitted |
 | `0x152` | 2 | Components listed |
+| `0x158` | `0xF0` | Up to 20 missile racks, 12 bytes each |
 | `0x248` | `0x2D0` | Up to 60 components, 12 bytes each |
 | `0x5D0` | 4 | Engines in its model: parts of subsystem class 5 |
 | `0x5D4` | 4 | The share of its engines left: 1.0 when created, less `1 / engines` for each one destroyed |
-| `0x5E8` | 4 | Afterburner fuel: `100 * afterburner_fuel` from its stats when created, or zero in one of the game's modes |
+| `0x5E8` | 4 | Afterburner fuel: `100 * afterburner_fuel` from its stats when created, or zero in one of the game's modes; 5000 more for each fuel pod |
+| `0x5EC` | 2 | [Countermeasures](missiles.md#countermeasures) left: 29 when created |
 | `0x5F0` | 16 | Shields: four values, each `6 * shield_power - 1` when created |
 | `0x600` | 16 | Armor: four values, each `6 * armor_class - 1` when created |
 | `0x634` | 2 | Where its lights stand in their [blinks](rendering.md#static-lights), in ticks added to the mission's clock: `rand()` over its largest value, times 100 and truncated, when allocated (`object_alloc`, `0x00475DD0`) |
 | `0x618` | 8 | The slots of two objects it passes through: the collision sweep tests no pair where either names the other. -1 when created |
 | `0x644` | 4 | Its side: 0 friendly, 1 hostile, 2 neutral. Its type's when created; `SetHostile` makes it hostile or friendly |
+| `0x648` | 4 | The tier a re-arm fits its racks by; nothing writes it |
+| `0x64C` | 4 | Set while a missile homes on it: `mission_frame` clears it on every object, and `missiles_update` sets it |
 | `0x658`, `0x65C` | 8 | Its [smoke](effects.md#smoke)'s template and emitter, or null for none |
 | `0x660` | 1 | Its smoke's level, 0 to 3, by its damage |
 | `0x664` | 4 | The shields' condition, how well they [recharge](#shields) as the armor wears: 1.0 when created |
@@ -69,6 +74,7 @@ again and again, and the game's loops never end; the port walks it once.
 | `0xB8C`, `0xB90` | 8 | Orders from other players waiting for their frame, in a multiplayer game |
 | `0xB94` | 1 | Set once `create_object` has filled the slot |
 | `0xB95` | 1 | Nonzero while invulnerable: `SetInvulnerability` |
+| `0xB96` | 2 | The 3D voice it holds, `0xFFFF` for none |
 
 ## Creating an object
 

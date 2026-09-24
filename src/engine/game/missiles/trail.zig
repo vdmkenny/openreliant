@@ -19,6 +19,7 @@ const gameobj = @import("../gameobj.zig");
 const GameObject = gameobj.GameObject;
 const matmanager = @import("../matmanager.zig");
 const missiles = @import("../missiles.zig");
+const table = @import("../table.zig");
 const xtrabits = @import("../xtrabits.zig");
 
 /// A type's look (`missile_looks`, `0x00503958`, `0x58` bytes a type), which picks the pieces of
@@ -182,7 +183,7 @@ pub const Trail = struct {
     }
 
     /// The pieces let go of.
-    fn release(trail: *Trail, gpa: Allocator) void {
+    pub fn release(trail: *Trail, gpa: Allocator) void {
         if (trail.ribbon) |ribbon| ribbon.destroy(gpa);
         for (&trail.sides) |*side| if (side.*) |ribbon| {
             ribbon.destroy(gpa);
@@ -197,9 +198,8 @@ pub const Trail = struct {
 /// pieces' makers require.
 pub const Trails = struct {
     gpa: Allocator,
-    records: [max_trails]?Trail = @splat(null),
-    /// The newest live trail (`missile_trail_list`, `0x005887F8`).
-    newest: ?u8 = null,
+    /// The trails, the newest first (`missile_trail_list`, `0x005887F8`).
+    list: table.Linked(Trail, max_trails) = .{},
     images: Images,
 
     pub const Images = struct {
@@ -229,15 +229,11 @@ pub const Trails = struct {
 
     /// `missiles_reset`'s part (`0x00494D80`), as a mission ends: every trail let go.
     pub fn reset(trails: *Trails) void {
-        for (&trails.records) |*record| {
-            if (record.*) |*trail| trail.release(trails.gpa);
-            record.* = null;
-        }
-        trails.newest = null;
+        trails.list.reset(trails.gpa);
     }
 
     pub fn get(trails: *Trails, index: usize) ?*Trail {
-        return if (trails.records[index]) |*trail| trail else null;
+        return trails.list.get(index);
     }
 
     /// `missile_trail_create` (`0x00494E40`): a trail of `missile_type`'s look following `follows`,
@@ -247,16 +243,10 @@ pub const Trails = struct {
     /// **Fix:** with every trail taken, the game takes the record past the last, and writes past
     /// its pool; the port leaves the missile without a trail.
     pub fn start(trails: *Trails, world: gameobj.World, follows: Follows, missile_type: missiles.Type) Allocator.Error!?u8 {
-        const at: u8 = for (trails.records, 0..) |record, index| {
-            if (record == null) break @intCast(index);
-        } else return null;
         const style = &looks[missile_type.index() orelse return null];
-        trails.records[at] = .{ .type = missile_type, .follows = follows, .scrolled = world.clock.frame_start };
-        const trail = &trails.records[at].?;
-        trail.older = trails.newest;
-        if (trails.newest) |head| trails.records[head].?.newer = at;
-        trails.newest = at;
-        errdefer trails.free(at);
+        const at = trails.list.add(.{ .type = missile_type, .follows = follows, .scrolled = world.clock.frame_start }) orelse return null;
+        const trail = trails.get(at).?;
+        errdefer trails.list.remove(trails.gpa, at);
 
         const slot = followed(trail, world.objects) orelse return at;
         const tail = tailCorners(&slot.object);
@@ -278,23 +268,18 @@ pub const Trails = struct {
 
     /// `missile_trail_free` (`0x00495200`): the trail's pieces let go, and its record freed.
     fn free(trails: *Trails, at: u8) void {
-        const trail = &trails.records[at].?;
-        trail.release(trails.gpa);
-        if (trail.older) |older| trails.records[older].?.newer = trail.newer;
-        if (trail.newer) |newer| trails.records[newer].?.older = trail.older else trails.newest = trail.older;
-        trails.records[at] = null;
+        trails.list.remove(trails.gpa, at);
     }
 
     /// The end of `missiles_update` (`0x004960F0`), once a frame: each trail's pieces, newest
     /// first, by its look: the side ribbons (`sides`), the ribbon (`ribbonFrame`), the plume
     /// (`plumeFrame`) and the glow (`glowFrame`). A trail that fades out is freed on the way.
     pub fn frame(trails: *Trails, world: gameobj.World) void {
-        var at = trails.newest;
-        while (at) |index| {
-            at = trails.records[index].?.older;
-            const pieces = trails.records[index].?.looked().pieces;
+        var walk = trails.list.walk();
+        while (walk.next()) |index| {
+            const pieces = trails.get(index).?.looked().pieces;
             if (pieces.sides) trails.sidesFrame(world, index);
-            if (pieces.ribbon and trails.records[index] != null) trails.ribbonFrame(world, index);
+            if (pieces.ribbon and trails.get(index) != null) trails.ribbonFrame(world, index);
             const trail = trails.get(index) orelse continue;
             if (pieces.plume) trail.plumeFrame(world);
             if (pieces.glow) trail.glowFrame(world);
@@ -305,7 +290,7 @@ pub const Trails = struct {
     /// something, its newest ring is laid at the tail of what it follows. Once it has faded
     /// out with nothing to follow, the trail is freed.
     fn ribbonFrame(trails: *Trails, world: gameobj.World, at: u8) void {
-        const trail = &trails.records[at].?;
+        const trail = trails.get(at).?;
         const ribbon = trail.ribbon.?;
         const style = trail.looked();
         const colour = ribbonColour(trail, world.objects);
@@ -342,7 +327,7 @@ pub const Trails = struct {
     /// ring it has just moved to. Once the last has faded out, the side ribbons are let go, or,
     /// without a ribbon, the trail is freed.
     fn sidesFrame(trails: *Trails, world: gameobj.World, at: u8) void {
-        const trail = &trails.records[at].?;
+        const trail = trails.get(at).?;
         const style = trail.looked();
         const count = sideCount(style);
         var faded = true;
@@ -378,10 +363,9 @@ pub const Trails = struct {
 
     /// Adds each piece its trail's frame left shown to the world's layer.
     pub fn draw(trails: *Trails, gpa: Allocator, scene: *srcore.Scene) Allocator.Error!void {
-        var at = trails.newest;
-        while (at) |index| {
-            const trail = &trails.records[index].?;
-            at = trail.older;
+        var walk = trails.list.walk();
+        while (walk.next()) |index| {
+            const trail = trails.get(index).?;
             for (trail.sides) |side| if (side) |ribbon| if (ribbon.shown) try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &ribbon.object }, .world);
             if (trail.ribbon) |ribbon| if (ribbon.shown) try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &ribbon.object }, .world);
             if (trail.plume) |plume| if (plume.shown) try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &plume.object }, .world);
@@ -781,7 +765,7 @@ test "Trails.frame" {
     missiles.end(world, 0);
     try std.testing.expectEqual(Follows.nothing, trail.follows);
     for (0..20) |_| missiles.frame(world, 0);
-    try std.testing.expectEqual(null, stage.trails.newest);
+    try std.testing.expectEqual(null, stage.trails.list.newest);
 }
 
 test "Trails.start" {
@@ -791,10 +775,10 @@ test "Trails.start" {
     const world = stage.world();
     const ship = try stage.armed.add(.friendly, @splat(0));
     // With every trail taken, a missile flies without one.
-    for (&stage.trails.records) |*record| record.* = .{ .type = .none, .follows = .nothing, .scrolled = 0 };
+    for (&stage.trails.list.records) |*record| record.* = .{ .type = .none, .follows = .nothing, .scrolled = 0 };
     missiles.launch(world, ship, 1, .none);
     try std.testing.expectEqual(null, stage.armed.missile(0).trail);
-    for (&stage.trails.records) |*record| record.* = null;
+    for (&stage.trails.list.records) |*record| record.* = null;
 }
 
 test Look {

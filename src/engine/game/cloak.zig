@@ -19,6 +19,7 @@ const hud = @import("hud.zig");
 const missiles = @import("missiles.zig");
 const objects = @import("objects.zig");
 const particles = @import("particles.zig");
+const table = @import("table.zig");
 
 /// How many countermeasures fly at once (`countermeasures`, `0x00540610`).
 pub const max_countermeasures = 100;
@@ -121,9 +122,7 @@ pub const Countermeasures = struct {
         }
         object.countermeasures -= 1;
         if (player) hud.beep(world, .done);
-        const at: u8 = for (countermeasures.records, 0..) |record, index| {
-            if (record == null) break @intCast(index);
-        } else return;
+        const at: u8 = @intCast(table.firstFreeIndex(Countermeasure, &countermeasures.records) orelse return);
         const mounted = countermeasures.model orelse return;
 
         var model: objects.Model = objects.Model.create(countermeasures.gpa, mounted.model, mounted.loaded, .{}) catch return;

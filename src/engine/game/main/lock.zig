@@ -179,9 +179,6 @@ pub const Lock = struct {
 /// The locked tone's sample of `bank_stdsmp`.
 const tone_sample = 0x15;
 
-/// Within this of the ship's nose a target can be locked (`0x004DC484`).
-const lock_cone: f32 = 0.7;
-
 /// `missile_lock_possible` (`0x00491350`): whether the armed missile can lock on `target`: it has
 /// missiles left, or one the player launched still flies at a target; it is not a Solomon; the
 /// target can be aimed at; the player's missiles are not disabled; outside a multiplayer game the
@@ -198,9 +195,7 @@ pub fn possible(world: gameobj.World, ring: *missile_display.Ring, target: aigen
     if (all.slots[@intCast(target.index)].object.side != .hostile) return false;
     if (armed.type == .screamer) return false;
     const stats = all.missile_stats.of(armed.type) orelse return false;
-    const toward = ai.aimedAt(all, target).position - ship.nextPosition();
-    if (math.lengthSquared(toward) > stats.lock_range * stats.lock_range) return false;
-    return math.dot(math.normalize(toward), math.forward(ship.root.next_orientation)) >= lock_cone;
+    return missiles.inLockReach(stats, ai.aimedAt(all, target).position - ship.nextPosition(), ship.nextHeading());
 }
 
 /// `player_missile_guiding` (`0x004AF190`): whether a missile the player launched still flies at

@@ -1246,3 +1246,18 @@ address	kind	name	type	comment
 004af190	function	player_missile_guiding	bool (void)	Whether a live missile the player launched still has a target
 00539a94	data	camera_missile	int	The missile record the missile view (0x12) follows
 00539a7c	data	camera_missile_gone	int	Set once the missile the missile view follows has ended
+0045e500	function	object_loadout_by_tier	void __fastcall (GameObject *object, int tier)	Rack types for each missile attachment (kind 0) of the root's child parts: the attachment's id for the tier (+0x34 + 4 * tier); the player's ship in simulator mode 1 or missions 30 to 35 gets 5, 3, 1 in turn
+0045e1a0	function	object_fit_missiles	void __fastcall (GameObject *object, bool multiplayer_models)	Hangs each rack's pod or missile (attachment_models kind 0, the second model in multiplayer) on the missile attachments of the root's child parts, its count from the model table; a type below 0 leaves count 0 and stops the fitting there; fatal past 20
+00491320	function	lock_rings_free	void (void)	Frees the lock rings and their mesh
+00456a80	function	radio_missile_warning	void (void)	While a missile homes on the player's ship in action, at most every 1000 ticks, Moose says one of plck_001 to plck_008
+0041a390	function	launch_tube_boost	void __fastcall (int slot)	A stage of the Launch order: throttle 2 at the carrier's velocity with sound 0x18 and a trail of the torpedo's look for 200 ticks, then flies forward, pops the order, becomes targetable and collides, and posts Launched
+00461c40	function	camera_set_view_call	void __fastcall (int view, int object, bool force, bool unknown)	Calls camera_set_view
+00494e10	function	missiles_free	void (void)	Frees the missile and trail pools and clears missiles_initialised
+0057e020	data	missile_lock_target	OrderEntry	The target and component the lock began on, at +4 and +6, laid out as an order entry for ai_target_node
+0057dfe8	data	missile_lock_unused	int	Counted in lock states 2, 3 and 5, capped at 90; never read
+0057e014	data	lock_ring_angles	float[3]	Each lock ring's own turn this frame
+0057bf50	data	enemy_lock_voice	int	stdsmp sound 0 on voice 1, played again while the enemy lock light shows; -1 for none
+00562df0	data	campaign_tier	int	The tier fighters asked for tier 0 take in single player: 0, then 1 after mission 11, 2 after 19, 3 after 21
+005887fc	data	missile_net_ids	int[8][200]	In a network game, each remote player's missile id to a local record, -1 for none
+00588400	data	player_loadouts	byte[8][84]	The loadout screen's choice for each player slot, 0x54 bytes: the ship, then 20 rack types, -1 for none
+005883b4	data	skip_briefing	byte	Set when a mission starts without its briefing and loadout; the player's ship then takes the tier's loadout
