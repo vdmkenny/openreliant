@@ -754,11 +754,14 @@ const end_wave_life = 500;
 /// damage over that as the share that passes through, and flares, unless the object is cloaked;
 /// and the missile ends.
 ///
-/// The player's shields take it only on the fore quadrant, and only as it empties a shield reserve:
-/// the fore's while it holds any, else the aft's (`ShieldReserves.missileHit`). On any other
-/// quadrant, with its shield up, a missile does the player's ship no harm. **Unverified** in play
-/// ([#214](https://github.com/vdmkenny/openreliant/issues/214)); the port keeps it as the code has
-/// it.
+/// A hit on the player's fore or aft shield is taken off that side's reserve first, while it holds
+/// anything (`ShieldReserves.spare`); one that runs it out, or finds none, reaches the shield.
+///
+/// **Fix:** the game takes a missile's hit on the player's shields only on the fore quadrant, and
+/// only as it empties a reserve, the fore's while it holds any, else the aft's; with neither
+/// holding anything, or on any other quadrant, it does the player's shields no harm. Every other
+/// hit on the player's shields, a shot's, a knock's and a shockwave's, draws the reserve of the
+/// side struck and then reaches the shield, so the port takes a missile's the same way.
 ///
 /// Not ported: in a multiplayer mission, the shield damage five times over.
 fn collide(world: gameobj.World, at: u8) bool {
@@ -785,7 +788,7 @@ fn collide(world: gameobj.World, at: u8) bool {
         if (object.shields.get(struck) < 0 or object.invulnerable == ._unknown_4) return hitHull(world, at, index, struck);
         const stats = missile.stats(&all.missile_stats);
         if (stats.shield_damage > 0) {
-            const reaches = index != all.player or (struck == .fore and world.player.shield_reserves.missileHit(stats.shield_damage));
+            const reaches = index != all.player or !world.player.shield_reserves.spare(struck, stats.shield_damage);
             if (reaches) collision.damage(world, index, struck, stats.shield_damage, stats.hull_damage / stats.shield_damage, missile.launcher, damageKind(missile.type));
         }
         if (!object.flags.cloaked) shield.flare(world, index, point);
@@ -1154,17 +1157,31 @@ test collide {
     missile.object().root.next_position = .{ .x = 500, .y = 0, .z = 5200 };
     try std.testing.expect(!collide(world, 0));
 
-    // The enemy's on the player's fore shield is taken only as a reserve runs out; with none, the
-    // shield is left alone.
+    // The enemy's on the player's fore shield is taken off the fore reserve while it holds,
+    // sparing the shield.
     all.slots[player].object.radius = 100;
+    const reserves = &world.player.shield_reserves;
+    const fore = all.slots[player].object.shields.fore;
     launch(world, enemy, 0, .none);
-    const theirs: u8 = all.missiles.newest.?;
+    var theirs: u8 = all.missiles.newest.?;
+    missile = armed.missile(theirs);
+    const damage = missile.stats(&all.missile_stats).shield_damage;
+    reserves.fore = damage * 2;
+    missile.slot.drawn.position = .{ 0, 0, 300 };
+    missile.object().root.next_position = .{ .x = 0, .y = 0, .z = -300 };
+    try std.testing.expect(collide(world, theirs));
+    try std.testing.expectEqual(damage, reserves.fore);
+    try std.testing.expectEqual(fore, all.slots[player].object.shields.fore);
+
+    // With no reserve, the shield takes it, as it takes a shot.
+    reserves.fore = 0;
+    launch(world, enemy, 0, .none);
+    theirs = all.missiles.newest.?;
     missile = armed.missile(theirs);
     missile.slot.drawn.position = .{ 0, 0, 300 };
     missile.object().root.next_position = .{ .x = 0, .y = 0, .z = -300 };
-    const fore = all.slots[player].object.shields.fore;
     try std.testing.expect(collide(world, theirs));
-    try std.testing.expectEqual(fore, all.slots[player].object.shields.fore);
+    try std.testing.expect(all.slots[player].object.shields.fore < fore);
 }
 
 test {

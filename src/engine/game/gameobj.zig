@@ -1036,8 +1036,9 @@ pub const ShieldReserves = struct {
         };
     }
 
-    /// A shot or a knock of `amount` on `quadrant`, taken off the reserve there while it holds
-    /// anything (`bullet_hit`, `collision_damage`): whether it held, sparing the shield. One that
+    /// A shot, a knock or a missile of `amount` on `quadrant`, taken off the reserve there while it
+    /// holds anything (`bullet_hit`, `collision_damage`, `missiles.collide`): whether it held,
+    /// sparing the shield. One that
     /// runs out is emptied, and the shield takes the whole hit.
     pub fn spare(reserves: *ShieldReserves, quadrant: collision.Quadrant, amount: f32) bool {
         const reserve = reserves.of(quadrant) orelse return false;
@@ -1046,14 +1047,6 @@ pub const ShieldReserves = struct {
         if (reserve.* > 0) return true;
         reserve.* = 0;
         return false;
-    }
-
-    /// A missile's `amount` on the fore shield (`missile_collide`), taken off the fore reserve
-    /// while it holds anything, else off the aft's: whether it ran that reserve out, and the shield
-    /// takes the whole hit. With neither holding anything, nothing reaches the shield.
-    pub fn missileHit(reserves: *ShieldReserves, amount: f32) bool {
-        const drawn: collision.Quadrant = if (reserves.fore > 0) .fore else .aft;
-        return reserves.of(drawn).?.* > 0 and !reserves.spare(drawn, amount);
     }
 };
 
@@ -1070,17 +1063,6 @@ test ShieldReserves {
     try std.testing.expectEqual(0, reserves.fore);
     try std.testing.expect(!reserves.spare(.fore, 1));
     try std.testing.expect(!reserves.spare(.left, 1));
-
-    // A missile draws the fore reserve, then the aft's, and reaches the shield only as one runs
-    // out.
-    reserves = .{ .fore = 1, .aft = 2 };
-    try std.testing.expect(!reserves.missileHit(0.5));
-    try std.testing.expect(reserves.missileHit(1));
-    try std.testing.expectEqual(0, reserves.fore);
-    try std.testing.expect(!reserves.missileHit(1));
-    try std.testing.expectEqual(1, reserves.aft);
-    try std.testing.expect(reserves.missileHit(1));
-    try std.testing.expect(!reserves.missileHit(1));
 }
 
 /// `object_recharge_shields` (`0x00476FC0`), which `simulation_step` runs for every object after
