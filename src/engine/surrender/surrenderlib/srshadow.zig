@@ -277,7 +277,8 @@ const Casters = struct {
     /// Adds `object`'s triangles, where it casts and can reach one of the `allowed` maps: its
     /// opaque surfaces at its current level of detail, each polygon a fan of its corners, turned
     /// into the camera's frame as the pipeline turns it. Lines cast nothing. The last run takes
-    /// them on where it goes into the same maps.
+    /// them on where it goes into the same maps. An object its portal clips casts only what the
+    /// portal keeps of it, as it is drawn.
     fn add(casters: *Casters, object: *const srapiext.MeshObject, allowed: Maps) Allocator.Error!void {
         if (!casts(object)) return;
         const context = casters.context;
@@ -302,7 +303,13 @@ const Casters = struct {
                 if (shape.kind == .lines or shape.count < 3) continue;
                 const corners = mesh.indices[shape.first..][0..shape.count];
                 for (1..corners.len - 1) |second| {
-                    try casters.indices.appendSlice(casters.arena, &.{ base + corners[0], base + corners[second], base + corners[second + 1] });
+                    const triangle = [3]u32{ base + corners[0], base + corners[second], base + corners[second + 1] };
+                    const portal = if (object.flags.portal_clipped) object.portal else null;
+                    if (portal) |cut| {
+                        try casters.addClipped(cut.view, triangle);
+                    } else {
+                        try casters.indices.appendSlice(casters.arena, &triangle);
+                    }
                 }
             }
         }
@@ -316,6 +323,38 @@ const Casters = struct {
             }
         }
         try casters.runs.append(casters.arena, .{ .first = first, .count = count, .maps = reached });
+    }
+
+    /// Adds what `plane`, a portal's in the camera's frame, keeps of the triangle of the positions
+    /// at `triangle`: all of it, none, or the piece on its side, as a fan of new corners.
+    fn addClipped(casters: *Casters, plane: srapiext.Portal.View, triangle: [3]u32) Allocator.Error!void {
+        var corners: [3]Vector = undefined;
+        var inside: [3]f32 = undefined;
+        for (triangle, &corners, &inside) |index, *corner, *side| {
+            corner.* = casters.positions.items[index];
+            side.* = plane.inside(corner.*);
+        }
+        if (inside[0] >= 0 and inside[1] >= 0 and inside[2] >= 0) return casters.indices.appendSlice(casters.arena, &triangle);
+        var kept: [4]Vector = undefined;
+        var count: usize = 0;
+        for (0..3) |i| {
+            const j = (i + 1) % 3;
+            if (inside[i] >= 0) {
+                kept[count] = corners[i];
+                count += 1;
+            }
+            if ((inside[i] >= 0) != (inside[j] >= 0)) {
+                const t = inside[i] / (inside[i] - inside[j]);
+                kept[count] = corners[i] + (corners[j] - corners[i]) * @as(Vector, @splat(t));
+                count += 1;
+            }
+        }
+        if (count < 3) return;
+        const base: u32 = @intCast(casters.positions.items.len);
+        for (kept[0..count]) |corner| try casters.positions.append(casters.arena, corner);
+        for (1..count - 1) |second| {
+            try casters.indices.appendSlice(casters.arena, &.{ base, base + @as(u32, @intCast(second)), base + @as(u32, @intCast(second + 1)) });
+        }
     }
 
     /// The maps a sphere of `radius` at `centre`, in the camera's frame, can throw a shadow into.
@@ -424,6 +463,33 @@ test gather {
     square.surfaces[0].material.blend[0] = .add;
     const blended = (try gather(arena, context, &lights, &world, &.{}, &.{}, testing.settings)).?;
     try std.testing.expectEqual(0, blended.indices.len);
+}
+
+test "a portal cuts a caster's shadow" {
+    const gpa = std.testing.allocator;
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const context = testing.context();
+    const square = try @import("srmesh.zig").testing.square(gpa);
+    defer square.deinit(gpa);
+    const levels = [_]srapiext.Level{.{ .mesh = &square, .until = std.math.inf(f32) }};
+    // A portal down the middle of the square, keeping its left half.
+    const portal: srapiext.Portal = .{ .view = .{ .normal = .{ 1, 0, 0 }, .point = .{ 0, 0, 1000 } } };
+    var cut: srapiext.MeshObject = .{ .flags = .{ .lit = true, .portal_clipped = true }, .position = .{ 0, 0, 1000 }, .radius = square.radius, .levels = &levels, .portal = &portal };
+    const world = [_]srcore.Object{.{ .mesh = &cut }};
+
+    // One triangle keeps a corner and is cut to a triangle, the other keeps two and is cut to two:
+    // three triangles, every corner of them in the left half.
+    const lights = [_]srlight.Light{testing.keyLight(true)};
+    const frame = (try gather(arena, context, &lights, &world, &.{}, &.{}, testing.settings)).?;
+    try std.testing.expectEqual(9, frame.indices.len);
+    for (frame.indices) |index| try std.testing.expect(frame.positions[index][0] <= 1e-3);
+
+    // Not flagged, the portal leaves it whole.
+    cut.flags.portal_clipped = false;
+    const whole = (try gather(arena, context, &lights, &world, &.{}, &.{}, testing.settings)).?;
+    try std.testing.expectEqual(6, whole.indices.len);
 }
 
 test "the cockpit's map" {

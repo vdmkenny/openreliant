@@ -25,6 +25,7 @@ const matmanager = @import("matmanager.zig");
 const objects = @import("objects.zig");
 const particles = @import("particles.zig");
 pub const breakup = @import("explode/breakup.zig");
+pub const split = @import("explode/split.zig");
 const shockwave = @import("shockwave.zig");
 const sound3d = @import("sound3d.zig");
 const table = @import("table.zig");
@@ -48,6 +49,8 @@ pub const Explosions = struct {
     moved_at: i32 = 0,
     /// The pieces the ships' break-ups send flying (`0x0055AE88`).
     pieces: breakup.Pieces,
+    /// The capital ships splitting in two (`0x0055335C`).
+    splits: split.Splits,
     /// The fireballs going off (`explosion_fireballs`, `0x00553398`), in as many slots as the
     /// settings give them.
     fireballs: [Fireballs.fuller.slots()]?Fireball = @splat(null),
@@ -87,23 +90,25 @@ pub const Explosions = struct {
     };
 
     pub fn init(gpa: Allocator, images: Images) Allocator.Error!Explosions {
-        return .{ .images = images, .pieces = try .create(gpa) };
+        return .{ .images = images, .pieces = try .create(gpa), .splits = .init(gpa) };
     }
 
     pub fn deinit(explosions: *Explosions) void {
         explosions.pieces.deinit();
+        explosions.splits.deinit();
     }
 
     /// As a mission starts again: nothing flying or going off, and no marker, with the same
     /// settings; the debris is loaded again (`Debris.load`).
     pub fn reset(explosions: *Explosions) void {
         explosions.pieces.reset();
-        explosions.* = .{ .images = explosions.images, .settings = explosions.settings, .pieces = explosions.pieces };
+        explosions.splits.reset();
+        explosions.* = .{ .images = explosions.images, .settings = explosions.settings, .pieces = explosions.pieces, .splits = explosions.splits };
     }
 
     /// `explosions_update` (`0x0046E480`), once a frame, as far as the port goes: the marker drifts
-    /// on, the bits fly on, the pieces fly on (`breakup.Pieces.frame`), and each fireball plays on
-    /// (`Fireball.frame`), until it is done.
+    /// on, the bits fly on, the pieces fly on (`breakup.Pieces.frame`), the splits go on
+    /// (`split.Splits.frame`), and each fireball plays on (`Fireball.frame`), until it is done.
     ///
     /// **Improvement:** the marker drifts by `drift` a tick, where the game adds it once a frame,
     /// which comes to the same at a frame a tick.
@@ -117,6 +122,7 @@ pub const Explosions = struct {
         }
         explosions.moved_at = clock.frame_start;
         explosions.pieces.frame(world);
+        explosions.splits.frame(world);
         for (&explosions.fireballs) |*slot| {
             const fireball = &(slot.* orelse continue);
             if (!fireball.frame(clock)) slot.* = null;
@@ -133,6 +139,7 @@ pub const Explosions = struct {
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &bit.object }, .world);
         }
         try explosions.pieces.draw(gpa, scene, ahead);
+        try explosions.splits.draw(gpa, scene);
         for (&explosions.fireballs) |*slot| {
             const fireball = &(slot.* orelse continue);
             if (!fireball.showing) continue;
@@ -863,10 +870,11 @@ pub const ComponentLoss = enum {
 
 /// Runs `routine` for `part`, a component of the object in slot `index` just destroyed: whether
 /// `objects.loseComponents` goes on with it. A capital ship lets it go on for any part but one of
-/// its hull, which ends the ship: it is marked unpowered and exploding, and lost (`loseHull`). The
-/// Ulysses' stops it for every part.
+/// its hull, which ends the ship: it is marked unpowered and exploding, splits in two
+/// (`split.start`), and is lost (`loseHull`). The Ulysses' stops it for every part.
 ///
-/// Not ported: the capital ship splitting in two, and all the Ulysses' does
+/// Not ported: the force fields going dark (`force_field_mark`,
+/// [#179](https://github.com/vdmkenny/openreliant/issues/179)), and all the Ulysses' does
 /// ([#225](https://github.com/vdmkenny/openreliant/issues/225)).
 pub fn loseComponent(ctx: aigeneric.Context, index: u16, routine: ComponentLoss, part: *const objects.Model.Part) bool {
     switch (routine) {
@@ -875,6 +883,7 @@ pub fn loseComponent(ctx: aigeneric.Context, index: u16, routine: ComponentLoss,
             const flags = &ctx.world.objects.slots[index].object.flags;
             flags.unpowered = true;
             flags.exploding = true;
+            split.start(ctx.world, index);
             loseHull(ctx, index);
             return false;
         },

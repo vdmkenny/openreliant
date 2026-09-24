@@ -179,10 +179,7 @@ Older exporters wrote 8-byte records, which stop two bytes into the name.
 
 ### Point list (tags `0x0D`, `0x0E`)
 
-A part's lists of points on its mesh, which the game's asserts call point lists
-(`node_point_group`, `0x004ADD50`, finds a part's list of a kind). A `0x0D` record is the list's
-kind, a u32; `model_load` keeps it as `{kind, count, points}` and reads the list's points from a
-`0x0E` chunk after the part's clips. A point:
+A part can carry lists of points on its mesh, which the game's asserts call point lists. Each `0x0D` record is a list's kind, a u32, and each list's points follow in a `0x0E` chunk after the part's clips. `model_load` keeps a list as `{kind, count, points}`, and `node_point_group` (`0x004ADD50`) finds a part's list of a kind. A point:
 
 | Off | Type | Field |
 |---|---|---|
@@ -200,7 +197,7 @@ The kinds the game reads:
 | 4 | `part_burn_lights` (`0x00471470`) | Where a burning wreck's light stands: the first point |
 | 5 | `split_update` (`0x00470030`) | Where fireballs go off as a split ship's halves part |
 
-`shp.PointList` holds a list, and `sltool shp info` counts each part's.
+`shp.PointList` holds a list, and `sltool shp info` counts each part's lists.
 
 ### Firing arc (tag `0x10`)
 

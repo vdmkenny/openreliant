@@ -646,14 +646,15 @@ table at `+0x518`.
 (`0x0046F820`) at `+0x614`, by the type whose stats they take, and type `0x16`
 `explode_ulysses_component` (`0x0046EA50`). The first answers true for any part but one of class
 hull; for that one, it marks the ship unpowered and exploding, hides its force fields, splits it in
-two, credits the kill as above and ends it with `object_hull_lost`. The second answers false for
-every part.
+two ([Effects](effects.md#splits)), credits the kill as above and ends it with `object_hull_lost`.
+The second answers false for every part.
 
 [`objects.zig`](../../src/engine/game/objects.zig) ports the pass as `loseComponents` and
 `node_destroy` as `destroyPart`. Not ported: the Destroyed events
 ([#37](https://github.com/vdmkenny/openreliant/issues/37)), the subtarget's red parts
-([#45](https://github.com/vdmkenny/openreliant/issues/45)), and the types' own extras, the split
-and the Ulysses' routine ([#225](https://github.com/vdmkenny/openreliant/issues/225)).
+([#45](https://github.com/vdmkenny/openreliant/issues/45)), the force fields going dark
+([#179](https://github.com/vdmkenny/openreliant/issues/179)), and the types' own extras and the
+Ulysses' routine ([#225](https://github.com/vdmkenny/openreliant/issues/225)).
 
 The port lists them in [`create.zig`](../../src/engine/game/create.zig) as the parts themselves,
 since a mounted turret's parts are not the hull's, and marks each one as a component and, where the

@@ -199,6 +199,8 @@ pub const Type = enum(u32) {
     /// The Phoenix (`uspf_phx.shp`), which carries the Nova Cannon.
     phoenix = 0x0B,
     reliant = 0x0C,
+    /// The Victorious (`victorious.shp`).
+    victorious = 0x11,
     /// The Nanny (`nanny.shp`).
     nanny = 0x18,
     /// The limpet car (`limpet_t_car.shp`).
@@ -217,6 +219,8 @@ pub const Type = enum(u32) {
     gurevich = 0x3E,
     /// Capital ships (`saladin.shp`, `stalag.shp`, `antanov.shp`, `kronstadt.shp`, `boridin.shp`).
     saladin = 0x43,
+    /// The Dark Reign (`darkreign.shp`).
+    darkreign = 0x44,
     stalag = 0x45,
     antanov = 0x46,
     kronstadt = 0x47,
@@ -237,8 +241,14 @@ pub const Type = enum(u32) {
     /// A black box (`black_box.shp`).
     black_box = 0x70,
     satellite = 0x71,
+    /// The Latov (`latov.shp`).
+    latov = 0x81,
+    /// The Czar, docked (`czar_docked.shp`).
+    czar_docked = 0x84,
     /// A deathmatch beacon (`DMBeacon.shp`).
     dm_beacon = 0x8E,
+    /// The Kafelnikof (`kafelnikof.shp`).
+    kafelnikof = 0x95,
     /// Another escape pod (`ber_escape.shp`).
     other_escape_pod = 0x90,
     /// The Turret Flak's shell (`shell.shp`).
@@ -272,6 +282,11 @@ pub const Type = enum(u32) {
             .{ .t_phoenix, "t_uspf_phx.shp" },
             .{ .reliant, "reliant.shp" },
             .{ .nanny, "nanny.shp" },
+            .{ .victorious, "victorious.shp" },
+            .{ .darkreign, "darkreign.shp" },
+            .{ .latov, "latov.shp" },
+            .{ .czar_docked, "czar_docked.shp" },
+            .{ .kafelnikof, "kafelnikof.shp" },
             .{ .prowler, "us_prowler.shp" },
             .{ .stalag, "stalag.shp" },
             .{ .antanov, "antanov.shp" },
@@ -488,7 +503,8 @@ pub const GameObject = extern struct {
     shields: Quadrants,
     /// Each `6 * ShipCombat.armor_class - 1` when created. `ship_damage_value` reports the lowest.
     armor: Quadrants,
-    _unknown_610: u32,
+    /// What the explosions' routines note of it as it comes apart.
+    ends: Ends,
     /// The routine in `explode.cpp` that `create_object` gives most capital ships, bases and
     /// stations, which `node_draw` runs as one of the object's components is destroyed. The port
     /// leaves it null and picks the routine by type as it needs it (`explode.ComponentLoss`).
@@ -650,6 +666,15 @@ pub const GameObject = extern struct {
     sound_voice: u16,
 
     /// The names of the script commands that set a bit are the developers' own.
+    /// What the explosions' routines note of an object as it comes apart (`+0x610`).
+    pub const Ends = packed struct(u32) {
+        /// The Ulysses has lost its fin (`explode_ulysses_component`).
+        fin_lost: bool = false,
+        /// Its split has ended (`split_update`), which it does once.
+        split_ended: bool = false,
+        _unknown_2: u30 = 0,
+    };
+
     pub const Flags = packed struct(u32) {
         /// Not drawn: `camera_set_view` sets it on the object whose cockpit the camera is in, and the
         /// warp orders while it warps. `mission_frame` hands `node_draw` flag `0x10` for it, which
@@ -813,6 +838,7 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "guns") == 0x134);
         assert(@offsetOf(GameObject, "rounds") == 0x13C);
         assert(@offsetOf(GameObject, "gun_turn") == 0x14C);
+        assert(@offsetOf(GameObject, "ends") == 0x610);
         assert(@offsetOf(GameObject, "component_loss") == 0x614);
         assert(@offsetOf(GameObject, "passes_through") == 0x618);
         assert(@offsetOf(GameObject, "_unknown_624") == 0x624);
@@ -1129,6 +1155,15 @@ pub const World = struct {
     display: ?*@import("hud.zig").State = null,
     /// The pools a damaged ship's smoke comes from; null where none is sent out.
     smoke: ?*@import("main/smoke.zig").Pools = null,
+    /// What objects are made from while the mission runs, as a capital ship's split makes its
+    /// other half (`create_object`); null where none are made.
+    spawn: ?Spawn = null,
+
+    /// The ship types' stats and their models.
+    pub const Spawn = struct {
+        tables: *create.Stats,
+        types: create.Types,
+    };
 
     /// What particles are sent out with, as the camera sees them, their sparks going to the
     /// explosions; null where nothing is seen.
@@ -1243,6 +1278,27 @@ pub fn linkPart(model: *objects.Model, index: usize) void {
     a.committed = false;
     a.unframed = false;
     a.posed = false;
+}
+
+/// `object_recentre` (`0x004769F0`) for a live object in `slot`: moves its origin to the centre of
+/// mass of its shown parts (`recentre`), its root's place and next place, and its frame, going
+/// with it, so that it stays where it was, and keeps what that works out.
+pub fn recentreObject(slot: *create.Slot) void {
+    const model = if (slot.model) |*live| live else return;
+    const source = (slot.type orelse return).model;
+    const object = &slot.object;
+    const before = model.centre;
+    recentre(model, source);
+    const shift = math.transform(object.root.orientation, model.centre - before);
+    object.root.position = vec3(vector(object.root.position) + shift);
+    object.root.next_position = vec3(vector(object.root.next_position) + shift);
+    slot.drawn.position += shift;
+    object.mass = model.mass;
+    object.centre = vec3(model.centre);
+    object.radius = model.radius;
+    object.angular_response = model.angular_response;
+    object.bounds_min = vec3(model.bounds[0]);
+    object.bounds_max = vec3(model.bounds[1]);
 }
 
 /// Moves the object's origin to its parts' centre of mass, as `object_link_parts` ends

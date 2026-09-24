@@ -1286,3 +1286,36 @@ address	kind	name	type	comment
 0046ccf0	function	explode_part_burst	void __fastcall (GameObject *object, ModelNode *node, float reach)	A part going up as its component is destroyed: a lit fireball its size, a burning bit at every third of 20 points within 0.3 of its radius, and its mesh cut in four through the ship (model_slice), each quarter again in two, four, eight and two, flying off at their cuts times reach over 60 with the ship velocity, a hundredth of both a tick, for 100 to 119 ticks, toward a lit fireball where each ends; then the node children
 00499bb0	function	node_forget	void __fastcall (ModelNode *node)	For a node being destroyed and those hanging from it: a turret base sets the turret kind of each of its owner guns whose base it is to -1; a part node leaves its owner components and the table at +0x518
 0048ca80	function	hud_subtarget_clear	void (void)	Puts back the meshes hud_subtarget copied to pick the player subtarget out in red
+0046bc00	function	split_slot_free	int __fastcall (void)	The first empty slot of the splits under way (0x0055335C), or 0 when all ten are taken
+0046f480	function	split_create	void * __fastcall (GameObject *object)	Starts a capital ship splitting in two: a 0x44-byte record in a slot of 0x0055335C with split_update and split_free, the tick, its sequence (explode_sequence_find), two portals of flag 0x100, the root position, engines_disabled, the Krasnaya arms and the Boridin breakaway core taken apart, and the points of each root child point list of kind 2 in the root frame (split_point_insert)
+0046f6d0	function	split_point_insert	void __fastcall (void **list, Vec3 *point, bool sorted)	Adds a point to a split list, in ascending z where sorted, else at the end; one that belongs right after the head goes before it
+0046f790	function	split_points_free	void __fastcall (void *list)	Frees a split point list
+0046f7b0	function	split_point_nth	void * __fastcall (void *list, int n)	The nth point of a split list, the head for n of 0 or less, or null past the end
+0046f7d0	function	split_free	void __fastcall (void *record)	Frees a split portals, its point list and the record, and clears its slot
+00470030	function	split_update	bool __fastcall (void *record)	Runs a split once a frame: mode 0 sweeps a cut through the points with fireballs, bits and sounds, the portals in the scene and the ship held shaking, then parts the halves; mode 1 bursts about the ship, then shows the wreck; always true, freeing itself at the end
+00471d30	function	explode_sequence_find	int __fastcall (uint type)	The index of a type record in the explosion sequences (0x004FFB50, 40 of 0x2C bytes), or -1
+00471d70	function	explode_flash_near	void __fastcall (GameObject *object)	Flashes the screen for 100 ticks (0x00587CC8) where the camera stands within 5 radii of the object
+00471290	function	explode_part_burn	void __thiscall (int slot, char *name, char a, char b, char c)	Sets a wreck part burning: an electric ray between each pair of its kind 1 points, then unless c its burn lights (part_burn_lights) and smoke (part_streams)
+00471470	function	part_burn_lights	void __fastcall (ModelNode *node)	A red Burn light at the first point of each kind 4 point list of the part, in 15 slots at 0x0055AD24
+004715d0	function	part_streams	void __fastcall (ModelNode *node, bool forever, void *particles)	A particle stream at each point of the part kind 3 point lists, along its vertex normal, for 5000 ticks or for good, into 0x0055AD60
+00472140	function	krasnaya_left_arm_off	void __fastcall (GameObject *object, ModelNode *node, int link)	Throws the Krasnaya left arm off as an object of type 0xA3 and shows its wreck parts, with fireballs and a flash
+00472420	function	krasnaya_right_arm_off	void __fastcall (GameObject *object, ModelNode *node, int link)	Throws the Krasnaya right arm off as an object of type 0xA3 and shows its wreck parts, with fireballs and a flash
+00473fb0	function	node_tree_stop	void __fastcall (ModelNode *node)	Sets the animation speed of a node and all under it to 0
+0046acb0	function	eray_remove	void __fastcall (void *ray)	Frees an electric ray wherever it is in the 100 slots
+004add50	function	node_point_group	void * __fastcall (ModelNode *node, int kind)	The point list of a kind on the node part, or null
+004add90	function	node_find_named	ModelNode * __fastcall (ModelNode *node, char *name)	The first node under a node, depth first, whose part has the name
+004ade20	function	node_find_link	ModelNode * __fastcall (ModelNode *node, int link)	The first node under a node whose part has the link id
+004ade80	function	node_show_named	void __fastcall (ModelNode *root, char *name)	Clears the hidden flag of the node node_find_named finds
+004ade90	function	node_hide_named	void __fastcall (ModelNode *root, char *name)	Sets the hidden flag of the node node_find_named finds
+004adea0	function	node_clip_named	void __fastcall (ModelNode *root, char *name, void *portal)	Clips the node node_find_named finds by the portal: its frame +0xAC and frame flag 2
+004adee0	function	node_tree_clip	void __fastcall (ModelNode *node, void *portal)	Clips a node and all under it by the portal; a null portal clears frame flag 2
+004adf40	function	node_tree_unclip	void __fastcall (ModelNode *node)	Clears the portal of a node and all under it, leaving frame flag 2 set
+0055335c	data	splits_under_way	void *[10]	The splits under way (split_create), which the Ulysses pieces share; explosions_update runs each once a frame, and object_draw darkens the engine glows of an object that has one
+004ffb50	data	explode_sequences		How each capital ship type splits in two: 40 records of 0x2C bytes, by type (explode_sequence_find); make explode-tables transcribes them
+004c50d0	function	portal_create	void * __fastcall (int corners, char *name)	A Surrender portal, a scene object of kind 8: corners times 0x20 plus 0xE0 bytes, turned to the identity and zeroed; the split makes planes of none (flag 0x100)
+004c5150	function	scene_object_destroy	void __fastcall (void *object)	Takes a scene object out of its list and frees it
+004ce9f0	function	portal_transform	int __fastcall (void *portal)	Puts a portal plane in the camera frame, its normal at +0xC8 and its point at +0xA0; sr_draw_layers runs it over the portals in the scene (list 4)
+004ccf30	function	portal_clip	void __fastcall (void *portal)	Cuts the clipper polygon by a portal plane, keeping what lies on the side its normal points away from; the clipper runs it last
+004c4ee0	function	sprite_set_free	void __fastcall (void *set)	Frees a sprite set
+0049c670	function	particle_emitter_free	void __fastcall (void *emitter)	Frees a particle emitter
+0046ba80	function	explosions_free	void __fastcall (void)	Frees the splits under way, each by its free routine, as the explosions are torn down
