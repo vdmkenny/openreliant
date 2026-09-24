@@ -546,17 +546,14 @@ const hull_passes = 9;
 fn hullHit(world: gameobj.World, ship: u16, hull: u16, pass: u8) bool {
     const all = world.objects;
     const model = if (all.slots[hull].model) |*live| live else return false;
-    const source = if (all.slots[hull].type) |kind| kind.model else return false;
     const object = &all.slots[hull].object;
 
     // The hull stands where this step is taking it, as the ship's sphere does.
-    model.place(object.nextPosition(), object.root.next_orientation);
     const at = all.slots[ship].object.nextPosition();
-    const found = objects.hitSphere(model, source, at, all.slots[ship].object.radius) orelse return false;
+    const found = objects.hitSphere(model, object.placeAt(.next), at, all.slots[ship].object.radius) orelse return false;
 
-    const part = model.parts[found.part].object;
-    const contact = math.transform(part.orientation, found.point) + part.position;
-    const normal = math.transform(part.orientation, found.normal);
+    const contact = math.transform(found.place.orientation, found.point) + found.place.position;
+    const normal = math.transform(found.place.orientation, found.normal);
     // The ship takes the shove at its own centre, the hull at the face it was hit on. The game
     // works the hull's lever out in the part's frame; the port uses the object's, which differs
     // only for a part its model animates.

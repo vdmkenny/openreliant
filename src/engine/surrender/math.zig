@@ -23,6 +23,11 @@ pub const Place = struct {
             .orientation = product(parent.orientation, place.orientation),
         };
     }
+
+    /// `point`, given in the world, in this place's own frame.
+    pub fn inverse(place: Place, point: Vector) Vector {
+        return transformTransposed(place.orientation, point - place.position);
+    }
 };
 
 // The helpers add in the order the engine's do, which with the FPU rounding to single precision, as

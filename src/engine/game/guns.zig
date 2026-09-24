@@ -1215,7 +1215,7 @@ fn candidates(world: gameobj.World, bullet: *Bullet, record: Gun, lifetime: i32)
         if (object.flags.components and model != null) {
             const end = bullet.at + (bullet.velocity - gameobj.vector(object.velocity)) * @as(Vector, @splat(life));
             var listing: Listing = .{ .bullet = bullet, .object = index, .from = bullet.at, .to = end };
-            objects.hitWalk(model.?, object.placeAt(.next), bullet.at, end, &listing);
+            objects.hitWalk(model.?, object.placeAt(.next), &listing);
         } else {
             bullet.candidates[bullet.candidate_count] = .{ .object = index };
             bullet.candidate_count += 1;
@@ -1231,6 +1231,10 @@ const Listing = struct {
     object: u16,
     from: Vector,
     to: Vector,
+
+    pub fn meets(listing: *Listing, box: objects.Box) bool {
+        return box.meetsSegment(listing.from, listing.to);
+    }
 
     pub fn part(listing: *Listing, ref: objects.PartRef, place: math.Place, moving: bool) void {
         const shot = listing.bullet;
@@ -1413,7 +1417,7 @@ fn componentStruck(world: gameobj.World, bullet: *const Bullet, segment: objects
     const slot = &world.objects.slots[index];
     const model = if (slot.model) |*live| live else return null;
     const root = slot.object.placeAt(.next);
-    if (!objects.meetsBounds(model, root, bullet.last, bullet.at)) return null;
+    if (!objects.Box.ofBounds(model, root).meetsSegment(bullet.last, bullet.at)) return null;
     var struck: ?objects.Crossing = null;
     for (run) |candidate| {
         const ref = candidate.part orelse continue;
