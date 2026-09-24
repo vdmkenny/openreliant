@@ -242,7 +242,9 @@ const fire_speed: f32 = 2;
 /// the `fire` track of each of its parts playing none, whose events fire it
 /// (`guns.clipEventMuzzles`). A target it can't lead or aim at, or no longer valid, it drops.
 ///
-/// **Quirk:** the muzzle points along its own nose, from where the base stands.
+/// **Quirk:** the muzzle points along its own nose, from where the base stands. Every fighter's
+/// rear turret has its muzzle facing opposite its aim, and so never fires
+/// ([#219](https://github.com/vdmkenny/openreliant/issues/219)).
 fn track(world: gameobj.World, index: u16, gun: *guns.Fitted, aimed: *Aimed) void {
     const all = world.objects;
     if (aimed.target.index < 0 or !ai.targetValid(all, aimed.target, .{})) return drop(aimed);
@@ -289,7 +291,8 @@ const huge_overshoot: f32 = 20;
 /// and a turn by 6.28319; the port by the exact values.
 ///
 /// Not ported: the Stalag's turrets fire anywhere while the byte at `0x005883F8` is set, which the
-/// hull's triggers set, perhaps with the player inside it.
+/// hull's triggers set, perhaps with the player inside it
+/// ([#220](https://github.com/vdmkenny/openreliant/issues/220)).
 fn aimAngles(aimed: *const Aimed, aim: Vector) ?[2]f32 {
     const model = aimed.model;
     const base = &model.parts[aimed.base];
@@ -345,7 +348,8 @@ fn aimAngles(aimed: *const Aimed, aim: Vector) ?[2]f32 {
 /// **Quirk:** nothing asks whether the object is valid to aim at, so an exploding, cloaked or
 /// untargetable one early in the slots can be picked, and dropped by the next track.
 ///
-/// Not ported: in a multiplayer game, the player who last hurt the turret's object is passed over.
+/// Not ported: in a multiplayer game, the player who last hurt the turret's object is passed over
+/// ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
 fn pickTarget(world: gameobj.World, index: u16, aimed: *Aimed) void {
     const all = world.objects;
     const own = &all.slots[index].object;
@@ -463,7 +467,8 @@ const reload_speed: f32 = 4;
 /// spent when the roll lets it launch, whether one is launched or not; and a target found within
 /// the lock range but beyond half of it is found and dropped in turn.
 ///
-/// Not ported: in a multiplayer game, the player who last hurt the turret's object is passed over.
+/// Not ported: in a multiplayer game, the player who last hurt the turret's object is passed over
+/// ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
 fn missileStep(world: gameobj.World, index: u16, launcher: *Launcher) void {
     const all = world.objects;
     const now = world.clock.frame_start;

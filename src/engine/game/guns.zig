@@ -155,7 +155,8 @@ pub const Turret = union(enum) {
     spin: turrets.Spin,
     /// A missile turret (kind 3). It is in no gun group.
     missile: turrets.Launcher,
-    /// A turret destroyed with its base (kind -1): nothing steps or fires it again.
+    /// A turret destroyed with its base (kind -1, `node_forget`): nothing steps or fires it again.
+    /// Nothing destroys a base yet ([#42](https://github.com/vdmkenny/openreliant/issues/42)).
     gone,
 };
 

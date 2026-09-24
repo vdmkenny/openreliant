@@ -227,7 +227,7 @@ exception; a Huge Gun aimed up to 20 degrees past a pitch limit aims at the limi
 has a firing arc, the direction from the pitching part, in the root's frame, picks a row by its
 angle about Y (32 to a turn) and a column by its angle from Y (16, wrapping twice round the half
 turn), and four neighbouring bits must be set. Not ported: the Stalag's turrets fire anywhere while
-the byte at `0x005883F8` is set. **Improvement:** the port turns radians, degrees and turns by the
+the byte at `0x005883F8` is set ([#220](https://github.com/vdmkenny/openreliant/issues/220)). **Improvement:** the port turns radians, degrees and turns by the
 exact values, where the game has 57.2958, 0.0174533, 3.14159 and 6.28319.
 
 `turret_pick_target` (`0x0047D1F0`) takes the first object, in slot order, it can lead from its
@@ -237,10 +237,13 @@ for a Huge Gun, is aimed at whole; any other only by a turret whose own object l
 is not a Kurgan, an Antanov, a Nanny or a Prowler, at the first of its components the turret can
 reach. It doesn't ask whether the object is valid, so an exploding, cloaked or untargetable one
 early in the slots is picked and dropped in turn. In a multiplayer game it passes over the player
-who last hurt its object (`+0x10`), which the port leaves out.
+who last hurt its object (`+0x10`), which the port leaves out
+([#55](https://github.com/vdmkenny/openreliant/issues/55)).
 
-The Predator's tail gun, a turret of one part, faces back, while its part's frame puts its aim of
-no yaw and no pitch ahead: its muzzle never points at what it aims at, and it never fires.
+Every fighter's rear turret, the Predator's tail gun among them, has its muzzle facing back, while
+its base's frame puts its aim of no yaw and no pitch ahead: its muzzle never points at what it aims
+at, and it never fires ([#219](https://github.com/vdmkenny/openreliant/issues/219)). A capital
+ship's turrets face along their aim.
 
 **Spinning, `turret_spin_step` (`0x0047C9B0`).** Its barrels loop their `fire` track, from a
 standstill at first. While its trigger is held, through the tick it is held until, they spin up by
@@ -260,6 +263,13 @@ The gun fires by its trigger in the step, however fast it spins.
 
 It starts in state 0 with no missiles, so it reloads first. A target within the lock range but
 beyond half of it is found and dropped in turn.
+
+Not ported: destroying a turret's base, which sets its gun's kind to -1 (`node_forget`,
+`0x00499BB0`, [#42](https://github.com/vdmkenny/openreliant/issues/42)); the script's
+`TurretSetTarget`, which aims a ship's aimed turrets on a component at an entity
+([#36](https://github.com/vdmkenny/openreliant/issues/36)); and in a multiplayer game, the damage
+that has every turret of the object pick again, passing the attacker over
+([#55](https://github.com/vdmkenny/openreliant/issues/55)).
 
 Groups leave out kinds 1 and 3, and FULL GUNS kind 1 ([The trigger](#the-trigger)). The game reads
 through a missing part where an assembly lacks one, a slot of -1 or past 4 into the words beside
