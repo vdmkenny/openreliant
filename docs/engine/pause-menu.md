@@ -1,32 +1,16 @@
 # Pause menu
 
-While the mission is paused, the game draws a menu in place of the head-up display. The menu has a
-main screen and screens for the audio, video and control settings; multiplayer has a screen of its
-own. The mouse drives the menu, and Escape backs out of it.
+While a mission is paused, the game draws a configuration menu in place of the head-up display. The menu has a main screen and screens for audio, video and control settings; multiplayer has its own screen. The mouse drives the menu, and Escape backs out of it.
 
-**Unverified:** the source file's name. The menu's code (`0x0048D820`-`0x004906F0`) and its data
-lie between `hudmovie.cpp`'s and `language.cpp`'s in link order ([Source files](../binary/sources.md)),
-and no assertion names the file. The port calls it `hudoptions.cpp`: it sorts between those two, and
-the menu draws through the display's pane in `hud_draw`'s place. `game_pause` and
-`mission_paused_frame` lie between `language.cpp` and `main.cpp`'s first placed function, and
-`paused` among `main.cpp`'s variables, so they are taken to be `main.cpp`'s.
+**Unverified:** the source file's name. The menu's code (`0x0048D820` to `0x004906F0`) and its data lie between `hudmovie.cpp`'s and `language.cpp`'s in link order ([Source files](../binary/sources.md)), and no assertion names the file. The port calls it `hudoptions.cpp`: it sorts between those two, and the menu draws through the display's pane in `hud_draw`'s place. `game_pause` and `mission_paused_frame` lie between `language.cpp` and `main.cpp`'s first placed function, and `paused` among `main.cpp`'s variables, so they are taken to be `main.cpp`'s.
 
 ## In the port
 
-[`game/hudoptions.zig`](../../src/engine/game/hudoptions.zig) holds the menu and its screens, with
-the items, their drawing and the widgets the screens share in
-[`hudoptions/menu.zig`](../../src/engine/game/hudoptions/menu.zig) and the screens in
-[`hudoptions/screens.zig`](../../src/engine/game/hudoptions/screens.zig); `game_pause` is in
-[`game/main.zig`](../../src/engine/game/main.zig). Ported so far: pausing and resuming, the paused
-frame's outcomes, the menu's items and pointer, and the main, audio and video screens, which save
-to `starlancer.ini` as the game does. Not yet: the controls screen and F1 (#210), the multiplayer
-screen (#211), and the brightness, whose slider stays hidden as it does where the hardware can't set it (#209).
-The sandbox's RESTART starts the sandbox again and its LEAVE MISSION quits.
+[`game/hudoptions.zig`](../../src/engine/game/hudoptions.zig) holds the menu and its screens, with the items, their drawing and the widgets the screens share in [`hudoptions/menu.zig`](../../src/engine/game/hudoptions/menu.zig) and the screens in [`hudoptions/screens.zig`](../../src/engine/game/hudoptions/screens.zig); `game_pause` is in [`game/main.zig`](../../src/engine/game/main.zig). Ported so far: pausing and resuming, the paused frame's outcomes, the menu's items and pointer, and the main, audio and video screens, which save to `starlancer.ini` as the game does. Not yet: the controls screen and F1 ([#210](https://github.com/vdmkenny/openreliant/issues/210)), the multiplayer screen ([#211](https://github.com/vdmkenny/openreliant/issues/211)), and the brightness slider, which stays hidden as it does where hardware cannot set it ([#209](https://github.com/vdmkenny/openreliant/issues/209)). The sandbox's RESTART starts the sandbox again and its LEAVE MISSION quits.
 
 **Improvements**, each marked so in the code:
 
-- The menu is drawn `hud.scaleFor` times larger, as the display is, so it keeps its proportions on
-  a larger screen.
+- The menu is drawn `hud.scaleFor` times larger, as the display is, so it keeps its proportions on a larger screen.
 - The pointer is where the system's is over the window, rather than DirectInput's motion added up.
 - Losing the window's focus pauses into the menu in single player too.
 - OpenReliant's version is written, dimmed, in the bottom right corner.
@@ -35,12 +19,10 @@ The sandbox's RESTART starts the sandbox again and its LEAVE MISSION quits.
 **Fixes** of the game's bugs, each marked so in the code:
 
 - Coverage level 16 of the fonts is drawn as 15, where the game reads past its remap table.
-- The effects' test sound plays at the volume set, where the game plays it at what the pointer's
-  place works out to.
+- The effects' test sound plays at the volume set, where the game plays it at what the pointer's place works out to.
 - The video screen's RESET DEFAULTS sets the cockpit mode the setting stands for.
 
-W and H below are the screen's size in pixels (`sr + 0x1666`, `sr + 0x166A`). The layout is in
-pixels about fractions of the screen, and doesn't scale.
+W and H below are the screen's size in pixels (`sr + 0x1666`, `sr + 0x166A`). The layout is in pixels about fractions of the screen, and does not scale.
 
 ## Pausing
 

@@ -1,87 +1,57 @@
 # The game loop
 
-How the payload paces a mission: a timer ticks 100 times a second, the loop runs one game tick for
-each tick of the timer, and objects move on every fourth tick. The names below are those
-`make ghidra-annotate` gives the Ghidra project.
+How the payload paces a mission: a timer ticks 100 times a second, the loop runs one game tick for each tick of the timer, and objects move on every fourth tick. Function and variable names follow annotations in the Ghidra project (`make ghidra-annotate`).
 
 ## Ticks
 
-`tick_timer` (`0x004827C0`) runs 100 times a second, on a periodic multimedia timer that
-`timer_start` (`0x004A70F0`) sets up. Unless the game is paused, which the word `paused`
-(`0x57E04C`) says, it advances `game_ticks` (`0x565064`) and the play time: ticks, seconds,
-minutes and hours at `0x565070` to `0x565076`. The play time rolls a second over after 101 ticks. `game_tick` also counts the ticks it runs in
-`mission_ticks` (`0x587CC4`), which stops while the game is paused.
-The [script clock](script-vm.md#the-clock-and-timers) runs on a timer of its own, once a second,
-and stops for the pause too.
+`tick_timer` (`0x004827C0`) runs 100 times a second on a periodic multimedia timer created by `timer_start` (`0x004A70F0`).
+
+- Unless the game is paused (indicated by `paused`, `0x57E04C`), it advances `game_ticks` (`0x565064`) and the play time counters: ticks, seconds, minutes and hours at `0x565070` to `0x565076`. The play time rolls a second over after 101 ticks.
+- `game_tick` also counts active ticks in `mission_ticks` (`0x587CC4`), which stops while the game is paused.
+- The [script clock](script-vm.md#the-clock-and-timers) runs on its own timer once a second and also stops while paused.
 
 ## The loop
 
-`mission_run` (`0x00494040`) zeroes the clocks, then loops. Each pass runs `game_tick`
-(`0x00477850`) once for each tick of `game_ticks` since the previous pass, then, unless the game is
-paused, the frame's work, `mission_frame` (`0x004924B0`). So the simulation advances at a fixed
-rate whatever the frame rate. The frame's work runs every object's [orders](orders.md), through
-`orders_update`, and flushes the script's events, once a frame. It begins with `frame_begin`
-(`0x00491E00`), which sets `frame_duration` (`0x588330`) to the ticks since `frame_start`
-(`0x5883B0`) and `frame_start` to `mission_ticks`; code that runs once a frame measures time with
-these.
+`mission_run` (`0x00494040`) resets the clocks to zero, then loops:
 
-`game_tick` runs `simulation_step` (`0x004774D0`) unless the game is paused. `simulation_step`
-does its work on every fourth call, so 25 times a second: each object's own updates, then
-`objects_update` (`0x00468FA0`), which moves every object with `object_move` and handles
-collisions, then the missiles (`missiles_move`, `0x00495720`) and the shots (`0x0047A4E0`). The
-rates and speeds of the [flight model](objects.md#motion) are therefore per twenty-fifth of a
-second, and afterburner fuel, which burns 4 units an update from 100 per second of the ship's
-stat, lasts that many seconds. Each frame draws what moves between its last two
-places, as far into the step as the ticks since it have gone
-([Drawing between steps](objects.md#drawing-between-steps)), so motion moves on a hundred times a
-second.
+- Each pass runs `game_tick` (`0x00477850`) once for each tick of `game_ticks` accumulated since the previous pass.
+- Unless the game is paused, it then executes the frame work, `mission_frame` (`0x004924B0`). The simulation advances at a fixed rate regardless of display frame rate.
+- The frame work runs every object's [orders](orders.md) via `orders_update`, and flushes script events once per frame.
+- It begins with `frame_begin` (`0x00491E00`), which sets `frame_duration` (`0x588330`) to the ticks elapsed since `frame_start` (`0x5883B0`) and sets `frame_start` to `mission_ticks`; per-frame code measures elapsed time with these values.
+
+`game_tick` runs `simulation_step` (`0x004774D0`) unless the game is paused. `simulation_step` executes on every fourth call (25 times a second):
+
+- Each object's individual updates.
+- `objects_update` (`0x00468FA0`), which moves every object with `object_move` and handles collisions.
+- Missile updates (`missiles_move`, `0x00495720`) and gun projectiles (`0x0047A4E0`).
+
+The rates and speeds of the [flight model](objects.md#motion) are therefore measured per 1/25 of a second. Afterburner fuel burns 4 units per update from the ship's 100 per second stat, lasting that many seconds. Each frame draws moving objects interpolated between their last two positions based on elapsed ticks since the step ([Drawing between steps](objects.md#drawing-between-steps)), so visual motion advances 100 times a second.
 
 ## Porting
 
-[`game/main.zig`](../../src/engine/game/main.zig) holds the clocks as `Clock`, with `frameBegin`,
-`frameReset`, and `nextTick` and `runTicks` for `mission_run`'s pacing, one game tick for each tick
-of the timer. The functions that tick them live with their files: `hog_snd.tickTimer` for what
-`tick_timer` does to them, and `gameobj.gameTick` and `gameobj.simulationStep`.
+[`game/main.zig`](../../src/engine/game/main.zig) holds the clocks as `Clock`, with `frameBegin`, `frameReset`, `nextTick`, and `runTicks` for `mission_run` pacing (one game tick per timer tick). The ticking functions live in their respective files: `hog_snd.tickTimer` for `tick_timer` logic, and `gameobj.gameTick` and `gameobj.simulationStep`.
 
-**Improvement:** the port has no periodic timer. `advanceTo` takes the platform's monotonic count of
-hundredths of a second, and the ticks come from the difference between two counts rather than from
-the length of a frame, so the clocks keep to that count however the frames fall and nothing
-accumulates. The frame rate is therefore decoupled from the tick rate in both directions: a frame
-shorter than a hundredth runs no tick, a frame that spans several runs all of them at once, and a
-second of play is 100 ticks and 25 simulation steps whatever the rate the engine draws at.
+**Improvement:** the port has no periodic timer. `advanceTo` takes the platform's monotonic count of hundredths of a second, and ticks come from the difference between counts rather than frame durations, so clocks keep to that count and nothing accumulates. The frame rate is decoupled from the tick rate in both directions: a frame shorter than 1/100 second runs no tick, a frame spanning several runs all of them in catchup, and a second of play is always 100 ticks and 25 simulation steps regardless of display refresh rate.
 
-**Improvement:** `objects.stepFraction` also counts the time past the last tick, which `advanceToFine`
-keeps from a finer count, so that what moves moves on every frame rather than every tick, evenly at
-any display rate. The effects, which move by a velocity a tick, are drawn that far past the tick
-as well (`objects.pastTick`, and [Effects](effects.md#drawn-between-the-ticks)).
-`--no-smooth-motion` and `--original` move it on with the ticks, as the original does.
+**Improvement:** `objects.stepFraction` counts elapsed time past the last tick, which `advanceToFine` maintains from a higher-precision timer, so moving entities update smoothly on every frame rather than stepping on ticks. Visual effects, which move by a velocity per tick, are drawn that far past the tick as well (`objects.pastTick`, and [Effects](effects.md#drawn-between-the-ticks)). `--no-smooth-motion` and `--original` move objects on ticks, as the original does.
 
-The simulation step walks the objects ([The object array](objects.md#the-object-array)): each has
-its orientation orthonormalized in its turn, then its node update, its shields' recharge and its
-[guns' step](guns.md#the-step), and then the player's controls fly the player's ship, while its top order is Player
-Control, `objects_update` moves every object and the [shots in flight](guns.md#shots) fly on. Each
-frame, `mission_frame` frames each object between its last two steps, tests the shots against what
-they may have struck, and draws it all after the camera's frame.
+The simulation step processes objects in sequence ([The object array](objects.md#the-object-array)):
 
-Ported so far: the clocks, the pacing, the keyboard and the joystick, which the simulation step
-reads 25 times a second as `read_keyboard` and `read_joystick` do rather than once a frame, the
-step's work on the objects and the [missiles](missiles.md#flight), and each frame's orders and
-framing (`main.missionFrame`), which is what a mission and the sandbox both run.
-Not yet: the mouse, the countdown `game_tick` steps once a second, and the sound streaming that
-shares `tick_timer`.
+1. Each object's orientation is orthonormalized in turn.
+2. Node updates, shield recharge, and the [guns' step](guns.md#the-step).
+3. Player controls fly the player's ship while its active order is Player Control.
+4. `objects_update` moves all objects, and [shots in flight](guns.md#shots) advance.
+5. Each frame, `mission_frame` interpolates each object between its last two steps, checks shots against potential targets, and draws the scene after the camera frame.
+
+Ported so far: the clocks, pacing, keyboard and joystick inputs (polled 25 times a second as `read_keyboard` and `read_joystick` do, rather than once per frame), simulation step work on objects and [missiles](missiles.md#flight), and per-frame orders and interpolation (`main.missionFrame`), which both missions and the sandbox run.
+
+Not yet: the mouse, the countdown that `game_tick` steps once a second, and sound streaming that shares `tick_timer`.
 
 ## Collisions
 
-After moving the objects, `objects_update` lists each one that collides: its slot, its collision
-radius (`0x59C`) times `visibility` (`0x12C`), and how far its sphere reaches along X. It sorts the
-list by that reach, the farthest first, and walks each object against those after it while their
-spheres still reach back to it, which is every object that can be near it. A pair where either
-names the other in `passes_through` (`0x618`) is left alone, as is one whose spheres do not
-overlap; the rest go to `objects_collide` (`0x00466170`). A pass that moves anything is followed by
-another, up to ten; on the tenth the game puts "collision" on the screen.
+After moving objects, `objects_update` gathers colliding candidates: slot index, collision radius (`0x59C`) times `visibility` (`0x12C`), and bounding sphere reach along X. It sorts the list by that reach (farthest first) and checks each object against subsequent ones whose spheres reach back to it. Pairs where either object lists the other in `passes_through` (`0x618`) or whose spheres do not overlap are skipped; remaining pairs route to `objects_collide` (`0x00466170`). Up to 10 collision passes run; on the tenth, the game displays "collision" on screen.
 
-`objects_collide` decides by the two objects' classes (`ShipCombat.class`, `+0x28`) and by whether
-they list components:
+`objects_collide` checks the two objects' classes (`ShipCombat.class`, `+0x28`) and component lists:
 
 | The pair | What happens |
 |---|---|
@@ -94,38 +64,18 @@ they list components:
 | A torpedo against anything else | It goes off |
 | Anything else | The impact's damage, then both move again and are set apart |
 
-Before that, the two shove each other (`0x00464E80`). The point their spheres touch at moves with
-each of them between this step and the next, so a turning ship strikes with its wingtip's speed;
-the impulse comes from how fast the two points close, over each object's mass and its
-`angular_response`, doubled so the bounce keeps the speed they met at, and both take it through
-`object_knock`, equal and opposite. The move that follows applies those knocks. An object held to
-another, and the Ripper with something in its grip, take no shove.
+Before separation, the two objects apply an impulse shove (`0x00464E80`). The contact point on each sphere moves with the object between steps, so a turning ship strikes with its wingtip speed. The impulse is calculated from closing velocity over both masses and `angular_response`, doubled so the bounce preserves relative impact speed, and applied equally and oppositely via `object_knock`. Attached objects and the Ripper with a captured victim receive no shove.
 
-Two spheres meet on the line between their centres, so a shove between them has no lever and neither
-ship is set spinning. A hull's own faces do give one ([#143](https://github.com/vdmkenny/openreliant/issues/143)).
+Two spheres collide along the line between their centers, applying no torque, so neither ship is set spinning. Hull faces do apply torque ([#143](https://github.com/vdmkenny/openreliant/issues/143)).
 
-The pair is then set apart along that line: each is placed at 1.1 times its own radius from the
-point midway between the two, so the step that follows does not find them overlapping again.
+The pair is then separated along that line: each object is placed at 1.1 times its own radius from the midpoint between the two, preventing overlapping on the next step.
 
-A ship that meets an object listing components is tested against that object's collision tree
-instead ([Models](../formats/shp.md#tree-node-tag-0x07)): each part's boxes are descended to the
-leaves, and the faces of a leaf the ship's sphere reaches give the nearest point. Those are the
-file's own faces, which the leaf lists by index, not the merged polygons the renderer draws. The ship is then
-shoved at its own centre and the hull at that point, so the hull turns about the hit and the ship
-does not.
+A ship colliding with an object that lists components tests against that object's collision tree ([Models](../formats/shp.md#tree-node-tag-0x07)): parts are traversed down to leaf nodes, and leaf faces within reach of the ship's sphere determine the nearest contact point. These are the file's own indexed faces, not the merged polygons the renderer draws. The ship is shoved at its center and the hull at the hit point, rotating the hull around the impact while the ship does not rotate.
 
-An impact also does damage, from the impulse the shove handed the pair: a fifth of it over the
-lighter of the two masses, halved, on the quadrant each was struck in (`collision_damage`,
-`0x00465CA0`). The Ripper takes none. The player's fore or aft [shield
-reserve](controls.md#the-shield-balance) takes it first, and while it holds that is all. With the
-shield there down the armour takes it; with it up the shield takes it first, what passes through
-wears the armour, which sets the armour's conditions again, and the shield
-[flares](effects.md#shields). A ship meeting a hull takes it the same way, its reserve drawn by
-twice the damage. A collision does not count toward what a ship has taken lately, so it never
-sends one after its attacker; a shot does.
+Impact damage is calculated from the collision impulse (`collision_damage`, `0x00465CA0`): 1/5 of the impulse divided by the lighter mass, halved, applied to the struck quadrant. The Ripper takes no damage. The player's fore or aft [shield reserve](controls.md#the-shield-balance) absorbs damage first. If the reserve is depleted, the shield takes damage; when down, armor absorbs the damage, updating armor condition, and the shield [flares](effects.md#shields). A ship striking a hull takes damage similarly, drawing twice the damage from reserve. Collisions do not count toward recent damage taken from an attacker, so they do not trigger retaliatory orders; weapon hits do.
 
-Ported so far: the sweep, the pairs it passes over, the shove, setting two objects apart, the hull
-test and the damage ([`collision.zig`](../../src/engine/game/collision.zig)). A collision does no damage to a component: only a torpedo's hit and a ship destroying itself
-against a hull reach `component_damage`. Not yet: the mine's explosion
-([#41](https://github.com/vdmkenny/openreliant/issues/41)). The difficulty scales the damage
-([Destruction](objects.md#destruction)).
+Ported so far: the sweep, ignored pairs, shove impulse, object separation, hull collision tree tests, and damage ([`collision.zig`](../../src/engine/game/collision.zig)). Collisions do not damage components: only torpedo impacts and ships destroying themselves against a hull call `component_damage`.
+
+Not yet: the mine's explosion ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
+
+Difficulty scales collision damage ([Destruction](objects.md#destruction)).

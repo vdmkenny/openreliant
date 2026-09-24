@@ -1,8 +1,6 @@
 # Shipped binaries
 
-Every file listed here comes from the two discs, most of it by way of `LANCER.CAB`.
-`make game` reproduces that layout under `game/install/`. The analysis reads the game executable,
-with its code readable, from `game/decrypted/LANCER.EXE`, which the repository does not provide.
+Every file listed here comes from the two discs, most of it by way of `LANCER.CAB`. `make game` reproduces that layout under `game/install/`. The analysis reads the game executable, with its code readable, from `game/decrypted/LANCER.EXE`, which the repository does not provide.
 
 All binaries are 32-bit x86 PE images (`machine = 0x14C`).
 
@@ -15,14 +13,11 @@ All binaries are 32-bit x86 PE images (`machine = 0x14C`).
 | `LANGUAGE.DLL` | 122,951 | 6.0 | `0x10000000` | Localised strings, as a `.rsrc` string table the game reads by ID. |
 | `ITACLANG.DLL` | 692,282 | - | - | In-flight communication system language resources. |
 
-`LANCER.ICD` is stripped, so Ghidra names its functions `FUN_<address>`. It is built with Visual
-C++ 6.0 and links the C runtime statically; see [`runtime.md`](runtime.md).
+`LANCER.ICD` carries no symbols, so Ghidra names its functions `FUN_<address>`. It is built with Visual C++ 6.0 and links the C runtime statically; see [`runtime.md`](runtime.md).
 
 ## Middleware
 
-The game is a thin layer over several late-1990s SDKs. Source paths surviving in the payload's
-`.rdata` show the original tree as `lancer\game\*.cpp`, `lancer\interface\loadout` and
-`lancer\surrender\surrenderlib`.
+The game is a thin layer over several late-1990s SDKs. Source paths in the payload's `.rdata` show the original tree as `lancer\game\*.cpp`, `lancer\interface\loadout` and `lancer\surrender\surrenderlib`.
 
 | Library | Files | Role |
 |---|---|---|
@@ -31,8 +26,7 @@ The game is a thin layer over several late-1990s SDKs. Source paths surviving in
 | **Miles Sound System** | `mss32.dll`, `MSS*.M3D`, `MP3DEC.ASI` | Audio. The `.m3d` files are selectable 3D providers: EAX, Aureal A3D, RSX, Dolby Surround, DirectSound3D. |
 | **Bink** | `binkw32.dll` | Video playback for briefings, cutscenes and interface transitions. |
 
-DirectDraw, Direct3D, DirectInput and DirectPlay are reached through those libraries or loaded
-dynamically; only `DINPUT.dll` is imported statically, for `DirectInputCreateEx`.
+DirectDraw, Direct3D, DirectInput and DirectPlay are reached through those libraries or loaded dynamically; only `DINPUT.dll` is imported statically, for `DirectInputCreateEx`.
 
 ## Data files
 
@@ -48,5 +42,4 @@ dynamically; only `DINPUT.dll` is imported statically, for `DirectInputCreateEx`
 
 ## Protection dependencies
 
-`SECDRV.SYS` is the SafeDisc kernel driver. Windows Vista and later disabled it, and Windows 10
-removed it, so the shipped `LANCER.EXE` cannot start on a current system.
+`SECDRV.SYS` is the SafeDisc kernel driver. Windows Vista and later disabled it, and Windows 10 removed it, so the shipped `LANCER.EXE` cannot start on a current system.

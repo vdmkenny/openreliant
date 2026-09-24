@@ -1,165 +1,82 @@
 # Guns
 
-How a ship is fitted with guns, how they are grouped, what a simulation step does with them, and
-the shots they fire. The gun types' figures and where they come from are in
-[`formats/stats.md`](../formats/stats.md#guns).
+How a ship is fitted with guns, how they are grouped, what a simulation step does with them, and the shots they fire. Gun type statistics and sources are documented in [`formats/stats.md`](../formats/stats.md#guns).
 
 ## The guns a model holds
 
-`object_fit_guns` (`0x00479800`) walks the object's model when it is created, after its
-[components](objects.md#components) are listed, once to count its guns and once to fill them in,
-and allocates `gun_count` records of `0x60` bytes at `+0x134` and a word for each gun at
-`+0x138`. `object_collect_guns` (`0x00479640`) walks the root's parts in order:
+`object_fit_guns` (`0x00479800`) traverses an object's model when created, after its [components](objects.md#components) are listed: once to count its guns and once to allocate them. It allocates `gun_count` records of `0x60` bytes at `+0x134` and one word for each gun at `+0x138`. `object_collect_guns` (`0x00479640`) traverses the root parts in order:
 
-- A part of a turret's class (3, 9, 10 or 18, `part_is_turret`, `0x00479610`) whose
-  [turret kind](../formats/shp.md#part-tag-0x01) is 1, 2 or 3 fits that [turret](#turrets), and
-  what it carries is not walked.
-- A part that shares its link id with a part of a turret's class, whatever that part's kind, is
-  passed over with what it carries: its muzzles are the turret's. A turret's class with any other
-  kind is passed over likewise, so the Boridin's Ion Cannon (class 18, kind 0) and the six guns
-  mounted on it give no gun.
-- Any other part gives a fixed gun for each of its
-  [attachment points](../formats/shp.md#attachment-point-tag-0x09) of kind 3, a muzzle, of the gun
-  type the attachment names at `+0x64`, and the guns of each model its attachments
-  [mount](objects.md#what-an-attachment-point-holds), walked in turn. A muzzle that names type 0
-  is a warning and fires type 1 instead.
+- A part of a turret class (3, 9, 10 or 18, via `part_is_turret`, `0x00479610`) whose [turret kind](../formats/shp.md#part-tag-0x01) is 1, 2 or 3 fits that [turret](#turrets); parts attached to it are skipped.
+- A part sharing its link id with a turret-class part is skipped along with its attachments, because its muzzles belong to the turret. A turret class with any other kind is likewise skipped (for example, the Boridin's Ion Cannon with class 18, kind 0, and its six mounted guns produce no fitted guns).
+- Any other part produces a fixed gun for each [attachment point](../formats/shp.md#attachment-point-tag-0x09) of kind 3 (muzzle), matching the gun type named at `+0x64`, followed by the guns of any mounted models ([Objects](objects.md#what-an-attachment-point-holds)). A muzzle naming type 0 triggers a warning and fires type 1 instead.
 
-**Unverified:** that a part's node holds what hangs from it in the order of its attachments, which
-orders the guns of the models mounted on it among its own.
+**Unverified:** that a part node holds attachments in order, ordering mounted model guns among its own.
 
-A gun's record holds its turret kind at `+0x00`, -1 once its turret is destroyed; the node it
-fires from at `+0x04`; its type's record in `gun_stats` at `+0x08`; the tick its trigger is held
-until at `+0x0C`; which side of its group it is at `+0x14`; and the tick it may next fire at
-`+0x18`. A turret keeps more in the rest ([Turrets](#turrets)). The word at `+0x138` counts the
-steps it has been firing, which times the sound of its shots.
+A gun record tracks:
+- `+0x00`: turret kind (-1 once destroyed)
+- `+0x04`: muzzle node pointer
+- `+0x08`: gun stats record pointer
+- `+0x0C`: tick until trigger is held
+- `+0x14`: side of its group
+- `+0x18`: next available refire tick
+
+Turrets store additional data in remaining fields ([Turrets](#turrets)). The word at `+0x138` counts elapsed firing steps to time sound effects.
 
 ## Groups
 
-`gun_groups_build` (`0x004667F0`) works a ship type's gun groups out from the first object of the
-type created, and keeps them in the type's table at `0x00545900`, `0x78` bytes a type: 20 groups of
-6, each two halfword gun indices and a halfword the game never writes. It pairs each gun with the
-gun of its own type nearest its mirror image across the ship, closest pair first, and the gun
-further to the left leads its group. A gun with nothing to mirror makes a group of its own. Turrets
-of kind 1 and 3 are left out, and a type with no model gets no groups.
+`gun_groups_build` (`0x004667F0`) derives a ship type's gun groups from the first instance created, storing them in the type table at `0x00545900` (`0x78` bytes per type: 20 groups of 6 bytes, each containing two 16-bit gun indices and an unused 16-bit word). Each gun pairs with the nearest mirror-image gun of its type across the lateral axis, closest pair first; the left gun leads the group. A gun with no counterpart forms its own group. Turrets of kinds 1 and 3 are omitted, and types without models receive no groups.
 
-`create_object` then marks each gun with its side, 0 for the gun that leads its group and 1 for the
-other, and starts the ship on `gun_mode`: group 0, synchronised, and firing every group at once
-unless the type has exactly one.
+`create_object` marks each gun with its side (0 for the group leader, 1 for the other) and initializes `gun_mode`: group 0, synchronized, firing all groups at once unless the type has only one group (0x20 for one group, 0x30 for more).
 
 ## The trigger
 
-`object_fire_guns` (`0x0047B1F0`) holds the trigger of the guns that are to fire, setting each
-gun's `+0x0C` to `frame_start` plus the ticks it is given. FIRE LASERS holds it for one tick, so
-the player's guns fire this frame and stop unless the key is held into the next; the mission
-script's Fire command holds it for 20 or 100. With FULL GUNS every gun fires but an aimed turret's,
-otherwise the two guns of the chosen group do. A muzzle of gun type 11, the Nova Cannon, is passed
-over either way: it charges up instead
-([#150](https://github.com/vdmkenny/openreliant/issues/150)). A ship whose guns are disabled fires
-none.
+`object_fire_guns` (`0x0047B1F0`) holds the trigger for firing guns by setting each gun's `+0x0C` to `frame_start` plus the requested ticks. `FIRE LASERS` holds it for one tick, so player guns fire during the current frame and stop unless the key remains held into the next frame; the script Fire command holds it for 20 or 100 ticks. With `FULL GUNS`, every gun fires except aimed turrets; otherwise the two guns of the selected group fire. A muzzle of gun type 11 (Nova Cannon) is skipped either way because it charges up instead ([#150](https://github.com/vdmkenny/openreliant/issues/150)). A ship whose guns are disabled fires nothing.
 
 ## The step
 
-`guns_step` (`0x004770E0`) runs for every object each simulation step, after its shields recharge.
-An object whose components are listed steps no guns of its own.
+`guns_step` (`0x004770E0`) runs for every object during each simulation step, after shields recharge. An object listing components steps no guns of its own.
 
-The guns' charge (`+0x140`) grows by the type's `gun_energy` times the guns' share of the power
-(`+0x734`) and their condition (`+0x66C`), over `ShipCombat._unknown_14` seconds of steps, and
-stops at `gun_energy`. A ship charging up a gun does not recharge while its charge is not zero.
+Gun charge (`+0x140`) recharges by the type's `gun_energy` multiplied by its power allocation (`+0x734`) and condition (`+0x66C`), over `ShipCombat._unknown_14` seconds of simulation steps, capping at `gun_energy`. A ship charging a gun does not recharge while its charge is non-zero.
 
-Then each gun whose trigger is held fires, once its refire interval has passed:
+Each gun whose trigger is held fires once its refire interval has elapsed:
 
-- The guns about to fire are added up first, and each is held against the charge the step began
-  with, so a ship that cannot pay for all of them fires none rather than some. A shot of a gun
-  whose type draws energy takes `Gun.shot_energy` from the charge; one whose type fires rounds
-  takes one of the object's rounds (`+0x13C`), which the gunnery window shows.
-- A ship whose gun condition is below 0.9 misfires: a shot goes off only as often as the condition
-  and a tenth allow.
-- While the ship fires one group of guns and not in step, the group's two guns fire in turn: a gun
-  fires only when its side is the ship's turn (`+0x14C`), which passes to the other side after the
-  pass.
-- The interval begins again whether or not the shot went off, and a ship aiming blind takes 135
-  ticks for every 100.
-- The player's shots are all heard; another ship's are heard one step in every
-  `gun_sound_periods` of its type. A heard shot plays its gun type's 3D sound, which follows it
-  ([Sound](sound.md#where-the-sounds-come-from)).
+- Guns ready to fire are summed first and checked against available charge at the start of the step. If the ship cannot pay the energy cost for all ready guns, none fire. Firing energy weapons deducts `Gun.shot_energy` from charge; projectile weapons deduct one round from ammunition (`+0x13C`).
+- When gun condition drops below 0.9, weapons misfire: shots occur only as frequently as condition plus 0.1 allows.
+- In alternate fire mode (non-synchronized single group), the two paired guns fire in turn: a gun fires only when its side matches the ship's turn state (`+0x14C`), alternating sides afterwards.
+- The refire interval resets regardless of whether the shot succeeded. A ship aiming blind takes 135 ticks for every 100 ticks of base interval.
+- Player shots always produce sound. Other ships produce sound once every `gun_sound_periods` steps for that type. Heard shots trigger the gun type's 3D sound following the projectile ([Sound](sound.md#where-the-sounds-come-from)).
 
-A ship that is jumping fires nothing, though its guns still recharge. Every shot that does go off
-is a bullet, below.
+A ship executing a jump fires nothing, though its weapons continue recharging. Successful shots create active projectiles.
 
 ## Shots
 
-A gun that fires makes a shot: `bullet_fire` (`0x0047C5F0`) takes the first free of the 200 records
-at `0x00563148`, `0xC4` bytes each, and `bullet_place` (`0x0047BDB0`) fills it in. The shot leaves
-the muzzle node where the step is taking it, flying along that node's nose at the gun type's speed,
-and lives for the type's ticks, which is what gives the gun its range. A ship aiming blind aims at
-its target instead of its nose, and gun type 12 scatters.
+`bullet_fire` (`0x0047C5F0`) allocates the first available of 200 projectile records at `0x00563148` (`0xC4` bytes each), and `bullet_place` (`0x0047BDB0`) populates it. The projectile spawns at the muzzle node and travels along that node's forward vector at the gun type's velocity for its defined lifetime in ticks, which determines range. A ship aiming blind aims directly at its target instead of along the muzzle vector, and gun type 12 scatters.
 
-A few gun types have rules of their own. Two Turret Flak shots in five are Turret Lasers shots
-instead (`bullet_fire`), and a Turret Flak shot lives a random share of its life, from a fifth of
-it to all of it, and scatters up to 0.06 radians either way about each axis. The two Huge Guns reach
-1200 and 3000 farther than the objects they strike stand, and their shots always go through the
-shields, even where they are down.
+Special gun rules:
+- Two in five Turret Flak shots spawn as Turret Lasers shots instead (`bullet_fire`). Turret Flak shots have randomized lifetimes between 20% and 100% of their base duration, scattering up to 0.06 radians on each axis.
+- The two Huge Guns project reach 1200 and 3000 units past hit targets, and their shots penetrate shields even when shields are down.
 
-The shot is then given the objects it may reach: each object whose radius, widened by how far it
-could move meanwhile, its path comes within over its whole life, up to 20 of them. An object whose
-components are listed is listed part by part instead ([The hit tests](objects.md#the-hit-tests)):
-along the path its life gives it from the muzzle, as it moves against the object, each part whose
-collision tree's root box that path meets, or that plays a track, is a candidate of its own, the
-object with the part's node's number (`bullet_candidate_test`, `0x0047BC90`). The object's
-velocity it takes off is a step's worth, where the shot's is a tick's. Nothing else is ever tested,
-so a ship that flies into a shot's path after it was fired is not hit.
+Potential targets are assigned at spawn: up to 20 objects whose radius, expanded by movement during flight time, intersects the projectile trajectory. Objects listing components are checked part by part ([The hit tests](objects.md#the-hit-tests)): along the projectile ray, each part whose collision tree root box intersects the path, or that plays a track, registers as a candidate with its node index (`bullet_candidate_test`, `0x0047BC90`). The target velocity subtracted is per-step, while the shot velocity is per-tick. Entities that move into the path after firing are not tested.
 
-`bullets_move` (`0x0047A4E0`) moves every shot on by its velocity each simulation step, after the
-objects move. Once a frame `bullets_frame` (`0x0047A510`) draws them, tests them and lets the spent
-ones go.
+`bullets_move` (`0x0047A4E0`) advances all active shots by their velocity each simulation step, after objects move. `bullets_frame` (`0x0047A510`) renders them, tests collisions, and frees expired projectiles once per frame.
 
-`bullet_hit` (`0x00479B40`) tests what the shot crossed between its last place and its place now
-against the objects it was given, and drops any it has flown past. An object is struck where the
-segment first crosses the sphere of its radius:
+`bullet_hit` (`0x00479B40`) tests the segment between the shot's previous and current positions against candidate objects, discarding any that have been passed. An object is struck where the segment intersects its bounding radius:
 
-- With a shield up in that quadrant the shot spends itself there: `object_damage` takes the gun
-  type's first damage, and the share that passes through to the armour is its second over its
-  first. For the player's ship the [shield reserves](controls.md#the-shield-balance) take the hit
-  first.
-- With the shield down the shot reaches the hull (`bullet_hull_hit`, `0x00479940`): the last of
-  the object's part nodes whose box the segment crosses decides that it hit, and the quadrant's
-  armour takes the type's second damage. It throws [sparks](effects.md#sparks) from where it
-  struck.
-- A ship with its spectral shields on takes nothing at all. The gun type they are tuned to is
-  handed to the check and ignored, so every shot is turned.
+- If shields are active in that quadrant, the shot impacts the shield: `object_damage` applies the gun type's primary damage value, and the fraction penetrating to armour equals secondary damage over primary damage. For the player ship, [shield reserves](controls.md#the-shield-balance) absorb damage first.
+- If shields are down, the shot strikes the hull (`bullet_hull_hit`, `0x00479940`): the last part node whose box is crossed records the hit, and quadrant armour takes secondary damage. Impact throws [sparks](effects.md#sparks).
+- Ships with active spectral shields take no damage; the tuned gun type check is ignored, deflecting all shots.
 
-An object that lists components is struck part by part instead. Where the segment meets its
-bounding box, each of its run of candidates the segment passes within the radius of, as it is
-drawn, is crossed at its next place (`node_hit_test` with `missile_hull_test`), and the last face
-crossed of them all is struck. The shot is spent there. A Huge Gun's sets off a lit fireball 5000
-across for 150 ticks, 40 of its own [sparks](effects.md#sparks) along the face's normal and the
-sound `EXPLOSION01`, and does no damage. Any other throws 10 sparks of kind 1 along the normal, and
-the part takes the gun type's second damage (`component_damage`). One that crosses no part flies
-on. Not ported: a force field's flare, and the shield generator's
-([#179](https://github.com/vdmkenny/openreliant/issues/179)); what the hit leaves hanging from the
-part (`node_add_effect`, `0x004992D0`, [#40](https://github.com/vdmkenny/openreliant/issues/40));
-and the cloak a hit reveals ([#89](https://github.com/vdmkenny/openreliant/issues/89)).
+Objects listing components resolve collisions part by part. Within the component bounding box, candidates are tested against the segment at their next positions (`node_hit_test` with `missile_hull_test`), striking the last face crossed. Huge Gun shots trigger a lit fireball 5000 units across for 150 ticks, 40 [sparks](effects.md#sparks) along the surface normal, and the `EXPLOSION01` sound, inflicting no component damage. Other weapons emit 10 sparks of kind 1 along the normal and apply secondary damage to the component (`component_damage`). Shots missing all parts continue flying.
 
-Either way the shot is spent and the frame that follows lets it go. A shot spent on a shield,
-whatever became of it, makes the shield [flare](effects.md#shields) where it struck, unless the
-ship is cloaked.
+Not ported: force field flares, shield generator flares ([#179](https://github.com/vdmkenny/openreliant/issues/179)), attached impact effects (`node_add_effect`, `0x004992D0`, [#40](https://github.com/vdmkenny/openreliant/issues/40)), and cloaks revealed by weapon hits ([#89](https://github.com/vdmkenny/openreliant/issues/89)).
+
+Expired shots are freed on the next frame. A shot striking a shield triggers a shield [flare](effects.md#shields) at the impact point unless the ship is cloaked.
 
 ### How a shot is drawn
 
-`guns_init` (`0x00478990`) builds the meshes the shots are drawn with once at start-up, twice over:
-a set for the player's side and one for the rest, the same but for the Turret Lasers' rings. Most
-are bolts: two quads crossed along the flight from the muzzle on, one upright and one flat, and far
-off the upright one alone, on the texture `gunflare\lasers` added to what stands behind them. Eight
-builders make them, differing only in the bolt's size, how far it is drawn, and the rings the
-Turret Lasers' bolt has across it.
+`guns_init` (`0x00478990`) builds projectile meshes at startup: one set for the player and one for other ships, differing only in Turret Lasers rings. Most projectiles are bolts formed by two crossed textured quads (one upright, one horizontal) along the trajectory, with distant shots using the upright quad alone, textured with additive `gunflarelasers`. Eight builders create them, differing in bolt dimensions, draw distance, and cross rings.
 
-`bullet_build` (`0x0047D9A0`) gives each new shot up to eight pieces by its gun type: mesh objects,
-sprite sets, lights, and bare frames the rest hang off. A mesh takes its own texture coordinates:
-its gun type's span across the texture (`0x00500FB0`, `0x00500FEC`, 32 texels out of 256 for most
-types), and the top half of it for any side but hostile, the bottom half for hostile, which is what
-gives a friendly shot and an enemy's their different colours. The Pulse Cannon's and the Collapser
-Guns' flares have a texture for the player's side and one for the rest. Each frame `bullets_frame`
-does its type's own work on the pieces, then places them between the shot's last two places.
+`bullet_build` (`0x0047D9A0`) attaches up to eight visual components per shot based on gun type: mesh objects, sprite sets, lights, and parent frames. Textures sample UV coordinates across 32 of 256 texels (`0x00500FB0`, `0x00500FEC`), using the top half for friendly/neutral ships and the bottom half for hostile ships to distinguish colors. Pulse Cannon and Collapser Guns flares use dedicated textures for player and non-player shots. `bullets_frame` updates and interpolates these components between simulation positions each frame.
 
 | Gun type | Drawn with |
 |---|---|
@@ -178,28 +95,15 @@ does its type's own work on the pieces, then places them between the shot's last
 | Turret Lasers | A bolt 400 across and 2400 long, with two diamonds across it |
 | Allied and Coalition Huge Guns | Three squares crossed in the three planes, tumbling and fading, a glow, a light of their own and a trail of particles |
 
-The Nova Cannon's bolt is turned an eighth of a turn about the flight as it is built, and then
-given the muzzle's turn in place of it, so it is drawn unturned.
+The Nova Cannon bolt rotates 1/8 turn during construction and takes the muzzle orientation, rendering unrotated.
 
-On a hardware renderer (`sr + 0x1AC`) a shot also casts a point light from where it is drawn: blue
-(0, 0.5, 1), or orange (1, 0.5, 0) for a hostile ship's shot unless the player fired it, reaching
-1000 at full strength. Only the latest two of the player's shots cast one (`0x0056317C`), and the
-latest two of everyone else's (`0x00563168`): a new shot's light puts out the light of the oldest
-of its two. A shot flies past that reach within a step, so its light shows on the hull that fired
-it for the frames just after it leaves the muzzle.
+On hardware renderers (`sr + 0x1AC`), shots cast dynamic point lights: blue `(0, 0.5, 1)` or orange `(1, 0.5, 0)` for hostile ships unless fired by the player, reaching 1000 units radius. In the original game, only the latest two shots from the player (`0x0056317C`) and latest two from other ships (`0x00563168`) cast lights, with new shots extinguishing older ones.
 
-**Improvement:** the port lets every shot cast its light (`ShotLights.every_shot`), so that
-sustained fire lights the hulls it passes; `--original` and `--few-shot-lights` keep the game's two
-([Renderer](../port/renderer.md#improvements)).
+**Improvement:** the port allows all shots to cast light (`ShotLights.every_shot`) so sustained fire illuminates passing hulls; `--original` and `--few-shot-lights` restore the original two-shot limit ([Renderer](../port/renderer.md#improvements)).
 
 ## Turrets
 
-A turret part of kind 1, 2 or 3 makes a turret of its assembly: the shown parts of its model that
-share its link id, each in the slot its part names at `+0xF8`. The turret's fit fills the rest of
-the gun's record, marks the node of the part in slot 0, its base, with node flag `0x400`, and
-keeps the model whose parts it turns, the object's own or one mounted on it, at `+0x34` (`+0x30`
-for kind 2). The muzzle is the last of the assembly's; a turret's slot numbers index that model's
-parts.
+A turret part of kind 1, 2 or 3 forms a turret assembly: visible parts of its model sharing its link id, placed in slots defined at `+0xF8`. Setup initializes the gun record, sets node flag `0x400` on slot 0 (the base), and stores the model pointer at `+0x34` (`+0x30` for kind 2). The muzzle is the last part of the assembly; slot indices reference model parts.
 
 | Kind | Fit | What the record keeps |
 |---|---|---|
@@ -207,115 +111,48 @@ parts.
 | 2, spinning | `turret_fit_spin` (`0x00479470`) | The parts in slots 0 to 4 at `+0x1C` to `+0x2C`: the barrels that spin, the gun, and two flaps |
 | 3, missile | `turret_fit_missile` (`0x004793A0`) | The parts in slots 0 to 4 at `+0x38`: the base and the launcher; a target at `+0x18`; a timer at `+0x4C`; the missiles left at `+0x58`, none at first; its state at `+0x5C`. It has no muzzle and no gun type |
 
-An aimed turret fires by its parts' `fire` tracks: each track's event of kind 0 fires a shot from
-each muzzle of its part (`clip_event_muzzles`, `0x0047C7B0`, through `bullet_fire`), heard, of the
-type the muzzle holds. Nothing holds such a shot back: not the ship's charge or rounds, the gun's
-refire or condition, a jump, nor the guns being disabled.
+Aimed turrets fire according to their parts' `fire` tracks: event 0 fires from each part muzzle (`clip_event_muzzles`, `0x0047C7B0`, through `bullet_fire`) with sound, matching the muzzle's gun type. These shots bypass capacitor charge, ammunition counts, refire delays, condition penalties, jumps, and gun disabled flags.
 
 ### Each frame
 
-`orders_update` runs `object_step_turrets` (`0x0047C950`) for each object after its orders, where
-its guns are not disabled. Unless the object is exploding or its current order is Dock, each of its
-guns runs its turret's step, by kind, from the table at `0x00500FA0`: nothing for a fixed gun and
-for a destroyed turret's (-1).
+`orders_update` runs `object_step_turrets` (`0x0047C950`) after orders for objects with enabled weapons. Unless an object is exploding or executing a Dock order, each gun evaluates its turret step from the table at `0x00500FA0` (fixed guns and destroyed turrets marked -1 do nothing).
 
-**Aimed, `turret_aimed_step` (`0x0047D3D0`).** With a target it tracks it (below), then turns: its
-base about its X axis by the yaw still to turn, its part in slot 1 and the one in slot 2 about their
-Y by the pitch, each at most 0.02 a tick either way and within its limits (`node_turn`), each placed
-by its new angles (`node_place`). A turret that drops its target as it tracks still turns by what it
-had to turn the frame before. Every 100 to 199 ticks, where it has no target, it looks for one.
+**Aimed, `turret_aimed_step` (`0x0047D3D0`).** When a target is active, the turret tracks it and rotates: the base turns about X by remaining yaw, and slot 1/slot 2 parts pitch about Y, each clamped to 0.02 radians per tick within mechanical limits (`node_turn`, `node_place`). If a target is lost during tracking, the turret continues turning by the previous frame's delta. If idle, it searches for a new target every 100 to 199 ticks.
 
-`turret_aimed_track` (`0x0047CFA0`): a target no longer valid (`order_target_valid`) is dropped.
-Otherwise the turret leads it from its base with its gun (`ai_lead_aim_with_gun`), by a share of
-the lead from 0.5 to 0.8 at random where the target's ECM is on, and works out the yaw and pitch
-toward that (`turret_aim_angles`); where it can't lead it or aim there, it drops it. It keeps what
-it still has to turn at `+0x50` and `+0x54`, each the short way round. Where the muzzle's forward
-axis, from where the base stands, both at their next places, passes within twice the target's
-radius of the aim point, ahead (`turret_in_line`, `0x0047CF10`), it holds its trigger for a tick and
-plays the `fire` track, in the track's own mode at a speed of 2, on each of its parts playing
-none. The tracks' events fire its muzzles.
+`turret_aimed_track` (`0x0047CFA0`): invalid targets (`order_target_valid`) are dropped. Otherwise, the turret computes lead aim from its base (`ai_lead_aim_with_gun`), scaling lead randomly between 0.5 to 0.8 when the target has active ECM, and calculates required yaw and pitch angles (`turret_aim_angles`). If aiming or leading fails, the target is dropped. Remaining yaw and pitch deltas are stored at `+0x50` and `+0x54` via the shortest rotational path. When the muzzle forward axis passes within twice the target radius of the aim point ahead (`turret_in_line`, `0x0047CF10`), it holds the trigger for one tick and plays the `fire` track at speed 2 on idle parts, firing the muzzles.
 
-`turret_aim_angles` (`0x0047CB10`) takes the aim point from the base as the model stands drawn, in
-the frame of the model's root and then of the base's part: the yaw is `atan2(y, -z)`, and the pitch
-`-atan2(x, -z')`, where `z'` is `z` turned by the yaw. They fail outside the base's yaw limits,
-where they are not equal, and outside the pitching part's pitch limits, which have no such
-exception; a Huge Gun aimed up to 20 degrees past a pitch limit aims at the limit. Where the turret
-has a firing arc, the direction from the pitching part, in the root's frame, picks a row by its
-angle about Y (32 to a turn) and a column by its angle from Y (16, wrapping twice round the half
-turn), and four neighbouring bits must be set. The game finds the angle from Y by dividing the
-direction's X by the sine of its angle about Y, which is nothing straight ahead or behind;
-**Fix:** the port takes the length across directly. Not ported: the Stalag's turrets fire anywhere
-while the byte at `0x005883F8` is set ([#220](https://github.com/vdmkenny/openreliant/issues/220)). **Improvement:** the port turns radians, degrees and turns by the
-exact values, where the game has 57.2958, 0.0174533, 3.14159 and 6.28319.
+`turret_aim_angles` (`0x0047CB10`) computes aim angles relative to the base part: yaw is `atan2(y, -z)` and pitch is `-atan2(x, -z')`, where `z'` is `z` rotated by yaw. Angles outside mechanical limits fail; Huge Guns aimed up to 20 degrees past a pitch limit clamp to the limit. If firing arcs are defined, the direction in root space indexes a 32-row by 16-column bitmask table requiring four adjacent bits set. The original game calculated angle from Y by dividing X by `sin(yaw)`, which divides by zero when pointing straight forward or backward.
+**Fix:** the port calculates the transverse length directly.
+Not ported: Stalag turrets firing in all directions while `0x005883F8` is set ([#220](https://github.com/vdmkenny/openreliant/issues/220)).
+**Improvement:** the port converts angles using exact mathematical constants rather than approximations (`57.2958`, `0.0174533`, `3.14159`, `6.28319`).
 
-`turret_pick_target` (`0x0047D1F0`) takes the first object, in slot order, it can lead from its
-base and aim at: of a type below `0x100`, not its own object, of neither its side nor the neutral
-one; for a Huge Gun only a ship that lists components. An object that lists no components, or any
-for a Huge Gun, is aimed at whole; any other only by a turret whose own object lists components and
-is not a Kurgan, an Antanov, a Nanny or a Prowler, at the first of its components the turret can
-reach. It doesn't ask whether the object is valid, so an exploding, cloaked or untargetable one
-early in the slots is picked, dropped by the next track and picked again, keeping the turret from
-any other; **Fix:** the port passes over what the track would drop. In a multiplayer game it passes
-over the player
-who last hurt its object (`+0x10`), which the port leaves out
-([#55](https://github.com/vdmkenny/openreliant/issues/55)).
+`turret_pick_target` (`0x0047D1F0`) acquires the first valid object in slot order that it can lead and aim at: type under `0x100`, not itself, and hostile (neither friendly nor neutral). Huge Guns only target entities with component lists. Entities without components (or any entity for Huge Guns) are targeted as a whole; otherwise, turrets on ships with components target individual sub-components (excluding Kurgan, Antanov, Nanny, and Prowler). The original game did not check target validity during selection, causing cloaked, exploding, or untargetable entities to monopolize targeting queues.
+**Fix:** the port skips entities that tracking would drop. In multiplayer, it skips the player who last damaged the object (`+0x10`), which the port omits ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
 
-Every fighter's rear turret, the Predator's tail gun among them, has its muzzle facing back, while
-its base's frame puts its aim of no yaw and no pitch ahead: in the game its muzzle never points at
-what it aims at, and it never fires. A capital ship's turrets face along their aim. **Fix:** a
-turret whose muzzle faces away from its aim turns, and aims, in its parts' frames turned a half turn
-about their X axis, so its yaw and pitch limits cover the way its muzzle faces and it fires
-([#219](https://github.com/vdmkenny/openreliant/issues/219)).
+**Fix:** in the original game, rear fighter turrets (including the Predator tail gun) have rear-facing muzzles but base reference frames pointing forward with zero yaw and pitch, preventing them from aligning with targets or firing. The port rotates the reference frame 180 degrees around X for rear-facing muzzles, allowing them to aim and fire backwards properly ([#219](https://github.com/vdmkenny/openreliant/issues/219)).
 
-**Spinning, `turret_spin_step` (`0x0047C9B0`).** Its barrels loop their `fire` track, from a
-standstill at first. While its trigger is held, through the tick it is held until, they spin up by
-0.1 a tick to at most 4, its gun's track loops at their speed and its flaps open at a speed of 4;
-otherwise they spin down by 0.02 a tick, its gun's track stops at its start, and its flaps shut.
-The gun fires by its trigger in the step, however fast it spins.
+**Spinning, `turret_spin_step` (`0x0047C9B0`).** Barrels loop their `fire` track. While the trigger is held, barrels accelerate by 0.1 per tick up to a speed of 4, the gun track loops at matching speed, and protective flaps open at speed 4. When released, barrels decelerate by 0.02 per tick, the gun track stops at start, and flaps close. Weapons fire during the step regardless of spin speed.
 
-**Missile, `turret_missile_step` (`0x0047D560`).** By its state:
+**Missile, `turret_missile_step` (`0x0047D560`).** State transitions:
 
-| State | What it does |
+| State | Action |
 |---|---|
-| 0, searching | Out of missiles, it goes to 2. Once its wait is over it picks the object nearest ahead of its launcher, within the Screamer's lock range and within 0.7 of the distance up or down, that is targetable, of another side, neutral or not, lists no components, and is neither a stand-in, exploding nor disabled, and goes to 1 |
-| 1, tracking | Out of missiles, it goes to 2. A target no longer valid, beyond half the lock range or outside the cone up or down is dropped: back to 0, to look again in 20 ticks. Otherwise it turns its base 0.1 toward a target standing more than 0.1 of the distance to either side, a frame whatever the frame's length, and with the target within 0.7 ahead and its wait over, launches a Screamer at it one time in five ([`missile_launch_turret`](missiles.md#a-missile-turrets)), counting a missile spent when the roll lets it launch, and waits 2000 ticks, 1000 in mission 28 |
-| 2 | After 100 ticks, plays its launcher's `reload` track forward at 4, and goes to 3 |
-| 3 | After 800 ticks, plays it back at -4 from where it is, and goes to 4 |
-| 4 | After 300 ticks, holds six missiles, and goes back to 0 |
+| 0, searching | When empty, transitions to state 2. When cooldown expires, selects the nearest target ahead within Screamer lock range and within 0.7 distance vertical bounds that is targetable, hostile/neutral, has no components, and is not a stand-in, exploding, or disabled, then transitions to state 1 |
+| 1, tracking | When empty, transitions to state 2. If the target becomes invalid, exceeds half lock range, or leaves the vertical cone, it resets to state 0 (re-scanning in 20 ticks). Otherwise, turns its base 0.1 radians toward targets offset by more than 0.1 lateral distance; when within 0.7 ahead and cooldown expires, launches a Screamer with a 1-in-5 probability per check ([`missile_launch_turret`](missiles.md#a-missile-turrets)), deducting ammunition on launch, and waits 2000 ticks (1000 in mission 28) |
+| 2 | After 100 ticks, plays the launcher `reload` track forward at speed 4, transitioning to state 3 |
+| 3 | After 800 ticks, plays the track in reverse at speed -4, transitioning to state 4 |
+| 4 | After 300 ticks, reloads six missiles and returns to state 0 |
 
-It starts in state 0 with no missiles, so it reloads first. A target within the lock range but
-beyond half of it is found and dropped in turn.
+Turrets start in state 0 with zero missiles, reloading immediately. Targets between 50% and 100% of lock range are acquired and dropped alternately.
 
-Destroying a turret's base stops its gun for good: `node_forget` (`0x00499BB0`) sets its kind to -1
-([Objects](objects.md#a-components-destruction)).
+Destroying a turret base disables the weapon permanently: `node_forget` (`0x00499BB0`) sets its kind to -1 ([Objects](objects.md#a-components-destruction)).
 
-Not ported: the script's `TurretSetTarget`, which aims a ship's aimed turrets on a component at an
-entity ([#36](https://github.com/vdmkenny/openreliant/issues/36)); and in a multiplayer game, the
-damage that has every turret of the object pick again, passing the attacker over
-([#55](https://github.com/vdmkenny/openreliant/issues/55)).
+Not ported: script `TurretSetTarget` targeting commands ([#36](https://github.com/vdmkenny/openreliant/issues/36)), and multiplayer damage-induced re-targeting ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
 
-Groups leave out kinds 1 and 3, and FULL GUNS kind 1 ([The trigger](#the-trigger)). The game reads
-through a missing part where an assembly lacks one, a slot of -1 or past 4 into the words beside
-the slots, and a missile turret's missing muzzle under FULL GUNS; the port fits no gun for an
-assembly that lacks its base, its muzzle or, for a missile turret, its launcher, passes over such a
-slot, and passes over a gun with no muzzle at the trigger (**Fix**).
+Gun groups exclude kinds 1 and 3, and `FULL GUNS` excludes kind 1 ([The trigger](#the-trigger)). The original game read into adjacent memory when assemblies lacked expected parts; the port checks for missing base, muzzle, or launcher parts, skipping invalid slots and trigger calls (**Fix**).
 
 ## The port
 
-[`guns.zig`](../../src/engine/game/guns.zig) holds the fitting (`fit`), the groups (`buildGroups`),
-the trigger (`fire`), the step (`step`), the shots (`shoot`, `moveBullets`, `bulletsFrame`) and how
-they are drawn (`Looks`, `dress`, `animate`, `drawBullets`). The shapes come from one comptime
-table of recipes, which stands for the game's eleven shape builders and the generators they call.
-The port builds each shape once, and the Turret Lasers' two sets apart, since that is all the
-game's two sets differ in. `simulationStep` runs the step and moves the shots;
-`missionFrame` runs their frame pass; `drawFrame` adds them to the scene after the objects; and
-`playerControls` pulls the trigger from FIRE LASERS. `gun_stats` and the shots in flight live in
-`create.Objects`, and the executable's own half of each gun record is
-[`guns/stats.zig`](../../src/engine/game/guns/stats.zig), which `make gun-tables` derives from the
-payload.
+[`guns.zig`](../../src/engine/game/guns.zig) implements weapon fitting (`fit`), grouping (`buildGroups`), trigger evaluation (`fire`), simulation steps (`step`), projectile handling (`shoot`, `moveBullets`, `bulletsFrame`), and visual rendering (`Looks`, `dress`, `animate`, `drawBullets`). Procedural geometries use compile-time recipe tables replacing the original eleven shape builders. Shapes are built once, keeping Turret Lasers variations distinct. `simulationStep` updates steps and moves projectiles; `missionFrame` executes per-frame updates; `drawFrame` queues render objects; and `playerControls` maps `FIRE LASERS`. `gun_stats` and active projectiles reside in `create.Objects`, and static binary records are defined in [`guns/stats.zig`](../../src/engine/game/guns/stats.zig), generated via `make gun-tables`.
 
-Not ported: the Huge Guns' trails of particles, the sparks an impact makes and a flak shell's
-burst, which is only heard ([#41](https://github.com/vdmkenny/openreliant/issues/41)); the muzzle flashes
-([#63](https://github.com/vdmkenny/openreliant/issues/63)); the Nova Cannon's charge
-([#150](https://github.com/vdmkenny/openreliant/issues/150)); and the gunnery keys that
-choose a group or fire them all ([#92](https://github.com/vdmkenny/openreliant/issues/92)).
+Not ported: Huge Gun particle trails, impact sparks and audible flak bursts ([#41](https://github.com/vdmkenny/openreliant/issues/41)), muzzle flashes ([#63](https://github.com/vdmkenny/openreliant/issues/63)), Nova Cannon charging ([#150](https://github.com/vdmkenny/openreliant/issues/150)), and gunnery selection hotkeys ([#92](https://github.com/vdmkenny/openreliant/issues/92)).

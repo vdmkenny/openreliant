@@ -1,8 +1,6 @@
 # Controls
 
-How the payload reads the player's keyboard, joystick and mouse, and turns them into the inputs of
-the [flight model](objects.md#motion). The names below are those `make ghidra-annotate` gives the
-Ghidra project; [`src/engine/input.zig`](../../src/engine/input.zig) defines the structures.
+How the payload reads the player's keyboard, joystick and mouse, and turns them into the inputs of the [flight model](objects.md#motion). The names below are those `make ghidra-annotate` gives the Ghidra project; [`src/engine/input.zig`](../../src/engine/input.zig) defines the structures.
 
 ## Devices
 
@@ -10,14 +8,9 @@ Ghidra project; [`src/engine/input.zig`](../../src/engine/input.zig) defines the
 
 - the keyboard, shared with other programs and read only while the game is in the foreground;
 - the mouse, held exclusively while the game is in the foreground;
-- a joystick. `input_init` first enumerates the attached joysticks that have force feedback,
-  and `joystick_found` (`0x004BD190`) opens each it is handed. With none, `input_init` enumerates
-  any attached joystick and clears `force_feedback` (`0x50E1A4`); otherwise, while that flag is
-  set, `load_force_effects` (`0x004BD800`) loads the effects from `forces\*.frc`.
+- a joystick. `input_init` first enumerates the attached joysticks that have force feedback, and `joystick_found` (`0x004BD190`) opens each it is handed. With none, `input_init` enumerates any attached joystick and clears `force_feedback` (`0x50E1A4`); otherwise, while that flag is set, `load_force_effects` (`0x004BD800`) loads the effects from `forces*.frc`.
 
-For the joystick, `joystick_object_found` (`0x004BD050`) sets the range of each axis the game uses
-and records that the device has it in `joystick_axes` (`0x5DDC4C`), a `JoystickAxes` with a flag
-for each axis in the order of `DIJOYSTATE`:
+For the joystick, `joystick_object_found` (`0x004BD050`) sets the range of each axis the game uses and records that the device has it in `joystick_axes` (`0x5DDC4C`), a `JoystickAxes` with a flag for each axis in the order of `DIJOYSTATE`:
 
 | Axis | Range | Flag |
 |---|---|---|
@@ -27,11 +20,9 @@ for each axis in the order of `DIJOYSTATE`:
 | Rz, the twist | -1000 to 1000 | `rz` |
 | First slider | 0 to 1000 | `slider` |
 
-A dead zone of a tenth of the range applies to the whole device. `joystick_buttons` (`0x5DDC54`)
-holds the button count and `joystick_name` (`0x5DDB48`) the product name.
+A dead zone of a tenth of the range applies to the whole device. `joystick_buttons` (`0x5DDC54`) holds the button count and `joystick_name` (`0x5DDB48`) the product name.
 
-`input_acquire` (`0x004BD780`) acquires the three devices, or unacquires them while the word at
-`0x5DDD28` is set, and `input_shutdown` (`0x004BD3F0`) releases them.
+`input_acquire` (`0x004BD780`) acquires the three devices, or unacquires them while the word at `0x5DDD28` is set, and `input_shutdown` (`0x004BD3F0`) releases them.
 
 ## Reading
 

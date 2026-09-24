@@ -1,22 +1,12 @@
 # Head-up display
 
-`C:\lancer\game\hud.cpp` holds the display drawn over the view: the panels, the gauges, the target
-display and the text. Its code lies between `hog_SND.CPP`'s and `hudmovie.cpp`'s, about 40KB of it;
-only `hud_init` asserts, so the source map places that stretch alone.
+`C:\lancer\game\hud.cpp` holds the display drawn over the view: the panels, the gauges, the target display and the text. Its code lies between `hog_SND.CPP`'s and `hudmovie.cpp`'s, about 40KB of it; only `hud_init` asserts, so the source map places that stretch alone.
 
-The port draws the readouts, the clock, the status lights with the devices' charges, the jump
-prompt, the player's target, the eject marker, the scanner, the ship status indicator, the
-targeting cluster, the radar's rings, the windows' frames and what the power distribution and the
-target display show
-([`engine/game/hud.zig`](../../src/engine/game/hud.zig),
-[`engine/game/hud/windows.zig`](../../src/engine/game/hud/windows.zig)), reaching them as the
-engine does, through the overlay `srcore.render` runs after a frame's layers and before the scene
-ends.
+The port draws the readouts, the clock, the status lights with the devices' charges, the jump prompt, the player's target, the eject marker, the scanner, the ship status indicator, the targeting cluster, the radar's rings, the windows' frames and what the power distribution and the target display show ([`engine/game/hud.zig`](../../src/engine/game/hud.zig), [`engine/game/hud/windows.zig`](../../src/engine/game/hud/windows.zig)), reaching them as the engine does, through the overlay `srcore.render` runs after a frame's layers and before the scene ends.
 
 ## The elements
 
-The display's elements as the game's manual names them, with where the code that draws each has
-been found. An element whose code is not found yet is marked so.
+The display's elements as the game's manual names them, with where the code that draws each has been found. An element whose code is not found yet is marked so.
 
 | Element | Where | Key | Shows | Code |
 | --- | --- | --- | --- | --- |
@@ -40,44 +30,26 @@ been found. An element whose code is not found yet is marked so.
 | Status lights | top, left of middle | | the systems that are on: match speed, blind fire, smart targeting, which makes any ship fired on the target, reverse thrust, the spectral shields and the cloak with a bar for the time left, the ECM | [The status lights](#the-status-lights) |
 | Clock | foot, middle, over the radar | | the time played | [`hud.zig`](../../src/engine/game/hud.zig) |
 
-Each panel but the ship status is one of the display's [windows](#the-windows), which come and
-go as the game needs them; SHIFT with a panel's key holds it on.
+Each panel but the ship status is one of the display's [windows](#the-windows), which come and go as the game needs them; SHIFT with a panel's key holds it on.
 
 ## How it is reached
 
-`hud_draw` (`0x004843B0`) draws the display once a frame. `mission_run` puts it in `sr + 0x88` and
-Surrender calls it while it renders, so no call reaches it in the listing and Ghidra does not find
-it without being told; `make ghidra-run SCRIPT=DefineFunctions.java ARGS="0x004843b0"` does that.
-`hud_init` (`0x00483150`) sets the display up once, from the device reset at `0x004AD0A0` rather
-than per frame: it copies the element names into the table at `0x0057BC5C`, a hundred bytes each,
-allocates the file's work buffer, takes `oldpalette.tga` and `powerball.tga`, and works out the
-tables the [power ball](#the-power-distribution) is drawn from.
+`hud_draw` (`0x004843B0`) draws the display once a frame. `mission_run` puts it in `sr + 0x88` and Surrender calls it while it renders, so no call reaches it in the listing and Ghidra does not find it without being told; `make ghidra-run SCRIPT=DefineFunctions.java ARGS="0x004843b0"` does that. `hud_init` (`0x00483150`) sets the display up once, from the device reset at `0x004AD0A0` rather than per frame: it copies the element names into the table at `0x0057BC5C`, a hundred bytes each, allocates the file's work buffer, takes `oldpalette.tga` and `powerball.tga`, and works out the tables the [power ball](#the-power-distribution) is drawn from.
 
-`mission_frame` itself calls only three of the file's routines: the windows' `hud_window_open`
-(`0x0048B510`) and `hud_window_close` (`0x0048B590`); the subtarget (`0x0048CC30`), which walks the
-target's assembly by `link_id`; and a utility (`0x0048CEB0`).
+`mission_frame` itself calls only three of the file's routines: the windows' `hud_window_open` (`0x0048B510`) and `hud_window_close` (`0x0048B590`); the subtarget (`0x0048CC30`), which walks the target's assembly by `link_id`; and a utility (`0x0048CEB0`).
 
 ## Where an element stands
 
-`hud_place` (`0x00482E90`) gives an element its place from a fraction of the screen, so the display
-keeps its layout at any resolution:
+`hud_place` (`0x00482E90`) gives an element its place from a fraction of the screen, so the display keeps its layout at any resolution:
 
     x = round((screen_width  - 0x21) * across) + 0x10 + offset_x
     y = round((screen_height - 0x21) * down)   + 0x10 + offset_y
 
-with the screen's size at `sr + 0x1666` and `sr + 0x166A`. Half of the way across comes to the
-middle of the screen, the inset and the margin cancelling. `hud_grid_place` (`0x00482F00`) places
-the item of an index in a grid from half-way across, `0x30` apart across and `0x26` down, two to a
-row, its first item `156` to the left.
+with the screen's size at `sr + 0x1666` and `sr + 0x166A`. Half of the way across comes to the middle of the screen, the inset and the margin cancelling. `hud_grid_place` (`0x00482F00`) places the item of an index in a grid from half-way across, `0x30` apart across and `0x26` down, two to a row, its first item `156` to the left.
 
-The places move with the screen, but the shapes and the glyphs do not: the game draws them at their
-own size whatever the resolution, and the window it makes is 640 by 480 (`0x004A85BC`).
+The places move with the screen, but the shapes and the glyphs do not: the game draws them at their own size whatever the resolution, and the window it makes is 640 by 480 (`0x004A85BC`).
 
-**Improvement:** the port draws the display as large against the window as it stood against a
-1024 by 768 screen, a mode the hardware renderers run in and the size of the retail game's own
-screenshots, by whichever side has room for less, so it keeps its shape. What the display measures
-in its own pixels, the inset and the margin and an element's offset, is scaled with it; the
-fraction of the window is not, so the display still reaches the edges of a window of any shape.
+**Improvement:** the port draws the display as large against the window as it stood against a 1024 by 768 screen, a mode the hardware renderers run in and the size of the retail game's own screenshots, by whichever side has room for less, so it keeps its shape. What the display measures in its own pixels, the inset and the margin and an element's offset, is scaled with it; the fraction of the window is not, so the display still reaches the edges of a window of any shape.
 At a scale of 1 the arithmetic is the game's own. Half of the way across then falls within a pixel
 or so of the middle rather than exactly on it, the inset having grown. Since the offsets are fixed
 in pixels, the screen chosen sets how far in the elements stand: at 640 by 480 the clock, 130

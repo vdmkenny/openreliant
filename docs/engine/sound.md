@@ -1,35 +1,12 @@
 # Sound
 
-How the game plays its sounds through the Miles Sound System (`MSS32.DLL`): the banks' sounds on
-voices of their own, the effects placed in 3D around the camera, and the music. The port's code is
-[`game/hog_snd.zig`](../../src/engine/game/hog_snd.zig) and
-[`game/sound3d.zig`](../../src/engine/game/sound3d.zig); what stands in for Miles is in
-[Sound in the port](../port/sound.md). The banks are [`.fat` files](../formats/fat.md).
+How the game plays its sounds through the Miles Sound System (`MSS32.DLL`): the banks' sounds on voices of their own, the effects placed in 3D around the camera, and the music. The port's code is [`game/hog_snd.zig`](../../src/engine/game/hog_snd.zig) and [`game/sound3d.zig`](../../src/engine/game/sound3d.zig); what stands in for Miles is in [Sound in the port](../port/sound.md). The banks are [`.fat` files](../formats/fat.md).
 
 ## Start-up
 
-`WinMain` calls `sound_init` (`0x00481440`) with 10 voices. It starts Miles, opens a digital driver
-at 22,050 Hz in 16-bit stereo, or at 11,025 Hz where that fails (`sound_driver_open`,
-`0x00482D10`), allocates a sample for each voice, and starts the 100 Hz timer,
-`tick_timer` (`0x004827C0`). Asked for them, it also opens the CD's audio and sets aside two more
-samples and a double buffer for the radio's speech. `sound_3d_providers` (`0x004817E0`) lists
-Miles's 3D providers and `sound_3d_open` (`0x00481900`) opens the one the settings name, else the
-first of `Miles Fast 2D Positional Audio`, `Aureal A3D Interactive (TM)`, `Creative Labs EAX (TM)`
-and `RAD Game Tools RSX 3D Audio`, with `Dolby Surround` for one of them where asked. It allocates
-a 3D voice for each sample the provider supports, up to 64, and sets the effects up on them
-(`sound3d_init`). That sets the provider's room to EAX's generic one (`AIL_set_3D_room_type`, 0),
-with a damping of 1 and an effect volume and decay time of 0, and each 3D sound it plays gets an
-effects level of 0, with no obstruction or occlusion: the room's reverb is never heard.
+`WinMain` calls `sound_init` (`0x00481440`) with 10 voices. It starts Miles, opens a digital driver at 22,050 Hz in 16-bit stereo, or at 11,025 Hz where that fails (`sound_driver_open`, `0x00482D10`), allocates a sample for each voice, and starts the 100 Hz timer, `tick_timer` (`0x004827C0`). Asked for them, it also opens the CD's audio and sets aside two more samples and a double buffer for the radio's speech. `sound_3d_providers` (`0x004817E0`) lists Miles's 3D providers and `sound_3d_open` (`0x00481900`) opens the one the settings name, else the first of `Miles Fast 2D Positional Audio`, `Aureal A3D Interactive (TM)`, `Creative Labs EAX (TM)` and `RAD Game Tools RSX 3D Audio`, with `Dolby Surround` for one of them where asked. It allocates a 3D voice for each sample the provider supports, up to 64, and sets the effects up on them (`sound3d_init`). That sets the provider's room to EAX's generic one (`AIL_set_3D_room_type`, 0), with a damping of 1 and an effect volume and decay time of 0, and each 3D sound it plays gets an effects level of 0, with no obstruction or occlusion: the room's reverb is never heard.
 
-As the game's window is put away (`window_suspended`, `0x005DDD28`, which `0x004A8260` sets and
-`input_init` clears) while the renderer runs (`app_active`, `0x005D6CAC`), the message
-pump (`message_pump`, `0x004AAB20`) pauses the music, the 3D voices and the voices, where no video is
-playing, and waits on the window's messages; once the window is back, it resumes the sound.
-`app_inactive_paused` (`0x005D6CAD`) remembers that it paused. Only in a multiplayer session with a
-mission loaded does it pause the mission too (`game_pause`), which then stays in its
-[pause menu](pause-menu.md). In single player the mission isn't paused, and the timer's ticks go on
-while the pump waits. **Unverified:** that the mission runs the ticks it missed once the window is
-active again.
+As the game's window is put away (`window_suspended`, `0x005DDD28`, which `0x004A8260` sets and `input_init` clears) while the renderer runs (`app_active`, `0x005D6CAC`), the message pump (`message_pump`, `0x004AAB20`) pauses the music, the 3D voices and the voices, where no video is playing, and waits on the window's messages; once the window is back, it resumes the sound. `app_inactive_paused` (`0x005D6CAD`) remembers that it paused. Only in a multiplayer session with a mission loaded does it pause the mission too (`game_pause`), which then stays in its [pause menu](pause-menu.md). In single player the mission is not paused, and the timer's ticks go on while the pump waits. **Unverified:** that the mission runs the ticks it missed once the window is active again.
 
 ## Volumes
 

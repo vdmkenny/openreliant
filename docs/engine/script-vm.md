@@ -1,17 +1,10 @@
 # The script VM at run time
 
-How the payload runs mission scripts: threads, the interpreter loop, calls, commands, the clock,
-timers and events. The bytecode, and the triggers and parts that point into it, are described with
-the [mission format](../formats/dte.md#script). The structures below are defined in
-[`src/engine/vm.zig`](../../src/engine/vm.zig), and `make ghidra-annotate` applies them to the
-Ghidra project together with the names used here.
+How the payload runs mission scripts: threads, the interpreter loop, calls, commands, the clock, timers and events. The bytecode, and the triggers and parts that point into it, are described with the [mission format](../formats/dte.md#script). The structures below are defined in [`src/engine/vm.zig`](../../src/engine/vm.zig), and `make ghidra-annotate` applies them to the Ghidra project together with the names used here.
 
 ## Threads
 
-Every block runs on a thread, a `0xB8`-byte context from the pool at `vm_thread_pool`
-(`0x537590`), which holds 32. `vm_thread_start` (`0x0045B8D0`) takes a block, points the thread's
-instruction pointer past the block's length halfword and its block end at `block + length`, and
-runs it at once unless told to defer it. It starts none while 31 are running.
+Every block runs on a thread, a `0xB8`-byte context from the pool at `vm_thread_pool` (`0x537590`), which holds 32. `vm_thread_start` (`0x0045B8D0`) takes a block, points the thread's instruction pointer past the block's length halfword and its block end at `block + length`, and runs it at once unless told to defer it. It starts none while 31 are running.
 
 | Offset | Size | Field |
 |---|---|---|

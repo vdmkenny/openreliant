@@ -1,20 +1,12 @@
 # Effects
 
-What the game shows besides its objects and their shots: for now, the particles, fireballs,
-burning bits, break-up and shockwaves of an explosion, the smoke a damaged ship trails, a ship's
-shields flaring as they are struck, and the sparks a hit throws.
-[Destruction](objects.md#destruction) covers when a ship blows up.
+What the game shows besides its objects and their shots: for now, the particles, fireballs, burning bits, break-up and shockwaves of an explosion, the smoke a damaged ship trails, a ship's shields flaring as they are struck, and the sparks a hit throws. [Destruction](objects.md#destruction) covers when a ship blows up.
 
 ## Drawn between the ticks
 
-The game moves its effects on by the ticks, a hundred a second, and draws each where the last tick
-left it, so at a display rate the ticks don't divide evenly, they move on unevenly.
+The game moves its effects on by the ticks, a hundred a second, and draws each where the last tick left it, so at a display rate the ticks don't divide evenly, they move on unevenly.
 
-**Improvement:** each is drawn as far past its tick as the frame is, the share of a tick the
-clock keeps (`objects.pastTick`): a particle, a spark, a bit, a fireball and its light, a piece of
-the break-up and a shockwave all that much further along by their velocities, a piece turned that
-much further by its spin, and a shockwave's ring spread that much further. What they do stays on
-the ticks. `--no-smooth-motion` and `--original` draw them where the ticks leave them.
+**Improvement:** each is drawn as far past its tick as the frame is, the share of a tick the clock keeps (`objects.pastTick`): a particle, a spark, a bit, a fireball and its light, a piece of the break-up and a shockwave all that much further along by their velocities, a piece turned that much further by its spin, and a shockwave's ring spread that much further. What they do stays on the ticks. `--no-smooth-motion` and `--original` draw them where the ticks leave them.
 
 ## Particles
 

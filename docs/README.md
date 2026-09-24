@@ -1,12 +1,21 @@
 # Documentation
 
-Reference notes on StarLancer (Digital Anvil / Microsoft, 2000; developed by Warthog), on how
-OpenReliant reimplements its engine, and on the repository's tooling, derived from static analysis
-of a legally owned copy. The repository holds none of the game's files.
+Reference notes on StarLancer (Digital Anvil / Microsoft, 2000; developed by Warthog), on how OpenReliant reimplements its engine, and on the repository's tooling, derived from static analysis of a legally owned copy. The repository holds none of the game's files.
+
+## User guide
+
+Guides for installing, configuring and playing OpenReliant:
 
 | Path | Contents |
 |---|---|
-| [`controllers.md`](controllers.md) | For players: joysticks and gamepads, their default controls, and setting them up. |
+| [`guide/installation.md`](guide/installation.md) | Installing the game files from retail discs or disc images, and running OpenReliant. |
+| [`guide/controllers.md`](guide/controllers.md) | Joysticks and gamepads, default controls, button bindings, and controller settings. |
+| [`guide/configuration.md`](guide/configuration.md) | Command-line options, graphics and sound settings, and starlancer.ini. |
+
+## Reference documentation
+
+| Path | Contents |
+|---|---|
 | [`toolchain.md`](toolchain.md) | What `make setup` installs, and the Ghidra workflow. |
 | [`binary/executables.md`](binary/executables.md) | The shipped binaries and the middleware they are built on. |
 | [`binary/runtime.md`](binary/runtime.md) | The C runtime linked into the game: Visual C++ 6.0's `LIBCMT`. |
@@ -22,7 +31,7 @@ of a legally owned copy. The repository holds none of the game's files.
 | [`formats/dte.md`](formats/dte.md) | `.DTE` missions: directory, ships, triggers, and the script VM. |
 | [`formats/stats.md`](formats/stats.md) | Ship, gun, missile and pilot stat tables. |
 | [`engine/script-vm.md`](engine/script-vm.md) | The script VM at run time: threads, calls, commands, timers, events. |
-| [`engine/camera.md`](engine/camera.md) | The camera: the projection, the views, and where each puts the camera. |
+| [`engine/camera.md`](engine/camera.md) | The camera: the projection, views 1 to 8, and where each puts the camera. |
 | [`engine/backdrop.md`](engine/backdrop.md) | The backdrop: sky dome, nebula, stars, dust, sun, lens flares and the default lights. |
 | [`engine/rendering.md`](engine/rendering.md) | Rendering: layers, depth, shading modes as materials, lighting, blending, highlights. |
 | [`engine/objects.md`](engine/objects.md) | Live objects: the object array, model hierarchies, components, the flight model. |
@@ -40,16 +49,9 @@ of a legally owned copy. The repository holds none of the game's files.
 
 ## Conventions
 
-Addresses are virtual addresses for the payload executable's image base of `0x400000` unless
-stated otherwise. The shipped binaries carry no symbols. Function and data names are those
-`make ghidra-annotate` gives the Ghidra project; names of the form `FUN_<address>` are Ghidra's
-placeholders.
+Addresses are virtual addresses for the payload executable's image base of `0x400000` unless stated otherwise. The shipped binaries carry no symbols. Function and data names are those `make ghidra-annotate` gives the Ghidra project; names of the form `FUN_<address>` are Ghidra's placeholders.
 
-Fixed layouts, in the game's files and in its executable's data, are `extern struct`s in the
-code, their fields the layout's own: enums for codes, packed structs for flag words, arrays for
-runs, with `comptime` asserts on the offsets. The readers view the bytes as those structs in place
-([`formats/layout.zig`](../src/formats/layout.zig)), which needs a little-endian host; the few
-big-endian fields, the hog archive's and the mission script's jumps, are `layout.Big`.
+Fixed layouts, in the game's files and in its executable's data, are `extern struct`s in the code, their fields the layout's own: enums for codes, packed structs for flag words, arrays for runs, with `comptime` asserts on the offsets. The readers view the bytes as those structs in place ([`formats/layout.zig`](../src/formats/layout.zig)), which needs a little-endian host; the few big-endian fields, the hog archive's and the mission script's jumps, are `layout.Big`.
 
 Claims are marked where they are not directly verified:
 
