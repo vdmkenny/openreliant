@@ -295,8 +295,8 @@ line at the arrow's tip. `--original` starts it where the game does.
 Not ported: the corners `hud_comms_marker` (`0x0048B0F0`) marks on the object the radio's window
 names; the pointer to the nav point; the players' names over their ships in a multiplayer game;
 and what `hud_target_keys` does while the radio's window is open, or while `0x00529FB8` is set,
-which leaves out every key after the search under the reticle. The display's sounds for the keys
-are [#101](https://github.com/vdmkenny/openreliant/issues/101).
+which leaves out every key after the search under the reticle. The keys' sounds are in
+[The display's sounds](#the-displays-sounds).
 
 ## The ship status indicator
 
@@ -432,7 +432,7 @@ In the order it draws them:
 | `0xCC` | match speed | `matching_speed` |
 | `0xCB` | blind fire | the ship carries blind fire (`blind_fire_fitted`, `0x00566F8C`), `blind_fire` (`0x00579990`) is on, and the guns are not all firing (`GunMode.all`, the object's word at `+0x144`) |
 | `0xC5` | smart targeting | `smart_targeting` (`0x0056996C`), which SMART TARGET flips, or icon 4 |
-| `0xC3` | enemy lock | `enemy_lock` (`0x00579988`) with no missile homing on the ship, or icon 0. It flashes for 50 ticks of every 100, and a warning sound loops while it is shown |
+| `0xC3` | enemy lock | `enemy_lock` (`0x00579988`) with no missile homing on the ship, or icon 0. It flashes for 50 ticks of every 100, and a warning sound loops while it is shown ([The display's sounds](#the-displays-sounds)) |
 | `0xC4` | missile incoming | the object's `missile_homing` (`+0x64C`), or icon 1. It flashes for 25 ticks of every 50, on the lock warning's count (`0x0057BC44`) |
 | `0xC6` | ECM | `ecm_state` (`0x0057BF4C`) is 1, or icon 2, with a bar for its charge `0x23` below |
 | `0xC7` | cloak | the ship carries a cloak (`cloak_state`, `0x00566638`, not -1), on or off, with a bar for its charge `0x20` below. Never in a multiplayer game |
@@ -456,7 +456,7 @@ A bar is a line of `hud_colour(0xE7, 0x68, 0x00)` drawn with `VFX_line_draw` fro
 the light's point to the charge times a scale further: `1/62` for the ECM, `1/312` for the cloak and
 `1/187` for the spectral shields, so a full bar is about 32 pixels, rounded as `0x004C3330` rounds.
 
-The port draws all nine by these conditions. Not yet ported: the warning sound.
+The port draws all nine by these conditions.
 
 ## The devices
 
@@ -491,14 +491,47 @@ same twelve. The same switch picks the cockpit's frame model ([`main.zig`](../..
 - CLOAK SHIP is read by `player_controls`; `player_cloak_set` (`0x004153E0`) cloaks or uncloaks the
   ship through `object_set_cloak`, which sets `cloak_state` for the player.
 
-SMART TARGET, ECM and SPECTRAL SHIELDS play `hud_beep` (`0x0048CE70`) 4 turning a device on and 5
-turning it off: sample 15 + n of `bank_stdsmp`, at a volume of 60 (`0x00501C78`), in the four
-cockpit views only. The port's is `hud.beep`, which only the countermeasures play so far
-([#101](https://github.com/vdmkenny/openreliant/issues/101)).
-
 Ported: the charges, the fitting, SMART TARGET, TOGGLE BLINDFIRE, ECM and SPECTRAL SHIELDS
-([`input.zig`](../../src/engine/input.zig)). Not yet: the sounds and Betty, the tuning of the spectral
-shields, and the cloak (`cloak.cpp`), so the cloak's light shows its charge full.
+([`input.zig`](../../src/engine/input.zig)), with their sounds ([The display's sounds](#the-displays-sounds)).
+Not yet: the tuning of the spectral shields, and the cloak (`cloak.cpp`), so the cloak's light
+shows its charge full.
+
+## The display's sounds
+
+`hud_beep` (`0x0048CE70`) plays the display's sound n, sample 15 + n of `bank_stdsmp` at a volume
+of 60 in the middle (`0x00501C78`), in the four cockpit views only:
+
+| n | Played by |
+| --- | --- |
+| 0 | Most keys: COMMS WINDOW, WING STATUS WINDOW, GUNNERY WINDOW, DAMAGE WINDOW, FULL GUNS on a ship of more than one group, OBJECTIVES WINDOW, RADAR RANGES as the radar moves, the power keys, SHIELD BALANCING and POWERBALL WINDOW as they are first held, MISSILE WINDOW, PRIMARY TARGET; a targeting key that does what it is for; a countermeasure spent |
+| 1 | A window starting to open (`hud_window_open`) |
+| 2 | A window starting to close (`hud_window_close`), however it closes |
+| 3 | A key that finds nothing: TARGET TORPEDO without the player's controls, a nearest target key finding no ship, a next or previous target key finding none, a subtarget key without a target listing components that is not friendly, TARGET UNDER RETICULE with nothing to aim at, MATCH SPEED turning on with no target, PRIMARY TARGET with none, a turn of the missile ring that can't turn, no countermeasure left |
+| 4 | A device turning on: SMART TARGET, SYNCHRONISE GUNS, ECM, SPECTRAL SHIELDS, MATCH SPEED, CLOAK SHIP |
+| 5 | A device turning off, the same keys |
+
+The locked forms of the window keys play none of their own. Betty says which way TOGGLE BLINDFIRE
+turns blind fire, sounds `0x12` and `0x13` of `bank_betty`, SPECTRAL SHIELDS the spectral shields,
+`0x14` and `0x15`, and CLOAK SHIP the cloak, `0x10` and `0x11`.
+
+While the enemy lock's light shows, `hud_draw` plays `bank_stdsmp`'s sound 0 on voice 1 at a volume
+of 60, looped, and plays it again whenever voice 1 has finished or was stopped; the voice is kept
+at `enemy_lock_voice` (`0x0057BF50`). Once the light is out and no missile homes on the ship, it
+ends the voice if it is still playing.
+
+The port queues the windows' sounds as they open and close, and plays them later in the same
+frame (`hud.Beeps`).
+
+**Fix:** the game plays a power key's sound every frame the key is held, a new sound each frame;
+the port plays it as the key is pressed.
+
+**Fix:** the game runs the enemy lock's warning only in the view ahead, as it draws the lights, so
+a warning playing as the view changes loops until the player looks ahead again. The port runs it
+in every view, the light counting as out in the others.
+
+Not yet ported: PRIMARY TARGET ([#98](https://github.com/vdmkenny/openreliant/issues/98)), the
+radio's menu ([#99](https://github.com/vdmkenny/openreliant/issues/99)) and CLOAK SHIP
+([#89](https://github.com/vdmkenny/openreliant/issues/89)), with their sounds.
 
 ## The jump prompt, the eject marker and the scanner
 
@@ -625,8 +658,8 @@ The rest of the game opens windows too: firing the guns and launching a missile,
 and a change of target the target display ([The target](#the-target)), and the radio its own. A mission's script opens and closes any window by its
 number, `OpenInstrument` and `CloseInstrument` (`0x0045D9D0`, `0x0045DA30`): a window it opens is
 held, window 11 starts the radio's menu too, and window 10 closes window 13 first; one it closes is
-let go of. The display beeps with `hud_beep` 1 as a window opens, 2 as it closes, and 0 for most of
-the keys.
+let go of. The display sounds as a window opens and as it closes
+([The display's sounds](#the-displays-sounds)).
 
 ## The gunnery display
 

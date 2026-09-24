@@ -1110,16 +1110,22 @@ pub fn launchMissile(world: gameobj.World, index: u16) void {
 /// What `player_controls` (`0x00413410`) does about the target's speed, which reads the objects:
 /// while `matching_speed` is set, it matches it (`matchTargetSpeed`); then MATCH SPEED, once for
 /// each press, flips it, putting back `throttle_before_match` as it turns off and matching at once
-/// as it turns on. The game does this among the keys after the throttle's and the strafe keys;
-/// `aigeneric.playerControl` runs it after `playerControls`, since nothing between reads the
-/// throttle it sets.
-pub fn matchSpeed(player: *Player, devices: *Devices, all: *create.Objects, view: camera.View) void {
-    matchTargetSpeed(player, all, view);
+/// as it turns on. The display sounds `off` as it turns off, and `on` as it turns on, or `refused`
+/// with no target the player can aim at. The game does this among the keys after the throttle's
+/// and the strafe keys; `aigeneric.playerControl` runs it after `playerControls`, since nothing
+/// between reads the throttle it sets.
+pub fn matchSpeed(world: gameobj.World, devices: *Devices) void {
+    const player = world.player;
+    const all = world.objects;
+    matchTargetSpeed(player, all, world.view);
     if (!devices.active(.match_speed, true)) return;
     player.matching_speed = !player.matching_speed;
     if (player.matching_speed) {
-        matchTargetSpeed(player, all, view);
+        const aimed = if (ai.playerControlEntry(all)) |entry| ai.targetValid(all, entry.target, .{}) else false;
+        hud.beep(world, if (aimed) .on else .refused);
+        matchTargetSpeed(player, all, world.view);
     } else {
+        hud.beep(world, .off);
         all.slots[all.player].object.throttle = player.throttle_before_match;
     }
 }
@@ -1257,7 +1263,7 @@ test matchSpeed {
 
     // With no target, matching stops as soon as the key starts it, and the throttle stands.
     devices.keyboard.down[key] = true;
-    matchSpeed(&mission.player, &devices, all, .cockpit);
+    matchSpeed(mission.world(), &devices);
     try std.testing.expect(!mission.player.matching_speed);
     try std.testing.expectEqual(0.9, ship.object.throttle);
     devices.keyboard.down[key] = false;
@@ -1266,19 +1272,19 @@ test matchSpeed {
     // With one, the throttle follows its speed at once.
     setPlayerTarget(&display, all, @intCast(sabre), -1, false);
     devices.keyboard.down[key] = true;
-    matchSpeed(&mission.player, &devices, all, .cockpit);
+    matchSpeed(mission.world(), &devices);
     try std.testing.expect(mission.player.matching_speed);
     try std.testing.expectApproxEqAbs(0.25, ship.object.throttle, 1e-6);
     devices.keyboard.down[key] = false;
     devices.keyboard.read();
     // Each run keeps the throttle it finds, by now the matched one.
-    matchSpeed(&mission.player, &devices, all, .cockpit);
+    matchSpeed(mission.world(), &devices);
     try std.testing.expectApproxEqAbs(0.25, mission.player.throttle_before_match, 1e-6);
 
     // Out of range, it puts that back and stops.
     ship.object.throttle = 0.6;
     objects.setPosition(&mission.slot(sabre).object, &mission.slot(sabre).drawn, .{ 0, 0, 400000 });
-    matchSpeed(&mission.player, &devices, all, .cockpit);
+    matchSpeed(mission.world(), &devices);
     try std.testing.expect(!mission.player.matching_speed);
     try std.testing.expectApproxEqAbs(0.25, ship.object.throttle, 1e-6);
 }
@@ -1367,12 +1373,50 @@ const power_keys = [_]struct { action: controls.Action, preset: power.Preset }{
     .{ .action = .equalize_power, .preset = .equal },
 };
 
-/// The keys `frame_controls` reads after the targeting's, in its order:
+/// What `frameKeys` reads the keys for, and heard where.
+pub const FrameKeys = struct {
+    display: *hud.State,
+    player: *Player,
+    devices: *Devices,
+    /// The player's ship.
+    slot: *create.Slot,
+    /// The camera's view, and the timer's ticks.
+    view: camera.View,
+    game_ticks: u32,
+    multiplayer: bool,
+    /// The world the keys' sounds are heard in; null where nothing is heard.
+    world: ?gameobj.World = null,
+
+    fn beep(keys: FrameKeys, which: hud.Beep) void {
+        if (keys.world) |world| hud.beep(world, which);
+    }
+
+    fn say(keys: FrameKeys, line: usize) void {
+        const world = keys.world orelse return;
+        if (world.hearing) |hearing| hearing.sound.say(line);
+    }
+};
+
+/// Betty's word as a device turns on and as it turns off (`bank_betty`).
+const Said = struct {
+    on: usize,
+    off: usize,
+
+    fn of(said: Said, on: bool) usize {
+        return if (on) said.on else said.off;
+    }
+};
+const blind_fire_said: Said = .{ .on = 0x12, .off = 0x13 };
+const spectral_shields_said: Said = .{ .on = 0x14, .off = 0x15 };
+
+/// The keys `frame_controls` reads after the targeting's, in its order, each with the display's
+/// sound (`hud.Beep`): most with `done`, a device turning on or off with `on` or `off`.
 ///
-/// - TOGGLE BLINDFIRE flips blind fire on a ship that carries it.
+/// - TOGGLE BLINDFIRE flips blind fire on a ship that carries it, and Betty says which, with no
+///   sound of the display's.
 /// - COMMS WINDOW opens the radio's window held, and closes it once it is open.
 /// - WING STATUS WINDOW closes the objectives, then opens the wing status window or, up already,
-///   closes it; its locked form holds the window open as it opens it.
+///   closes it; its locked form holds the window open as it opens it, without a sound of its own.
 /// - GUNNERY WINDOW opens the gunnery window and turns to the ship's next group of guns, or out of
 ///   firing them all (`guns.nextGroup`), and its locked form opens it held or closes it once it is
 ///   open; SYNCHRONISE GUNS opens it too and flips whether the guns fire together.
@@ -1383,28 +1427,39 @@ const power_keys = [_]struct { action: controls.Action, preset: power.Preset }{
 ///   and opens the gunnery window, held while SHIFT is down, which a joystick button bound to it
 ///   can be pressed with; its key, which takes no modifier, is read only while SHIFT is up.
 /// - OBJECTIVES WINDOW closes the wing status window and opens the objectives.
-/// - SHIELD BALANCING held lets the stick shift the shields fore and aft.
+/// - SHIELD BALANCING held lets the stick shift the shields fore and aft, sounding as it is first
+///   held.
 /// - RADAR RANGES moves the radar to its next range, in the view ahead with its rings still.
 /// - While the radio's window is shut, each of the power keys held puts the power at its preset
 ///   and opens the power window. POWERBALL WINDOW held keeps it open and lets the stick move the
-///   power, and its locked form holds it open that way or closes it.
-/// - SPECTRAL SHIELDS, outside a multiplayer game, turns the spectral shields the other way.
+///   power, sounding as it is first held, and its locked form holds it open that way or closes
+///   it, without a sound of its own.
+/// - SPECTRAL SHIELDS, outside a multiplayer game, turns the spectral shields the other way, and
+///   Betty says which.
 ///
 /// A device's key is read whether or not the ship carries the device. COMMS WINDOW is read only
 /// while the player's order is Player Control, as it always is in the sandbox.
 ///
-/// Not yet ported: the radio's menu COMMS WINDOW starts; OBJECTIVES WINDOW paging
-/// through the objectives once they are open; PRIMARY TARGET and the orders to the wingmen; Betty's
-/// word for a device; and the display's sounds. `view` is the camera's view and `game_ticks` the
-/// timer's.
-pub fn frameKeys(display: *hud.State, player: *Player, devices: *Devices, slot: *create.Slot, view: camera.View, game_ticks: u32, multiplayer: bool) void {
+/// **Fix:** the game sounds a power key every frame it is held, a new sound each frame, which the
+/// port's frame rates make a din; the port sounds it as it is pressed.
+///
+/// Not yet ported: the radio's menu COMMS WINDOW starts; OBJECTIVES WINDOW paging through the
+/// objectives once they are open; PRIMARY TARGET and the orders to the wingmen.
+pub fn frameKeys(keys: FrameKeys) void {
+    const display = keys.display;
+    const player = keys.player;
+    const devices = keys.devices;
+    const slot = keys.slot;
+    const multiplayer = keys.multiplayer;
     const object = &slot.object;
     const windows = &display.windows;
     const groups = slot.groupCount();
     if (devices.active(.toggle_blindfire, true) and display.blind_fire_fitted) {
         display.blind_fire = !display.blind_fire;
+        keys.say(blind_fire_said.of(display.blind_fire));
     }
     if (devices.active(.comms_window, true)) {
+        keys.beep(.done);
         const comms = windows.status.getPtr(.comms);
         switch (comms.phase) {
             .shut => if (windows.open(.comms, multiplayer)) {
@@ -1419,6 +1474,7 @@ pub fn frameKeys(display: *hud.State, player: *Player, devices: *Devices, slot: 
     }
     for ([_]controls.Action{ .wing_status_window, .wing_status_window_locked }) |action| {
         if (!devices.active(action, true)) continue;
+        if (action == .wing_status_window) keys.beep(.done);
         if (windows.up(.objectives)) windows.close(.objectives);
         if (windows.up(.wing_status)) {
             windows.close(.wing_status);
@@ -1427,6 +1483,7 @@ pub fn frameKeys(display: *hud.State, player: *Player, devices: *Devices, slot: 
         }
     }
     if (devices.active(.gunnery_window, true)) {
+        keys.beep(.done);
         _ = windows.open(.gunnery, multiplayer);
         guns.nextGroup(object, groups);
     }
@@ -1440,12 +1497,16 @@ pub fn frameKeys(display: *hud.State, player: *Player, devices: *Devices, slot: 
     if (devices.active(.synchronise_guns, true)) {
         _ = windows.open(.gunnery, multiplayer);
         object.gun_mode.synchronised = !object.gun_mode.synchronised;
+        keys.beep(if (object.gun_mode.synchronised) .on else .off);
     }
     if (devices.active(.ecm, true) and display.devices.get(.ecm).setting != .absent) {
-        setEcm(display, object, !object.flags.ecm);
+        const on = !object.flags.ecm;
+        keys.beep(if (on) .on else .off);
+        setEcm(display, object, on);
     }
     for ([_]controls.Action{ .damage_window, .damage_window_locked }) |action| {
         if (!devices.active(action, true)) continue;
+        if (action == .damage_window) keys.beep(.done);
         if (windows.up(.damage)) {
             windows.close(.damage);
         } else if (windows.open(.damage, multiplayer) and action == .damage_window_locked) {
@@ -1453,23 +1514,32 @@ pub fn frameKeys(display: *hud.State, player: *Player, devices: *Devices, slot: 
         }
     }
     if (devices.active(.full_guns, true) and guns.fullGuns(object, slot.guns, slot.gun_groups, groups)) {
+        keys.beep(.done);
         if (windows.open(.gunnery, multiplayer) and devices.keyboard.shift()) windows.status.getPtr(.gunnery).held = true;
     }
     if (devices.active(.objectives_window, true)) {
+        keys.beep(.done);
         if (windows.up(.wing_status)) windows.close(.wing_status);
         if (windows.status.get(.objectives).phase != .open) _ = windows.open(.objectives, multiplayer);
     }
-    player.balancing_shields = devices.active(.shield_balancing, false);
-    if (devices.active(.radar_ranges, true)) hud.nextRadarRange(display, view, game_ticks);
+    const balancing = devices.active(.shield_balancing, false);
+    if (balancing and !player.balancing_shields) keys.beep(.done);
+    player.balancing_shields = balancing;
+    if (devices.active(.radar_ranges, true) and hud.nextRadarRange(display, keys.view, keys.game_ticks)) keys.beep(.done);
     if (windows.status.get(.comms).phase == .shut) {
         for (power_keys) |key| {
             if (!devices.active(key.action, false)) continue;
+            if (devices.active(key.action, true)) keys.beep(.done);
             power.choose(object, key.preset);
             _ = windows.open(.power, multiplayer);
         }
     }
-    player.power_held = devices.active(.powerball_window, false);
-    if (player.power_held) _ = windows.open(.power, multiplayer);
+    const power_held = devices.active(.powerball_window, false);
+    if (power_held) {
+        _ = windows.open(.power, multiplayer);
+        if (!player.power_held) keys.beep(.done);
+    }
+    player.power_held = power_held;
     if (devices.active(.powerball_window_locked, true)) {
         if (windows.status.get(.power).phase == .open) {
             windows.close(.power);
@@ -1481,7 +1551,10 @@ pub fn frameKeys(display: *hud.State, player: *Player, devices: *Devices, slot: 
     if (!multiplayer and devices.active(.spectral_shields, true) and
         display.devices.get(.spectral_shields).setting != .absent)
     {
-        setSpectralShields(display, object, !object.flags.spectral_shields);
+        const on = !object.flags.spectral_shields;
+        keys.beep(if (on) .on else .off);
+        keys.say(spectral_shields_said.of(on));
+        setSpectralShields(display, object, on);
     }
 }
 
@@ -1496,16 +1569,16 @@ test frameKeys {
     // ECM turns the ECM on, and again off.
     const ecm = controls.binding(.ecm).key;
     keyboard.down[ecm] = true;
-    frameKeys(&display, &player, &devices, &slot, .cockpit, 0, false);
+    frameKeys(.{ .display = &display, .player = &player, .devices = &devices, .slot = &slot, .view = .cockpit, .game_ticks = 0, .multiplayer = false });
     try std.testing.expect(object.flags.ecm);
     try std.testing.expectEqual(.on, display.devices.get(.ecm).setting);
     keyboard.read();
-    frameKeys(&display, &player, &devices, &slot, .cockpit, 0, false);
+    frameKeys(.{ .display = &display, .player = &player, .devices = &devices, .slot = &slot, .view = .cockpit, .game_ticks = 0, .multiplayer = false });
     try std.testing.expect(object.flags.ecm);
     keyboard.down[ecm] = false;
     keyboard.read();
     keyboard.down[ecm] = true;
-    frameKeys(&display, &player, &devices, &slot, .cockpit, 0, false);
+    frameKeys(.{ .display = &display, .player = &player, .devices = &devices, .slot = &slot, .view = .cockpit, .game_ticks = 0, .multiplayer = false });
     try std.testing.expect(!object.flags.ecm);
     keyboard.down[ecm] = false;
 
@@ -1513,18 +1586,18 @@ test frameKeys {
     const shields = controls.binding(.spectral_shields).key;
     display.devices.getPtr(.spectral_shields).setting = .absent;
     keyboard.down[shields] = true;
-    frameKeys(&display, &player, &devices, &slot, .cockpit, 0, false);
+    frameKeys(.{ .display = &display, .player = &player, .devices = &devices, .slot = &slot, .view = .cockpit, .game_ticks = 0, .multiplayer = false });
     try std.testing.expect(!object.flags.spectral_shields);
     keyboard.down[shields] = false;
     keyboard.read();
     display.devices.getPtr(.spectral_shields).setting = .off;
     keyboard.down[shields] = true;
-    frameKeys(&display, &player, &devices, &slot, .cockpit, 0, true);
+    frameKeys(.{ .display = &display, .player = &player, .devices = &devices, .slot = &slot, .view = .cockpit, .game_ticks = 0, .multiplayer = true });
     try std.testing.expect(!object.flags.spectral_shields);
     keyboard.down[shields] = false;
     keyboard.read();
     keyboard.down[shields] = true;
-    frameKeys(&display, &player, &devices, &slot, .cockpit, 0, false);
+    frameKeys(.{ .display = &display, .player = &player, .devices = &devices, .slot = &slot, .view = .cockpit, .game_ticks = 0, .multiplayer = false });
     try std.testing.expect(object.flags.spectral_shields);
     try std.testing.expectEqual(.on, display.devices.get(.spectral_shields).setting);
 }
@@ -1553,7 +1626,7 @@ test "the window keys" {
             };
             press.devices.keyboard.down[key] = true;
             if (modifier) |held| press.devices.keyboard.down[held] = true;
-            frameKeys(press.display, press.player, press.devices, press.slot, .cockpit, 0, false);
+            frameKeys(.{ .display = press.display, .player = press.player, .devices = press.devices, .slot = press.slot, .view = .cockpit, .game_ticks = 0, .multiplayer = false });
             press.devices.keyboard.down[key] = false;
             if (modifier) |held| press.devices.keyboard.down[held] = false;
             press.devices.read();
@@ -1630,7 +1703,7 @@ test "the window keys" {
     // SHIELD BALANCING lets the stick shift the shields for as long as it is held.
     press.once(.shield_balancing);
     try std.testing.expect(player.balancing_shields);
-    frameKeys(&display, &player, &devices, &slot, .cockpit, 0, false);
+    frameKeys(.{ .display = &display, .player = &player, .devices = &devices, .slot = &slot, .view = .cockpit, .game_ticks = 0, .multiplayer = false });
     try std.testing.expect(!player.balancing_shields);
 
     // RADAR RANGES moves the radar round to its closest range, and its rings start moving.

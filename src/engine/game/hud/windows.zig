@@ -7,12 +7,14 @@
 //! each on once a frame and draws it with `hud_window_draw` (`0x00486830`): sliding and shrinking
 //! into place as it opens, the reverse as it closes, and in place while it is open.
 //!
-//! Ported so far: the windows' phases and times, their frames and how they open and close, and
-//! what windows 2, 3, 7 and 8 show ([`missile_display.zig`](missile_display.zig),
-//! [`target_display.zig`](target_display.zig), [`power.zig`](power.zig)). Not yet: what the other windows show, which
-//! [`hud.md`](../../../../docs/engine/hud.md) lists with the state each reads; the display's sounds for a window opening and closing
-//! (`hud_beep` 1 and 2); and, in mission 25 before `0x00587CDC` is set, the gunnery, missile and
-//! wing status windows standing still and unseen.
+//! Ported so far: the windows' phases and times, their frames, how they open and close with the
+//! display's sounds (`hud_beep` 1 and 2), and what windows 1, 2, 3, 4, 7, 8 and 13 show
+//! ([`gunnery.zig`](gunnery.zig), [`missile_display.zig`](missile_display.zig),
+//! [`target_display.zig`](target_display.zig), [`damage.zig`](damage.zig),
+//! [`power.zig`](power.zig), [`wing_status.zig`](wing_status.zig)). Not yet: what the other
+//! windows show, which [`hud.md`](../../../../docs/engine/hud.md) lists with the state each reads;
+//! and, in mission 25 before `0x00587CDC` is set, the gunnery, missile and wing status windows
+//! standing still and unseen.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -156,15 +158,20 @@ pub const Shown = struct {
 
 pub const Windows = struct {
     status: std.EnumArray(Window, Status) = .initFill(.{}),
+    /// The display's sounds for the windows that have started opening and closing, which
+    /// `hud.draw` plays this frame.
+    beeps: hud.Beeps = .{},
 
-    /// `hud_window_open` (`0x0048B510`): starts `window` opening, and gives it its full time to
-    /// stay whatever its phase, so a window closing carries on closing. In a multiplayer game the
-    /// missiles, the objectives and window 9 never open. Returns whether the window is up.
+    /// `hud_window_open` (`0x0048B510`): starts `window` opening, with the display's sound, and
+    /// gives it its full time to stay whatever its phase, so a window closing carries on closing.
+    /// In a multiplayer game the missiles, the objectives and window 9 never open. Returns whether
+    /// the window is up.
     pub fn open(windows: *Windows, window: Window, multiplayer: bool) bool {
         if (multiplayer and (window == .missiles or window == ._unknown_9 or window == .objectives)) return false;
         const status = windows.status.getPtr(window);
         windows.renew(window);
         if (status.phase == .shut) {
+            windows.beeps.add(.opens);
             status.phase = .opening;
             status.progress = 0;
             status.held = false;
@@ -178,11 +185,13 @@ pub const Windows = struct {
     }
 
     /// `hud_window_close` (`0x0048B590`): starts `window` closing if it is open or opening, from
-    /// its full size, however far it had opened, and lets go of it. For the target display's two
-    /// forms the game also keeps a picture of what they show, which they close with.
+    /// its full size, however far it had opened, with the display's sound, and lets go of it. For
+    /// the target display's two forms the game also keeps a picture of what they show, which they
+    /// close with.
     pub fn close(windows: *Windows, window: Window) void {
         const status = windows.status.getPtr(window);
         if (!windows.up(window)) return;
+        windows.beeps.add(.closes);
         status.phase = .closing;
         status.held = false;
         status.progress = opening_ticks;
@@ -379,6 +388,17 @@ fn draw(
 
 fn round(value: f32) i32 {
     return @intFromFloat(math.roundEven(value));
+}
+
+test "a window sounds as it starts opening and as it starts closing" {
+    var windows: Windows = .{};
+    _ = windows.open(.damage, false);
+    // Opening already, it opens without a sound; a window shut closes without one.
+    _ = windows.open(.damage, false);
+    windows.close(.damage);
+    windows.close(.damage);
+    windows.close(.gunnery);
+    try std.testing.expectEqualSlices(hud.Beep, &.{ .opens, .closes }, windows.beeps.slice());
 }
 
 test "a window opens, stays its time and closes" {

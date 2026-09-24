@@ -404,6 +404,16 @@ pub const Sound = struct {
         driver.endSample(voice.sample);
     }
 
+    /// Whether voice `v` has finished or was stopped, as `hud_draw` asks of the enemy lock's
+    /// warning's voice; false with no driver.
+    pub fn voiceIdle(sound: *Sound, v: u8) bool {
+        const driver = sound.driver orelse return false;
+        return switch (driver.sampleStatus(sound.voices[v].sample)) {
+            .done, .stopped => true,
+            else => false,
+        };
+    }
+
     /// `sound_voice_playing` (`0x00482410`).
     pub fn voicePlaying(sound: *Sound, v: u8) bool {
         const driver = sound.driver orelse return false;
