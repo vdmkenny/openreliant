@@ -320,15 +320,16 @@ fn flyOn(fighter: Fighter) bool {
 
 /// `maneuver_steer_to_point` (`0x00405C60`): at full throttle at the point, and once it is within
 /// `weave_start` of the nose, pitching at the pilot's full rate until it is past `weave_end`, so
-/// the ship weaves.
-///
-/// Not ported: with something to avoid, it steers at the point with no pilot's limits and
-/// avoidance on ([#140](https://github.com/vdmkenny/openreliant/issues/140)); nothing is avoided
-/// yet.
+/// the ship weaves. With anything on its avoidance lists, it steers at the point with neither the
+/// pilot's limit nor its throttle, avoiding (`ai.steer`).
 fn steerToPoint(fighter: Fighter) void {
     const state = fighter.state;
     const ship = fighter.ship();
     const point = gameobj.vector(state.point);
+    if (ship.avoid_ahead.count >= 1 or ship.avoid_near.count != 0) {
+        _ = ai.steer(fighter.ctx.world, fighter.index, point, 1, 0, .{ .avoid_near = true, .avoid_ahead = true });
+        return;
+    }
     const toward = point - fighter.position();
     const off = math.dot(toward, fighter.heading()) / math.length(toward);
     ship.throttle = 1;
@@ -339,7 +340,7 @@ fn steerToPoint(fighter: Fighter) void {
         ship.roll_input = 0;
         return;
     }
-    _ = ai.steer(fighter.slot, point, fighter.pilot.turn_limit, 0, .{ .avoid_near = true, .avoid_ahead = true, .pitch_up = true }, fighter.ctx.clock.frame_duration);
+    _ = ai.steer(fighter.ctx.world, fighter.index, point, fighter.pilot.turn_limit, 0, .{ .avoid_near = true, .avoid_ahead = true, .pitch_up = true });
     if (off > weave_start) state.weaving = true;
 }
 

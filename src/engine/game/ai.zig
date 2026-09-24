@@ -51,7 +51,7 @@ pub const Record = extern struct {
         /// (`order_retaliate`).
         retaliate: bool,
         /// While it runs, `avoidance_scan` lists the objects the ship could hit, up to ten of each
-        /// of two kinds at `GameObject` offsets `0x6B4` and `0x6E0`, unless the object has
+        /// of two kinds (`GameObject.avoid_near`, `avoid_ahead`), unless the object has
         /// `no_avoidance`; `docs/engine/orders.md` says which.
         avoidance: bool,
         _unknown_8: u2,
@@ -351,12 +351,9 @@ test cruiseSpeed {
 /// What `ai_steer` does besides turning toward its point, as the orders and the maneuvers ask for
 /// it.
 pub const Steering = packed struct(u32) {
-    /// Move the point around the objects with listed components the ship could hit (`avoid_near`,
-    /// `0x004028F0`), which isn't ported yet
-    /// ([#140](https://github.com/vdmkenny/openreliant/issues/140)).
+    /// Move the point around the objects with listed components the ship could hit (`avoidNear`).
     avoid_near: bool = false,
-    /// Move the point around the objects the ship is closing on (`avoid_ahead`, `0x00402DC0`),
-    /// which isn't ported yet either.
+    /// Move the point around the objects the ship is on course to hit (`avoidAhead`).
     avoid_ahead: bool = false,
     /// Unless avoidance took the point over, roll toward the world's Y axis as well
     /// (`rollUpright`).
@@ -394,28 +391,36 @@ const ahead_cosine: f32 = 0.95;
 const roll_before_pitch: f32 = 0.8;
 
 /// `ai_steer` (`0x00401380`): the AI's steering, which the orders and the maneuvers turn a ship
-/// with. It aims the ship at `at`, a point in the world, by setting its three turning inputs: the
-/// angles off its nose, less `(1 - ease) * 6` times each turn rate, as shares of five degrees, each
-/// held within `limit` and 1. `ease` slackens the damping, so an eased turn swings further.
-///
-/// Where the flags ask for avoidance, the point moves around what the ship could hit first, and the
-/// turn is then made at full limit with no ease; that isn't ported yet
-/// ([#140](https://github.com/vdmkenny/openreliant/issues/140)), so the point stands as the caller
-/// gave it and this always returns false.
+/// with. It aims the ship at `at`, a point in the world, by setting its three turning inputs
+/// (`turn`). Where the flags ask for avoidance, the point first moves around what the ship could
+/// hit (`avoidNear`, `avoidAhead`), and the turn is then made at full limit with no ease and no
+/// pitch held up. Whether avoidance moved the point.
+pub fn steer(world: gameobj.World, index: u16, at: Vector, limit: f32, ease: f32, flags: Steering) bool {
+    var point = at;
+    var avoided = false;
+    if (flags.avoid_near) avoided = avoidNear(world, index, &point);
+    if (flags.avoid_ahead) avoided = avoidAhead(world, index, &point) or avoided;
+    turn(&world.objects.slots[index], point, limit, ease, flags, world.clock.frame_duration, avoided);
+    return avoided;
+}
+
+/// The rest of `ai_steer`: the turning inputs that aim the ship at `at`, the angles off its nose,
+/// less `(1 - ease) * 6` times each turn rate, as shares of five degrees, each held within
+/// `limit` and 1. `ease` slackens the damping, so an eased turn swings further. Where `avoided`,
+/// at full limit, with no ease and no pitch held up, and no roll upright.
 ///
 /// It steers by the place the ship is drawn at, which is where the frames have moved it to since
 /// the last step, since the orders run once a frame.
 ///
 /// **Improvement:** the angles come from `std.math.atan2` rather than the engine's table
 /// (`sr_atan2`), as they do elsewhere in the port.
-pub fn steer(slot: *create.Slot, at: Vector, limit_given: f32, ease_given: f32, flags_given: Steering, frame_duration: i32) bool {
+pub fn turn(slot: *create.Slot, at: Vector, limit_given: f32, ease_given: f32, flags_given: Steering, frame_duration: i32, avoided: bool) void {
     const object = &slot.object;
     // A ship with no flight stats would follow a null pointer here, so it steers nowhere instead.
-    const flight = slot.flight orelse return false;
+    const flight = slot.flight orelse return;
     var flags = flags_given;
     var ease = ease_given;
     var limit = limit_given;
-    const avoided = false;
     if (avoided) {
         limit = 1;
         ease = 0;
@@ -457,6 +462,131 @@ pub fn steer(slot: *create.Slot, at: Vector, limit_given: f32, ease_given: f32, 
     object.roll_input = std.math.clamp(object.roll_input, -limit, limit);
 
     if (!avoided and flags.roll_upright) rollUpright(object, at);
+}
+
+/// How long ahead, in steps, `avoidNear` looks for a meeting (`0x004DC448`).
+const near_steps: f32 = 250;
+
+/// `avoid_near` (`0x004028F0`): for each object of the ship's first avoidance list not standing in,
+/// exploding or disabled, not far behind along the line to the point and closing along it, that it
+/// would meet within 250 steps: where the line from where the ship goes next to the point crosses
+/// that object's box where it will then be, widened by the ship's radius, the point moves onto the
+/// box, widened again: to the face the line enters nearest, at the corner of it that is nearest the
+/// point, one way or the other along each of its two other axes. Whether it moved the point.
+///
+/// **Quirk:** it scales the point by the object's visibility into the box's frame, and again out
+/// of it.
+pub fn avoidNear(world: gameobj.World, index: u16, point: *Vector) bool {
+    const all = world.objects;
+    const ship = &all.slots[index].object;
+    if (ship.flags.no_avoidance) return false;
+    const from = ship.nextPosition();
+    const heading = math.normalize(point.* - from);
+    var avoided = false;
+    for (ship.avoid_near.list()) |listed| {
+        const object = &all.slots[@intCast(listed)].object;
+        if (object.flags.stand_in or object.flags.exploding or object.flags.disabled) continue;
+        const apart = object.nextPosition() - from;
+        if (math.dot(apart, heading) < -(object.radius + ship.radius)) continue;
+        const closing = gameobj.vector(object.velocity) - gameobj.vector(ship.velocity);
+        if (!(math.dot(heading, closing) < 0)) continue;
+        const steps = (math.length(apart) - ship.radius - object.radius) / math.length(closing);
+        if (!(steps <= near_steps)) continue;
+
+        const centre = object.nextPosition() + gameobj.vector(object.velocity) * @as(Vector, @splat(steps));
+        const turned = object.root.next_orientation;
+        const scale: Vector = @splat(object.visibility);
+        const widen: Vector = @splat(ship.radius);
+        var box: [2]Vector = .{ gameobj.vector(object.bounds_min) - widen, gameobj.vector(object.bounds_max) + widen };
+        const start = math.transformTransposed(turned, from - centre) * scale;
+        const end = math.transformTransposed(turned, point.* - centre) * scale;
+        const share = objects.boxEntry(start, end, box) orelse continue;
+        const entry = start + (end - start) * @as(Vector, @splat(share));
+        box = .{ box[0] - widen, box[1] + widen };
+        point.* = math.transform(turned, roundBox(box, entry, end) * scale) + centre;
+        avoided = true;
+    }
+    return avoided;
+}
+
+/// Where `avoidNear` moves a point entering `box` at `entry` and heading for `end`: on the face
+/// nearest the entry, the nearest to `end` of four points of it, at the entry along one of its
+/// two other axes and at an edge of the box along the other.
+fn roundBox(box_given: [2]Vector, entry_given: Vector, end: Vector) Vector {
+    const box: [2][3]f32 = .{ box_given[0], box_given[1] };
+    const entry: [3]f32 = entry_given;
+    var face: [3]f32 = undefined;
+    var nearest: f32 = std.math.floatMax(f32);
+    var axis: usize = 0;
+    for (0..3) |i| {
+        const low = @abs(entry[i] - box[0][i]);
+        const high = @abs(box[1][i] - entry[i]);
+        face[i] = if (low <= high) box[0][i] else box[1][i];
+        const gap = @min(low, high);
+        if (gap < nearest) {
+            nearest = gap;
+            axis = i;
+        }
+    }
+    const across = (axis + 1) % 3;
+    const up = (axis + 2) % 3;
+    var best: Vector = undefined;
+    var best_distance: f32 = std.math.floatMax(f32);
+    for ([4][2]f32{
+        .{ entry[across], box[0][up] },
+        .{ entry[across], box[1][up] },
+        .{ box[0][across], entry[up] },
+        .{ box[1][across], entry[up] },
+    }) |pair| {
+        var candidate: [3]f32 = undefined;
+        candidate[axis] = face[axis];
+        candidate[across] = pair[0];
+        candidate[up] = pair[1];
+        const distance = math.distance(candidate, end);
+        if (distance < best_distance) {
+            best_distance = distance;
+            best = candidate;
+        }
+    }
+    return best;
+}
+
+/// How far wide of a ship `avoidAhead` keeps, of its own side and of another, and how far it rises
+/// or dips past one it would pass too near (`0x004DC438`, `0x004DC44C`).
+const ahead_berth: [2]f32 = .{ 1000, 500 };
+const ahead_rise: [2]f32 = .{ 2000, 1000 };
+
+/// `avoid_ahead` (`0x00402DC0`): for a ship that lists no components, for each object of its
+/// second avoidance list, where that object will be once the ship has flown to where it is now at
+/// its cruise speed: where the line from where the ship goes next to the point passes within 1000
+/// of it, or 500 of one of another side, the point moves as far ahead of the ship as that is, and
+/// to the side of the ship's up and down axis away from it, by both their radii and 2000, or 1000
+/// for another side's. Whether it moved the point.
+pub fn avoidAhead(world: gameobj.World, index: u16, point: *Vector) bool {
+    const all = world.objects;
+    const slot = &all.slots[index];
+    const ship = &slot.object;
+    if (ship.flags.components or ship.flags.no_avoidance) return false;
+    const flight = slot.flight orelse return false;
+    const from = ship.nextPosition();
+    const orientation = ship.root.next_orientation;
+    var avoided = false;
+    for (ship.avoid_ahead.list()) |listed| {
+        const object = &all.slots[@intCast(listed)].object;
+        const toward = point.* - from;
+        const steps = math.distance(object.nextPosition(), from) / cruiseSpeed(ship, flight, world.view);
+        const ahead = object.nextPosition() + gameobj.vector(object.velocity) * @as(Vector, @splat(steps));
+        const to_ahead = ahead - from;
+        const along = math.dot(toward, to_ahead);
+        const share: f32 = if (along > 0) @min(along / math.lengthSquared(toward), 1) else 0;
+        const other_side: usize = @intFromBool(ship.side != object.side);
+        const berth = ahead_berth[other_side];
+        if (!(math.lengthSquared(toward * @as(Vector, @splat(share)) - to_ahead) < berth * berth)) continue;
+        const rise = object.radius + ship.radius + ahead_rise[other_side];
+        const below = math.transformTransposed(orientation, from - ahead)[1] < 0;
+        point.* = math.transform(orientation, .{ 0, if (below) -rise else rise, math.distance(from, ahead) }) + from;
+        avoided = true;
+    }
     return avoided;
 }
 
@@ -577,31 +707,31 @@ test steer {
     const slot = &all.slots[index];
 
     // Dead ahead, nothing turns.
-    _ = steer(slot, .{ 0, 0, 4000 }, 1, 0, .{}, 1);
+    turn(slot, .{ 0, 0, 4000 }, 1, 0, .{}, 1, false);
     try std.testing.expectEqual(0, slot.object.yaw_input);
     try std.testing.expectEqual(0, slot.object.pitch_input);
     try std.testing.expectEqual(0, slot.object.roll_input);
 
     // A point well off the nose is banked toward before it is pitched at.
-    _ = steer(slot, .{ 4000, 4000, 1000 }, 1, 0, .{}, 1);
+    turn(slot, .{ 4000, 4000, 1000 }, 1, 0, .{}, 1, false);
     try std.testing.expect(@abs(slot.object.roll_input) > 0);
 
     // A point a little off the nose is yawed at, within the limit it is given.
-    _ = steer(slot, .{ 200, 0, 4000 }, 0.25, 0, .{}, 1);
+    turn(slot, .{ 200, 0, 4000 }, 0.25, 0, .{}, 1, false);
     try std.testing.expectEqual(0.25, @abs(slot.object.yaw_input));
     try std.testing.expectEqual(0, slot.object.roll_input);
 
     // The turn rate damps the input, the less so the more the ease.
     slot.object.yaw_rate = 0.02;
-    _ = steer(slot, .{ 200, 0, 4000 }, 1, 0, .{}, 1);
+    turn(slot, .{ 200, 0, 4000 }, 1, 0, .{}, 1, false);
     const damped = slot.object.yaw_input;
-    _ = steer(slot, .{ 200, 0, 4000 }, 1, 1, .{}, 1);
+    turn(slot, .{ 200, 0, 4000 }, 1, 1, .{}, 1, false);
     try std.testing.expect(damped < slot.object.yaw_input);
     slot.object.yaw_rate = 0;
 
     // With the pitch held up it never dips below the floor, whichever way the point lies.
     slot.object.pitch_rate = 1;
-    _ = steer(slot, .{ 0, -4000, 1000 }, 1, 0, .{ .pitch_up = true }, 1);
+    turn(slot, .{ 0, -4000, 1000 }, 1, 0, .{ .pitch_up = true }, 1, false);
     try std.testing.expectEqual(pitch_floor, slot.object.pitch_input);
 }
 
@@ -624,7 +754,7 @@ test "a ship steered at a point comes round to face it" {
 
     const before = off(slot, at);
     for (0..50) |_| {
-        _ = steer(slot, at, 1, 0, .{ .roll_upright = true }, 1);
+        turn(slot, at, 1, 0, .{ .roll_upright = true }, 1, false);
         motion.move(&slot.object, slot.flight.?, .chase, .forward, null);
         // What the next step commits, which the steering then reads.
         slot.object.root.position = slot.object.root.next_position;
@@ -642,9 +772,9 @@ test "a slow frame halves the small turns" {
     const index = try mission.add(.predator, @splat(0));
     const slot = &all.slots[index];
 
-    _ = steer(slot, .{ 200, 0, 4000 }, 1, 0, .{}, slow_frame);
+    turn(slot, .{ 200, 0, 4000 }, 1, 0, .{}, slow_frame, false);
     const quick = slot.object.yaw_input;
-    _ = steer(slot, .{ 200, 0, 4000 }, 1, 0, .{}, slow_frame + 1);
+    turn(slot, .{ 200, 0, 4000 }, 1, 0, .{}, slow_frame + 1, false);
     try std.testing.expectApproxEqAbs(quick * 0.5, slot.object.yaw_input, 1e-6);
 }
 
@@ -725,4 +855,59 @@ test stop {
     try std.testing.expectEqual(0, object.throttle);
     try std.testing.expectEqual(0, object.yaw_rate);
     try std.testing.expectEqual(math.identity, object.rotation);
+}
+
+test avoidAhead {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const world = mission.world();
+    const ship = try mission.addOther(@splat(0));
+    const other = try mission.addOther(.{ 0, 0, 5000 });
+    const object = &mission.slot(ship).object;
+    object.radius = 100;
+    mission.slot(other).object.radius = 200;
+    object.avoid_ahead.add(other);
+
+    // A point beyond the other ship, of the same side: the ship steers over it, as far ahead as it
+    // is, by both radii and 2000.
+    var point: Vector = .{ 0, 0, 20000 };
+    try std.testing.expect(avoidAhead(world, ship, &point));
+    try std.testing.expectEqual(Vector{ 0, 2300, 5000 }, point);
+    // Well wide of it, the point stands.
+    point = .{ 20000, 0, 20000 };
+    try std.testing.expect(!avoidAhead(world, ship, &point));
+    // A ship told not to avoid avoids nothing.
+    object.flags.no_avoidance = true;
+    point = .{ 0, 0, 20000 };
+    try std.testing.expect(!avoidAhead(world, ship, &point));
+}
+
+test avoidNear {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const world = mission.world();
+    const ship = try mission.addOther(@splat(0));
+    const hull = try mission.addOther(.{ 0, 0, 5000 });
+    const object = &mission.slot(ship).object;
+    object.radius = 100;
+    object.velocity = .{ .x = 0, .y = 0, .z = 50 };
+    const big = &mission.slot(hull).object;
+    big.flags.components = true;
+    big.radius = 1000;
+    big.visibility = 1;
+    big.bounds_min = .{ .x = -1000, .y = -500, .z = -1000 };
+    big.bounds_max = .{ .x = 1000, .y = 500, .z = 1000 };
+    object.avoid_near.add(hull);
+
+    // Closing on the hull, the line to the point crosses its box: the point moves onto the box's
+    // face it enters nearest, widened twice by the ship's radius, at the corner nearest the point.
+    var point: Vector = .{ 0, 0, 20000 };
+    try std.testing.expect(avoidNear(world, ship, &point));
+    try std.testing.expectEqual(Vector{ 0, -700, 3800 }, point);
+    // Heading away from it, the point stands.
+    object.velocity = .{ .x = 0, .y = 0, .z = -50 };
+    point = .{ 0, 0, 20000 };
+    try std.testing.expect(!avoidNear(world, ship, &point));
 }

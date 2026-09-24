@@ -325,6 +325,29 @@ pub const Type = enum(u32) {
     }
 };
 
+/// A list of objects the avoidance code steers round (`avoidance_scan`), `max_avoided` at most.
+pub const Avoided = extern struct {
+    count: i32,
+    slots: [max_avoided]i32,
+
+    pub fn list(avoided: *const Avoided) []const i32 {
+        return avoided.slots[0..@intCast(std.math.clamp(avoided.count, 0, max_avoided))];
+    }
+
+    /// Adds `slot`, where there is room.
+    pub fn add(avoided: *Avoided, slot: u16) void {
+        if (avoided.count >= max_avoided) return;
+        avoided.slots[@intCast(avoided.count)] = slot;
+        avoided.count += 1;
+    }
+
+    comptime {
+        assert(@sizeOf(Avoided) == 0x2C);
+    }
+};
+
+pub const max_avoided = 10;
+
 /// A live object (`gameobj.cpp`), allocated at `0x00475DD0`.
 pub const GameObject = extern struct {
     type: Type,
@@ -545,7 +568,10 @@ pub const GameObject = extern struct {
     /// **Unknown.** -1 when created.
     _unknown_6ac: i32,
     _unknown_6b0: u32,
-    _unknown_6b4: [0x58]u8,
+    /// What `avoidance_scan` finds the ship could hit, for the avoidance code: the objects that
+    /// list components (`ai.avoidNear`), and the rest (`ai.avoidAhead`).
+    avoid_near: Avoided,
+    avoid_ahead: Avoided,
     /// A number from 0 to 99 the object draws from its own seed when created: where a mission lets
     /// the pilot eject, it does below `ai.eject_below` (`object_destroyed`). The `WillsBlag`
     /// command sets it to 100, which never does.
@@ -767,6 +793,8 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "gun_condition") == 0x66C);
         assert(@offsetOf(GameObject, "_unknown_678") == 0x678);
         assert(@offsetOf(GameObject, "_unknown_6ac") == 0x6AC);
+        assert(@offsetOf(GameObject, "avoid_near") == 0x6B4);
+        assert(@offsetOf(GameObject, "avoid_ahead") == 0x6E0);
         assert(@offsetOf(GameObject, "eject_roll") == 0x70C);
         assert(@offsetOf(GameObject, "nav_point") == 0x720);
         assert(@offsetOf(GameObject, "_unknown_74c") == 0x74C);

@@ -102,7 +102,7 @@ pub fn fly(ctx: Context, index: u16) void {
     const flags: ai.Steering = .{ .avoid_near = true, .avoid_ahead = true, .roll_upright = true };
     const avoided = if (target < 0) steer: {
         const at = object.nextPosition() + heading * @as(Vector, @splat(fly_ahead));
-        break :steer ai.steer(slot, at, 1, 0, flags, ctx.clock.frame_duration);
+        break :steer ai.steer(ctx.world, index, at, 1, 0, flags);
     } else steer: {
         const to = all.slots[@intCast(target)].object.nextPosition();
         if (math.lengthSquared(to - object.nextPosition()) < fly_reach * fly_reach) {
@@ -114,7 +114,7 @@ pub fn fly(ctx: Context, index: u16) void {
             return;
         }
         if (slot.flight == null) return;
-        break :steer ai.steer(slot, to, 1, 0, flags, ctx.clock.frame_duration);
+        break :steer ai.steer(ctx.world, index, to, 1, 0, flags);
     };
     if (avoided) object.throttle *= avoided_throttle;
 }
@@ -133,7 +133,7 @@ pub fn runAway(ctx: Context, index: u16) void {
     const from = slot.object.nextPosition();
     const away = from - all.slots[@intCast(target)].object.nextPosition();
     const at = from + away * @as(Vector, @splat(run_away_ahead));
-    _ = ai.steer(slot, at, 1, 0.1, .{ .avoid_near = true, .avoid_ahead = true }, ctx.clock.frame_duration);
+    _ = ai.steer(ctx.world, index, at, 1, 0.1, .{ .avoid_near = true, .avoid_ahead = true });
     slot.object.throttle = run_away_throttle;
 }
 

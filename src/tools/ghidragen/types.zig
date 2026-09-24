@@ -103,6 +103,7 @@ pub const exported = [_]Export{
     .{ "ControlAction", engine.input.controls.Action },
     .{ "ControlMode", engine.input.ControlMode },
     .{ "MissileRack", engine.game.gameobj.Rack },
+    .{ "Avoided", engine.game.gameobj.Avoided },
     .{ "MissileType", engine.game.missiles.Type },
     .{ "MissileLook", engine.game.missiles.trail.Look },
     .{ "MissileLookPieces", engine.game.missiles.trail.Look.Pieces },
