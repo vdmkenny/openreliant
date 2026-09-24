@@ -227,7 +227,7 @@ record are freed.
 `missiles_reset` (`0x00494D80`) frees every missile as a mission ends.
 
 The port keeps the missiles with the objects (`create.Objects.missiles`). Not yet ported: the
-countermeasures, the lock and what launches them.
+lock and what launches them.
 
 ## Trails
 
@@ -333,3 +333,46 @@ as wide as the tail and up to a sixth more at random, the second half as wide.
 
 **Fix:** with every trail taken, `missile_trail_create` takes the record past the last and writes
 past its pool. The port leaves the missile without a trail.
+
+## Countermeasures
+
+A ship drops countermeasures to draw away the missiles homing on it. `countermeasures`
+(`0x00540610`) holds 100 records of `0x24` bytes: whether it flies, the tick it ends at, the ship
+that dropped it, its velocity, its scene object over `ships\decoy.shp` (`decoy_model`,
+`0x00541420`), and its two streams of smoke. **Unverified:** that the code is `cloak.cpp`'s: it lies
+after `cbox.cpp`'s and before `cloak.cpp`'s asserting code, and its model's name lies just before
+`cloak.cpp`'s path among the strings. The port's is
+[`cloak.zig`](../../src/engine/game/cloak.zig).
+
+`decoys_init` (`0x00462390`), as a mission runs, clears them, loads the model and makes their smoke
+(`decoy_particles`, `0x00541424`): a puff a tick at even odds, from 50 to 100 across, grey from 0.25
+to nothing, living 100 ticks and up to 10 more, from the particles' first pool.
+
+`object_spend_countermeasure` (`0x00462550`) spends one of the ship's countermeasures (`+0x5EC`;
+29 as it is made). With none left, the player's display beeps its refusal (`hud_beep` 3) and
+nothing more happens; otherwise the player's beeps (`hud_beep` 0) and:
+
+1. The first free record takes it; with none free, it is spent for nothing.
+2. It stands at the ship's tail, `(0, 0, bounds_min.z)`, at the ship's next place, turned as the
+   ship will be, and drifts at a quarter of the ship's velocity, 5 along the ship's Y axis and 5
+   back, for 1000 ticks. Its smoke streams from its nose and its tail, along its own Z axis either
+   way, at 5 to 6 a tick, straying a quarter either way across.
+3. Outside a network game, or on its host: each missile, in the order of its records, homing on the
+   ship without a countermeasure, rolls `rand() % 100` against its type's decoy chance (`stats +
+   0x20`), 30 more against a player's ship, else 50 more where the ship's pilot holds its
+   countermeasures for 50 ticks at least (level 2 of `tier_c`). The first under it chases the
+   countermeasure: one countermeasure draws away one missile at most. A network client takes the
+   host's choice instead.
+
+A missile drawn away keeps its target, which must stay one to aim at, stops lighting its
+`missile_homing`, and homes on the countermeasure with no lead; within 1000 of it, both end
+([Homing](#homing)).
+
+`decoys_update` (`0x00462900`), once a frame after the explosions: each countermeasure past its
+time ends; the rest turn about their Y axis by 0.01 for each of the frame's ticks and one more,
+drift by their velocity times the frame's ticks, and trail their smoke.
+`countermeasure_end` (`0x00462460`) turns every missile it drew away back to its target, and ends
+it in a fireball from the sheet, 200 across over 50 ticks, drifting as it did.
+
+The port reads the model once for the whole run.
+

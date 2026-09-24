@@ -282,6 +282,8 @@ pub const Sound = struct {
     objects: ?*@import("create.zig").Objects = null,
     /// `betty.fat` (`bank_betty`, `0x0056654C`): the cockpit's warnings.
     betty: ?fat.Bank = null,
+    /// `bank_stdsmp`: the display's sounds and the frame's positional ones.
+    stdsmp: ?fat.Bank = null,
     /// When the player's armour last warned (`0x00588334`, `main.armorWarning`).
     armor_warned_at: i32 = 0,
     /// When a shot last sounded on the player's hull (`0x00593794`, `shieldfx.hullHit`).

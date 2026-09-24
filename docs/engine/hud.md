@@ -521,7 +521,9 @@ same twelve. The same switch picks the cockpit's frame model ([`main.zig`](../..
   ship through `object_set_cloak`, which sets `cloak_state` for the player.
 
 SMART TARGET, ECM and SPECTRAL SHIELDS play `hud_beep` (`0x0048CE70`) 4 turning a device on and 5
-turning it off: sample 15 + n of `bank_stdsmp`, in the four cockpit views only.
+turning it off: sample 15 + n of `bank_stdsmp`, at a volume of 60 (`0x00501C78`), in the four
+cockpit views only. The port's is `hud.beep`, which only the countermeasures play so far
+([#101](https://github.com/vdmkenny/openreliant/issues/101)).
 
 Ported: the charges, the fitting, SMART TARGET, TOGGLE BLINDFIRE, ECM and SPECTRAL SHIELDS
 ([`input.zig`](../../src/engine/input.zig)). Not yet: the sounds and Betty, the tuning of the spectral

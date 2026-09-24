@@ -1058,6 +1058,8 @@ pub const World = struct {
     shockwaves: ?*@import("shockwave.zig").Shockwaves = null,
     /// The missiles' and torpedoes' trails; null where none are left.
     trails: ?*missiles.trail.Trails = null,
+    /// The countermeasures in flight (`cloak.cpp`); null where none are dropped.
+    countermeasures: ?*@import("cloak.zig").Countermeasures = null,
     /// The shields' bubbles' meshes and colours (`shield.cpp`); null where none are drawn.
     shields: ?*@import("shield.zig").Shields = null,
     /// The sparks flying (`sparks.cpp`); null where none are thrown.

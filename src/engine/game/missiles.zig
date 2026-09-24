@@ -15,6 +15,7 @@ const Vector = math.Vector;
 const srcore = @import("../surrender/surrenderlib/srcore.zig");
 const ai = @import("ai.zig");
 const aigeneric = @import("aigeneric.zig");
+const cloak = @import("cloak.zig");
 const collision = @import("collision.zig");
 const create = @import("create.zig");
 const explode = @import("explode.zig");
@@ -240,7 +241,7 @@ pub const Missile = struct {
     }
 
     /// Its type's figures.
-    fn stats(missile: *const Missile, table: *const Table) *const Stats {
+    pub fn stats(missile: *const Missile, table: *const Table) *const Stats {
         return table.of(missile.type).?;
     }
 };
@@ -508,12 +509,11 @@ const steer_gain: f32 = 18.0 / std.math.pi;
 
 /// `missile_home` (`0x00496C90`): steers at the target, where it is still one to aim at, cloaked
 /// too for a Vagabond: at the point it aims at (`ai.aimedAt`), led along the target's nose by how
-/// far off it is times the target's speed over the missile's top speed. Its throttle is the cosine
+/// far off it is times the target's speed over the missile's top speed; or, drawn away, at the
+/// countermeasure, which it catches within `caught_range`, ending both. Its throttle is the cosine
 /// of the angle off its aim, and its pitch and yaw inputs the angles off it, less four times its
 /// rates, times `steer_gain`, within 1 either way; with its aim behind it, full over toward its
 /// side. A target lost, or beyond `lost_range`, ends it, but a Solomon flies straight on.
-///
-/// Not ported: a decoy's pull (stage 4 of #39).
 fn home(world: gameobj.World, at: u8) void {
     const all = world.objects;
     const missile = all.missiles.get(at) orelse return;
@@ -521,15 +521,31 @@ fn home(world: gameobj.World, at: u8) void {
     const allowed: GameObject.Flags = if (missile.type == .vagabond) .{ .cloaked = true } else .{};
     if (ai.targetValid(all, missile.target, allowed)) {
         const from = missile.slot.drawn.position;
-        const aimed = ai.aimedAt(all, missile.target).position;
-        const target = &all.slots[@intCast(missile.target.index)];
-        const lead = math.distance(aimed, from) * target.object.speed / missile.flight().max_speed;
-        const toward = aimed + math.forward(target.drawn.orientation) * @as(Vector, @splat(lead)) - from;
+        const aim = if (decoyAt(world, missile)) |decoy| decoyed: {
+            if (math.lengthSquared(decoy.place().position - from) < caught_range * caught_range) {
+                world.countermeasures.?.end(world, missile.decoy.?);
+                return end(world, at);
+            }
+            break :decoyed decoy.place().position;
+        } else led: {
+            const aimed = ai.aimedAt(all, missile.target).position;
+            const target = &all.slots[@intCast(missile.target.index)];
+            const lead = math.distance(aimed, from) * target.object.speed / missile.flight().max_speed;
+            break :led aimed + math.forward(target.drawn.orientation) * @as(Vector, @splat(lead));
+        };
+        const toward = aim - from;
         if (math.lengthSquared(toward) <= lost_range * lost_range) return steer(object, missile.slot.drawn.orientation, toward);
     }
     // The game asks whether the missile's trail has the Solomon's look.
     if (missile.type == .solomon) return steady(object, 1);
     end(world, at);
+}
+
+/// The countermeasure that has drawn the missile away, where one has.
+fn decoyAt(world: gameobj.World, missile: *const Missile) ?*cloak.Countermeasure {
+    const decoy = missile.decoy orelse return null;
+    const dropped = world.countermeasures orelse return null;
+    return dropped.get(decoy);
 }
 
 /// Sets the missile's controls to fly at what lies `toward` it, turned by `orientation`.

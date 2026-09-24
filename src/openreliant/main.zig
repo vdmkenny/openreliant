@@ -582,6 +582,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     // 3D sounds do.
     const stdsmp = try openreliant.fat.Bank.parse(try resources.readFile(arena, "stdsmp.fat"));
     sound.betty = try openreliant.fat.Bank.parse(try resources.readFile(arena, "betty.fat"));
+    sound.stdsmp = stdsmp;
     sound.open3D(try openreliant.fat.Bank.parse(try resources.readFile(arena, "smp3d.fat")));
 
     // The options' cockpit setting and the brightness, as `[Device]` keeps them, and the camera as
@@ -609,12 +610,16 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     defer shockwaves.deinit(gpa);
     var trails: game.missiles.trail.Trails = .init(gpa, try .load(&textures));
     defer trails.deinit();
+    // The countermeasures' model, read once for the whole run, as `decoys_init` reads it.
+    var effects_library: Library = .{ .gpa = arena, .resources = &resources, .textures = &textures };
+    var countermeasures: game.cloak.Countermeasures = .init(gpa, effects_library.mounts());
+    defer countermeasures.reset();
     var sparks: game.sparks.Sparks = try .create(gpa, &textures);
     defer sparks.deinit();
     var shields: game.shield.Shields = try .create(gpa, &textures, explosions.settings.detail, context.hardware, options.shields);
     defer shields.deinit(gpa);
     // What the objects run in, the camera's view brought up to date each frame.
-    var world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .difficulty = options.difficulty, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .smoke = &smoke, .shockwaves = &shockwaves, .trails = &trails, .sparks = &sparks, .shields = &shields };
+    var world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .difficulty = options.difficulty, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .smoke = &smoke, .shockwaves = &shockwaves, .trails = &trails, .countermeasures = &countermeasures, .sparks = &sparks, .shields = &shields };
     try sandbox.start(.{ .world = world, .clock = &clock, .devices = &devices }, @intCast(options.ship));
     // The music, as a mission's script starts it (`cmd_PlayMusic`): from `music\`, for ever, at 80.
     if (options.music) |name| {
@@ -856,6 +861,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .explosions = &explosions,
             .shockwaves = &shockwaves,
             .trails = &trails,
+            .countermeasures = &countermeasures,
             .shields = &shields,
             .paused = clock.paused,
             .attachments = .{
@@ -1075,6 +1081,7 @@ const Sandbox = struct {
         if (orders.world.smoke) |pools| pools.reset();
         sandbox.objects.missiles.reset(sandbox.objects.gpa);
         if (orders.world.trails) |trails| trails.reset();
+        if (orders.world.countermeasures) |dropped| dropped.reset();
         sandbox.objects.reset(sandbox.random);
         // The debris models, counted as used so the sweep below keeps them (`explosions_init`).
         if (orders.world.explosions) |explosions| explosions.debris = .load(sandbox.objects, sandbox.types.interface());

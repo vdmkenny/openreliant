@@ -444,7 +444,7 @@ address	kind	name	type	comment
 00409d10	function	fight_call_for_help		Has a ship the player has hurt badly send its nearest fighting wingman at the player
 004096b0	function	fight_fire	void __fastcall (int slot, FightState *state, ModelNode *node)	Fires for the pilot burst once its pause has passed, with the aim along the nose within fire_spread target radii and the node within a quarter of a laser range; a friendly ship holds fire with a player in line. Then times the missiles and countermeasures
 00409ec0	function	fight_update_cloak	void __fastcall (int slot, FightState *state)	Uncloaks the ship when its maneuver asked for no cloak, and cloaks it once cloak_at passes when it asked for one
-00462550	function	object_spend_countermeasure	void __fastcall (int slot, int unknown)	Spends one of an object's countermeasures, its word at +0x5EC: with none left it plays the display's sound 3 for the player (hud_beep) and does nothing else; otherwise it takes one, plays sound 0 for the player, and carries on
+00462550	function	object_spend_countermeasure	void __fastcall (int slot, int missile)	Spends one of an object's countermeasures (+0x5EC), the player's with hud_beep 0, or 3 with none left: drops one at its tail at its next place, drifting at a quarter of its velocity plus 5 along its Y axis and 5 back, trailing decoy_particles fore and aft, for 1000 ticks; then, outside a network client, the first missile in record order homing on it undecoyed that rolls under its decoy chance (30 more against a player, 50 more against a pilot whose countermeasures least is 50) chases it. A client takes the host's missile
 004c3830	function	SR_init	void * __fastcall (void)	Clears sr_context and returns it
 005e6b50	data	sr_context		Surrender's state: the device, its texture limits, the palette and colour cube in use
 00588730	data	sr	void *	What SR_init returned: sr_context
@@ -1219,3 +1219,11 @@ address	kind	name	type	comment
 005887f8	data	missile_trail_list	int *	The newest live trail; they link through +0x40
 005887c4	data	missile_trail_texture	TextureImage *	missiletrail\mtrail2
 00503958	data	missile_looks	MissileLook[11]	Each missile type's trail: its pieces, its ribbon's rings and colour, its side ribbons' and its plume's colour
+00462390	function	decoys_init	void (void)	Clears countermeasures, loads ships\decoy.shp into decoy_model and makes decoy_particles: life 100 and up to 10 more, rate 50, size 50 to 100, grey from 0.25 to nothing
+00462460	function	countermeasure_end	void __fastcall (int index)	Ends a countermeasure: every missile chasing it turns back to its target, and it ends in a sheet fireball of 200 over 50 ticks, drifting at its velocity
+004624f0	function	decoys_free	void (void)	Frees every countermeasure and decoy_particles
+00462900	function	decoys_update	void (void)	Once a frame after explosions_update: each countermeasure past its time ends; the rest turn about their Y axis by 0.01 for each tick and one more, drift by their velocity times the ticks, and stream their smoke
+00540610	data	countermeasures	byte[100][36]	Countermeasures in flight: live, until, owner slot, velocity, scene object and two emitters
+00541420	data	decoy_model	void *	ships\decoy.shp
+00541424	data	decoy_particles	ParticleTemplate *	The countermeasures' smoke
+00501c78	data	hud_beep_sounds	int[6][2]	hud_beep's sample of bank_stdsmp and volume for each sound: 15 to 20, at 60

@@ -62,6 +62,34 @@ test {
 
 /// What `hud_place` takes off the screen's size before working a place out, and what it adds back
 /// afterwards. An element therefore keeps its place at any resolution.
+/// The display's sounds (`hud_beep`), samples 15 to 20 of `bank_stdsmp` (the table at
+/// `0x00501C78`, each at a volume of 60).
+pub const Beep = enum(u3) {
+    /// Most of the display's keys: a countermeasure spent.
+    done = 0,
+    /// A window opening, and closing.
+    opens = 1,
+    closes = 2,
+    /// A key that finds nothing to do: no countermeasure left.
+    refused = 3,
+    /// A device turning on, and off.
+    on = 4,
+    off = 5,
+
+    const first_sample = 15;
+    const volume = 60;
+    const pan = 64;
+};
+
+/// `hud_beep` (`0x0048CE70`): the display's sound `which`, in the middle, in the four cockpit views
+/// only.
+pub fn beep(world: gameobj.World, which: Beep) void {
+    if (@intFromEnum(world.view) > @intFromEnum(camera.View.cockpit_rear)) return;
+    const hearing = world.hearing orelse return;
+    const bank = hearing.sound.stdsmp orelse return;
+    _ = hearing.sound.play(bank, Beep.first_sample + @as(usize, @intFromEnum(which)), Beep.volume, 1, Beep.pan, 0);
+}
+
 const inset: i32 = 0x21;
 const margin: i32 = 0x10;
 

@@ -26,6 +26,7 @@ const aigeneric = @import("aigeneric.zig");
 const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
 const guns = @import("guns.zig");
+const cloak = @import("cloak.zig");
 const missiles = @import("missiles.zig");
 const explode = @import("explode.zig");
 const particles = @import("particles.zig");
@@ -214,6 +215,7 @@ pub const Frame = struct {
     explosions: ?*explode.Explosions = null,
     shockwaves: ?*shockwave.Shockwaves = null,
     trails: ?*missiles.trail.Trails = null,
+    countermeasures: ?*cloak.Countermeasures = null,
     /// The shields' bubbles, which go into the world's layer after the objects.
     shields: ?*shield.Shields = null,
     /// Whether the game is paused, which holds the bubbles' colours still.
@@ -275,8 +277,9 @@ pub fn pause(pausing: Pausing, on: bool) !void {
 /// ships and read the player's controls, then the frames they are drawn at, then the missiles
 /// (`missiles.frame`) and the shots in flight (`guns.bulletsFrame`), then the sparks (`sparks.Sparks.frame`) and the particles
 /// (`particles.Pool.frame`, `smoke.Pools.frame`), which `particles_frame` runs together, the
-/// damaged ships' smoke (`smoke.frame`), the explosions (`explode.Explosions.frame`) and the
-/// shockwaves (`shockwave.Shockwaves.frame`). A mission and the sandbox alike run this once a
+/// damaged ships' smoke (`smoke.frame`), the explosions (`explode.Explosions.frame`), the
+/// countermeasures (`cloak.Countermeasures.frame`) and the shockwaves
+/// (`shockwave.Shockwaves.frame`). A mission and the sandbox alike run this once a
 /// frame, before the camera's own frame and anything drawn.
 ///
 /// Not ported: the rest of the frame's work, which is the mission's events and its scripts
@@ -291,6 +294,7 @@ pub fn missionFrame(orders: aigeneric.Context, fraction: f32) void {
     if (orders.world.smoke) |pools| pools.frame(orders.clock);
     smoke.frame(orders.world);
     if (orders.world.explosions) |explosions| explosions.frame(orders.world);
+    if (orders.world.countermeasures) |dropped| dropped.frame(orders.world);
     if (orders.world.shockwaves) |waves| waves.frame(orders.world);
 }
 
@@ -322,6 +326,7 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     try drawObjects(gpa, scene, frame.objects, attachments, frame.seat);
     try missiles.draw(frame.objects, gpa, scene, attachments);
     if (frame.trails) |trails| try trails.draw(gpa, scene);
+    if (frame.countermeasures) |dropped| try dropped.draw(gpa, scene, attachments);
     if (frame.shields) |bubbles| try bubbles.draw(gpa, arena, scene, frame.objects, .{
         .camera = attachments.camera,
         .inside = camera.inCockpit(frame.view, frame.cockpit_mode),
