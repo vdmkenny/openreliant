@@ -295,10 +295,29 @@ pub const PartRef = struct {
         return srofiles.polygonOf(found.meshes[0].faces, face);
     }
 
+    /// Whether it still names a part of the model of the object in `slot`, or of a model that
+    /// model carries. The models it may name go with their object, so only then may it be read.
+    pub fn livesIn(ref: PartRef, slot: *const create.Slot) bool {
+        const model = if (slot.model) |*live| live else return false;
+        return model.holds(ref.model) and ref.index < ref.model.parts.len;
+    }
+
     /// Its part's record where it has a collision tree over a mesh to test.
     fn tree(ref: PartRef) ?shp.PartData {
         const found = ref.data() orelse return null;
         return if (found.nodes.len > 0 and found.meshes.len > 0) found else null;
+    }
+};
+
+/// A part of the model of the object in slot `object`, or of a model that model carries: what an
+/// effect hangs from.
+pub const PartOf = struct {
+    object: u16,
+    part: PartRef,
+
+    /// The part, while it still belongs to its object (`PartRef.livesIn`).
+    pub fn live(on: PartOf, all: *const create.Objects) ?*Model.Part {
+        return if (on.part.livesIn(&all.slots[on.object])) on.part.part() else null;
     }
 };
 
@@ -1727,6 +1746,21 @@ pub const Model = struct {
     /// hold.
     pub fn carried(model: Model) Carried {
         return .{ .mounts = model.mounts, .hung = model.hung };
+    }
+
+    /// `node_find_named` (`0x004ADD90`): the first part named `name`, in the order the root's
+    /// child list holds them, each followed by the models it carries, however deep; null where
+    /// none is, or for a model with no file behind it.
+    pub fn partNamed(model: *Model, name: []const u8) ?PartRef {
+        for (model.source.parts, 0..) |data, index| {
+            if (index >= model.parts.len) break;
+            if (std.mem.eql(u8, data.part.name(), name)) return .{ .model = model, .index = index };
+            var each = model.carriedBy(index);
+            while (each.next()) |mount| {
+                if (mount.model.partNamed(name)) |found| return found;
+            }
+        }
+        return null;
     }
 
     /// Whether `other` is this model or one it carries, however deep.

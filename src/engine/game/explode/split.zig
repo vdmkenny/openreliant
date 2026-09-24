@@ -9,10 +9,11 @@
 //! other half the split makes, only behind it, so that in a sweep the ship comes apart from the
 //! stern forward, the cut stepping through the points of its parts' `cut` point lists.
 //!
+//! The other half, where it is a wreck, burns as it is made (`create.wreckMade`).
+//!
 //! Not ported: the Dark Reign's hat, the Krasnaya's arms and the Boridin breakaway's core, which
-//! the split takes apart first; the wrecks' electric rays, lights and smoke at the end
-//! (`explode_part_burn`, `0x00471290`); the screen's flash (`explode_flash_near`, `0x00471D70`); and
-//! the bodies among the burning bits ([#225](https://github.com/vdmkenny/openreliant/issues/225)).
+//! the split takes apart first; the screen's flash (`explode_flash_near`, `0x00471D70`); and the
+//! bodies among the burning bits ([#225](https://github.com/vdmkenny/openreliant/issues/225)).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -596,11 +597,12 @@ fn stopTracks(model: *objects.Model) void {
 
 /// The other half of the ship in slot `index`, of `half_type`, made where the ship stands and
 /// turned as it is, its centre where the ship's own model has it; it turns as the ship turns,
-/// but still, unpowered and disabled; its first part shows, cut by `portal`. Null where it can't
-/// be made.
+/// but still, unpowered and disabled; its first part shows, cut by `portal`. A wreck burns as it
+/// is made (`create.wreckMade`). Null where it can't be made.
 fn otherHalf(world: gameobj.World, spawn: gameobj.World.Spawn, index: u16, half_type: gameobj.Type, portal: *const srapiext.Portal) ?u16 {
     const all = world.objects;
     const made = create.createObject(all, spawn.tables, spawn.types, null, half_type, 0, @splat(0), world.random) catch return null;
+    create.wreckMade(world, made);
     const main = &all.slots[index];
     const half = &all.slots[made];
     const root = main.drawn;

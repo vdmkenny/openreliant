@@ -733,14 +733,14 @@ pub const Capital = struct {
     fn find(capital: *const Capital, ref: objects.PartRef) ?CapitalSlot {
         const at = ref.part().capshield orelse return null;
         const shown = capital.slots[at] orelse return null;
-        return if (shown.part.model == ref.model and shown.part.index == ref.index) at else null;
+        return if (shown.on.part.model == ref.model and shown.on.part.index == ref.index) at else null;
     }
 
     /// `capshield_free` (`0x0049F900`): lets slot `at` go, and its part, where it still stands in
     /// `all`, shows none.
     fn free(capital: *Capital, all: *Objects, at: CapitalSlot) void {
         const shown = capital.slots[at] orelse return;
-        if (shown.stands(all, at)) shown.part.part().capshield = null;
+        if (shown.stands(all, at)) shown.on.part.part().capshield = null;
         shown.destroy(capital.gpa);
         capital.slots[at] = null;
     }
@@ -779,7 +779,7 @@ pub const Capital = struct {
                 capital.free(all, at);
                 continue;
             }
-            const part = shown.part.part();
+            const part = shown.on.part.part();
             shown.object.position = part.object.position;
             shown.object.orientation = part.object.orientation;
             const ticks: f32 = @floatFromInt(look.frame_start -% shown.moved);
@@ -794,9 +794,8 @@ pub const Capital = struct {
 /// A capital shield (`capshields`, 0x3C bytes): a copy of the part struck, over `shield128`, or
 /// `ffield` for a force field, which its last hits light.
 pub const CapitalShield = struct {
-    /// The part it shows on (`+0x00`), of the object in slot `owner`.
-    owner: u16,
-    part: objects.PartRef,
+    /// The part it shows on (`+0x00`).
+    on: objects.PartOf,
     /// Its copy of the part's finest mesh, and the scene object that shows it (`+0x04`,
     /// `Capshield mesh`), with its colours (object `+0x110`).
     mesh: srapiext.Mesh,
@@ -835,8 +834,7 @@ pub const CapitalShield = struct {
         @memset(strengths, @splat(0));
         const shown = try gpa.create(CapitalShield);
         shown.* = .{
-            .owner = owner,
-            .part = ref,
+            .on = .{ .object = owner, .part = ref },
             .mesh = mesh,
             .colours = colours,
             .until = now + capital_shown_for,
@@ -868,9 +866,7 @@ pub const CapitalShield = struct {
     /// Whether its part still stands in `all` and names slot `at`: its object's model holds the
     /// part's, the part is not taken out, and its node names the slot. Only then is the part read.
     fn stands(shown: *const CapitalShield, all: *const Objects, at: CapitalSlot) bool {
-        const model = if (all.slots[shown.owner].model) |*live| live else return false;
-        if (!model.holds(shown.part.model) or shown.part.index >= shown.part.model.parts.len) return false;
-        const part = shown.part.part();
+        const part = shown.on.live(all) orelse return false;
         return !part.removed and part.capshield == at;
     }
 

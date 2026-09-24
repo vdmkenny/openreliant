@@ -18,6 +18,7 @@ pub const collision = @import("game/collision.zig");
 pub const create = @import("game/create.zig");
 pub const deathmatch = @import("game/deathmatch.zig");
 pub const environfx = @import("game/environfx.zig");
+pub const erayfx = @import("game/erayfx.zig");
 pub const explode = @import("game/explode.zig");
 pub const hud = @import("game/hud.zig");
 pub const hudoptions = @import("game/hudoptions.zig");

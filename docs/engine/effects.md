@@ -121,7 +121,7 @@ last frames play, where the game's vanishes after the last. `--original` restore
 [`explode.zig`](../../src/engine/game/explode.zig) ports the fireballs as `Explosions.setOff` and
 `Fireball`, and [`aiexplode.zig`](../../src/engine/game/aiexplode.zig) the spin-out's, the halt's
 and the torpedo's. Not ported: a special fireball's own texture (`0x00562CCC`), which none of these
-sets off, and the rest of `explosions_update`.
+sets off, and the rest of `explosions_update` but the [burning wrecks](#burning-wrecks).
 
 ## Burning bits
 
@@ -273,7 +273,60 @@ When the time is up, the split ends once (`GameObject` `0x610` bit 1) and the po
 - A burst with no points is skipped, where the game divides by zero, and the end reads only as many fireball points as the hull has.
 - When all ten slots are taken, the split whose slot is reused is stopped first, so its parts are no longer cut.
 
-[`explode/split.zig`](../../src/engine/game/explode/split.zig) ports the splits. Not ported: the Dark Reign's hat, the Krasnaya's arms and the Boridin breakaway's core, which a split takes apart first; the wrecks' electric rays, lights and smoke at the end (`explode_part_burn`, `0x00471290`); the screen's flash (`explode_flash_near`, `0x00471D70`); the bodies among the burning bits; and the Ulysses' own routine ([#225](https://github.com/vdmkenny/openreliant/issues/225)).
+[`explode/split.zig`](../../src/engine/game/explode/split.zig) ports the splits. Not ported: the Dark Reign's hat, the Krasnaya's arms and the Boridin breakaway's core, which a split takes apart first; the screen's flash (`explode_flash_near`, `0x00471D70`); and the bodies among the burning bits ([#225](https://github.com/vdmkenny/openreliant/issues/225)). The Ulysses' own routine is [#232](https://github.com/vdmkenny/openreliant/issues/232).
+
+### Burning wrecks
+
+Making a wreck type sets one of its parts burning (`create_object`):
+
+| Type | Wreck | Part |
+|---|---|---|
+| `0x72` | The Mammoth's front | `Mam frnt dest 2` |
+| `0x73` | The Mammoth's back | `Mam back dest` |
+| `0x75` | The Badanov's back | `Bad dead back`, shown first |
+| `0x76` | The Badanov's front | `BAD dead frnt`, shown first |
+| `0x77` | The Kurgan's | `Box07` |
+
+A split makes these as its other half, so they burn from the moment it starts.
+
+`explode_part_burn` (`0x00471290`) sets a part burning, for good or for 5000 ticks, flickering or not, with or without lights. The wrecks burn for good, flickering, with lights. Where the part has a list of ray points:
+
+- An [electric ray](#electric-rays) runs between each pair of points: one strand, 260 either way, a jitter of 0.2, pale cyan (0.6, 1, 1), dimming as it goes dark.
+- A red burn light, `Burn light` (`part_burn_lights`, `0x00471470`), stands at the first point of each light list, reaching 20000, in one of 15 slots (`0x0055AD24`). Each frame it flickers between half and full brightness, and it fades out over 10000 ticks.
+- Smoke streams from each point of the smoke lists (`part_streams`, `0x004715D0`), along the normal of the vertex it stands on, at 3 to 3.5 a tick, straying a quarter either way across, in one of 64 slots (`0x0055AD60`). The smoke (`0x00553350`) is grey puffs growing from 50 to 150 across over about a second, 0.2 of one a tick at first and 0.1 at the end.
+
+Each frame, `explosions_update` streams the smoke and fades the lights. A light or a stream that finds no free slot isn't made.
+
+**Fixes:**
+
+- The game leaves out the last pair of ray points, so every wreck has one ray fewer than its points make, and a part with a single pair has none. The port runs a ray between every pair.
+- The game keeps a burn light or a stream hanging from its part's frame after the wreck is gone. The port lets it go with the wreck.
+- The game stops with an assertion where the object has no part of the name. The port burns nothing.
+
+[`explode.zig`](../../src/engine/game/explode.zig) ports the burning as `burnPart`, and [`create.zig`](../../src/engine/game/create.zig) the wrecks' part of `create_object` as `wreckMade`. Not ported: the Protogate's power core, which burns with rays alone ([#233](https://github.com/vdmkenny/openreliant/issues/233)).
+
+## Electric rays
+
+`erayfx.cpp` draws electric rays: jagged strands of light between two points. They crackle over [burning wrecks](#burning-wrecks) and over ships a Havoc's shockwave disrupts ([Orders](orders.md)).
+
+There is room for 100 rays (`0x005531B0`). `eray_add` (`0x0046AC50`) takes the first free slot, or frees the first ray where all are taken. A ray (`eray_create`, `0x0046ACE0`, 0x1B0 bytes) has:
+
+- One or more strands of 16 segments (`eray_segment_mesh`, `0x0046A850`). A segment is a square across its start, over highlight texture 0, and two quads crossed along it, over `laser2`. All are lit and added to what is behind them by their alpha, which starts at 0.5.
+- A point light, `Eray Light`, reaching 10000, in the first strand's colour (`eray_colour`, `0x0046AEA0`), at the middle of that strand.
+- Flags: 1 flickers, 2 fades, 4 lasts only its life.
+- What it hangs from, whose frame its ends are in (`eray_hang`, `0x0046AE60`), and the object it plays over: it goes once that object's slot stands in.
+
+Once a frame, `erays_update` (`0x0046AC30`) runs `eray_update` (`0x0046AF40`) for each ray:
+
+- A ray that lasts its life loses the ticks since it last moved on, and goes when none are left.
+- A flickering ray stays lit for up to 100 ticks at random, then goes dark for up to 1500. One that fades dims by 0.03 a tick while dark; any other goes out at once.
+- While it is brighter than nothing, each strand runs from the ray's start to its end through 15 points between, which stray at random each frame (`eray_jitter`, `0x0046AA70`). The middle of each stretch moves by up to the ray's jitter times the stretch's length, in a random direction, halving the stretch four times over. The strand's alpha is 0.5 times the ray's brightness, and the light shines at full strength.
+
+The game leaves unset when a ray last changed and how long it stays lit. The port starts both at nothing, so a flickering ray goes dark on its first frame, fading if it fades. The game also makes a 17th segment for each strand that it never places or lights. The port leaves it out, and draws each strand as a single mesh.
+
+**Fix:** a ray hanging from a part that a split's portal cuts is cut by it too, so it shows only on what the sweep has laid bare. The game cuts the part alone, and its rays crackle over the stretch of the ship still whole.
+
+[`erayfx.zig`](../../src/engine/game/erayfx.zig) ports the rays.
 
 ## Smoke
 

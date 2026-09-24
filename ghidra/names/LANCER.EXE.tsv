@@ -1217,8 +1217,19 @@ address	kind	name	type	comment
 0046e370	function	missile_explode	void __fastcall (int *missile)	A missile's blast: 50 sparkles of the sparkle template at a life spread of 200, a lit sheet fireball of 3 radii for 100 ticks, both drifting at a quarter of its velocity, and EXPLOSION01 at it among the explosions
 0049bae0	function	tree_leaf_segment_test	bool __fastcall (Vec3 *from, Vec3 *to, void *leaf, Vec3 *point, Vec3 *normal, int *face)	A segment in a part's frame against a collision tree leaf: its box, then each face the segment starts in front of by no more than its length, fanned into triangles (segment_meets_triangle); the last crossed wins
 004ad700	function	segment_meets_triangle	bool __fastcall (Vec3 *from, Vec3 *to, Vec3 *a, Vec3 *b, Vec3 *c, Vec3 *point)	Where a segment crosses a triangle, solved through a 3x3 inverse for the share along it and across the edges from c
-0046ac50	function	eray_add	void * __fastcall (float width, float length, int strands)	Takes the first free of the 100 electric rays at 0x005531B0, freeing the first where all are taken, made by eray_create; order_disrupted_init plays fifteen
-0046ace0	function	eray_create	void * __fastcall (short strands, float width, float length)	An electric ray of 0x1B0 bytes (erayfx.cpp): 17 meshes a strand named Eray Mesh and a light named Eray Light
+0046ac50	function	eray_add	void * __fastcall (int strands, int life, float jitter, float width, uint flags)	Takes the first free of the 100 electric rays at 0x005531B0, freeing the first where all are taken, made by eray_create, with its life; order_disrupted_init plays fifteen, explode_part_burn one between each pair of points
+0046ace0	function	eray_create	void * __fastcall (short strands, uint flags, float jitter, float width)	An electric ray of 0x1B0 bytes (erayfx.cpp), lit, its time dark drawn up to 1500: 17 meshes a strand named Eray Mesh (eray_segment_mesh) and a light named Eray Light reaching 10000, hanging from the first strand middle segment
+0046a850	function	eray_segment_mesh		A ray segment mesh: a square across its start over highlight texture 0, then two quads crossed along Z, 400 long, over laser2, lit and added by alpha
+0046aa70	function	eray_jitter		The point halfway between two of a strand 17 points, strayed at random by up to a share of their distance, then the same for each half, depth times
+0046abe0	function	erays_init	void (void)	As a mission starts: laser2 into 0x005531AC, and the 100 ray slots emptied
+0046ac00	function	erays_free	void (void)	Frees every electric ray
+0046ac30	function	erays_update	void (void)	Once a frame (mission_frame): eray_update for each electric ray
+0046adf0	function	eray_free	void __fastcall (void *ray)	Frees a ray segment objects, its light and the ray
+0046ae60	function	eray_hang	void __fastcall (void *ray, void *frame)	Hangs every segment of a ray from a frame, which its ends are in
+0046aea0	function	eray_colour		Colours a strand of a ray, and for the first strand its light
+0046af40	function	eray_update	void __fastcall (void *ray)	A ray frame: a timed one loses the ticks since it last moved and goes at none; one whose object stands in goes; a flickering one stays lit up to 100 ticks and dark up to 1500, dimming by 0.03 a tick if it fades; while bright each strand is jittered, its segments placed and stretched between its points, and drawn with the light
+005531ac	data	eray_texture		laser2, which the electric rays are drawn over
+005531b0	data	erays		The 100 electric rays
 005887f0	data	missiles	int *	200 missile records of 0x28: started, object, launcher, decoy, trail, stats, net player, net id, older, newer
 005887f4	data	missile_list	int *	The newest live missile; they link to the older through +0x20
 00503d20	data	missile_orders	void *[12][2]	The missile orders' init and update
@@ -1297,9 +1308,14 @@ address	kind	name	type	comment
 00470030	function	split_update	bool __fastcall (void *record)	Runs a split once a frame: mode 0 sweeps a cut through the points with fireballs, bits and sounds, the portals in the scene and the ship held shaking, then parts the halves; mode 1 bursts about the ship, then shows the wreck; always true, freeing itself at the end
 00471d30	function	explode_sequence_find	int __fastcall (uint type)	The index of a type record in the explosion sequences (0x004FFB50, 40 of 0x2C bytes), or -1
 00471d70	function	explode_flash_near	void __fastcall (GameObject *object)	Flashes the screen for 100 ticks (0x00587CC8) where the camera stands within 5 radii of the object
-00471290	function	explode_part_burn	void __thiscall (int slot, char *name, char a, char b, char c)	Sets a wreck part burning: an electric ray between each pair of its kind 1 points, then unless c its burn lights (part_burn_lights) and smoke (part_streams)
+00471290	function	explode_part_burn	void __fastcall (int slot, char *name, bool forever, bool flickers, bool no_lights)	Sets a wreck part burning: an electric ray between each pair of its kind 1 points but the last, fading, flickering if asked, for 5000 ticks unless forever; then unless no_lights its burn lights (part_burn_lights) and smoke (part_streams)
 00471470	function	part_burn_lights	void __fastcall (ModelNode *node)	A red Burn light at the first point of each kind 4 point list of the part, in 15 slots at 0x0055AD24
 004715d0	function	part_streams	void __fastcall (ModelNode *node, bool forever, void *particles)	A particle stream at each point of the part kind 3 point lists, along its vertex normal, for 5000 ticks or for good, into 0x0055AD60
+00471590	function	burn_light_free	void __fastcall (int slot)	Frees a burn light slot and its light
+0055ad24	data	burn_lights		15 burning wrecks lights, 8 bytes each: the light, and what is left of it, fading by 0.0001 a tick and flickering between half and full
+0055ad60	data	burn_streams		64 burning wrecks smoke emitters, which explosions_update streams each frame
+00553350	data	wreck_smoke_template		The particle template a burning wreck streams: grey puffs 50 to 150 across over about a second
+005538c0	data	big_smoke_template		The particle template of great grey puffs 1000 to 2500 across, which the Boridin breakaway streams
 00472140	function	krasnaya_left_arm_off	void __fastcall (GameObject *object, ModelNode *node, int link)	Throws the Krasnaya left arm off as an object of type 0xA3 and shows its wreck parts, with fireballs and a flash
 00472420	function	krasnaya_right_arm_off	void __fastcall (GameObject *object, ModelNode *node, int link)	Throws the Krasnaya right arm off as an object of type 0xA3 and shows its wreck parts, with fireballs and a flash
 00473fb0	function	node_tree_stop	void __fastcall (ModelNode *node)	Sets the animation speed of a node and all under it to 0
