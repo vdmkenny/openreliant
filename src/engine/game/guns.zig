@@ -1135,9 +1135,10 @@ pub const spent: i32 = -1;
 pub const Candidate = struct {
     /// The object's slot.
     object: u16 = 0,
-    /// For an object that lists components, the part (the game keeps its node's number,
-    /// `object_number_parts`); null for any other, which is taken whole.
-    part: ?objects.PartRef = null,
+    /// For an object that lists components, the part's number (`objects.Model.numbered`), which
+    /// is found again each frame in the model the object has then, as the game keeps its node's
+    /// number (`object_number_parts`); null for any other object, which is taken whole.
+    part: ?u16 = null,
 };
 
 /// One shot in flight, as the game keeps it in the `0xC4` bytes of a pool record.
@@ -1457,7 +1458,7 @@ fn candidates(world: gameobj.World, bullet: *Bullet, record: Gun, lifetime: i32)
         if (math.lengthSquared(nearest - to) >= reach * reach) continue;
         if (componentModel(slot)) |model| {
             const end = bullet.at + (bullet.velocity - gameobj.vector(object.velocity)) * @as(Vector, @splat(life));
-            var listing: Listing = .{ .bullet = bullet, .object = index, .from = bullet.at, .to = end };
+            var listing: Listing = .{ .bullet = bullet, .object = index, .model = model, .from = bullet.at, .to = end };
             objects.hitWalk(model, object.placeAt(.next), &listing);
         } else {
             bullet.candidates[bullet.candidate_count] = .{ .object = index };
@@ -1479,6 +1480,7 @@ fn componentModel(slot: *create.Slot) ?*objects.Model {
 const Listing = struct {
     bullet: *Bullet,
     object: u16,
+    model: *objects.Model,
     from: Vector,
     to: Vector,
 
@@ -1491,7 +1493,8 @@ const Listing = struct {
         if (shot.candidate_count == max_candidates) return;
         const tree = ref.rootBox() orelse return;
         if (!moving and !tree.meetsSegment(place.inverse(listing.from), place.inverse(listing.to))) return;
-        shot.candidates[shot.candidate_count] = .{ .object = listing.object, .part = ref };
+        const number = std.math.cast(u16, listing.model.numberOf(ref) orelse return) orelse return;
+        shot.candidates[shot.candidate_count] = .{ .object = listing.object, .part = number };
         shot.candidate_count += 1;
     }
 };
@@ -1661,7 +1664,8 @@ const hull_sparks_carry: f32 = 0.25;
 /// `missile_hull_test`): where the shot's segment meets the object's bounding box, the last face it
 /// crosses of the parts among `run`, the object's run of candidates, each tested where the segment
 /// passes within its radius of it as it stands drawn, and crossed at its next place
-/// (`objects.crossPart`). Null where it crosses none, and the shot flies on.
+/// (`objects.crossPart`). Null where it crosses none, and the shot flies on. A candidate's part is
+/// found by its number in the model the object has now, which a part number past its last misses.
 fn componentStruck(world: gameobj.World, bullet: *const Bullet, segment: objects.Segment, index: u16, run: []const Candidate) ?objects.Crossing {
     const slot = &world.objects.slots[index];
     const model = componentModel(slot) orelse return null;
@@ -1669,7 +1673,7 @@ fn componentStruck(world: gameobj.World, bullet: *const Bullet, segment: objects
     if (!objects.Box.ofBounds(model, root).meetsSegment(bullet.last, bullet.at)) return null;
     var struck: ?objects.Crossing = null;
     for (run) |candidate| {
-        const ref = candidate.part orelse continue;
+        const ref = model.numbered(candidate.part orelse continue) orelse continue;
         const drawn = &ref.part().object;
         if (!(segment.missSquared(drawn.position, segment.nearest(drawn.position)) < drawn.radius * drawn.radius)) continue;
         const place = model.partAt(root, ref.model, ref.index, .next) orelse continue;
@@ -1970,7 +1974,7 @@ test "a shot strikes a component of a ship that lists them" {
     const bullet = &world.objects.bullets.pool[0];
     try std.testing.expectEqual(1, bullet.candidate_count);
     try std.testing.expectEqual(target, bullet.candidates[0].object);
-    try std.testing.expectEqual(0, bullet.candidates[0].part.?.index);
+    try std.testing.expectEqual(0, bullet.candidates[0].part.?);
     bullet.last = .{ -100, 0, 0 };
     bullet.at = .{ -100, 0, 600 };
     bulletsFrame(world, &mission.clock, 0);
@@ -1993,6 +1997,19 @@ test "a shot strikes a component of a ship that lists them" {
     const beside = &world.objects.bullets.pool[0];
     beside.last = .{ -400, 0, 0 };
     beside.at = .{ -400, 0, 600 };
+    bulletsFrame(world, &mission.clock, 0);
+    try std.testing.expectEqual(1, flying(world));
+
+    // Where the object's model has changed since the shot was fired, to one without the part, the
+    // shot finds no part by the number it keeps, and flies on.
+    beside.* = .{};
+    shoot(world, &mission.clock, ship.index, ship.guns()[0].turret.fixed, false);
+    const changed = &world.objects.bullets.pool[0];
+    const parts = slot.model.?.parts;
+    defer slot.model.?.parts = parts;
+    slot.model.?.parts = parts[0..0];
+    changed.last = .{ -100, 0, 0 };
+    changed.at = .{ -100, 0, 600 };
     bulletsFrame(world, &mission.clock, 0);
     try std.testing.expectEqual(1, flying(world));
 }

@@ -1858,6 +1858,41 @@ pub const Model = struct {
         return .{ .mounts = model.mounts, .hung = model.hung, .on = index };
     }
 
+    /// The part numbered `number` among the model's parts and those of the models it carries,
+    /// however deep, counted in the order `hitWalk` walks them: each part, then the models it
+    /// carries; null past the last. The game numbers an object's part nodes as it creates the
+    /// object (`object_number_parts`) and finds a node by its number (`GameObject.part_nodes`).
+    pub fn numbered(model: *Model, number: usize) ?PartRef {
+        var left = number;
+        return model.countTo(&left);
+    }
+
+    fn countTo(model: *Model, left: *usize) ?PartRef {
+        for (0..model.parts.len) |index| {
+            if (left.* == 0) return .{ .model = model, .index = index };
+            left.* -= 1;
+            var each = model.carriedBy(index);
+            while (each.next()) |mount| if (mount.model.countTo(left)) |found| return found;
+        }
+        return null;
+    }
+
+    /// The number of part `ref` (`numbered`); null for a part neither the model's nor carried by it.
+    pub fn numberOf(model: *Model, ref: PartRef) ?usize {
+        var count: usize = 0;
+        return if (model.countUntil(ref, &count)) count else null;
+    }
+
+    fn countUntil(model: *Model, ref: PartRef, count: *usize) bool {
+        for (0..model.parts.len) |index| {
+            if (model == ref.model and index == ref.index) return true;
+            count.* += 1;
+            var each = model.carriedBy(index);
+            while (each.next()) |mount| if (mount.model.countUntil(ref, count)) return true;
+        }
+        return false;
+    }
+
     pub const Carried = struct {
         mounts: []Mount,
         hung: []?Mount,
@@ -2705,6 +2740,14 @@ test "a gun attachment mounts the model its id names" {
     try std.testing.expectEqual(0, built.mounts[0].part);
     try std.testing.expectEqual(@as(Vector, .{ 50, 0, 0 }), built.mounts[0].origin);
     try std.testing.expectEqual(1, built.mounts[0].model.parts.len);
+
+    // The parts are numbered from the hull's, then the gun's it carries; none past them.
+    const gun_part: PartRef = .{ .model = &built.mounts[0].model, .index = 0 };
+    try std.testing.expectEqual(PartRef{ .model = &built, .index = 0 }, built.numbered(0).?);
+    try std.testing.expectEqual(gun_part, built.numbered(1).?);
+    try std.testing.expectEqual(null, built.numbered(2));
+    try std.testing.expectEqual(1, built.numberOf(gun_part));
+    try std.testing.expectEqual(null, built.numberOf(.{ .model = &built, .index = 1 }));
 
     // Placed, the mounted model stands at the attachment on the part that carries it.
     built.place(.{ 0, 0, 1000 }, math.identity);
