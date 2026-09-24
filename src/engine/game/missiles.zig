@@ -24,6 +24,7 @@ const shield = @import("shield.zig");
 const shieldfx = @import("shieldfx.zig");
 const shockwave = @import("shockwave.zig");
 const sound3d = @import("sound3d.zig");
+pub const trail = @import("missiles/trail.zig");
 const FlightModel = create.FlightModel;
 const GameObject = gameobj.GameObject;
 
@@ -216,12 +217,15 @@ pub const Missile = struct {
     launcher: u16,
     /// The countermeasure it chases (`+0x0C`), or null.
     decoy: ?u8 = null,
+    /// Its trail (`+0x10`), where it has one.
+    trail: ?u8 = null,
     type: Type,
     /// Its order, and what it flies at: the one entry of its object's order stack
     /// (`GameObject + 0x684`), whose target is at `+0x04` and its component at `+0x06`.
     order: Order = .pod_launch,
     target: aigeneric.Target = .none,
-    /// Whether it is drawn this frame: not once it has touched something.
+    /// Whether it is drawn this frame: not once it has touched something. The game draws it as
+    /// it goes.
     shown: bool = false,
     /// The live missiles' list, newest first (`+0x20`, `+0x24`).
     newer: ?u8 = null,
@@ -363,9 +367,20 @@ pub fn launch(world: gameobj.World, launcher: u16, rack: usize, target: aigeneri
     }
     racked.count -= 1;
     const order: Order = if (pod and racked.count < 0) .jettison else if (pod) .pod_launch else if (racked.type == .fuel_pod) .jettison else .rail_launch;
+    // The game lays a rail's trail after the launch's first run, and a pod's before it.
+    if (order == .pod_launch) try startTrail(world, at);
     setOrder(world, at, order);
+    if (order == .rail_launch) try startTrail(world, at);
     if (missiles.get(at)) |live| live.target = target;
     if (pod and racked.count == 0) try launch(world, launcher, rack, .none);
+}
+
+/// `missile_trail_create` for the missile at `at`, where it is still flying and the world has
+/// trails.
+fn startTrail(world: gameobj.World, at: u8) Allocator.Error!void {
+    const trails = world.trails orelse return;
+    const missile = world.objects.missiles.get(at) orelse return;
+    missile.trail = try trails.start(world, .{ .missile = at }, missile.type);
 }
 
 /// Where the pod or missile a rack holds stands: at its launcher's place, at the place the step
@@ -635,8 +650,9 @@ pub fn move(all: *create.Objects) void {
 /// target's missile warning; but not a player's Screamer's outside a multiplayer game. Past its
 /// flight time it ends.
 ///
-/// Not ported: the trails' frame, and in a multiplayer game, a missile whose lock is lost or whose
-/// launcher is gone.
+/// Then each trail's frame (`trail.Trails.frame`).
+///
+/// Not ported: in a multiplayer game, a missile whose lock is lost or whose launcher is gone.
 pub fn frame(world: gameobj.World, fraction: f32) void {
     const all = world.objects;
     const missiles = &all.missiles;
@@ -658,6 +674,7 @@ pub fn frame(world: gameobj.World, fraction: f32) void {
             all.slots[@intCast(live.target.index)].object.missile_homing = 1;
         }
     }
+    if (world.trails) |trails| trails.frame(world);
 }
 
 /// Adds each missile `frame` left drawn to the world's layer, as `object_draw` does for it there:
@@ -679,8 +696,7 @@ pub fn draw(all: *create.Objects, gpa: Allocator, scene: *srcore.Scene, attachme
 /// where it holds one; a Havoc's shockwave, or an Imp's, where it is drawn, sparing its launcher's
 /// side (`shockwave.Shockwave.strike`); its blast (`explode.missileBlast`); and its record freed.
 ///
-/// Not ported: its trail, which fades out from here, and in a multiplayer game, a remote missile's
-/// id.
+/// Its trail fades out from here. Not ported: in a multiplayer game, a remote missile's id.
 pub fn end(world: gameobj.World, at: u8) void {
     const all = world.objects;
     const missile = all.missiles.get(at) orelse return;
@@ -699,6 +715,9 @@ pub fn end(world: gameobj.World, at: u8) void {
         .side = all.slots[missile.launcher].object.side,
     });
     explode.missileBlast(world, missile.slot.drawn.position, gameobj.vector(object.velocity), object.radius);
+    if (missile.trail) |left| if (world.trails) |trails| if (trails.get(left)) |fading| {
+        fading.follows = .nothing;
+    };
     all.missiles.unlink(all.gpa, at);
 }
 
@@ -856,17 +875,17 @@ test "Table.load" {
     try std.testing.expectEqual(Order.raptor, raptor.order);
 }
 
-const testing = struct {
+pub const testing = struct {
     const shp = @import("../../formats/shp.zig");
 
     /// A mission whose ships are made on the fixture's model, carrying a Raptor pod and a Havoc on
     /// its two hardpoints, each hardpoint and each missile the fixture's own part.
-    const Armed = struct {
+    pub const Armed = struct {
         mission: gameobj.testing.Mission,
         model: create.testing.Model,
         points: [2]shp.Attachment,
 
-        fn init(armed: *Armed, gpa: Allocator) !void {
+        pub fn init(armed: *Armed, gpa: Allocator) !void {
             try armed.mission.init(gpa);
             errdefer armed.mission.deinit();
             try armed.model.init(gpa);
@@ -880,7 +899,7 @@ const testing = struct {
             armed.model.type.effects.mounts = .{ .context = &armed.model, .load = load };
         }
 
-        fn deinit(armed: *Armed) void {
+        pub fn deinit(armed: *Armed) void {
             armed.mission.deinit();
             armed.model.deinit(std.testing.allocator);
         }
@@ -891,18 +910,18 @@ const testing = struct {
         }
 
         /// An armed ship of `side` at `at`, facing along Z, in the next slot.
-        fn add(armed: *Armed, side: gameobj.Side(i32), at: Vector) !u16 {
+        pub fn add(armed: *Armed, side: gameobj.Side(i32), at: Vector) !u16 {
             const index = try create.createObject(armed.mission.objects, &armed.mission.tables, armed.model.types(), null, .predator, 0, at, &armed.mission.random);
             armed.mission.slot(index).object.side = side;
             armed.mission.slot(index).object.flags.targetable = true;
             return index;
         }
 
-        fn missile(armed: *Armed, at: u8) *Missile {
+        pub fn missile(armed: *Armed, at: u8) *Missile {
             return armed.mission.objects.missiles.get(at).?;
         }
 
-        fn live(armed: *Armed) usize {
+        pub fn live(armed: *Armed) usize {
             var count: usize = 0;
             var walk = armed.mission.objects.missiles.walk();
             while (walk.next()) |_| count += 1;

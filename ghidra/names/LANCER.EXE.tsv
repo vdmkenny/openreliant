@@ -1205,3 +1205,17 @@ address	kind	name	type	comment
 005887f0	data	missiles	int *	200 missile records of 0x28: started, object, launcher, decoy, trail, stats, net player, net id, older, newer
 005887f4	data	missile_list	int *	The newest live missile; they link to the older through +0x20
 00503d20	data	missile_orders	void *[12][2]	The missile orders' init and update
+00494e40	function	missile_trail_create	void __fastcall (int *missile, int slot, int kind, int type)	The first free trail, at the head of missile_trail_list: kind 1 follows the missile (and sets its +0x10), kind 2 an object slot; by missile_looks[type]'s pieces its side ribbons (black, at full strength), its ribbon, its plume and its glow, laid at the followed object's tail. Takes the record past the pool when every trail is taken
+00495200	function	missile_trail_free	void __fastcall (int *trail)	Clears a trail's kind, frees its ribbons, plume and glow, and unlinks it
+00495280	function	missile_trail_update	void __fastcall (int *trail)	The ribbon once a frame: fades each corner by frame_duration * 0.015 / (rings * 0.04); while following, lays the cursor ring at the tail at max(throttle, 0.5) times the look's colour, twisted or jittered by the look, hides the quads from it and shows those to it, and moves on 3 tail widths from the ring before; freed once faded with nothing to follow
+004970a0	function	missile_trail_mesh_create	void * __fastcall (int rings)	A ribbon mesh of rings of 4 corners, each joined to the next by two crossed quads and capped across the next, over missile_trail_texture, lit and added
+004974b0	function	missile_side_trails_update	void __fastcall (int *trail)	The side ribbons once a frame: fade; while following, the rings round the tail, a fifth of it and up to as much again, pushed out 0.5 to 0.8 of its half-width and turned by strand and by the turning; only the first moves the shared cursor. Once the last has faded, frees them, or the trail without a ribbon
+00497450	function	missile_glow_create	void * (void)	The glow: a set of 2 sprites named MissileTrail BMO over gunflare\partic6, lit and added
+00497980	function	missile_glow_update	void __fastcall (int *trail)	The glow 50 behind a missile's or a Russian torpedo's tail, its first sprite as wide as the tail and up to a sixth more at random, its second half that
+00497aa0	function	missile_plume_create	void * (void)	The exhaust plume, Missilebursttrail mesh: 6 rings of 9 widening from nothing to 210 at 630 behind, over shield128, scaled by the alpha and added
+00497d60	function	missile_plume_colour	void __fastcall (void *object, Vec3 *colour, float brightness)	Colours the plume's corners by nines from the first, 0.5 of the colour times brightness down to 0
+00497de0	function	missile_plume_update	void __fastcall (int *trail)	The plume at a missile's tail, its axis tilted up to 0.05 either way, coloured by the look, its texture turned by 0.091 a tick
+005887ec	data	missile_trails	int *	200 trail records of 0x48: look, kind, missile, slot, cursors, ribbon, side ribbons, plume, glow, last scroll, next, previous
+005887f8	data	missile_trail_list	int *	The newest live trail; they link through +0x40
+005887c4	data	missile_trail_texture	TextureImage *	missiletrail\mtrail2
+00503958	data	missile_looks	MissileLook[11]	Each missile type's trail: its pieces, its ribbon's rings and colour, its side ribbons' and its plume's colour

@@ -104,6 +104,8 @@ pub const exported = [_]Export{
     .{ "ControlMode", engine.input.ControlMode },
     .{ "MissileRack", engine.game.gameobj.Rack },
     .{ "MissileType", engine.game.missiles.Type },
+    .{ "MissileLook", engine.game.missiles.trail.Look },
+    .{ "MissileLookPieces", engine.game.missiles.trail.Look.Pieces },
 
     // The pause menu.
     .{ "MenuItem", engine.game.hudoptions.menu.Item },

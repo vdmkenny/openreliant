@@ -227,4 +227,109 @@ record are freed.
 `missiles_reset` (`0x00494D80`) frees every missile as a mission ends.
 
 The port keeps the missiles with the objects (`create.Objects.missiles`). Not yet ported: the
-trails, the countermeasures, the lock and what launches them.
+countermeasures, the lock and what launches them.
+
+## Trails
+
+A missile leaves a trail, and so does a torpedo as it leaves its carrier (the Launch order's stage
+at `0x0041A390`). `missile_trails` (`0x005887EC`) holds 200 records of `0x48` bytes, and
+`missile_trail_list` (`0x005887F8`) the newest live one. A trail follows a missile's record (kind
+1) or an object's slot (kind 2); `missile_end` detaches a missile's, which then fades out.
+[`missiles/trail.zig`](../../src/engine/game/missiles/trail.zig) ports them.
+
+| Offset | Field |
+|---|---|
+| `0x00` | Its type, whose look it takes |
+| `0x04` | Its kind: 0 free, 1 a missile, 2 an object |
+| `0x08`, `0x0C` | The missile, and the object's slot (-1 for a missile's) |
+| `0x10`, `0x14` | The ring its ribbon lays next, and the ring its side ribbons do, from 1 |
+| `0x18`, `0x1C` | Its ribbon, and its four side ribbons |
+| `0x2C`, `0x30` | Its plume, and its glow |
+| `0x34` | When its plume's texture last turned |
+| `0x38`, `0x3C` | `frame_start + 50` as the side ribbons are made, and a byte the side ribbons set without a ribbon; nothing reads either |
+| `0x40`, `0x44` | The trails made before it and after it |
+
+### Looks
+
+`missile_looks` (`0x00503958`) holds `0x58` bytes a type:
+
+| Offset | Field |
+|---|---|
+| `0x00` | Its pieces: `0x1` a ribbon, `0x2` a plume, `0x4` side ribbons, `0x8` a glow; `0x10` the ribbon twists with the missile's turning, `0x20` it jitters |
+| `0x04`, `0x08` | The ribbon's rings, and its colour, which the glow's first sprite takes too |
+| `0x14`, `0x20` | A second colour and a fade: nothing reads them |
+| `0x24`, `0x28` | The side ribbons' rings, and their colour |
+| `0x34`, `0x40` | Likewise unread |
+| `0x44` | How many side ribbons, up to four |
+| `0x48` | The plume's colour |
+
+| Type | Pieces | Ribbon | Side ribbons | Plume |
+|---|---|---|---|---|
+| 0 Screamer | ribbon, glow, jitter | 25, (0.3, 0.3, 0.6) | | |
+| 1 Raptor | ribbon, side | 5, (0.7, 0.9, 1) | 3 of 5, (0.3, 0.7, 0.8) | |
+| 2 Havoc | ribbon, plume | 35, (0.8, 0.6, 1) | | (0.5, 0.5, 0.5) |
+| 3 Jack Hammer | ribbon, glow | 60, (0.5, 0.5, 0.5) | | |
+| 4 Bandit | ribbon, side, jitter | 35, (0.2, 0.1, 0.5) | 3 of 10, (0.5, 0.5, 0.5) | |
+| 5 Vagabond | ribbon, twist, jitter | 40, (1, 1, 1) | | |
+| 6 Solomon | ribbon, glow, jitter | 45, (0, 0, 1) | | |
+| 7 Imp | ribbon, plume | 30, (0.2, 0, 0.5) | | (0, 0, 1) |
+| 8 Hawk | ribbon, plume, jitter | 40, (0.5, 0.5, 0.5) | | (0.5, 0.5, 0.5) |
+| 9 Torpedo | ribbon, glow, jitter | 70, (1, 1, 1); a hostile torpedo's (227, 199, 139) / 255 | | |
+| 10 Fuel pod | none | | | |
+
+### Ribbons
+
+A ribbon (`missile_trail_mesh_create`, `0x004970A0`) is a ring buffer of rings of four corners,
+the corners of the tail's cross-section: the bounds' far face behind the object. Each ring is
+joined to the next by two quads along the ring's diagonals, crossed, and one across the next
+ring. The quads along take the top half of `missiletrail\mtrail2`, from one ring to the next,
+and those across its bottom half. It is lit by the object's own colours and added to what is
+behind. A new ribbon has every corner at the tail's first; a side ribbon's corners start black at
+full strength, the ribbon's at nothing.
+
+Once a frame (`missile_trail_update`, `0x00495280`):
+
+1. Each corner fades by the frame's ticks times 0.015 over the rings times 0.04: a ring fades out
+   over the ribbon's rings over 0.375 ticks. Its colour is the look's times what is left.
+2. While the trail follows something, the cursor's ring is laid at its tail again, at full strength,
+   the look's colour times the throttle, at least 0.5. A twisting ribbon's ring is widened by half
+   the missile's turning (the sum of its three rates) plus 1, flattened to a fifth, and turned
+   about the nose by the turning times the tick times 0.01; a jittering one's is stretched across
+   and up by 0.5 to 2 at random.
+3. The quads from the cursor's ring to the next, the oldest, are hidden (the face flags' cap bit),
+   and those from the ring before to it shown. Once the ring stands more than three tail widths
+   from the one before, the cursor moves on.
+4. With nothing to follow and every corner faded out, the trail is freed.
+
+The side ribbons (`missile_side_trails_update`, `0x004974B0`) fade and are laid likewise, in their
+own colour, but their rings are a fifth of the tail and up to as much again, pushed out by 0.5 to
+0.8 of the tail's half-width, and turned about the nose by their share of a whole turn, and by the
+turning as the ribbon twists: a helix. They share one cursor, which only the first moves, so the
+rest lay their rings at the one it has just moved to. Once the last has faded out, they are let
+go, or, without a ribbon, the trail is freed.
+
+### Plume and glow
+
+The plume (`missile_plume_create`, `0x00497AA0`) is six rings of nine corners, joined by
+triangles, widening from nothing at the mouth to 210 at 630 behind, over `shield128` scaled by the
+alpha and added. Each frame while its missile lives (`missile_plume_update`, `0x00497DE0`), it
+stands at the missile's tail, its axis tilted by up to 0.05 either way at random, and its texture
+turns round it by 0.091 a tick. Its corners take the look's colour
+(`missile_plume_colour`, `0x00497D60`) by nines from the first, half of it at the mouth and a
+tenth less each nine; the corners go by nines from the centre of the mouth, not from its ring, so
+each ring's last corner takes the next ring's colour. The first triangle keeps no texture
+coordinates.
+
+**Fix:** the game works the mouth's corners' texture coordinates round the plume out as a nought
+over a nought, which is not a number; the port gives them 0.
+
+**Improvement:** the rings' widths are worked out from pi, where the game rounds half of it to
+1.5708.
+
+The glow (`missile_glow_create`, `0x00497450`) is two sprites over `gunflare\partic6`, lit and
+added: one in the look's colour, one white. Each frame while its missile lives, or the Russian
+torpedo it follows (`missile_glow_update`, `0x00497980`), it stands 50 behind the tail, the first
+as wide as the tail and up to a sixth more at random, the second half as wide.
+
+**Fix:** with every trail taken, `missile_trail_create` takes the record past the last and writes
+past its pool. The port leaves the missile without a trail.

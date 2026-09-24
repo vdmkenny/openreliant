@@ -213,6 +213,7 @@ pub const Frame = struct {
     ahead: f32 = 0,
     explosions: ?*explode.Explosions = null,
     shockwaves: ?*shockwave.Shockwaves = null,
+    trails: ?*missiles.trail.Trails = null,
     /// The shields' bubbles, which go into the world's layer after the objects.
     shields: ?*shield.Shields = null,
     /// Whether the game is paused, which holds the bubbles' colours still.
@@ -320,6 +321,7 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     attachments.scale = context.projection.scale[0];
     try drawObjects(gpa, scene, frame.objects, attachments, frame.seat);
     try missiles.draw(frame.objects, gpa, scene, attachments);
+    if (frame.trails) |trails| try trails.draw(gpa, scene);
     if (frame.shields) |bubbles| try bubbles.draw(gpa, arena, scene, frame.objects, .{
         .camera = attachments.camera,
         .inside = camera.inCockpit(frame.view, frame.cockpit_mode),
