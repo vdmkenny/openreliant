@@ -14,7 +14,7 @@
 //! Stalag's, and a split's burning bits may be bodies.
 //!
 //! Not ported: the Dark Reign's hat, the Krasnaya's arms and the Boridin breakaway's core, which
-//! the split takes apart first ([#225](https://github.com/vdmkenny/openreliant/issues/225)); and a
+//! the split takes apart first ([#238](https://github.com/vdmkenny/openreliant/issues/238)); and a
 //! Latov's rock chunks ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
 
 const std = @import("std");
@@ -535,7 +535,7 @@ fn clipTree(model: *objects.Model, portal: ?*const srapiext.Portal) void {
 ///
 /// Not ported: the special parts a few types take apart first, the Dark Reign's hat, the
 /// Krasnaya's arms and the Boridin breakaway's core
-/// ([#225](https://github.com/vdmkenny/openreliant/issues/225)).
+/// ([#238](https://github.com/vdmkenny/openreliant/issues/238)).
 pub fn start(world: gameobj.World, index: u16) void {
     const explosions = world.explosions orelse return;
     const all = world.objects;

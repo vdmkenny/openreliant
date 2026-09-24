@@ -275,7 +275,7 @@ When the time is up, the split ends once (`GameObject` `0x610` bit 1) and the po
 
 The flash (`0x00587CC8`) lasts 100 ticks. Once a frame, `mission_frame` draws it and counts it down by the frame's ticks (`0x00494940`): a sprite over the whole view, just beyond the near plane in the overlay's layer, untextured and added to what is drawn, white at 0.012 for each tick left, at most 1. So it holds white for 17 ticks and fades out over the rest. The same sprite shows red while the player's display is shaken by a hit ([#236](https://github.com/vdmkenny/openreliant/issues/236)).
 
-[`explode/split.zig`](../../src/engine/game/explode/split.zig) ports the splits, and [`main/flash.zig`](../../src/engine/game/main/flash.zig) the flash. Not ported: the Dark Reign's hat, the Krasnaya's arms and the Boridin breakaway's core, which a split takes apart first ([#225](https://github.com/vdmkenny/openreliant/issues/225)); a Latov's rock chunks ([#41](https://github.com/vdmkenny/openreliant/issues/41)), in whose place it throws nothing. The Ulysses' own routine is [#232](https://github.com/vdmkenny/openreliant/issues/232).
+[`explode/split.zig`](../../src/engine/game/explode/split.zig) ports the splits, and [`main/flash.zig`](../../src/engine/game/main/flash.zig) the flash. Not ported: the Dark Reign's hat, the Krasnaya's arms and the Boridin breakaway's core, which a split takes apart first ([#238](https://github.com/vdmkenny/openreliant/issues/238)); a Latov's rock chunks ([#41](https://github.com/vdmkenny/openreliant/issues/41)), in whose place it throws nothing. The Ulysses' own routine is [#232](https://github.com/vdmkenny/openreliant/issues/232).
 
 ### Burning wrecks
 

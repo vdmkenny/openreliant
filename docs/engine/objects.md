@@ -652,8 +652,9 @@ The second answers false for every part.
 [`objects.zig`](../../src/engine/game/objects.zig) ports the pass as `loseComponents` and
 `node_destroy` as `destroyPart`. Not ported: the Destroyed events
 ([#37](https://github.com/vdmkenny/openreliant/issues/37)), the subtarget's red parts
-([#45](https://github.com/vdmkenny/openreliant/issues/45)), and the types' own extras and the
-Ulysses' routine ([#225](https://github.com/vdmkenny/openreliant/issues/225)).
+([#45](https://github.com/vdmkenny/openreliant/issues/45)), the types' own extras
+([#238](https://github.com/vdmkenny/openreliant/issues/238)) and the Ulysses' routine
+([#232](https://github.com/vdmkenny/openreliant/issues/232)).
 
 The port lists them in [`create.zig`](../../src/engine/game/create.zig) as the parts themselves,
 since a mounted turret's parts are not the hull's, and marks each one as a component and, where the
