@@ -116,7 +116,8 @@ once a frame and frees it once it is done.
 second burst out close after a first. A fireball's light moves with it as it drifts, and starts 50%
 brighter, at 15 where the game's starts at 10, so it also reaches 50% farther. Each frame of its
 animation fades into the next, a second sprite showing the next frame, where the game flips from
-one to the next, some ten frames a second. `--original` restores the game's.
+one to the next, some ten frames a second. It fades out over the last fifth of its life as its
+last frames play, where the game's vanishes after the last. `--original` restores the game's.
 
 | Who | Where | Size | Light | Delay | Drift |
 |---|---|---|---|---|---|

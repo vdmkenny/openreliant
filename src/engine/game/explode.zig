@@ -228,6 +228,15 @@ pub const Fireballs = enum {
             .fuller => 15,
         };
     }
+
+    /// How long before the end of its `life` a fireball starts to fade out, still playing: over
+    /// the last fifth of it, where the game's shows in full to the end and is gone at once.
+    fn fadeOut(style: Fireballs, life: i32) i32 {
+        return switch (style) {
+            .original => 0,
+            .fuller => @divTrunc(life, 5),
+        };
+    }
 };
 
 /// Which of the backdrop's lights reach an explosion's debris: its bits and a ship's pieces.
@@ -503,8 +512,9 @@ pub const Fireball = struct {
     /// through its life, where it has drifted to, its colour where it is lit, and its light's fade.
     ///
     /// **Improvement:** with the `fuller` style, each frame of its animation fades into the next,
-    /// where the game flips from one to the next: sixteen or nine over a second and a half. It is
-    /// drawn further along between the ticks as well (`particles.Pool.draw`).
+    /// where the game flips from one to the next: sixteen or nine over a second and a half. It
+    /// fades out as its last frames play, where the game's vanishes after the last. It is drawn
+    /// further along between the ticks as well (`particles.Pool.draw`).
     fn show(fireball: *Fireball, images: Explosions.Images, ahead: f32) void {
         const frames: u32 = if (fireball.look.bang) 16 else 9;
         const life: f32 = @floatFromInt(fireball.life);
@@ -513,10 +523,11 @@ pub const Fireball = struct {
         const first: u32 = @intFromFloat(step);
         const next = @min(first + 1, frames - 1);
         const fade: f32 = if (fireball.style == .fuller and next > first) step - @as(f32, @floatFromInt(first)) else 0;
+        const kept = fireball.left(ahead);
         const offset = fireball.at + fireball.velocity * @as(Vector, @splat(ahead));
         for (&fireball.sprite, [2]u32{ first, next }, [2]f32{ 1 - fade, fade }) |*sprite, cell, share| {
             sprite.offset = offset;
-            sprite.fade = share;
+            sprite.fade = share * kept;
             if (fireball.lit) sprite.colour = @splat(played);
             if (!fireball.look.bang) sprite.uv = fireball.look.cell(cell);
         }
@@ -531,6 +542,15 @@ pub const Fireball = struct {
             light.intensity = fireball.style.peak() * (1 - played);
             if (fireball.style == .fuller) light.kind.point.position = offset;
         }
+    }
+
+    /// How much of it shows `ahead` of a tick past the frame's tick: all of it until its style
+    /// fades it out, then less and less, to nothing as its life ends.
+    fn left(fireball: Fireball, ahead: f32) f32 {
+        const out = fireball.style.fadeOut(fireball.life);
+        if (out == 0) return 1;
+        const to_go = @as(f32, @floatFromInt(fireball.life - fireball.age)) - ahead;
+        return std.math.clamp(to_go / @as(f32, @floatFromInt(out)), 0, 1);
     }
 };
 
@@ -916,6 +936,33 @@ test burst {
     burst(world, player);
     for (explosions.fireballs[0..Fireballs.original.slots()]) |slot| try std.testing.expect(slot != null);
     try std.testing.expectEqual(null, explosions.fireballs[Fireballs.original.slots()]);
+}
+
+test "a fireball's fade" {
+    var clock: Clock = .{};
+    var random: libcmt.Rand = .{};
+    const spec: Fireball.Spec = .{ .size = 100 };
+
+    // The fuller style fades it out over the last fifth of its life as it plays on.
+    var fireball: Fireball = .init(testing.images(), @splat(0), spec, .fuller, &clock, &random);
+    clock.frame_start = 120;
+    try std.testing.expect(fireball.frame(&clock));
+    fireball.show(testing.images(), 0);
+    try std.testing.expectApproxEqAbs(1, fireball.sprite[0].fade + fireball.sprite[1].fade, 1e-6);
+    clock.frame_start = 135;
+    try std.testing.expect(fireball.frame(&clock));
+    fireball.show(testing.images(), 0);
+    try std.testing.expectApproxEqAbs(0.5, fireball.sprite[0].fade + fireball.sprite[1].fade, 1e-6);
+    try std.testing.expectEqual(2, fireball.set.sprites.len);
+    clock.frame_start = 150;
+    try std.testing.expect(!fireball.frame(&clock));
+
+    // The game's shows in full to the end.
+    fireball = .init(testing.images(), @splat(0), spec, .original, &clock, &random);
+    clock.frame_start += 149;
+    try std.testing.expect(fireball.frame(&clock));
+    fireball.show(testing.images(), 0.5);
+    try std.testing.expectEqual(1, fireball.sprite[0].fade);
 }
 
 test blast {
