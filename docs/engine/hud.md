@@ -25,7 +25,7 @@ The display's elements as the game's manual names them, with where the code that
 | Damage display | top, right | D | a segmented bar each for the weapons, the engines and the shields, shortening with damage | [Window](#the-windows) 4, [The damage display](#the-damage-display) |
 | Power distribution | left | P | the guns, the shields and the engines round a ball, each with its share of the power, a third each at first. P held with the stick moves power toward one; U, I and O give all of it to the guns, the engines or the shields, and `[` shares it out again | [Window](#the-windows) 7, [The power distribution](#the-power-distribution) |
 | Communications | top, left | C | the units in range, numbered, which the number keys call. Landing, rearming and a nanny ship are asked of the base ship | [Window](#the-windows) 11, which draws the radio's menu with `0x00453A70`. The frame is ported; what it shows is not |
-| Wing status | right | X | the wing's fighters in a grid, the player's wing first, each with a bar for its damage | [Window](#the-windows) 13. The frame is ported; what it shows is not |
+| Wing status | right | X | the fighters of the player's wing in a grid, the player first, each with a bar for its damage | [Window](#the-windows) 13, [The wing status](#the-wing-status) |
 | Readouts | top, right of middle | | the seconds of afterburner fuel, the pilot's kills under a skull, and the countermeasures left | [The readouts](#the-readouts) |
 | Status lights | top, left of middle | | the systems that are on: match speed, blind fire, smart targeting, which makes any ship fired on the target, reverse thrust, the spectral shields and the cloak with a bar for the time left, the ECM | [The status lights](#the-status-lights) |
 | Clock | foot, middle, over the radar | | the time played | [`hud.zig`](../../src/engine/game/hud.zig) |
@@ -678,6 +678,41 @@ A bar (`hud_damage_bar`, `0x00488B30`) is shape `0xE0`, orange, drawn whole, the
 red, at the same place in the pane `hud_bar_pane`. The pane's left edge stands a pixel before
 `round(77 * level)` along the bar (`0x004DC91C`), its right edge `0x4D` further, and it runs from
 a pixel above the bar 6 down, all inclusive, so the red shows past the level.
+
+## The wing status
+
+Window 13 shows the fighters of the player's wing. A mission lists its flight groups in three
+wings, six slots each (`mission_wings_build`, `0x0045AC60`): each group whose byte at `+0x08` names
+a wing, 0 to 2, has its `+0x09` ships, from its first in the mission's ship list (`+0x0C`), take
+that wing's slots from the first, each object keeping the wing's number at `+0x74C`, and the slot
+after the last set to -1. The player's wing is `player_wing` (`0x00515D88`); the other two
+(`0x00515D7C`, `0x00515D94`) nothing reads. `mission_start` (`0x004934F0`) then puts the player's
+slot first, and gives each ship of the wing, at `+0x24`, its type's icon from the table at
+`0x004F8890`, 24 pairs of a type and a shape: `0xFC`, `0xFA`, `0x101`, `0xFF`, `0x102`, `0xFB`,
+`0x100`, `0x103`, `0xFE`, `0x105`, `0xFD` and `0x104` for the twelve ships the player can fly and
+their twins, none for the rest.
+
+`hud_window_draw` draws it in the view ahead from the window's place `(x, y)`: THE 45TH, string
+`0xA6`, right-aligned at `(x - 3, y - 78)`, then each slot's ship that is still there, is in the
+player's wing (`+0x74C` 0) and whose pilot has not ejected, three across and two down. The slots'
+bars stand at `(x - 135, y - 54)`, `(x - 88, y - 54)`, `(x - 41, y - 54)`, `(x - 135, y - 8)`,
+`(x - 88, y - 8)` and `(x - 41, y - 8)`.
+
+1. The bar, 38 of the display's pixels high (`0x004DC914`): its weakest armour quadrant's share of
+   `6 * armor_class`, at most all of it, gives the rows kept, rounded, and the rest are lost from
+   the top. Shape `0xF3` shows the rows kept and `0xF2` those lost, each drawn a pixel left of and
+   below the bar's place in the pane `hud_bar_pane`, 4 pixels across, cut to its rows.
+2. The ship's icon, where it has one, at 6 across and 1 down from the bar.
+3. Its slot's number, from 1, at 6 across and 2 up from the bar.
+
+**Fix:** a ship starts with one less than `6 * armor_class` in each quadrant, so an undamaged
+Predator's bar shows a row lost. The port counts from what a ship starts with.
+
+**Fix:** listing a wing sets only the slot after the last to -1, and the slots past it keep the
+ships of the mission before, which the window shows again where they are in the wing. The port
+empties every slot first.
+
+The sandbox lists the player and three wingmen in the player's wing.
 
 ## The power distribution
 

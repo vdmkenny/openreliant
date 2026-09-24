@@ -33,6 +33,7 @@ pub const language = @import("game/language.zig");
 pub const main = @import("game/main.zig");
 pub const matmanager = @import("game/matmanager.zig");
 pub const missiles = @import("game/missiles.zig");
+pub const mission = @import("game/mission.zig");
 pub const motion = @import("game/motion.zig");
 pub const nebula = @import("game/nebula.zig");
 pub const objects = @import("game/objects.zig");

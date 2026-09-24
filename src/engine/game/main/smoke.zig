@@ -42,7 +42,7 @@ pub const Level = enum(u8) {
             return if (object.smoke_level != .none) .light else .none;
         }
         const armor = object.armor;
-        const share = @min(armor.aft, armor.fore, armor.left, armor.right) / combat.fullArmor();
+        const share = armor.weakest() / combat.fullArmor();
         for (thresholds) |threshold| {
             if (share < threshold.below) return threshold.level;
         }

@@ -170,6 +170,7 @@ pub const exported = [_]Export{
     .{ "GameObject", engine.game.gameobj.GameObject },
     .{ "ObjectType", engine.game.gameobj.Type },
     .{ "Quadrants", engine.game.gameobj.Quadrants },
+    .{ "ObjectWing", engine.game.gameobj.Wing },
     .{ "ObjectFlags", engine.game.gameobj.GameObject.Flags },
     .{ "ObjectEnds", engine.game.gameobj.GameObject.Ends },
     .{ "ObjectSide", engine.game.gameobj.Side(i32) },

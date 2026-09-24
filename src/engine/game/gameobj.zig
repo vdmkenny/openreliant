@@ -132,6 +132,12 @@ pub const Quadrants = extern struct {
         return .{ quadrants.left, quadrants.right, quadrants.fore, quadrants.aft };
     }
 
+    /// The least of the four.
+    pub fn weakest(quadrants: Quadrants) f32 {
+        const each = quadrants.values();
+        return @reduce(.Min, @as(@Vector(each.len, f32), each));
+    }
+
     /// The four added together.
     pub fn total(quadrants: Quadrants) f32 {
         const each = quadrants.values();
@@ -195,6 +201,19 @@ pub const NetworkFlags = packed struct(u32) {
     /// when it ends. The multiplayer code's round of updates (`0x004BBEF0`) skips the object.
     _unknown_2: bool,
     _unknown_3: u29,
+};
+
+/// The wing a mission lists an object in, by its flight group (`mission.listPlayerWing`), which
+/// the object keeps (`GameObject.wing`).
+pub const Wing = enum(u16) {
+    /// The player's: the wing status window shows its ships, and an AI pilot in it may eject.
+    player = 0,
+    /// Two more wings a mission can list. **Unknown:** what reads them.
+    second = 1,
+    third = 2,
+    /// None, as the object is created.
+    none = 0xFFFF,
+    _,
 };
 
 /// An object's type (`GameObject.type`): for a ship, missile, mine or asteroid its record in
@@ -447,7 +466,9 @@ pub const GameObject = extern struct {
     type_data: Pointer(anyopaque),
     /// The renderer's object for it, or null.
     render: Pointer(anyopaque),
-    _unknown_24: u16,
+    /// The shape the wing status window shows it by, which the mission's start gives each ship of
+    /// the player's wing by its type (`main.startWing`); 0 for none, as created.
+    wing_icon: u16,
     _unknown_26: u16,
     /// The root of its model hierarchy.
     root: Node,
@@ -692,9 +713,8 @@ pub const GameObject = extern struct {
     /// **Unknown.** A 24-byte record for the pilot, from a table at `0x5048D8`.
     pilot_record: Pointer(anyopaque),
     pilot_stats: Pointer(@import("pilots.zig").Pilot),
-    /// **Unknown.** 0xFFFF when created, which a mission clears; while it is clear, an AI ship's
-    /// pilot may eject.
-    _unknown_74c: u16,
+    /// The wing the mission lists it in (`mission.listPlayerWing`).
+    wing: Wing,
     _unknown_74e: u16,
     _unknown_750: u32,
     /// The deathmatch power-up it holds.
@@ -908,7 +928,7 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "avoid_ahead") == 0x6E0);
         assert(@offsetOf(GameObject, "eject_roll") == 0x70C);
         assert(@offsetOf(GameObject, "nav_point") == 0x720);
-        assert(@offsetOf(GameObject, "_unknown_74c") == 0x74C);
+        assert(@offsetOf(GameObject, "wing") == 0x74C);
         assert(@offsetOf(GameObject, "_unknown_764") == 0x764);
         assert(@bitOffsetOf(Flags, "frozen") == 4);
         assert(@as(u32, @bitCast(Flags.standing_in)) == 0x3C);
@@ -1751,6 +1771,7 @@ test Quadrants {
     try std.testing.expectEqual(5, shields.get(.fore));
     try std.testing.expectEqual([4]f32{ 5, 5, 5, 2 }, shields.values());
     try std.testing.expectEqual(17, shields.total());
+    try std.testing.expectEqual(2, shields.weakest());
 }
 
 test "a knock pushes and turns an object" {
