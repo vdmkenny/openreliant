@@ -33,6 +33,7 @@ const tga = @import("../../formats/tga.zig");
 const bigfile = @import("bigfile.zig");
 const camera = @import("camera.zig");
 const gameobj = @import("gameobj.zig");
+const hog_snd = @import("hog_snd.zig");
 const input = @import("../input.zig");
 const language = @import("language.zig");
 const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
@@ -70,8 +71,6 @@ test {
     _ = wing_status;
 }
 
-/// What `hud_place` takes off the screen's size before working a place out, and what it adds back
-/// afterwards. An element therefore keeps its place at any resolution.
 /// The display's sounds (`hud_beep`), samples 15 to 20 of `bank_stdsmp` (the table at
 /// `0x00501C78`, each at a volume of 60).
 pub const Beep = enum(u3) {
@@ -92,14 +91,52 @@ pub const Beep = enum(u3) {
 };
 
 /// `hud_beep` (`0x0048CE70`): the display's sound `which`, in the middle, in the four cockpit views
-/// only.
-pub fn beep(world: gameobj.World, which: Beep) void {
-    if (@intFromEnum(world.view) > @intFromEnum(camera.View.cockpit_rear)) return;
-    const hearing = world.hearing orelse return;
-    const bank = hearing.sound.stdsmp orelse return;
-    _ = hearing.sound.play(bank, Beep.first_sample + @as(usize, @intFromEnum(which)), Beep.volume, 1, Beep.pan, 0);
+/// only (`camera.View.fromCockpit`), `view` being this frame's.
+pub fn playBeep(sound: *hog_snd.Sound, view: camera.View, which: Beep) void {
+    if (!view.fromCockpit()) return;
+    const bank = sound.stdsmp orelse return;
+    _ = sound.play(bank, Beep.first_sample + @as(usize, @intFromEnum(which)), Beep.volume, 1, Beep.pan, 0);
 }
 
+/// `playBeep` in `world`, where there is one and anything is heard in it.
+pub fn beep(world: ?gameobj.World, which: Beep) void {
+    const heard = world orelse return;
+    const hearing = heard.hearing orelse return;
+    playBeep(hearing.sound, heard.view, which);
+}
+
+/// The display's sounds asked for where no world is at hand, which `draw` plays later in the same
+/// frame: the windows' as they open and close (`windows.Windows`).
+pub const Beeps = struct {
+    queued: [capacity]Beep = undefined,
+    count: u8 = 0,
+
+    /// As many as a frame asks for; past them a sound is left out.
+    const capacity = 8;
+
+    pub fn add(beeps: *Beeps, which: Beep) void {
+        if (beeps.count == capacity) return;
+        beeps.queued[beeps.count] = which;
+        beeps.count += 1;
+    }
+
+    /// Each in turn (`playBeep`), where `sound` hears them, and none left after.
+    pub fn play(beeps: *Beeps, sound: ?*hog_snd.Sound, view: camera.View) void {
+        if (sound) |heard| for (beeps.queued[0..beeps.count]) |which| playBeep(heard, view, which);
+        beeps.count = 0;
+    }
+
+    pub fn slice(beeps: *const Beeps) []const Beep {
+        return beeps.queued[0..beeps.count];
+    }
+};
+
+/// The enemy lock's warning: `stdsmp`'s first sound on voice 1, looped, at `Beep.volume`.
+const lock_warning_voice = 1;
+const lock_warning_sample = 0;
+
+/// What `hud_place` takes off the screen's size before working a place out, and what it adds back
+/// afterwards. An element therefore keeps its place at any resolution.
 const inset: i32 = 0x21;
 const margin: i32 = 0x10;
 
@@ -776,7 +813,7 @@ pub const Frame = struct {
     /// The view this frame (`camera_view`), and the sound the locked tone plays through; none
     /// where nothing is heard.
     view: camera.View = .cockpit,
-    sound: ?*@import("hog_snd.zig").Sound = null,
+    sound: ?*hog_snd.Sound = null,
 };
 
 /// `hud_draw` (`0x004843B0`): the display for a frame, in its order. First it takes the player's
@@ -797,8 +834,10 @@ pub fn draw(state: *State, resources: *Resources, frame: Frame) (spr.Error || Al
     state.followTarget(frame.all, frame.multiplayer);
     if (frame.sound) |sound| state.lock.sound(sound, frame.view);
     state.runCharges(live, frame_duration, frame.multiplayer);
-    // Where the lead cursor stands, which the reticle closes on.
+    // Where the lead cursor stands, which the reticle closes on, and whether the enemy lock's
+    // light shows.
     var lead: ?[2]i32 = null;
+    var lock_lit = false;
     if (ahead) {
         try state.drawJumpPrompt(frame.ready, art, frame.gpa, frame.target, frame.screen, frame_duration, colour, scale);
         if (frame.sight) |sight| {
@@ -809,25 +848,22 @@ pub fn draw(state: *State, resources: *Resources, frame: Frame) (spr.Error || Al
         try state.drawScanner(frame.scanning, frame.clock.game_ticks, art, frame.gpa, frame.target, frame.screen, colour, scale);
         const lit = state.lit(live, frame.player.matching_speed, frame.multiplayer, frame_duration);
         try state.drawLights(art, frame.gpa, frame.target, frame.screen, lit, frame_duration, colour, scale);
+        lock_lit = lit.enemy_lock;
     }
+    if (frame.sound) |sound| state.warnOfLock(sound, lock_lit, live.missile_homing != 0);
     try drawViewName(&resources.font, frame.gpa, frame.target, frame.screen, frame.last_view, frame.strings.*, colour, scale);
     if (ahead) try state.drawInstruments(resources, frame, lead, colour, scale);
     const contents: windows.Contents = .{
-        .gunnery = .{ .slot = slot, .wire_frame = state.wire_frame, .font = &resources.font, .strings = frame.strings },
-        .damage = .{ .object = live, .font = &resources.font, .strings = frame.strings },
-        .missiles = .{ .ring = &state.missiles, .font = &resources.font, .strings = frame.strings },
-        .power = .{
-            .ball = resources.ball,
-            .object = live,
-            .hit_shake = frame.hit_shake,
-            .random = frame.random,
-            .font = &resources.font,
-            .strings = frame.strings,
-        },
-        .target_display = .{ .state = state, .all = frame.all, .strings = frame.strings, .font = &resources.font },
-        .wing_status = .{ .all = frame.all, .font = &resources.font, .strings = frame.strings },
+        .gunnery = .{ .slot = slot, .wire_frame = state.wire_frame },
+        .damage = .{ .object = live },
+        .missiles = .{ .ring = &state.missiles },
+        .power = .{ .ball = resources.ball, .object = live, .hit_shake = frame.hit_shake, .random = frame.random },
+        .target_display = .{ .state = state, .all = frame.all },
+        .wing_status = .{ .all = frame.all },
     };
-    try state.windows.frame(art, frame.gpa, frame.target, frame.screen, frame.last_view, frame_duration, contents, colour, scale);
+    const pen: windows.Pen = .{ .art = art, .font = &resources.font, .strings = frame.strings, .gpa = frame.gpa, .target = frame.target, .colour = colour };
+    try state.windows.frame(pen, frame.screen, frame.last_view, frame_duration, contents, scale);
+    state.windows.beeps.play(frame.sound, frame.view);
 }
 
 /// The first gun of the group the ship has chosen (`GunMode.group`), which blind fire and the
@@ -1295,6 +1331,9 @@ pub const State = struct {
     /// `mission_frame` sets it each frame when a ship whose order is Fight, against the player,
     /// has its missile ready (`aifight.FightState.missile_ready`).
     enemy_lock: bool = false,
+    /// The voice the enemy lock's warning plays on (`enemy_lock_voice`, `0x0057BF50`) while it
+    /// plays (`warnOfLock`).
+    lock_warning: ?u8 = null,
     /// `player_ejected` (`0x00579986`), which the Eject Player order sets.
     ejected: bool = false,
     icons: Icons = .{},
@@ -1357,6 +1396,26 @@ pub const State = struct {
         }
         if (state.devices.getPtr(.spectral_shields).run(.spectral_shields, frame_duration)) {
             input.setSpectralShields(state, object, false);
+        }
+    }
+
+    /// `hud_draw`'s warning with the enemy lock's light, `showing` this frame: while it shows, the
+    /// warning plays on voice 1, started again whenever that voice has finished or was stopped.
+    /// Once it is out and no missile homes on the ship (`homing`), a warning still playing ends.
+    ///
+    /// **Fix:** the game does this only in the view ahead, as it draws the lights, so a warning
+    /// playing as the view changes loops until the player looks ahead again. The port runs it in
+    /// every view, the light counting as out in the others.
+    pub fn warnOfLock(state: *State, sound: *hog_snd.Sound, showing: bool, homing: bool) void {
+        if (showing) {
+            if (!sound.voiceIdle(lock_warning_voice)) return;
+            const bank = sound.stdsmp orelse return;
+            sound.playOn(lock_warning_voice, bank, lock_warning_sample, Beep.volume, 0, Beep.pan, 0);
+            state.lock_warning = lock_warning_voice;
+        } else if (state.lock_warning) |voice| {
+            if (homing or sound.voiceIdle(lock_warning_voice)) return;
+            sound.endVoice(voice);
+            state.lock_warning = null;
         }
     }
 
@@ -1766,10 +1825,14 @@ pub const Keys = struct {
 ///   says the armed missile's name.
 ///
 /// All but the nearest and the subtarget keys, and SMART TARGET, stop MATCH SPEED; PREVIOUS
-/// FRIENDLY TARGET does not. Not yet ported: the rest of the display's sounds
-/// ([#101](https://github.com/vdmkenny/openreliant/issues/101)), the radio's menu while its window
-/// is open, and what the game does while `0x00529FB8` is set, which leaves out every key after
-/// the search under the reticle.
+/// FRIENDLY TARGET does not. Each key sounds the display's `done` where it does what it is for and
+/// `refused` where it finds nothing: TARGET TORPEDO without the player's controls, a nearest key
+/// finding no ship, a step key finding no target, a subtarget key with no target listing
+/// components that is not friendly, TARGET UNDER RETICULE with nothing there to aim at. SMART
+/// TARGET sounds `on` or `off`, MISSILE WINDOW `done`.
+///
+/// Not yet ported: the radio's menu while its window is open, and what the game does while
+/// `0x00529FB8` is set, which leaves out every key after the search under the reticle.
 pub fn targetKeys(state: *State, keys: Keys) void {
     const all = keys.all;
     const devices = keys.devices;
@@ -1777,38 +1840,51 @@ pub fn targetKeys(state: *State, keys: Keys) void {
 
     if (devices.active(.target_torpedo, true)) {
         if (ai.playerControlEntry(all)) |entry| {
+            beep(keys.world, .done);
             if (input.seekTarget(all, &entry.target, .next, .torpedo)) state.targetChanged(all, keys.multiplayer);
-        }
+        } else beep(keys.world, .refused);
     }
     const current = &all.slots[all.player].orders[0];
     const controlled = current.order == .player_control;
     const looking = keys.last_view == .cockpit or keys.last_view == .chase;
     for (nearest_keys) |key| {
         if (!devices.active(key.action, true) or !looking or !controlled) continue;
-        if (nearest(all, key.side)) |index| input.setPlayerTarget(state, all, @intCast(index), -1, keys.multiplayer);
+        if (nearest(all, key.side)) |index| {
+            beep(keys.world, .done);
+            input.setPlayerTarget(state, all, @intCast(index), -1, keys.multiplayer);
+        } else beep(keys.world, .refused);
     }
     if (devices.active(.smart_target, true)) {
         state.smart_targeting = !state.smart_targeting;
+        beep(keys.world, if (state.smart_targeting) .on else .off);
     }
     for (step_keys) |key| {
         if (!devices.active(key.action, true) or !controlled) continue;
         if (key.stops_matching) keys.player.matching_speed = false;
-        switch (key.steps) {
+        const found = switch (key.steps) {
             .target => |among| pickTarget(state, all, key.step, among, key.holds, keys.multiplayer),
-            .subtarget => input.cycleSubtarget(state, all, key.step, keys.multiplayer),
-        }
+            .subtarget => subtarget: {
+                input.cycleSubtarget(state, all, key.step, keys.multiplayer);
+                break :subtarget listsComponents(all, current.target);
+            },
+        };
+        beep(keys.world, if (found) .done else .refused);
     }
     if (devices.active(.target_under_reticule, true)) {
         const found: aigeneric.Target = .{ .kind = .ship, .index = if (state.under_reticle) |index| @intCast(index) else -1, .component = -1 };
-        if (ai.targetValid(all, found, .{}) and controlled) {
-            current.target.index = found.index;
-            current.target.component = -1;
-            _ = state.bringUp(targetWindow(&all.slots[@intCast(found.index)]), keys.multiplayer);
-        }
+        if (ai.targetValid(all, found, .{})) {
+            beep(keys.world, .done);
+            if (controlled) {
+                current.target.index = found.index;
+                current.target.component = -1;
+                _ = state.bringUp(targetWindow(&all.slots[@intCast(found.index)]), keys.multiplayer);
+            }
+        } else beep(keys.world, .refused);
     }
 
     const missiles = state.windows.status.getPtr(.missiles);
     if (devices.active(.missile_window, true)) {
+        beep(keys.world, .done);
         switch (missiles.phase) {
             .shut => if (state.windows.open(.missiles, keys.multiplayer)) {
                 missiles.held = true;
@@ -1829,7 +1905,7 @@ pub fn targetKeys(state: *State, keys: Keys) void {
         if (turned) if (world.hearing) |hearing| {
             _ = sound3d.play(hearing.sound, hearing.scene(world), null, null, all.player, .missileselect, 1, .not_reserved);
         };
-        beep(world, if (turned) .done else .refused);
+        beep(keys.world, if (turned) .done else .refused);
         if (world.hearing) |hearing| state.missiles.sayName(hearing.sound);
     }
 }
@@ -1869,16 +1945,24 @@ const StepKey = struct {
 
 /// A next or previous target key: with neither form of the target display up and a target the
 /// player can aim at, it brings up the target's form, held open for NEXT ENEMY TARGET alone;
-/// otherwise it steps the target.
-fn pickTarget(state: *State, all: *create.Objects, step: input.Step, among: input.Among, hold: bool, multiplayer: bool) void {
+/// otherwise it steps the target. Returns whether it brought the display up or found a target.
+fn pickTarget(state: *State, all: *create.Objects, step: input.Step, among: input.Among, hold: bool, multiplayer: bool) bool {
     const current = all.slots[all.player].orders[0].target;
     const shut = state.windows.status.get(.target).phase == .shut and state.windows.status.get(.big_target).phase == .shut;
     if (shut and ai.targetValid(all, current, .{})) {
         const window = targetWindow(&all.slots[@intCast(current.index)]);
         if (state.windows.open(window, multiplayer) and hold) state.windows.status.getPtr(window).held = true;
-        return;
+        return true;
     }
-    _ = input.cycleTarget(state, all, step, among, multiplayer);
+    return input.cycleTarget(state, all, step, among, multiplayer);
+}
+
+/// Whether the player's `target` lists components and isn't friendly, which a subtarget key needs
+/// to find one.
+fn listsComponents(all: *const create.Objects, target: aigeneric.Target) bool {
+    if (target.index < 0) return false;
+    const object = &all.slots[@intCast(target.index)].object;
+    return object.flags.components and object.side != .friendly;
 }
 
 /// The nearest ship to the player's on `side` within `pick_reach`, for the nearest target keys:
@@ -3141,15 +3225,16 @@ pub const Radar = struct {
 
 /// RADAR RANGES (`frame_controls`, `0x00414060`): in the view ahead from the cockpit, with the
 /// rings still, the radar moves to its next range, round from the widest to the closest, and its
-/// rings start moving to that range's.
-pub fn nextRadarRange(state: *State, view: camera.View, game_ticks: u32) void {
-    if (view != .cockpit or state.radar_zoom != null) return;
+/// rings start moving to that range's. Returns whether it moved.
+pub fn nextRadarRange(state: *State, view: camera.View, game_ticks: u32) bool {
+    if (view != .cockpit or state.radar_zoom != null) return false;
     state.radar_range = if (state.radar_range >= 2) 0 else state.radar_range + 1;
     state.radar_zoom = .{
         .to = Radar.range_rings[state.radar_range],
         .down = state.radar_range == 0,
         .next = game_ticks + Radar.zoom_ticks,
     };
+    return true;
 }
 
 /// `hud_radar_zoom` (`0x004892F0`), which `hud_draw` runs after the radar: while the rings are
@@ -3389,20 +3474,20 @@ test nextRadarRange {
     var state: State = .{};
     // From the widest range the key comes round to the closest, whose rings are one; the rings
     // step there a shape a frame.
-    nextRadarRange(&state, .cockpit, 1000);
+    try std.testing.expect(nextRadarRange(&state, .cockpit, 1000));
     try std.testing.expectEqual(0, state.radar_range);
     for (0..9) |_| stepRadarZoom(&state, 1000);
     try std.testing.expectEqual(0x162, state.radar_rings);
     // While they move, the key does nothing.
-    nextRadarRange(&state, .cockpit, 1000);
+    try std.testing.expect(!nextRadarRange(&state, .cockpit, 1000));
     try std.testing.expectEqual(0, state.radar_range);
     stepRadarZoom(&state, 1000);
     try std.testing.expectEqual(0x161, state.radar_rings);
     try std.testing.expectEqual(null, state.radar_zoom);
     // The next range steps up to two rings; outside the view ahead the key does nothing.
-    nextRadarRange(&state, .cockpit_rear, 1000);
+    try std.testing.expect(!nextRadarRange(&state, .cockpit_rear, 1000));
     try std.testing.expectEqual(0, state.radar_range);
-    nextRadarRange(&state, .cockpit, 1000);
+    try std.testing.expect(nextRadarRange(&state, .cockpit, 1000));
     for (0..5) |_| stepRadarZoom(&state, 1000);
     try std.testing.expectEqual(0x166, state.radar_rings);
     try std.testing.expectEqual(null, state.radar_zoom);
@@ -3457,4 +3542,63 @@ test "the sight glides back to the middle" {
     // A gun it does not aim leaves the sight where it is.
     _ = try drawReticle(&state, &art, std.testing.allocator, target, screen, .chase, .{ 350, 260 }, .excluded, 10, .{ 1, 1, 1, 1 }, 1);
     try std.testing.expectEqual([2]i32{ 350, 260 }, state.sight.?);
+}
+
+/// A sound player of `voices` voices, with `stdsmp` of `count` sounds.
+const TestSound = struct {
+    mixer: @import("../mss.zig").Mixer,
+    sound: hog_snd.Sound,
+
+    fn init(test_sound: *TestSound, voices: u8, stdsmp: []const u8) !void {
+        test_sound.mixer = .init(22050);
+        test_sound.sound.init(test_sound.mixer.driver(), voices, null);
+        test_sound.sound.stdsmp = try @import("../../formats/fat.zig").Bank.parse(stdsmp);
+    }
+
+    fn playing(test_sound: *TestSound) bool {
+        for (0..test_sound.sound.voice_count) |v| {
+            if (test_sound.sound.voicePlaying(@intCast(v))) return true;
+        }
+        return false;
+    }
+};
+
+test Beeps {
+    var heard: TestSound = undefined;
+    const bank = comptime hog_snd.testing.bank(Beep.first_sample + std.enums.values(Beep).len);
+    try heard.init(4, &bank);
+    var beeps: Beeps = .{};
+
+    // Outside the cockpit's views nothing is heard, and the sounds asked for are let go.
+    beeps.add(.opens);
+    beeps.play(&heard.sound, .chase);
+    try std.testing.expect(!heard.playing());
+    try std.testing.expectEqual(0, beeps.slice().len);
+    // From the cockpit they are.
+    beeps.add(.opens);
+    beeps.play(&heard.sound, .cockpit_left);
+    try std.testing.expect(heard.playing());
+
+    // Past as many as a frame asks for, a sound is left out.
+    for (0..Beeps.capacity + 1) |_| beeps.add(.done);
+    try std.testing.expectEqual(Beeps.capacity, beeps.slice().len);
+}
+
+test "the enemy lock's warning" {
+    var heard: TestSound = undefined;
+    const bank = comptime hog_snd.testing.bank(1);
+    try heard.init(2, &bank);
+    const sound = &heard.sound;
+    var state: State = .{};
+
+    // With the light, the warning plays on its voice.
+    state.warnOfLock(sound, true, false);
+    try std.testing.expect(sound.voicePlaying(lock_warning_voice));
+    try std.testing.expectEqual(lock_warning_voice, state.lock_warning.?);
+    // A missile homing keeps it going as the light goes out; without one it ends.
+    state.warnOfLock(sound, false, true);
+    try std.testing.expect(sound.voicePlaying(lock_warning_voice));
+    state.warnOfLock(sound, false, false);
+    try std.testing.expect(!sound.voicePlaying(lock_warning_voice));
+    try std.testing.expectEqual(null, state.lock_warning);
 }

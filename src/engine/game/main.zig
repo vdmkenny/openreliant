@@ -779,9 +779,6 @@ pub fn armorConditions(object: *gameobj.GameObject, combat: *const create.ShipCo
     object.shield_condition = fore * 0.25 + aft * 0.25 + sides;
 }
 
-/// Betty's warning of the armour failing.
-const armor_warning = 1;
-
 /// The rest of `object_armor_conditions` (`0x00492370`), for the player's ship: once a quadrant has
 /// lost its shield and half its armour, the cockpit's warning, sound 1 of `betty.fat`, no more than
 /// once in 500 ticks.
@@ -792,7 +789,7 @@ pub fn armorWarning(hearing: hog_snd.Hearing, object: *const gameobj.GameObject,
     const half = combat.startingArmor() * 0.5;
     for (object.shields.values(), object.armor.values()) |held, armor| {
         if (held > 0 or armor >= half) continue;
-        sound.say(armor_warning);
+        _ = sound.say(.armor_failing);
         sound.armor_warned_at = frame_start;
         return;
     }

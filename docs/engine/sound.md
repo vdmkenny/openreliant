@@ -183,6 +183,6 @@ the start. The stream's volume is `round(((Musicvolume × level) / 127) × Maste
   its way, and its object loses flag `0x4000`.
 - Turning the missile ring plays `MISSILESELECT` at the player's ship (`hud_target_keys`).
 
-Not ported: the radio's speech and its double buffer; the CD's audio; and the
-display's sounds, the missile ring's among them
-([#101](https://github.com/vdmkenny/openreliant/issues/101)).
+The display's own sounds are in [The display's sounds](hud.md#the-displays-sounds).
+
+Not ported: the radio's speech and its double buffer; and the CD's audio.

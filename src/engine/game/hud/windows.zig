@@ -7,19 +7,23 @@
 //! each on once a frame and draws it with `hud_window_draw` (`0x00486830`): sliding and shrinking
 //! into place as it opens, the reverse as it closes, and in place while it is open.
 //!
-//! Ported so far: the windows' phases and times, their frames and how they open and close, and
-//! what windows 2, 3, 7 and 8 show ([`missile_display.zig`](missile_display.zig),
-//! [`target_display.zig`](target_display.zig), [`power.zig`](power.zig)). Not yet: what the other windows show, which
-//! [`hud.md`](../../../../docs/engine/hud.md) lists with the state each reads; the display's sounds for a window opening and closing
-//! (`hud_beep` 1 and 2); and, in mission 25 before `0x00587CDC` is set, the gunnery, missile and
-//! wing status windows standing still and unseen.
+//! Ported so far: the windows' phases and times, their frames, how they open and close with the
+//! display's sounds (`hud_beep` 1 and 2), and what windows 1, 2, 3, 4, 7, 8 and 13 show
+//! ([`gunnery.zig`](gunnery.zig), [`missile_display.zig`](missile_display.zig),
+//! [`target_display.zig`](target_display.zig), [`damage.zig`](damage.zig),
+//! [`power.zig`](power.zig), [`wing_status.zig`](wing_status.zig)). Not yet: what the other
+//! windows show, which [`hud.md`](../../../../docs/engine/hud.md) lists with the state each reads;
+//! and, in mission 25 before `0x00587CDC` is set, the gunnery, missile and wing status windows
+//! standing still and unseen.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const camera = @import("../camera.zig");
 const device = @import("../../surrender/srd3d/device.zig");
+const srtexture = @import("../../surrender/surrenderlib/srtexture.zig");
 const hud = @import("../hud.zig");
+const language = @import("../language.zig");
 const math = @import("../../surrender/math.zig");
 const spr = @import("../../../formats/spr.zig");
 
@@ -156,15 +160,20 @@ pub const Shown = struct {
 
 pub const Windows = struct {
     status: std.EnumArray(Window, Status) = .initFill(.{}),
+    /// The display's sounds for the windows that have started opening and closing, which
+    /// `hud.draw` plays this frame.
+    beeps: hud.Beeps = .{},
 
-    /// `hud_window_open` (`0x0048B510`): starts `window` opening, and gives it its full time to
-    /// stay whatever its phase, so a window closing carries on closing. In a multiplayer game the
-    /// missiles, the objectives and window 9 never open. Returns whether the window is up.
+    /// `hud_window_open` (`0x0048B510`): starts `window` opening, with the display's sound, and
+    /// gives it its full time to stay whatever its phase, so a window closing carries on closing.
+    /// In a multiplayer game the missiles, the objectives and window 9 never open. Returns whether
+    /// the window is up.
     pub fn open(windows: *Windows, window: Window, multiplayer: bool) bool {
         if (multiplayer and (window == .missiles or window == ._unknown_9 or window == .objectives)) return false;
         const status = windows.status.getPtr(window);
         windows.renew(window);
         if (status.phase == .shut) {
+            windows.beeps.add(.opens);
             status.phase = .opening;
             status.progress = 0;
             status.held = false;
@@ -178,11 +187,13 @@ pub const Windows = struct {
     }
 
     /// `hud_window_close` (`0x0048B590`): starts `window` closing if it is open or opening, from
-    /// its full size, however far it had opened, and lets go of it. For the target display's two
-    /// forms the game also keeps a picture of what they show, which they close with.
+    /// its full size, however far it had opened, with the display's sound, and lets go of it. For
+    /// the target display's two forms the game also keeps a picture of what they show, which they
+    /// close with.
     pub fn close(windows: *Windows, window: Window) void {
         const status = windows.status.getPtr(window);
         if (!windows.up(window)) return;
+        windows.beeps.add(.closes);
         status.phase = .closing;
         status.held = false;
         status.progress = opening_ticks;
@@ -238,20 +249,17 @@ pub const Windows = struct {
     /// draws that.
     pub fn frame(
         windows: *Windows,
-        art: *hud.Art,
-        gpa: Allocator,
-        target: device.Device,
+        pen: Pen,
         screen: [2]u32,
         last_view: camera.View,
         frame_duration: i32,
         contents: Contents,
-        colour: [4]f32,
         scale: f32,
-    ) (spr.Error || Allocator.Error)!void {
+    ) Canvas.Error!void {
         for (std.enums.values(Window)) |window| {
             const shown = windows.step(window, frame_duration) orelse continue;
             if (!hud.instrumented(last_view)) continue;
-            try draw(art, gpa, target, screen, window, shown, windows.status.get(window).phase, contents, colour, scale);
+            try draw(pen, screen, window, shown, windows.status.get(window).phase, contents, scale);
         }
     }
 };
@@ -278,7 +286,7 @@ pub fn bufferClip(window: Window, at: [2]i32, size: f32) hud.Clip {
     var from: [2]f32 = undefined;
     var to: [2]f32 = undefined;
     for (&from, &to, at, buffer_size, in_buffer) |*low, *high, place, extent, fraction| {
-        const inside: f32 = @floatFromInt(round(@as(f32, @floatFromInt(extent - 2)) * fraction + 1));
+        const inside: f32 = @floatFromInt(math.round(@as(f32, @floatFromInt(extent - 2)) * fraction + 1));
         const centre: f32 = @floatFromInt(place);
         low.* = centre - inside * size;
         high.* = centre + (@as(f32, @floatFromInt(extent)) - inside) * size;
@@ -312,7 +320,7 @@ pub const Inside = struct {
     /// The point `offset` of the display's own pixels from the window's place.
     pub fn place(inside: Inside, offset: [2]i32) [2]i32 {
         var point: [2]i32 = undefined;
-        for (&point, inside.at, offset) |*out, from, by| out.* = from + round(@as(f32, @floatFromInt(by)) * inside.size);
+        for (&point, inside.at, offset) |*out, from, by| out.* = from + math.round(@as(f32, @floatFromInt(by)) * inside.size);
         return point;
     }
 
@@ -340,45 +348,110 @@ pub const Inside = struct {
     }
 };
 
-/// `hud_window_draw` (`0x00486830`): in the view ahead, each piece of the window's frame, from
-/// where its place stands, then what the window shows.
-fn draw(
+/// What the windows draw with: the display's shapes, font and strings, onto `target`, in
+/// `colour`.
+pub const Pen = struct {
     art: *hud.Art,
+    font: *hud.Opened,
+    strings: *const language.Language,
     gpa: Allocator,
     target: device.Device,
-    screen: [2]u32,
-    window: Window,
-    shown: Shown,
-    phase: Phase,
-    contents: Contents,
     colour: [4]f32,
-    scale: f32,
-) (spr.Error || Allocator.Error)!void {
+};
+
+/// A window as its frame and what it shows are drawn: with `pen`, from the window's place
+/// (`inside`), each offset in the display's own pixels.
+pub const Canvas = struct {
+    pen: Pen,
+    inside: Inside,
+
+    pub const Error = spr.Error || Allocator.Error;
+
+    /// Shape `index` at `at`, drawn as `how` says.
+    pub fn shapeWith(canvas: Canvas, index: usize, at: [2]i32, how: hud.Draw) Error!void {
+        const pen = canvas.pen;
+        try hud.drawShapeWith(pen.art, pen.gpa, pen.target, index, canvas.inside.place(at), pen.colour, canvas.inside.size, how);
+    }
+
+    /// Shape `index` at `at`, cut to the window.
+    pub fn shape(canvas: Canvas, index: usize, at: [2]i32) Error!void {
+        try canvas.shapeWith(index, at, .{ .clip = canvas.inside.clip });
+    }
+
+    /// Shape `index` at `at`, cut to the VFX pane of `edges` (`Inside.pane`).
+    pub fn shapeIn(canvas: Canvas, index: usize, at: [2]i32, edges: [4]i32) Error!void {
+        try canvas.shapeWith(index, at, .{ .clip = canvas.inside.pane(edges) });
+    }
+
+    /// `picture` with its top left corner at `at`, cut to the window.
+    pub fn image(canvas: Canvas, picture: *srtexture.Image, at: [2]i32) void {
+        const corner = canvas.inside.place(at);
+        hud.drawImage(canvas.pen.target, picture, .{ @floatFromInt(corner[0]), @floatFromInt(corner[1]) }, canvas.pen.colour, canvas.inside.size, .{ .clip = canvas.inside.clip });
+    }
+
+    /// `words` at `at` in the display's font, aligned as `alignment` says.
+    pub fn text(canvas: Canvas, words: []const u8, at: [2]i32, alignment: hud.Align) Allocator.Error!void {
+        const pen = canvas.pen;
+        _ = try hud.drawText(pen.font, pen.gpa, pen.target, canvas.inside.place(at), words, pen.colour, alignment, canvas.inside.size);
+    }
+
+    /// The game's string `id`, where it has one.
+    pub fn string(canvas: Canvas, id: u32, at: [2]i32, alignment: hud.Align) Allocator.Error!void {
+        try canvas.text(canvas.pen.strings.string(id) orelse return, at, alignment);
+    }
+
+    /// `args` written out as `format` says.
+    pub fn print(canvas: Canvas, comptime format: []const u8, args: anytype, at: [2]i32, alignment: hud.Align) Allocator.Error!void {
+        var buffer: [32]u8 = undefined;
+        try canvas.text(std.fmt.bufPrint(&buffer, format, args) catch return, at, alignment);
+    }
+};
+
+/// How much of a bar of `rows` is dark for `share` of what it measures left: all of it less the
+/// share of it, rounded as `sr_round` does. The target display's bars and the wing status's count
+/// their rows this way.
+pub fn unlitRows(share: f32, rows: i32) i32 {
+    return rows - math.round(share * @as(f32, @floatFromInt(rows)));
+}
+
+test unlitRows {
+    // Whole, a bar is lit all the way; half gone, its top half is dark; gone, all of it.
+    try std.testing.expectEqual(0, unlitRows(1, 98));
+    try std.testing.expectEqual(49, unlitRows(0.5, 98));
+    try std.testing.expectEqual(38, unlitRows(0, 38));
+}
+
+/// `hud_window_draw` (`0x00486830`): in the view ahead, each piece of the window's frame, from
+/// where its place stands, then what the window shows.
+fn draw(pen: Pen, screen: [2]u32, window: Window, shown: Shown, phase: Phase, contents: Contents, scale: f32) Canvas.Error!void {
     const at = anchor(screen, window, shown, scale);
     const size = scale * shown.scale;
     const clip: ?hud.Clip = if (shown.buffered) bufferClip(window, at, size) else null;
+    const canvas: Canvas = .{ .pen = pen, .inside = .{ .at = at, .size = size, .clip = clip } };
     for (layouts.get(window).frame) |piece| {
-        const from: [2]i32 = .{
-            at[0] + round(@as(f32, @floatFromInt(piece.offset[0])) * size),
-            at[1] + round(@as(f32, @floatFromInt(piece.offset[1])) * size),
-        };
-        try hud.drawShapeWith(art, gpa, target, piece.shape, from, colour, size, .{ .mirror = piece.mirror, .clip = clip });
+        try canvas.shapeWith(piece.shape, piece.offset, .{ .mirror = piece.mirror, .clip = clip });
     }
-    const inside: Inside = .{ .at = at, .size = size, .clip = clip };
     switch (window) {
-        .gunnery => if (contents.gunnery) |gunnery| try hud.gunnery.draw(gunnery, art, gpa, target, inside, colour),
-        .missiles => if (contents.missiles) |missiles| try hud.missile_display.draw(missiles, art, gpa, target, inside, colour),
-        .damage => if (contents.damage) |damage| try hud.damage.draw(damage, art, gpa, target, inside, colour),
-        .power => if (contents.power) |power| try hud.power.draw(power, art, gpa, target, inside, colour),
-        .wing_status => if (contents.wing_status) |wing| try hud.wing_status.draw(wing, art, gpa, target, inside, colour),
+        .gunnery => if (contents.gunnery) |gunnery| try hud.gunnery.draw(gunnery, canvas),
+        .missiles => if (contents.missiles) |missiles| try hud.missile_display.draw(missiles, canvas),
+        .damage => if (contents.damage) |damage| try hud.damage.draw(damage, canvas),
+        .power => if (contents.power) |power| try hud.power.draw(power, canvas),
+        .wing_status => if (contents.wing_status) |wing| try hud.wing_status.draw(wing, canvas),
         else => if (hud.target_display.Form.of(window)) |form| if (contents.target_display) |scene| {
-            try scene.draw(form, phase == .closing, art, gpa, target, inside, colour);
+            try scene.draw(form, phase == .closing, canvas);
         },
     }
 }
 
-fn round(value: f32) i32 {
-    return @intFromFloat(math.roundEven(value));
+test "a window sounds as it starts opening and as it starts closing" {
+    var windows: Windows = .{};
+    _ = windows.open(.damage, false);
+    // Opening already, it opens without a sound; a window shut closes without one.
+    _ = windows.open(.damage, false);
+    windows.close(.damage);
+    windows.close(.damage);
+    windows.close(.gunnery);
+    try std.testing.expectEqualSlices(hud.Beep, &.{ .opens, .closes }, windows.beeps.slice());
 }
 
 test "a window opens, stays its time and closes" {

@@ -7,14 +7,10 @@
 
 const std = @import("std");
 const assert = std.debug.assert;
-const Allocator = std.mem.Allocator;
 
-const spr = @import("../../../formats/spr.zig");
-const device = @import("../../surrender/srd3d/device.zig");
 const gameobj = @import("../gameobj.zig");
 const hog_snd = @import("../hog_snd.zig");
 const hud = @import("../hud.zig");
-const language = @import("../language.zig");
 const missiles = @import("../missiles.zig");
 const Type = missiles.Type;
 
@@ -124,25 +120,26 @@ pub const Ring = struct {
     pub fn sayName(ring: *Ring, sound: *hog_snd.Sound) void {
         const armed = ring.armedEntry();
         if (armed.count == -1) return;
-        const index = armed.type.index() orelse return;
-        if (index >= betty_names.len) return;
-        const bank = sound.betty orelse return;
+        const name = bettyName(armed.type) orelse return;
         if (ring.name_voice) |voice| sound.endVoice(voice);
-        ring.name_voice = sound.play(bank, betty_names[index], 127, 1, 64, 0);
+        ring.name_voice = sound.say(name);
     }
 };
 
 /// Which way ROTATE MISSILES turns the ring.
 pub const Turn = enum { clockwise, anticlockwise };
 
-/// Betty's name of each type, the Screamer to the Hawk.
-const betty_names = [_]usize{ 2, 8, 3, 4, 7, 5, 10, 6, 9 };
+/// Betty's name of a missile type, the Screamer to the Hawk, which is her line of the same name.
+fn bettyName(missile: missiles.Type) ?hog_snd.Betty {
+    return switch (missile) {
+        inline .screamer, .raptor, .havoc, .jack_hammer, .bandit, .vagabond, .solomon, .imp, .hawk => |named| @field(hog_snd.Betty, @tagName(named)),
+        else => null,
+    };
+}
 
-/// What the window shows a frame: the ring, in the display's font and the game's strings.
+/// What the window shows a frame: the ring.
 pub const Shown = struct {
     ring: *const Ring,
-    font: *hud.Opened,
-    strings: *const language.Language,
 };
 
 /// Where the armed missile's count, its name and the ring stand from the window's place.
@@ -153,26 +150,14 @@ const ring_at = [2]i32{ 0, 0x47 };
 /// `hud_window_draw`'s window 2 (`0x00486E8F`), in the view ahead: for each live entry, in the
 /// ring's order, the armed one's count and name, centred, and each one's shape for its place, the
 /// shapes standing round the ring by their own offsets.
-pub fn draw(
-    shown: Shown,
-    art: *hud.Art,
-    gpa: Allocator,
-    target: device.Device,
-    placed: hud.windows.Inside,
-    colour: [4]f32,
-) (spr.Error || Allocator.Error)!void {
+pub fn draw(shown: Shown, canvas: hud.windows.Canvas) hud.windows.Canvas.Error!void {
     for (shown.ring.entries) |entry| {
         if (entry.count == -1) continue;
         if (entry.place == 0) {
-            var buffer: [8]u8 = undefined;
-            if (std.fmt.bufPrint(&buffer, "{d}", .{entry.count})) |count| {
-                _ = try hud.drawText(shown.font, gpa, target, placed.place(count_at), count, colour, .centre, placed.size);
-            } else |_| {}
-            if (shown.strings.string(@intCast(entry.name))) |name| {
-                _ = try hud.drawText(shown.font, gpa, target, placed.place(name_at), name, colour, .centre, placed.size);
-            }
+            try canvas.print("{d}", .{entry.count}, count_at, .centre);
+            try canvas.string(@intCast(entry.name), name_at, .centre);
         }
-        try hud.drawShapeWith(art, gpa, target, @intCast(entry.shape + entry.place), placed.place(ring_at), colour, placed.size, .{ .clip = placed.clip });
+        try canvas.shape(@intCast(entry.shape + entry.place), ring_at);
     }
 }
 

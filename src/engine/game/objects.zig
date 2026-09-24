@@ -1863,32 +1863,39 @@ pub const Model = struct {
     /// carries; null past the last. The game numbers an object's part nodes as it creates the
     /// object (`object_number_parts`) and finds a node by its number (`GameObject.part_nodes`).
     pub fn numbered(model: *Model, number: usize) ?PartRef {
-        var left = number;
-        return model.countTo(&left);
-    }
-
-    fn countTo(model: *Model, left: *usize) ?PartRef {
-        for (0..model.parts.len) |index| {
-            if (left.* == 0) return .{ .model = model, .index = index };
-            left.* -= 1;
-            var each = model.carriedBy(index);
-            while (each.next()) |mount| if (mount.model.countTo(left)) |found| return found;
-        }
-        return null;
+        var count: Counting = .{ .until = .{ .number = number } };
+        return if (model.countParts(&count)) count.found else null;
     }
 
     /// The number of part `ref` (`numbered`); null for a part neither the model's nor carried by it.
     pub fn numberOf(model: *Model, ref: PartRef) ?usize {
-        var count: usize = 0;
-        return if (model.countUntil(ref, &count)) count else null;
+        var count: Counting = .{ .until = .{ .part = ref } };
+        return if (model.countParts(&count)) count.counted else null;
     }
 
-    fn countUntil(model: *Model, ref: PartRef, count: *usize) bool {
+    /// A count of the parts in the order `numbered` numbers them, until the part it looks for.
+    const Counting = struct {
+        until: union(enum) { number: usize, part: PartRef },
+        counted: usize = 0,
+        found: ?PartRef = null,
+    };
+
+    /// Counts the model's parts, then the models each carries, until `count` finds its part:
+    /// whether it did.
+    fn countParts(model: *Model, count: *Counting) bool {
         for (0..model.parts.len) |index| {
-            if (model == ref.model and index == ref.index) return true;
-            count.* += 1;
+            const ref: PartRef = .{ .model = model, .index = index };
+            const reached = switch (count.until) {
+                .number => |number| count.counted == number,
+                .part => |part| std.meta.eql(ref, part),
+            };
+            if (reached) {
+                count.found = ref;
+                return true;
+            }
+            count.counted += 1;
             var each = model.carriedBy(index);
-            while (each.next()) |mount| if (mount.model.countUntil(ref, count)) return true;
+            while (each.next()) |mount| if (mount.model.countParts(count)) return true;
         }
         return false;
     }

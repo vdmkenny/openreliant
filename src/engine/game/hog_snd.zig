@@ -343,9 +343,10 @@ pub const Sound = struct {
         return @intCast(chosen);
     }
 
-    /// Betty's warning `index` (`bank_betty`), at full volume in the middle.
-    pub fn say(sound: *Sound, index: usize) void {
-        if (sound.betty) |bank| _ = sound.play(bank, index, 127, 1, 64, 0);
+    /// Betty's `line`, at full volume in the middle: the voice it plays on, or null.
+    pub fn say(sound: *Sound, line: Betty) ?u8 {
+        const bank = sound.betty orelse return null;
+        return sound.play(bank, @intFromEnum(line), 127, 1, 64, 0);
     }
 
     /// `sound_play_on_voice` (`0x004820C0`): plays it on voice `v`, ending what it was playing.
@@ -402,6 +403,16 @@ pub const Sound = struct {
         voice.fading = 0;
         voice.held = 0;
         driver.endSample(voice.sample);
+    }
+
+    /// Whether voice `v` has finished or was stopped, as `hud_draw` asks of the enemy lock's
+    /// warning's voice; false with no driver.
+    pub fn voiceIdle(sound: *Sound, v: u8) bool {
+        const driver = sound.driver orelse return false;
+        return switch (driver.sampleStatus(sound.voices[v].sample)) {
+            .done, .stopped => true,
+            else => false,
+        };
     }
 
     /// `sound_voice_playing` (`0x00482410`).
@@ -852,6 +863,35 @@ pub fn tickTimer(clock: *Clock) void {
         }
     }
 }
+
+/// Betty's lines in `bank_betty`, which `Sound.say` plays.
+pub const Betty = enum(u8) {
+    /// The armed missile run out.
+    missiles_gone = 0,
+    /// A quadrant has lost its shield and half its armour (`main.armorWarning`).
+    armor_failing = 1,
+    /// The armed missile's name, as the missile ring turns to it.
+    screamer = 2,
+    havoc = 3,
+    jack_hammer = 4,
+    vagabond = 5,
+    imp = 6,
+    bandit = 7,
+    raptor = 8,
+    hawk = 9,
+    solomon = 10,
+    /// Countermeasures running low, and gone.
+    countermeasures_low = 0xD,
+    countermeasures_gone = 0xF,
+    /// A device turning on, and off.
+    cloak_on = 0x10,
+    cloak_off = 0x11,
+    blind_fire_on = 0x12,
+    blind_fire_off = 0x13,
+    spectral_shields_on = 0x14,
+    spectral_shields_off = 0x15,
+    _,
+};
 
 pub const testing = struct {
     /// A bank of `count` sounds, each four frames of 16-bit PCM, the `n`th at priority `n * 10`.

@@ -24,12 +24,9 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const device = @import("../../surrender/srd3d/device.zig");
-const spr = @import("../../../formats/spr.zig");
 const shp = @import("../../../formats/shp.zig");
 const create = @import("../create.zig");
 const hud = @import("../hud.zig");
-const language = @import("../language.zig");
 const windows = @import("windows.zig");
 
 /// The target display's two forms: window 3, the small one, and window 8, the large one.
@@ -52,22 +49,10 @@ pub const Scene = struct {
     /// showed.
     state: *hud.State,
     all: *const create.Objects,
-    strings: *const language.Language,
-    /// The display's font.
-    font: *hud.Opened,
 
     /// Draws `form`: what it shows now, and while it closes what it last showed.
-    pub fn draw(
-        scene: Scene,
-        form: Form,
-        closing: bool,
-        art: *hud.Art,
-        gpa: Allocator,
-        target: device.Device,
-        inside: windows.Inside,
-        colour: [4]f32,
-    ) (spr.Error || Allocator.Error)!void {
-        const context: Context = .{ .art = art, .gpa = gpa, .target = target, .inside = inside, .colour = colour, .scene = scene };
+    pub fn draw(scene: Scene, form: Form, closing: bool, canvas: windows.Canvas) windows.Canvas.Error!void {
+        const context: Context = .{ .canvas = canvas };
         switch (form) {
             inline else => |which| {
                 const name = @tagName(which);
@@ -143,9 +128,10 @@ pub const Small = struct {
     pub const status_at: [2]i32 = .{ -4, -0x2C };
     pub const lines: Lines = .{ .name = .{ 0x37, -0x43 }, .range = .{ 0x37, -0x2B }, .speed = .{ 0x37, -0x1F }, .alignment = .left };
 
-    fn draw(small: Small, context: Context) (spr.Error || Allocator.Error)!void {
-        const inside = context.inside;
-        try hud.ShipStatus.draw(small.status, .target, context.art, context.gpa, context.target, inside.place(status_at), inside.size, inside.clip, context.colour);
+    fn draw(small: Small, context: Context) windows.Canvas.Error!void {
+        const pen = context.canvas.pen;
+        const inside = context.canvas.inside;
+        try hud.ShipStatus.draw(small.status, .target, pen.art, pen.gpa, pen.target, inside.place(status_at), inside.size, inside.clip, pen.colour);
         try context.name(small.facts, lines);
         try context.figures(small.facts, lines);
     }
@@ -163,10 +149,11 @@ pub const Large = struct {
     pub const picture_at: [2]i32 = .{ -0xD0, -0x80 };
     pub const lines: Lines = .{ .name = .{ -2, -0x9D }, .range = .{ -3, -0x1D }, .speed = .{ -3, -0x11 }, .alignment = .right };
 
-    fn draw(shown: Large, context: Context) (spr.Error || Allocator.Error)!void {
-        const inside = context.inside;
+    fn draw(shown: Large, context: Context) windows.Canvas.Error!void {
+        const pen = context.canvas.pen;
+        const inside = context.canvas.inside;
         if (shown.picture) |picture| {
-            try hud.drawShapeWith(picture.art, picture.gpa, context.target, 0, inside.place(picture_at), context.colour, inside.size, .{ .clip = inside.clip });
+            try hud.drawShapeWith(picture.art, picture.gpa, pen.target, 0, inside.place(picture_at), pen.colour, inside.size, .{ .clip = inside.clip });
         }
         try context.name(shown.facts, lines);
         if (shown.subtarget) |part| try part.draw(context);
@@ -186,11 +173,11 @@ pub const Subtarget = struct {
     pub const name_at: [2]i32 = .{ -0x78, -0x33 };
     pub const icon_at: [2]i32 = .{ -0xBA, -0x34 };
 
-    fn draw(part: Subtarget, context: Context) (spr.Error || Allocator.Error)!void {
-        try context.text(part.named.name, name_at, .left);
-        try context.shape(part.named.icon, icon_at, .{ .clip = context.inside.clip });
+    fn draw(part: Subtarget, context: Context) windows.Canvas.Error!void {
+        try context.canvas.string(part.named.name, name_at, .left);
+        try context.canvas.shape(part.named.icon, icon_at);
         if (part.unlit) |unlit| {
-            try context.shape(armor_bar.lit, armor_bar.at, .{ .clip = context.inside.clip });
+            try context.canvas.shape(armor_bar.lit, armor_bar.at);
             try armor_bar.darken(context, unlit, armor_bar.dark_top);
         }
     }
@@ -210,12 +197,14 @@ pub const BarShapes = struct {
     dark_top: i32,
 
     /// The dark shape over the top `unlit` rows from `top`.
-    fn darken(bar: BarShapes, context: Context, unlit: i32, top: i32) (spr.Error || Allocator.Error)!void {
+    fn darken(bar: BarShapes, context: Context, unlit: i32, top: i32) windows.Canvas.Error!void {
         if (unlit == 0) return;
-        const pane = context.inside.pane(.{ bar.pane[0], top, bar.pane[0] + 4, top + unlit });
-        try context.shape(bar.dark, bar.at, .{ .clip = pane });
+        try context.canvas.shapeIn(bar.dark, bar.at, .{ bar.pane[0], top, bar.pane[0] + pane_reach, top + unlit });
     }
 };
+
+/// How far across from its left edge a bar's panes reach.
+const pane_reach = 4;
 
 /// The subtarget's armour bar: shape `0xDE`, darkened by `0xDB`, 38 rows.
 pub const armor_bar: BarShapes = .{ .lit = 0xDE, .dark = 0xDB, .at = .{ -0xC6, -0x32 }, .rows = 38, .pane = .{ -0xC7, -0x33 }, .dark_top = -0x33 };
@@ -228,18 +217,11 @@ pub const Bar = struct {
     unlit: i32,
     top: i32,
 
-    fn draw(bar: Bar, context: Context, shapes: BarShapes) (spr.Error || Allocator.Error)!void {
-        const lit = context.inside.pane(.{ shapes.pane[0], shapes.pane[1] + bar.unlit, shapes.pane[0] + 4, shapes.pane[1] + shapes.rows });
-        try context.shape(shapes.lit, shapes.at, .{ .clip = lit });
+    fn draw(bar: Bar, context: Context, shapes: BarShapes) windows.Canvas.Error!void {
+        try context.canvas.shapeIn(shapes.lit, shapes.at, .{ shapes.pane[0], shapes.pane[1] + bar.unlit, shapes.pane[0] + pane_reach, shapes.pane[1] + shapes.rows });
         try shapes.darken(context, bar.unlit, bar.top);
     }
 };
-
-/// How much of a bar of `rows` is dark for `share` of what it measures left: all of it less the
-/// share of it, rounded as `sr_round` does.
-pub fn unlitRows(share: f32, rows: i32) i32 {
-    return rows - hud.round(share * @as(f32, @floatFromInt(rows)));
-}
 
 /// The subtarget of the player's current order, as the large form shows it: a component the
 /// target lists, whose part's class has a name and an icon.
@@ -251,7 +233,7 @@ fn subtarget(all: *const create.Objects) ?Subtarget {
     const part = holder.components[@intCast(current.component)] orelse return null;
     const found = named(part.class) orelse return null;
     const unlit: ?i32 = if (part.component_armor > 0)
-        unlitRows(part.armor / @as(f32, @floatFromInt(part.component_armor)), armor_bar.rows)
+        windows.unlitRows(part.armor / @as(f32, @floatFromInt(part.component_armor)), armor_bar.rows)
     else
         null;
     return .{ .named = found, .unlit = unlit };
@@ -267,13 +249,13 @@ fn hull(slot: *const create.Slot) ?Bar {
         for (slot.object.armor.values()) |left| weakest = @min(weakest, left);
         const full = combat.fullArmor();
         const share = if (full > 0) weakest / full else 0;
-        return .{ .unlit = unlitRows(share, hull_bar.rows), .top = hull_bar.dark_top - 3 };
+        return .{ .unlit = windows.unlitRows(share, hull_bar.rows), .top = hull_bar.dark_top - 3 };
     }
     const model = if (slot.model) |*model| model else return null;
     for (model.parts) |part| {
         if (part.removed or part.class != .hull or part.component_armor <= 0) continue;
         const share = part.armor / @as(f32, @floatFromInt(part.component_armor));
-        return .{ .unlit = unlitRows(share, hull_bar.rows), .top = hull_bar.dark_top };
+        return .{ .unlit = windows.unlitRows(share, hull_bar.rows), .top = hull_bar.dark_top };
     }
     return null;
 }
@@ -314,37 +296,20 @@ pub const Pictures = struct {
 };
 
 /// What a form draws with.
+/// What a form of the display is drawn with: the window's canvas, and the text both forms show.
 const Context = struct {
-    art: *hud.Art,
-    gpa: Allocator,
-    target: device.Device,
-    inside: windows.Inside,
-    colour: [4]f32,
-    scene: Scene,
-
-    fn shape(context: Context, index: u16, at: [2]i32, how: hud.Draw) (spr.Error || Allocator.Error)!void {
-        try hud.drawShapeWith(context.art, context.gpa, context.target, index, context.inside.place(at), context.colour, context.inside.size, how);
-    }
-
-    /// The game's string `id` at `at`.
-    fn text(context: Context, id: u16, at: [2]i32, alignment: hud.Align) Allocator.Error!void {
-        try context.line(context.scene.strings.string(id) orelse return, at, alignment);
-    }
+    canvas: windows.Canvas,
 
     /// The type's name, where it has one, as `lines` places it.
     fn name(context: Context, shown: Facts, lines: Lines) Allocator.Error!void {
-        if (shown.name) |id| try context.text(id, lines.name, lines.alignment);
+        if (shown.name) |id| try context.canvas.string(id, lines.name, lines.alignment);
     }
 
     /// The range and the speed, as `lines` places them.
     fn figures(context: Context, shown: Facts, lines: Lines) Allocator.Error!void {
         var buffer: [16]u8 = undefined;
-        try context.line(hud.rangeText(&buffer, shown.range), lines.range, lines.alignment);
-        try context.line(std.fmt.bufPrint(&buffer, "{d} kps", .{shown.speed}) catch return, lines.speed, lines.alignment);
-    }
-
-    fn line(context: Context, words: []const u8, at: [2]i32, alignment: hud.Align) Allocator.Error!void {
-        _ = try hud.drawText(context.scene.font, context.gpa, context.target, context.inside.place(at), words, context.colour, alignment, context.inside.size);
+        try context.canvas.text(hud.rangeText(&buffer, shown.range), lines.range, lines.alignment);
+        try context.canvas.print("{d} kps", .{shown.speed}, lines.speed, lines.alignment);
     }
 };
 
@@ -363,13 +328,6 @@ test named {
     try std.testing.expectEqual(0x12, seen.count());
 }
 
-test unlitRows {
-    // Whole, a bar is lit all the way; half gone, its top half is dark; gone, all of it.
-    try std.testing.expectEqual(0, unlitRows(1, 98));
-    try std.testing.expectEqual(49, unlitRows(0.5, 98));
-    try std.testing.expectEqual(38, unlitRows(0, 38));
-}
-
 test "the forms show the target" {
     const gameobj = @import("../gameobj.zig");
     const objects = @import("../objects.zig");
@@ -384,9 +342,7 @@ test "the forms show the target" {
     const slot = mission.slot(sabre);
     slot.object.speed = 212.6;
     var state: hud.State = .{ .target = sabre };
-    const strings: language.Language = undefined;
-    var font: hud.Opened = undefined;
-    const scene: Scene = .{ .state = &state, .all = all, .strings = &strings, .font = &font };
+    const scene: Scene = .{ .state = &state, .all = all };
 
     // Its type's name, its range in whole kilometres and its speed.
     const facts = scene.small().?.facts;

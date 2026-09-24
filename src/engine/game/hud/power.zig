@@ -12,14 +12,11 @@ const Allocator = std.mem.Allocator;
 
 const math = @import("../../surrender/math.zig");
 const srtexture = @import("../../surrender/surrenderlib/srtexture.zig");
-const device = @import("../../surrender/srd3d/device.zig");
-const spr = @import("../../../formats/spr.zig");
 const tga = @import("../../../formats/tga.zig");
 const libcmt = @import("../../libcmt.zig");
 const input_power = @import("../../input/power.zig");
 const gameobj = @import("../gameobj.zig");
 const hud = @import("../hud.zig");
-const language = @import("../language.zig");
 
 /// The texture `hud_init` reads for the ball.
 pub const picture_name = "powerball.tga";
@@ -214,12 +211,11 @@ pub const Shown = struct {
     /// The camera's shake, which shakes the ball too.
     hit_shake: f32,
     random: ?*libcmt.Rand,
-    font: *hud.Opened,
-    strings: *const language.Language,
 };
 
-/// The string the window's title is (`0xA7`).
+/// The window's title, POWER (`0xA7`), and where it stands from the window's place.
 const title = 0xA7;
+const title_at = [2]i32{ 2, -77 };
 
 /// The shares as whole percentages, which `hud_window_draw` rounds from each share and then, where
 /// they come to 101, takes one from the first that is 34.
@@ -254,19 +250,19 @@ const bars = std.EnumArray(input_power.System, Bar).init(.{
     // Across the top, emptying from the left.
     .shields = .{ .empty = 0x83, .full = 0x80, .at = .{ 41, -32 }, .pane = struct {
         fn pane(share: f32) [4]i32 {
-            return .{ 40 + round(54 - share * 54), -33, 94, -17 };
+            return .{ 40 + math.round(54 - share * 54), -33, 94, -17 };
         }
     }.pane },
     // Up the left side, filling from the foot.
     .guns = .{ .empty = 0x84, .full = 0x81, .at = .{ 34, -13 }, .pane = struct {
         fn pane(share: f32) [4]i32 {
-            return .{ 33, -14 + round(48 - share * 48), 64, 34 };
+            return .{ 33, -14 + math.round(48 - share * 48), 64, 34 };
         }
     }.pane },
     // Down the right side, filling from the top.
     .engines = .{ .empty = 0x85, .full = 0x82, .at = .{ 70, -13 }, .pane = struct {
         fn pane(share: f32) [4]i32 {
-            return .{ 69, -14, 100, -14 + round(share * 48) };
+            return .{ 69, -14, 100, -14 + math.round(share * 48) };
         }
     }.pane },
 });
@@ -291,45 +287,25 @@ const ball_at: [2]i32 = .{ 68 - radius, -1 - radius };
 
 /// Draws what window 7 shows, in the order `hud_window_draw` draws it: the title, the ball, the
 /// percentages, then each bar and the shapes round them.
-pub fn draw(
-    shown: Shown,
-    art: *hud.Art,
-    gpa: Allocator,
-    target: device.Device,
-    placed: hud.windows.Inside,
-    colour: [4]f32,
-) (spr.Error || Allocator.Error)!void {
-    const size_on_screen = placed.size;
-    if (shown.strings.string(title)) |text| {
-        _ = try hud.drawText(shown.font, gpa, target, placed.place(.{ 2, -77 }), text, colour, .left, size_on_screen);
-    }
+pub fn draw(shown: Shown, canvas: hud.windows.Canvas) hud.windows.Canvas.Error!void {
+    try canvas.string(title, title_at, .left);
 
     const setting = input_power.point(shown.object);
     shown.ball.render(setting, shown.hit_shake, shown.random);
-    const corner = placed.place(ball_at);
-    hud.drawImage(target, &shown.ball.image, .{ @floatFromInt(corner[0]), @floatFromInt(corner[1]) }, colour, size_on_screen, .{ .clip = placed.clip });
+    canvas.image(&shown.ball.image, ball_at);
 
     const found = percentages(setting);
     for (std.enums.values(input_power.System)) |system| {
-        var buffer: [16]u8 = undefined;
-        const text = std.fmt.bufPrint(&buffer, "{d}%", .{found.get(system)}) catch continue;
-        _ = try hud.drawText(shown.font, gpa, target, placed.place(figures.get(system)), text, colour, .left, size_on_screen);
+        try canvas.print("{d}%", .{found.get(system)}, figures.get(system), .left);
     }
 
     const shares = input_power.shares(setting);
     for ([_]input_power.System{ .guns, .engines, .shields }) |system| {
         const bar = bars.get(system);
-        const from = placed.place(bar.at);
-        try hud.drawShapeWith(art, gpa, target, bar.empty, from, colour, size_on_screen, .{ .clip = placed.clip });
-        try hud.drawShapeWith(art, gpa, target, bar.full, from, colour, size_on_screen, .{ .clip = placed.pane(bar.pane(shares.get(system))) });
+        try canvas.shape(bar.empty, bar.at);
+        try canvas.shapeIn(bar.full, bar.at, bar.pane(shares.get(system)));
     }
-    for (labels) |label| {
-        try hud.drawShapeWith(art, gpa, target, label.shape, placed.place(label.at), colour, size_on_screen, .{ .clip = placed.clip });
-    }
-}
-
-fn round(value: f32) i32 {
-    return @intFromFloat(math.roundEven(value));
+    for (labels) |label| try canvas.shape(label.shape, label.at);
 }
 
 fn testingPicture(gpa: Allocator) !tga.Image {
