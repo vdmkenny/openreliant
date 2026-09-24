@@ -30,6 +30,9 @@ const sound3d = @import("sound3d.zig");
 const table = @import("table.zig");
 const xtrabits = @import("xtrabits.zig");
 const Clock = @import("main.zig").Clock;
+const ai = @import("ai.zig");
+const aigeneric = @import("aigeneric.zig");
+const deathmatch = @import("deathmatch.zig");
 
 /// What the explosions leave for the frames after them.
 pub const Explosions = struct {
@@ -701,7 +704,7 @@ pub fn throwBit(world: gameobj.World, at: Vector, direction: Vector, how: Bit.Th
 /// The fireballs a burst sets off about the ship, lit and each a little late, within
 /// `burst_spread` of its radius, 0.8 of it across (`0x004DC4C0`, `0x004DC410`).
 const burst_fireballs = 18;
-const burst_spread: f32 = 0.3;
+pub const burst_spread: f32 = 0.3;
 const burst_size: f32 = 0.8;
 const burst_delay: f32 = 10;
 
@@ -710,6 +713,9 @@ const burst_delay: f32 = 10;
 const blast_bits: Scatter = .{ .count = 25, .throw = .{ .size = 0.4, .speed = 0.2 } };
 const small_blast_bits: Scatter = .{ .count = 5, .throw = .{ .size = 0.2, .speed = 0.1 } };
 const burst_bits: Scatter = .{ .count = 25, .throw = .{ .size = 0.2, .speed = 0.2 } };
+/// The flame a burst sends out, and a destroyed component: slow, carrying a quarter of the ship's
+/// velocity.
+const burst_flames: Flames = .{ .speed = 20, .speed_range = 5, .carried = .{ .share = 0.25 }, .count = 200 };
 
 /// A blast sets a shockwave off one time in `blast_shockwave_odds`: `blast_shockwave_size` times
 /// the ship's radius across (`0x004DC520`), over `blast_shockwave_life` ticks and up to
@@ -792,7 +798,7 @@ pub fn burst(world: gameobj.World, index: u16) void {
     if (index == world.objects.player) if (world.explosions) |explosions| {
         explosions.marker = .{ .position = at, .drift = velocity * @as(Vector, @splat(0.25)) };
     };
-    _ = flames(world, at, velocity, .{ .speed = 20, .speed_range = 5, .carried = .{ .share = 0.25 }, .count = 200 });
+    _ = flames(world, at, velocity, burst_flames);
     const carried = 0.5;
     sparkles(world, at, velocity, carried, .{});
     const random = world.random;
@@ -804,6 +810,96 @@ pub fn burst(world: gameobj.World, index: u16) void {
         fireballAt(world, place, .{ .size = radius * burst_size, .light = true, .delay = delay, .velocity = velocity * @as(Vector, @splat(carried)) });
     }
     sound(world, at, .explosions);
+}
+
+/// `explode_component_lost` (`0x0046D090`): what the destruction of a component of assembly `link`
+/// of `model`, its root standing at `root`, sets off, as `objects.loseComponents` finds it. Each
+/// part of the assembly, hidden or not, and each model mounted on it, goes up
+/// (`breakup.burstPart`), its pieces the faster the more the assembly's parts measure across
+/// together; and the root sends out a burst of flame and the explosion's sound.
+///
+/// Not ported: what it sets off first for a few types
+/// ([#225](https://github.com/vdmkenny/openreliant/issues/225)).
+pub fn componentLost(world: gameobj.World, index: u16, model: *const objects.Model, root: math.Place, link: u32) void {
+    const slot = &world.objects.slots[index];
+    var reach: f32 = 0;
+    for (model.parts) |*part| {
+        if (!part.removed and part.link_id == link) reach += part.object.radius;
+    }
+    for (model.parts, 0..) |*part, at| {
+        if (!part.removed and part.link_id == link) breakup.burstTree(world, slot, model, at, reach);
+    }
+    _ = flames(world, root.position, gameobj.vector(slot.object.velocity), burst_flames);
+    sound(world, root.position, .explosions);
+}
+
+/// What `create_object` gives an object at `+0x614`, by the type whose stats it takes
+/// (`create.donor`): the routine `objects.loseComponents` runs as one of the object's components
+/// other than a shield generator is destroyed, which says whether the pass goes on.
+pub const ComponentLoss = enum {
+    /// `explode_capship_component` (`0x0046F820`): most capital ships, bases and stations.
+    capital_ship,
+    /// `explode_ulysses_component` (`0x0046EA50`): type `0x16`.
+    ulysses,
+
+    /// The types, by the type whose stats they take, that `create_object` gives
+    /// `explode_capship_component`.
+    const capital_ships = types: {
+        var set: std.StaticBitSet(256) = .initEmpty();
+        for ([_]u8{
+            0x0C, 0x0D, 0x0F, 0x11, 0x13, 0x14, 0x18, 0x1E, 0x20, 0x21, 0x34, 0x36, 0x37, 0x38,
+            0x3A, 0x3C, 0x3D, 0x3E, 0x3F, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x5E, 0x78,
+            0x80, 0x81, 0x84, 0x95, 0x9B, 0x9C, 0x9F, 0xA5, 0xA8, 0xB0, 0xC0, 0xC1, 0xC2,
+        }) |number| set.set(number);
+        break :types set;
+    };
+
+    /// The routine an object of `ship_type` has, or none.
+    pub fn of(ship_type: gameobj.Type) ?ComponentLoss {
+        const number = std.math.cast(u8, @intFromEnum(ship_type)) orelse return null;
+        const stats = create.donor(number) orelse number;
+        if (capital_ships.isSet(stats)) return .capital_ship;
+        return if (stats == 0x16) .ulysses else null;
+    }
+};
+
+/// Runs `routine` for `part`, a component of the object in slot `index` just destroyed: whether
+/// `objects.loseComponents` goes on with it. A capital ship lets it go on for any part but one of
+/// its hull, which ends the ship: it is marked unpowered and exploding, and lost (`loseHull`). The
+/// Ulysses' stops it for every part.
+///
+/// Not ported: the capital ship splitting in two, and all the Ulysses' does
+/// ([#225](https://github.com/vdmkenny/openreliant/issues/225)).
+pub fn loseComponent(ctx: aigeneric.Context, index: u16, routine: ComponentLoss, part: *const objects.Model.Part) bool {
+    switch (routine) {
+        .capital_ship => {
+            if (part.class != .hull) return true;
+            const flags = &ctx.world.objects.slots[index].object.flags;
+            flags.unpowered = true;
+            flags.exploding = true;
+            loseHull(ctx, index);
+            return false;
+        },
+        .ulysses => return false,
+    }
+}
+
+/// A ship that lists components losing its hull, as both `node_draw` and the capital ships'
+/// routine end one: where the player took it from a Kurgan, an Antanov or a Gurevich, the kill is
+/// theirs (`kills_add`), and the ship is lost (`ai.hullLost`).
+///
+/// Not ported: the radio's remark on the kill (`radio_kill_remark`,
+/// [#48](https://github.com/vdmkenny/openreliant/issues/48)).
+pub fn loseHull(ctx: aigeneric.Context, index: u16) void {
+    const world = ctx.world;
+    const all = world.objects;
+    const object = &all.slots[index].object;
+    const credited = switch (object.type) {
+        .kurgan, .antanov, .gurevich => true,
+        else => false,
+    };
+    if (object.last_attacker == all.player and credited) deathmatch.addKills(world.player, all, all.player, 1);
+    ai.hullLost(ctx, index);
 }
 
 pub const testing = struct {
@@ -859,6 +955,37 @@ pub const testing = struct {
         }
     };
 };
+
+test ComponentLoss {
+    try std.testing.expectEqual(.capital_ship, ComponentLoss.of(.badanov));
+    // A type under another number has the routine of the type it takes its stats from.
+    try std.testing.expectEqual(.capital_ship, ComponentLoss.of(@enumFromInt(0xDB)));
+    try std.testing.expectEqual(.ulysses, ComponentLoss.of(@enumFromInt(0x16)));
+    try std.testing.expectEqual(null, ComponentLoss.of(.sabre));
+    try std.testing.expectEqual(null, ComponentLoss.of(@enumFromInt(0x1234)));
+}
+
+test loseHull {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const ctx = mission.orders();
+    const player = try mission.add(.predator, @splat(0));
+
+    // The player's taking a Kurgan's hull is a kill; any ship so ends, its orders cleared.
+    const kurgan = try mission.add(.kurgan, .{ 0, 0, 1000 });
+    mission.slot(kurgan).object.last_attacker = player;
+    loseHull(ctx, kurgan);
+    try std.testing.expectEqual(1, mission.player.kills.count);
+    try std.testing.expect(mission.slot(kurgan).object.flags.exploding);
+
+    // A Badanov's is not.
+    const badanov = try mission.add(.badanov, .{ 0, 0, 2000 });
+    mission.slot(badanov).object.last_attacker = player;
+    loseHull(ctx, badanov);
+    try std.testing.expectEqual(1, mission.player.kills.count);
+    try std.testing.expect(mission.slot(badanov).object.flags.exploding);
+}
 
 test Explosions {
     var stage: testing.Stage = undefined;

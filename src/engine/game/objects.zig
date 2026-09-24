@@ -23,6 +23,9 @@ const environfx = @import("environfx.zig");
 const libcmt = @import("../libcmt.zig");
 const xtrabits = @import("xtrabits.zig");
 const Clock = @import("main.zig").Clock;
+const aigeneric = @import("aigeneric.zig");
+const explode = @import("explode.zig");
+const sound3d = @import("sound3d.zig");
 const Vector = math.Vector;
 
 /// A node of an object's model hierarchy (`objects.cpp`), allocated at `0x004991D0`: the object's
@@ -738,6 +741,104 @@ pub fn frameTree(root: *Node, model: ?*Model, drawn: *Model.Local, fraction: f32
     parts.place(drawn.position, drawn.orientation);
 }
 
+/// `node_draw` (`0x0049A8C0`) for the roots flagged `destroyed`, as `mission_frame`'s pass that draws
+/// the objects reaches the object in slot `index`, in sight or not: its model's root, then, depth
+/// first, those of the models mounted on its shown parts. For each part of such a root that has
+/// run out of armour and is not yet spent, in part order:
+///
+/// - It is spent.
+/// - An engine takes its share off the object's `engines_intact`.
+/// - A shield generator, while the object still has one, is heard going down, and the object has
+///   none after. Any other part goes to the routine the object's type has
+///   (`explode.ComponentLoss`), which may end the pass over this root, its flag left set.
+/// - Its destruction sets its assembly off (`explode.componentLost`).
+/// - Each part of its assembly that is shown is taken out (`destroyPart`), a part of the hull
+///   ending the ship first (`explode.loseHull`); each hidden one, its damaged model, is shown.
+///
+/// Then the root's flag is cleared.
+///
+/// Not ported: the Destroyed event for each component taken out (`event_destroyed`,
+/// [#37](https://github.com/vdmkenny/openreliant/issues/37)), and the subtarget's parts picked out
+/// in red again where the object is the player's target (`hud_subtarget_clear`, `hud_subtarget`,
+/// [#45](https://github.com/vdmkenny/openreliant/issues/45)).
+pub fn loseComponents(ctx: aigeneric.Context, index: u16) void {
+    const slot = &ctx.world.objects.slots[index];
+    const model = if (slot.model) |*live| live else return;
+    loseIn(ctx, index, model, slot.drawn);
+}
+
+fn loseIn(ctx: aigeneric.Context, index: u16, model: *Model, root: math.Place) void {
+    if (model.destroyed) loseRoot(ctx, index, model, root);
+    for (model.parts, 0..) |*part, at| {
+        if (part.hidden) continue;
+        var each = model.carried();
+        while (each.next()) |mount| {
+            if (mount.part == at) loseIn(ctx, index, &mount.model, mount.rootAt(part.drawn()));
+        }
+    }
+}
+
+fn loseRoot(ctx: aigeneric.Context, index: u16, model: *Model, root: math.Place) void {
+    const world = ctx.world;
+    const slot = &world.objects.slots[index];
+    const object = &slot.object;
+    for (model.parts) |*part| {
+        if (part.removed or part.spent or !(part.armor < 0)) continue;
+        part.spent = true;
+        if (part.class == .engine) object.engines_intact -= 1 / @as(f32, @floatFromInt(object.engines));
+        if (part.class == .shield_generator) {
+            if (object.flags.shield_generator) shieldsDown(world, part.drawn());
+            object.flags.shield_generator = false;
+        } else if (explode.ComponentLoss.of(object.type)) |routine| {
+            if (!explode.loseComponent(ctx, index, routine, part)) return;
+        }
+        const link = part.link_id;
+        explode.componentLost(world, index, model, root, link);
+        for (model.parts, 0..) |*piece, at| {
+            if (piece.removed or piece.link_id != link) continue;
+            if (piece.hidden) {
+                piece.hidden = false;
+                continue;
+            }
+            if (piece.class == .hull) explode.loseHull(ctx, index);
+            destroyPart(slot, .{ .model = model, .index = at });
+        }
+    }
+    model.destroyed = false;
+}
+
+/// A shield generator going down: `SHLDDOWN` from where it stands, facing its way.
+fn shieldsDown(world: gameobj.World, at: math.Place) void {
+    const hearing = world.hearing orelse return;
+    _ = sound3d.play(hearing.sound, hearing.scene(world), at.position, math.forward(at.orientation), -1, .shlddown, 1, .not_reserved);
+}
+
+/// `node_destroy` (`0x00499E30`) with `node_forget` (`0x00499BB0`): takes part `ref` out of the
+/// object in `slot`, and with it each part linked to it however deep and every model mounted on
+/// any of them. Each is hidden for good (`Model.Part.removed`), a turret whose base it is stops
+/// for good (`guns.Turret.gone`), and a component leaves the object's list.
+pub fn destroyPart(slot: *create.Slot, ref: PartRef) void {
+    const part = ref.part();
+    if (part.removed) return;
+    part.removed = true;
+    part.hidden = true;
+    for (ref.model.parts, 0..) |*linked, at| {
+        if (linked.parent == ref.index) destroyPart(slot, .{ .model = ref.model, .index = at });
+    }
+    if (part.turret) for (slot.guns) |*gun| {
+        const base = gun.turret.base() orelse continue;
+        if (base.model == ref.model and base.index == ref.index) gun.turret = .gone;
+    };
+    for (&slot.components) |*entry| {
+        if (entry.* == part) entry.* = null;
+    }
+    var each = ref.model.carried();
+    while (each.next()) |mount| {
+        if (mount.part != ref.index) continue;
+        for (0..mount.model.parts.len) |at| destroyPart(slot, .{ .model = &mount.model, .index = at });
+    }
+}
+
 /// The light mask `node_add_part` gives a part's Surrender object: a light reaches the object unless
 /// their masks share a bit (`docs/engine/rendering.md`).
 pub fn lightMask(model_lists_components: bool) u32 {
@@ -773,8 +874,10 @@ pub const Model = struct {
     centre: Vector = @splat(0),
     /// The sum of its shown parts' masses (`GameObject.mass`), as `recentre` leaves it.
     mass: f32 = 0,
-    /// The root node's `destroyed` flag, which `component_damage` sets where a component hanging
-    /// from the root runs out of armour.
+    /// The root node's `destroyed` flag, which `component_damage` sets where one of its parts, a
+    /// component, runs out of armour, and `loseComponents` acts on and clears. Every part's node
+    /// stays in its root's child list, whatever part it is linked to, so the root holds them all
+    /// (`node_holder`, `0x00499EE0`).
     destroyed: bool = false,
     /// Its farthest vertex from its origin, and its bounding box (`GameObject.radius`,
     /// `bounds_min`, `bounds_max`), as `recentre` leaves them.
@@ -955,9 +1058,12 @@ pub const Model = struct {
         /// assembly it belongs to, such as a turret and its barrels.
         component_armor: i32 = 0,
         link_id: u32 = 0,
-        /// Its node's `destroyed` flag, which `component_damage` sets on the holder of a component
-        /// whose armour has run out.
-        destroyed: bool = false,
+        /// Its node's flag `0x10`: a component whose destruction `loseComponents` has dealt with,
+        /// which is no longer aimed at.
+        spent: bool = false,
+        /// Taken out of its model (`node_destroy`, `destroyPart`): hidden for good, and passed
+        /// over where the game finds its node gone from its root's child list.
+        removed: bool = false,
         /// Its node's `targetable` flag, which cycling subtargets requires and `SetTargetable`
         /// changes.
         targetable: bool = false,
@@ -984,6 +1090,12 @@ pub const Model = struct {
         object: srapiext.MeshObject,
         /// Its node's animation, and what `node_place` reads of its part.
         animation: Animation = .{},
+
+        /// Whether it is there to be aimed at: neither hidden nor spent (node flags `0x20` and
+        /// `0x10`).
+        pub fn standing(part: *const Part) bool {
+            return !part.hidden and !part.spent;
+        }
 
         /// Where it stands as it was last drawn: its node's frame.
         pub fn drawn(part: *const Part) math.Place {
@@ -2627,6 +2739,114 @@ test "Model.partPlace" {
     try std.testing.expectApproxEqAbs(100, next.position[0], 1e-3);
     try std.testing.expectApproxEqAbs(100, next.position[2], 1e-3);
     try std.testing.expectEqual(@as(Vector, .{ 0, 0, 200 }), model.partPlace(2, .now).position);
+}
+
+test loseComponents {
+    const gpa = std.testing.allocator;
+    const guns = @import("guns.zig");
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(gpa);
+    defer mission.deinit();
+    const ctx = mission.orders();
+    var fixture: create.testing.Model = undefined;
+    try fixture.init(gpa);
+    defer fixture.deinit(gpa);
+    _ = try mission.add(.kamov, @splat(0));
+    const index = try create.createObject(mission.objects, &mission.tables, fixture.types(), null, .predator, 0, @splat(0), &mission.random);
+    const slot = &mission.objects.slots[index];
+
+    // Its model, three parts hanging from the root: a comms transmitter; its damaged model, hidden;
+    // and an engine that is a missile turret's base.
+    const srmesh = @import("../surrender/surrenderlib/srmesh.zig");
+    const mesh = try srmesh.testing.square(gpa);
+    defer mesh.deinit(gpa);
+    var animated: Animated = undefined;
+    animated.init(&mesh, &.{});
+    var model: Model = try .create(gpa, &animated.source, &animated.loaded, .{});
+    defer model.deinit(gpa);
+    const kept = slot.model;
+    slot.model = model;
+    defer slot.model = kept;
+    const live = &slot.model.?;
+    for (live.parts) |*part| part.parent = null;
+    live.parts[0] = .{ .hidden = false, .parent = null, .origin = @splat(0), .object = live.parts[0].object, .class = .comms_transmitter, .link_id = 1, .armor = 100 };
+    live.parts[1].link_id = 1;
+    live.parts[1].hidden = true;
+    live.parts[2].class = .engine;
+    live.parts[2].link_id = 2;
+    live.parts[2].armor = 100;
+    live.parts[2].turret = true;
+    slot.components[0] = &live.parts[0];
+    var fitted = [_]guns.Fitted{.{ .turret = .{ .missile = .{ .model = live, .base = 2, .launcher = 2 } } }};
+    const kept_guns = slot.guns;
+    slot.guns = &fitted;
+    defer slot.guns = kept_guns;
+
+    // Nothing happens until a component's armour runs out and its root is flagged.
+    loseComponents(ctx, index);
+    try std.testing.expect(!live.parts[0].spent);
+
+    // The comms transmitter is taken out and leaves the components; its damaged model shows.
+    live.parts[0].armor = -1;
+    live.destroyed = true;
+    loseComponents(ctx, index);
+    try std.testing.expect(live.parts[0].spent and live.parts[0].removed and live.parts[0].hidden);
+    try std.testing.expect(!live.parts[1].hidden);
+    try std.testing.expect(!live.parts[2].removed);
+    try std.testing.expect(!live.destroyed);
+    try std.testing.expectEqual(null, slot.components[0]);
+
+    // An engine takes its share of the thrust with it, and the turret on it stops for good.
+    slot.object.engines = 2;
+    slot.object.engines_intact = 1;
+    live.parts[2].armor = -1;
+    live.destroyed = true;
+    loseComponents(ctx, index);
+    try std.testing.expectEqual(0.5, slot.object.engines_intact);
+    try std.testing.expect(live.parts[2].removed);
+    try std.testing.expect(fitted[0].turret == .gone);
+
+    // A shield generator takes the object's with it.
+    live.parts[1] = .{ .hidden = false, .parent = null, .origin = @splat(0), .object = live.parts[1].object, .class = .shield_generator, .link_id = 3, .armor = -1 };
+    slot.object.flags.shield_generator = true;
+    live.destroyed = true;
+    loseComponents(ctx, index);
+    try std.testing.expect(!slot.object.flags.shield_generator);
+    try std.testing.expect(live.parts[1].removed);
+}
+
+test "a ship that lists components ends with its hull" {
+    const gpa = std.testing.allocator;
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(gpa);
+    defer mission.deinit();
+    const ctx = mission.orders();
+    var fixture: create.testing.Model = undefined;
+    try fixture.init(gpa);
+    defer fixture.deinit(gpa);
+    fixture.data[0].part.class = .hull;
+    _ = try mission.add(.kamov, @splat(0));
+
+    // Any ship: the hull is taken out with the rest of its assembly, and the ship ends.
+    const ship = try create.createObject(mission.objects, &mission.tables, fixture.types(), null, .predator, 0, @splat(0), &mission.random);
+    const hull = &mission.objects.slots[ship].model.?;
+    hull.parts[0].armor = -1;
+    hull.destroyed = true;
+    loseComponents(ctx, ship);
+    try std.testing.expect(mission.objects.slots[ship].object.flags.exploding);
+    try std.testing.expect(hull.parts[0].removed and !hull.destroyed);
+
+    // A capital ship's routine ends it there instead, leaving the hull and its root's flag, and
+    // it drifts on unpowered.
+    const capital = try create.createObject(mission.objects, &mission.tables, fixture.types(), null, .badanov, 0, .{ 0, 0, 5000 }, &mission.random);
+    const wreck = &mission.objects.slots[capital].model.?;
+    wreck.parts[0].armor = -1;
+    wreck.destroyed = true;
+    loseComponents(ctx, capital);
+    const flags = mission.objects.slots[capital].object.flags;
+    try std.testing.expect(flags.exploding and flags.unpowered);
+    try std.testing.expect(wreck.parts[0].spent and !wreck.parts[0].removed and wreck.destroyed);
+    try std.testing.expectEqual(0, mission.objects.slots[capital].object.order_count);
 }
 
 test "Model.lineage" {

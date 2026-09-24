@@ -441,16 +441,16 @@ const shielded_hit: f32 = 1000;
 
 /// `component_damage` (`0x004645C0`): damage to one of an object's components, as the difficulty
 /// scales it. A collision does none; guns, missiles and explosions do. Where the component belongs
-/// to an assembly, such as a
-/// turret and its barrels, the damage goes to the part of it that still has armour, and a component
-/// whose armour runs out marks the part it hangs from as destroyed.
+/// to an assembly, such as a turret and its barrels, the damage goes to the first part of it that
+/// still has armour, and a component whose armour runs out marks its model's root as destroyed,
+/// for `objects.loseComponents` to act on.
 ///
 /// With smart targeting on, the player's hit on a hostile ship makes the component struck, if it
 /// is one the ship lists, the player's target and subtarget, or else the ship alone, unless it is
 /// already the target of the player's current order.
 ///
-/// The part struck may be one of a model mounted on the object's: its assembly and the part it
-/// hangs from are that model's.
+/// The part struck may be one of a model mounted on the object's: its assembly and its root are
+/// that model's.
 ///
 /// Not ported: the invulnerability a component may carry, the score a player's hit is worth, and
 /// what multiplayer makes of it.
@@ -467,7 +467,7 @@ pub fn componentDamage(world: gameobj.World, index: u16, struck_part: objects.Pa
     var struck = component;
     if (component.link_id != 0) {
         for (model.parts) |*part| {
-            if (part.parent != component.parent or part.link_id != component.link_id) continue;
+            if (part.removed or part.link_id != component.link_id) continue;
             if (part.component_armor <= 0) continue;
             struck = part;
             break;
@@ -487,7 +487,7 @@ pub fn componentDamage(world: gameobj.World, index: u16, struck_part: objects.Pa
     if (left >= 0 or !protected) struck.armor = left;
     object.last_attacker = attacker;
     if (struck.armor < 0) {
-        if (struck.parent) |holder| model.parts[holder].destroyed = true else model.destroyed = true;
+        model.destroyed = true;
     }
     const display = smartTargeting(world, attacker, kind) orelse return;
     if (object.side != .hostile) return;
@@ -909,7 +909,7 @@ test componentDamage {
     try std.testing.expectEqual(60, part.armor);
     try std.testing.expectEqual(1, all.slots[index].object.last_attacker);
 
-    // Past its armour, the part it hangs from is marked destroyed; this one hangs from the root.
+    // Past its armour, its model's root is marked destroyed.
     componentDamage(world, index, struck, 100, 1, .bullet);
     try std.testing.expect(part.armor < 0);
     try std.testing.expect(all.slots[index].model.?.destroyed);

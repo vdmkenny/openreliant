@@ -489,9 +489,10 @@ pub const GameObject = extern struct {
     /// Each `6 * ShipCombat.armor_class - 1` when created. `ship_damage_value` reports the lowest.
     armor: Quadrants,
     _unknown_610: u32,
-    /// **Unknown.** Code in `explode.cpp` that `create_object` gives capital ships, planets and a
-    /// few other types, which `node_draw` runs as one of the object's components is destroyed.
-    _unknown_614: Pointer(Routine),
+    /// The routine in `explode.cpp` that `create_object` gives most capital ships, bases and
+    /// stations, which `node_draw` runs as one of the object's components is destroyed. The port
+    /// leaves it null and picks the routine by type as it needs it (`explode.ComponentLoss`).
+    component_loss: Pointer(Routine),
     /// The slots of two objects it passes through: the collision sweep of `objects_update` tests
     /// no pair where either names the other. Both are `none` when created.
     passes_through: [2]Slot,
@@ -812,7 +813,7 @@ pub const GameObject = extern struct {
         assert(@offsetOf(GameObject, "guns") == 0x134);
         assert(@offsetOf(GameObject, "rounds") == 0x13C);
         assert(@offsetOf(GameObject, "gun_turn") == 0x14C);
-        assert(@offsetOf(GameObject, "_unknown_614") == 0x614);
+        assert(@offsetOf(GameObject, "component_loss") == 0x614);
         assert(@offsetOf(GameObject, "passes_through") == 0x618);
         assert(@offsetOf(GameObject, "_unknown_624") == 0x624);
         assert(@offsetOf(GameObject, "_unknown_628") == 0x628);

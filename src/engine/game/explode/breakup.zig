@@ -106,13 +106,17 @@ pub const Source = struct {
 pub const Cuts = enum(u2) {
     one = 1,
     two = 2,
+    three = 3,
 
     fn pieces(cuts: Cuts) usize {
         return @as(usize, 1) << @intFromEnum(cuts);
     }
 };
 
-pub const max_pieces = Cuts.two.pieces();
+pub const max_pieces = Cuts.three.pieces();
+
+/// Which side of each plane of a cut a polygon lies on, a bit a plane.
+const Sides = std.meta.Int(.unsigned, @intFromEnum(Cuts.three));
 
 /// `model_slice` (`0x0046BF20`): cuts `source`'s mesh along `cuts` random planes through `frame`'s
 /// origin. Each polygon goes to the side of each plane that the sum of its corners, in `frame`,
@@ -127,7 +131,7 @@ pub const max_pieces = Cuts.two.pieces();
 /// from the piece's own corners, and carries the colours and coordinates, so a piece looks as its
 /// part did. It also leaves out the polygons in no surface, which draw nothing.
 pub fn cut(gpa: Allocator, frame: math.Place, source: Source, cuts: Cuts, random: *libcmt.Rand) Allocator.Error![max_pieces]?Piece {
-    var planes: [@intFromEnum(Cuts.two)]Vector = undefined;
+    var planes: [@intFromEnum(Cuts.three)]Vector = undefined;
     for (planes[0..@intFromEnum(cuts)]) |*plane| plane.* = random.centredVector(@splat(1));
 
     // The source's frame, as the frame sees it.
@@ -136,7 +140,7 @@ pub fn cut(gpa: Allocator, frame: math.Place, source: Source, cuts: Cuts, random
     const offset = math.transform(into, source.place.position - frame.position);
 
     const mesh = source.mesh;
-    const sides = try gpa.alloc(u2, mesh.polygons.len);
+    const sides = try gpa.alloc(Sides, mesh.polygons.len);
     defer gpa.free(sides);
     for (mesh.polygons, sides) |polygon, *side| {
         var sum: Vector = @splat(0);
@@ -144,7 +148,7 @@ pub fn cut(gpa: Allocator, frame: math.Place, source: Source, cuts: Cuts, random
         const point = math.transform(turn, sum) + offset;
         side.* = 0;
         for (planes[0..@intFromEnum(cuts)], 0..) |plane, bit| {
-            if (math.dot(point, plane) > 0) side.* |= @as(u2, 1) << @intCast(bit);
+            if (math.dot(point, plane) > 0) side.* |= @as(Sides, 1) << @intCast(bit);
         }
     }
 
@@ -175,7 +179,7 @@ const Side = struct {
 
 /// The mesh of the polygons of `mesh` that lie on `side`, turned by `turn` and moved by `offset`.
 /// Null where none lie there, or where they have more corners than a mesh holds.
-fn pieceOf(gpa: Allocator, mesh: *const srapiext.Mesh, sides: []const u2, side: u2, turn: math.Matrix, offset: Vector) Allocator.Error!?Side {
+fn pieceOf(gpa: Allocator, mesh: *const srapiext.Mesh, sides: []const Sides, side: Sides, turn: math.Matrix, offset: Vector) Allocator.Error!?Side {
     var polygon_count: usize = 0;
     var corner_count: usize = 0;
     var walk: Walk = .{ .mesh = mesh, .sides = sides, .side = side };
@@ -235,8 +239,8 @@ fn sharesCoordinates(mesh: *const srapiext.Mesh) bool {
 /// The polygons of a mesh on one side, surface by surface.
 const Walk = struct {
     mesh: *const srapiext.Mesh,
-    sides: []const u2,
-    side: u2,
+    sides: []const Sides,
+    side: Sides,
     surface: usize = 0,
     in_surface: usize = 0,
     polygon: usize = 0,
@@ -453,7 +457,7 @@ fn breakUpPart(explosions: *explode.Explosions, world: gameobj.World, slot: *con
             const tumble = random.centredVector(@splat(first_tumble));
             explosions.pieces.add(.{
                 .until = @as(i32, random.rand() % flight_range) + first_flight + now,
-                .velocity = away(piece.object.position, centre, speed, carried),
+                .velocity = away(piece.object.position, centre, speed, carried, step_share),
                 .tumble = tumble,
                 .trail = trailFrom(kind, now),
                 .piece = piece,
@@ -468,7 +472,7 @@ fn breakUpPart(explosions: *explode.Explosions, world: gameobj.World, slot: *con
             const tumble = random.centredVector(@splat(count * kind.tumble()));
             explosions.pieces.add(.{
                 .until = @as(i32, random.rand() % flight_range) + kind.flight() + now,
-                .velocity = away(flying.object.position, centre, count * second_speed, carried),
+                .velocity = away(flying.object.position, centre, count * second_speed, carried, step_share),
                 .tumble = tumble,
                 .piece = flying,
             });
@@ -477,9 +481,88 @@ fn breakUpPart(explosions: *explode.Explosions, world: gameobj.World, slot: *con
 }
 
 /// A piece's velocity a tick: away from the ship's centre at `speed` a step, with what it carries
-/// of the ship's velocity.
-fn away(at: Vector, centre: Vector, speed: f32, carried: Vector) Vector {
-    return (math.normalize(at - centre) * @as(Vector, @splat(speed)) + carried) * @as(Vector, @splat(step_share));
+/// of the ship's velocity, `share` of both.
+fn away(at: Vector, centre: Vector, speed: f32, carried: Vector, share: f32) Vector {
+    return (math.normalize(at - centre) * @as(Vector, @splat(speed)) + carried) * @as(Vector, @splat(share));
+}
+
+/// How a part goes up as a component is destroyed (`0x0046CCF0`): the bits thrown from about it,
+/// every third of `part_points` within `explode.burst_spread` of its radius; and its pieces, flying
+/// away at `part_speed` times their cuts and the assembly's reach (`0x004DC824`), carrying the
+/// ship's velocity, both `part_share` of it a tick, turning up to `part_tumble` times their cuts
+/// either way about each axis a tick (`0x004DC4D0`), for `part_flight` ticks and up to
+/// `part_flight_range` more.
+const part_points = 20;
+const part_bit: explode.Bit.Throw = .{ .size = 0.3, .speed = 0.1 };
+const part_speed: f32 = 1.0 / 60.0;
+const part_share: f32 = 0.01;
+const part_tumble: f32 = 0.005;
+const part_flight = 100;
+const part_flight_range = 20;
+
+/// `0x0046CCF0` for part `index` of `model` and, after it, each part of each model mounted on it,
+/// however deep: each goes up (`burstPart`). A part taken out of its model is passed over with
+/// what it carries.
+pub fn burstTree(world: gameobj.World, slot: *const create.Slot, model: *const objects.Model, index: usize, reach: f32) void {
+    if (model.parts[index].removed) return;
+    burstPart(world, slot, &model.parts[index], reach);
+    var each = model.carried();
+    while (each.next()) |mount| {
+        if (mount.part != index) continue;
+        for (0..mount.model.parts.len) |at| burstTree(world, slot, &mount.model, at, reach);
+    }
+}
+
+/// A part of a destroyed component's assembly going up: a lit fireball its size where it stands,
+/// burning bits thrown from about it, and its drawn mesh cut in four through the ship's centre,
+/// each quarter cut again in two, four, eight and two. Each piece flies away from the ship, the
+/// faster the more the assembly's parts measure across together (`reach`), and a lit fireball its
+/// size waits for it where it will end.
+fn burstPart(world: gameobj.World, slot: *const create.Slot, part: *const objects.Model.Part, reach: f32) void {
+    const explosions = world.explosions orelse return;
+    const random = world.random;
+    const at = part.drawn();
+    const radius = part.object.radius;
+    explode.fireballAt(world, at.position, .{ .size = radius, .light = true });
+    for (0..part_points) |n| {
+        const out = math.transform(at.orientation, random.centredVector(@splat(radius * explode.burst_spread)));
+        if (n % 3 == 0) explode.throwBit(world, at.position + out, math.normalize(out), part_bit);
+    }
+
+    const shown = part.object.levels;
+    if (shown.len == 0) return;
+    const gpa = explosions.pieces.gpa;
+    const now = world.clock.frame_start;
+    const centre = slot.drawn.position;
+    const carried = gameobj.vector(slot.object.velocity);
+    const source: Source = .{
+        .mesh = shown[@min(part.object.level, shown.len - 1)].mesh,
+        .place = at,
+        .flags = part.object.flags,
+        .light_mask = explosions.settings.debris_lights.mask(part.object.light_mask),
+    };
+    var quarters = cut(gpa, slot.drawn, source, .two, random) catch return;
+    for (&quarters, 0..) |*maybe, n| {
+        var quarter = maybe.* orelse continue;
+        defer quarter.deinit(gpa);
+        const cuts: Cuts = @enumFromInt(n % 3 + 1);
+        const again: Source = .{ .mesh = &quarter.mesh, .place = quarter.place(), .flags = source.flags, .light_mask = source.light_mask };
+        var pieces = cut(gpa, quarter.place(), again, cuts, random) catch continue;
+        const count: f32 = @floatFromInt(@intFromEnum(cuts));
+        for (&pieces) |*small| {
+            const piece = small.* orelse continue;
+            const velocity = away(piece.object.position, centre, count * reach * part_speed, carried, part_share);
+            const flight = @as(i32, random.rand() % part_flight_range) + part_flight;
+            const end = piece.object.position + velocity * @as(Vector, @splat(@floatFromInt(flight)));
+            explode.fireballAt(world, end, .{ .size = piece.object.radius, .light = true, .delay = flight });
+            explosions.pieces.add(.{
+                .until = now + flight,
+                .velocity = velocity,
+                .tumble = random.centredVector(@splat(count * part_tumble)),
+                .piece = piece,
+            });
+        }
+    }
 }
 
 const testing = struct {
@@ -545,6 +628,13 @@ test cut {
         }
     }
     try std.testing.expectEqual(mesh.polygons.len, polygons);
+
+    // Three planes make up to eight pieces, every polygon still in one of them.
+    var eighths = try cut(gpa, .{}, source, .three, &random);
+    defer for (&eighths) |*maybe| if (maybe.*) |*piece| piece.deinit(gpa);
+    var kept: usize = 0;
+    for (&eighths) |*maybe| kept += if (maybe.*) |piece| piece.mesh.polygons.len else 0;
+    try std.testing.expectEqual(mesh.polygons.len, kept);
 }
 
 test Pieces {

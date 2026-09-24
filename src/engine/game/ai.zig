@@ -230,6 +230,19 @@ pub fn collisionCourse(world: gameobj.World, index: u16, target: u16, steps: f32
 /// (`0x28`).
 pub const eject_below = 40;
 
+/// `object_hull_lost` (`0x00401F00`): the end of a ship that lists components, as the part of its
+/// hull holding it together is destroyed. Its current order gives way as to Explode, its stack is
+/// emptied, and it is marked exploding, so it takes no order again; no Explode order runs it down.
+///
+/// Not ported: the Destroyed event it queues for the ship (`event_destroyed`,
+/// [#37](https://github.com/vdmkenny/openreliant/issues/37)).
+pub fn hullLost(ctx: aigeneric.Context, index: u16) void {
+    const object = &ctx.world.objects.slots[index].object;
+    _ = aigeneric.giveWay(ctx, index, .explode) catch false;
+    object.order_count = 0;
+    object.flags.exploding = true;
+}
+
 /// `object_destroyed` (`0x00401F30`): a ship's end. An AI ship's pilot ejects where the mission
 /// lets it and its roll says so, or where the ship is told to eject before exploding, and the ship
 /// spins on under Eject Spin. The player's ejects, unless it already has or the blow was too
@@ -281,6 +294,23 @@ fn replaceOrders(ctx: aigeneric.Context, index: u16, making_way: orders.Order, o
 pub fn setTargetable(object: *gameobj.GameObject, combat: ?*const create.ShipCombat, targetable: bool) void {
     const allowed = if (combat) |stats| stats.targeting.targetable else false;
     object.flags.targetable = targetable and allowed;
+}
+
+test hullLost {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const ctx = mission.orders();
+    _ = try mission.add(.predator, @splat(0));
+    const ship = try mission.add(.sabre, .{ 0, 0, 1000 });
+    const object = &mission.objects.slots[ship].object;
+
+    // Its orders are cleared, and it takes none again.
+    try std.testing.expect(try aigeneric.push(ctx, ship, .do_nothing, .none));
+    hullLost(ctx, ship);
+    try std.testing.expectEqual(0, object.order_count);
+    try std.testing.expect(object.flags.exploding);
+    try std.testing.expect(!try aigeneric.push(ctx, ship, .do_nothing, .none));
 }
 
 test objectDestroyed {
@@ -679,8 +709,8 @@ pub const target_barred: GameObject.Flags = .{
 
 /// `order_target_valid` (`0x00401870`): whether an order's target can still be aimed at. The object
 /// must be targetable and none of `target_barred`, save the flags in `allowed`, and a component
-/// must be one the object has and neither hidden nor passed over. **Unverified:** it lies before
-/// this file's known code.
+/// must be one the object has and neither hidden nor spent (`objects.Model.Part.standing`).
+/// **Unverified:** it lies before this file's known code.
 pub fn targetValid(all: *const create.Objects, target: aigeneric.Target, allowed: GameObject.Flags) bool {
     if (target.index < 0 or target.index >= all.slots.len) return false;
     const slot = &all.slots[@intCast(target.index)];
@@ -690,9 +720,8 @@ pub fn targetValid(all: *const create.Objects, target: aigeneric.Target, allowed
     if (barred != 0) return false;
     if (target.component < 0) return true;
     if (target.component >= object.component_count) return false;
-    // The game also passes over a node marked with flag `0x10`, which the port does not keep.
     const part = slot.components[@intCast(target.component)] orelse return false;
-    return !part.hidden;
+    return part.standing();
 }
 
 comptime {

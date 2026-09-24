@@ -1165,7 +1165,7 @@ pub fn seekTarget(all: *const create.Objects, target: *aigeneric.Target, step: S
 }
 
 /// `0x00414F90`: steps the player's target's component round its components to the next the
-/// player can aim at, targetable and not hidden, or to none when it finds none. It first gives
+/// player can aim at, targetable and neither hidden nor spent, or to none when it finds none. It first gives
 /// both forms of the target display their full time again, and does nothing more for a target
 /// that lists no components, or a friendly one; otherwise it opens the target's form of the
 /// display, if that is shut. The display follows the new component on its next frame. Not yet
@@ -1185,7 +1185,7 @@ pub fn cycleSubtarget(display: *hud.State, all: *create.Objects, step: Step, mul
     for (0..@intCast(count)) |_| {
         component.* = step.from(component.*, count);
         const part = slot.components[@intCast(component.*)] orelse continue;
-        if (part.targetable and !part.hidden) return;
+        if (part.targetable and part.standing()) return;
     }
     component.* = -1;
 }

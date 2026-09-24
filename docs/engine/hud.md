@@ -382,10 +382,11 @@ as the part's armour has lost of its first, rounded.
 | 15 to 22 | `0x193` to `0x19A` | Surface Building, Twin Power Cores, Vent Hatch, Ion Cannon, Armored Plate, Cap Gun, Warp Projector, Fuel Pod |
 
 The hull's bar, shape `0xDC` with its top at `(-6, -0x7E)`, 98 rows, is lit from the foot as far as
-the first part hanging from the ship's root that is hull and has armour keeps its armour; for a
-torpedo, as far as its weakest armour quadrant is from six times its armour class. Shape `0xDB`
-darkens the rest from the top, its pane's top row `-0x75`, or `-0x78` for a torpedo. Each bar is
-cut to a pane four pixels wide (`hud_bar_pane`, `0x0057BDFC`). A ship with neither has no bar.
+the first of the ship's own parts that is hull and has armour keeps its armour (every part node
+stays in its root's child list, whatever part it is linked to); for a torpedo, as far as its weakest
+armour quadrant is from six times its armour class. Shape `0xDB` darkens the rest from the top, its
+pane's top row `-0x75`, or `-0x78` for a torpedo. Each bar is cut to a pane four pixels wide
+(`hud_bar_pane`, `0x0057BDFC`). A ship with neither has no bar.
 
 As a form closes, `hud_window_close` draws what it shows once more into `hud_window_picture`
 (`0x00566600`), for the target and subtarget it last drew (`hud_display_target`, `0x0057BF40`, and
