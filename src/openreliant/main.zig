@@ -1026,11 +1026,15 @@ const Sandbox = struct {
         model: game.objects.Model,
     };
 
-    /// The Reliant, which the sandbox starts ahead of the player and turned across its way. It flies its heading at `reliant_speed`, a tenth of the 100 its type cruises at,
-    /// which carries it slowly across the player's way.
+    /// The Reliant, which the sandbox starts ahead of the player and turned across its way. It flies
+    /// its heading at `crawl_speed`, a tenth of the 100 its type cruises at, which carries it slowly
+    /// across the player's way.
     const reliant_at: math.Vector = .{ 6000, -9000, 48000 };
-    const reliant_turn: f32 = 1.1;
-    const reliant_speed: i32 = 10;
+    const crawl_turn: f32 = 1.1;
+    const crawl_speed: i32 = 10;
+    /// The Badanov, the smallest of the Coalition's capital ships, which the sandbox starts beyond
+    /// the wing, crawling alongside the Reliant: turned as it is, flying as fast.
+    const badanov_at: math.Vector = .{ 6000, -9000, 190000 };
     /// A wing: four Sabres, `wing_ahead` in front of the player, beyond the Reliant, and
     /// `wing_spacing` apart. Their models are drawn once they are within 25000, a fighter's last
     /// level of detail.
@@ -1113,18 +1117,28 @@ const Sandbox = struct {
         _ = game.aigeneric.push(orders, index, .player_control, .none) catch |err| {
             std.log.warn("the player's controls are left out: {s}", .{@errorName(err)});
         };
-        if (sandbox.create(.reliant, reliant_at)) |reliant| {
-            const slot = &sandbox.objects.slots[reliant];
-            game.objects.setOrientation(&slot.object, &slot.drawn, math.rotation(.y, reliant_turn));
-            // Fly with nothing to fly to holds the heading it starts on, at the speed in its data.
-            if (game.aigeneric.push(orders, reliant, .fly, .none) catch false) {
-                if (game.aigeneric.current(sandbox.objects, reliant)) |entry| entry.data.fly = reliant_speed;
-            }
-        } else |err| std.log.warn("the Reliant is left out: {s}", .{@errorName(err)});
+        sandbox.crawl(orders, .reliant, "Reliant", reliant_at);
+        sandbox.crawl(orders, .badanov, "Badanov", badanov_at);
         sandbox.bringWing(orders);
         sandbox.types.sweep(&sandbox.objects.types);
         if (sandbox.player_type != ship_type or sandbox.cockpit == null) try sandbox.loadCockpit(ship_type);
         sandbox.player_type = ship_type;
+    }
+
+    /// A capital ship of `ship_type`, `name`d in the warning, at `at`, turned across the player's
+    /// way, crawling along its heading at `crawl_speed`. Left out, with a warning, where it can't
+    /// be made.
+    fn crawl(sandbox: *Sandbox, orders: game.aigeneric.Context, ship_type: game.gameobj.Type, name: []const u8, at: math.Vector) void {
+        const index = sandbox.create(ship_type, at) catch |err| {
+            std.log.warn("the {s} is left out: {s}", .{ name, @errorName(err) });
+            return;
+        };
+        const slot = &sandbox.objects.slots[index];
+        game.objects.setOrientation(&slot.object, &slot.drawn, math.rotation(.y, crawl_turn));
+        // Fly with nothing to fly to holds the heading it starts on, at the speed in its data.
+        if (game.aigeneric.push(orders, index, .fly, .none) catch false) {
+            if (game.aigeneric.current(sandbox.objects, index)) |entry| entry.data.fly = crawl_speed;
+        }
     }
 
     fn create(sandbox: *Sandbox, ship_type: game.gameobj.Type, at: math.Vector) game.create.Error!u16 {
@@ -1414,9 +1428,9 @@ test "the sandbox's Reliant flies at a crawl" {
     var flight = game.gameobj.testing.flight;
     flight.max_speed = cruise;
     var object = game.gameobj.testing.object();
-    object.throttle = @as(f32, @floatFromInt(Sandbox.reliant_speed)) / cruise;
+    object.throttle = @as(f32, @floatFromInt(Sandbox.crawl_speed)) / cruise;
     for (0..200) |_| game.motion.fly(&object, &flight, .chase, game.motion.Motion.forward.thrust());
-    const crawl: f32 = @floatFromInt(Sandbox.reliant_speed);
+    const crawl: f32 = @floatFromInt(Sandbox.crawl_speed);
     try std.testing.expectApproxEqAbs(crawl, math.length(game.gameobj.vector(object.velocity)), 0.01);
 }
 

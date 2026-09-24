@@ -102,10 +102,11 @@ improvements off, and an option after it turns one back on.
 
 It runs a sandbox of its own, drawn through the ported pipeline and driver with the GPU
 ([Renderer](renderer.md)): the player's ship at the origin, facing along Z, the Reliant ahead of it
-and turned across its way, and a wing of four Sabres beyond it. Each flies under an order of
+and turned across its way, a wing of four Sabres beyond it, and beyond them the Badanov, the
+smallest of the Coalition's capital ships, turned as the Reliant is. Each flies under an order of
 its own ([Orders](../engine/orders.md)): the player's ship under Player Control, which is its own
-controls, the Sabres under Fight against the player, and the Reliant under Fly at a tenth of its
-speed, which has it crawl across the player's way. The Sabres' pilot is record 42 of
+controls, the Sabres under Fight against the player, and the Reliant and the Badanov under Fly at
+a tenth of the Reliant's speed, which has them crawl alongside each other across the player's way. The Sabres' pilot is record 42 of
 `pilotstats.bin`, one of its weakest, where `create_object` gives a Sabre the sharp pilot of record
 66, so the player's missiles mostly get past their countermeasures. The game's own bindings drive the camera ([Controls](../engine/controls.md),
 [Camera](../engine/camera.md)): the keys 1 to 8 pick the cockpit, left, right, rear, flyby,
