@@ -178,8 +178,9 @@ throws debris only, and leaves a piece out where the game has no model for it.
 
 ## Break-up
 
-A blast and a burst break the ship up first (`explode_break_up`, `0x0046C550`). It walks the
-model's hierarchy from the root, each part before the parts hanging from it, and cuts each part in
+A blast and a burst break the ship up first (`explode_break_up`, `0x0046C550`). It walks the node
+tree from the root, the root's child list, every part in order whatever it is linked to and shown
+or not, and each part's own children, the roots of the models it carries, and cuts each part in
 four (`model_slice`, `0x0046BF20`).
 
 A cut draws a number of random planes through a frame's origin, each a normal of three numbers

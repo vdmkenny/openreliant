@@ -73,11 +73,11 @@ bytes at `GameObject + 0x158`, `rack_count` of them (`+0x150`).
    `0x3D`: 0 and 255 for the campaign's tier, 4 and 5 for tier 0. The campaign's tier is 0 for a
    new pilot and rises to 1, 2 and 3 after the 11th, 19th and 21st missions
    (`mission_end_record`).
-2. The types (`object_loadout_by_tier`, `0x0045E500`): each missile hardpoint of the parts that
-   hang from the root, in turn, takes the missile its attachment names for the tier: its id for
-   tier 0, and the low half of the four words after it for tiers 1 to 4. A player's ship takes the
-   racks the player chose on the loadout screen instead (`0x00588400`, `0x54` bytes a player),
-   unless the briefing is skipped.
+2. The types (`object_loadout_by_tier`, `0x0045E500`): each missile hardpoint of the parts in the
+   root's child list, every part in order whatever it is linked to, in turn, takes the missile its
+   attachment names for the tier: its id for tier 0, and the low half of the four words after it
+   for tiers 1 to 4. A player's ship takes the racks the player chose on the loadout screen instead
+   (`0x00588400`, `0x54` bytes a player), unless the briefing is skipped.
 3. The fitting (`object_fit_missiles`, `0x0045E1A0`): on each hardpoint, in turn, hangs what its
    rack holds, the pod or the missile (`attachment_models`), and fills the rack with the pod's
    capacity, or 1. A rack of no missile ends the loadout: its count is 0 and every hardpoint after
@@ -88,9 +88,8 @@ A re-arm (`order_dock`, `cmd_ReplenishWeapons`) lets go of what hangs and fits t
 the tier at `GameObject + 0x648`, which nothing writes.
 
 The port fits a player's ship by the tier, as the game does when the briefing is skipped; the
-loadout screen is not ported (#44). The hardpoints of a part that hangs from another part are never
-reached, as in `Jap_Sai.SHP` and `Chin_Han.SHP`. **Unverified:** that the root lists its parts in
-the order the model does, which is the order the port walks.
+loadout screen is not ported (#44). The root lists each part at its number (`object_link_part`), so
+the hardpoints of a part linked to another, as in `Jap_Sai.SHP` and `Chin_Han.SHP`, are fitted too.
 
 ## Flight
 
@@ -198,8 +197,8 @@ against every object of type below 256 that collides, but its launcher, of any s
 - Any other: whether the segment passes within its radius. A Havoc or an Imp just ends there.
   Otherwise, where it first meets the sphere, the quadrant (`0x00463CA0`):
   - With the quadrant's shield below 0, or `invulnerable` at 4: `missile_hit_hull` (`0x00495BB0`).
-    The parts that hang from the root are tested by the boxes of their meshes; where the segment
-    meets one, the quadrant's armour takes the type's hull damage and the hit sounds.
+    Every part in the root's child list, hidden or not, is tested by the box of its mesh; where the
+    segment meets one, the quadrant's armour takes the type's hull damage and the hit sounds.
   - Otherwise, with a shield damage above 0: the shield takes it, with the hull damage over the
     shield damage as the share that passes through (`object_damage`), five times over in a
     multiplayer mission. The player's ship takes it only on the fore quadrant, and only as the hit
