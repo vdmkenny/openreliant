@@ -937,16 +937,14 @@ pub const max_candidates = 20;
 /// What a shot's `dies_at` becomes once it has struck something: the frame that follows frees it.
 pub const spent: i32 = -1;
 
-/// An object a shot may reach, and which of its components, as `bullet_place` leaves it.
+/// An object a shot may reach, and which of its parts, as `bullet_place` leaves it.
 pub const Candidate = struct {
     /// The object's slot.
     object: u16 = 0,
-    /// Its component, or `no_component` for an object whose components are not listed.
-    component: u16 = no_component,
+    /// For an object that lists components, the part (the game keeps its node's number,
+    /// `object_number_parts`); null for any other, which is taken whole.
+    part: ?objects.PartRef = null,
 };
-
-/// What a candidate's component holds where the object has none.
-pub const no_component: u16 = 0xFFFF;
 
 /// One shot in flight, as the game keeps it in the `0xC4` bytes of a pool record.
 pub const Bullet = struct {
@@ -1188,11 +1186,13 @@ fn shotSound(world: gameobj.World, index: u8, kind: GunType, sound: i32, player:
 }
 
 /// The objects `bullet_place` gives a new shot: those its path comes near enough to over its life,
-/// widened by how far each could move meanwhile. An object whose components are listed is tested
-/// part by part, so each part it could reach is its own candidate.
+/// widened by how far each could move meanwhile, up to `max_candidates`. An object whose
+/// components are listed is walked part by part (`objects.hitWalk`), along the path its life gives
+/// the shot from where it leaves the muzzle as it moves against the object, and each part whose
+/// collision tree's root box that path meets, or that plays a track, is a candidate of its own
+/// (`0x0047BC90`).
 ///
-/// Not ported: the parts, which `object_hit_test` picks for an object whose components are listed
-/// ([#40](https://github.com/vdmkenny/openreliant/issues/40)); such an object is taken whole here.
+/// **Quirk:** the object's velocity, a step's worth, is taken off the shot's, a tick's.
 fn candidates(world: gameobj.World, bullet: *Bullet, record: Gun, lifetime: i32) void {
     const all = world.objects;
     if (record.speed <= 0) return;
@@ -1211,10 +1211,37 @@ fn candidates(world: gameobj.World, bullet: *Bullet, record: Gun, lifetime: i32)
         const moving = if (slot.flight) |flight| ai.cruiseSpeed(object, flight, world.view) else 0;
         const reach = moving * when + object.radius + hugeReach(bullet.kind);
         if (math.lengthSquared(nearest - to) >= reach * reach) continue;
-        bullet.candidates[bullet.candidate_count] = .{ .object = index };
-        bullet.candidate_count += 1;
+        const model = if (slot.model) |*live| live else null;
+        if (object.flags.components and model != null) {
+            const end = bullet.at + (bullet.velocity - gameobj.vector(object.velocity)) * @as(Vector, @splat(life));
+            var listing: Listing = .{ .bullet = bullet, .object = index, .from = bullet.at, .to = end };
+            objects.hitWalk(model.?, object.placeAt(.next), bullet.at, end, &listing);
+        } else {
+            bullet.candidates[bullet.candidate_count] = .{ .object = index };
+            bullet.candidate_count += 1;
+        }
     }
 }
+
+/// `0x0047BC90`, what `bullet_place` tests each part of an object that lists components with:
+/// where the part plays a track, or the shot's path meets its collision tree's root box, the part
+/// is a candidate, while there is room.
+const Listing = struct {
+    bullet: *Bullet,
+    object: u16,
+    from: Vector,
+    to: Vector,
+
+    pub fn part(listing: *Listing, ref: objects.PartRef, place: math.Place, moving: bool) void {
+        const shot = listing.bullet;
+        if (shot.candidate_count == max_candidates) return;
+        const data = ref.data() orelse return;
+        if (data.nodes.len == 0) return;
+        if (!moving and !objects.meetsTree(ref, place, listing.from, listing.to)) return;
+        shot.candidates[shot.candidate_count] = .{ .object = listing.object, .part = ref };
+        shot.candidate_count += 1;
+    }
+};
 
 /// What a turret's shot does to a player's ship, over what it does to any other (`0x004DC59C`).
 const turret_damage_to_players: f32 = 2.5;
@@ -1335,9 +1362,14 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
             index += 1;
             continue;
         }
-        // An object whose components are listed is not tested part by part yet.
+        // An object whose components are listed is tested part by part, its candidates in a run.
         if (object.flags.components) {
-            index += 1;
+            var end = index;
+            while (end < bullet.candidate_count and bullet.candidates[end].object == candidate.object) end += 1;
+            if (componentStruck(world, bullet, segment, candidate.object, bullet.candidates[index..end])) |crossing| {
+                return componentHit(world, bullet, candidate.object, crossing);
+            }
+            index = end;
             continue;
         }
         // Where the segment first crosses the object's sphere.
@@ -1371,6 +1403,65 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
 /// quarter of the object's velocity, a step's (`bullet_hull_hit`).
 const hull_sparks: sparks.Spray = .{ .speed = 10, .speed_range = 5, .spread = 1, .count = 10 };
 const hull_sparks_carry: f32 = 0.25;
+
+/// `bullet_hit` for an object that lists components (`bullet_hull_test`, `0x004798B0`, and
+/// `missile_hull_test`): where the shot's segment meets the object's bounding box, the last face it
+/// crosses of the parts among `run`, the object's run of candidates, each tested where the segment
+/// passes within its radius of it as it stands drawn, and crossed at its next place
+/// (`objects.crossPart`). Null where it crosses none, and the shot flies on.
+fn componentStruck(world: gameobj.World, bullet: *const Bullet, segment: objects.Segment, index: u16, run: []const Candidate) ?objects.Crossing {
+    const slot = &world.objects.slots[index];
+    const model = if (slot.model) |*live| live else return null;
+    const root = slot.object.placeAt(.next);
+    if (!objects.meetsBounds(model, root, bullet.last, bullet.at)) return null;
+    var struck: ?objects.Crossing = null;
+    for (run) |candidate| {
+        const ref = candidate.part orelse continue;
+        const drawn = &ref.part().object;
+        if (!(segment.missSquared(drawn.position, segment.nearest(drawn.position)) < drawn.radius * drawn.radius)) continue;
+        const place = model.partAt(root, ref.model, ref.index, .next) orelse continue;
+        if (objects.crossPart(ref, place, bullet.last, bullet.at)) |crossed| struck = crossed;
+    }
+    return struck;
+}
+
+/// What a shot that strikes a component throws: sparks along the face's normal, and for a Huge
+/// Gun's, more of them, of its own, a fireball this far across and this long, and an explosion's
+/// sound.
+const component_sparks: sparks.Spray = .{ .speed = 20, .speed_range = 10, .spread = 1, .count = 10 };
+const huge_sparks: sparks.Spray = .{ .speed = 30, .speed_range = 10, .spread = 1.6, .count = 40 };
+const huge_fireball_size: f32 = 5000;
+const huge_fireball_life = 150;
+
+/// `bullet_hit` striking part `crossing.part` of the object in slot `index`, which lists
+/// components: the shot is spent where it crosses the part's face, as the part stands drawn. A
+/// Huge Gun's sets off a lit fireball there, its own sparks along the face's normal and an
+/// explosion's sound, and does no damage; any other throws sparks along the normal, and the part
+/// takes the type's second damage (`collision.componentDamage`).
+///
+/// Not ported: a force field's flare (`capshield_flare`, `0x0049F4A0`), what the hit leaves on the
+/// part (`node_add_effect`, `0x004992D0`), and the cloak a hit reveals
+/// ([#89](https://github.com/vdmkenny/openreliant/issues/89)).
+fn componentHit(world: gameobj.World, bullet: *Bullet, index: u16, crossing: objects.Crossing) void {
+    bullet.dies_at = spent;
+    const drawn = crossing.part.part().drawn();
+    const at = math.transform(drawn.orientation, crossing.point) + drawn.position;
+    const normal = math.transform(drawn.orientation, crossing.normal);
+    const huge: ?sparks.Kind = switch (bullet.kind) {
+        .allied_huge_gun => .allied_huge_gun,
+        .coalition_huge_gun => .coalition_huge_gun,
+        else => null,
+    };
+    if (huge) |kind| {
+        explode.fireballAt(world, at, .{ .size = huge_fireball_size, .life = huge_fireball_life, .light = true });
+        sparks.spray(world, kind, at, normal, @splat(0), huge_sparks);
+        if (world.hearing) |hearing| _ = sound3d.play(hearing.sound, hearing.scene(world), at, null, -1, .explosion01, 1, .explosions);
+        return;
+    }
+    sparks.spray(world, .component, at, normal, @splat(0), component_sparks);
+    const record = bullet.stats(&world.objects.gun_stats);
+    collision.componentDamage(world, index, crossing.part, record.damage[1], bullet.owner, .bullet);
+}
 
 /// `0x00479940`: a shot that has passed an object's shields. It finds the last of the object's
 /// parts the segment crosses, by the box each part's mesh stands in, and wears the quadrant's
@@ -1494,6 +1585,61 @@ test bulletsFrame {
     ship.mission.clock.frame_start += 1000;
     bulletsFrame(world, &ship.mission.clock, 0);
     try std.testing.expectEqual(0, flying(world));
+}
+
+test "a shot strikes a component of a ship that lists them" {
+    const gpa = std.testing.allocator;
+    var ship: testing.Ship = undefined;
+    try ship.init(gpa);
+    defer ship.deinit(gpa);
+    const world = ship.world();
+    // A ship that lists its one part as a component: a square facing the shooter, 500 ahead.
+    var hull: create.testing.Model = undefined;
+    try hull.init(gpa);
+    defer hull.deinit(gpa);
+    hull.withHull();
+    hull.source.header.flags.components = true;
+    hull.data[0].part.flags.component = true;
+    hull.data[0].part.component_armor = 100;
+    const mission = &ship.mission;
+    const target = try create.createObject(mission.objects, &mission.tables, hull.types(), null, @enumFromInt(9), 0, .{ -50, 0, 500 }, &mission.random);
+    const slot = &mission.objects.slots[target];
+    try std.testing.expect(slot.object.flags.components);
+    slot.model.?.place(slot.drawn.position, slot.drawn.orientation);
+    const part = &slot.model.?.parts[0];
+    // As far across as its square, which the fixture's loaded part, with no mesh, leaves out.
+    part.object.radius = 150;
+
+    // The part is the shot's candidate, and the shot, crossing it, spends itself on it.
+    shoot(world, &mission.clock, ship.index, ship.guns()[0].turret.fixed, false);
+    const bullet = &world.objects.bullets.pool[0];
+    try std.testing.expectEqual(1, bullet.candidate_count);
+    try std.testing.expectEqual(target, bullet.candidates[0].object);
+    try std.testing.expectEqual(0, bullet.candidates[0].part.?.index);
+    bullet.last = .{ -100, 0, 0 };
+    bullet.at = .{ -100, 0, 600 };
+    bulletsFrame(world, &mission.clock, 0);
+    try std.testing.expect(part.armor < 100);
+    try std.testing.expectEqual(0, flying(world));
+
+    // A Huge Gun's shot sets a fireball off there, and does no damage.
+    const armor = part.armor;
+    shoot(world, &mission.clock, ship.index, ship.guns()[0].turret.fixed, false);
+    const huge = &world.objects.bullets.pool[0];
+    huge.kind = .coalition_huge_gun;
+    huge.last = .{ -100, 0, 0 };
+    huge.at = .{ -100, 0, 600 };
+    bulletsFrame(world, &mission.clock, 0);
+    try std.testing.expectEqual(armor, part.armor);
+    try std.testing.expectEqual(0, flying(world));
+
+    // One that passes beside the part flies on.
+    shoot(world, &mission.clock, ship.index, ship.guns()[0].turret.fixed, false);
+    const beside = &world.objects.bullets.pool[0];
+    beside.last = .{ -400, 0, 0 };
+    beside.at = .{ -400, 0, 600 };
+    bulletsFrame(world, &mission.clock, 0);
+    try std.testing.expectEqual(1, flying(world));
 }
 
 test "a shot striking a hull throws sparks from where it struck" {
@@ -2525,6 +2671,7 @@ test {
 const Allocator = std.mem.Allocator;
 const ai = @import("ai.zig");
 const collision = @import("collision.zig");
+const explode = @import("explode.zig");
 const shield = @import("shield.zig");
 const shieldfx = @import("shieldfx.zig");
 const sparks = @import("sparks.zig");

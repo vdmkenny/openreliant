@@ -83,8 +83,9 @@ pub const Node = extern struct {
     /// Children the list at `children` can hold: 100 once allocated.
     child_capacity: i32,
     child_count: i32,
-    /// **Unknown.** -1 when allocated.
-    _unknown_fc: i32,
+    /// Its number among the object's part nodes (`object_number_parts`), for an object that lists
+    /// components; -1 when allocated.
+    number: i32,
     children: Pointer(Pointer(Node)),
 
     pub const Flags = packed struct(u32) {
@@ -217,6 +218,9 @@ pub fn setOrientation(object: *GameObject, frame: *Model.Local, orientation: mat
     object.root.orientation = orientation;
 }
 
+/// The file of a model made from none, as in a test.
+const no_source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &.{}, .trailing_bytes = 0 };
+
 /// What a sphere meets on a model.
 pub const Hit = struct {
     part: usize,
@@ -269,50 +273,135 @@ pub fn hitSphere(model: *const Model, source: *const shp.Model, at: Vector, radi
     return sphere.hit;
 }
 
+/// A part of an object's model, or of a model mounted on it however deep: one of the object's part
+/// nodes, which the game numbers from the root down (`object_number_parts`, `0x00466BA0`).
+pub const PartRef = struct {
+    model: *Model,
+    index: usize,
+
+    pub fn part(ref: PartRef) *Model.Part {
+        return &ref.model.parts[ref.index];
+    }
+
+    /// Its part's record as the file holds it, with its collision tree; null for a model with no
+    /// file behind it, as in a test.
+    pub fn data(ref: PartRef) ?shp.PartData {
+        const parts = ref.model.source.parts;
+        return if (ref.index < parts.len) parts[ref.index] else null;
+    }
+};
+
+/// `object_hit_test` (`0x0049BEF0`), with `node_hit_test` (`0x0049BD30`) for the roots: where the
+/// segment from `from` to `to` meets the box `model` stands in, with its root at `root`, it hands
+/// each of its shown parts to `query.part`, with where the part stands as the next step has it and
+/// whether it or a part it hangs from, however far up, plays a track, and then walks each model the
+/// part carries in turn. A hidden part is passed over with all it carries.
+pub fn hitWalk(model: *Model, root: math.Place, from: Vector, to: Vector, query: anytype) void {
+    walkHits(model, root, from, to, query, false);
+}
+
+fn walkHits(model: *Model, root: math.Place, from: Vector, to: Vector, query: anytype, carried_moving: bool) void {
+    if (!meetsBounds(model, root, from, to)) return;
+    for (model.parts, 0..) |*part, index| {
+        if (part.hidden) continue;
+        const moving = carried_moving or model.moving(index);
+        query.part(.{ .model = model, .index = index }, model.partPlace(index, .next).within(root), moving);
+        for (model.mounts) |*mount| {
+            if (mount.part != index) continue;
+            walkHits(&mount.model, model.mountRoot(mount, root, .next), from, to, query, moving);
+        }
+    }
+}
+
+/// Whether the segment from `from` to `to` meets the box `model` stands in, its bounding box, with
+/// its root at `root` (`node_hit_test` for a root node).
+pub fn meetsBounds(model: *const Model, root: math.Place, from: Vector, to: Vector) bool {
+    const half = (model.bounds[1] - model.bounds[0]) * @as(Vector, @splat(0.5));
+    const centre = math.transform(root.orientation, (model.bounds[1] + model.bounds[0]) * @as(Vector, @splat(0.5))) + root.position;
+    const start = math.transformTransposed(root.orientation, from - centre);
+    const end = math.transformTransposed(root.orientation, to - centre);
+    return boxEntry(start, end, .{ -half, half }) != null;
+}
+
+/// Whether the segment from `from` to `to`, in a part's frame, meets a box of the part's collision
+/// tree.
+fn meetsNode(node: shp.TreeNode, from: Vector, to: Vector) bool {
+    const centre = gameobj.vector(node.centre);
+    const half = gameobj.vector(node.half_size);
+    const start = math.transformTransposed(node.orientation, from - centre);
+    const end = math.transformTransposed(node.orientation, to - centre);
+    return boxEntry(start, end, .{ -half, half }) != null;
+}
+
+/// Whether the segment from `from` to `to` meets the root box of the collision tree of the part
+/// `ref`, standing at `place`; never for a part with no tree.
+pub fn meetsTree(ref: PartRef, place: math.Place, from: Vector, to: Vector) bool {
+    const data = ref.data() orelse return false;
+    if (data.nodes.len == 0) return false;
+    return meetsNode(data.nodes[0], math.transformTransposed(place.orientation, from - place.position), math.transformTransposed(place.orientation, to - place.position));
+}
+
 /// What a segment crosses of a model: the part and the face, and where, in the part's frame.
 pub const Crossing = struct {
-    part: usize,
+    part: PartRef,
     face: usize,
     point: Vector,
     normal: Vector,
 };
 
-/// `object_hit_test` with `missile_hull_test` (`0x004959A0`) and `0x0049BAE0`: the face of the
-/// model a segment crosses, or null where it crosses none. Each part's collision tree is descended
-/// through the boxes the segment meets, and at a leaf each face the segment starts in front of, no
-/// further off than the segment is long, is tested. The last face crossed counts, not the nearest.
-/// `place` must have run for the frame the segment is given in.
-pub fn hitSegment(model: *const Model, source: *const shp.Model, from: Vector, to: Vector) ?Crossing {
+/// `node_hit_test` with `missile_hull_test` (`0x004959A0`) and `tree_leaf_segment_test`
+/// (`0x0049BAE0`) for one part, `ref`, standing at `place`: the face of it the segment crosses, or
+/// null where it crosses none. The part's collision tree is descended through the boxes the segment
+/// meets, and at a leaf each face the segment starts in front of, no further off than the segment is
+/// long, is tested. The last face crossed counts, not the nearest.
+pub fn crossPart(ref: PartRef, place: math.Place, from: Vector, to: Vector) ?Crossing {
     const Crosser = struct {
         /// Its ends in the part's frame.
         from: Vector,
         to: Vector,
         reach: f32,
+        ref: PartRef,
         hit: ?Crossing = null,
 
         fn reaches(segment: @This(), node: shp.TreeNode) bool {
-            const centre = gameobj.vector(node.centre);
-            const half = gameobj.vector(node.half_size);
-            const start = math.transformTransposed(node.orientation, segment.from - centre);
-            const end = math.transformTransposed(node.orientation, segment.to - centre);
-            return boxEntry(start, end, .{ -half, half }) != null;
+            return meetsNode(node, segment.from, segment.to);
         }
 
-        fn face(segment: *@This(), part: usize, index: usize, triangle: [3]Vector, normal: Vector) void {
+        fn face(segment: *@This(), _: usize, index: usize, triangle: [3]Vector, normal: Vector) void {
             const ahead = math.dot(segment.from - triangle[0], normal);
             if (ahead < 0 or ahead * ahead > segment.reach) return;
             const point = segmentMeetsTriangle(segment.from, segment.to, triangle) orelse return;
-            segment.hit = .{ .part = part, .face = index, .point = point, .normal = normal };
+            segment.hit = .{ .part = segment.ref, .face = index, .point = point, .normal = normal };
         }
     };
-    var segment: Crosser = .{ .from = undefined, .to = undefined, .reach = math.lengthSquared(to - from) };
-    var parts = shownParts(model, source);
-    while (parts.next()) |part| {
-        segment.from = math.transformTransposed(part.object.orientation, from - part.object.position);
-        segment.to = math.transformTransposed(part.object.orientation, to - part.object.position);
-        descend(source.parts[parts.at - 1], parts.at - 1, &segment);
-    }
+    const data = ref.data() orelse return null;
+    if (data.nodes.len == 0 or data.meshes.len == 0) return null;
+    var segment: Crosser = .{
+        .from = math.transformTransposed(place.orientation, from - place.position),
+        .to = math.transformTransposed(place.orientation, to - place.position),
+        .reach = math.lengthSquared(to - from),
+        .ref = ref,
+    };
+    descend(data, ref.index, &segment);
     return segment.hit;
+}
+
+/// `object_hit_test` with `missile_hull_test`: the face of `model`, with its root at `root`, or of
+/// a model it carries, that the segment crosses (`crossPart`), or null where it crosses none. The
+/// last face crossed counts.
+pub fn hitSegment(model: *Model, root: math.Place, from: Vector, to: Vector) ?Crossing {
+    const Last = struct {
+        from: Vector,
+        to: Vector,
+        hit: ?Crossing = null,
+
+        fn part(last: *@This(), ref: PartRef, place: math.Place, _: bool) void {
+            if (crossPart(ref, place, last.from, last.to)) |crossed| last.hit = crossed;
+        }
+    };
+    var last: Last = .{ .from = from, .to = to };
+    hitWalk(model, root, from, to, &last);
+    return last.hit;
 }
 
 /// The parts of a model that are tested for what meets them: shown, with a collision tree and a
@@ -597,19 +686,28 @@ test hitSegment {
 
     var live = try Model.create(gpa, &model.source, &model.loaded, .{});
     defer live.deinit(gpa);
-    live.place(@splat(0), math.identity);
+    gameobj.linkParts(&live, &model.source);
+    const root: math.Place = .{};
 
     // The part is a square in the XY plane facing -Z; a segment through it from in front crosses
     // it where it passes.
-    const hit = hitSegment(&live, &model.source, .{ 5, 5, -60 }, .{ 5, 5, 60 }) orelse return error.TestExpectedHit;
-    try std.testing.expectEqual(0, hit.part);
+    const hit = hitSegment(&live, root, .{ 5, 5, -60 }, .{ 5, 5, 60 }) orelse return error.TestExpectedHit;
+    try std.testing.expectEqual(&live, hit.part.model);
+    try std.testing.expectEqual(0, hit.part.index);
     try std.testing.expectEqual(math.Vector{ 5, 5, 0 }, hit.point);
     try std.testing.expectEqual(math.Vector{ 0, 0, -1 }, hit.normal);
 
     // From behind, short of it, and beside it, it crosses nothing.
-    try std.testing.expectEqual(null, hitSegment(&live, &model.source, .{ 5, 5, 60 }, .{ 5, 5, -60 }));
-    try std.testing.expectEqual(null, hitSegment(&live, &model.source, .{ 5, 5, -60 }, .{ 5, 5, -30 }));
-    try std.testing.expectEqual(null, hitSegment(&live, &model.source, .{ 900, 0, -60 }, .{ 900, 0, 60 }));
+    try std.testing.expectEqual(null, hitSegment(&live, root, .{ 5, 5, 60 }, .{ 5, 5, -60 }));
+    try std.testing.expectEqual(null, hitSegment(&live, root, .{ 5, 5, -60 }, .{ 5, 5, -30 }));
+    try std.testing.expectEqual(null, hitSegment(&live, root, .{ 900, 0, -60 }, .{ 900, 0, 60 }));
+    // Moved, it is struck where it stands at the next step.
+    try std.testing.expect(hitSegment(&live, .{ .position = .{ 1000, 0, 0 } }, .{ 1005, 5, -60 }, .{ 1005, 5, 60 }) != null);
+    try std.testing.expectEqual(null, hitSegment(&live, .{ .position = .{ 1000, 0, 0 } }, .{ 5, 5, -60 }, .{ 5, 5, 60 }));
+    // Its root box and its tree's root box meet the segment; one beside them doesn't.
+    try std.testing.expect(meetsBounds(&live, root, .{ 5, 5, -60 }, .{ 5, 5, 60 }));
+    try std.testing.expect(meetsTree(.{ .model = &live, .index = 0 }, root, .{ 5, 5, -60 }, .{ 5, 5, 60 }));
+    try std.testing.expect(!meetsTree(.{ .model = &live, .index = 0 }, root, .{ 900, 0, -60 }, .{ 900, 0, 60 }));
 }
 
 /// `node_tree_frames` (`0x0049A880`) for an object, once a frame before it is drawn and before the
@@ -637,6 +735,8 @@ pub fn lightMask(model_lists_components: bool) u32 {
 /// animation a node's track holds (`node_animate`); what `node_add_part` mounts on the attachment
 /// points besides the lights and the engine glows.
 pub const Model = struct {
+    /// The file the model was made from, which its parts' collision trees are read from.
+    source: *const shp.Model = &no_source,
     /// The root's place (`object_set_position`, `object_set_orientation`).
     position: Vector = @splat(0),
     orientation: math.Matrix = math.identity,
@@ -1060,7 +1160,7 @@ pub const Model = struct {
         }
         const order = try linkOrder(gpa, model);
         errdefer gpa.free(order);
-        var built: Model = .{ .parts = parts, .order = order, .lights = &.{}, .glows = &.{}, .mounts = &.{} };
+        var built: Model = .{ .source = model, .parts = parts, .order = order, .lights = &.{}, .glows = &.{}, .mounts = &.{} };
         const lights = try createLights(gpa, model, effects.light_sprites);
         errdefer gpa.free(lights);
         const glows = try createGlows(gpa, model, effects.glows);
@@ -1408,6 +1508,19 @@ pub const Model = struct {
             const at = mount.rootAt(model.parts[mount.part].drawn());
             mount.model.place(at.position, at.orientation);
         }
+    }
+
+    /// Whether part `index` plays a track, or a part it hangs from does: a node whose track has a
+    /// mode and a speed.
+    pub fn moving(model: *const Model, index: usize) bool {
+        var at: ?usize = index;
+        for (model.parts) |_| {
+            const part = at orelse return false;
+            const a = &model.parts[part].animation;
+            if (a.mode != .none and a.speed != 0) return true;
+            at = model.parts[part].parent;
+        }
+        return false;
     }
 
     /// Which of a node's places: the one the last simulation step committed, or the one the next
@@ -2483,6 +2596,42 @@ test "Model.partPlace" {
     try std.testing.expectApproxEqAbs(100, next.position[0], 1e-3);
     try std.testing.expectApproxEqAbs(100, next.position[2], 1e-3);
     try std.testing.expectEqual(@as(Vector, .{ 0, 0, 200 }), model.partPlace(2, .now).position);
+}
+
+test "a segment strikes a part of a model mounted on another" {
+    const gpa = std.testing.allocator;
+    // The mounted model: a square facing -Z, with its collision tree.
+    var gun: create.testing.Model = undefined;
+    try gun.init(gpa);
+    defer gun.deinit(gpa);
+    gun.withHull();
+    // The model carrying it: a part with a gun attachment 1000 along Z.
+    var attachments = [1]shp.Attachment{std.mem.zeroes(shp.Attachment)};
+    attachments[0].kind = .gun;
+    attachments[0].position = .{ .x = 0, .y = 0, .z = 1000 };
+    attachments[0].orientation = math.identity;
+    var data = [1]shp.PartData{testingPart()};
+    data[0].part.parent = -1;
+    data[0].attachments = &attachments;
+    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &data, .trailing_bytes = 0 };
+    var loaded_parts = [1]srofiles.LoadedPart{.{ .flags = .{}, .levels = &.{}, .meshes = &.{} }};
+    const loaded: srofiles.Loaded = .{ .parts = &loaded_parts };
+    const Answer = struct {
+        fn load(context: *anyopaque, _: []const u8) ?Mounts.Mounted {
+            const fixture: *create.testing.Model = @ptrCast(@alignCast(context));
+            return .{ .model = &fixture.source, .loaded = &fixture.loaded };
+        }
+    };
+    var built: Model = try .create(gpa, &source, &loaded, .{ .mounts = .{ .context = &gun, .load = Answer.load } });
+    defer built.deinit(gpa);
+    gameobj.linkParts(&built, &source);
+    // The carrier's box reaches the mount, as its object's does once its parts are summed.
+    built.bounds = .{ .{ -200, -200, -200 }, .{ 200, 200, 1200 } };
+
+    // The segment through the square is struck on the mounted model's part.
+    const hit = hitSegment(&built, .{}, .{ 5, 5, 900 }, .{ 5, 5, 1100 }) orelse return error.TestExpectedHit;
+    try std.testing.expectEqual(&built.mounts[0].model, hit.part.model);
+    try std.testing.expectEqual(0, hit.part.index);
 }
 
 test "a part's first track poses it where it is linked" {

@@ -631,3 +631,22 @@ flag.
 
 `ship_damage_value` (`0x00452CB0`), the value ShotAt events carry, is the lowest of the object's
 four armor values, or a component's own.
+
+## The hit tests
+
+`object_hit_test` (`0x0049BEF0`) walks an object's nodes with a test and a query. For a root node,
+the object's or that of an object mounted on it, `node_hit_test` (`0x0049BD30`) hands the test the
+object's bounding box, at the root's next place, and only where the test passes does the walk go on
+into the root's children. For a part node it hands the test each box of the part's collision tree,
+at the node's next place (`node_next_place`), from the root box down, going on into a box's children
+only where the test passes, and then walks on into the node's own children, the roots of what the
+part mounts, whatever the test said. A child that is hidden, or of flag `0x80`, the nodes the
+attachment points make, is passed over with all it holds. The shots' candidates
+(`bullet_candidate_test`), the shots' hits and the missiles' (`missile_hull_test`, `0x004959A0`)
+and the collisions go through it.
+
+For an object that lists components, `create_object` numbers its part nodes, its model's and those
+of the models mounted on it, from the root down, depth first (`object_number_parts`, `0x00466BA0`):
+each node's number goes at `+0xFC`, the count at `+0x154`, and a table of the nodes by number at
+`+0x518`. A shot's candidates name its parts by these numbers; the port names a part by its model
+and its index there (`objects.PartRef`), and walks the models mounted on a part after it.

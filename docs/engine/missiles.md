@@ -189,8 +189,9 @@ whose lock is broken, and ends one whose launcher is gone.
 `missile_collide` (`0x00495CF0`) tests the segment from the missile's drawn place to its next place
 against every object of type below 256 that collides, but its launcher, of any side:
 
-- An object that lists components: its parts (`missile_hit_components`, `0x00495AC0`), by their
-  collision trees at their next places (`object_hit_test` with `missile_hull_test`, `0x004959A0`):
+- An object that lists components: its parts, and those of the models mounted on it
+  (`missile_hit_components`, `0x00495AC0`), by their collision trees at their next places
+  ([`object_hit_test`](objects.md#the-hit-tests) with `missile_hull_test`, `0x004959A0`):
   within the boxes the segment meets, each face the segment starts in front of, no further off
   than it is long, is tested, and the last face crossed counts. But for a Havoc or an Imp, the part
   struck takes the type's component damage.
