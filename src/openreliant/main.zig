@@ -546,9 +546,9 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         .global_palette = global_palette,
     });
     defer sandbox.deinit();
-    // What the shots are drawn with, built once (`guns_init`); the Turret Flak's shell is a ship
-    // type's model, so it comes after the types' loader.
-    sandbox.objects.bullets.looks = try game.guns.Looks.create(arena, &textures, sandbox.types.interface());
+    // What the shots are drawn with, built once (`guns_init`); the Turret Flak's shell is loaded as
+    // each mission starts.
+    sandbox.objects.bullets.looks = try game.guns.Looks.create(arena, &textures);
     sandbox.objects.bullets.shot_lights = options.shot_lights;
     var player: engine.input.Player = .{};
     var devices: engine.input.Devices = .{};
@@ -1098,7 +1098,9 @@ const Sandbox = struct {
         if (orders.world.trails) |trails| trails.reset();
         if (orders.world.countermeasures) |dropped| dropped.reset();
         sandbox.objects.reset(sandbox.random);
-        // The debris models, counted as used so the sweep below keeps them (`explosions_init`).
+        // The Turret Flak's shell and the debris models, counted as used so the sweep below keeps
+        // them (`guns_load_shell`, `explosions_init`).
+        if (sandbox.objects.bullets.looks) |looks| looks.loadShell(sandbox.objects, sandbox.types.interface());
         if (orders.world.explosions) |explosions| explosions.debris = .load(sandbox.objects, sandbox.types.interface());
         const index = try sandbox.create(@enumFromInt(ship_type), @splat(0));
         if (sandbox.objects.slots[index].model == null) return error.NoModel;

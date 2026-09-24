@@ -115,33 +115,47 @@ pub fn playerControlEntry(all: *create.Objects) ?*aigeneric.Entry {
     return null;
 }
 
-/// How much further a Turret Flak's shot is led for, over its type's lifetime (`0x004DC3D8`), and
-/// the share of a gun's range within which a shot is led at all (`0x004DC3D4`).
+/// How much further a Turret Flak's shot is led for, over its lifetime (`0x004DC3D8`), and the
+/// share of a gun's life within which a shot is led at all (`0x004DC3D4`).
 const flak_lead: f32 = 3;
 const lead_range: f32 = 0.25;
 
-/// `0x00401280`: where to aim at `target` for the fastest of the guns the ship fires together to
-/// hit it: ahead of it along its heading by how far it flies, times `lead`, while that gun's shot
-/// flies to it (`0x00401180`). Null where that takes longer than a quarter of the gun's life, when
-/// the caller aims at it unled.
+/// `ai_lead_aim` (`0x00401280`): where to aim at `target` for the fastest of the guns the ship
+/// fires together to hit it, from its root (`leadAimWithGun`).
+///
+/// **Fix:** the game reads each gun's turret kind as its type, which leads every ship's shots as
+/// a Laser Cannon's; the port leads by the fastest gun's own type.
 pub fn leadAim(all: *const create.Objects, index: u16, target: aigeneric.Target, lead: f32) ?Vector {
     const slot = &all.slots[index];
     var fastest: guns.GunType = .laser_cannon;
     var best: f32 = -1;
     var chosen: guns.Chosen = .of(&slot.object, slot.guns, slot.gun_groups);
     while (chosen.next()) |gun| {
-        const speed = gun.type.stats(&all.gun_stats).speed;
+        const barrel = gun.barrel() orelse continue;
+        const speed = barrel.type.stats(&all.gun_stats).speed;
         if (speed > best) {
             best = speed;
-            fastest = gun.type;
+            fastest = barrel.type;
         }
     }
-    const record = fastest.stats(&all.gun_stats);
-    const life: f32 = @floatFromInt(record.lifetime);
-    const lifetime = if (fastest == .turret_flak) life * flak_lead else life;
+    return leadAimWithGun(all, slot.drawn.position, target, fastest, lead);
+}
+
+/// `ai_lead_aim_with_gun` (`0x00401180`): where to aim from `from` at `target` for a shot of `gun`
+/// to hit it: ahead of it along its heading by how far it flies, times `lead`, while the shot
+/// flies to it. Null where that takes longer than a quarter of the gun's life, when the caller
+/// aims at it unled or not at all.
+///
+/// A Turret Flak's shot is led within three times its gun's lifetime.
+///
+/// **Fix:** the game takes the Laser Cannon's lifetime there, the table's first gun's, which leads
+/// flak past the life of its own shells; the port the flak's own.
+pub fn leadAimWithGun(all: *const create.Objects, from: Vector, target: aigeneric.Target, gun: guns.GunType, lead: f32) ?Vector {
+    const record = gun.stats(&all.gun_stats);
+    const lifetime = @as(f32, @floatFromInt(record.lifetime)) * @as(f32, if (gun == .turret_flak) flak_lead else 1);
     const aimed = aimedAt(all, target);
-    const flight = math.distance(slot.drawn.position, aimed.position) / record.speed;
-    if (!(flight < lifetime * lead_range)) return null;
+    const flight = math.distance(from, aimed.position) / record.speed;
+    if (!(flight <= lifetime * lead_range)) return null;
     const struck = &all.slots[@intCast(target.index)];
     return aimed.position + math.forward(struck.drawn.orientation) * @as(Vector, @splat(flight * struck.object.speed * lead));
 }
@@ -809,6 +823,14 @@ test "aiming at a target" {
     const led = leadAim(all, ship, aimed, 1).?;
     try std.testing.expectApproxEqAbs(100, led[0], 1e-3);
     try std.testing.expectApproxEqAbs(1000, led[2], 1e-3);
+
+    // A Turret Flak's shot is led within three of its lifetimes.
+    const flak = &all.gun_stats.types[guns.GunType.turret_flak.number()];
+    flak.speed = 100;
+    flak.lifetime = 13;
+    try std.testing.expectEqual(null, leadAimWithGun(all, @splat(0), aimed, .turret_flak, 1));
+    flak.lifetime = 14;
+    try std.testing.expect(leadAimWithGun(all, @splat(0), aimed, .turret_flak, 1) != null);
 }
 
 test collisionCourse {

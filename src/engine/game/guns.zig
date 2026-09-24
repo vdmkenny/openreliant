@@ -72,6 +72,14 @@ pub const GunType = enum(u4) {
         return @enumFromInt(named - 1);
     }
 
+    /// Whether it is one of the Huge Guns, which the turrets aim by rules of their own.
+    pub fn huge(gun_type: GunType) bool {
+        return switch (gun_type) {
+            .allied_huge_gun, .coalition_huge_gun => true,
+            else => false,
+        };
+    }
+
     /// The number a muzzle names it by, and its record in `gun_stats`.
     pub fn number(gun_type: GunType) u8 {
         return @as(u8, @intFromEnum(gun_type)) + 1;
@@ -113,45 +121,85 @@ pub const Stats = struct {
     }
 };
 
-/// One of an object's guns, as the game keeps it in the 0x60 bytes at `GameObject.guns`.
+/// One of an object's guns, as the game keeps it in the 0x60 bytes at `GameObject.guns`: the
+/// turret it stands on, where it stands on one, and its trigger.
 pub const Fitted = struct {
-    /// The turret kind of the part it stands on (`+0x00`).
-    turret: Turret = .fixed,
-    /// The part it fires from (`+0x04`), and where on the part.
-    part: *const objects.Model.Part,
-    muzzle: shp.Attachment,
-    /// Its type. The game keeps the type's record at `+0x08`.
-    type: GunType,
+    /// What it stands on, by its part's turret kind, with what a turret keeps (`+0x00`, and by
+    /// kind the record's rest).
+    turret: Turret,
     /// The tick the trigger is held until (`+0x0C`): the gun fires while the frame begins before
     /// it (`fire`).
     firing_until: i32 = 0,
     /// Which side of its group it is (`+0x14`), as `create_object` marks it from the type's
     /// groups.
     side: GroupSide = .first,
-    /// The tick it may next fire (`+0x18`).
+    /// The tick it may next fire (`+0x18`), for a gun that fires by the trigger.
     next_shot: i32 = 0,
     /// The steps it has been firing, over the sound's period (`gun_stats.sound_periods`), which
     /// the game keeps in its own array at `GameObject+0x138`.
     sounded: i32 = 0,
+
+    /// Where its shots leave from and what they are; none for a missile turret, which fires no
+    /// shots, or for a turret destroyed with its base.
+    pub fn barrel(gun: *const Fitted) ?*const Barrel {
+        return switch (gun.turret) {
+            .fixed => |*fixed| fixed,
+            .aimed => |*aimed| &aimed.barrel,
+            .spin => |*spin| &spin.barrel,
+            .missile, .gone => null,
+        };
+    }
 };
 
-/// What a gun stands on: the turret kind of its part (`ShpPart.turret_kind`, `+0xF4`), which the
-/// turret setups copy to `+0x00` of the gun's record. Turrets are not fitted yet
-/// ([#71](https://github.com/vdmkenny/openreliant/issues/71)).
-pub const Turret = enum(i32) {
-    /// **Unknown.** A part whose turret kind reads `0xFFFF`: the steps pass the gun over.
-    unset = -1,
-    /// A gun that does not move.
-    fixed = 0,
-    /// A turret the mission's `TurretSetTarget` aims. It is in no gun group, and FULL GUNS leaves
-    /// it out.
-    aimed = 1,
-    /// **Unknown.** A turret that fires the object's rounds and puffs particles at its muzzle.
-    _unknown_2 = 2,
-    /// **Unknown.** It is in no gun group.
-    _unknown_3 = 3,
-    _,
+/// What a gun stands on: no turret, or one of the turrets a turret part makes of its assembly by
+/// its turret kind (`shp.Part.TurretKind`), with what it keeps ([`guns/turrets.zig`](guns/turrets.zig)).
+pub const Turret = union(enum) {
+    /// A gun that does not move, which fires by its object's trigger (kind 0).
+    fixed: Barrel,
+    /// A turret that turns to aim at a target of its own, and fires by its parts' tracks (kind 1).
+    /// It is in no gun group, and FULL GUNS leaves it out.
+    aimed: turrets.Aimed,
+    /// A gun whose barrels spin up while its trigger is held (kind 2).
+    spin: turrets.Spin,
+    /// A missile turret (kind 3). It is in no gun group.
+    missile: turrets.Launcher,
+    /// A turret destroyed with its base (kind -1, `node_forget`): nothing steps or fires it again.
+    /// Nothing destroys a base yet ([#42](https://github.com/vdmkenny/openreliant/issues/42)).
+    gone,
 };
+
+/// Where a gun's shots leave from, and their type (`+0x04`, and `+0x08`, which holds the type's
+/// record).
+pub const Barrel = struct {
+    muzzle: Muzzle,
+    type: GunType,
+};
+
+/// A muzzle a gun fires from: an attachment of kind `gun_muzzle` on a part of its object's model,
+/// or of a model mounted on it (the gun's node, `+0x04`). The model it belongs to outlives the
+/// object.
+pub const Muzzle = struct {
+    model: *const objects.Model,
+    part: usize,
+    attachment: *const shp.Attachment,
+
+    /// Where it stands as its part is drawn (its node's frame).
+    pub fn drawn(muzzle: Muzzle) math.Place {
+        return muzzle.onPart().within(muzzle.model.parts[muzzle.part].drawn());
+    }
+
+    /// Where it stands at `when`, with `top`, its object's model, standing at `root`
+    /// (`node_world_place`, `node_next_place`); null where `top` doesn't carry it.
+    pub fn at(muzzle: Muzzle, top: *const objects.Model, root: math.Place, when: objects.Model.Step) ?math.Place {
+        return muzzle.onPart().within(top.partAt(root, muzzle.model, muzzle.part, when) orelse return null);
+    }
+
+    fn onPart(muzzle: Muzzle) math.Place {
+        return .{ .position = gameobj.vector(muzzle.attachment.position), .orientation = muzzle.attachment.orientation };
+    }
+};
+
+pub const turrets = @import("guns/turrets.zig");
 
 /// Which of its group's two guns a gun is, as `create_object` marks them (`+0x14`), and which
 /// fires next while a ship fires one group out of step (`GameObject.gun_turn`).
@@ -167,27 +215,49 @@ pub const GroupSide = enum(u32) {
     }
 };
 
-/// `0x00479800` with `0x00479640`: the guns a model gives an object, one for each `gun_muzzle`
-/// attachment of its parts and of the models mounted on them, each of the type the muzzle holds.
-/// A muzzle that names type 0 is taken as type 1, as the game does after warning about it.
+/// `object_fit_guns` (`0x00479800`) with `object_collect_guns` (`0x00479640`): the guns `model`
+/// gives an object, walking its parts in order. A part of a turret's class fits the turret its
+/// kind makes of its assembly (`turrets.fit`); a part of a turret's assembly is passed over,
+/// with what it carries, since its muzzles are the turret's. Any other part gives a fixed gun for
+/// each of its `gun_muzzle` attachments, of the type the muzzle holds, and the guns of each model
+/// its attachments mount, in the order of its attachments. A muzzle that names type 0 is taken as
+/// type 1, as the game does after warning about it. `ship` is what the turrets' fits need.
 ///
-/// Not ported: the turrets' own aiming, which the game sets up here by the part's turret kind
-/// ([#71](https://github.com/vdmkenny/openreliant/issues/71)).
-pub fn fit(gpa: Allocator, model: *const objects.Model) Allocator.Error![]Fitted {
+/// **Unverified:** that a part's node holds what hangs from it in the order of its attachments.
+pub fn fit(gpa: Allocator, model: *objects.Model, ship: turrets.Ship) Allocator.Error![]Fitted {
     var made: std.ArrayList(Fitted) = .empty;
     errdefer made.deinit(gpa);
-    try collect(gpa, &made, model);
+    try collect(gpa, &made, model, ship);
     return made.toOwnedSlice(gpa);
 }
 
-fn collect(gpa: Allocator, made: *std.ArrayList(Fitted), model: *const objects.Model) Allocator.Error!void {
-    for (model.parts) |*part| {
-        for (part.attachments) |attachment| {
-            if (attachment.kind != .gun_muzzle) continue;
-            try made.append(gpa, .{ .part = part, .muzzle = attachment, .type = .fromNumber(attachment.gun_type) });
+fn collect(gpa: Allocator, made: *std.ArrayList(Fitted), model: *objects.Model, ship: turrets.Ship) Allocator.Error!void {
+    // The mounts are made in the order of the parts and their attachments.
+    var mount: usize = 0;
+    for (model.parts, 0..) |*part, index| {
+        if (part.class.isTurret() and turrets.fits(part.turret_kind)) {
+            if (turrets.fit(model, index, ship)) |turret| try made.append(gpa, .{ .turret = turret });
+            continue;
+        }
+        if (turrets.inAssembly(model, part.link_id)) continue;
+        for (part.attachments, 0..) |*attachment, at| {
+            if (attachment.kind == .gun_muzzle) try made.append(gpa, .{ .turret = .{ .fixed = .{
+                .muzzle = .{ .model = model, .part = index, .attachment = attachment },
+                .type = .fromNumber(attachment.gun_type),
+            } } });
+            while (mount < model.mounts.len and precedes(model.mounts[mount], index, at)) mount += 1;
+            if (mount == model.mounts.len) continue;
+            const mounted = &model.mounts[mount];
+            if (mounted.part != index or mounted.attachment != at) continue;
+            try collect(gpa, made, &mounted.model, ship);
+            mount += 1;
         }
     }
-    for (model.mounts) |*mount| try collect(gpa, made, &mount.model);
+}
+
+/// Whether `mount` stands on an attachment before attachment `at` of part `index`.
+fn precedes(mount: objects.Model.Mount, index: usize, at: usize) bool {
+    return mount.part < index or (mount.part == index and mount.attachment < at);
 }
 
 test Stats {
@@ -224,9 +294,13 @@ pub const Group = struct {
     second: i16 = -1,
 };
 
-/// The turret kinds `gun_groups_build` leaves out of the groups.
-fn grouped(gun: Fitted) bool {
-    return gun.turret != .aimed and gun.turret != ._unknown_3;
+/// The barrel of a gun `gun_groups_build` groups: a fixed gun's or a spinning gun's, not an
+/// aimed turret's nor a missile turret's.
+fn grouped(gun: *const Fitted) ?*const Barrel {
+    return switch (gun.turret) {
+        .fixed, .spin => gun.barrel(),
+        .aimed, .missile, .gone => null,
+    };
 }
 
 /// `gun_groups_build` (`0x004667F0`): pairs a ship type's guns into groups, each gun with the gun
@@ -246,9 +320,10 @@ pub fn buildGroups(fitted: []const Fitted, groups: *[max_groups]Group) u16 {
     };
     var list: [max_groups * 2]Entry = undefined;
     var count: usize = 0;
-    for (fitted, 0..) |gun, index| {
-        if (!grouped(gun) or count == list.len) continue;
-        list[count] = .{ .gun = @intCast(index), .at = place(gun), .type = gun.type };
+    for (fitted, 0..) |*gun, index| {
+        const barrel = grouped(gun) orelse continue;
+        if (count == list.len) continue;
+        list[count] = .{ .gun = @intCast(index), .at = barrel.muzzle.drawn().position, .type = barrel.type };
         count += 1;
     }
 
@@ -293,12 +368,6 @@ pub fn buildGroups(fitted: []const Fitted, groups: *[max_groups]Group) u16 {
     return made;
 }
 
-/// Where a gun sits in its object's frame: its muzzle on the part that carries it.
-fn place(gun: Fitted) math.Vector {
-    const at: math.Vector = .{ gun.muzzle.position.x, gun.muzzle.position.y, gun.muzzle.position.z };
-    return math.transform(gun.part.object.orientation, at) + gun.part.object.position;
-}
-
 test fit {
     const gpa = std.testing.allocator;
     var model: create.testing.Model = undefined;
@@ -314,13 +383,14 @@ test fit {
 
     var live = try objects.Model.create(gpa, &model.source, &model.loaded, .{});
     defer live.deinit(gpa);
-    const fitted = try fit(gpa, &live);
+    const fitted = try fit(gpa, &live, .{});
     defer gpa.free(fitted);
     try std.testing.expectEqual(2, fitted.len);
-    try std.testing.expectEqual(GunType.messon_blaster, fitted[0].type);
+    try std.testing.expectEqual(GunType.messon_blaster, fitted[0].barrel().?.type);
     // A muzzle that names no type fires type 1.
-    try std.testing.expectEqual(GunType.laser_cannon, fitted[1].type);
-    try std.testing.expectEqual(&live.parts[0], fitted[0].part);
+    try std.testing.expectEqual(GunType.laser_cannon, fitted[1].barrel().?.type);
+    try std.testing.expectEqual(0, fitted[0].turret.fixed.muzzle.part);
+    try std.testing.expectEqual(&muzzles[1], fitted[1].turret.fixed.muzzle.attachment);
 }
 
 test buildGroups {
@@ -343,7 +413,7 @@ test buildGroups {
     var live = try objects.Model.create(gpa, &model.source, &model.loaded, .{});
     defer live.deinit(gpa);
     live.place(@splat(0), math.identity);
-    const fitted = try fit(gpa, &live);
+    const fitted = try fit(gpa, &live, .{});
     defer gpa.free(fitted);
 
     var groups: [max_groups]Group = @splat(.{});
@@ -399,8 +469,12 @@ pub const held_ticks: i32 = 1;
 /// from the start of the frame. FIRE LASERS holds it for one tick, so the guns fire this frame and
 /// stop unless it is held again; the mission script's Fire command holds it for longer.
 ///
-/// With FULL GUNS every gun fires but a turret's; otherwise the two guns of the chosen group do.
-/// A muzzle of the charging type is passed over either way, as is a ship whose guns are disabled.
+/// With FULL GUNS every gun fires but an aimed turret's; otherwise the two guns of the chosen
+/// group do. A muzzle of the charging type is passed over either way, as is a ship whose guns are
+/// disabled.
+///
+/// **Fix:** the game reads a missile turret's gun type, of a muzzle it has none of, and a
+/// destroyed turret's; the port passes over a gun with no barrel.
 ///
 /// Not ported: the charge the trigger builds up for a gun of the charging type
 /// ([#150](https://github.com/vdmkenny/openreliant/issues/150)); `0x004BA780` for the player.
@@ -409,8 +483,9 @@ pub fn fire(object: *gameobj.GameObject, trigger: Trigger, ticks: i32) void {
     const until = trigger.frame_start + ticks;
     var chosen: Chosen = .of(object, trigger.fitted, trigger.groups);
     while (chosen.next()) |gun| {
-        if (gun.type == charging_type) continue;
-        if (object.gun_mode.all and (gun.turret == .aimed or gun.turret == .unset)) continue;
+        const barrel = gun.barrel() orelse continue;
+        if (barrel.type == charging_type) continue;
+        if (object.gun_mode.all and gun.turret == .aimed) continue;
         gun.firing_until = until;
     }
 }
@@ -457,7 +532,7 @@ pub const Chosen = struct {
 /// An object whose components are listed steps no guns of its own, and one that is jumping fires
 /// none.
 ///
-/// Not ported: the particles a turret of kind `_unknown_2` puffs.
+/// Not ported: the particles a spinning gun puffs.
 pub fn step(world: gameobj.World, clock: *const Clock, index: u16) void {
     const all = world.objects;
     const slot = &all.slots[index];
@@ -475,11 +550,13 @@ pub fn step(world: gameobj.World, clock: *const Clock, index: u16) void {
 
     // What the guns firing this step will draw between them.
     var needed: f32 = 0;
-    for (fitted) |gun| {
-        const record = gun.type.stats(stats);
-        if (clock.frame_start <= gun.firing_until and gun.turret == .fixed and
-            record.kind == .energy and gun.next_shot <= clock.frame_start)
-        {
+    for (fitted) |*gun| {
+        const fixed = switch (gun.turret) {
+            .fixed => |*fixed| fixed,
+            else => continue,
+        };
+        const record = fixed.type.stats(stats);
+        if (clock.frame_start <= gun.firing_until and record.kind == .energy and gun.next_shot <= clock.frame_start) {
             needed += @floatFromInt(record.shot_energy);
         }
     }
@@ -490,50 +567,57 @@ pub fn step(world: gameobj.World, clock: *const Clock, index: u16) void {
     var alternated = false;
     for (fitted) |*gun| {
         if (clock.frame_start >= gun.firing_until) continue;
-        const record = gun.type.stats(stats);
+        const barrel = gun.barrel() orelse continue;
+        const record = barrel.type.stats(stats);
         // Whether the shot is heard is worked out before the sound's turn comes round. Only type
         // 0, which no gun has, has a period of zero.
-        const is_heard = heard(world, index, gun.*);
-        if (gun.turret != .unset and (record.kind == .energy or record.kind == .rounds)) {
-            gun.sounded = @rem(gun.sounded + 1, @max(1, gun_stats.sound_periods[gun.type.number()]));
+        const is_heard = heard(world, index, gun);
+        if (record.kind == .energy or record.kind == .rounds) {
+            gun.sounded = @rem(gun.sounded + 1, @max(1, gun_stats.sound_periods[barrel.type.number()]));
         }
-        if (gun.turret == .fixed) {
-            if (gun.next_shot > clock.frame_start) continue;
-            shot: {
-                switch (record.kind) {
-                    .energy => {
-                        if (needed >= charge) break :shot;
-                        if (takesTurn(object, groups, gun.*)) |takes| {
-                            if (!takes) break :shot;
-                            alternated = true;
-                        }
-                        if (!fires(world, object)) break :shot;
-                        shoot(world, clock, index, gun.*, is_heard);
-                        object.gun_charge -= @floatFromInt(record.shot_energy);
-                    },
-                    .rounds => {
-                        if (object.rounds <= 0) break :shot;
-                        if (takesTurn(object, groups, gun.*)) |takes| {
-                            if (!takes) break :shot;
-                            alternated = true;
-                        }
-                        if (!fires(world, object)) break :shot;
-                        shoot(world, clock, index, gun.*, is_heard);
-                        object.rounds -= 1;
-                    },
-                    else => {},
+        switch (gun.turret) {
+            .fixed => {
+                if (gun.next_shot > clock.frame_start) continue;
+                shot: {
+                    switch (record.kind) {
+                        .energy => {
+                            if (needed >= charge) break :shot;
+                            if (takesTurn(object, groups, gun)) |takes| {
+                                if (!takes) break :shot;
+                                alternated = true;
+                            }
+                            if (!fires(world, object)) break :shot;
+                            shoot(world, clock, index, barrel.*, is_heard);
+                            object.gun_charge -= @floatFromInt(record.shot_energy);
+                        },
+                        .rounds => {
+                            if (object.rounds <= 0) break :shot;
+                            if (takesTurn(object, groups, gun)) |takes| {
+                                if (!takes) break :shot;
+                                alternated = true;
+                            }
+                            if (!fires(world, object)) break :shot;
+                            shoot(world, clock, index, barrel.*, is_heard);
+                            object.rounds -= 1;
+                        },
+                        else => {},
+                    }
                 }
-            }
-            gun.next_shot = clock.frame_start + refire(record, object.blind_fire_aim != 0);
-        } else if (gun.turret == ._unknown_2 and gun.next_shot <= clock.frame_start and object.rounds > 0) {
-            gun.next_shot = clock.frame_start + refire(record, object.blind_fire_aim != 0);
-            if (takesTurn(object, groups, gun.*)) |takes| {
-                if (!takes) continue;
-                alternated = true;
-            }
-            // Not ported: the particles the muzzle puffs (`clip_event_particles`).
-            shoot(world, clock, index, gun.*, is_heard);
-            object.rounds -= 1;
+                gun.next_shot = clock.frame_start + refire(record, object.blind_fire_aim != 0);
+            },
+            .spin => {
+                if (gun.next_shot > clock.frame_start or object.rounds <= 0) continue;
+                gun.next_shot = clock.frame_start + refire(record, object.blind_fire_aim != 0);
+                if (takesTurn(object, groups, gun)) |takes| {
+                    if (!takes) continue;
+                    alternated = true;
+                }
+                // Not ported: the particles the muzzle puffs (`clip_event_particles`).
+                shoot(world, clock, index, barrel.*, is_heard);
+                object.rounds -= 1;
+            },
+            // An aimed turret fires by its parts' tracks (`clipEventMuzzles`).
+            .aimed, .missile, .gone => {},
         }
     }
     if (alternated) object.gun_turn = object.gun_turn.other();
@@ -542,7 +626,7 @@ pub fn step(world: gameobj.World, clock: *const Clock, index: u16) void {
 /// Whether a gun takes this shot, for a ship firing one group of guns out of step: the group's two
 /// guns fire in turn (`GameObject.gun_turn`). Null for a ship firing every group or firing in
 /// step, and for a group of one gun, none of which take turns.
-fn takesTurn(object: *const gameobj.GameObject, groups: *const [max_groups]Group, gun: Fitted) ?bool {
+fn takesTurn(object: *const gameobj.GameObject, groups: *const [max_groups]Group, gun: *const Fitted) ?bool {
     const mode = object.gun_mode;
     if (mode.all or mode.synchronised) return null;
     if (groups[mode.group].second < 0) return null;
@@ -564,18 +648,19 @@ fn refire(record: Gun, blind: bool) i32 {
 /// Whether a gun's shot is heard: the player's shots all are, and another ship's one in every
 /// `gun_stats.sound_periods` steps of firing. The step works this out before it advances the
 /// count, so it holds for the shot the gun is about to take.
-pub fn heard(world: gameobj.World, owner: u16, gun: Fitted) bool {
+pub fn heard(world: gameobj.World, owner: u16, gun: *const Fitted) bool {
     return owner == world.objects.player or gun.sounded == 0;
 }
 
 test fire {
     var object = gameobj.testing.object();
-    var part: objects.Model.Part = undefined;
+    // The trigger reads nothing of where the guns stand.
+    const muzzle: Muzzle = .{ .model = undefined, .part = 0, .attachment = undefined };
     var fitted = [_]Fitted{
-        .{ .part = &part, .muzzle = std.mem.zeroes(shp.Attachment), .type = .laser_cannon, .side = .first },
-        .{ .part = &part, .muzzle = std.mem.zeroes(shp.Attachment), .type = .laser_cannon, .side = .second },
-        .{ .part = &part, .muzzle = std.mem.zeroes(shp.Attachment), .type = .pulse_cannon },
-        .{ .part = &part, .muzzle = std.mem.zeroes(shp.Attachment), .type = charging_type },
+        .{ .turret = .{ .fixed = .{ .muzzle = muzzle, .type = .laser_cannon } }, .side = .first },
+        .{ .turret = .{ .fixed = .{ .muzzle = muzzle, .type = .laser_cannon } }, .side = .second },
+        .{ .turret = .{ .fixed = .{ .muzzle = muzzle, .type = .pulse_cannon } } },
+        .{ .turret = .{ .fixed = .{ .muzzle = muzzle, .type = charging_type } } },
     };
     var groups: [max_groups]Group = @splat(.{});
     groups[0] = .{ .first = 0, .second = 1 };
@@ -730,7 +815,7 @@ test step {
     const rounds: GunType = .collapser_guns;
     world.objects.gun_stats.types[rounds.number()] = testing.gun_type.stats(&world.objects.gun_stats);
     world.objects.gun_stats.types[rounds.number()].kind = .rounds;
-    for (ship.guns()) |*gun| gun.type = rounds;
+    for (ship.guns()) |*gun| gun.turret.fixed.type = rounds;
     ship.hold();
     ship.ready();
     step(world, &ship.mission.clock, ship.index);
@@ -738,7 +823,7 @@ test step {
     try std.testing.expectEqual(51, object.gun_charge);
 
     // A ship that is jumping fires nothing, though its guns still recharge.
-    for (ship.guns()) |*gun| gun.type = testing.gun_type;
+    for (ship.guns()) |*gun| gun.turret.fixed.type = testing.gun_type;
     object.gun_charge = 50;
     object.flags.jumping = true;
     ship.hold();
@@ -835,8 +920,8 @@ test heard {
     var gun = ship.guns()[0];
     gun.sounded = 2;
     // Every one of the player's shots is heard; another ship's only as its count comes round.
-    try std.testing.expect(heard(ship.world(), ship.mission.objects.player, gun));
-    try std.testing.expect(!heard(ship.world(), ship.index + 1, gun));
+    try std.testing.expect(heard(ship.world(), ship.mission.objects.player, &gun));
+    try std.testing.expect(!heard(ship.world(), ship.index + 1, &gun));
 }
 
 // --- Bullets -----------------------------------------------------------------------------------
@@ -909,7 +994,7 @@ pub const Bullets = struct {
     pool: [max_bullets]Bullet = @splat(.{}),
     /// What the shots are drawn with, where the caller has built it; without, they fly unseen and
     /// draw none of the numbers their looks would.
-    looks: ?*const Looks = null,
+    looks: ?*Looks = null,
     /// Which shots cast a light.
     shot_lights: ShotLights = .latest_two,
     /// The shots that cast a light under `latest_two`: the player's latest two (`0x0056317C`), and
@@ -997,7 +1082,7 @@ const hostile_shot_light: [3]f32 = .{ 1, 0.5, 0 };
 /// player's shot gives ([#83](https://github.com/vdmkenny/openreliant/issues/83)), and the aim a
 /// ship firing blind takes at its target
 /// ([#183](https://github.com/vdmkenny/openreliant/issues/183)).
-pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, gun: Fitted, is_heard: bool) void {
+pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, barrel: Barrel, is_heard: bool) void {
     const all = world.objects;
     const slot = &all.slots[owner];
     const model = if (slot.model) |*live| live else return;
@@ -1006,15 +1091,12 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, gun: Fitted,
 
     // The shot's own type, which is its gun's but for a Turret Flak's two times in five
     // (`bullet_fire`); its figures follow it.
-    var kind = gun.type;
+    var kind = barrel.type;
     if (kind == .turret_flak and @rem(world.random.rand(), 5) < 2) kind = .turret_lasers;
     const record = kind.stats(&all.gun_stats);
 
     // The muzzle stands where the step is taking the ship, on the part that carries it.
-    model.place(slot.object.nextPosition(), slot.object.root.next_orientation);
-    const part = gun.part.object;
-    const muzzle = (math.Place{ .position = gameobj.vector(gun.muzzle.position), .orientation = gun.muzzle.orientation })
-        .within(.{ .position = part.position, .orientation = part.orientation });
+    const muzzle = barrel.muzzle.at(model, slot.object.placeAt(.next), .next) orelse return;
     const at = muzzle.position;
     const turn = muzzle.orientation;
 
@@ -1061,6 +1143,36 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, gun: Fitted,
     }
     if (is_heard) shotSound(world, @intCast(index), kind, record.sound, owner == all.player);
     candidates(world, bullet, record, lifetime);
+}
+
+/// The game's own effects of the events the tracks of the model of the object in slot `owner`
+/// pass (`node_tree_update`): a `muzzles` event fires the part's muzzles (`clipEventMuzzles`).
+///
+/// Not ported: the particles a `puff` event sends out (`clip_event_particles`, `0x0047C800`,
+/// [#41](https://github.com/vdmkenny/openreliant/issues/41)).
+pub fn clipEvents(world: *gameobj.World, owner: u16) gameobj.Events {
+    return .{ .context = world, .owner = owner, .fire = clipEvent };
+}
+
+fn clipEvent(context: *anyopaque, owner: u16, model: *objects.Model, part: usize, kind: gameobj.EventKind) void {
+    const world: *const gameobj.World = @ptrCast(@alignCast(context));
+    switch (kind) {
+        .muzzles => clipEventMuzzles(world.*, owner, model, part),
+        .puff, _ => {},
+    }
+}
+
+/// `clip_event_muzzles` (`0x0047C7B0`): fires a shot from each muzzle of part `index` of
+/// `model`, one of the models of the object in slot `owner`, of the type the muzzle holds, and
+/// heard (`bullet_fire`). This is how an aimed turret fires, by its parts' `fire` tracks. Nothing
+/// holds such a shot back: not the ship's charge or rounds, the gun's refire or condition, a jump,
+/// nor its guns being disabled.
+pub fn clipEventMuzzles(world: gameobj.World, owner: u16, model: *const objects.Model, index: usize) void {
+    for (model.parts[index].attachments) |*attachment| {
+        if (attachment.kind != .gun_muzzle) continue;
+        const muzzle: Muzzle = .{ .model = model, .part = index, .attachment = attachment };
+        shoot(world, world.clock, owner, .{ .muzzle = muzzle, .type = .fromNumber(attachment.gun_type) }, true);
+    }
 }
 
 /// The sound a shot makes as it is fired (`bullet_fire`), its gun type's, following it: on a voice
@@ -1287,6 +1399,27 @@ fn hullHit(world: gameobj.World, bullet: *Bullet, index: u16, struck: collision.
     bullet.dies_at = spent;
 }
 
+test clipEventMuzzles {
+    const gpa = std.testing.allocator;
+    var ship: testing.Ship = undefined;
+    try ship.init(gpa);
+    defer ship.deinit(gpa);
+    var world = ship.world();
+    const model = &ship.mission.objects.slots[ship.index].model.?;
+
+    // A muzzles event fires a shot from each of the part's muzzles, held back by nothing: not
+    // an empty charge, nor guns that are disabled.
+    ship.object().gun_charge = 0;
+    ship.object().flags.guns_disabled = true;
+    const events = clipEvents(&world, ship.index);
+    events.fire(events.context, events.owner, model, 0, .muzzles);
+    try std.testing.expectEqual(2, flying(world));
+    for (world.objects.bullets.pool[0..2]) |bullet| try std.testing.expectEqual(ship.index, bullet.owner);
+    // A puff fires nothing.
+    events.fire(events.context, events.owner, model, 0, .puff);
+    try std.testing.expectEqual(2, flying(world));
+}
+
 test shoot {
     const gpa = std.testing.allocator;
     var ship: testing.Ship = undefined;
@@ -1294,7 +1427,7 @@ test shoot {
     defer ship.deinit(gpa);
     const world = ship.world();
 
-    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0], false);
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0].turret.fixed, false);
     try std.testing.expectEqual(1, flying(world));
     const bullet = &world.objects.bullets.pool[0];
     // It leaves the muzzle, a hundred to the left of the ship's nose, flying along that nose at
@@ -1313,7 +1446,7 @@ test shoot {
 
     // Nothing is fired once every record is in flight.
     for (&world.objects.bullets.pool) |*record| record.live = true;
-    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0], false);
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0].turret.fixed, false);
     try std.testing.expectEqual(max_bullets, flying(world));
 }
 
@@ -1332,7 +1465,7 @@ test bulletsFrame {
 
     // A shot whose path crosses the ship: its shields take the type's first damage, and it is
     // spent.
-    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0], false);
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0].turret.fixed, false);
     const bullet = &world.objects.bullets.pool[0];
     try std.testing.expectEqual(1, bullet.candidate_count);
     try std.testing.expectEqual(target, bullet.candidates[0].object);
@@ -1346,7 +1479,7 @@ test bulletsFrame {
     struck.shields = .all(0);
     struck.recent_damage = 0;
     const armor = struck.armor;
-    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0], false);
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0].turret.fixed, false);
     const next = &world.objects.bullets.pool[0];
     next.last = .{ 0, 0, 0 };
     next.at = .{ 0, 0, 600 };
@@ -1356,7 +1489,7 @@ test bulletsFrame {
     try std.testing.expectEqual(0, flying(world));
 
     // A shot that reaches the end of its life is let go.
-    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0], false);
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0].turret.fixed, false);
     try std.testing.expectEqual(1, flying(world));
     ship.mission.clock.frame_start += 1000;
     bulletsFrame(world, &ship.mission.clock, 0);
@@ -1381,7 +1514,7 @@ test "a shot striking a hull throws sparks from where it struck" {
     slot.object.shields = .all(0);
 
     // They fly from where the shot enters the part's box, its face 500 ahead.
-    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0], false);
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0].turret.fixed, false);
     const bullet = &world.objects.bullets.pool[0];
     bullet.last = .{ 0, 0, 0 };
     bullet.at = .{ 0, 0, 600 };
@@ -1405,7 +1538,7 @@ test "the player's shifted shields take a hit before the quadrant does" {
     ship.mission.player.shield_reserves = .{ .fore = 25, .aft = 0 };
 
     // A shot into the player's fore quadrant comes off the reserve, and the shields are untouched.
-    shoot(world, &ship.mission.clock, shooter, ship.mission.objects.slots[shooter].guns[0], false);
+    shoot(world, &ship.mission.clock, shooter, ship.mission.objects.slots[shooter].guns[0].turret.fixed, false);
     const bullet = &world.objects.bullets.pool[0];
     bullet.last = .{ 0, 0, 500 };
     bullet.at = .{ 0, 0, -100 };
@@ -1435,9 +1568,9 @@ test "a heard shot sounds, following it" {
     world.hearing = .{ .sound = &sound, .camera = &listener, .clock = &ship.mission.clock };
 
     // Unheard, nothing plays; heard, the gun type's sound follows the shot.
-    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0], false);
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[0].turret.fixed, false);
     for (sound.voices_3d[0..sound.voice_3d_count]) |voice| try std.testing.expectEqual(-1, voice.owner);
-    shoot(world, &ship.mission.clock, ship.index, ship.guns()[1], true);
+    shoot(world, &ship.mission.clock, ship.index, ship.guns()[1].turret.fixed, true);
     const record = testing.gun_type.stats(&ship.mission.objects.gun_stats);
     var found = false;
     for (sound.voices_3d[0..sound.voice_3d_count]) |voice| {
@@ -1461,14 +1594,14 @@ test "only the latest two shots of a ring cast a light" {
     ship.mission.objects.slots[other].object.side = .hostile;
 
     // The player's third shot puts out the first one's light.
-    for (0..3) |_| shoot(world, &ship.mission.clock, ship.index, ship.guns()[0], false);
+    for (0..3) |_| shoot(world, &ship.mission.clock, ship.index, ship.guns()[0].turret.fixed, false);
     try std.testing.expectEqual(null, bullets.pool[0].light);
     try std.testing.expect(bullets.pool[1].light != null);
     try std.testing.expect(bullets.pool[2].light != null);
     try std.testing.expectEqual(shot_light, bullets.pool[2].light.?.colour);
 
     // Another ship's shots keep a ring of their own, and a hostile ship's are orange.
-    shoot(world, &ship.mission.clock, other, ship.mission.objects.slots[other].guns[0], false);
+    shoot(world, &ship.mission.clock, other, ship.mission.objects.slots[other].guns[0].turret.fixed, false);
     try std.testing.expectEqual(hostile_shot_light, bullets.pool[3].light.?.colour);
     try std.testing.expect(bullets.pool[1].light != null);
 
@@ -1486,7 +1619,7 @@ test "every shot casts a light where the port lets them" {
     defer ship.deinit(gpa);
     const world = ship.world();
     world.objects.bullets.shot_lights = .every_shot;
-    for (0..3) |_| shoot(world, &ship.mission.clock, ship.index, ship.guns()[0], false);
+    for (0..3) |_| shoot(world, &ship.mission.clock, ship.index, ship.guns()[0].turret.fixed, false);
     for (world.objects.bullets.pool[0..3]) |bullet| try std.testing.expect(bullet.light != null);
     // The rings are left alone.
     try std.testing.expectEqual(null, world.objects.bullets.player_lights.held[0]);
@@ -1503,7 +1636,7 @@ test "a Turret Flak shot bursts at a random range, scatters, and is at times a l
         types[kind.number()].lifetime = 100;
         types[kind.number()].speed = 500;
     }
-    var gun = ship.guns()[0];
+    var gun = ship.guns()[0].turret.fixed;
     gun.type = .turret_flak;
 
     var flak: usize = 0;
@@ -1535,7 +1668,7 @@ test "a Huge Gun's shot reaches farther, and always through the shields" {
     defer ship.deinit(gpa);
     const world = ship.world();
     world.objects.gun_stats.types[GunType.coalition_huge_gun.number()] = testing.gun_type.stats(&world.objects.gun_stats);
-    var gun = ship.guns()[0];
+    var gun = ship.guns()[0].turret.fixed;
     gun.type = .coalition_huge_gun;
 
     // A ship off to the side of the shot's path by more than its radius, but within 3000.
@@ -1719,12 +1852,12 @@ pub const Built = struct {
 pub const Looks = struct {
     shapes: std.EnumArray(Shape, Built),
     images: std.EnumArray(Image, *srtexture.Image),
-    /// The Turret Flak's shell (`0x00479140`): the first mesh of the first part of ship type
-    /// `shell_type`'s model, drawn at every distance. Null where the model cannot be loaded, and a
-    /// Turret Flak shot is then not drawn.
-    shell: ?srapiext.Level,
+    /// The Turret Flak's shell (`loadShell`): the first mesh of the first part of ship type
+    /// `shell_type`'s model, drawn at every distance. Null until it is loaded, or where the model
+    /// cannot be, and a Turret Flak shot is then not drawn.
+    shell: ?srapiext.Level = null,
 
-    pub fn create(gpa: Allocator, textures: *srtexture.Table, types: ShipTypes) (Allocator.Error || matmanager.Error)!*Looks {
+    pub fn create(gpa: Allocator, textures: *srtexture.Table) (Allocator.Error || matmanager.Error)!*Looks {
         const looks = try gpa.create(Looks);
         errdefer gpa.destroy(looks);
         for (std.enums.values(Image)) |image| {
@@ -1736,13 +1869,16 @@ pub const Looks = struct {
             try build(looks.shapes.getPtr(shape), gpa, recipes.get(shape), &looks.images);
             made += 1;
         }
-        looks.shell = shell: {
-            const loaded = types.load(types.context, shell_type) orelse break :shell null;
-            const parts = loaded.loaded.parts;
-            if (parts.len == 0 or parts[0].levels.len == 0) break :shell null;
-            break :shell .{ .mesh = parts[0].levels[0].mesh, .until = std.math.inf(f32) };
-        };
+        looks.shell = null;
         return looks;
+    }
+
+    /// `guns_load_shell` (`0x00479140`), as a mission starts, once the objects are reset: the
+    /// Turret Flak's shell, the first level of the first part of ship type `shell_type`'s model,
+    /// counted as used so that it stays loaded (`xtrabits.firstLevels`).
+    pub fn loadShell(looks: *Looks, all: *Objects, types: ShipTypes) void {
+        const levels = xtrabits.firstLevels(all, types, shell_type) orelse &.{};
+        looks.shell = if (levels.len > 0) .{ .mesh = levels[0].mesh, .until = std.math.inf(f32) } else null;
     }
 
     pub fn destroy(looks: *Looks, gpa: Allocator) void {
@@ -2209,7 +2345,7 @@ const test_looks = struct {
             for (&names, std.enums.values(Image)) |*name, image| name.* = std.fs.path.basenameWindows(image.name());
             const textures = try @import("backdrop.zig").testing.Textures.initNames(gpa, &names);
             errdefer textures.deinit(gpa);
-            return .{ .textures = textures, .looks = try .create(gpa, &textures.table, create.testing.no_models) };
+            return .{ .textures = textures, .looks = try .create(gpa, &textures.table) };
         }
 
         fn deinit(built: Fixture, gpa: Allocator) void {
@@ -2253,6 +2389,14 @@ test Looks {
     try std.testing.expectEqual(std.math.inf(f32), huge.levels[0].until);
     // Without the shell's model, a Turret Flak shot is not drawn.
     try std.testing.expectEqual(null, built.looks.shell);
+    // Its shell is loaded as a mission starts, its type counted as used so that the types no
+    // object uses, let go between missions, keep it.
+    var random: libcmt.Rand = .{};
+    const all = try create.Objects.create(gpa, &random);
+    defer all.destroy();
+    built.looks.loadShell(all, create.testing.no_models);
+    try std.testing.expectEqual(null, built.looks.shell);
+    try std.testing.expectEqual(1, all.types[shell_type].objects);
 }
 
 test dress {
@@ -2386,6 +2530,7 @@ const shieldfx = @import("shieldfx.zig");
 const sparks = @import("sparks.zig");
 const create = @import("create.zig");
 const ShipTypes = create.Types;
+const Objects = create.Objects;
 const formats = @import("../../formats/stats.zig");
 const gameobj = @import("gameobj.zig");
 const gun_stats = @import("guns/stats.zig");

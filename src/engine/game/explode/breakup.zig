@@ -436,7 +436,7 @@ fn breakUpPart(explosions: *explode.Explosions, world: gameobj.World, slot: *con
     const carried = gameobj.vector(slot.object.velocity);
     const source: Source = .{
         .mesh = shown[@min(part.object.level, shown.len - 1)].mesh,
-        .place = .{ .position = part.object.position, .orientation = part.object.orientation },
+        .place = part.drawn(),
         .flags = part.object.flags,
         .light_mask = explosions.settings.debris_lights.mask(part.object.light_mask),
     };

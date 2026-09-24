@@ -624,7 +624,6 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
         }
         gameobj.linkParts(&model, loaded.model);
         slot.model = model;
-        slot.guns = try guns.fit(all.gpa, &slot.model.?);
         // `object_recentre` puts what it works out in the record.
         object.mass = model.mass;
         object.centre = gameobj.vec3(model.centre);
@@ -666,8 +665,12 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.gun_count = 0;
     object.component_count = 0;
     // The components are listed once the count is clear, as the game lists them, and the guns are
-    // fitted after them (`object_fit_guns`).
+    // fitted after them (`object_fit_guns`): a turret fires within its component's firing arc.
     if (object.flags.components) collectComponents(slot);
+    if (slot.model) |*model| slot.guns = try guns.fit(all.gpa, model, .{
+        .components = slot.components[0..@intCast(object.component_count)],
+        .arcs = if (slot.type) |loaded| loaded.model.firing_arcs else &.{},
+    });
     object.gun_count = @intCast(slot.guns.len);
     // The type's gun groups follow from this object's guns, and each gun learns its side.
     // `gun_groups_build` leaves a type with no model alone.
@@ -715,6 +718,8 @@ pub fn settledTier(asked: i32, ship_type: gameobj.Type, campaign: u2) u2 {
 /// A missile hardpoint: an attachment of kind `missile` on a part of the model.
 pub const Hardpoint = struct {
     part: usize,
+    /// Which of the part's attachments it is.
+    index: usize,
     attachment: *const shp.Attachment,
 };
 
@@ -741,7 +746,7 @@ pub const Hardpoints = struct {
             while (each.attachment < part.attachments.len) {
                 const attachment = &part.attachments[each.attachment];
                 each.attachment += 1;
-                if (attachment.kind == .missile) return .{ .part = each.part, .attachment = attachment };
+                if (attachment.kind == .missile) return .{ .part = each.part, .index = each.attachment - 1, .attachment = attachment };
             }
         }
         return null;
@@ -801,7 +806,13 @@ fn hang(gpa: Allocator, effects: objects.Effects, hardpoint: Hardpoint, file: ?[
     var built: objects.Model = try .create(gpa, mounted.model, mounted.loaded, effects);
     gameobj.linkParts(&built, mounted.model);
     const at = hardpoint.attachment.position;
-    return .{ .part = hardpoint.part, .origin = .{ at.x, at.y, at.z }, .orientation = hardpoint.attachment.orientation, .model = built };
+    return .{
+        .part = hardpoint.part,
+        .attachment = hardpoint.index,
+        .origin = .{ at.x, at.y, at.z },
+        .orientation = hardpoint.attachment.orientation,
+        .model = built,
+    };
 }
 
 /// `objects_update` (`0x00468FA0`), once a simulation step after the objects' own updates: moves
@@ -1027,7 +1038,7 @@ pub const testing = struct {
             model.node_faces = .{&model.faces};
             model.data[0].part.volume = 2;
             model.data[0].part.density = 3;
-            model.source = .{ .header = std.mem.zeroes(shp.Header), .parts = &model.data, .tail_count = 0, .trailing_bytes = 0 };
+            model.source = .{ .header = std.mem.zeroes(shp.Header), .parts = &model.data, .trailing_bytes = 0 };
             model.loaded = .{ .parts = &model.loaded_parts };
             model.type = .{ .model = &model.source, .loaded = &model.loaded };
         }
@@ -1166,7 +1177,7 @@ test collectComponents {
     }
     data[2].part.flags.targetable = true;
     var loaded_parts: [4]srofiles.LoadedPart = @splat(.{ .flags = .{}, .levels = &.{}, .meshes = &.{} });
-    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &data, .tail_count = 0, .trailing_bytes = 0 };
+    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &data, .trailing_bytes = 0 };
     const loaded: srofiles.Loaded = .{ .parts = &loaded_parts };
     var kind: Type = .{ .model = &source, .loaded = &loaded };
 
@@ -1196,7 +1207,7 @@ test collectComponents {
         part.part.parent = -1;
         part.part.flags.component = true;
     }
-    const crowded: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &many, .tail_count = 0, .trailing_bytes = 0 };
+    const crowded: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &many, .trailing_bytes = 0 };
     const crowded_loaded: srofiles.Loaded = .{ .parts = &many_loaded };
     var crowded_kind: Type = .{ .model = &crowded, .loaded = &crowded_loaded };
     slot.model.?.deinit(gpa);

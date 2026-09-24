@@ -904,7 +904,7 @@ test staticLightsMark {
 
     // A light on an intact part marks that class alone.
     var parts = [_]shp.PartData{ intact, damaged };
-    const model: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &parts, .tail_count = 0, .trailing_bytes = 0 };
+    const model: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &parts, .trailing_bytes = 0 };
     try std.testing.expectEqual([2]bool{ true, false }, staticLightsMark(&model));
 
     // A light that blinks, or one with no brightness, is not baked at all.

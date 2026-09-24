@@ -136,9 +136,11 @@ fn info(ctx: Context, model: shp.Model) !void {
         try ctx.stdout.print("[{d:>3}] {s:<34} type {d:>2}  parent {d:>3}  link {d}", .{
             index, part.name(), @intFromEnum(part.class), part.parent, part.link_id,
         });
-        if (part.turret_kind != 0) {
-            try ctx.stdout.print("  turret kind {d} yaw [{d:.0},{d:.0}] pitch [{d:.0},{d:.0}]", .{
-                part.turret_kind, part.yaw_min, part.yaw_max, part.pitch_min, part.pitch_max,
+        if (part.turret_kind != .fixed) {
+            try ctx.stdout.print("  turret kind {d} slot {d} yaw [{d:.0},{d:.0}] pitch [{d:.0},{d:.0}]", .{
+                @intFromEnum(part.turret_kind), part.turret_slot,
+                part.angles_min.x,              part.angles_max.x,
+                part.angles_min.y,              part.angles_max.y,
             });
         }
         try ctx.stdout.writeByte('\n');

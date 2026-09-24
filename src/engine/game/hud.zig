@@ -825,7 +825,8 @@ pub fn draw(state: *State, resources: *Resources, frame: Frame) (spr.Error || Al
 fn groupLead(slot: *const create.Slot) ?guns.GunType {
     const first = slot.gun_groups[slot.object.gun_mode.group].first;
     if (first < 0 or first >= slot.guns.len) return null;
-    return slot.guns[@intCast(first)].type;
+    const barrel = slot.guns[@intCast(first)].barrel() orelse return null;
+    return barrel.type;
 }
 
 /// What blind fire does for the ship of `slot` this frame: nothing where it is not carried or not
@@ -2848,7 +2849,7 @@ pub fn drawTarget(
     const range = rangeText(&buffer, kilometres(all, index));
 
     const part = ai.targetPart(all, state.shown);
-    const node: math.Place = if (part) |found| .{ .position = found.object.position, .orientation = found.object.orientation } else struck.drawn;
+    const node: math.Place = if (part) |found| found.drawn() else struck.drawn;
     const seen = sight.view(node.position);
     if (!sight.onScreen(sight.pixel(seen)) or seen[2] < 0) {
         try drawOffScreen(art, &fonts.small, gpa, target, sight, pointerDirection(ship.drawn, node.position), hostile, range, scene.mode, edge_line, colour, scale);

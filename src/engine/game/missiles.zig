@@ -307,34 +307,19 @@ pub fn launch(world: gameobj.World, launcher: u16, rack: usize, target: aigeneri
     const racked = &carrier.object.racks[rack];
     const number = racked.type.index() orelse return;
     const model = if (carrier.model) |*carried| carried else return;
-    if (rack >= model.hung.len or model.hung[rack] == null) return;
-    const places = hungPlaces(carrier, model, rack);
+    if (rack >= model.hung.len) return;
+    const hung = if (model.hung[rack]) |*mount| mount else return;
+    const places = hungPlaces(carrier, model, hung);
     const held = create.models.attachment(.missile, @intCast(number)) orelse create.models.Attachment{};
     const pod = held.second_model != null;
     const built: objects.Model = if (pod and racked.count > 0)
         (buildModel(all.gpa, carrier, held.second_model.?) catch return) orelse return
     else taken: {
         defer model.hung[rack] = null;
-        break :taken model.hung[rack].?.model;
+        break :taken hung.model;
     };
 
-    // Its object's type is the missile's, as in the game.
-    var slot: create.Slot = .{ .object = gameobj.objectAlloc(@enumFromInt(number), world.random), .model = built };
-    const object = &slot.object;
-    slot.flight = &all.missile_stats.flight[number];
-    object.side = carrier.object.side;
-    object.velocity = carrier.object.velocity;
-    object.radius = built.radius;
-    object.bounds_min = gameobj.vec3(built.bounds[0]);
-    object.bounds_max = gameobj.vec3(built.bounds[1]);
-    object.root.position = gameobj.vec3(places.now.position);
-    object.root.orientation = places.now.orientation;
-    object.root.next_position = gameobj.vec3(places.next.position);
-    object.root.next_orientation = places.next.orientation;
-    object.root.flags.committed = true;
-    object.root.flags.unframed = true;
-    slot.drawn = places.drawn;
-    const at = missiles.add(.{ .slot = slot, .launcher = launcher, .type = racked.type }).?;
+    const at = spawn(world, launcher, racked.type, built, places) orelse return;
 
     if (world.hearing) |hearing| {
         const class: sound3d.Class = if (launcher == all.player) .guaranteed else .not_reserved;
@@ -351,6 +336,63 @@ pub fn launch(world: gameobj.World, launcher: u16, rack: usize, target: aigeneri
     if (pod and racked.count == 0) launch(world, launcher, rack, .none);
 }
 
+/// `missile_launch_turret` (`0x004967F0`): a Screamer from part `launcher` of `model`, a missile
+/// turret's launcher on the object in slot `ship` or on a model mounted on it, at `target`, where
+/// the object may launch missiles and a record is free. It is built as a Screamer pod's missile,
+/// starts where the launcher stands, at the object's velocity, and flies its pod launch with its
+/// trail, then its guidance. No sound is played.
+///
+/// Where memory runs out for it, or the game lacks its model, nothing is launched.
+pub fn launchFromTurret(world: gameobj.World, ship: u16, model: *const objects.Model, launcher: usize, target: aigeneric.Target) void {
+    const all = world.objects;
+    const carrier = &all.slots[ship];
+    if (carrier.object.flags.missiles_disabled or all.missiles.full()) return;
+    const top = if (carrier.model) |*carried| carried else return;
+    const places: Places = .{
+        .now = top.partAt(carrier.object.placeAt(.now), model, launcher, .now) orelse return,
+        .next = top.partAt(carrier.object.placeAt(.next), model, launcher, .next) orelse return,
+        .drawn = model.parts[launcher].drawn(),
+    };
+    const held = create.models.attachment(.missile, comptime Type.screamer.index().?) orelse return;
+    const built = (buildModel(all.gpa, carrier, held.second_model orelse return) catch return) orelse return;
+    const at = spawn(world, ship, .screamer, built, places) orelse return;
+    startTrail(world, at);
+    setOrder(world, at, .pod_launch);
+    if (all.missiles.get(at)) |live| live.target = target;
+}
+
+/// Where a launch starts a missile: where its launcher stood at the last step, where the step is
+/// taking it, and where it is drawn (`node_world_place`, `node_next_place`, and its node's frame).
+const Places = struct { now: math.Place, next: math.Place, drawn: math.Place };
+
+/// A missile of type `kind` of the model `built`, from the object in slot `launcher`, standing at
+/// `places`: its object's type is the missile's, as in the game, and it takes the launcher's side
+/// and velocity. Its record's index, or null where none is free, which lets the model go.
+fn spawn(world: gameobj.World, launcher: u16, kind: Type, built: objects.Model, places: Places) ?u8 {
+    const all = world.objects;
+    const carrier = &all.slots[launcher];
+    const number = kind.index() orelse return null;
+    var slot: create.Slot = .{ .object = gameobj.objectAlloc(@enumFromInt(number), world.random), .model = built };
+    const object = &slot.object;
+    slot.flight = &all.missile_stats.flight[number];
+    object.side = carrier.object.side;
+    object.velocity = carrier.object.velocity;
+    object.radius = built.radius;
+    object.bounds_min = gameobj.vec3(built.bounds[0]);
+    object.bounds_max = gameobj.vec3(built.bounds[1]);
+    object.root.position = gameobj.vec3(places.now.position);
+    object.root.orientation = places.now.orientation;
+    object.root.next_position = gameobj.vec3(places.next.position);
+    object.root.next_orientation = places.next.orientation;
+    object.root.flags.committed = true;
+    object.root.flags.unframed = true;
+    slot.drawn = places.drawn;
+    return all.missiles.add(.{ .slot = slot, .launcher = launcher, .type = kind }) orelse {
+        slot.release(all.gpa);
+        return null;
+    };
+}
+
 /// `missile_trail_create` for the missile at `at`, where it is still flying and the world has
 /// trails.
 fn startTrail(world: gameobj.World, at: u8) void {
@@ -359,23 +401,13 @@ fn startTrail(world: gameobj.World, at: u8) void {
     missile.trail = trails.start(world, .{ .missile = at }, missile.type) catch null;
 }
 
-/// Where the pod or missile a rack holds stands: at its launcher's place, at the place the step
-/// is taking it to, and where the launcher is drawn (`node_world_place`, `node_next_place`, and
-/// its node's frame). The launcher's model is left placed as it is drawn.
-fn hungPlaces(carrier: *const create.Slot, model: *objects.Model, rack: usize) struct { now: math.Place, next: math.Place, drawn: math.Place } {
-    const root = &carrier.object.root;
-    const drawn = hungAt(model, rack);
-    model.place(gameobj.vector(root.position), root.orientation);
-    const now = hungAt(model, rack);
-    model.place(gameobj.vector(root.next_position), root.next_orientation);
-    const next = hungAt(model, rack);
-    model.place(carrier.drawn.position, carrier.drawn.orientation);
-    return .{ .now = now, .next = next, .drawn = drawn };
-}
-
-fn hungAt(model: *const objects.Model, rack: usize) math.Place {
-    const held = &model.hung[rack].?.model;
-    return .{ .position = held.position, .orientation = held.orientation };
+/// Where the pod or missile a rack holds stands.
+fn hungPlaces(carrier: *const create.Slot, model: *const objects.Model, hung: *const objects.Model.Mount) Places {
+    return .{
+        .now = model.mountRoot(hung, carrier.object.placeAt(.now), .now),
+        .next = model.mountRoot(hung, carrier.object.placeAt(.next), .next),
+        .drawn = .{ .position = hung.model.position, .orientation = hung.model.orientation },
+    };
 }
 
 /// The model of `file`, a pod's missile, built as the launcher's own mounts are; null where the
@@ -916,6 +948,35 @@ pub const testing = struct {
         }
     };
 };
+
+test launchFromTurret {
+    var armed: testing.Armed = undefined;
+    try armed.init(std.testing.allocator);
+    defer armed.deinit();
+    const world = armed.mission.world();
+    const ship = try armed.add(.hostile, .{ 0, 0, 500 });
+    const enemy = try armed.add(.friendly, .{ 0, 0, 20000 });
+    const target: aigeneric.Target = .{ .kind = .ship, .index = @intCast(enemy), .component = -1 };
+    const slot = armed.mission.slot(ship);
+    slot.object.velocity = .{ .x = 0, .y = 0, .z = 30 };
+    const model = &slot.model.?;
+
+    // A Screamer leaves the launcher on its pod launch, at the target, at the ship's velocity,
+    // from where the launcher stands.
+    launchFromTurret(world, ship, model, 0, target);
+    const missile = armed.missile(0);
+    try std.testing.expectEqual(Type.screamer, missile.type);
+    try std.testing.expectEqual(Order.pod_launch, missile.order);
+    try std.testing.expectEqual(target, missile.target);
+    try std.testing.expectEqual(ship, missile.launcher);
+    try std.testing.expectEqual(30, missile.object().velocity.z);
+    const next = model.partPlace(0, .next).within(slot.object.placeAt(.next));
+    try std.testing.expectEqual(next.position, gameobj.vector(missile.object().root.next_position));
+    // A ship whose missiles are disabled launches none.
+    slot.object.flags.missiles_disabled = true;
+    launchFromTurret(world, ship, model, 0, target);
+    try std.testing.expectEqual(1, armed.live());
+}
 
 test launch {
     var armed: testing.Armed = undefined;

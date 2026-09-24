@@ -380,9 +380,8 @@ The port reads the model once for the whole run.
 ## Who launches
 
 Only these launch the missiles of `missiles.cpp`: the player (`player_launch_missile`), the Fight
-order (`fight_fire`), orders 2 and 3, and a missile turret (`turret_missile_step`, `0x0047D560`,
-not ported: [#191](https://github.com/vdmkenny/openreliant/issues/191)). A turret named a missile
-turret in the models' tables is a gun.
+order (`fight_fire`), orders 2 and 3, and a missile turret ([A missile turret's](#a-missile-turrets)).
+A turret named a missile turret in the models' tables is a gun.
 
 ### The ring
 
@@ -548,6 +547,16 @@ ship with its missiles disabled still locks, lighting the player's enemy lock, t
 Orders 2, Launch Missile (`order_launch_missile`, `0x0040B940`), and 3 (`0x0040B990`, which the
 game names nothing), both run once over the ship's orders, launch a missile at their target from
 the first rack with missiles left: of any type but the Jack Hammer, and a Jack Hammer.
+
+### A missile turret's
+
+A missile [turret](guns.md#each-frame) (`turret_missile_step`) tracks what it finds ahead and
+launches one time in five each time its wait is over, six before it reloads.
+`missile_launch_turret` (`0x004967F0`) launches a Screamer from its launcher, where the turret's object may launch missiles and a record
+is free. The Screamer is built as a Screamer pod's missile (attachment kind 0, id 0's second
+model), of the object's side, and starts where the launcher stands: at its committed place, its
+next, and its frame, at the object's velocity. It lays its trail, flies the pod launch and then its
+guidance, at the turret's target. No sound is played.
 
 ### The missile camera
 

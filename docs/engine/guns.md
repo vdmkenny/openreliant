@@ -6,17 +6,31 @@ the shots they fire. The gun types' figures and where they come from are in
 
 ## The guns a model holds
 
-`object_fit_guns` (`0x00479800`) walks the object's model when it is created, once to count its
-guns and once to fill them in, and allocates `gun_count` records of `0x60` bytes at `+0x134` and a
-word for each gun at `+0x138`. A gun comes from an
-[attachment point](../formats/shp.md#attachment-point-tag-0x09) of kind 3, a muzzle, and fires the
-gun type the attachment names at `+0x64`. A muzzle that names type 0 is a warning and fires type 1
-instead. A turret part takes a gun of its own by its turret kind, which is not ported
-([#71](https://github.com/vdmkenny/openreliant/issues/71)).
+`object_fit_guns` (`0x00479800`) walks the object's model when it is created, after its
+[components](objects.md#components) are listed, once to count its guns and once to fill them in,
+and allocates `gun_count` records of `0x60` bytes at `+0x134` and a word for each gun at
+`+0x138`. `object_collect_guns` (`0x00479640`) walks the root's parts in order:
 
-A gun's record holds its turret kind at `+0x00`, the node it fires from at `+0x04`, its type's
-record in `gun_stats` at `+0x08`, the tick its trigger is held until at `+0x0C`, which side of its
-group it is at `+0x14`, and the tick it may next fire at `+0x18`. The word at `+0x138` counts the
+- A part of a turret's class (3, 9, 10 or 18, `part_is_turret`, `0x00479610`) whose
+  [turret kind](../formats/shp.md#part-tag-0x01) is 1, 2 or 3 fits that [turret](#turrets), and
+  what it carries is not walked.
+- A part that shares its link id with a part of a turret's class, whatever that part's kind, is
+  passed over with what it carries: its muzzles are the turret's. A turret's class with any other
+  kind is passed over likewise, so the Boridin's Ion Cannon (class 18, kind 0) and the six guns
+  mounted on it give no gun.
+- Any other part gives a fixed gun for each of its
+  [attachment points](../formats/shp.md#attachment-point-tag-0x09) of kind 3, a muzzle, of the gun
+  type the attachment names at `+0x64`, and the guns of each model its attachments
+  [mount](objects.md#what-an-attachment-point-holds), walked in turn. A muzzle that names type 0
+  is a warning and fires type 1 instead.
+
+**Unverified:** that a part's node holds what hangs from it in the order of its attachments, which
+orders the guns of the models mounted on it among its own.
+
+A gun's record holds its turret kind at `+0x00`, -1 once its turret is destroyed; the node it
+fires from at `+0x04`; its type's record in `gun_stats` at `+0x08`; the tick its trigger is held
+until at `+0x0C`; which side of its group it is at `+0x14`; and the tick it may next fire at
+`+0x18`. A turret keeps more in the rest ([Turrets](#turrets)). The word at `+0x138` counts the
 steps it has been firing, which times the sound of its shots.
 
 ## Groups
@@ -37,7 +51,7 @@ unless the type has exactly one.
 `object_fire_guns` (`0x0047B1F0`) holds the trigger of the guns that are to fire, setting each
 gun's `+0x0C` to `frame_start` plus the ticks it is given. FIRE LASERS holds it for one tick, so
 the player's guns fire this frame and stop unless the key is held into the next; the mission
-script's Fire command holds it for 20 or 100. With FULL GUNS every gun fires but a turret's,
+script's Fire command holds it for 20 or 100. With FULL GUNS every gun fires but an aimed turret's,
 otherwise the two guns of the chosen group do. A muzzle of gun type 11, the Nova Cannon, is passed
 over either way: it charges up instead
 ([#150](https://github.com/vdmkenny/openreliant/issues/150)). A ship whose guns are disabled fires
@@ -144,7 +158,7 @@ does its type's own work on the pieces, then places them between the shot's last
 | Gattling Plasma Cannon | Four bolts of different lengths at random about the flight |
 | Vulcan Battery | Four short bolts in two pairs that wheel about the flight in opposite ways |
 | Nova Cannon | A bolt 360 across and 10000 long |
-| Turret Flak | The first part of the shell model, `shell.shp` |
+| Turret Flak | The first part of the shell model, `shell.shp`, which `guns_load_shell` (`0x00479140`) takes as each mission starts, once the objects are reset, counting its ship type, `0xB1`, as used |
 | Turret Lasers | A bolt 400 across and 2400 long, with two diamonds across it |
 | Allied and Coalition Huge Guns | Three squares crossed in the three planes, tumbling and fading, a glow, a light of their own and a trail of particles |
 
@@ -161,6 +175,113 @@ it for the frames just after it leaves the muzzle.
 **Improvement:** the port lets every shot cast its light (`ShotLights.every_shot`), so that
 sustained fire lights the hulls it passes; `--original` and `--few-shot-lights` keep the game's two
 ([Renderer](../port/renderer.md#improvements)).
+
+## Turrets
+
+A turret part of kind 1, 2 or 3 makes a turret of its assembly: the shown parts of its model that
+share its link id, each in the slot its part names at `+0xF8`. The turret's fit fills the rest of
+the gun's record, marks the node of the part in slot 0, its base, with node flag `0x400`, and
+keeps the model whose parts it turns, the object's own or one mounted on it, at `+0x34` (`+0x30`
+for kind 2). The muzzle is the last of the assembly's; a turret's slot numbers index that model's
+parts.
+
+| Kind | Fit | What the record keeps |
+|---|---|---|
+| 1, aimed | `turret_fit_aimed` (`0x00479160`) | The parts in slots 0 to 4 at `+0x38` to `+0x48`, slot 1 the base's where no part names it; a target at `+0x18` (none, index -1, at `+0x1C`); the tick it next looks for one at `+0x4C`; the yaw and pitch still to turn at `+0x50` and `+0x54`; and, where a part of the assembly is one of the object's components and the object's model has [firing arcs](../formats/shp.md#firing-arc-tag-0x10), that component's arc at `+0x58`, the last found |
+| 2, spinning | `turret_fit_spin` (`0x00479470`) | The parts in slots 0 to 4 at `+0x1C` to `+0x2C`: the barrels that spin, the gun, and two flaps |
+| 3, missile | `turret_fit_missile` (`0x004793A0`) | The parts in slots 0 to 4 at `+0x38`: the base and the launcher; a target at `+0x18`; a timer at `+0x4C`; the missiles left at `+0x58`, none at first; its state at `+0x5C`. It has no muzzle and no gun type |
+
+An aimed turret fires by its parts' `fire` tracks: each track's event of kind 0 fires a shot from
+each muzzle of its part (`clip_event_muzzles`, `0x0047C7B0`, through `bullet_fire`), heard, of the
+type the muzzle holds. Nothing holds such a shot back: not the ship's charge or rounds, the gun's
+refire or condition, a jump, nor the guns being disabled.
+
+### Each frame
+
+`orders_update` runs `object_step_turrets` (`0x0047C950`) for each object after its orders, where
+its guns are not disabled. Unless the object is exploding or its current order is Dock, each of its
+guns runs its turret's step, by kind, from the table at `0x00500FA0`: nothing for a fixed gun and
+for a destroyed turret's (-1).
+
+**Aimed, `turret_aimed_step` (`0x0047D3D0`).** With a target it tracks it (below), then turns: its
+base about its X axis by the yaw still to turn, its part in slot 1 and the one in slot 2 about their
+Y by the pitch, each at most 0.02 a tick either way and within its limits (`node_turn`), each placed
+by its new angles (`node_place`). A turret that drops its target as it tracks still turns by what it
+had to turn the frame before. Every 100 to 199 ticks, where it has no target, it looks for one.
+
+`turret_aimed_track` (`0x0047CFA0`): a target no longer valid (`order_target_valid`) is dropped.
+Otherwise the turret leads it from its base with its gun (`ai_lead_aim_with_gun`), by a share of
+the lead from 0.5 to 0.8 at random where the target's ECM is on, and works out the yaw and pitch
+toward that (`turret_aim_angles`); where it can't lead it or aim there, it drops it. It keeps what
+it still has to turn at `+0x50` and `+0x54`, each the short way round. Where the muzzle's forward
+axis, from where the base stands, both at their next places, passes within twice the target's
+radius of the aim point, ahead (`turret_in_line`, `0x0047CF10`), it holds its trigger for a tick and
+plays the `fire` track, in the track's own mode at a speed of 2, on each of its parts playing
+none. The tracks' events fire its muzzles.
+
+`turret_aim_angles` (`0x0047CB10`) takes the aim point from the base as the model stands drawn, in
+the frame of the model's root and then of the base's part: the yaw is `atan2(y, -z)`, and the pitch
+`-atan2(x, -z')`, where `z'` is `z` turned by the yaw. They fail outside the base's yaw limits,
+where they are not equal, and outside the pitching part's pitch limits, which have no such
+exception; a Huge Gun aimed up to 20 degrees past a pitch limit aims at the limit. Where the turret
+has a firing arc, the direction from the pitching part, in the root's frame, picks a row by its
+angle about Y (32 to a turn) and a column by its angle from Y (16, wrapping twice round the half
+turn), and four neighbouring bits must be set. The game finds the angle from Y by dividing the
+direction's X by the sine of its angle about Y, which is nothing straight ahead or behind;
+**Fix:** the port takes the length across directly. Not ported: the Stalag's turrets fire anywhere
+while the byte at `0x005883F8` is set ([#220](https://github.com/vdmkenny/openreliant/issues/220)). **Improvement:** the port turns radians, degrees and turns by the
+exact values, where the game has 57.2958, 0.0174533, 3.14159 and 6.28319.
+
+`turret_pick_target` (`0x0047D1F0`) takes the first object, in slot order, it can lead from its
+base and aim at: of a type below `0x100`, not its own object, of neither its side nor the neutral
+one; for a Huge Gun only a ship that lists components. An object that lists no components, or any
+for a Huge Gun, is aimed at whole; any other only by a turret whose own object lists components and
+is not a Kurgan, an Antanov, a Nanny or a Prowler, at the first of its components the turret can
+reach. It doesn't ask whether the object is valid, so an exploding, cloaked or untargetable one
+early in the slots is picked, dropped by the next track and picked again, keeping the turret from
+any other; **Fix:** the port passes over what the track would drop. In a multiplayer game it passes
+over the player
+who last hurt its object (`+0x10`), which the port leaves out
+([#55](https://github.com/vdmkenny/openreliant/issues/55)).
+
+Every fighter's rear turret, the Predator's tail gun among them, has its muzzle facing back, while
+its base's frame puts its aim of no yaw and no pitch ahead: in the game its muzzle never points at
+what it aims at, and it never fires. A capital ship's turrets face along their aim. **Fix:** a
+turret whose muzzle faces away from its aim turns, and aims, in its parts' frames turned a half turn
+about their X axis, so its yaw and pitch limits cover the way its muzzle faces and it fires
+([#219](https://github.com/vdmkenny/openreliant/issues/219)).
+
+**Spinning, `turret_spin_step` (`0x0047C9B0`).** Its barrels loop their `fire` track, from a
+standstill at first. While its trigger is held, through the tick it is held until, they spin up by
+0.1 a tick to at most 4, its gun's track loops at their speed and its flaps open at a speed of 4;
+otherwise they spin down by 0.02 a tick, its gun's track stops at its start, and its flaps shut.
+The gun fires by its trigger in the step, however fast it spins.
+
+**Missile, `turret_missile_step` (`0x0047D560`).** By its state:
+
+| State | What it does |
+|---|---|
+| 0, searching | Out of missiles, it goes to 2. Once its wait is over it picks the object nearest ahead of its launcher, within the Screamer's lock range and within 0.7 of the distance up or down, that is targetable, of another side, neutral or not, lists no components, and is neither a stand-in, exploding nor disabled, and goes to 1 |
+| 1, tracking | Out of missiles, it goes to 2. A target no longer valid, beyond half the lock range or outside the cone up or down is dropped: back to 0, to look again in 20 ticks. Otherwise it turns its base 0.1 toward a target standing more than 0.1 of the distance to either side, a frame whatever the frame's length, and with the target within 0.7 ahead and its wait over, launches a Screamer at it one time in five ([`missile_launch_turret`](missiles.md#a-missile-turrets)), counting a missile spent when the roll lets it launch, and waits 2000 ticks, 1000 in mission 28 |
+| 2 | After 100 ticks, plays its launcher's `reload` track forward at 4, and goes to 3 |
+| 3 | After 800 ticks, plays it back at -4 from where it is, and goes to 4 |
+| 4 | After 300 ticks, holds six missiles, and goes back to 0 |
+
+It starts in state 0 with no missiles, so it reloads first. A target within the lock range but
+beyond half of it is found and dropped in turn.
+
+Not ported: destroying a turret's base, which sets its gun's kind to -1 (`node_forget`,
+`0x00499BB0`, [#42](https://github.com/vdmkenny/openreliant/issues/42)); the script's
+`TurretSetTarget`, which aims a ship's aimed turrets on a component at an entity
+([#36](https://github.com/vdmkenny/openreliant/issues/36)); and in a multiplayer game, the damage
+that has every turret of the object pick again, passing the attacker over
+([#55](https://github.com/vdmkenny/openreliant/issues/55)).
+
+Groups leave out kinds 1 and 3, and FULL GUNS kind 1 ([The trigger](#the-trigger)). The game reads
+through a missing part where an assembly lacks one, a slot of -1 or past 4 into the words beside
+the slots, and a missile turret's missing muzzle under FULL GUNS; the port fits no gun for an
+assembly that lacks its base, its muzzle or, for a missile turret, its launcher, passes over such a
+slot, and passes over a gun with no muzzle at the trigger (**Fix**).
 
 ## The port
 
@@ -181,6 +302,5 @@ burst, which is only heard ([#41](https://github.com/vdmkenny/openreliant/issues
 ([#63](https://github.com/vdmkenny/openreliant/issues/63)); the parts of an object whose components
 are listed, so shots pass through a capital ship
 ([#153](https://github.com/vdmkenny/openreliant/issues/153)); the Nova Cannon's charge
-([#150](https://github.com/vdmkenny/openreliant/issues/150)); turrets, their aiming and the guns
-they carry ([#71](https://github.com/vdmkenny/openreliant/issues/71)); and the gunnery keys that
+([#150](https://github.com/vdmkenny/openreliant/issues/150)); and the gunnery keys that
 choose a group or fire them all ([#92](https://github.com/vdmkenny/openreliant/issues/92)).

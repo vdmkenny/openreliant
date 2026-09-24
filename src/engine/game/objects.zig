@@ -72,7 +72,8 @@ pub const Node = extern struct {
     animated_angles: shp.Vec3,
     /// Where the animation has the node moved, added to its part's origin.
     animated_offset: shp.Vec3,
-    /// The angles the node is turned by besides the animation's, which the turrets steer.
+    /// The angles a turret turns the node by besides the animation's (`node_turn`), which
+    /// `node_place` adds to them.
     angles: shp.Vec3,
     /// A component's counterpart of `GameObject.armor`, which `ship_damage_value` reads for it.
     armor: f32,
@@ -115,7 +116,9 @@ pub const Node = extern struct {
         component: bool,
         /// **Unknown.** `create_object` sets it on the root.
         _unknown_9: bool,
-        _unknown_10: bool,
+        /// The base of a turret, which the turret fits mark (`turret_fit_aimed`); destroying the
+        /// node stops the turret's gun for good (`node_forget`, `0x00499BB0`).
+        turret: bool,
         /// Set while the node or one hanging from it plays an animation track: `node_play` sets it
         /// up to the root, and `node_tree_update` descends only into children that have it.
         animating: bool,
@@ -142,7 +145,7 @@ pub const Node = extern struct {
         node.flags.unframed = true;
     }
 
-    /// A part node's pose: the animation's angles, plus the turret's, and its offset.
+    /// A part node's pose: the animation's angles plus the turret's, and its offset.
     pub const Pose = extern struct {
         angles: shp.Vec3,
         offset: shp.Vec3,
@@ -175,6 +178,7 @@ pub const Node = extern struct {
         assert(@bitOffsetOf(Flags, "targetable") == 13);
         assert(@bitOffsetOf(Flags, "posed") == 3);
         assert(@bitOffsetOf(Flags, "animating") == 11);
+        assert(@bitOffsetOf(Flags, "turret") == 10);
         assert(@offsetOf(Node, "position") == 0x14);
         assert(@offsetOf(Node, "pose") == 0x44);
         assert(@offsetOf(Node, "next_pose") == 0x8C);
@@ -182,6 +186,7 @@ pub const Node = extern struct {
         assert(@offsetOf(Node, "time") == 0xBC);
         assert(@offsetOf(Node, "speed") == 0xC0);
         assert(@offsetOf(Node, "animated_angles") == 0xC4);
+        assert(@offsetOf(Node, "angles") == 0xDC);
         assert(@offsetOf(Node, "orientation") == 0x20);
         assert(@offsetOf(Node, "part") == 0xA4);
         assert(@offsetOf(Node, "armor") == 0xE8);
@@ -793,8 +798,9 @@ pub const Model = struct {
     /// as an object of its own, hung from the node of the part that carries the attachment. Its own
     /// parts, lights, glows and mounts come with it.
     pub const Mount = struct {
-        /// The part that carries the attachment.
+        /// The part that carries the attachment, and which of the part's attachments it is.
         part: usize,
+        attachment: usize,
         /// Where the attachment stands on that part, and how it is turned there.
         origin: Vector,
         orientation: math.Matrix,
@@ -803,6 +809,13 @@ pub const Model = struct {
         /// Where the attachment stands in the world, for its part standing at `carrier`.
         pub fn within(mount: Mount, carrier: math.Place) math.Place {
             return (math.Place{ .position = mount.origin, .orientation = mount.orientation }).within(carrier);
+        }
+
+        /// Where the mounted model's root stands, for its part standing at `carrier`: at the
+        /// attachment, gone back by the model's centre of mass, which it stands on.
+        pub fn rootAt(mount: Mount, carrier: math.Place) math.Place {
+            const on = mount.within(carrier);
+            return .{ .position = math.transform(on.orientation, mount.model.centre) + on.position, .orientation = on.orientation };
         }
     };
 
@@ -832,6 +845,12 @@ pub const Model = struct {
         targetable: bool = false,
         /// What its part is (part `+0x40`), which the target display names a subtarget by.
         class: shp.Part.Class = @enumFromInt(0),
+        /// The turret its part makes of its assembly, and which of the turret's parts it is (part
+        /// `+0xF4`, `+0xF8`).
+        turret_kind: shp.Part.TurretKind = .fixed,
+        turret_slot: i32 = -1,
+        /// Its node's `turret` flag: the base of a turret, which the turret fits mark.
+        turret: bool = false,
         /// The part its node hangs from (`object_link_part`), or null for one hanging from the
         /// root. A part names its parent by index, or -1 for none.
         parent: ?usize,
@@ -847,6 +866,11 @@ pub const Model = struct {
         object: srapiext.MeshObject,
         /// Its node's animation, and what `node_place` reads of its part.
         animation: Animation = .{},
+
+        /// Where it stands as it was last drawn: its node's frame.
+        pub fn drawn(part: *const Part) math.Place {
+            return .{ .position = part.object.position, .orientation = part.object.orientation };
+        }
     };
 
     /// How a node plays its animation track (node `+0xB4`).
@@ -882,6 +906,10 @@ pub const Model = struct {
         mount: Vector = @splat(0),
         orientation: math.Matrix = math.identity,
         still: [3]bool = @splat(false),
+        /// How far a turret turns the part about each of its axes, at least and at most, in
+        /// degrees (part `+0xD8`, `+0xE4`).
+        angles_min: Vector = @splat(0),
+        angles_max: Vector = @splat(0),
         /// The part's tracks, and which the loader filed under each name the game starts by.
         tracks: []const shp.Track = &.{},
         slots: std.EnumArray(Slot, ?usize) = .initFill(null),
@@ -893,6 +921,12 @@ pub const Model = struct {
         /// Where the track has the part (node `+0xC4`, `+0xD0`), which `node_animate` sets.
         angles: Vector = @splat(0),
         offset: Vector = @splat(0),
+        /// The angles a turret turns the node by besides the track's (node `+0xDC`, `swivel`).
+        turret: Vector = @splat(0),
+        /// A part of a turret whose muzzle faces back, which turns in its frame turned a half turn
+        /// about X: its turret's angles about Y and Z count the other way. **Fix:** the game's
+        /// never fires ([#219](https://github.com/vdmkenny/openreliant/issues/219)).
+        reversed: bool = false,
         /// The place `node_place` worked out for the next step, and its pose (node `+0x5C` to
         /// `+0xA3`), and the ones `node_tree_update` committed from them (`+0x14` to `+0x5B`).
         next: Posed = .{},
@@ -904,6 +938,14 @@ pub const Model = struct {
         unframed: bool = false,
         posed: bool = false,
         animating: bool = false,
+
+        /// The node's place in the frame it hangs from at `step`.
+        pub fn at(a: Animation, step: Step) Local {
+            return switch (step) {
+                .now => a.now.place,
+                .next => a.next.place,
+            };
+        }
     };
 
     /// The part `index` hangs from, or null where it hangs from the root: the index a part names,
@@ -984,7 +1026,6 @@ pub const Model = struct {
             var radius: f32 = 0;
             for (part.meshes) |mesh| radius = @max(radius, mesh.radius);
             const at = source.part.position;
-            const still = source.part.unknown_c8;
             node.* = .{
                 .hidden = source.part.flags.damaged,
                 .flags = source.part.flags,
@@ -992,6 +1033,8 @@ pub const Model = struct {
                 .armor = @floatFromInt(source.part.component_armor),
                 .component_armor = source.part.component_armor,
                 .class = source.part.class,
+                .turret_kind = source.part.turret_kind,
+                .turret_slot = source.part.turret_slot,
                 .link_id = source.part.link_id,
                 .parent = parentOf(model, index),
                 .origin = @splat(0),
@@ -1007,7 +1050,9 @@ pub const Model = struct {
                     .mount = .{ source.part.mount_point.x, source.part.mount_point.y, source.part.mount_point.z },
                     .orientation = source.part.orientation,
                     // Three whole numbers, which the game tests as floats against zero.
-                    .still = .{ @as(u32, @bitCast(still.x)) != 0, @as(u32, @bitCast(still.y)) != 0, @as(u32, @bitCast(still.z)) != 0 },
+                    .still = source.part.still != @as(@Vector(3, u32), @splat(0)),
+                    .angles_min = .{ source.part.angles_min.x, source.part.angles_min.y, source.part.angles_min.z },
+                    .angles_max = .{ source.part.angles_max.x, source.part.angles_max.y, source.part.angles_max.z },
                     .tracks = source.tracks,
                     .slots = slotsOf(source.tracks),
                 },
@@ -1076,14 +1121,15 @@ pub const Model = struct {
     }
 
     /// `node_place` (`0x0049A140`): works part `index`'s next place out from its animation's
-    /// angles, less those about the axes it doesn't turn about, and its offset, and marks it
-    /// pending and posed. Its pose adds the turret's angles, which the port doesn't steer yet.
-    fn pose(model: *Model, index: usize) void {
+    /// angles, less those about the axes it doesn't turn about, plus the turret's, and its
+    /// offset, and marks it pending and posed.
+    pub fn pose(model: *Model, index: usize) void {
         const a = &model.parts[index].animation;
         inline for (0..3) |axis| {
             if (a.still[axis]) a.angles[axis] = 0;
         }
-        const posed: Pose = .{ .angles = a.angles, .offset = a.offset };
+        const turret: Vector = if (a.reversed) .{ a.turret[0], -a.turret[1], -a.turret[2] } else a.turret;
+        const posed: Pose = .{ .angles = a.angles + turret, .offset = a.offset };
         a.next = .{ .place = model.placeFor(index, posed), .pose = posed };
         a.pending = true;
         a.posed = true;
@@ -1106,6 +1152,29 @@ pub const Model = struct {
         lever = math.transform(turn, lever);
         at -= lever;
         return .{ .position = at, .orientation = turn };
+    }
+
+    /// `node_turn` (`0x0049B520`): turns part `index`'s node by `delta` about its axes besides
+    /// its animation, as a turret turns, and marks it animating. About an axis whose limits are
+    /// equal it comes round to within a half turn either way; about any other it stays within
+    /// them. `pose` places it so.
+    ///
+    /// **Improvement:** the game turns the limits' degrees to radians by a rounded 0.0174533, and
+    /// brings an angle round by 3.14159 and 6.28319; the port by `std.math.rad_per_deg`, π and 2π.
+    pub fn swivel(model: *Model, index: usize, delta: Vector) void {
+        const a = &model.parts[index].animation;
+        a.turret += delta;
+        model.markAnimating(index);
+        inline for (0..3) |axis| {
+            const least = a.angles_min[axis];
+            const most = a.angles_max[axis];
+            if (least == most) {
+                a.turret[axis] = math.halfTurn(a.turret[axis]);
+            } else {
+                if (a.turret[axis] < least * std.math.rad_per_deg) a.turret[axis] = least * std.math.rad_per_deg;
+                if (a.turret[axis] > most * std.math.rad_per_deg) a.turret[axis] = most * std.math.rad_per_deg;
+            }
+        }
     }
 
     /// `node_play` (`0x0049A2D0`): plays on part `index`'s node the track the loader filed under
@@ -1135,9 +1204,9 @@ pub const Model = struct {
         if (chosen != .none) model.markAnimating(index);
     }
 
-    /// `0x0049A2A0`: marks part `index`'s node as animating, and every node it hangs from up to
-    /// the root, unless it is marked already.
-    fn markAnimating(model: *Model, index: usize) void {
+    /// `node_mark_animating` (`0x0049A2A0`): marks part `index`'s node as animating, and every
+    /// node it hangs from up to the root, unless it is marked already.
+    pub fn markAnimating(model: *Model, index: usize) void {
         if (model.parts[index].animation.animating) return;
         var at: ?usize = index;
         while (at) |part| : (at = model.parts[part].parent) model.parts[part].animation.animating = true;
@@ -1300,10 +1369,11 @@ pub const Model = struct {
             made.deinit(gpa);
         }
         for (model.parts, 0..) |part, index| {
-            for (part.attachments) |attachment| {
+            for (part.attachments, 0..) |attachment, at| {
                 const mounted = mounts.of(attachment) orelse continue;
                 try made.append(gpa, .{
                     .part = index,
+                    .attachment = at,
                     .origin = .{ attachment.position.x, attachment.position.y, attachment.position.z },
                     .orientation = attachment.orientation,
                     .model = try build(gpa, mounted.model, mounted.loaded, effects, depth + 1),
@@ -1335,12 +1405,56 @@ pub const Model = struct {
         }
         var each = model.carried();
         while (each.next()) |mount| {
-            const carrier = model.parts[mount.part].object;
-            // The attachment where the part that carries it stands.
-            const on = mount.within(.{ .position = carrier.position, .orientation = carrier.orientation });
-            // The mounted model stands on its own centre of mass, so its origin goes back by it.
-            mount.model.place(math.transform(on.orientation, mount.model.centre) + on.position, on.orientation);
+            const at = mount.rootAt(model.parts[mount.part].drawn());
+            mount.model.place(at.position, at.orientation);
         }
+    }
+
+    /// Which of a node's places: the one the last simulation step committed, or the one the next
+    /// takes it to.
+    pub const Step = enum { now, next };
+
+    /// Where part `index` stands in the model's frame at `step`: its place in the part it hangs
+    /// from, and that part's in its own, up to the root. Parents that run in a circle end the walk
+    /// once it has taken as many steps as there are parts.
+    pub fn partPlace(model: *const Model, index: usize, step: Step) math.Place {
+        var stands = model.parts[index].animation.at(step);
+        var at = model.parts[index].parent;
+        for (model.parts) |_| {
+            const parent = at orelse break;
+            stands = stands.within(model.parts[parent].animation.at(step));
+            at = model.parts[parent].parent;
+        }
+        return stands;
+    }
+
+    /// Where part `index` of `held`, this model or one it carries however deep, stands in the world
+    /// at `step`, with this model's root at `root` (`node_world_place`, `node_next_place`); null
+    /// where it carries no such model.
+    pub fn partAt(model: *const Model, root: math.Place, held: *const Model, index: usize, step: Step) ?math.Place {
+        return held.partPlace(index, step).within(model.mountedAt(root, held, step) orelse return null);
+    }
+
+    /// Where the root of `held`, this model or one it carries however deep, stands at `step`, with
+    /// this model's root at `root`; null where it carries no such model. Its parts stand from
+    /// there by `partPlace`: together, `node_world_place` (`0x004AD960`) and `node_next_place`
+    /// (`0x004AD8D0`).
+    ///
+    /// **Quirk:** the game skips a parent's turn where its diagonal reads 1, 1 and anything but 1,
+    /// which no turn does.
+    pub fn mountedAt(model: *const Model, root: math.Place, held: *const Model, step: Step) ?math.Place {
+        if (held == model) return root;
+        var each = model.carried();
+        while (each.next()) |mount| {
+            if (mount.model.mountedAt(model.mountRoot(mount, root, step), held, step)) |found| return found;
+        }
+        return null;
+    }
+
+    /// Where the root of `mount`, one this model carries, stands at `step`, with this model's
+    /// root at `root`.
+    pub fn mountRoot(model: *const Model, mount: *const Mount, root: math.Place, step: Step) math.Place {
+        return mount.rootAt(model.partPlace(mount.part, step).within(root));
     }
 
     /// Each model it carries: those its attachments mount, then those its missile hardpoints
@@ -1644,6 +1758,8 @@ fn testingPart() shp.PartData {
 pub const testing = struct {
     /// A part with no mesh, no mass and no tracks, standing unturned at the model's origin.
     pub const part = testingPart;
+    /// A track's clip of `length`, played in `mode`, named `name`.
+    pub const clip = testingClip;
 };
 
 test "Node.commitNext" {
@@ -1721,7 +1837,7 @@ test Model {
     data.part.volume = 2;
     data.part.density = 3;
     data.part.first_moments = .{ 0, 0, 20 };
-    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = (&data)[0..1], .tail_count = 0, .trailing_bytes = 0 };
+    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = (&data)[0..1], .trailing_bytes = 0 };
     gameobj.recentre(&model, &source);
     try std.testing.expectEqual(@as(Vector, .{ 0, 0, 110 }), model.centre);
     try std.testing.expectEqual(@as(Vector, .{ 0, 0, -10 }), parts[0].origin);
@@ -1865,7 +1981,7 @@ test "a model's lights: their sprites, and the light a blinking one casts" {
     var hull = [1]shp.PartData{testingPart()};
     hull[0].part.parent = -1;
     hull[0].attachments = &attachments;
-    const model: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &hull, .tail_count = 0, .trailing_bytes = 0 };
+    const model: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &hull, .trailing_bytes = 0 };
 
     var flare: srtexture.Image = .{ .levels = &.{} };
     var lamp: srtexture.Image = .{ .levels = &.{} };
@@ -2017,7 +2133,7 @@ test "a part hangs from the part it names" {
     data[1].part.parent = 2;
     data[2].part.position = .{ .x = 0, .y = 0, .z = 0 };
     data[2].part.parent = -1;
-    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &data, .tail_count = 0, .trailing_bytes = 0 };
+    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &data, .trailing_bytes = 0 };
 
     var levels = [_]srapiext.Level{.{ .mesh = &mesh, .until = std.math.inf(f32) }};
     var loaded_parts = [3]srofiles.LoadedPart{
@@ -2055,7 +2171,7 @@ test "a part whose parents run in a circle stands at the root" {
     var data = [2]shp.PartData{ testingPart(), testingPart() };
     data[0].part.parent = 1;
     data[1].part.parent = 0;
-    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &data, .tail_count = 0, .trailing_bytes = 0 };
+    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &data, .trailing_bytes = 0 };
     const order = try Model.linkOrder(gpa, &source);
     defer gpa.free(order);
     try std.testing.expectEqualSlices(usize, &.{ 0, 1 }, order);
@@ -2075,7 +2191,7 @@ test "a gun attachment mounts the model its id names" {
     gun_data[0].part.parent = -1;
     gun_data[0].part.volume = 1;
     gun_data[0].part.density = 1;
-    const gun: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &gun_data, .tail_count = 0, .trailing_bytes = 0 };
+    const gun: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &gun_data, .trailing_bytes = 0 };
 
     // A hull carrying one gun attachment, out along X, and one of a kind that mounts nothing.
     var attachments = [2]shp.Attachment{ std.mem.zeroes(shp.Attachment), std.mem.zeroes(shp.Attachment) };
@@ -2099,7 +2215,7 @@ test "a gun attachment mounts the model its id names" {
     var hull = [1]shp.PartData{testingPart()};
     hull[0].part.parent = -1;
     hull[0].attachments = &attachments;
-    const model: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &hull, .tail_count = 0, .trailing_bytes = 0 };
+    const model: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &hull, .trailing_bytes = 0 };
 
     const Answer = struct {
         gun: *const shp.Model,
@@ -2130,6 +2246,12 @@ test "a gun attachment mounts the model its id names" {
     // Placed, the mounted model stands at the attachment on the part that carries it.
     built.place(.{ 0, 0, 1000 }, math.identity);
     try std.testing.expectEqual(@as(Vector, .{ 50, 0, 1000 }), built.mounts[0].model.parts[0].object.position);
+    // At the steps' places, its root stands where placing puts it; a model it doesn't carry
+    // stands nowhere.
+    const root: math.Place = .{ .position = .{ 0, 0, 1000 }, .orientation = math.identity };
+    try std.testing.expectEqual(@as(Vector, .{ 50, 0, 1000 }), built.mountedAt(root, &built.mounts[0].model, .next).?.position);
+    try std.testing.expectEqual(root.position, built.mountedAt(root, &built, .now).?.position);
+    try std.testing.expectEqual(null, built.mounts[0].model.mountedAt(root, &built, .now));
     // Turned a quarter about Y, the attachment goes with the hull.
     built.place(@splat(0), math.rotation(.y, std.math.pi / 2.0));
     try std.testing.expectApproxEqAbs(0, built.mounts[0].model.parts[0].object.position[0], 1e-3);
@@ -2222,7 +2344,7 @@ const Animated = struct {
         }
         animated.data[1].tracks = tracks;
         animated.loaded = .{ .parts = &animated.loaded_parts };
-        animated.source = .{ .header = std.mem.zeroes(shp.Header), .parts = &animated.data, .tail_count = 0, .trailing_bytes = 0 };
+        animated.source = .{ .header = std.mem.zeroes(shp.Header), .parts = &animated.data, .trailing_bytes = 0 };
     }
 };
 
@@ -2306,6 +2428,63 @@ test "Model.placeFor" {
     try std.testing.expect(math.length(pivot - (mount + @as(Vector, .{ 0, 0, 100 }))) < 1e-3);
 }
 
+test "Model.swivel" {
+    const gpa = std.testing.allocator;
+    const srmesh = @import("../surrender/surrenderlib/srmesh.zig");
+    const mesh = try srmesh.testing.square(gpa);
+    defer mesh.deinit(gpa);
+    var animated: Animated = undefined;
+    animated.init(&mesh, &.{});
+    // A turret's base, which turns freely about X, up to 60 degrees down about Y and not at all
+    // about Z.
+    animated.data[1].part.angles_min = .{ .x = 0, .y = -60, .z = 0 };
+    animated.data[1].part.angles_max = .{ .x = 0, .y = 0, .z = 0 };
+    var model: Model = try .create(gpa, &animated.source, &animated.loaded, .{});
+    defer model.deinit(gpa);
+    testingLink(&model);
+    const a = &model.parts[1].animation;
+
+    // Freely about X it comes round within a half turn; about Y it stops at its limit. It is
+    // marked animating, up to the root.
+    model.swivel(1, .{ 4, -2, 0 });
+    try std.testing.expectApproxEqAbs(4 - std.math.tau, a.turret[0], 1e-6);
+    try std.testing.expectApproxEqAbs(-60 * std.math.rad_per_deg, a.turret[1], 1e-6);
+    try std.testing.expect(a.animating and model.parts[0].animation.animating);
+    // Its pose adds the turret's angles to the track's.
+    a.angles = .{ 0, 0.25, 0 };
+    model.pose(1);
+    try std.testing.expectEqual(a.turret + @as(Vector, .{ 0, 0.25, 0 }), a.next.pose.angles);
+    try std.testing.expect(a.pending and a.posed);
+    // An axis whose limits are equal, but not zero, is free too.
+    a.angles_min[2] = 10;
+    a.angles_max[2] = 10;
+    model.swivel(1, .{ 0, 0, 0.5 });
+    try std.testing.expectEqual(0.5, a.turret[2]);
+}
+
+test "Model.partPlace" {
+    const gpa = std.testing.allocator;
+    const srmesh = @import("../surrender/surrenderlib/srmesh.zig");
+    const mesh = try srmesh.testing.square(gpa);
+    defer mesh.deinit(gpa);
+    var animated: Animated = undefined;
+    animated.init(&mesh, &.{});
+    var model: Model = try .create(gpa, &animated.source, &animated.loaded, .{});
+    defer model.deinit(gpa);
+    testingLink(&model);
+
+    // Each part stands 100 along Z from the one it hangs from.
+    try std.testing.expectEqual(@as(Vector, .{ 0, 0, 200 }), model.partPlace(2, .now).position);
+    // The middle part swivelled a quarter about Y for the next step carries the last with it
+    // there, but not yet now.
+    model.swivel(1, .{ 0, std.math.pi / 2.0, 0 });
+    model.pose(1);
+    const next = model.partPlace(2, .next);
+    try std.testing.expectApproxEqAbs(100, next.position[0], 1e-3);
+    try std.testing.expectApproxEqAbs(100, next.position[2], 1e-3);
+    try std.testing.expectEqual(@as(Vector, .{ 0, 0, 200 }), model.partPlace(2, .now).position);
+}
+
 test "a part's first track poses it where it is linked" {
     const gpa = std.testing.allocator;
     const srmesh = @import("../surrender/surrenderlib/srmesh.zig");
@@ -2370,7 +2549,7 @@ const Fired = struct {
         return .{ .context = fired, .fire = fire };
     }
 
-    fn fire(context: *anyopaque, _: *Model, _: usize, kind: gameobj.EventKind) void {
+    fn fire(context: *anyopaque, _: u16, _: *Model, _: usize, kind: gameobj.EventKind) void {
         const fired: *Fired = @ptrCast(@alignCast(context));
         fired.kinds[fired.count] = kind;
         fired.count += 1;
@@ -2404,7 +2583,7 @@ test "a track plays once, round and round, and back and forth" {
     gameobj.updateTree(&root, &model, fired.events());
     try std.testing.expectEqual(40, a.time);
     try std.testing.expectEqual(1, fired.count);
-    try std.testing.expectEqual(gameobj.EventKind.flash, fired.kinds[0]);
+    try std.testing.expectEqual(gameobj.EventKind.muzzles, fired.kinds[0]);
     try std.testing.expect(root.flags.animating);
     gameobj.updateTree(&root, &model, fired.events());
     gameobj.updateTree(&root, &model, fired.events());
