@@ -924,6 +924,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .shields = &shields,
             .rays = &rays,
             .flash = &flash,
+            .interference = &display.state.interference,
             .ticks = @intCast(@max(clock.frame_duration, 0)),
             .paused = clock.paused,
             .attachments = .{
@@ -1174,6 +1175,7 @@ const Sandbox = struct {
         if (orders.world.trails) |trails| trails.reset();
         if (orders.world.rays) |rays| rays.reset();
         if (orders.world.flash) |lit| lit.* = .{};
+        if (orders.world.display) |display| display.interference = .{};
         if (orders.world.countermeasures) |dropped| dropped.reset();
         sandbox.objects.reset(sandbox.random);
         // The Turret Flak's shell and the debris models, counted as used so the sweep below keeps

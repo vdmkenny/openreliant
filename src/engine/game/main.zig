@@ -232,6 +232,8 @@ pub const Frame = struct {
     /// (`frame_duration`), which it counts down.
     flash: ?*flash.Flash = null,
     ticks: i32 = 0,
+    /// The display's interference, which the flash shows red in the view ahead and then fades.
+    interference: ?*hud.Interference = null,
     /// Whether the game is paused, which holds the bubbles' colours still.
     paused: bool = false,
 };
@@ -429,7 +431,12 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     if (frame.smoke) |pools| try pools.draw(gpa, scene, frame.ahead);
     if (frame.explosions) |explosions| try explosions.draw(gpa, scene, frame.ahead);
     if (frame.rays) |rays| if (attachments.random) |random| try rays.draw(gpa, scene, frame.objects, attachments.frame_start, random);
-    if (frame.flash) |lit| if (!frame.paused) try lit.draw(gpa, scene, .{ .position = context.camera.position, .orientation = context.camera.orientation }, context.projection, frame.ticks);
+    if (frame.flash) |lit| if (!frame.paused) {
+        const shaken = frame.interference;
+        const red = if (shaken != null and frame.view == .cockpit) shaken.?.level else 0;
+        try lit.draw(gpa, scene, .{ .position = context.camera.position, .orientation = context.camera.orientation }, context.projection, frame.ticks, red);
+        if (shaken) |interference| interference.fade(attachments.frame_start);
+    };
     if (frame.shockwaves) |waves| try waves.draw(gpa, scene, frame.ahead);
     try frame.space.frame(gpa, scene, context, frame.view, frame.cockpit_mode);
     if (context.hardware) try frame.sky.frame(gpa, scene, context);

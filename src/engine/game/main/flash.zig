@@ -1,10 +1,11 @@
 //! The screen's flash, in `C:\lancer\game\main.cpp`: a capital ship coming apart close by lights
 //! the whole view white for a moment (`0x00587CC8`), which `mission_frame` draws and counts down
-//! (`0x00494940`). **Unverified:** `0x00494940` lies after `main.cpp`'s known code, before
-//! `matmanager.cpp`'s; by what it does it is this file's.
+//! (`screen_flash_draw`, `0x00494940`), and shows red while the player's display is shaken by a
+//! hit (`hud.Interference`). **Unverified:** `0x00494940` lies after `main.cpp`'s known code,
+//! before `matmanager.cpp`'s; by what it does it is this file's.
 //!
-//! Not ported: the red the same sprite shows while the player's display is shaken by a hit, in the
-//! cockpit's view (`hud_interference`, [#236](https://github.com/vdmkenny/openreliant/issues/236)).
+//! Not ported: the byte `0x0054EA7C`, which keeps the red away while it is set. **Unknown:** what
+//! sets it.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -48,20 +49,26 @@ pub const Flash = struct {
         if (math.distance(gameobj.vector(object.root.position), camera) < object.radius * near_radii) flash.start();
     }
 
-    /// The flash's part of `0x00494940`, once a frame but while paused: while it lasts, the sprite
-    /// goes into the overlay's layer, as bright as its ticks left give it, just beyond the near
-    /// plane of the camera at `camera`, reaching the width and the height of the view there either
-    /// side; then it counts down the frame's `ticks`.
-    pub fn draw(flash: *Flash, gpa: Allocator, scene: *srcore.Scene, camera: math.Place, projection: srapi.Projection, ticks: i32) Allocator.Error!void {
-        if (flash.left <= 0) return;
-        const bright = @min(@as(f32, @floatFromInt(flash.left)) * per_tick, 1);
+    /// `screen_flash_draw` (`0x00494940`), once a frame but while paused: while the flash lasts,
+    /// the sprite is white, as bright as its ticks left give it, and it counts down the frame's
+    /// `ticks`; while `red`, the display's interference in the view ahead, is above zero, the
+    /// sprite is red at it instead. Either way the sprite goes into the overlay's layer, just
+    /// beyond the near plane of the camera at `camera`, reaching the width and the height of the
+    /// view there either side. The caller fades the interference after (`hud.Interference.fade`).
+    pub fn draw(flash: *Flash, gpa: Allocator, scene: *srcore.Scene, camera: math.Place, projection: srapi.Projection, ticks: i32, red: f32) Allocator.Error!void {
+        const flashing = flash.left > 0;
+        if (flashing) {
+            const bright = @min(@as(f32, @floatFromInt(flash.left)) * per_tick, 1);
+            flash.sprite[0].colour = .{ bright, bright, bright };
+            flash.left -= ticks;
+        }
+        if (red > 0) flash.sprite[0].colour = .{ red, 0, 0 };
+        if (!flashing and !(red > 0)) return;
         const distance = projection.near + beyond_near;
         const bounds = projection.bounds;
-        flash.sprite[0].colour = .{ bright, bright, bright };
         flash.sprite[0].half_size = .{ (bounds[2] - bounds[0]) * distance, (bounds[3] - bounds[1]) * distance };
         flash.set.sprites = &flash.sprite;
         flash.set.position = camera.position + math.forward(camera.orientation) * @as(Vector, @splat(distance));
-        flash.left -= ticks;
         try xtrabits.sceneAdd(gpa, scene, .{ .sprites = &flash.set }, .overlay);
     }
 };
@@ -74,7 +81,7 @@ test Flash {
     const projection: srapi.Projection = .init(640, 480, .{ 0, 0, 1, 1 }, .{ 1, 1 });
 
     // Nothing shows until it is lit.
-    try flash.draw(gpa, &scene, .{}, projection, 1);
+    try flash.draw(gpa, &scene, .{}, projection, 1, 0);
     try std.testing.expectEqual(0, scene.layers.get(.overlay).items.len);
 
     // A ship coming apart within five of its radii of the camera lights it; further off, not.
@@ -88,13 +95,19 @@ test Flash {
     try std.testing.expectEqual(flash_ticks, flash.left);
 
     // White at first, in front of the camera over the whole view, counting down the frame's ticks.
-    try flash.draw(gpa, &scene, .{}, projection, 50);
+    try flash.draw(gpa, &scene, .{}, projection, 50, 0);
     try std.testing.expectEqual(1, scene.layers.get(.overlay).items.len);
     try std.testing.expectEqual([3]f32{ 1, 1, 1 }, flash.sprite[0].colour);
     try std.testing.expect(flash.set.position[2] > projection.near);
     try std.testing.expectEqual(50, flash.left);
     // Then fading.
-    try flash.draw(gpa, &scene, .{}, projection, 50);
+    try flash.draw(gpa, &scene, .{}, projection, 50, 0);
     try std.testing.expectApproxEqAbs(0.6, flash.sprite[0].colour[0], 1e-5);
     try std.testing.expectEqual(0, flash.left);
+
+    // A hit's interference shows it red at its level, over the white.
+    scene.clear();
+    try flash.draw(gpa, &scene, .{}, projection, 1, 0.3);
+    try std.testing.expectEqual(1, scene.layers.get(.overlay).items.len);
+    try std.testing.expectEqual([3]f32{ 0.3, 0, 0 }, flash.sprite[0].colour);
 }

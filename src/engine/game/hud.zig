@@ -398,6 +398,86 @@ pub const Draw = struct {
     /// Only what falls inside a rectangle of the screen, as a VFX pane clips what is drawn into
     /// it.
     clip: ?Clip = null,
+    /// Shaken a row at a time (`hud_blit`), as the display draws what it shakes while the player
+    /// is hit; null for drawn still.
+    shake: ?Shake = null,
+};
+
+/// How the display shakes while the player is hit (`hud_blit`, `0x0048C6E0`): each row of a shape
+/// moves right by `rowShift` of the camera's shake, `hit_shake`, or for a shape flipped both ways
+/// of the interference itself, drawing from `random`.
+pub const Shake = struct {
+    hit_shake: f32,
+    interference: f32,
+    random: *libcmt.Rand,
+
+    /// How far the next row of a shape flipped as `mirror` says moves.
+    fn row(shake: Shake, mirror: Mirror) i32 {
+        const amount = if (mirror.across and mirror.down) shake.interference else shake.hit_shake;
+        return rowShift(amount, shake.random);
+    }
+};
+
+/// How far a shake of `amount` moves a row, in the display's own pixels: nothing while it is not
+/// above zero, and otherwise a random share of `10 * amount`, rounded as `sr_round` rounds.
+pub fn rowShift(amount: f32, random: ?*libcmt.Rand) i32 {
+    if (!(amount > 0)) return 0;
+    const source = random orelse return 0;
+    const share = @as(f32, @floatFromInt(source.rand())) * (1.0 / @as(f32, libcmt.Rand.max));
+    return math.round(share * row_reach * amount);
+}
+
+/// How far a shake of 1 moves a row at most (`0x004DC520`).
+const row_reach = 10;
+
+/// The display's interference as the player's ship is hit (`hud_interference`, `0x00588700`):
+/// while it lasts the display shakes (`Shake`) and, in the view ahead, the screen's flash shows red
+/// at it (`main.flash`).
+pub const Interference = struct {
+    level: f32 = 0,
+    /// The tick it last faded at (`0x00588728`), and last sounded at (`0x00587CD0`).
+    faded_at: i32 = 0,
+    sounded_at: i32 = 0,
+
+    /// What a hit sets it to, how far it fades a tick (`0x004DC4D0`), the buffered sound it plays
+    /// at the player's ship at that loudness, and the least ticks between two, to which a random
+    /// share of as many more is added.
+    const hit_level: f32 = 0.3;
+    const fade_per_tick: f32 = 0.005;
+    const sound = 12;
+    const loudness: f32 = 10000;
+    const sound_gap = 15;
+
+    /// `hud_interference_start` (`0x00494890`), as `object_damage` and `object_armor_damage` hit
+    /// the player's ship: the interference at `hit_level`, and its sound at the ship once more than
+    /// `sound_gap` ticks and a random share of as many more have passed since the last.
+    pub fn start(interference: *Interference, world: gameobj.World) void {
+        const frame_start = world.clock.frame_start;
+        const gap = @rem(world.random.rand(), sound_gap) + sound_gap;
+        if (gap < frame_start - interference.sounded_at) {
+            interference.sounded_at = frame_start;
+            if (world.hearing) |hearing| {
+                const ship = &world.objects.slots[world.objects.player];
+                hearing.sound.bufferAt(sound, ship.drawn.position, hearing.camera.*, loudness);
+            }
+        }
+        interference.level = hit_level;
+    }
+
+    /// `hud_interference_fade` (`0x004948F0`), once a frame at `frame_start`: `fade_per_tick` less
+    /// for each tick since it last faded, to nothing.
+    pub fn fade(interference: *Interference, frame_start: i32) void {
+        const ticks: f32 = @floatFromInt(frame_start - interference.faded_at);
+        interference.level = @max(interference.level - ticks * fade_per_tick, 0);
+        interference.faded_at = frame_start;
+    }
+
+    /// How the display shakes this frame, `hit_shake` the camera's shake: not at all while the
+    /// interference is out.
+    pub fn shake(interference: Interference, hit_shake: f32, random: *libcmt.Rand) ?Shake {
+        if (!(interference.level > 0)) return null;
+        return .{ .hit_shake = hit_shake, .interference = interference.level, .random = random };
+    }
 };
 
 /// Which ways `VFX_shape_draw_mirrored` flips a shape, the two low bits of its mode: 1 across, 2
@@ -442,31 +522,49 @@ pub fn drawShapeWith(
 }
 
 /// Draws `image` with its top left corner at `corner` on the screen, `scale` times its own size,
-/// mirrored or clipped as `how` says.
+/// mirrored, clipped or shaken as `how` says: shaken, a row at a time, each moved right by the
+/// shake's `Shake.row`.
 pub fn drawImage(target: device.Device, image: *srtexture.Image, corner: [2]f32, colour: [4]f32, scale: f32, how: Draw) void {
-    const left = corner[0];
-    const top = corner[1];
-    const right = left + @as(f32, @floatFromInt(image.width())) * scale;
-    const bottom = top + @as(f32, @floatFromInt(image.height())) * scale;
+    const width = @as(f32, @floatFromInt(image.width())) * scale;
+    const height = @as(f32, @floatFromInt(image.height())) * scale;
+    const u: [2]f32 = if (how.mirror.across) .{ 1, 0 } else .{ 0, 1 };
+    const v: [2]f32 = if (how.mirror.down) .{ 1, 0 } else .{ 0, 1 };
+    const tint = device.pack(colour);
+    const shake = how.shake orelse {
+        drawPart(target, image, .{ corner[0], corner[1], corner[0] + width, corner[1] + height }, u, v, tint, how.clip);
+        return;
+    };
+    const rows = image.height();
+    const per_row = (v[1] - v[0]) / @as(f32, @floatFromInt(rows));
+    for (0..rows) |row| {
+        const down: f32 = @floatFromInt(row);
+        const left = corner[0] + @as(f32, @floatFromInt(shake.row(how.mirror))) * scale;
+        const top = corner[1] + down * scale;
+        const along: [2]f32 = .{ v[0] + per_row * down, v[0] + per_row * (down + 1) };
+        drawPart(target, image, .{ left, top, left + width, top + scale }, u, along, tint, how.clip);
+    }
+}
+
+/// Draws the part of `image` between texture coordinates `u` and `v` over the rectangle `edges`
+/// of the screen (left, top, right, bottom), cut to `clip`.
+fn drawPart(target: device.Device, image: *srtexture.Image, edges: [4]f32, u_in: [2]f32, v_in: [2]f32, tint: u32, clip: ?Clip) void {
+    const left, const top, const right, const bottom = edges;
     var x: [2]f32 = .{ left, right };
     var y: [2]f32 = .{ top, bottom };
-    var u: [2]f32 = if (how.mirror.across) .{ 1, 0 } else .{ 0, 1 };
-    var v: [2]f32 = if (how.mirror.down) .{ 1, 0 } else .{ 0, 1 };
-    if (how.clip) |clip| {
-        const kept_x: [2]f32 = .{ @max(left, clip.left), @min(right, clip.right) };
-        const kept_y: [2]f32 = .{ @max(top, clip.top), @min(bottom, clip.bottom) };
+    var u = u_in;
+    var v = v_in;
+    if (clip) |cut| {
+        const kept_x: [2]f32 = .{ @max(left, cut.left), @min(right, cut.right) };
+        const kept_y: [2]f32 = .{ @max(top, cut.top), @min(bottom, cut.bottom) };
         if (kept_x[0] >= kept_x[1] or kept_y[0] >= kept_y[1]) return;
         // Each texture coordinate follows its edge in, in the image's own proportion.
-        const across = u;
-        const down = v;
         for (0..2) |edge| {
-            u[edge] = across[0] + (across[1] - across[0]) * (kept_x[edge] - left) / (right - left);
-            v[edge] = down[0] + (down[1] - down[0]) * (kept_y[edge] - top) / (bottom - top);
+            u[edge] = u_in[0] + (u_in[1] - u_in[0]) * (kept_x[edge] - left) / (right - left);
+            v[edge] = v_in[0] + (v_in[1] - v_in[0]) * (kept_y[edge] - top) / (bottom - top);
         }
         x = kept_x;
         y = kept_y;
     }
-    const tint = device.pack(colour);
     const corners = [4]device.Vertex{
         .{ .x = x[0], .y = y[0], .z = 1, .rhw = 1, .diffuse = tint, .u = u[0], .v = v[0] },
         .{ .x = x[1], .y = y[0], .z = 1, .rhw = 1, .diffuse = tint, .u = u[1], .v = v[0] },
@@ -834,10 +932,11 @@ pub fn draw(state: *State, resources: *Resources, frame: Frame) (spr.Error || Al
     state.followTarget(frame.all, frame.multiplayer);
     if (frame.sound) |sound| state.lock.sound(sound, frame.view);
     state.runCharges(live, frame_duration, frame.multiplayer);
-    // Where the lead cursor stands, which the reticle closes on, and whether the enemy lock's
-    // light shows.
+    // Where the lead cursor stands, which the reticle closes on, whether the enemy lock's light
+    // shows, and how the display shakes (`hud_blit`).
     var lead: ?[2]i32 = null;
     var lock_lit = false;
+    const shake = state.interference.shake(frame.hit_shake, frame.random);
     if (ahead) {
         try state.drawJumpPrompt(frame.ready, art, frame.gpa, frame.target, frame.screen, frame_duration, colour, scale);
         if (frame.sight) |sight| {
@@ -847,7 +946,7 @@ pub fn draw(state: *State, resources: *Resources, frame: Frame) (spr.Error || Al
         try state.drawEjectMarker(art, frame.gpa, frame.target, frame.screen, frame_duration, colour, scale);
         try state.drawScanner(frame.scanning, frame.clock.game_ticks, art, frame.gpa, frame.target, frame.screen, colour, scale);
         const lit = state.lit(live, frame.player.matching_speed, frame.multiplayer, frame_duration);
-        try state.drawLights(art, frame.gpa, frame.target, frame.screen, lit, frame_duration, colour, scale);
+        try state.drawLights(art, frame.gpa, frame.target, frame.screen, lit, frame_duration, colour, scale, shake);
         lock_lit = lit.enemy_lock;
     }
     if (frame.sound) |sound| state.warnOfLock(sound, lock_lit, live.missile_homing != 0);
@@ -861,7 +960,7 @@ pub fn draw(state: *State, resources: *Resources, frame: Frame) (spr.Error || Al
         .target_display = .{ .state = state, .all = frame.all },
         .wing_status = .{ .all = frame.all },
     };
-    const pen: windows.Pen = .{ .art = art, .font = &resources.font, .strings = frame.strings, .gpa = frame.gpa, .target = frame.target, .colour = colour };
+    const pen: windows.Pen = .{ .art = art, .font = &resources.font, .strings = frame.strings, .gpa = frame.gpa, .target = frame.target, .colour = colour, .shake = shake };
     try state.windows.frame(pen, frame.screen, frame.last_view, frame_duration, contents, scale);
     state.windows.beeps.play(frame.sound, frame.view);
 }
@@ -937,10 +1036,11 @@ pub const Readout = enum {
         value: i32,
         colour: [4]f32,
         scale: f32,
+        shake: ?Shake,
     ) (spr.Error || Allocator.Error)!void {
         const at = readout.spec();
         const point = place(screen, at.offset, at.across, at.down, scale);
-        try drawShape(art, gpa, target, at.shape, scaled(point, at.shape_offset, scale), colour, scale);
+        try drawShapeWith(art, gpa, target, at.shape, scaled(point, at.shape_offset, scale), colour, scale, .{ .shake = shake });
 
         var buffer: [16]u8 = undefined;
         const text = std.fmt.bufPrint(&buffer, "{d}", .{value}) catch return;
@@ -1334,6 +1434,8 @@ pub const State = struct {
     /// The voice the enemy lock's warning plays on (`enemy_lock_voice`, `0x0057BF50`) while it
     /// plays (`warnOfLock`).
     lock_warning: ?u8 = null,
+    /// The display's interference as the player's ship is hit.
+    interference: Interference = .{},
     /// `player_ejected` (`0x00579986`), which the Eject Player order sets.
     ejected: bool = false,
     icons: Icons = .{},
@@ -1507,6 +1609,7 @@ pub const State = struct {
         frame_duration: i32,
         colour: [4]f32,
         scale: f32,
+        shake: ?Shake,
     ) (spr.Error || Allocator.Error)!void {
         var index: i32 = 0;
         inline for (comptime std.enums.values(Light)) |light| {
@@ -1518,7 +1621,9 @@ pub const State = struct {
                     .missile_incoming => Flash.fast.step(&state.warning_ticks, frame_duration),
                     else => true,
                 };
-                if (drawn) try drawShape(art, gpa, target, @intFromEnum(light), at, colour, scale);
+                // Every light shakes but reverse thrust's.
+                const how: Draw = .{ .shake = if (light == .reverse_thrust) null else shake };
+                if (drawn) try drawShapeWith(art, gpa, target, @intFromEnum(light), at, colour, scale, how);
                 if (comptime light.charged()) |kind| {
                     drawBar(target, at, kind.spec().bar_down, state.devices.get(kind).bar(kind), scale);
                 }
@@ -1603,6 +1708,7 @@ pub const State = struct {
     /// What `hud_draw` draws only in the view ahead from the cockpit, after the view's name.
     fn drawInstruments(state: *State, resources: *Resources, frame: Frame, lead: ?[2]i32, colour: [4]f32, scale: f32) (spr.Error || Allocator.Error)!void {
         const frame_duration = frame.clock.frame_duration;
+        const shake = state.interference.shake(frame.hit_shake, frame.random);
         const slot = &frame.all.slots[frame.all.player];
         const live = &slot.object;
         const flight = slot.flight orelse return;
@@ -1615,10 +1721,10 @@ pub const State = struct {
                 .skull => frame.player.kills.count,
                 .coil => live.countermeasures,
             };
-            try readout.draw(art, &resources.font, frame.gpa, frame.target, frame.screen, value, colour, scale);
+            try readout.draw(art, &resources.font, frame.gpa, frame.target, frame.screen, value, colour, scale, shake);
         }
         const status = ShipStatus.ofPlayer(slot, &state.ship_hits, frame.player.shield_reserves);
-        try ShipStatus.draw(status, .player, art, frame.gpa, frame.target, place(frame.screen, ShipStatus.offset, ShipStatus.across, ShipStatus.down, scale), scale, null, colour);
+        try ShipStatus.draw(status, .player, art, frame.gpa, frame.target, place(frame.screen, ShipStatus.offset, ShipStatus.across, ShipStatus.down, scale), scale, null, colour, shake);
         try drawCluster(art, &resources.font, frame.gpa, frame.target, frame.screen, .{
             .throttle = live.throttle,
             .speed = live.speed,
@@ -1626,10 +1732,10 @@ pub const State = struct {
             .charge = live.gun_charge,
             .full_charge = combat.gun_energy,
             .nova = if (novaShown(slot)) live.nova_charge else null,
-        }, colour, scale);
-        try drawRadar(art, frame.gpa, frame.target, frame.screen, state, frame.all, colour, scale);
+        }, colour, scale, shake);
+        try drawRadar(art, frame.gpa, frame.target, frame.screen, state, frame.all, colour, scale, shake);
         stepRadarZoom(state, frame.clock.game_ticks);
-        const aims = try drawReticle(state, art, frame.gpa, frame.target, frame.screen, frame.mode, lead, blindFire(state, slot), frame_duration, colour, scale);
+        const aims = try drawReticle(state, art, frame.gpa, frame.target, frame.screen, frame.mode, lead, blindFire(state, slot), frame_duration, colour, scale, shake);
         live.blind_fire_aim = @intFromBool(aims);
         try drawClock(&resources.font, frame.gpa, frame.target, frame.screen, frame.clock.play.minutes, frame.clock.play.seconds, colour, scale);
     }
@@ -2442,7 +2548,10 @@ pub const ShipStatus = struct {
     }
 
     /// Draws what `shown` holds in `mode`, from `point`, `size` times the display's own size and
-    /// cut to `clip`.
+    /// cut to `clip`; the schematic and its hits shaken as `shake` says, the arcs still.
+    ///
+    /// **Fix:** while shaken, the game draws the player's own schematic two pixels left and two
+    /// down of where it draws it still, apart from its hits. The port keeps it in place.
     pub fn draw(
         shown: Shown,
         mode: Mode,
@@ -2453,10 +2562,11 @@ pub const ShipStatus = struct {
         size: f32,
         clip: ?Clip,
         colour: [4]f32,
+        shake: ?Shake,
     ) (spr.Error || Allocator.Error)!void {
         const layout = layouts.get(mode);
         if (shown.schematic) |schematic| {
-            const how: Draw = .{ .mirror = .{ .across = shown.mirrored }, .clip = clip };
+            const how: Draw = .{ .mirror = .{ .across = shown.mirrored }, .clip = clip, .shake = shake };
             try drawShapeWith(schematic.art, schematic.gpa, target, 0, scaled(point, layout.schematic, size), colour, size, how);
             var hits = shown.hits.iterator();
             while (hits.next()) |quadrant| {
@@ -2652,6 +2762,7 @@ pub fn drawCluster(
     gauges: Cluster.Gauges,
     colour: [4]f32,
     scale: f32,
+    shake: ?Shake,
 ) (spr.Error || Allocator.Error)!void {
     const width: i32 = @intCast(screen[0]);
     const height: i32 = @intCast(screen[1]);
@@ -2659,8 +2770,8 @@ pub fn drawCluster(
     const top = (height >> 1) - round(@as(f32, Cluster.up) * scale);
     const left: [2]i32 = .{ (width >> 1) - apart, top };
     const right: [2]i32 = .{ (width >> 1) + apart - round(@as(f32, Cluster.mirror_shift) * scale), top };
-    try drawShapeWith(art, gpa, target, Cluster.arc_shape, right, colour, scale, .{ .mirror = .{ .across = true } });
-    try drawShape(art, gpa, target, Cluster.arc_shape, left, colour, scale);
+    try drawShapeWith(art, gpa, target, Cluster.arc_shape, right, colour, scale, .{ .mirror = .{ .across = true }, .shake = shake });
+    try drawShapeWith(art, gpa, target, Cluster.arc_shape, left, colour, scale, .{ .shake = shake });
 
     const centre = scaled(left, Cluster.circle, scale);
     const throttle, const speed = Cluster.shares(gauges);
@@ -2763,12 +2874,14 @@ pub fn drawReticle(
     frame_duration: i32,
     colour: [4]f32,
     scale: f32,
+    shake: ?Shake,
 ) (spr.Error || Allocator.Error)!bool {
+    const how: Draw = .{ .shake = shake };
     const middle: [2]i32 = .{ @as(i32, @intCast(screen[0])) >> 1, @as(i32, @intCast(screen[1])) >> 1 };
     const drawn = mode != .chase;
-    if (drawn) try drawShape(art, gpa, target, reticle_shape, middle, colour, scale);
+    if (drawn) try drawShapeWith(art, gpa, target, reticle_shape, middle, colour, scale, how);
     const found = target_at orelse {
-        if (drawn) try drawShape(art, gpa, target, reticle_shape, middle, colour, scale);
+        if (drawn) try drawShapeWith(art, gpa, target, reticle_shape, middle, colour, scale, how);
         return false;
     };
     const near = round(@as(f32, @floatFromInt(under_reticle)) * scale);
@@ -2802,7 +2915,7 @@ pub fn drawReticle(
         }
         state.sight = sight;
     }
-    if (drawn) try drawShape(art, gpa, target, if (bright) sight_shape else reticle_shape, at, colour, scale);
+    if (drawn) try drawShapeWith(art, gpa, target, if (bright) sight_shape else reticle_shape, at, colour, scale, how);
     return aims;
 }
 
@@ -3259,10 +3372,11 @@ pub fn drawRadar(
     all: *const create.Objects,
     colour: [4]f32,
     scale: f32,
+    shake: ?Shake,
 ) (spr.Error || Allocator.Error)!void {
     const point = place(screen, Radar.offset, Radar.across, Radar.down, scale);
     try drawContacts(art, gpa, target, screen, point, all, state.radar_range, .below, colour, scale);
-    try drawShape(art, gpa, target, state.radar_rings, scaled(point, Radar.rings_offset, scale), colour, scale);
+    try drawShapeWith(art, gpa, target, state.radar_rings, scaled(point, Radar.rings_offset, scale), colour, scale, .{ .shake = shake });
     try drawContacts(art, gpa, target, screen, point, all, state.radar_range, .above, colour, scale);
 }
 
@@ -3533,14 +3647,14 @@ test "the sight glides back to the middle" {
     var nothing: u8 = 0;
     const target: device.Device = .{ .ptr = &nothing, .vtable = &.{ .begin = Null.begin, .end = Null.end, .draw = Null.draw, .overlay = Null.mark } };
     var art: Art = .{ .set = undefined, .images = &.{} };
-    const aims = try drawReticle(&state, &art, std.testing.allocator, target, screen, .chase, .{ 600, 400 }, .on, 10, .{ 1, 1, 1, 1 }, 1);
+    const aims = try drawReticle(&state, &art, std.testing.allocator, target, screen, .chase, .{ 600, 400 }, .on, 10, .{ 1, 1, 1, 1 }, 1, null);
     try std.testing.expect(!aims);
     try std.testing.expectEqual([2]i32{ 310, 240 }, state.sight.?);
     // Within its reach, blind fire takes the target.
-    try std.testing.expect(try drawReticle(&state, &art, std.testing.allocator, target, screen, .chase, .{ 350, 260 }, .on, 10, .{ 1, 1, 1, 1 }, 1));
+    try std.testing.expect(try drawReticle(&state, &art, std.testing.allocator, target, screen, .chase, .{ 350, 260 }, .on, 10, .{ 1, 1, 1, 1 }, 1, null));
     try std.testing.expectEqual([2]i32{ 350, 260 }, state.sight.?);
     // A gun it does not aim leaves the sight where it is.
-    _ = try drawReticle(&state, &art, std.testing.allocator, target, screen, .chase, .{ 350, 260 }, .excluded, 10, .{ 1, 1, 1, 1 }, 1);
+    _ = try drawReticle(&state, &art, std.testing.allocator, target, screen, .chase, .{ 350, 260 }, .excluded, 10, .{ 1, 1, 1, 1 }, 1, null);
     try std.testing.expectEqual([2]i32{ 350, 260 }, state.sight.?);
 }
 
@@ -3601,4 +3715,59 @@ test "the enemy lock's warning" {
     state.warnOfLock(sound, false, false);
     try std.testing.expect(!sound.voicePlaying(lock_warning_voice));
     try std.testing.expectEqual(null, state.lock_warning);
+}
+
+test Interference {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    _ = try mission.add(.predator, @splat(0));
+    const world = mission.world();
+    var interference: Interference = .{};
+
+    // Still, the display doesn't shake; a hit shakes it.
+    try std.testing.expectEqual(null, interference.shake(1, &mission.random));
+    mission.clock.frame_start = 100;
+    interference.start(world);
+    try std.testing.expectEqual(Interference.hit_level, interference.level);
+    try std.testing.expect(interference.shake(1, &mission.random) != null);
+    // It fades by `fade_per_tick` a tick since it last faded, to nothing.
+    interference.faded_at = 100;
+    interference.fade(120);
+    try std.testing.expectApproxEqAbs(Interference.hit_level - 20 * Interference.fade_per_tick, interference.level, 1e-6);
+    interference.fade(1000);
+    try std.testing.expectEqual(0, interference.level);
+}
+
+test rowShift {
+    var random: libcmt.Rand = .{};
+    try std.testing.expectEqual(0, rowShift(0, &random));
+    try std.testing.expectEqual(0, rowShift(1, null));
+    for (0..20) |_| {
+        const shift = rowShift(2, &random);
+        try std.testing.expect(shift >= 0 and shift <= 2 * row_reach);
+    }
+}
+
+test "a shaken image is drawn a row at a time" {
+    const Counter = struct {
+        draws: usize = 0,
+        fn ignore(_: *anyopaque) void {}
+        fn count(context: *anyopaque, _: device.State, _: device.Primitive, _: []const device.Vertex, _: ?[]const u16) void {
+            const counter: *@This() = @ptrCast(@alignCast(context));
+            counter.draws += 1;
+        }
+    };
+    var counter: Counter = .{};
+    const into: device.Device = .{ .ptr = &counter, .vtable = &.{ .begin = Counter.ignore, .end = Counter.ignore, .draw = Counter.count, .overlay = Counter.ignore } };
+    const pixels = [_]u8{0xFF} ** (2 * 3 * 4);
+    var level = [_]srtexture.Level{.{ .width = 2, .height = 3, .rgba = &pixels }};
+    var image: srtexture.Image = .{ .levels = &level };
+    var random: libcmt.Rand = .{};
+
+    drawImage(into, &image, .{ 0, 0 }, .{ 1, 1, 1, 1 }, 1, .{});
+    try std.testing.expectEqual(1, counter.draws);
+    const shake: Shake = .{ .hit_shake = 1, .interference = 0.3, .random = &random };
+    drawImage(into, &image, .{ 0, 0 }, .{ 1, 1, 1, 1 }, 1, .{ .shake = shake });
+    try std.testing.expectEqual(1 + 3, counter.draws);
 }

@@ -2,10 +2,7 @@
 //! a wire frame, the shape the mission's start picks for its type (`hud.State.wire_frame`), with
 //! the group of guns that fires lit and its gun's name, or every group but a Nova Cannon's lit
 //! under FULL GUNS, whether a pair of guns fires together or in turn, and the rounds left on the
-//! ships whose guns fire them.
-//!
-//! Not ported: the shake the display's interference gives it (`hud_blit`,
-//! [#236](https://github.com/vdmkenny/openreliant/issues/236)).
+//! ships whose guns fire them. Its shapes shake with the display (`hud.Shake`).
 
 const std = @import("std");
 
@@ -114,7 +111,7 @@ pub fn items(slot: *const create.Slot, wire_frame: ?u16, out: *[max_items]Item) 
 pub fn draw(shown: Shown, canvas: hud.windows.Canvas) hud.windows.Canvas.Error!void {
     var buffer: [max_items]Item = undefined;
     for (items(shown.slot, shown.wire_frame, &buffer)) |item| switch (item) {
-        .shape => |shape| try canvas.shape(shape.index, shape.at),
+        .shape => |shape| try canvas.shaky(shape.index, shape.at),
         .string => |string| try canvas.string(string.id, string.at, .left),
         .rounds => |rounds| try canvas.print("{d}", .{rounds.count}, rounds.at, .left),
     };

@@ -127,15 +127,37 @@ most cutaways. Its place is measured from the screen's edge rather than with `hu
 The port draws the view's name, and in view 0 all it has ported of the rest. A mission's launch
 ends in view 0 ([`camera.md`](camera.md)), and so does the port's start.
 
-While `hud_interference` (`0x00588700`) is above 0, `hud_draw` draws its shapes through `hud_blit`
-(`0x0048C6E0`) rather than `VFX_shape_draw`: under the hardware renderers each row of the shape is
-shifted sideways by a random amount scaled by `hud_interference`, or for some shapes by `hit_shake`
-(`0x00588724`). `hud_interference_start` (`0x00494890`) sets it to 0.3 and plays sound 12 at the
-ship no more often than every 15 to 29 ticks; `hud_interference_fade` (`0x004948F0`) lowers it by
-0.005 a tick. The two routines that start it, `0x00463EE0` and `0x004641F0`, lie between
-`cloak.cpp`'s code and `collision.cpp`'s. **Unverified:** that they are where the ship takes
-damage, and which shapes take `hit_shake`. The port draws every shape plain, as the game does
-with no interference.
+### The interference
+
+`object_damage` (`0x00463EE0`) and `object_armor_damage` (`0x004641F0`), hitting the player's ship,
+run `hud_interference_start` (`0x00494890`): `hud_interference` (`0x00588700`) goes to 0.3, and
+sound 12 of the buffered sounds plays at the ship at a loudness of 10000 once more than 15 ticks
+and a random share of 15 more have passed since the last (`0x00587CD0`). Once a frame
+`screen_flash_draw` (`0x00494940`) shows the screen's flash sprite red at `hud_interference`, with
+no green or blue, in view 0 unless `0x0054EA7C` is set ([Effects](effects.md)), and then fades it
+by 0.005 for each tick since it last did (`0x00588728`, `hud_interference_fade`, `0x004948F0`).
+
+While it is above 0, the display draws much of what it shows through `hud_blit` (`0x0048C6E0`)
+rather than `VFX_shape_draw`: under the hardware renderers each row of the shape moves right by a
+random share of `10 * hit_shake` pixels (`0x004DC520`, `hit_shake` at `0x00588724`), or for a shape
+flipped both ways of `10 * hud_interference`; the software renderer draws it still. Shaken this
+way:
+
+- in `hud_draw`, the status lights but reverse thrust, the readouts, the targeting cluster's arcs,
+  and the reticle and blind fire's sight;
+- the ship status indicator's schematic and its hits (`hud_ship_status`), the radar's rings
+  (`hud_radar`);
+- the windows' frames, and in `hud_window_draw` the gunnery display's shapes, the missile ring,
+  the damage display's and the wing status's icons, the large target display's picture, and the
+  radio window's pictures.
+
+The rest, the bars, rules, brackets, markers and text among them, stand still.
+
+**Fix:** while shaken, `hud_ship_status` draws the player's own schematic two pixels left and
+two down of where it draws it still, apart from its hits. The port keeps it in place.
+
+The port draws a shaken shape a row at a time (`hud.Shake`), a random number of the C runtime's
+for each row, as the game does.
 
 ## The readouts
 
@@ -367,8 +389,8 @@ As a form closes, `hud_window_close` draws what it shows once more into `hud_win
 with the display's new target for the range, the name and the rest. The port keeps what each form
 last showed and closes it with that.
 
-**Not ported:** the pilot's name, which a mission gives (`GameObject.pilot_record`); the display's
-interference; and in a multiplayer game the players' names and one more line of the small form.
+**Not ported:** the pilot's name, which a mission gives (`GameObject.pilot_record`); and in a
+multiplayer game the players' names and one more line of the small form.
 
 ## The radar
 
@@ -818,7 +840,6 @@ the instruments and the windows.
   the foot in every view.
 - Where the chase view's pointers to the target and the nav point are made, and their model
   ([#182](https://github.com/vdmkenny/openreliant/issues/182)).
-- Which of the display's shapes `hud_blit` shakes by `hit_shake` rather than `hud_interference`.
 - What `hud_palette_ramp` (`0x0048D590`) colours, and whether the display's text takes its palette
   from it rather than from the font.
 - How the display reaches the screen in the game, which is `vfx.dll`'s panes rather than anything

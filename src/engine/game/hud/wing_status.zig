@@ -1,10 +1,7 @@
 //! Window 13 of the display, the wing status (`hud_window_draw`'s case at `0x00486F8E`): THE 45TH,
 //! and the ships of the player's wing (`create.Objects.wing`) in a grid three across and two down,
 //! the player's first, each with a bar of its weakest armour quadrant, its type's icon and its
-//! number in the wing.
-//!
-//! Not ported: the shake the display's interference gives the icons (`hud_blit`,
-//! [#236](https://github.com/vdmkenny/openreliant/issues/236)).
+//! number in the wing. The icons shake with the display (`hud.Shake`).
 
 const std = @import("std");
 
@@ -95,7 +92,7 @@ pub fn draw(shown: Shown, canvas: hud.windows.Canvas) hud.windows.Canvas.Error!v
         const left = shapes[0];
         try canvas.shapeIn(level_shape, shapes, .{ left, at[1] + entry.lost, left + bar_reach, at[1] + bar_height });
         if (entry.lost != 0) try canvas.shapeIn(lost_shape, shapes, .{ left, at[1], left + bar_reach, at[1] + entry.lost });
-        if (entry.icon) |icon| try canvas.shape(icon, at + icon_offset);
+        if (entry.icon) |icon| try canvas.shaky(icon, at + icon_offset);
         try canvas.print("{d}", .{entry.number}, at + number_offset, .left);
     }
 }

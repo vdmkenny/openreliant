@@ -357,6 +357,8 @@ pub const Pen = struct {
     gpa: Allocator,
     target: device.Device,
     colour: [4]f32,
+    /// How the display shakes this frame; null while it stands still.
+    shake: ?hud.Shake = null,
 };
 
 /// A window as its frame and what it shows are drawn: with `pen`, from the window's place
@@ -376,6 +378,11 @@ pub const Canvas = struct {
     /// Shape `index` at `at`, cut to the window.
     pub fn shape(canvas: Canvas, index: usize, at: [2]i32) Error!void {
         try canvas.shapeWith(index, at, .{ .clip = canvas.inside.clip });
+    }
+
+    /// Shape `index` at `at`, cut to the window, shaken while the display shakes (`hud_blit`).
+    pub fn shaky(canvas: Canvas, index: usize, at: [2]i32) Error!void {
+        try canvas.shapeWith(index, at, .{ .clip = canvas.inside.clip, .shake = canvas.pen.shake });
     }
 
     /// Shape `index` at `at`, cut to the VFX pane of `edges` (`Inside.pane`).
@@ -429,7 +436,7 @@ fn draw(pen: Pen, screen: [2]u32, window: Window, shown: Shown, phase: Phase, co
     const clip: ?hud.Clip = if (shown.buffered) bufferClip(window, at, size) else null;
     const canvas: Canvas = .{ .pen = pen, .inside = .{ .at = at, .size = size, .clip = clip } };
     for (layouts.get(window).frame) |piece| {
-        try canvas.shapeWith(piece.shape, piece.offset, .{ .mirror = piece.mirror, .clip = clip });
+        try canvas.shapeWith(piece.shape, piece.offset, .{ .mirror = piece.mirror, .clip = clip, .shake = pen.shake });
     }
     switch (window) {
         .gunnery => if (contents.gunnery) |gunnery| try hud.gunnery.draw(gunnery, canvas),
