@@ -1,8 +1,7 @@
 //! `C:\lancer\game\sparks.cpp`: the sparks a hit throws, small bolts that fly off, slow and fade.
 //!
-//! Ported: the sparks, and those a shot striking a hull throws (`guns.hullHit`). **Not ported:**
-//! the callers of the rest: a shot striking a component, which throws kinds 0, 1 and 4
-//! ([#40](https://github.com/vdmkenny/openreliant/issues/40)); a shot striking a shield
+//! Ported: the sparks, and those a shot striking a hull throws (`guns.hullHit`) or a component
+//! (`guns.componentHit`). **Not ported:** the callers of the rest: a shot striking a shield
 //! (`0x0049F1E0`, [#133](https://github.com/vdmkenny/openreliant/issues/133)); and `0x004B02A0`,
 //! which throws kind 3 ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
 

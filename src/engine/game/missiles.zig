@@ -842,8 +842,6 @@ fn hitHull(world: gameobj.World, at: u8, index: u16, struck: collision.Quadrant)
 /// parts, or of the models mounted on it, the segment meets (`objects.hitSegment`); but for a
 /// Havoc or an Imp, the hit leaves what it leaves on the part (`shieldfx.componentHit`) and the part
 /// takes the type's component damage. The missile stops and ends.
-///
-/// Not ported: the burst the component gives off ([#40](https://github.com/vdmkenny/openreliant/issues/40)).
 fn hitComponents(world: gameobj.World, at: u8, index: u16) bool {
     const all = world.objects;
     const missile = all.missiles.get(at) orelse return false;
@@ -851,7 +849,7 @@ fn hitComponents(world: gameobj.World, at: u8, index: u16) bool {
     const model = if (slot.model) |*live| live else return false;
     const hit = objects.hitSegment(model, slot.object.placeAt(.next), missile.slot.drawn.position, gameobj.vector(missile.object().root.next_position)) orelse return false;
     if (missile.type.shockwave() == null) {
-        shieldfx.componentHit(world, index, hit.part, hit.face, .component);
+        shieldfx.componentHit(world, index, hit, .component);
         collision.componentDamage(world, index, hit.part, missile.stats(&all.missile_stats).component_damage, missile.launcher, damageKind(missile.type));
     }
     return stop(world, at);

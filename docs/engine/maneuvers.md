@@ -220,7 +220,7 @@ The Fight order and its maneuvers read the ship's pilot, a record of `pilot_stat
 
 The Fight order and every command run as described, with these left out: the cloak
 ([#89](https://github.com/vdmkenny/openreliant/issues/89)), the points a model gives its components
-([#40](https://github.com/vdmkenny/openreliant/issues/40)), multiplayer, where the host chooses the
+([#239](https://github.com/vdmkenny/openreliant/issues/239)), multiplayer, where the host chooses the
 maneuvers ([#55](https://github.com/vdmkenny/openreliant/issues/55)), and the mission's
 `SetActionCentre` ([#36](https://github.com/vdmkenny/openreliant/issues/36)).
 

@@ -12,11 +12,13 @@
 //! `0x00458AB0`, which is the one routine the build keeps of every routine that only returns 1, so
 //! a hull's emitter shows nothing.
 //!
-//! Not ported: the nodes and their emitters, which show nothing; a component's burst, and the
-//! nodes of earlier hits nearby that kind 3 clears first
-//! ([#40](https://github.com/vdmkenny/openreliant/issues/40)); and kind 5's sound. The game hangs a part no more than a
-//! hundred nodes, so a part struck a hundred times no longer sounds; the port keeps no nodes, and
-//! every hit sounds.
+//! The port keeps no nodes, as none shows anything once made: it sounds a hull's hit, bursts a
+//! component's, and sounds a rock's. The game hangs a part no more than a hundred nodes, so a hull's
+//! part struck a hundred times no longer sounds; the port's sounds every time. A component's are
+//! never that many: kind 3 first clears the nodes of earlier hits nearby, and the oldest past ten.
+//!
+//! Not ported: the rock chunk kind 5 throws (`0x00472780`,
+//! [#41](https://github.com/vdmkenny/openreliant/issues/41)).
 
 const std = @import("std");
 
@@ -24,6 +26,7 @@ const math = @import("../surrender/math.zig");
 const Vector = math.Vector;
 const gameobj = @import("gameobj.zig");
 const objects = @import("objects.zig");
+const particles = @import("particles.zig");
 const shield = @import("shield.zig");
 const sound3d = @import("sound3d.zig");
 
@@ -41,15 +44,82 @@ pub const Kind = enum(i32) {
     }
 };
 
-/// `0x004992D0` for a shot or a missile on part `ref`, a component of the object in slot `index`,
-/// on face `face` of the part's record, leaving `kind`. On an object with a shield generator that
-/// isn't exploding, a component's capital shield glows round the face (`shield.flareCapital`),
-/// and nothing is left on the part.
-pub fn componentHit(world: gameobj.World, index: u16, ref: objects.PartRef, face: usize, kind: Kind) void {
-    if (kind != .component) return;
-    const flags = world.objects.slots[index].object.flags;
-    if (!flags.shield_generator or flags.exploding) return;
-    shield.flareCapital(world, index, ref, ref.polygon(face));
+/// `0x004992D0` for a shot or a missile that `crossing` has striking a component of the object in
+/// slot `index`, leaving `kind`. On an object with a shield generator that isn't exploding, the
+/// part's capital shield glows round the face struck (`shield.flareCapital`); otherwise the hit
+/// bursts (`burst`). A rock's sounds `COLL02` where it struck.
+pub fn componentHit(world: gameobj.World, index: u16, crossing: objects.Crossing, kind: Kind) void {
+    switch (kind) {
+        .component => {
+            const flags = world.objects.slots[index].object.flags;
+            if (flags.shield_generator and !flags.exploding) return shield.flareCapital(world, index, crossing.part, crossing.part.polygon(crossing.face));
+            burst(world, crossing);
+        },
+        .rock => {
+            const hearing = world.hearing orelse return;
+            const drawn = crossing.part.part().drawn();
+            const at = math.transform(drawn.orientation, crossing.point) + drawn.position;
+            _ = sound3d.play(hearing.sound, hearing.scene(world), at, @splat(0), -1, .coll02, 1, .not_reserved);
+        },
+        .hull, .grey => {},
+    }
+}
+
+/// What a component's hit bursts into (`shieldfx_orange`, `0x0049FD20`): orange puffs growing from
+/// 50 to 100 across as they fade over about a second.
+pub const orange: particles.Template = .{
+    .life = 100,
+    .life_spread = 10,
+    .rate = .through(15, 10, 0),
+    .size = .through(50, 75, 100),
+    .colour = .{ .through(1, 0.25, 0), .through(0.5, 0.25, 0), .through(0, 0.25, 0) },
+};
+
+/// How many puffs a component's hit bursts into, and how they leave the point struck: out along
+/// the face's normal at 10 to 12 a tick, straying up to an eighth either way across
+/// (`shieldfx_create`).
+const burst_count = 20;
+const burst_speed: f32 = 10;
+const burst_speed_range: f32 = 2;
+const burst_spread: Vector = .{ 0.25, 0.25, 0 };
+
+/// `shieldfx_create`'s kind 3: an emitter of `orange` hanging from the part at the point struck,
+/// facing out along the face's normal, bursts `burst_count` puffs.
+fn burst(world: gameobj.World, crossing: objects.Crossing) void {
+    const pool = world.particles orelse return;
+    const sending = world.sending() orelse return;
+    var emitter: particles.Emitter = .{
+        .life = burst_life,
+        .born = world.clock.frame_start,
+        .place = .{ .position = crossing.point, .orientation = outFrom(crossing.normal) },
+        .direction = .{ 0, 0, 1 },
+        .spread = burst_spread,
+        .speed = burst_speed,
+        .speed_range = burst_speed_range,
+        .template = &orange,
+    };
+    pool.burst(&emitter, crossing.part.part().drawn(), burst_count, sending);
+}
+
+/// How long the emitter lives, which a burst doesn't read.
+const burst_life = 1000;
+
+/// A frame whose forward axis is `normal` (`shieldfx_create`): across it, `X` crossed with the
+/// normal, and up, that crossed with the normal again.
+///
+/// **Fix:** the game's frame is not a number for a normal along `X`; the port takes the frame
+/// `math.lookAt` gives that normal.
+fn outFrom(normal: Vector) math.Matrix {
+    const forward = math.normalize(normal);
+    const side = math.cross(.{ 1, 0, 0 }, forward);
+    if (!(math.length(side) > 1e-6)) return math.lookAt(forward);
+    const across = math.normalize(side);
+    const up = math.normalize(math.cross(across, forward));
+    return .{
+        up[0], across[0], forward[0],
+        up[1], across[1], forward[1],
+        up[2], across[2], forward[2],
+    };
 }
 
 /// How long after a shot last sounded on the player's hull another does (`0x00593794`).
@@ -108,4 +178,58 @@ test hullHit {
     // Another ship's hull sounds every hit, and leaves the player's pause alone.
     hullHit(world, other, .{ 0, 0, 990 });
     try std.testing.expectEqual(130, sound.player_hit_at);
+}
+
+test componentHit {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    var image: @import("../surrender/surrenderlib/srtexture.zig").Image = undefined;
+    var pool: particles.Pool = try .init(std.testing.allocator, 100, &image, .add);
+    defer pool.deinit();
+    var watching: @import("camera.zig").Camera = .{};
+    var world = mission.world();
+    world.particles = &pool;
+    world.camera = &watching;
+    mission.clock.frame_start = 10;
+    const index = try mission.add(.kamov, .{ 0, 0, 1000 });
+    var parts: [1]objects.Model.Part = .{.{ .hidden = false, .parent = null, .origin = @splat(0), .object = .{ .flags = .{}, .position = .{ 0, 0, 1000 }, .radius = 100, .levels = &.{} } }};
+    var model: objects.Model = .{ .parts = &parts, .order = &.{}, .lights = &.{}, .glows = &.{}, .mounts = &.{} };
+    const crossing: objects.Crossing = .{ .part = .{ .model = &model, .index = 0 }, .face = 0, .point = .{ 0, 0, -50 }, .normal = .{ 0, 0, -1 } };
+
+    // A shield generator's ship glows instead, which leaves nothing on the part.
+    const flags = &mission.slot(index).object.flags;
+    flags.shield_generator = true;
+    componentHit(world, index, crossing, .component);
+    try std.testing.expectEqual(0, sent(&pool));
+    // Without one, the hit bursts into twenty orange puffs, heading out along the face's normal.
+    flags.shield_generator = false;
+    componentHit(world, index, crossing, .component);
+    try std.testing.expectEqual(burst_count, sent(&pool));
+    for (pool.particles[0..burst_count]) |particle| {
+        try std.testing.expectEqual(&orange, particle.template.?);
+        try std.testing.expect(particle.velocity[2] < 0);
+    }
+    // A rock's leaves no puffs.
+    componentHit(world, index, crossing, .rock);
+    try std.testing.expectEqual(burst_count, sent(&pool));
+}
+
+/// How many of the pool's particles are in use.
+fn sent(pool: *const particles.Pool) usize {
+    var count: usize = 0;
+    for (pool.particles) |particle| count += @intFromBool(particle.template != null);
+    return count;
+}
+
+test outFrom {
+    // Its forward axis is the normal, and it is a turn: its axes a right-handed set of units.
+    for ([_]Vector{ .{ 0, 0, -1 }, .{ 0.3, 0.8, 0.2 }, .{ 1, 0, 0 } }) |normal| {
+        const frame = outFrom(normal);
+        const forward: Vector = .{ frame[2], frame[5], frame[8] };
+        try std.testing.expectApproxEqAbs(1, math.dot(forward, math.normalize(normal)), 1e-5);
+        const up: Vector = .{ frame[0], frame[3], frame[6] };
+        const across: Vector = .{ frame[1], frame[4], frame[7] };
+        try std.testing.expectApproxEqAbs(1, math.dot(math.cross(up, across), forward), 1e-5);
+    }
 }

@@ -589,11 +589,15 @@ orange template (`shieldfx_init`, `0x0049FD20`) on the part's surface nearest th
 (`mesh_nearest_surface`, `0x0049FEF0`), facing out from it. A shot or a missile on a component leaves a burst of
 20 of the same template's particles, or, on a ship with a shield generator, its capital shield's glow ([Capital shields](#capital-shields)). Nothing sends the hull's emitter's particles out: `node_draw`
 updates a node of kind 6 through `0x00458AB0`, the one routine the build keeps of every routine that
-only returns 1, so it shows nothing. [`shieldfx.zig`](../../src/engine/game/shieldfx.zig) ports the
-sound.
+only returns 1, so it shows nothing.
+
+A component's burst (kind 3, `shieldfx_create`, `0x004A0310`) is an emitter of the orange template (`shieldfx_orange`, `0x0049FD20`) at the point struck, facing out along the face's normal, which bursts 20 puffs at once. They leave at 10 to 12 a tick, straying up to an eighth either way across, and grow from 50 to 100 across as they fade from orange over about a second. Before it adds a component's node, `node_add_effect` clears the nodes of earlier hits within reach of the new one, and the oldest past ten. A rock's hit (kind 5) plays `COLL02` where it struck, and throws a rock chunk (`0x00472780`).
+
+**Fix:** a normal along `X` leaves the game's emitter with no frame; the port faces it along the normal all the same.
+
+[`shieldfx.zig`](../../src/engine/game/shieldfx.zig) ports the sound, the burst and the rock's sound, keeping no nodes, as none shows anything once made. So a hull's part struck a hundred times, which the game's hundred nodes a part would leave silent, still sounds. Not ported: the rock chunk ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
 
 [`sparks.zig`](../../src/engine/game/sparks.zig) ports the sparks,
 [`guns.zig`](../../src/engine/game/guns.zig) the hull's, and [`shield.zig`](../../src/engine/game/shield.zig)
-a shield's ([Shields](#shields)). Not ported: the other callers, the burst a shot leaves on a component
-([#40](https://github.com/vdmkenny/openreliant/issues/40)), and `0x004B02A0`
+a shield's ([Shields](#shields)), and [`guns.zig`](../../src/engine/game/guns.zig) a component's. Not ported: `0x004B02A0`
 ([#41](https://github.com/vdmkenny/openreliant/issues/41)).

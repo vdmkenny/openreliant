@@ -428,7 +428,7 @@ fn attackMediumFighter(fighter: Fighter) bool {
 /// at that is clear of the target's hull (`ai.escapeDirection`), in the target's frame.
 ///
 /// Not ported: for a component of the target, the point the model gives the component
-/// ([#40](https://github.com/vdmkenny/openreliant/issues/40)); the port finds the way out for it
+/// ([#239](https://github.com/vdmkenny/openreliant/issues/239)); the port finds the way out for it
 /// as for any other part.
 fn startAttackRun(fighter: Fighter) void {
     const enemy = fighter.enemy();

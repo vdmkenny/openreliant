@@ -1349,11 +1349,10 @@ pub fn bulletsFrame(world: gameobj.World, clock: *const Clock, fraction: f32) vo
 /// before the quadrant does, and a turret's shot hurts a player's ship more. A ship with its
 /// spectral shields on takes nothing at all: the gun type they are tuned to is handed to the check
 /// and ignored, so every shot is turned. Whatever becomes of a shot spent on a shield, the shield
-/// flares where it struck (`shield.flare`).
+/// flares where it struck (`shield.flare`). An object whose components are listed is struck part by
+/// part instead (`componentHit`).
 ///
-/// Not ported: the parts of an object whose components are listed, which the game tests node by
-/// node ([#40](https://github.com/vdmkenny/openreliant/issues/40)); the cloak a hit reveals
-/// ([#89](https://github.com/vdmkenny/openreliant/issues/89)).
+/// Not ported: the cloak a hit reveals ([#89](https://github.com/vdmkenny/openreliant/issues/89)).
 fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
     const all = world.objects;
     const segment: objects.Segment = .between(bullet.last, bullet.at);
@@ -1463,7 +1462,7 @@ const huge_fireball_life = 150;
 fn componentHit(world: gameobj.World, bullet: *Bullet, index: u16, crossing: objects.Crossing) void {
     bullet.dies_at = spent;
     if (crossing.part.part().force_field) shield.flareCapital(world, index, crossing.part, null);
-    shieldfx.componentHit(world, index, crossing.part, crossing.face, .onComponentOf(world.objects.slots[index].object.type));
+    shieldfx.componentHit(world, index, crossing, .onComponentOf(world.objects.slots[index].object.type));
     const drawn = crossing.part.part().drawn();
     const at = math.transform(drawn.orientation, crossing.point) + drawn.position;
     const normal = math.transform(drawn.orientation, crossing.normal);

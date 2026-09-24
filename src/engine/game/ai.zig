@@ -203,7 +203,7 @@ const least_closing: f32 = 0.001;
 /// on it by its velocity less twice the target's, to within both radii and the margin.
 ///
 /// Not ported: against a target with listed components, the parts of it the ship could hit
-/// ([#40](https://github.com/vdmkenny/openreliant/issues/40)); that is taken as no.
+/// ([#239](https://github.com/vdmkenny/openreliant/issues/239)); that is taken as no.
 pub fn collisionCourse(world: gameobj.World, index: u16, target: u16, steps: f32, margin: f32) bool {
     const all = world.objects;
     const ship = &all.slots[index];
