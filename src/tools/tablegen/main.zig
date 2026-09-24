@@ -11,6 +11,7 @@
 //!     tablegen orders <LANCER.EXE> <output.zig>
 //!     tablegen maneuvers <LANCER.EXE> <output.zig>
 //!     tablegen views <LANCER.EXE> <output.zig>
+//!     tablegen sequences <LANCER.EXE> <output.zig>
 //!     tablegen sources <LANCER.EXE> <disassembly.asm> <strings.tsv> <output.zig>
 //!
 //! `opcodes`: the VM dispatches on a byte through a table of handler addresses. Reading that table
@@ -41,6 +42,8 @@
 //!
 //! `views`: the camera's views, with the string that names each and its two flags.
 //!
+//! `sequences`: how each capital ship type that splits in two as its hull is destroyed does so.
+//!
 //! `sources`: the source files the payload was compiled from, in link order, and the code known to
 //! be each one's, from the paths their assertions hold. `strings.tsv` is the export's too.
 //!
@@ -65,6 +68,7 @@ const maneuvers = @import("maneuvers.zig");
 const models = @import("models.zig");
 const orders = @import("orders.zig");
 const sources = @import("sources.zig");
+const sequences = @import("sequences.zig");
 const views = @import("views.zig");
 const x86 = @import("x86.zig");
 
@@ -93,6 +97,7 @@ const usage =
     \\       tablegen orders <LANCER.EXE> <output.zig>
     \\       tablegen maneuvers <LANCER.EXE> <output.zig>
     \\       tablegen views <LANCER.EXE> <output.zig>
+    \\       tablegen sequences <LANCER.EXE> <output.zig>
     \\       tablegen sources <LANCER.EXE> <disassembly.asm> <strings.tsv> <output.zig>
     \\
 ;
@@ -109,6 +114,7 @@ const Mode = union(enum) {
     orders: struct { binary: []const u8, output: []const u8 },
     maneuvers: struct { binary: []const u8, output: []const u8 },
     views: struct { binary: []const u8, output: []const u8 },
+    sequences: struct { binary: []const u8, output: []const u8 },
     sources: struct { binary: []const u8, listing: []const u8, strings: []const u8, output: []const u8 },
 
     fn parse(args: []const [:0]const u8) ?Mode {
@@ -127,6 +133,7 @@ const Mode = union(enum) {
             .orders => if (rest.len == 2) .{ .orders = .{ .binary = rest[0], .output = rest[1] } } else null,
             .maneuvers => if (rest.len == 2) .{ .maneuvers = .{ .binary = rest[0], .output = rest[1] } } else null,
             .views => if (rest.len == 2) .{ .views = .{ .binary = rest[0], .output = rest[1] } } else null,
+            .sequences => if (rest.len == 2) .{ .sequences = .{ .binary = rest[0], .output = rest[1] } } else null,
             .sources => if (rest.len == 4) .{ .sources = .{ .binary = rest[0], .listing = rest[1], .strings = rest[2], .output = rest[3] } } else null,
         };
     }
@@ -151,6 +158,7 @@ pub fn main(init: std.process.Init) !u8 {
         .orders => |paths| orderTable(init, arena, paths.binary, paths.output),
         .maneuvers => |paths| maneuverTable(init, arena, paths.binary, paths.output),
         .views => |paths| viewTable(init, arena, paths.binary, paths.output),
+        .sequences => |paths| sequenceTable(init, arena, paths.binary, paths.output),
         .sources => |paths| sourceMap(init, arena, paths),
     };
 }
@@ -287,6 +295,22 @@ fn viewTable(init: std.process.Init, arena: std.mem.Allocator, binary_path: []co
     try out.interface.flush();
 
     std.debug.print("{d} views -> {s}\n", .{ records.len, output });
+    return 0;
+}
+
+fn sequenceTable(init: std.process.Init, arena: std.mem.Allocator, binary_path: []const u8, output: []const u8) !u8 {
+    const cwd: Io.Dir = .cwd();
+    const binary = try cwd.readFileAlloc(init.io, binary_path, arena, .limited(64 << 20));
+    const pe_image: pe.Image = try .parse(binary);
+    const records = try sequences.read(arena, .init(pe_image, binary));
+
+    var buffer: [16 << 10]u8 = undefined;
+    var out: Io.File.Writer = .init(try cwd.createFile(init.io, output, .{}), init.io, &buffer);
+    defer out.file.close(init.io);
+    try sequences.emit(&out.interface, records);
+    try out.interface.flush();
+
+    std.debug.print("{d} explosion sequences -> {s}\n", .{ records.len, output });
     return 0;
 }
 
@@ -512,6 +536,7 @@ test {
     _ = maneuvers;
     _ = models;
     _ = orders;
+    _ = sequences;
     _ = sources;
     _ = views;
     _ = x86;
