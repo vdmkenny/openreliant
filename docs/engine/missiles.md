@@ -200,7 +200,11 @@ against every object of type below 256 that collides, but its launcher, of any s
     multiplayer mission. The player's ship takes it only on the fore quadrant, and only as the hit
     empties a [shield reserve](controls.md#the-shield-balance): the fore's while it holds anything, else
     the aft's. With neither holding anything, or on any other quadrant, the player's shields take
-    nothing. **Unverified** in play ([#214](https://github.com/vdmkenny/openreliant/issues/214)).
+    nothing.
+
+    **Fix:** every other hit on the player's shields, a shot's, a knock's and a shockwave's, draws
+    the reserve of the side struck and then reaches the shield, so the port takes a missile's the
+    same way: off the fore or aft reserve while it holds, then on the shield.
   - The shield flares at the point unless the object is cloaked.
 
 The missile's velocity is zeroed and it ends. A Screamer's damage counts as kind 5, any other's as
