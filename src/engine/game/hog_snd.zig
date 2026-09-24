@@ -22,6 +22,7 @@ const mss = @import("../mss.zig");
 const profile = @import("../profile.zig");
 const camera = @import("camera.zig");
 const Clock = @import("main.zig").Clock;
+const gameobj = @import("gameobj.zig");
 const sound3d = @import("sound3d.zig");
 
 const log = std.log.scoped(.sound);
@@ -564,15 +565,19 @@ pub const Sound = struct {
     }
 
     /// `sound_3d_voice_end` (`0x00481AF0`): ends what a 3D voice plays and frees it, and the
-    /// object it followed has none. Not ported: a missile's, whose object the missiles' records
-    /// name (#39).
+    /// object or the missile it followed has none.
     pub fn end3D(sound: *Sound, v: u8) void {
         const driver = sound.driver orelse return;
         const voice = &sound.voices_3d[v];
         if (voice.owner == -1) return;
-        if (voice.follows == .object) if (sound.objects) |all| {
-            if (voice.owner < all.slots.len) all.slots[@intCast(voice.owner)].object.sound_voice = 0xFFFF;
-        };
+        if (sound.objects) |all| {
+            const followed: ?*gameobj.GameObject = switch (voice.follows) {
+                .object => if (voice.owner < all.slots.len) &all.slots[@intCast(voice.owner)].object else null,
+                .missile => if (all.missiles.get(@intCast(voice.owner))) |missile| &missile.slot.object else null,
+                else => null,
+            };
+            if (followed) |object| object.sound_voice = 0xFFFF;
+        }
         voice.priority = 0;
         voice._unknown_0c = 0;
         voice.owner = -1;

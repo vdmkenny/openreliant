@@ -403,6 +403,9 @@ pub const Objects = struct {
     /// The shots in flight (`0x00563148`), which the game keeps in `guns.cpp`'s own globals. The
     /// port keeps them here, beside the objects they fly among.
     bullets: guns.Bullets = .{},
+    /// The missiles in flight (`0x005887F0`), which the game keeps in `missiles.cpp`'s own globals.
+    /// The port keeps them here too.
+    missiles: missiles.Missiles = .{},
     /// The working lists of the collision sweep `objectsUpdate` runs.
     sweep: Sweep = .{},
     /// `0x005185AC`: the tick at which `aigeneric.ordersUpdate` next clears what every object has
@@ -420,6 +423,7 @@ pub const Objects = struct {
     }
 
     pub fn destroy(all: *Objects) void {
+        all.missiles.reset(all.gpa);
         for (&all.slots) |*slot| slot.release(all.gpa);
         all.gpa.destroy(all);
     }

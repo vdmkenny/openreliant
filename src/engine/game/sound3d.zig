@@ -171,8 +171,7 @@ pub fn endAll(sound: *Sound) void {
 /// voice of `class`, else one not reserved, else borrows a free one of another class. Returns the
 /// voice, or null.
 ///
-/// The game passes a fourth argument it never reads. Not ported: a missile's sound, which follows
-/// its object (#39).
+/// The game passes a fourth argument it never reads.
 pub fn play(sound: *Sound, scene: Scene, at: ?Vector, facing: ?Vector, owner: i32, which: sounds.Sound, volume: f32, class: Class) ?u8 {
     const driver = sound.driver orelse return null;
     if (!sound.effects.ready) return null;
@@ -196,7 +195,14 @@ pub fn play(sound: *Sound, scene: Scene, at: ?Vector, facing: ?Vector, owner: i3
             direction = facing orelse return null;
         },
         .point => position = at orelse return null,
-        .missile, .none, _ => return null,
+        // Where the missile goes next, facing the way it flies, still.
+        .missile => {
+            if (owner < 0) return null;
+            const missile = scene.objects.missiles.get(@intCast(owner)) orelse return null;
+            position = missile.slot.object.nextPosition();
+            direction = math.normalize(gameobj.vector(missile.slot.object.velocity));
+        },
+        .none, _ => return null,
         .object => {
             if (owner < 0 or owner >= scene.objects.slots.len) return null;
             const slot = &scene.objects.slots[@intCast(owner)];

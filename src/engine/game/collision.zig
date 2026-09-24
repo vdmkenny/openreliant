@@ -200,9 +200,9 @@ fn push(world: gameobj.World, first: u16, second: u16, pass: u8) bool {
 pub const Kind = enum(i32) {
     /// A shot from a gun (`guns.bulletHit`).
     bullet = 0,
-    /// **Unknown.** A missile's hit, where the missile's object is of any type but 0
-    /// (`0x00495AC0`, `0x00495BB0`, `0x00495CF0`), and what `0x004A0F00` does to the shields.
-    _unknown_1 = 1,
+    /// A missile's hit, but a Screamer's (`missiles.collide`), and what an Imp's shockwave does to
+    /// the shields (`shockwave.Shockwave.strike`).
+    missile = 1,
     collision = 2,
     /// What a ship does to what it dies crashing into: 5000 to an object (`objects_collide`), 5001
     /// to the component of a hull it hit (`collision_test_hull`).
@@ -210,8 +210,8 @@ pub const Kind = enum(i32) {
     /// **Unknown.** Also 5001 from a ship dying against a hull, to another part of the component's
     /// assembly (`collision_test_hull`).
     _unknown_4 = 4,
-    /// **Unknown.** A missile's hit, where the missile's object is of type 0.
-    _unknown_5 = 5,
+    /// A Screamer's hit.
+    screamer = 5,
     _,
 };
 
@@ -498,7 +498,7 @@ pub fn componentDamage(world: gameobj.World, index: u16, component: *objects.Mod
 /// Whether the damage counts toward what an object has taken lately, which `order_retaliate` reads.
 fn counted(kind: Kind) bool {
     return switch (kind) {
-        .bullet, ._unknown_1, ._unknown_5 => true,
+        .bullet, .missile, .screamer => true,
         else => false,
     };
 }

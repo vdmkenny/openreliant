@@ -26,6 +26,7 @@ const aigeneric = @import("aigeneric.zig");
 const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
 const guns = @import("guns.zig");
+const missiles = @import("missiles.zig");
 const explode = @import("explode.zig");
 const particles = @import("particles.zig");
 const shield = @import("shield.zig");
@@ -270,19 +271,19 @@ pub fn pause(pausing: Pausing, on: bool) !void {
 }
 
 /// `mission_frame` (`0x004924B0`), as far as the objects go: every object's orders, which fly the
-/// ships and read the player's controls, then the frames they are drawn at, then the shots in
-/// flight (`guns.bulletsFrame`), then the sparks (`sparks.Sparks.frame`) and the particles
+/// ships and read the player's controls, then the frames they are drawn at, then the missiles
+/// (`missiles.frame`) and the shots in flight (`guns.bulletsFrame`), then the sparks (`sparks.Sparks.frame`) and the particles
 /// (`particles.Pool.frame`, `smoke.Pools.frame`), which `particles_frame` runs together, the
 /// damaged ships' smoke (`smoke.frame`), the explosions (`explode.Explosions.frame`) and the
 /// shockwaves (`shockwave.Shockwaves.frame`). A mission and the sandbox alike run this once a
 /// frame, before the camera's own frame and anything drawn.
 ///
-/// Not ported: the rest of the frame's work, which is the mission's events, its scripts and the
-/// missiles ([#30](https://github.com/vdmkenny/openreliant/issues/30),
-/// [#39](https://github.com/vdmkenny/openreliant/issues/39)).
+/// Not ported: the rest of the frame's work, which is the mission's events and its scripts
+/// ([#30](https://github.com/vdmkenny/openreliant/issues/30)).
 pub fn missionFrame(orders: aigeneric.Context, fraction: f32) void {
     aigeneric.ordersUpdate(orders);
     frameObjects(orders.world.objects, fraction);
+    missiles.frame(orders.world, fraction);
     guns.bulletsFrame(orders.world, orders.clock, fraction);
     if (orders.world.sparks) |thrown| thrown.frame(orders.clock);
     if (orders.world.particles) |pool| pool.frame(orders.clock);
@@ -318,6 +319,7 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     var attachments = frame.attachments;
     attachments.scale = context.projection.scale[0];
     try drawObjects(gpa, scene, frame.objects, attachments, frame.seat);
+    try missiles.draw(frame.objects, gpa, scene, attachments);
     if (frame.shields) |bubbles| try bubbles.draw(gpa, arena, scene, frame.objects, .{
         .camera = attachments.camera,
         .inside = camera.inCockpit(frame.view, frame.cockpit_mode),

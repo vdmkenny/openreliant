@@ -1070,6 +1070,7 @@ const Sandbox = struct {
         if (orders.world.sparks) |thrown| thrown.reset();
         if (orders.world.particles) |pool| pool.reset();
         if (orders.world.smoke) |pools| pools.reset();
+        sandbox.objects.missiles.reset(sandbox.objects.gpa);
         sandbox.objects.reset(sandbox.random);
         // The debris models, counted as used so the sweep below keeps them (`explosions_init`).
         if (orders.world.explosions) |explosions| explosions.debris = .load(sandbox.objects, sandbox.types.interface());

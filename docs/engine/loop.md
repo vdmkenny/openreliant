@@ -64,10 +64,10 @@ they may have struck, and draws it all after the camera's frame.
 
 Ported so far: the clocks, the pacing, the keyboard and the joystick, which the simulation step
 reads 25 times a second as `read_keyboard` and `read_joystick` do rather than once a frame, the
-step's work on the objects, and each frame's orders and framing (`main.missionFrame`), which is
-what a mission and the sandbox both run.
-Not yet: the mouse, the missiles the step moves after `objects_update`, the countdown `game_tick`
-steps once a second, and the sound streaming that shares `tick_timer`.
+step's work on the objects and the [missiles](missiles.md#flight), and each frame's orders and
+framing (`main.missionFrame`), which is what a mission and the sandbox both run.
+Not yet: the mouse, the countdown `game_tick` steps once a second, and the sound streaming that
+shares `tick_timer`.
 
 ## Collisions
 

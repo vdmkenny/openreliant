@@ -907,6 +907,14 @@ pub const ShieldReserves = struct {
         reserve.* = 0;
         return false;
     }
+
+    /// A missile's `amount` on the fore shield (`missile_collide`), taken off the fore reserve
+    /// while it holds anything, else off the aft's: whether it ran that reserve out, and the shield
+    /// takes the whole hit. With neither holding anything, nothing reaches the shield.
+    pub fn missileHit(reserves: *ShieldReserves, amount: f32) bool {
+        const drawn: collision.Quadrant = if (reserves.fore > 0) .fore else .aft;
+        return reserves.of(drawn).?.* > 0 and !reserves.spare(drawn, amount);
+    }
 };
 
 test ShieldReserves {
@@ -922,6 +930,17 @@ test ShieldReserves {
     try std.testing.expectEqual(0, reserves.fore);
     try std.testing.expect(!reserves.spare(.fore, 1));
     try std.testing.expect(!reserves.spare(.left, 1));
+
+    // A missile draws the fore reserve, then the aft's, and reaches the shield only as one runs
+    // out.
+    reserves = .{ .fore = 1, .aft = 2 };
+    try std.testing.expect(!reserves.missileHit(0.5));
+    try std.testing.expect(reserves.missileHit(1));
+    try std.testing.expectEqual(0, reserves.fore);
+    try std.testing.expect(!reserves.missileHit(1));
+    try std.testing.expectEqual(1, reserves.aft);
+    try std.testing.expect(reserves.missileHit(1));
+    try std.testing.expect(!reserves.missileHit(1));
 }
 
 /// `object_recharge_shields` (`0x00476FC0`), which `simulation_step` runs for every object after
@@ -1095,6 +1114,7 @@ pub fn simulationStep(clock: *Clock, devices: *input.Devices, world: World) bool
         aigeneric.objectOrders(.{ .world = world, .clock = clock, .devices = devices }, all.player);
     }
     create.objectsUpdate(world);
+    missiles.move(world.objects);
     guns.moveBullets(world);
     return true;
 }

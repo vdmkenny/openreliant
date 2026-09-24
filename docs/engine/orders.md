@@ -198,7 +198,7 @@ set from C's `rand()` when the object is created, that steps as `seed * 0x343FD 
 | Fly ship backwards (45) | Throttle -0.5, no turning. |
 | Multiplayer Control (101) | Disables the object once it has object flag `0x10000000`. |
 | Fight (105) | Fights its target by running [combat maneuvers](maneuvers.md), one after another. |
-| Disrupted (114) | On starting, sets object flag `0x8`, sets the ship tumbling with random turn rates, and keeps the tick to end at, the duration in its data after `frame_start`. It pops at that tick, and its `exit` clears the flag. |
+| Disrupted (114) | A Havoc's shockwave gives it ([Effects](effects.md#shockwaves)). On starting, sets object flag `0x8` (unpowered), keeps the tick to end at, the duration in its data (a word) after `frame_start`, takes the push in its data after that (three floats) as a knock in the ship's own frame, though the shockwave gives it in the world's, and knocks each turn rate by up to 0.05 either way at random, which the ship tumbles by. It also plays fifteen electric rays over the ship (`erayfx.cpp`, not ported: [#213](https://github.com/vdmkenny/openreliant/issues/213)). It pops past that tick, and its `exit` clears the flag. |
 | Eject Player (118) | The player's pilot ejects; the ship drifts, unpowered, for 400 to 599 ticks, then explodes ([Destruction](objects.md#destruction)). |
 
 **Unknown:** what the other orders do.

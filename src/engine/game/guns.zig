@@ -1197,10 +1197,8 @@ pub fn bulletsFrame(world: gameobj.World, clock: *const Clock, fraction: f32) vo
 /// ([#89](https://github.com/vdmkenny/openreliant/issues/89)).
 fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
     const all = world.objects;
-    const span = bullet.at - bullet.last;
-    const length = math.lengthSquared(span);
-    if (length < 1) return;
-    const along = 1 / length;
+    const segment: objects.Segment = .between(bullet.last, bullet.at);
+    if (math.lengthSquared(segment.span) < 1) return;
     const record = bullet.stats(&world.objects.gun_stats);
 
     var index: usize = 0;
@@ -1212,11 +1210,9 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
             index += 1;
             continue;
         }
-        const to = slot.drawn.position - bullet.last;
-        const when = std.math.clamp(math.dot(span, to) * along, 0, 1);
-        const nearest = span * @as(Vector, @splat(when));
+        const when = segment.nearest(slot.drawn.position);
         const reach = object.radius + hugeReach(bullet.kind);
-        if (math.lengthSquared(nearest - to) > reach * reach) {
+        if (segment.missSquared(slot.drawn.position, when) > reach * reach) {
             // Once the shot is past an object it is dropped from the list.
             if (when == 0) {
                 var from = index;
@@ -1233,11 +1229,7 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
             continue;
         }
         // Where the segment first crosses the object's sphere.
-        const a = math.dot(span, span);
-        const b = math.dot(span, to) * -2;
-        const c = math.dot(to, to) - reach * reach;
-        const root = @sqrt(@max(b * b - 4 * a * c, 0));
-        const point = bullet.last + span * @as(Vector, @splat((-b - root) / (a + a)));
+        const point = segment.point(segment.sphereEntry(slot.drawn.position, reach));
         const struck = collision.quadrant(object, math.transformTransposed(slot.drawn.orientation, point - slot.drawn.position));
 
         const huge = bullet.kind == .allied_huge_gun or bullet.kind == .coalition_huge_gun;
@@ -1280,7 +1272,7 @@ fn hullHit(world: gameobj.World, bullet: *Bullet, index: u16, struck: collision.
     const all = world.objects;
     const slot = &all.slots[index];
     const model = if (slot.model) |*live| live else return;
-    const along = partEntry(model, bullet.last, bullet.at) orelse return;
+    const along = objects.partEntry(model, bullet.last, bullet.at, .last_shown) orelse return;
     const record = bullet.stats(&world.objects.gun_stats);
     var value = record.damage[1];
     if (index < all.players and fromTurret(bullet.kind)) value *= turret_damage_to_players;
@@ -1293,43 +1285,6 @@ fn hullHit(world: gameobj.World, bullet: *Bullet, index: u16, struck: collision.
         sparks.spray(world, .hull, at, at - slot.drawn.position, carried, hull_sparks);
     }
     bullet.dies_at = spent;
-}
-
-/// How far along the segment from `from` to `to` it enters the box the last of the model's parts
-/// it crosses stands in, which is how `0x00479940` finds what a shot has hit; null where it
-/// crosses none.
-fn partEntry(model: *const objects.Model, from: Vector, to: Vector) ?f32 {
-    var entry: ?f32 = null;
-    for (model.parts) |*part| {
-        if (part.hidden) continue;
-        if (part.object.levels.len == 0) continue;
-        const mesh = part.object.levels[0].mesh;
-        // The segment in the part's own frame, where its mesh's box stands.
-        const start = math.transformTransposed(part.object.orientation, from - part.object.position);
-        const end = math.transformTransposed(part.object.orientation, to - part.object.position);
-        if (boxEntry(start, end, mesh.bounds)) |along| entry = along;
-    }
-    return entry;
-}
-
-/// How far along a segment it enters a box (`segment_meets_box`, `0x0049B6A0`), by the slab test:
-/// 0 where it starts inside; null where it misses.
-fn boxEntry(from: Vector, to: Vector, bounds: [2]Vector) ?f32 {
-    var near: f32 = 0;
-    var far: f32 = 1;
-    const span = to - from;
-    inline for (0..3) |axis| {
-        if (span[axis] == 0) {
-            if (from[axis] < bounds[0][axis] or from[axis] > bounds[1][axis]) return null;
-        } else {
-            const first = (bounds[0][axis] - from[axis]) / span[axis];
-            const second = (bounds[1][axis] - from[axis]) / span[axis];
-            near = @max(near, @min(first, second));
-            far = @min(far, @max(first, second));
-            if (near > far) return null;
-        }
-    }
-    return near;
 }
 
 test shoot {
@@ -1598,19 +1553,6 @@ test "a Huge Gun's shot reaches farther, and always through the shields" {
     // then the share of it that passes to the armour. A hull hit would have counted the second
     // damage alone, 4.
     try std.testing.expectEqual(10 + 4, slot.object.recent_damage);
-}
-
-test boxEntry {
-    const bounds: [2]Vector = .{ .{ -10, -10, -10 }, .{ 10, 10, 10 } };
-    // Through the middle, entering 40 of 100 in; from a corner; ending inside; and from inside.
-    try std.testing.expectEqual(0.4, boxEntry(.{ 0, 0, -50 }, .{ 0, 0, 50 }, bounds));
-    try std.testing.expect(boxEntry(.{ -50, -50, -50 }, .{ 50, 50, 50 }, bounds) != null);
-    try std.testing.expect(boxEntry(.{ 0, 0, -50 }, .{ 0, 0, 0 }, bounds) != null);
-    try std.testing.expectEqual(0, boxEntry(.{ 0, 0, 0 }, .{ 0, 0, 50 }, bounds));
-    // Past it, short of it, and alongside it.
-    try std.testing.expectEqual(null, boxEntry(.{ 50, 0, -50 }, .{ 50, 0, 50 }, bounds));
-    try std.testing.expectEqual(null, boxEntry(.{ 0, 0, -50 }, .{ 0, 0, -20 }, bounds));
-    try std.testing.expectEqual(null, boxEntry(.{ 0, 20, -50 }, .{ 0, 20, 50 }, bounds));
 }
 
 // --- How a shot is drawn -------------------------------------------------------------------------

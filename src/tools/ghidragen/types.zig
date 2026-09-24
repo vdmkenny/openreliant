@@ -126,6 +126,8 @@ pub const exported = [_]Export{
     .{ "QueuedOrder", engine.game.aigeneric.Queued },
     .{ "OrderState", engine.game.aigeneric.State },
     .{ "FlyState", engine.game.aiorders.FlyState },
+    .{ "DisruptedState", engine.game.aiorders.DisruptedState },
+    .{ "DisruptedData", engine.game.aiorders.DisruptedData },
     .{ "ExplodeState", engine.game.aiexplode.State },
     .{ "ExplodeMode", engine.game.aiexplode.Mode },
     .{ "ExplodeStyle", engine.game.aiexplode.Style },
