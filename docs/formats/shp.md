@@ -174,7 +174,7 @@ Older exporters wrote 8-byte records, which stop two bytes into the name.
 | Off | Type | Field |
 |---|---|---|
 | `0x00` | i32 | Time |
-| `0x04` | i32 | Kind: 0 fires the part's muzzle flashes, 2 puffs particles from its attachments of kind 7. The engine's update ignores any other kind, such as 3 |
+| `0x04` | i32 | Kind: 0 fires a shot from each of the part's muzzles, 2 puffs particles from its attachments of kind 7. The engine's update ignores any other kind, such as 3 |
 | `0x08` | i32 | **Unknown.** `node_tree_update` doesn't read it |
 
 ### Point list (tags `0x0D`, `0x0E`)

@@ -490,9 +490,9 @@ pub const Keyframe = extern struct {
     }
 };
 
-/// Tag `0x0C`. Something a track sets off as it passes a time (`node_tree_update`): kind 0 fires
-/// the muzzle flashes of the part's guns, the part's nodes of kind 4, and kind 2 puffs particles
-/// from the part's attachments of kind 7. The update knows no other kinds. **Unknown:** the third
+/// Tag `0x0C`. Something a track sets off as it passes a time (`node_tree_update`): kind 0 fires a
+/// shot from each of the part's muzzles, the part's nodes of kind 4, which lights their flashes,
+/// and kind 2 puffs particles from the part's attachments of kind 7. The update knows no other kinds. **Unknown:** the third
 /// field.
 pub const ClipEvent = extern struct {
     time: i32,

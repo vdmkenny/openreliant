@@ -810,6 +810,7 @@ address	kind	name	type	comment
 00480420	function	bolt_build_coalition_huge	void * __fastcall (void)	The Coalition Huge Gun's shell: as bolt_build_allied_huge, 3400 across, on clhuge
 004786e0	function	muzzle_flash_mesh_build	void * __fastcall (void *texture)	A gun type's muzzle flash mesh, four quads on the texture given, added; guns_init builds one for each type into muzzle_flash_meshes
 0047b150	function	muzzle_flash_create	void * __fastcall (ModelNode *node)	A muzzle node's flash (gunbarrelflare_Mesh): a mesh object over the flash mesh of the gun type the node's attachment names, with its own texture coordinates
+0047ba80	function	muzzle_flash_draw	void __fastcall (ModelNode *node)	Readies a muzzle node's flash to be drawn: hides its frame once the tick at +0xBC has passed, else turns it as the attachment, shows the Gattling Plasma Cannon's sheet frame for frame_start, and scales it by the share of its gun type's gun_flash_ticks left, held between 0 and 1
 00479140	function	guns_load_shell	void __cdecl (void)	Loads the Turret Flak's shell, the first part's levels of ship type 0xB1's model (shell.shp), into both sets of bolts
 00478fa0	function	bullets_free_all	void __cdecl (void)	Lets every shot go (bullet_free) and empties the list of those in flight
 00478fe0	function	guns_shutdown	void __cdecl (void)	Frees what guns_init built: the particle templates, the pool of shots, both sets of bolts but the shell, the muzzle flash meshes
@@ -840,6 +841,9 @@ address	kind	name	type	comment
 005635e0	data	bolt_levels	void *[15][4]	Each gun type's bolts for the player's side, four slots a type less one, which guns_init builds and bullet_build draws the shots with
 00563010	data	bolt_levels_other	void *[15][4]	Each gun type's bolts for the other sides, as bolt_levels; the same meshes but for the Turret Lasers' rings
 00563108	data	muzzle_flash_meshes	void *[15]	Each gun type's muzzle flash mesh, by type less one
+00563150	data	muzzle_flare_texture	void *	The texture matflarea3, drawn across the muzzle by every gun type's flash but the Gattling Plasma Cannon's
+00563154	data	muzzle_tongue_texture	void *	The texture matflareb3, drawn down the flare by every gun type's flash but the Gattling Plasma Cannon's
+00563158	data	muzzle_sheet_texture	void *	The texture gunflare\sfxalpha1, three frames the Gattling Plasma Cannon's flash plays through
 00478990	function	guns_init	void __cdecl (void)	Once at start-up: empties the 200 shots, loads gun_stats, requires the shot textures and builds each gun type's bolt meshes (0x00478460 and its fellows) into the tables at 0x005635E0 on and 0x00563010 on, the first set for the friendly side and the second for the rest
 00478460	function	bolt_build_laser	void * __cdecl (void)	A level set of 0x54 bytes for a bolt sized by gun type 1's record (+0x04 half width, +0x08 half height, +0x0C length): two quads crossed along the flight until 15000, one quad until 100000, drawn with gunflare\lasers added and the object's own coordinates
 0047f370	function	bolt_build_proton	void * __fastcall (int variant)	The Proton Cannon's bolt, as bolt_build_laser with its size written in (50, 50, 1400) and lit by colours of the object's own

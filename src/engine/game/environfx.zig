@@ -49,7 +49,7 @@ pub const Glows = struct {
     }
 };
 
-/// The quads a glow's mesh is made of: one across the nozzle, then the blades down the plume.
+/// The quads a plume's mesh is made of: one across its foot, then the blades down it.
 const nozzle_quads = 1;
 const blade_quads = 3;
 const quads = nozzle_quads + blade_quads;
@@ -58,6 +58,8 @@ const corners = 4;
 /// How far apart the blades stand about the axis the plume runs along (`0x004DC458`). Each blade is
 /// a single quad crossing the axis, so it stands for two, and a sixth of a turn apart spreads the
 /// three of them evenly around it.
+///
+/// **Improvement:** a sixth of a turn exactly, where the game rounds it to 1.0472.
 const blade_step: f32 = std.math.pi / 3.0;
 
 /// How far into a flare's texture a corner reaches: a little inside its edges, so that a flare
@@ -84,28 +86,36 @@ fn materialNames(comptime prefix: []const u8) [glow_kinds][]const u8 {
     return names;
 }
 
-/// One glow's mesh (`engine_glow_mesh_build`, `0x00469400`): four quads of sixteen vertices, the
-/// first across the nozzle and three down the plume, `blade_step` apart about it. They are drawn a
-/// unit across and a unit long, for `node_draw` to scale by the attachment's size and to stretch
-/// along the plume by the throttle.
+/// One glow's mesh (`engine_glow_mesh_build`, `0x00469400`): a plume a unit across and a unit
+/// long, for `node_draw` to scale by the attachment's size and to stretch along the plume by the
+/// throttle, over the mesh's own texture coordinates, a little inside each flare.
 fn glowMesh(gpa: Allocator, textures: *srtexture.Table, kind: usize) (Allocator.Error || matmanager.Error)!srapiext.Mesh {
-    const vertex_count = quads * corners;
-    var mesh: srapiext.Mesh = try .create(gpa, .{ .polygons = quads, .vertices = vertex_count, .indices = vertex_count, .surfaces = 2 });
+    const nozzle = try matmanager.textureRequire(textures, nozzle_materials[kind]);
+    const blades = try matmanager.textureRequire(textures, blade_materials[kind]);
+    var mesh = try plumeMesh(gpa, @splat(1), flare_material, nozzle, blades);
     errdefer mesh.deinit(gpa);
     const uv = try mesh.addCoordinates(gpa);
     // Nothing gives the quads their planes, so every one of them faces the camera: the mesh is
     // never culled by them.
     @memset(mesh.biases, sort_bias);
-    mesh.surfaces[0] = .{
-        .polygons = nozzle_quads,
-        .material = flare_material,
-        .textures = .{ .{ .image = try matmanager.textureRequire(textures, nozzle_materials[kind]) }, .none },
-    };
-    mesh.surfaces[1] = .{
-        .polygons = blade_quads,
-        .material = flare_material,
-        .textures = .{ .{ .image = try matmanager.textureRequire(textures, blade_materials[kind]) }, .none },
-    };
+    for (0..quads) |quad| {
+        uv[quad * corners ..][0..corners].* = .{
+            .{ uv_far, uv_far }, .{ uv_far, uv_near }, .{ uv_near, uv_near }, .{ uv_near, uv_far },
+        };
+    }
+    return mesh;
+}
+
+/// A plume's mesh, which the engine glows and the muzzle flashes (`guns.flash`) share: four quads
+/// of sixteen vertices, `size` across, up and long. The first stands square across the plume's
+/// foot, and the other three run down the plume from it, `blade_step` apart about it. The first
+/// quad is drawn with `material` over `nozzle`, the rest with it over `blades`.
+pub fn plumeMesh(gpa: Allocator, size: Vector, material: srapiext.Material, nozzle: *srtexture.Image, blades: *srtexture.Image) Allocator.Error!srapiext.Mesh {
+    const vertex_count = quads * corners;
+    var mesh: srapiext.Mesh = try .create(gpa, .{ .polygons = quads, .vertices = vertex_count, .indices = vertex_count, .surfaces = 2 });
+    errdefer mesh.deinit(gpa);
+    mesh.surfaces[0] = .{ .polygons = nozzle_quads, .material = material, .textures = .{ .{ .image = nozzle }, .none } };
+    mesh.surfaces[1] = .{ .polygons = blade_quads, .material = material, .textures = .{ .{ .image = blades }, .none } };
 
     // The nozzle sits square across the plume's foot, where it leaves the hull.
     mesh.positions[0..corners].* = .{ .{ -1, -1, 0 }, .{ 1, -1, 0 }, .{ 1, 1, 0 }, .{ -1, 1, 0 } };
@@ -115,13 +125,9 @@ fn glowMesh(gpa: Allocator, textures: *srtexture.Table, kind: usize) (Allocator.
         const along: Vector = .{ 0, 0, 1 };
         mesh.positions[(nozzle_quads + blade) * corners ..][0..corners].* = .{ -across, along - across, along + across, across };
     }
+    for (mesh.positions) |*position| position.* *= size;
     mesh.numberPolygons(corners);
     for (mesh.indices, 0..) |*index, at| index.* = @intCast(at);
-    for (0..quads) |quad| {
-        uv[quad * corners ..][0..corners].* = .{
-            .{ uv_far, uv_far }, .{ uv_far, uv_near }, .{ uv_near, uv_near }, .{ uv_near, uv_far },
-        };
-    }
     srapi.findBoundingBox(&mesh);
     return mesh;
 }
@@ -182,6 +188,24 @@ test glowMesh {
     try std.testing.expectEqual(@as(Vector, .{ -1, -1, 0 }), mesh.bounds[0]);
     try std.testing.expectEqual(@as(Vector, .{ 1, 1, 1 }), mesh.bounds[1]);
     try std.testing.expectApproxEqAbs(std.math.sqrt2, mesh.radius, 1e-5);
+}
+
+test plumeMesh {
+    const gpa = std.testing.allocator;
+    const textures = try @import("backdrop.zig").testing.Textures.initNames(gpa, &.{ "matflarea3", "matflareb3" });
+    defer textures.deinit(gpa);
+    const nozzle = try matmanager.textureRequire(&textures.table, "matflarea3");
+    const mesh = try plumeMesh(gpa, .{ 60, 60, 600 }, flare_material, nozzle, nozzle);
+    defer mesh.deinit(gpa);
+
+    // Stretched to its size: the nozzle's corners, and each blade's far end.
+    try std.testing.expectEqual(@as(Vector, .{ 60, -60, 0 }), mesh.positions[1]);
+    try std.testing.expectEqual(@as(Vector, .{ 0, 60, 600 }), mesh.positions[6]);
+    try std.testing.expectApproxEqAbs(-0.866025 * 60.0, mesh.positions[8][0], 1e-3);
+    try std.testing.expectEqual(@as(Vector, .{ 60, 60, 600 }), mesh.bounds[1]);
+    // No coordinates of its own, and no bias.
+    try std.testing.expectEqual(null, mesh.uv[0]);
+    try std.testing.expectEqual(0, mesh.biases[0]);
 }
 
 test "materials are numbered from one" {

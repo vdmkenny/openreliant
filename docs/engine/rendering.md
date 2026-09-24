@@ -232,6 +232,12 @@ little inside the texture's edges, and each polygon is biased ten nearer so that
 front of the hull it sits on. Nothing gives the quads their planes, so none of them is ever culled
 by facing away.
 
+A muzzle's flash is the same shape, stretched to its own size ([Guns](guns.md#muzzle-flashes)); the
+port builds both from one plume (`environfx.plumeMesh`).
+
+**Improvement:** the blades stand a sixth of a turn apart exactly, where the game rounds it to
+1.0472.
+
 ### What a glow burns
 
 `node_draw` scales that unit mesh by the attachment's sizes each frame, the length by how hard the

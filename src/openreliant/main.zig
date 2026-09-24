@@ -106,7 +106,7 @@ const Doc = struct {
 
 /// Every option's help, which the compiler holds to having one for each.
 const docs: std.enums.EnumArray(Arg, Doc) = .init(.{
-    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, light worked out on encoded colours, no shadows, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings, particles and burning bits as few, plain and brief as the original's, a damaged ship's smoke as even as the original's, the shields' bubbles as coarse as the original's, the levels of detail changing as near as the original's, as little drawn a frame as the original allows, the marker for a target out of sight placed as the original misplaces it, a missile's sound left where it was launched, and the sound mixed plainly in stereo" },
+    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, light worked out on encoded colours, no shadows, motion that moves on with the game's ticks, lights from the latest shots only, muzzle flashes that light nothing and none from the turrets, an explosion's debris lit by every light, its fireballs, rings, particles and burning bits as few, plain and brief as the original's, a damaged ship's smoke as even as the original's, the shields' bubbles as coarse as the original's, the levels of detail changing as near as the original's, as little drawn a frame as the original allows, the marker for a target out of sight placed as the original misplaces it, a missile's sound left where it was launched, and the sound mixed plainly in stereo" },
     .@"--ship" = .{ .section = .sandbox, .value = "<type>", .text = "the ship type to fly, by its number in shipstats.bin; 0, the Predator, by default" },
     .@"--view" = .{ .section = .sandbox, .value = "<0|1|2>", .text = "the view it starts in, as the game's settings keep it: 0 the cockpit; 1 the chase view; 2 no cockpit. The settings' own by default, which the pause menu's video screen changes" },
     .@"--difficulty" = .{ .section = .sandbox, .value = "<easy|medium|hard>", .text = "the game's difficulty: how hard hits land on your ship, and shots on the enemy; medium by default, as in the game" },
@@ -222,6 +222,8 @@ const Options = struct {
     smooth_motion: bool = true,
     /// Which shots cast a light: every one, or the latest two of each side as the original does.
     shot_lights: game.guns.ShotLights = .every_shot,
+    /// Whether a muzzle's flash lights what stands round it, and whether the turrets' guns flash.
+    flashes: game.guns.flash.Settings = .{},
     /// Which lights reach an explosion's debris: a ship's, or every one as the original lets them.
     debris_lights: game.explode.DebrisLights = .like_ships,
     /// How many burning bits the explosions keep flying, and for how long.
@@ -292,6 +294,7 @@ const Options = struct {
                 options.settings = .original;
                 options.smooth_motion = false;
                 options.shot_lights = .latest_two;
+                options.flashes = .original;
                 options.debris_lights = .every_light;
                 options.bit_pool = .original;
                 options.fireballs = .original;
@@ -541,6 +544,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
 
     // The engine glows every ship's thrusters burn, built once and shared by them all.
     const glows: game.environfx.Glows = try .create(arena, &textures);
+    // The muzzle flashes' flares, built with the shots' looks (`guns_init`).
+    const flashes: game.guns.flash.Looks = try .create(arena, &textures, options.flashes);
     // The radar's backing, which the cockpit's view draws under the radar.
     const backing = try game.main.RadarBacking.create(arena, &textures);
     // The display's shapes, whose global palette the ships' schematics are drawn with too.
@@ -556,6 +561,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         .resources = &resources,
         .textures = &textures,
         .glows = &glows,
+        .flashes = &flashes,
         .light_sprites = try .load(&textures),
         .global_palette = global_palette,
     });
@@ -1255,6 +1261,7 @@ const TypeCache = struct {
     resources: *game.bigfile.Hog,
     textures: *srtexture.Table,
     glows: *const game.environfx.Glows,
+    flashes: *const game.guns.flash.Looks,
     light_sprites: game.objects.LightSprites,
     global_palette: ?*const [spr.palette_size]u8,
     loaded: [game.create.ship_type_count]?*Cached = @splat(null),
@@ -1311,6 +1318,7 @@ const TypeCache = struct {
             .effects = .{
                 .light_sprites = cache.light_sprites,
                 .glows = cache.glows,
+                .flashes = cache.flashes,
                 .mounts = cached.library.mounts(),
             },
             .schematic = if (cached.schematic) |*art| .{ .art = art, .gpa = gpa } else null,
@@ -1555,6 +1563,8 @@ test Options {
     try std.testing.expectEqual(0, retro.fps.?);
     try std.testing.expect(!retro.smooth_motion);
     try std.testing.expectEqual(.latest_two, retro.shot_lights);
+    try std.testing.expectEqual(game.guns.flash.Settings.original, retro.flashes);
+    try std.testing.expectEqual(game.guns.flash.Settings{}, plain.flashes);
     try std.testing.expectEqual(.stays, retro.missile_sound);
     try std.testing.expectEqual(.every_light, retro.debris_lights);
     try std.testing.expectEqual(.like_ships, plain.debris_lights);

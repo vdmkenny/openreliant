@@ -27,6 +27,7 @@ const aigeneric = @import("aigeneric.zig");
 const explode = @import("explode.zig");
 const sound3d = @import("sound3d.zig");
 const shield = @import("shield.zig");
+const flash = @import("guns/flash.zig");
 const Vector = math.Vector;
 
 /// A node of an object's model hierarchy (`objects.cpp`), allocated at `0x004991D0`: the object's
@@ -877,8 +878,7 @@ pub fn lightMask(model_lists_components: bool) u32 {
 /// hangs from the root.
 ///
 /// Not yet ported: the moment of inertia `object_bounds` sums, which nothing reads yet; the
-/// animation a node's track holds (`node_animate`); what `node_add_part` mounts on the attachment
-/// points besides the lights and the engine glows.
+/// animation a node's track holds (`node_animate`).
 pub const Model = struct {
     /// The file the model was made from, which its parts' collision trees are read from.
     source: *const shp.Model = &no_source,
@@ -891,6 +891,8 @@ pub const Model = struct {
     lights: []Light,
     glows: []Glow,
     mounts: []Mount,
+    /// A flash for each gun muzzle its parts carry (`node_mount_muzzle`).
+    flashes: []flash.Flash = &.{},
     /// What its missile hardpoints hold, a rack each, as `object_fit_missiles` hangs it: a pod, or
     /// a missile on its rail, which a launch takes its model from. Empty until the racks are
     /// fitted.
@@ -1343,8 +1345,11 @@ pub const Model = struct {
         errdefer gpa.free(lights);
         const glows = try createGlows(gpa, model, effects.glows);
         errdefer gpa.free(glows);
+        const flashes = try createFlashes(gpa, model, effects.flashes);
+        errdefer gpa.free(flashes);
         built.lights = lights;
         built.glows = glows;
+        built.flashes = flashes;
         built.mounts = try createMounts(gpa, model, effects, depth);
         return built;
     }
@@ -1625,6 +1630,28 @@ pub const Model = struct {
         return made;
     }
 
+    /// One flash for each attachment of kind `gun_muzzle` a part carries, hidden
+    /// (`node_mount_muzzle`). A model carries none while the flashes' meshes are not built.
+    fn createFlashes(gpa: Allocator, model: *const shp.Model, looks: ?*const flash.Looks) Allocator.Error![]flash.Flash {
+        const built = looks orelse return gpa.alloc(flash.Flash, 0);
+        var count: usize = 0;
+        for (model.parts) |part| {
+            for (part.attachments) |attachment| {
+                if (attachment.kind == .gun_muzzle) count += 1;
+            }
+        }
+        const made = try gpa.alloc(flash.Flash, count);
+        var at: usize = 0;
+        for (model.parts, 0..) |part, index| {
+            for (part.attachments) |*attachment| {
+                if (attachment.kind != .gun_muzzle) continue;
+                made[at].init(built, index, attachment);
+                at += 1;
+            }
+        }
+        return made;
+    }
+
     pub fn deinit(model: Model, gpa: Allocator) void {
         var each = model.carried();
         while (each.next()) |mount| mount.model.deinit(gpa);
@@ -1634,6 +1661,7 @@ pub const Model = struct {
         gpa.free(model.order);
         gpa.free(model.lights);
         gpa.free(model.glows);
+        gpa.free(model.flashes);
     }
 
     /// The model each gun and pod attachment holds, mounted on the part that carries it
@@ -1831,10 +1859,11 @@ pub const Model = struct {
 
     /// Adds each shown part's object to `layer`, the world's or, for a cockpit, the overlay
     /// (`node_draw`, `0x0049A8C0`, for the model's part nodes), then the lights, unless the view
-    /// leaves them out, and the engine glows its shown parts carry. Nothing, for an object too far
-    /// off to see.
+    /// leaves them out, the engine glows its shown parts carry, and the muzzle flashes they carry
+    /// that a shot has lit (`flash.Flash.show`), with their lights where they cast them. A flash
+    /// goes into the world's layer whatever the part's. Nothing, for an object too far off to see.
     ///
-    /// Not yet ported: the cloak, and the nodes of kinds 4 and 6.
+    /// Not yet ported: the cloak, and the nodes of kind 6.
     pub fn draw(model: *Model, gpa: Allocator, scene: *srcore.Scene, layer: srcore.Layer, view: View) Allocator.Error!void {
         if (view.tooFarOff(model.position, model.radius * model.visibility)) return;
         for (model.parts) |*part| {
@@ -1872,6 +1901,14 @@ pub const Model = struct {
             glow.object.orientation = math.product(math.product(carrier.orientation, glow.orientation), scale);
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &glow.object }, layer);
         }
+        for (model.flashes) |*lit| {
+            // A flash goes out of sight with the part that carries it, as a light does.
+            const carrier = &model.parts[lit.part];
+            if (carrier.hidden) continue;
+            if (!lit.show(view.frame_start, carrier.drawn())) continue;
+            try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &lit.object }, .world);
+            if (lit.light) |*light| try xtrabits.sceneAdd(gpa, scene, .{ .light = light }, .world);
+        }
         var each = model.carried();
         while (each.next()) |mount| {
             // What a hidden part carries is hidden with it, as a light and a glow are.
@@ -1894,11 +1931,12 @@ pub const Model = struct {
 };
 
 /// What a model draws its attachments with: the sprites every light draws, the meshes the engine
-/// glows draw, and where the models a gun or a pod attachment holds come from. A model carries only
-/// the ones it is given.
+/// glows and the muzzle flashes draw, and where the models a gun or a pod attachment holds come
+/// from. A model carries only the ones it is given.
 pub const Effects = struct {
     light_sprites: LightSprites = .{},
     glows: ?*const environfx.Glows = null,
+    flashes: ?*const flash.Looks = null,
     mounts: ?Mounts = null,
 };
 
@@ -2417,6 +2455,50 @@ test "an engine glow burns with the throttle" {
         try std.testing.expect(burning >= flicker_least and burning <= 1);
     }
     try std.testing.expect(random.seed != 1);
+}
+
+test "a model draws the muzzle flashes a shot has lit" {
+    const gpa = std.testing.allocator;
+    const srmesh = @import("../surrender/surrenderlib/srmesh.zig");
+    const built: flash.testing.Built = try .init(gpa, .{});
+    defer built.deinit(gpa);
+    const mesh = try srmesh.testing.square(gpa);
+    defer mesh.deinit(gpa);
+    const levels = [_]srapiext.Level{.{ .mesh = &mesh, .until = std.math.inf(f32) }};
+
+    var parts = [_]Model.Part{.{
+        .hidden = false,
+        .parent = null,
+        .origin = .{ 0, 0, 0 },
+        .object = .{ .flags = .{}, .position = @splat(0), .radius = mesh.radius, .levels = &levels },
+    }};
+    var muzzle = std.mem.zeroes(shp.Attachment);
+    muzzle.kind = .gun_muzzle;
+    muzzle.gun_type = 1;
+    muzzle.position = .{ .x = 0, .y = 0, .z = 50 };
+    muzzle.orientation = math.identity;
+    var flashes: [1]flash.Flash = undefined;
+    flashes[0].init(&built.looks, 0, &muzzle);
+    var model: Model = .{ .parts = &parts, .order = &.{0}, .lights = &.{}, .glows = &.{}, .flashes = &flashes, .mounts = &.{} };
+    model.place(.{ 0, 0, 1000 }, math.identity);
+
+    var scene: srcore.Scene = .{};
+    defer scene.deinit(gpa);
+    // Until a shot lights it, only the part is drawn.
+    try model.draw(gpa, &scene, .overlay, .{ .frame_start = 10 });
+    try std.testing.expectEqual(0, scene.layers.get(.world).items.len);
+
+    // Lit, it stands on its muzzle, in the world's layer whatever the part's, and casts its light.
+    flashes[0].fire(.laser_cannon, 10, .{ 0, 0.5, 1 });
+    try model.draw(gpa, &scene, .overlay, .{ .frame_start = 10 });
+    try std.testing.expectEqual(1, scene.layers.get(.world).items.len);
+    try std.testing.expectEqual(@as(Vector, .{ 0, 0, 1050 }), flashes[0].object.position);
+    try std.testing.expectEqual(1, scene.lights.items.len);
+
+    // A flash goes out of sight with the part that carries it.
+    parts[0].hidden = true;
+    try model.draw(gpa, &scene, .overlay, .{ .frame_start = 10 });
+    try std.testing.expectEqual(1, scene.layers.get(.world).items.len);
 }
 
 test "a model draws the glows its parts carry" {
