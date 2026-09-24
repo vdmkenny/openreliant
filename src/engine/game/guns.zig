@@ -163,9 +163,20 @@ pub const Turret = union(enum) {
     spin: turrets.Spin,
     /// A missile turret (kind 3). It is in no gun group.
     missile: turrets.Launcher,
-    /// A turret destroyed with its base (kind -1, `node_forget`): nothing steps or fires it again.
-    /// Nothing destroys a base yet ([#42](https://github.com/vdmkenny/openreliant/issues/42)).
+    /// A turret destroyed with its base (kind -1, `node_forget`, `objects.destroyPart`): nothing
+    /// steps or fires it again.
     gone,
+
+    /// The part whose destruction stops it for good (`node_forget`): an aimed turret's or a
+    /// launcher's base, a spinning gun's barrels; none for a fixed gun.
+    pub fn base(turret: Turret) ?objects.PartRef {
+        return switch (turret) {
+            .aimed => |aimed| .{ .model = aimed.model, .index = aimed.base },
+            .missile => |launcher| .{ .model = launcher.model, .index = launcher.base },
+            .spin => |spin| .{ .model = spin.model, .index = spin.barrels },
+            .fixed, .gone => null,
+        };
+    }
 };
 
 /// Where a gun's shots leave from, and their type (`+0x04`, and `+0x08`, which holds the type's
@@ -1593,6 +1604,14 @@ test bulletsFrame {
     ship.mission.clock.frame_start += 1000;
     bulletsFrame(world, &ship.mission.clock, 0);
     try std.testing.expectEqual(0, flying(world));
+}
+
+test "Turret.base" {
+    var model: objects.Model = .{ .parts = &.{}, .order = &.{}, .lights = &.{}, .glows = &.{}, .mounts = &.{} };
+    const launcher: Turret = .{ .missile = .{ .model = &model, .base = 3, .launcher = 4 } };
+    try std.testing.expectEqual(3, launcher.base().?.index);
+    try std.testing.expect(launcher.base().?.model == &model);
+    try std.testing.expectEqual(null, (Turret{ .gone = {} }).base());
 }
 
 test "a shot strikes a component of a ship that lists them" {

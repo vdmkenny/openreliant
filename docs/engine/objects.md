@@ -599,10 +599,56 @@ A component's entry holds its node, the slot of the parent's child list that hol
 a halfword that is nonzero while the component is invulnerable.
 
 A component's armour comes from its part's record (`0x104`), and `component_damage`
-(`0x004645C0`) wears it down: the damage goes to the part of the component's assembly that still has
-armour, a part with more than 2499 takes only a hit of 500 or more, an object with a shield
-generator keeps three quarters of a hit below 1000, and a component whose armour runs out marks the
-part it hangs from as destroyed. A collision does none of this.
+(`0x004645C0`) wears it down: the damage goes to the first part of the component's assembly that
+still has armour, a part with more than 2499 takes only a hit of 500 or more, an object with a
+shield generator keeps three quarters of a hit below 1000, and a component whose armour runs out
+marks its root as destroyed (node flag `0x40`). A collision does none of this. Every part node
+stays in its root's child list, whatever part `object_link_part` links it to, so the node holding
+a component (`node_holder`, `0x00499EE0`) is always its model's root: the object's, or that of a
+model mounted on it.
+
+### A component's destruction
+
+`node_draw` (`0x0049A8C0`) acts on a root flagged destroyed as `mission_frame`'s pass reaches it,
+whether the object is in sight or not. For each of the root's parts whose armour is below zero and
+that has no flag `0x10`, in part order:
+
+1. It gets flag `0x10`, which neither targeting nor cycling subtargets accepts.
+2. An engine takes `1 / engines` off the object's share of its engines (`+0x5D4`).
+3. A shield generator, while the object has one, plays `SHLDDOWN` (sound `0x39`) at the part,
+   facing its way, and clears the object's `shield_generator`, so hits are no longer cut to a
+   quarter. For any other part, the routine at the object's `+0x614` runs, and where it answers
+   false the pass over this root ends there, its flag left set.
+4. `explode_component_lost` (`0x0046D090`) sets the assembly off: after a few types' own extras,
+   each part of the assembly goes up with what is mounted on it (`explode_part_burst`, see
+   [Effects](effects.md#a-components-destruction)), and the root sends out 200 of the flame and
+   sound `0xB`.
+5. Each part of the assembly (the same link id) that is shown queues Destroyed for its component
+   index (`event_destroyed`) and is destroyed (`node_destroy`, `0x00499E30`), with every part
+   linked to it and every model mounted on them. Where it is of class hull, the ship ends first:
+   the player gets the kill of a Kurgan, an Antanov or a Gurevich, and `object_hull_lost`
+   (`0x00401F00`) gives its order way as to Explode, empties its stack and marks it exploding.
+   Each hidden part of the assembly, its damaged model, is shown.
+
+Then the player's subtarget's red parts are put back and picked out again where the object is the
+player's target, and the flag is cleared.
+
+`node_forget` (`0x00499BB0`), as a node is destroyed, stops for good each of the owner's turrets
+whose base the node is (turret kind -1) and takes the node out of the owner's components and the
+table at `+0x518`.
+
+`create_object` gives most capital ships, bases and stations `explode_capship_component`
+(`0x0046F820`) at `+0x614`, by the type whose stats they take, and type `0x16`
+`explode_ulysses_component` (`0x0046EA50`). The first answers true for any part but one of class
+hull; for that one, it marks the ship unpowered and exploding, hides its force fields, splits it in
+two, credits the kill as above and ends it with `object_hull_lost`. The second answers false for
+every part.
+
+[`objects.zig`](../../src/engine/game/objects.zig) ports the pass as `loseComponents` and
+`node_destroy` as `destroyPart`. Not ported: the Destroyed events
+([#37](https://github.com/vdmkenny/openreliant/issues/37)), the subtarget's red parts
+([#45](https://github.com/vdmkenny/openreliant/issues/45)), and the types' own extras, the split
+and the Ulysses' routine ([#225](https://github.com/vdmkenny/openreliant/issues/225)).
 
 The port lists them in [`create.zig`](../../src/engine/game/create.zig) as the parts themselves,
 since a mounted turret's parts are not the hull's, and marks each one as a component and, where the

@@ -286,11 +286,12 @@ The gun fires by its trigger in the step, however fast it spins.
 It starts in state 0 with no missiles, so it reloads first. A target within the lock range but
 beyond half of it is found and dropped in turn.
 
-Not ported: destroying a turret's base, which sets its gun's kind to -1 (`node_forget`,
-`0x00499BB0`, [#42](https://github.com/vdmkenny/openreliant/issues/42)); the script's
-`TurretSetTarget`, which aims a ship's aimed turrets on a component at an entity
-([#36](https://github.com/vdmkenny/openreliant/issues/36)); and in a multiplayer game, the damage
-that has every turret of the object pick again, passing the attacker over
+Destroying a turret's base stops its gun for good: `node_forget` (`0x00499BB0`) sets its kind to -1
+([Objects](objects.md#a-components-destruction)).
+
+Not ported: the script's `TurretSetTarget`, which aims a ship's aimed turrets on a component at an
+entity ([#36](https://github.com/vdmkenny/openreliant/issues/36)); and in a multiplayer game, the
+damage that has every turret of the object pick again, passing the attacker over
 ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
 
 Groups leave out kinds 1 and 3, and FULL GUNS kind 1 ([The trigger](#the-trigger)). The game reads

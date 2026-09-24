@@ -225,6 +225,24 @@ its part did. A piece takes the part's light mask; `--original` restores every l
 
 [`explode/breakup.zig`](../../src/engine/game/explode/breakup.zig) ports the break-up.
 
+### A component's destruction
+
+As a component is destroyed ([Objects](objects.md#a-components-destruction)), each part of its
+assembly goes up, and each part of every model mounted on it (`explode_part_burst`,
+`0x0046CCF0`):
+
+- a lit fireball its size where it stands, over 150 ticks;
+- a burning bit, of size 0.3 and speed 0.1, from each third of 20 points within 0.15 of its radius
+  either way about it, thrown outward from its centre;
+- its drawn mesh cut in four through the ship's centre, and each quarter cut again, through its
+  own centre, in two, four, eight and two. Each piece flies away from the ship's centre at the
+  planes that cut it times the assembly's parts' radii together over 60, a step, carrying on with
+  the ship's velocity, and moves at a hundredth of that a tick. It turns up to its planes times
+  0.0025 radians a tick either way about each axis, for 100 to 119 ticks, and then goes up as any
+  piece does; a lit fireball its size, set off late by as long, waits where it ends.
+
+The hidden parts of the assembly, its damaged model, go up with the rest.
+
 ## Smoke
 
 A damaged ship trails smoke from its engines, and a badly damaged one throws out small fireballs as

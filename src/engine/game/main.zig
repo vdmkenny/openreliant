@@ -299,7 +299,7 @@ pub fn missionFrame(orders: aigeneric.Context, fraction: f32) void {
     if (orders.world.particles) |pool| pool.frame(orders.clock);
     if (orders.world.smoke) |pools| pools.frame(orders.clock);
     smoke.frame(orders.world);
-    objectsPass(orders.world);
+    objectsPass(orders);
     if (orders.world.explosions) |explosions| explosions.frame(orders.world);
     if (orders.world.countermeasures) |dropped| dropped.frame(orders.world);
     if (orders.world.shockwaves) |waves| waves.frame(orders.world);
@@ -311,9 +311,11 @@ pub fn missionFrame(orders: aigeneric.Context, fraction: f32) void {
 
 /// `mission_frame`'s pass that draws the objects, beyond drawing them: over each object drawn
 /// this frame, whether one fights the player with its missile ready, which lights the display's
-/// enemy lock, and each one's avoidance lists (`avoidanceScan`). The damaged ships' smoke is
+/// enemy lock, what its destroyed components leave (`objects.loseComponents`, which `object_draw`
+/// runs), and each one's avoidance lists (`avoidanceScan`). The damaged ships' smoke is
 /// `smoke.frame`'s.
-fn objectsPass(world: gameobj.World) void {
+fn objectsPass(orders: aigeneric.Context) void {
+    const world = orders.world;
     const all = world.objects;
     var enemy_lock = false;
     var walk = all.walk();
@@ -324,6 +326,7 @@ fn objectsPass(world: gameobj.World) void {
             const order = slot.orders[0];
             if (order.order == .fight and order.target.index == all.player and slot.state.fight.missile_ready) enemy_lock = true;
         }
+        objects.loseComponents(orders, index);
         avoidanceScan(world, index);
     }
     if (world.display) |display| display.enemy_lock = enemy_lock;

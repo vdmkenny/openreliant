@@ -258,8 +258,8 @@ fn subtarget(all: *const create.Objects) ?Subtarget {
 }
 
 /// The hull as the large form's bar shows it. For a torpedo, its weakest armour quadrant against
-/// six times its armour class; for the rest, the armour of the first part hanging from its root
-/// that is hull and has armour; for one with neither, no bar.
+/// six times its armour class; for the rest, the armour of the first of its model's parts, in its
+/// root's child list, that is hull and has armour; for one with neither, no bar.
 fn hull(slot: *const create.Slot) ?Bar {
     const combat = slot.combat orelse return null;
     if (combat.class == .torpedo) {
@@ -271,7 +271,7 @@ fn hull(slot: *const create.Slot) ?Bar {
     }
     const model = if (slot.model) |*model| model else return null;
     for (model.parts) |part| {
-        if (part.parent != null or part.class != .hull or part.component_armor <= 0) continue;
+        if (part.removed or part.class != .hull or part.component_armor <= 0) continue;
         const share = part.armor / @as(f32, @floatFromInt(part.component_armor));
         return .{ .unlit = unlitRows(share, hull_bar.rows), .top = hull_bar.dark_top };
     }
