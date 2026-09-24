@@ -191,6 +191,11 @@ parts.
 | 2, spinning | `turret_fit_spin` (`0x00479470`) | The parts in slots 0 to 4 at `+0x1C` to `+0x2C`: the barrels that spin, the gun, and two flaps |
 | 3, missile | `turret_fit_missile` (`0x004793A0`) | The parts in slots 0 to 4 at `+0x38`: the base and the launcher; a target at `+0x18`; a timer at `+0x4C`; the missiles left at `+0x58`, none at first; its state at `+0x5C`. It has no muzzle and no gun type |
 
+An aimed turret fires by its parts' `fire` tracks: each track's event of kind 0 fires a shot from
+each muzzle of its part (`clip_event_muzzles`, `0x0047C7B0`, through `bullet_fire`), heard, of the
+type the muzzle holds. Nothing holds such a shot back: not the ship's charge or rounds, the gun's
+refire or condition, a jump, nor the guns being disabled.
+
 Groups leave out kinds 1 and 3, and FULL GUNS kind 1 ([The trigger](#the-trigger)). The game reads
 through a missing part where an assembly lacks one, a slot of -1 or past 4 into the words beside
 the slots, and a missile turret's missing muzzle under FULL GUNS; the port fits no gun for an

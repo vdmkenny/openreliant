@@ -1138,6 +1138,36 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, barrel: Barr
     candidates(world, bullet, record, lifetime);
 }
 
+/// The game's own effects of the events the tracks of the model of the object in slot `owner`
+/// pass (`node_tree_update`): a `muzzles` event fires the part's muzzles (`clipEventMuzzles`).
+///
+/// Not ported: the particles a `puff` event sends out (`clip_event_particles`, `0x0047C800`,
+/// [#41](https://github.com/vdmkenny/openreliant/issues/41)).
+pub fn clipEvents(world: *gameobj.World, owner: u16) gameobj.Events {
+    return .{ .context = world, .owner = owner, .fire = clipEvent };
+}
+
+fn clipEvent(context: *anyopaque, owner: u16, model: *objects.Model, part: usize, kind: gameobj.EventKind) void {
+    const world: *const gameobj.World = @ptrCast(@alignCast(context));
+    switch (kind) {
+        .muzzles => clipEventMuzzles(world.*, owner, model, part),
+        .puff, _ => {},
+    }
+}
+
+/// `clip_event_muzzles` (`0x0047C7B0`): fires a shot from each muzzle of part `index` of
+/// `model`, one of the models of the object in slot `owner`, of the type the muzzle holds, and
+/// heard (`bullet_fire`). This is how an aimed turret fires, by its parts' `fire` tracks. Nothing
+/// holds such a shot back: not the ship's charge or rounds, the gun's refire or condition, a jump,
+/// nor its guns being disabled.
+pub fn clipEventMuzzles(world: gameobj.World, owner: u16, model: *const objects.Model, index: usize) void {
+    for (model.parts[index].attachments) |*attachment| {
+        if (attachment.kind != .gun_muzzle) continue;
+        const muzzle: Muzzle = .{ .model = model, .part = index, .attachment = attachment };
+        shoot(world, world.clock, owner, .{ .muzzle = muzzle, .type = .fromNumber(attachment.gun_type) }, true);
+    }
+}
+
 /// The sound a shot makes as it is fired (`bullet_fire`), its gun type's, following it: on a voice
 /// of the player's guns for the player's shots, and on a guaranteed one for the huge guns'.
 fn shotSound(world: gameobj.World, index: u8, kind: GunType, sound: i32, player: bool) void {
@@ -1360,6 +1390,27 @@ fn hullHit(world: gameobj.World, bullet: *Bullet, index: u16, struck: collision.
         sparks.spray(world, .hull, at, at - slot.drawn.position, carried, hull_sparks);
     }
     bullet.dies_at = spent;
+}
+
+test clipEventMuzzles {
+    const gpa = std.testing.allocator;
+    var ship: testing.Ship = undefined;
+    try ship.init(gpa);
+    defer ship.deinit(gpa);
+    var world = ship.world();
+    const model = &ship.mission.objects.slots[ship.index].model.?;
+
+    // A muzzles event fires a shot from each of the part's muzzles, held back by nothing: not
+    // an empty charge, nor guns that are disabled.
+    ship.object().gun_charge = 0;
+    ship.object().flags.guns_disabled = true;
+    const events = clipEvents(&world, ship.index);
+    events.fire(events.context, events.owner, model, 0, .muzzles);
+    try std.testing.expectEqual(2, flying(world));
+    for (world.objects.bullets.pool[0..2]) |bullet| try std.testing.expectEqual(ship.index, bullet.owner);
+    // A puff fires nothing.
+    events.fire(events.context, events.owner, model, 0, .puff);
+    try std.testing.expectEqual(2, flying(world));
 }
 
 test shoot {

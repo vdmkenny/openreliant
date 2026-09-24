@@ -272,8 +272,9 @@ on by its speed and, for a track of some length:
 It then poses the node for the time (`node_animate`) and sets off the track's events whose time it
 passed: from the whole number the old time rounds to up to, but not including, the new one's, and
 for a looping track that went round, from the old time to the end and from zero to the new time.
-Going back and forth sets off none. An event of kind 0 fires the part's guns' muzzle flashes, its
-nodes of kind 4 (`0x0047C7B0`), and one of kind 2 puffs particles from its attachments of kind 7
+Going back and forth sets off none. An event of kind 0 fires a shot from each of the part's
+muzzles, its nodes of kind 4 (`clip_event_muzzles`, `0x0047C7B0`), which is how an aimed
+[turret](guns.md#turrets) fires; one of kind 2 puffs particles from its attachments of kind 7
 (`0x0047C800`); the update knows no others. A track of no length, or a mode past 3, sets off the
 events of whatever span the last node visited left.
 

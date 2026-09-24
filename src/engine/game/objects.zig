@@ -2531,7 +2531,7 @@ const Fired = struct {
         return .{ .context = fired, .fire = fire };
     }
 
-    fn fire(context: *anyopaque, _: *Model, _: usize, kind: gameobj.EventKind) void {
+    fn fire(context: *anyopaque, _: u16, _: *Model, _: usize, kind: gameobj.EventKind) void {
         const fired: *Fired = @ptrCast(@alignCast(context));
         fired.kinds[fired.count] = kind;
         fired.count += 1;
@@ -2565,7 +2565,7 @@ test "a track plays once, round and round, and back and forth" {
     gameobj.updateTree(&root, &model, fired.events());
     try std.testing.expectEqual(40, a.time);
     try std.testing.expectEqual(1, fired.count);
-    try std.testing.expectEqual(gameobj.EventKind.flash, fired.kinds[0]);
+    try std.testing.expectEqual(gameobj.EventKind.muzzles, fired.kinds[0]);
     try std.testing.expect(root.flags.animating);
     gameobj.updateTree(&root, &model, fired.events());
     gameobj.updateTree(&root, &model, fired.events());

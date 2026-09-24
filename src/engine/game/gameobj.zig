@@ -1075,8 +1075,6 @@ pub const World = struct {
     /// The runtime's numbers (`libcmt.Rand`), which the guns' step draws a damaged gun's misfire
     /// from.
     random: *libcmt.Rand,
-    /// Whoever sets off the effects of the events the objects' tracks pass.
-    events: ?Events = null,
     /// The sound the objects are heard through, and where from; null where nothing is heard.
     hearing: ?@import("hog_snd.zig").Hearing = null,
     /// The camera, whose view the game's code switches (`camera_set_view`); null where nothing is
@@ -1140,7 +1138,8 @@ pub fn simulationStep(clock: *Clock, devices: *input.Devices, world: World) bool
         const object = &slot.object;
         if (object.flags.stand_in or object.flags.disabled) continue;
         if (index == turn) orthonormalizeTurn(&object.root);
-        updateTree(&object.root, if (slot.model) |*model| model else null, world.events);
+        var live = world;
+        updateTree(&object.root, if (slot.model) |*model| model else null, guns.clipEvents(&live, @intCast(index)));
         const combat = slot.combat orelse continue;
         rechargeShields(object, combat, if (index == all.player) world.player.shield_reserves else null);
         guns.step(world, clock, index);
@@ -1438,25 +1437,28 @@ fn visit(model: *objects.Model, index: usize, windows: *Windows, events: ?Events
         if (!windows.passes(event.time)) continue;
         const kind: EventKind = @enumFromInt(event.kind);
         switch (kind) {
-            .flash, .puff => sink.fire(sink.context, model, index, kind),
+            .muzzles, .puff => sink.fire(sink.context, sink.owner, model, index, kind),
             _ => {},
         }
     }
 }
 
-/// What a track's event sets off as a node passes it (`node_tree_update`). The effects aren't
-/// ported yet: `0x0047C7B0` fires the muzzle flash of each node of kind 4 the part carries, and
-/// `0x0047C800` puffs particles from each of the part's attachments of kind 7.
+/// What a track's event sets off as a node passes it (`node_tree_update`).
 pub const EventKind = enum(i32) {
-    flash = 0,
+    /// Fires a shot from each of the part's muzzles (`clip_event_muzzles`, `0x0047C7B0`).
+    muzzles = 0,
+    /// Puffs particles from each of the part's attachments of kind 7 (`clip_event_particles`,
+    /// `0x0047C800`).
     puff = 2,
     _,
 };
 
-/// Whoever sets off the effects of the events a model's tracks pass.
+/// Whoever sets off the effects of the events the tracks of the model of the object in slot
+/// `owner` pass: the game's own (`guns.clipEvents`), or a test's.
 pub const Events = struct {
     context: *anyopaque,
-    fire: *const fn (context: *anyopaque, model: *objects.Model, part: usize, kind: EventKind) void,
+    owner: u16 = 0,
+    fire: *const fn (context: *anyopaque, owner: u16, model: *objects.Model, part: usize, kind: EventKind) void,
 };
 
 /// Fixtures for the tests here and in the modules that move objects.
