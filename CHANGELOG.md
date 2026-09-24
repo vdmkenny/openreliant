@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.3.0](https://github.com/vdmkenny/openreliant/compare/v0.2.0...v0.3.0) (2026-09-24)
+
+
+### Features
+
+* a component's destruction ([#227](https://github.com/vdmkenny/openreliant/issues/227)) ([a2f9ec1](https://github.com/vdmkenny/openreliant/commit/a2f9ec147927744977e760b072295cf1efb6efc5))
+* a component's hit bursts into orange puffs ([#240](https://github.com/vdmkenny/openreliant/issues/240)) ([52ad22a](https://github.com/vdmkenny/openreliant/commit/52ad22a9bae98886bd799538b497f6a663f66393)), closes [#40](https://github.com/vdmkenny/openreliant/issues/40)
+* a field of rocks in the sandbox ([#241](https://github.com/vdmkenny/openreliant/issues/241)) ([563c0fe](https://github.com/vdmkenny/openreliant/commit/563c0fecfba9fd4b7c79b431d96b4b9bea40a387))
+* burning wrecks and electric rays ([#235](https://github.com/vdmkenny/openreliant/issues/235)) ([04085dd](https://github.com/vdmkenny/openreliant/commit/04085dd33f941ee29b4a6432a5e1c189c3a6ef07))
+* capital ships split in two ([#230](https://github.com/vdmkenny/openreliant/issues/230)) ([c15bd1d](https://github.com/vdmkenny/openreliant/commit/c15bd1d48d7ae0eb75aede3c25cff3c4bbd8ced1))
+* capital ships' shields glow where struck ([#231](https://github.com/vdmkenny/openreliant/issues/231)) ([e8ef948](https://github.com/vdmkenny/openreliant/commit/e8ef948d73d3998bc8e3daa6d8705b37b06f646b)), closes [#179](https://github.com/vdmkenny/openreliant/issues/179)
+* fade fireballs out as they finish ([#200](https://github.com/vdmkenny/openreliant/issues/200)) ([f768c92](https://github.com/vdmkenny/openreliant/commit/f768c920a93894890ce93eac24aa907d3973bac2))
+* gamma-correct lighting ([#199](https://github.com/vdmkenny/openreliant/issues/199)) ([97c8429](https://github.com/vdmkenny/openreliant/commit/97c84299a8c4047c9e73c7122ed129d30a5c5202))
+* guns flash at the muzzle as they fire ([#242](https://github.com/vdmkenny/openreliant/issues/242)) ([b683a9c](https://github.com/vdmkenny/openreliant/commit/b683a9c270d983c3cb867137e032cd56fc1b3f0f)), closes [#63](https://github.com/vdmkenny/openreliant/issues/63)
+* install the full game from both discs ([#205](https://github.com/vdmkenny/openreliant/issues/205)) ([f7e662d](https://github.com/vdmkenny/openreliant/commit/f7e662ddde9079ec36d5427f1f4e48f6e952df93))
+* missiles ([#215](https://github.com/vdmkenny/openreliant/issues/215)) ([3044c9d](https://github.com/vdmkenny/openreliant/commit/3044c9da3a1834381e6e4926e4f3b24aa252b98e))
+* openreliant --version ([#204](https://github.com/vdmkenny/openreliant/issues/204)) ([d29c304](https://github.com/vdmkenny/openreliant/commit/d29c304fe9f0a5d3ef4154da381ffbe43fa2bbf5))
+* shadows from the key lights ([#197](https://github.com/vdmkenny/openreliant/issues/197)) ([55686eb](https://github.com/vdmkenny/openreliant/commit/55686ebc7271e4f7ca967c7d82687cfc4ab89c47))
+* shots strike the parts of capital ships ([#222](https://github.com/vdmkenny/openreliant/issues/222)) ([9773acc](https://github.com/vdmkenny/openreliant/commit/9773acc5ce8bf41a2baac6e739fe49b36dfb756e))
+* the AI's avoidance ([#217](https://github.com/vdmkenny/openreliant/issues/217)) ([cbb59fe](https://github.com/vdmkenny/openreliant/commit/cbb59fefb092e7832bf6e55081ee880e5e671a54))
+* the controller rumbles with the game's force feedback ([#245](https://github.com/vdmkenny/openreliant/issues/245)) ([ce9f27d](https://github.com/vdmkenny/openreliant/commit/ce9f27df2b1c7786f96555d7c1f28d6ec40d3484)), closes [#83](https://github.com/vdmkenny/openreliant/issues/83) [#118](https://github.com/vdmkenny/openreliant/issues/118)
+* the levels of detail reach as far as the high setting's, and the finer ones further ([#224](https://github.com/vdmkenny/openreliant/issues/224)) ([fe134e8](https://github.com/vdmkenny/openreliant/commit/fe134e8c2e8498f50b6c1e0d97728fdf6e322bd9))
+* the missile window ([#216](https://github.com/vdmkenny/openreliant/issues/216)) ([41a493b](https://github.com/vdmkenny/openreliant/commit/41a493bff77e2eb9d2739e3fda5a441dbdc91119))
+* the pause menu ([#212](https://github.com/vdmkenny/openreliant/issues/212)) ([8fc47a1](https://github.com/vdmkenny/openreliant/commit/8fc47a1a39be74811aaf33f97838fa02dfef021e))
+* the screen's flash and bodies among the burning bits ([#237](https://github.com/vdmkenny/openreliant/issues/237)) ([8234872](https://github.com/vdmkenny/openreliant/commit/8234872751ae28f583b0de4aa5dbf6e1d94f5ded))
+* the turrets ([#221](https://github.com/vdmkenny/openreliant/issues/221)) ([9e5d1ff](https://github.com/vdmkenny/openreliant/commit/9e5d1ffdbeb4151ef3d2fec9fceef45baa97f35e))
+
+
+### Fixes
+
+* every part node hangs in its root's child list ([#228](https://github.com/vdmkenny/openreliant/issues/228)) ([0f0481c](https://github.com/vdmkenny/openreliant/commit/0f0481c5c9a07691c27bc71a1ba6e3ce7479a2b5))
+* missiles hurt the player's raised shields ([#243](https://github.com/vdmkenny/openreliant/issues/243)) ([86c1c9a](https://github.com/vdmkenny/openreliant/commit/86c1c9a65f44b00bfb720bae020e9581d28d5b46)), closes [#214](https://github.com/vdmkenny/openreliant/issues/214)
+
+
+### Documentation
+
+* separate user guide and rewrite documentation with concise, natural phrasing ([#229](https://github.com/vdmkenny/openreliant/issues/229)) ([ed481db](https://github.com/vdmkenny/openreliant/commit/ed481dbab7cab794b7738475fb3fe511c3ce0260))
+
 ## [0.2.0](https://github.com/vdmkenny/openreliant/compare/v0.1.0...v0.2.0) (2026-09-23)
 
 
