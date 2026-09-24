@@ -199,8 +199,12 @@ pub const Type = enum(u32) {
     /// The Phoenix (`uspf_phx.shp`), which carries the Nova Cannon.
     phoenix = 0x0B,
     reliant = 0x0C,
+    /// The Nanny (`nanny.shp`).
+    nanny = 0x18,
     /// The limpet car (`limpet_t_car.shp`).
     limpet_car = 0x1D,
+    /// The Prowler (`us_prowler.shp`).
+    prowler = 0x1E,
     ripper = 0x1F,
     sabre = 0x2B,
     kamov = 0x2D,
@@ -209,8 +213,10 @@ pub const Type = enum(u32) {
     kurgan = 0x3C,
     /// The Gurevich (`rmc_gurevich.shp`).
     gurevich = 0x3E,
-    /// Capital ships (`saladin.shp`, `kronstadt.shp`, `boridin.shp`).
+    /// Capital ships (`saladin.shp`, `stalag.shp`, `antanov.shp`, `kronstadt.shp`, `boridin.shp`).
     saladin = 0x43,
+    stalag = 0x45,
+    antanov = 0x46,
     kronstadt = 0x47,
     boridin = 0x48,
     /// The Russian troop car (`rus_troopcar.shp`).
@@ -263,6 +269,10 @@ pub const Type = enum(u32) {
             .{ .phoenix, "uspf_phx.shp" },
             .{ .t_phoenix, "t_uspf_phx.shp" },
             .{ .reliant, "reliant.shp" },
+            .{ .nanny, "nanny.shp" },
+            .{ .prowler, "us_prowler.shp" },
+            .{ .stalag, "stalag.shp" },
+            .{ .antanov, "antanov.shp" },
             .{ .limpet_car, "limpet_t_car.shp" },
             .{ .ripper, "ripper_2.shp" },
             .{ .sabre, "rus_sabre.shp" },

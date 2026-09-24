@@ -734,6 +734,9 @@ pub const Player = struct {
     shield_reserves: gameobj.ShieldReserves = .{},
     /// How the mission is ending, which the player's ship's end decides.
     ending: @import("game/main.zig").Ending = .playing,
+    /// `mission_number` (`0x00562DC8`): the number of the mission being flown, from 1; 0 where
+    /// none is, as in the sandbox. A few of the game's rules single a mission out by it.
+    mission: u8 = 0,
     /// The pilot's kills over the whole campaign.
     kills: Kills = .{},
 

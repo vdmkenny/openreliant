@@ -1194,9 +1194,9 @@ pub const Model = struct {
         if (chosen != .none) model.markAnimating(index);
     }
 
-    /// `0x0049A2A0`: marks part `index`'s node as animating, and every node it hangs from up to
-    /// the root, unless it is marked already.
-    fn markAnimating(model: *Model, index: usize) void {
+    /// `node_mark_animating` (`0x0049A2A0`): marks part `index`'s node as animating, and every
+    /// node it hangs from up to the root, unless it is marked already.
+    pub fn markAnimating(model: *Model, index: usize) void {
         if (model.parts[index].animation.animating) return;
         var at: ?usize = index;
         while (at) |part| : (at = model.parts[part].parent) model.parts[part].animation.animating = true;
@@ -1742,6 +1742,8 @@ fn testingPart() shp.PartData {
 pub const testing = struct {
     /// A part with no mesh, no mass and no tracks, standing unturned at the model's origin.
     pub const part = testingPart;
+    /// A track's clip of `length`, played in `mode`, named `name`.
+    pub const clip = testingClip;
 };
 
 test "Node.commitNext" {

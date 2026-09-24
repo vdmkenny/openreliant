@@ -16,6 +16,7 @@ const aiorders = @import("aiorders.zig");
 const camera = @import("camera.zig");
 const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
+const guns = @import("guns.zig");
 const input = @import("../input.zig");
 const Clock = @import("main.zig").Clock;
 const orders = @import("ai/orders.zig");
@@ -322,11 +323,9 @@ pub fn objectOrders(ctx: Context, index: u16) void {
 }
 
 /// `orders_update` (`0x0040C8F0`): the orders of every object that is not disabled, once a frame,
-/// in the loops' order. Every `damage_window` ticks it first clears what each object has lately
+/// in the loops' order, and after them its turrets' steps, where its guns are not disabled
+/// (`guns.turrets.step`). Every `damage_window` ticks it first clears what each object has lately
 /// taken, which is what the ships retaliate by.
-///
-/// Not ported: the guns' step, which runs for each object after its orders
-/// ([#38](https://github.com/vdmkenny/openreliant/issues/38)).
 pub fn ordersUpdate(ctx: Context) void {
     const all = ctx.world.objects;
     if (ctx.clock.game_ticks > all.damage_cleared_at) {
@@ -337,6 +336,7 @@ pub fn ordersUpdate(ctx: Context) void {
     while (walk.next()) |index| {
         if (all.slots[index].object.flags.disabled) continue;
         objectOrders(ctx, index);
+        if (!all.slots[index].object.flags.guns_disabled) guns.turrets.step(ctx.world, index);
     }
 }
 

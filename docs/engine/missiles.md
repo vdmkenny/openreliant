@@ -550,8 +550,9 @@ the first rack with missiles left: of any type but the Jack Hammer, and a Jack H
 
 ### A missile turret's
 
-`missile_launch_turret` (`0x004967F0`) launches a Screamer from a missile
-[turret](guns.md#turrets)'s launcher, where the turret's object may launch missiles and a record
+A missile [turret](guns.md#each-frame) (`turret_missile_step`) tracks what it finds ahead and
+launches one time in five each time its wait is over, six before it reloads.
+`missile_launch_turret` (`0x004967F0`) launches a Screamer from its launcher, where the turret's object may launch missiles and a record
 is free. The Screamer is built as a Screamer pod's missile (attachment kind 0, id 0's second
 model), of the object's side, and starts where the launcher stands: at its committed place, its
 next, and its frame, at the object's velocity. It lays its trail, flies the pod launch and then its

@@ -112,7 +112,8 @@ each ship it applies to, and `ClearAI` clears the orders of each ship that is no
 It runs from two places:
 
 - `orders_update` (`0x0040C8F0`) runs `object_orders` once a frame for every object that is not
-  disabled (`DisableObject`), the player's ship included.
+  disabled (`DisableObject`), the player's ship included, and after it, where the object's guns
+  are not disabled, its [turrets](guns.md#each-frame) (`object_step_turrets`).
   `mission_frame` (`0x004924B0`), `mission_run`'s work for each frame, calls it (see
   [the game loop](loop.md)).
 - `simulation_step` runs it for the player's ship, before the objects move, while the ship's
