@@ -770,7 +770,7 @@ test "the radar's backing stands where the radar does" {
 /// lies after `language.cpp`'s code, where `main.cpp`'s begins, next to `mission_frame`. For the
 /// player's ship it goes on to the warning (`armorWarning`).
 pub fn armorConditions(object: *gameobj.GameObject, combat: *const create.ShipCombat) void {
-    const full = combat.fullArmor() - 1;
+    const full = combat.startingArmor();
     const fore = object.armor.fore / full;
     const aft = object.armor.aft / full;
     const sides = (object.armor.left / full) * 0.25 + (object.armor.right / full) * 0.25;
@@ -789,7 +789,7 @@ pub fn armorWarning(hearing: hog_snd.Hearing, object: *const gameobj.GameObject,
     const sound = hearing.sound;
     const frame_start = hearing.clock.frame_start;
     if (frame_start - sound.armor_warned_at <= 500) return;
-    const half = (combat.fullArmor() - 1) * 0.5;
+    const half = combat.startingArmor() * 0.5;
     for (object.shields.values(), object.armor.values()) |held, armor| {
         if (held > 0 or armor >= half) continue;
         sound.say(armor_warning);
@@ -856,6 +856,9 @@ pub const PlayerShip = struct {
     /// The gunnery display's wire frame of the ship, a shape of the display's set, which the start
     /// keeps at `0x005883C0` (`hud.gunnery`).
     wire_frame: u16,
+    /// The shape the wing status window shows the ship by (`GameObject.wing_icon`), which the
+    /// start gives each ship of the player's wing from the table at `0x004F8890`.
+    wing_icon: u16,
     spectral_shields: bool = false,
     blind_fire: bool = false,
 };
@@ -865,18 +868,18 @@ pub const PlayerShip = struct {
 /// **Unverified:** the start also loads `kamg_frm.shp` for any ship when the word at `0x00562DC8`,
 /// which looks like the mission's number, is 25 and `0x00587CDC` is clear.
 pub const player_ships = [_]PlayerShip{
-    .{ .cockpit = "preg_frm.shp", .wire_frame = 0x116, .blind_fire = true },
-    .{ .cockpit = "nagg_frm.shp", .wire_frame = 0x10E, .spectral_shields = true },
-    .{ .cockpit = "gre2_frm.shp", .wire_frame = 0x108 },
-    .{ .cockpit = "cru3_frm.shp", .wire_frame = 0x107, .spectral_shields = true },
-    .{ .cockpit = "coyg_frm.shp", .wire_frame = 0x106, .blind_fire = true },
-    .{ .cockpit = "mirg_frm.shp", .wire_frame = 0x10B },
-    .{ .cockpit = "temg_frm.shp", .wire_frame = 0x11B, .spectral_shields = true },
-    .{ .cockpit = "pat2_frm.shp", .wire_frame = 0x10F, .blind_fire = true },
-    .{ .cockpit = "wolv_frm.shp", .wire_frame = 0x11E },
-    .{ .cockpit = "rea2_frm.shp", .wire_frame = 0x117, .blind_fire = true },
-    .{ .cockpit = "shr2_frm.shp", .wire_frame = 0x11A, .spectral_shields = true, .blind_fire = true },
-    .{ .cockpit = "phe2_frm.shp", .wire_frame = 0x112, .blind_fire = true },
+    .{ .cockpit = "preg_frm.shp", .wire_frame = 0x116, .wing_icon = 0xFC, .blind_fire = true },
+    .{ .cockpit = "nagg_frm.shp", .wire_frame = 0x10E, .wing_icon = 0xFA, .spectral_shields = true },
+    .{ .cockpit = "gre2_frm.shp", .wire_frame = 0x108, .wing_icon = 0x101 },
+    .{ .cockpit = "cru3_frm.shp", .wire_frame = 0x107, .wing_icon = 0xFF, .spectral_shields = true },
+    .{ .cockpit = "coyg_frm.shp", .wire_frame = 0x106, .wing_icon = 0x102, .blind_fire = true },
+    .{ .cockpit = "mirg_frm.shp", .wire_frame = 0x10B, .wing_icon = 0xFB },
+    .{ .cockpit = "temg_frm.shp", .wire_frame = 0x11B, .wing_icon = 0x100, .spectral_shields = true },
+    .{ .cockpit = "pat2_frm.shp", .wire_frame = 0x10F, .wing_icon = 0x103, .blind_fire = true },
+    .{ .cockpit = "wolv_frm.shp", .wire_frame = 0x11E, .wing_icon = 0xFE },
+    .{ .cockpit = "rea2_frm.shp", .wire_frame = 0x117, .wing_icon = 0x105, .blind_fire = true },
+    .{ .cockpit = "shr2_frm.shp", .wire_frame = 0x11A, .wing_icon = 0xFD, .spectral_shields = true, .blind_fire = true },
+    .{ .cockpit = "phe2_frm.shp", .wire_frame = 0x112, .wing_icon = 0x104, .blind_fire = true },
 };
 
 /// Where the second set of the player's ship types starts: types `0xF4` to `0xFF`, whose models
@@ -887,6 +890,38 @@ pub const player_twins_first = 0xF4;
 pub fn playerShip(ship_type: u32) ?PlayerShip {
     const index = if (ship_type >= player_twins_first) ship_type - player_twins_first else ship_type;
     return if (index < player_ships.len) player_ships[index] else null;
+}
+
+/// `mission_start`'s part in the player's wing, once the mission has listed it: the player's ship
+/// takes the wing's first slot, and each ship in the wing the icon of its type
+/// (`PlayerShip.wing_icon`), or none for a type the player can't fly.
+pub fn startWing(all: *create.Objects) void {
+    all.wing[0] = all.player;
+    for (all.wing) |listed| {
+        const index = listed orelse continue;
+        const object = &all.slots[index].object;
+        object.wing_icon = if (playerShip(object.type.number())) |ship| ship.wing_icon else 0;
+    }
+}
+
+test startWing {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const player = try mission.add(.reaper, @splat(0));
+    const wingman = try mission.add(.predator, .{ 1000, 0, 0 });
+    const twin = try mission.add(.t_phoenix, .{ 2000, 0, 0 });
+    const capital = try mission.add(.reliant, .{ 0, 0, 9000 });
+    all.wing = .{ null, wingman, twin, capital, null, null };
+    startWing(all);
+    // The player first, and each ship by its type's icon: a twin as the ship it twins, a type the
+    // player can't fly none.
+    try std.testing.expectEqual(player, all.wing[0].?);
+    try std.testing.expectEqual(player_ships[9].wing_icon, all.slots[player].object.wing_icon);
+    try std.testing.expectEqual(0xFC, all.slots[wingman].object.wing_icon);
+    try std.testing.expectEqual(0x104, all.slots[twin].object.wing_icon);
+    try std.testing.expectEqual(0, all.slots[capital].object.wing_icon);
 }
 
 /// Fits the display's devices to the player's ship, as the start does after `hud_init` has set

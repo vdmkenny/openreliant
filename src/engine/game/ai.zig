@@ -243,8 +243,8 @@ pub fn hullLost(ctx: aigeneric.Context, index: u16) void {
     object.flags.exploding = true;
 }
 
-/// `object_destroyed` (`0x00401F30`): a ship's end. An AI ship's pilot ejects where the mission
-/// lets it and its roll says so, or where the ship is told to eject before exploding, and the ship
+/// `object_destroyed` (`0x00401F30`): a ship's end. An AI ship's pilot ejects where the ship is in
+/// the player's wing and its roll says so, or where the ship is told to eject before exploding, and the ship
 /// spins on under Eject Spin. The player's ejects, unless it already has or the blow was too
 /// heavy, or it is flying the Kamov, and its ship blows up later (`aieject.playerInit`).
 /// Otherwise the ship explodes (`aiexplode`), in place of whatever it was doing: the stack is
@@ -256,7 +256,7 @@ pub fn objectDestroyed(ctx: aigeneric.Context, index: u16, may_spin: bool, no_ej
     const all = ctx.world.objects;
     const slot = &all.slots[index];
     const object = &slot.object;
-    const ai_pilot_ejects = index >= all.players and object._unknown_74c == 0 and object.eject_roll < eject_below;
+    const ai_pilot_ejects = index >= all.players and object.wing == .player and object.eject_roll < eject_below;
     if (!object.flags.ejected and (ai_pilot_ejects or object.invulnerable == .eject_before_exploding)) {
         replaceOrders(ctx, index, .eject, .eject_spin, may_spin);
         return;
@@ -330,9 +330,9 @@ test objectDestroyed {
     try std.testing.expect(slots[other].object.flags.exploding and slots[other].object.order_starting);
     try std.testing.expect(!try aigeneric.push(ctx, other, .do_nothing, .none));
 
-    // Where the mission lets its pilot eject, a low roll ejects, and the ship spins on.
+    // In the player's wing, where its pilot may eject, a low roll ejects, and the ship spins on.
     const ejecting = try mission.add(.sabre, .{ 0, 0, 2000 });
-    slots[ejecting].object._unknown_74c = 0;
+    slots[ejecting].object.wing = .player;
     slots[ejecting].object.eject_roll = eject_below - 1;
     objectDestroyed(ctx, ejecting, true, false);
     try std.testing.expectEqual(.eject_spin, slots[ejecting].orders[0].order);

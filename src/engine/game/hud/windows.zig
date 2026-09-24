@@ -298,6 +298,8 @@ pub const Contents = struct {
     power: ?hud.power.Shown = null,
     /// Windows 3 and 8's, the target display's two forms.
     target_display: ?hud.target_display.Scene = null,
+    /// Window 13's.
+    wing_status: ?hud.wing_status.Shown = null,
 };
 
 /// Where a window's contents are drawn: the window's place on the screen, how many times their
@@ -368,6 +370,7 @@ fn draw(
         .missiles => if (contents.missiles) |missiles| try hud.missile_display.draw(missiles, art, gpa, target, inside, colour),
         .damage => if (contents.damage) |damage| try hud.damage.draw(damage, art, gpa, target, inside, colour),
         .power => if (contents.power) |power| try hud.power.draw(power, art, gpa, target, inside, colour),
+        .wing_status => if (contents.wing_status) |wing| try hud.wing_status.draw(wing, art, gpa, target, inside, colour),
         else => if (hud.target_display.Form.of(window)) |form| if (contents.target_display) |scene| {
             try scene.draw(form, phase == .closing, art, gpa, target, inside, colour);
         },

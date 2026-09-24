@@ -58,6 +58,7 @@ pub const missile_display = @import("hud/missile_display.zig");
 const missile_lock = @import("main/lock.zig");
 pub const power = @import("hud/power.zig");
 pub const target_display = @import("hud/target_display.zig");
+pub const wing_status = @import("hud/wing_status.zig");
 
 test {
     _ = damage;
@@ -66,6 +67,7 @@ test {
     _ = windows;
     _ = power;
     _ = target_display;
+    _ = wing_status;
 }
 
 /// What `hud_place` takes off the screen's size before working a place out, and what it adds back
@@ -823,6 +825,7 @@ pub fn draw(state: *State, resources: *Resources, frame: Frame) (spr.Error || Al
             .strings = frame.strings,
         },
         .target_display = .{ .state = state, .all = frame.all, .strings = frame.strings, .font = &resources.font },
+        .wing_status = .{ .all = frame.all, .font = &resources.font, .strings = frame.strings },
     };
     try state.windows.frame(art, frame.gpa, frame.target, frame.screen, frame.last_view, frame_duration, contents, colour, scale);
 }

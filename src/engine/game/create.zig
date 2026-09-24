@@ -27,6 +27,7 @@ const collision = @import("collision.zig");
 const gameobj = @import("gameobj.zig");
 const guns = @import("guns.zig");
 const missiles = @import("missiles.zig");
+const WingSlots = @import("mission.zig").WingSlots;
 const GameObject = gameobj.GameObject;
 const main = @import("main.zig");
 const motion = @import("motion.zig");
@@ -231,6 +232,12 @@ pub const ShipCombat = extern struct {
         return @floatFromInt(combat.armor_class * 6);
     }
 
+    /// A quadrant's armour as `create_object` fills it, one short of `fullArmor`, which the armour's
+    /// conditions and warning count from (`main.armorConditions`).
+    pub fn startingArmor(combat: *const ShipCombat) f32 {
+        return combat.fullArmor() - 1;
+    }
+
     /// Six times its `shield_power`: a quadrant's full shields, likewise.
     pub fn fullShields(combat: *const ShipCombat) f32 {
         return @floatFromInt(combat.shield_power * 6);
@@ -418,6 +425,9 @@ pub const Objects = struct {
     /// The missiles in flight (`0x005887F0`), which the game keeps in `missiles.cpp`'s own globals.
     /// The port keeps them here too.
     missiles: missiles.Missiles = .{},
+    /// The player's wing (`player_wing`, `0x00515D88`), which the game keeps in `mission.cpp`'s
+    /// own globals and a mission lists (`mission.listPlayerWing`). The port keeps it here too.
+    wing: WingSlots = @splat(null),
     /// The working lists of the collision sweep `objectsUpdate` runs.
     sweep: Sweep = .{},
     /// `0x005185AC`: the tick at which `aigeneric.ordersUpdate` next clears what every object has
@@ -603,7 +613,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.roll_input = 0;
     object.pitch_input = 0;
     object.yaw_input = 0;
-    object._unknown_74c = 0xFFFF;
+    object.wing = .none;
     object.random_seed = random.rand();
     object.invulnerable = .none;
     object.visibility = 1;
@@ -689,11 +699,11 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
             object.flags.attached = true;
         }
     }
-    object._unknown_24 = 0;
+    object.wing_icon = 0;
     pilots.setPilot(object, if (combat.side == .hostile) coalition_pilot else 0);
     // Each quadrant's shields and armour full.
     object.shields = .all(combat.fullShields() - 1);
-    object.armor = .all(combat.fullArmor() - 1);
+    object.armor = .all(combat.startingArmor());
     main.armorConditions(object, combat);
     if (!object.flags.components and combat.class != .debris) slot.shield = try shield.Bubble.create(all.gpa, object.radius, combat.side);
 

@@ -88,6 +88,7 @@ address	kind	name	type	comment
 0045a9e0	function	event_shot_at		Queues ShotAt: attacker, the victim's damage value twice, victim, and -1 for the weapon
 0045aa60	function	event_destroyed		Queues Destroyed for a ship, or for one of its components, marking it destroyed
 00404ee0	function	event_ship_reached		Queues ShipReached for a ship
+0045ac60	function	mission_wings_build	void (void)	Lists each flight group whose byte at +0x08 names a wing, 0 to 2, in that wing's table, six slots each: its +0x09 ships from its first in the mission's ship list (+0x0C) take the slots from the first, each object getting the wing's number at +0x74C, and the slot after the last is set to -1
 0045ac30	function	ship_object	GameObject * __fastcall (MissionShip *ship)	The live object of a mission ship
 0045a970	function	object_ship	MissionShip * __fastcall (GameObject *object)	The mission ship of a live object, or null
 0045ade0	function	object_component_index	uint __fastcall (GameObject *object, ModelNode *node)	A component's index among a live object's components, or 0xFF
@@ -456,6 +457,10 @@ address	kind	name	type	comment
 00515da4	data	maneuver_code		The compiled lines of the maneuver scripts, packed as the compiler writes them
 004e1918	data	maneuver_choices	byte *[9]	The lists Fight picks a maneuver from, a count and then maneuver numbers, by where the target is from the ship's nose, then where the ship is from the target's
 004e193c	data	pursue_distances	float[3]	How far off a target Fight pursues it, by the pilot's value 3, before the target's speed scales it
+00515d7c	data	wing_second	short[6]	The mission's second wing, as mission_wings_build lists it. Nothing reads it
+00515d88	data	player_wing	short[6]	The slots of the player's wing, -1 for none, as mission_wings_build lists it with mission_start putting the player's first: the ships the wing status window shows and the radio's orders go to
+00515d94	data	wing_third	short[6]	The mission's third wing, as mission_wings_build lists it. Nothing reads it
+004f8890	data	wing_icons	short[48]	Pairs of a ship type and the shape the wing status window shows it by, which mission_start gives each ship of the player's wing: the twelve ships the player can fly and their twins
 00515d74	data	action_sphere_radius	float	The action sphere's radius: 220000
 00515d78	data	action_sphere_center		The object the action sphere is around, which fighters away from the fight return to
 0040a3a0	function	fight_choose_maneuver	void __fastcall (int slot)	Chooses the Fight order's next maneuver into its entry's data: by the matchup, then its length

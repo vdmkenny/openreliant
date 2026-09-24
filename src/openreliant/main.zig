@@ -3,8 +3,8 @@
 //! `resource.hog` and the texture cache from it as the game does. `openreliant install` installs
 //! the game's files from its discs; see `install.zig`.
 //!
-//! So far it runs a sandbox of its own: the player's ship in space, the Reliant standing still
-//! ahead of it, and a wing of Coalition fighters flying at it, drawn through Surrender's pipeline
+//! So far it runs a sandbox of its own: the player's ship in space with three wingmen, the Reliant
+//! standing still ahead of it, and a wing of Coalition fighters flying at it, drawn through Surrender's pipeline
 //! and its Direct3D driver with the GPU, or onto the software device, from the camera's views,
 //! which the game's camera keys pick and steer. Added for the port: F2 and F3 start the sandbox
 //! again in the previous or next ship type, F4 brings another wing, Alt and Enter switch to the
@@ -817,7 +817,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
                 }
                 settleStart(&display, &sandbox, &view, at);
             }
-            if (devices.keyboard.pressed(f4, .none, true)) sandbox.bringWing(orders);
+            if (devices.keyboard.pressed(f4, .none, true)) _ = sandbox.bringWing(orders);
 
             // `frame_controls` and the camera run once a frame, over the ticks the frame spans.
             view.frameControls(&devices, sandbox.objects.player, ticks, at);
@@ -1050,8 +1050,8 @@ const Library = struct {
 
 /// The sandbox's mission: the objects, the ship types' tables and the models they loaded, and the
 /// cockpit the mission's start loads for the player's ship. Its ships are the player's, at the
-/// origin facing along Z, the Reliant standing still ahead of it, and a wing of Coalition fighters
-/// flying at it.
+/// origin facing along Z, with its wingmen, the Reliant standing still ahead of it, and a wing of
+/// Coalition fighters flying at it.
 const Sandbox = struct {
     gpa: Allocator,
     objects: *game.create.Objects,
@@ -1096,6 +1096,13 @@ const Sandbox = struct {
     const wing_size = 4;
     const wing_ahead: f32 = 150000;
     const wing_spacing: f32 = 3000;
+    /// The player's wingmen, of these types, each standing this far from the player's ship in its
+    /// own frame. They fly each at a Sabre of the wing in turn, not in formation.
+    const wingmen = [_]struct { type: game.gameobj.Type, at: math.Vector }{
+        .{ .type = .grendel, .at = .{ -4000, 0, -3000 } },
+        .{ .type = .wolverine, .at = .{ 4000, 0, -3000 } },
+        .{ .type = .reaper, .at = .{ 0, 1500, -6000 } },
+    };
     /// The wing's pilot, record 42 of `pilotstats.bin` (`Jackel Plt`), where a mission names each
     /// ship's own and `create_object` gives a Sabre the sharp pilot of record 66: one of the
     /// file's weakest, who drops a countermeasure every 300 to 600 ticks while a missile homes
@@ -1139,7 +1146,8 @@ const Sandbox = struct {
     }
 
     /// Starts the mission again, as the game's does: every slot a stand-in, then the player in a
-    /// ship of `ship_type` on its own controls, the Reliant flying its slow way across, and a wing.
+    /// ship of `ship_type` on its own controls, the Reliant flying its slow way across, a wing, and
+    /// the player's wingmen flying at it, listed in the player's wing.
     /// The types no object uses any more are let go. Fails where the game has no model for the
     /// player's type.
     fn start(sandbox: *Sandbox, orders: game.aigeneric.Context, ship_type: u8) !void {
@@ -1177,7 +1185,8 @@ const Sandbox = struct {
         sandbox.crawl(orders, .reliant, "Reliant", reliant_at);
         sandbox.crawl(orders, .badanov, "Badanov", badanov_at);
         sandbox.scatterRocks(orders);
-        sandbox.bringWing(orders);
+        const sabres = sandbox.bringWing(orders);
+        sandbox.bringWingmen(orders, index, &sabres);
         sandbox.types.sweep(&sandbox.objects.types);
         if (sandbox.player_type != ship_type or sandbox.cockpit == null) try sandbox.loadCockpit(ship_type);
         sandbox.player_type = ship_type;
@@ -1228,8 +1237,10 @@ const Sandbox = struct {
     }
 
     /// A wing of fighters `wing_ahead` in front of the player, side by side and facing it, each
-    /// under a Fight order against the player. A wing past the last slot is left out.
-    fn bringWing(sandbox: *Sandbox, orders: game.aigeneric.Context) void {
+    /// under a Fight order against the player: their slots, or null for those left out past the
+    /// last slot.
+    fn bringWing(sandbox: *Sandbox, orders: game.aigeneric.Context) [wing_size]?u16 {
+        var brought: [wing_size]?u16 = @splat(null);
         const ship = &sandbox.player().object;
         const from = ship.nextPosition();
         const facing = math.product(ship.root.next_orientation, math.rotation(.y, std.math.pi));
@@ -1238,8 +1249,9 @@ const Sandbox = struct {
             const at = from + math.transform(ship.root.next_orientation, .{ across, 0, wing_ahead });
             const index = sandbox.create(.sabre, at) catch |err| {
                 std.log.warn("the wing is left out: {s}", .{@errorName(err)});
-                return;
+                return brought;
             };
+            brought[place] = index;
             const slot = &sandbox.objects.slots[index];
             game.objects.setOrientation(&slot.object, &slot.drawn, facing);
             game.pilots.setPilot(&slot.object, wing_pilot);
@@ -1247,6 +1259,38 @@ const Sandbox = struct {
                 std.log.warn("a Sabre won't fight: {s}", .{@errorName(err)});
             };
         }
+        return brought;
+    }
+
+    /// The player's `wingmen`, around the player's ship in slot `player` and turned as it is, each
+    /// under a Fight order against the next of the `sabres` there are, and listed after the player
+    /// in the player's wing, as a mission lists its flight group (`mission.listPlayerWing`), which
+    /// the mission's start then finishes (`main.startWing`). The wingmen past the last slot are left
+    /// out.
+    fn bringWingmen(sandbox: *Sandbox, orders: game.aigeneric.Context, player_index: u16, sabres: []const ?u16) void {
+        var wing: [1 + wingmen.len]u16 = undefined;
+        wing[0] = player_index;
+        var count: usize = 1;
+        const ship = &sandbox.player().object;
+        const from = ship.nextPosition();
+        const targets = sabres[0 .. std.mem.indexOfScalar(?u16, sabres, null) orelse sabres.len];
+        for (wingmen, 0..) |wingman, place| {
+            const index = sandbox.create(wingman.type, from + math.transform(ship.root.next_orientation, wingman.at)) catch |err| {
+                std.log.warn("the wingmen are left out: {s}", .{@errorName(err)});
+                break;
+            };
+            const slot = &sandbox.objects.slots[index];
+            game.objects.setOrientation(&slot.object, &slot.drawn, ship.root.next_orientation);
+            if (targets.len > 0) {
+                _ = game.aigeneric.pushShip(orders, index, .fight, targets[place % targets.len].?, -1) catch |err| {
+                    std.log.warn("a wingman won't fight: {s}", .{@errorName(err)});
+                };
+            }
+            wing[count] = index;
+            count += 1;
+        }
+        game.mission.listPlayerWing(sandbox.objects, wing[0..count]);
+        game.main.startWing(sandbox.objects);
     }
 
     /// The cockpit the mission's start loads for a ship the player can fly.

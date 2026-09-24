@@ -39,6 +39,7 @@ again and again, and the game's loops never end; the port walks it once.
 | `0x018` | 4 | The type's model, as loaded |
 | `0x01C` | 4 | Data kept for the type and shared by its objects |
 | `0x020` | 4 | The renderer's object for it, or null |
+| `0x024` | 2 | The shape the [wing status](hud.md#the-wing-status) window shows it by; 0 for none, as created |
 | `0x028` | `0x104` | The root node of its model hierarchy |
 | `0x150` | 2 | [Missile racks](missiles.md#the-loadout) fitted |
 | `0x152` | 2 | Components listed |
@@ -67,7 +68,7 @@ again and again, and the game's loops never end; the port walks it once.
 | `0x73C` | 4 | The shields' share of the power as a factor on how fast they [recharge](#shields): 1.0 when created |
 | `0x740` | 4 | Its pilot, a record of `pilotstats.bin` (`object_set_pilot`, `0x0049CCE0`) |
 | `0x748` | 4 | The pilot's entry in `pilot_stats` |
-| `0x74C` | 2 | 0xFFFF when created. While a mission has it clear, an AI ship's pilot may eject. **Unknown:** what else it is |
+| `0x74C` | 2 | The wing a mission lists it in: 0 the player's, 1 and 2 two more, `0xFFFF` none, as created ([The wings](hud.md#the-wing-status)) |
 | `0x754` | 4 | The deathmatch power-up it holds (`gameobj.PowerUp`), -1 for none: a record of the table at `0x0050C510` |
 | `0x75C` | 4 | The frame the power-up runs out at, or -1 for never |
 | `0x760` | 4 | The frame the power-up was handed out at |
@@ -539,7 +540,7 @@ its armour. The game tells a shot by comparing the damage's kind with the player
 0, a shot's kind, in a single-player game. The port takes the difficulty from `--difficulty`,
 medium by default.
 
-- An AI ship's pilot ejects where the mission lets it, `0x74C` clear, and its roll at `0x70C` is
+- An AI ship's pilot ejects where the ship is in the player's wing, `0x74C` 0, and its roll at `0x70C` is
   below 40, or where the ship was told to eject before exploding. The ship spins on under Eject
   Spin (108).
 - The player's pilot ejects, unless it has already, the blow was too heavy, or the ship is the Kamov:
