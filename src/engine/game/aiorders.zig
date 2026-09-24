@@ -10,6 +10,7 @@ const assert = std.debug.assert;
 
 const shp = @import("../../formats/shp.zig");
 const math = @import("../surrender/math.zig");
+const erayfx = @import("erayfx.zig");
 const Vector = math.Vector;
 const ai = @import("ai.zig");
 const aigeneric = @import("aigeneric.zig");
@@ -239,6 +240,13 @@ pub const DisruptedState = extern struct {
 /// How far either way each of a disrupted ship's rates is knocked, in radians a step.
 const disrupted_spin: f32 = 0.1;
 
+/// The electric rays over a disrupted ship: fifteen, each from its centre out to its radius at
+/// random, 90 either way, straying by up to 0.6 of its length, flickering and dimming as they go
+/// dark, and lasting as long as the order; white and blue in turn.
+const disrupted_rays = 15;
+const disrupted_ray: erayfx.Spec = .{ .life = 0, .jitter = 0.6, .width = 90, .flags = .{ .flickers = true, .fades = true, .timed = true } };
+const disrupted_colours = [2][3]f32{ .{ 0.8, 0.8, 1 }, .{ 0.3, 0.5, 1 } };
+
 /// `order_disrupted_init` (`0x0040C140`): the init of Disrupted (114). The ship is left unpowered
 /// until the tick its data counts to, takes the push in its data, and has each rate knocked by up
 /// to 0.05 either way, at random, which it tumbles by.
@@ -246,8 +254,7 @@ const disrupted_spin: f32 = 0.1;
 /// **Quirk:** the push is given in the world's frame and taken in the ship's own
 /// (`gameobj.knockLocal`), so the ship is thrown off at a turn from straight away from the blast.
 ///
-/// Not ported: the fifteen electric rays that play over the ship (`erayfx.cpp`,
-/// [#213](https://github.com/vdmkenny/openreliant/issues/213)).
+/// Fifteen electric rays play over it meanwhile (`disrupted_rays`).
 pub fn disruptedInit(ctx: Context, index: u16) void {
     const slot = &ctx.world.objects.slots[index];
     const object = &slot.object;
@@ -260,6 +267,17 @@ pub fn disruptedInit(ctx: Context, index: u16) void {
     object.pitch_rate += random.centred() * disrupted_spin;
     object.roll_rate += random.centred() * disrupted_spin;
     object.rotation = math.fromAngles(object.pitch_rate, object.yaw_rate, object.roll_rate);
+    const rays = ctx.world.rays orelse return;
+    var spec = disrupted_ray;
+    spec.life = data.ticks;
+    for (0..disrupted_rays) |n| {
+        const ray = rays.add(spec, random) catch return;
+        ray.colour(0, disrupted_colours[n % 2]);
+        const turn = math.fromAngleVector(random.fractionVector(@splat(std.math.tau)));
+        ray.to = math.transform(turn, .{ 0, 0, object.radius });
+        ray.hang(.{ .object = index });
+        ray.owner = index;
+    }
 }
 
 /// `order_disrupted` (`0x0040C370`): the update of Disrupted, which pops past its end.
@@ -270,6 +288,35 @@ pub fn disrupted(ctx: Context, index: u16) void {
 /// `order_disrupted_exit` (`0x0040C390`): the exit of Disrupted, which powers the ship again.
 pub fn disruptedExit(ctx: Context, index: u16) void {
     ctx.world.objects.slots[index].object.flags.unpowered = false;
+}
+
+test disruptedInit {
+    const gpa = std.testing.allocator;
+    var rays: erayfx.testing.Built = try .init(gpa);
+    defer rays.deinit(gpa);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(gpa);
+    defer mission.deinit();
+    var ctx = mission.orders();
+    ctx.world.rays = &rays.rays;
+    const index = try mission.add(.predator, @splat(0));
+    const slot = mission.slot(index);
+    slot.object.radius = 50;
+    slot.orders[0].data = .{ .disrupted = .{ .ticks = 300, .push = @splat(0) } };
+
+    // Unpowered until its data runs out, with fifteen rays out from its centre to its radius,
+    // white and blue in turn, lasting as long.
+    disruptedInit(ctx, index);
+    try std.testing.expect(slot.object.flags.unpowered);
+    for (rays.rays.slots[0..disrupted_rays], 0..) |made, n| {
+        const ray = made.?;
+        try std.testing.expectEqual(index, ray.owner);
+        try std.testing.expectEqual(300, ray.life);
+        try std.testing.expect(ray.flags.flickers and ray.flags.fades and ray.flags.timed);
+        try std.testing.expectApproxEqAbs(50, math.length(ray.to), 1e-3);
+        try std.testing.expectEqual(disrupted_colours[n % 2], ray.light.colour);
+    }
+    try std.testing.expectEqual(null, rays.rays.slots[disrupted_rays]);
 }
 
 test doNothing {

@@ -31,6 +31,8 @@ const shockwave = @import("shockwave.zig");
 const sound3d = @import("sound3d.zig");
 const table = @import("table.zig");
 const xtrabits = @import("xtrabits.zig");
+const erayfx = @import("erayfx.zig");
+const shp = @import("../../formats/shp.zig");
 const Clock = @import("main.zig").Clock;
 const ai = @import("ai.zig");
 const aigeneric = @import("aigeneric.zig");
@@ -58,6 +60,9 @@ pub const Explosions = struct {
     /// The point view `0x1B` watches (`0x0055AD0C`), which the player's ship's break-up leaves where
     /// the ship blew up; null until it has.
     marker: ?Marker = null,
+    /// The burning wrecks' red lights (`0x0055AD24`) and their smoke (`0x0055AD60`).
+    burn_lights: [max_burn_lights]?BurnLight = @splat(null),
+    streams: [max_streams]?Stream = @splat(null),
 
     pub const max_bits = BitPool.lasting.room(.high);
     const Bits = table.Ring(Bit, max_bits);
@@ -114,7 +119,8 @@ pub const Explosions = struct {
     }
 
     /// `explosions_update` (`0x0046E480`), once a frame, as far as the port goes: the marker drifts
-    /// on, the bits fly on, the pieces fly on (`breakup.Pieces.frame`), the splits go on
+    /// on, the bits fly on, the wrecks burn on (`burnFrame`), the pieces fly on
+    /// (`breakup.Pieces.frame`), the splits go on
     /// (`split.Splits.frame`), and each fireball plays on (`Fireball.frame`), until it is done.
     ///
     /// **Improvement:** the marker drifts by `drift` a tick, where the game adds it once a frame,
@@ -122,7 +128,8 @@ pub const Explosions = struct {
     pub fn frame(explosions: *Explosions, world: gameobj.World) void {
         const clock = world.clock;
         if (explosions.marker) |*marker| marker.position += marker.drift * @as(Vector, @splat(@floatFromInt(@max(clock.frame_duration, 0))));
-        const seconds = @as(f32, @floatFromInt(clock.frame_start - explosions.moved_at)) * Bit.per_tick;
+        const ticks: f32 = @floatFromInt(clock.frame_start - explosions.moved_at);
+        const seconds = ticks * Bit.per_tick;
         for (&explosions.bits.slots) |*slot| {
             const bit = &(slot.* orelse continue);
             if (bit.life) |life| if (bit.born + life < clock.frame_start) {
@@ -131,6 +138,7 @@ pub const Explosions = struct {
             };
             bit.fly(seconds);
         }
+        explosions.burnFrame(world, ticks);
         explosions.moved_at = clock.frame_start;
         explosions.pieces.frame(world);
         explosions.splits.frame(world);
@@ -140,8 +148,8 @@ pub const Explosions = struct {
         }
     }
 
-    /// The rest of `explosions_update`: the bits and the pieces go into the world's layer, and
-    /// each fireball showing, with its light among the lights, `ahead` of a tick past the frame's
+    /// The rest of `explosions_update`: the bits and the pieces go into the world's layer, the
+    /// burning wrecks' lights among the lights, and each fireball showing, with its light among the lights, `ahead` of a tick past the frame's
     /// tick.
     pub fn draw(explosions: *Explosions, gpa: Allocator, scene: *srcore.Scene, ahead: f32) Allocator.Error!void {
         for (&explosions.bits.slots) |*slot| {
@@ -151,6 +159,10 @@ pub const Explosions = struct {
         }
         try explosions.pieces.draw(gpa, scene, ahead);
         try explosions.splits.draw(gpa, scene);
+        for (&explosions.burn_lights) |*slot| {
+            const burning = &(slot.* orelse continue);
+            try xtrabits.sceneAdd(gpa, scene, .{ .light = &burning.light }, .world);
+        }
         for (&explosions.fireballs) |*slot| {
             const fireball = &(slot.* orelse continue);
             if (!fireball.showing) continue;
@@ -178,6 +190,84 @@ pub const Explosions = struct {
             .original => Bit.flight.draw(random),
         };
         explosions.addBit(piece, at, velocity, life, clock, random);
+    }
+
+    /// `part_burn_lights` (`0x00471470`): a red light, `Burn light`, at the first point of each of
+    /// the part's lists of them, hanging from the part, in the first free slots while there are.
+    fn burnLights(explosions: *Explosions, on: objects.PartOf, data: shp.PartData) void {
+        for (data.point_lists) |list| {
+            if (list.kind != .light or list.points.len == 0) continue;
+            const slot = for (&explosions.burn_lights) |*slot| {
+                if (slot.* == null) break slot;
+            } else return;
+            slot.* = .{
+                .on = on,
+                .at = gameobj.vector(list.points[0].position),
+                .light = .{ .mask = 0, .intensity = 8, .colour = burn_colour, .kind = .{ .point = .{ .position = @splat(0), .range = burn_reach } } },
+            };
+        }
+    }
+
+    /// `part_streams` (`0x004715D0`) with the wreck's smoke: a stream from each point of each of the
+    /// part's lists of them, hanging from the part and leaving along the normal of the vertex the
+    /// point stands on, for good or for `burn_life` ticks, in the first free slots while there are.
+    fn smoke(explosions: *Explosions, world: gameobj.World, on: objects.PartOf, data: shp.PartData, forever: bool) void {
+        const levels = on.part.part().object.levels;
+        const mesh = if (levels.len > 0) levels[0].mesh else null;
+        for (data.point_lists) |list| {
+            if (list.kind != .streams) continue;
+            for (list.points) |point| {
+                const slot = for (&explosions.streams) |*slot| {
+                    if (slot.* == null) break slot;
+                } else return;
+                const normal: Vector = if (mesh) |from| if (point.vertex < from.normals.len) from.normals[point.vertex] else @splat(0) else @splat(0);
+                slot.* = .{ .on = on, .emitter = .{
+                    .life = if (forever) forever_life else burn_life,
+                    .born = world.clock.frame_start,
+                    .place = .{ .position = gameobj.vector(point.position) },
+                    .direction = normal,
+                    .spread = stream_spread,
+                    .speed = stream_speed,
+                    .speed_range = stream_speed_range,
+                    .template = &wreck_smoke,
+                } };
+            }
+        }
+    }
+
+    /// The burning wrecks' part of `explosions_update`, `ticks` since the bits last moved on: each
+    /// stream sends its smoke out (`particles.Pool.stream`) and goes once its life is over, and each
+    /// light fades and goes once it is spent, flickering meanwhile.
+    ///
+    /// **Fix:** the game keeps a light or a stream hanging from its part's frame after the wreck is
+    /// gone; the port lets it go with the wreck.
+    fn burnFrame(explosions: *Explosions, world: gameobj.World, ticks: f32) void {
+        const all = world.objects;
+        for (&explosions.streams) |*slot| {
+            const stream = &(slot.* orelse continue);
+            const part = stream.on.live(all) orelse {
+                slot.* = null;
+                continue;
+            };
+            const pool = world.particles orelse continue;
+            const sending = world.sending() orelse continue;
+            if (!pool.stream(&stream.emitter, part.drawn(), sending)) slot.* = null;
+        }
+        for (&explosions.burn_lights) |*slot| {
+            const burning = &(slot.* orelse continue);
+            burning.left -= ticks * burn_fade_per_tick;
+            const part = burning.on.live(all) orelse {
+                slot.* = null;
+                continue;
+            };
+            const place = part.drawn();
+            if (!(burning.left > 0)) {
+                slot.* = null;
+                continue;
+            }
+            burning.light.intensity = 1 - world.random.fraction() * 0.5;
+            burning.light.kind.point.position = math.transform(place.orientation, burning.at) + place.position;
+        }
     }
 
     /// `0x00471B20`, a stream's spark (`particles.Emitter.spark`): a small piece of debris thrown
@@ -912,7 +1002,7 @@ pub const ComponentLoss = enum {
 /// (`shield.hideForceFields`), it splits in two (`split.start`), and is lost (`loseHull`). The
 /// Ulysses' stops it for every part.
 ///
-/// Not ported: all the Ulysses' does ([#225](https://github.com/vdmkenny/openreliant/issues/225)).
+/// Not ported: all the Ulysses' does ([#232](https://github.com/vdmkenny/openreliant/issues/232)).
 pub fn loseComponent(ctx: aigeneric.Context, index: u16, routine: ComponentLoss, part: *const objects.Model.Part) bool {
     switch (routine) {
         .capital_ship => {
@@ -945,6 +1035,102 @@ pub fn loseHull(ctx: aigeneric.Context, index: u16) void {
     };
     if (object.last_attacker == all.player and credited) deathmatch.addKills(world.player, all, all.player, 1);
     ai.hullLost(ctx, index);
+}
+
+/// Room for the burning wrecks' lights and their smoke's streams (`0x0055AD24`, `0x0055AD60`).
+pub const max_burn_lights = 15;
+pub const max_streams = 64;
+
+/// The smoke a burning wreck streams (`0x00553350`): grey puffs growing from 50 across to 150 over
+/// one to 1.1 seconds as they fade out, a fifth of one a tick at first and a tenth at the end.
+pub const wreck_smoke: particles.Template = .{
+    .life = 100,
+    .life_spread = 10,
+    .rate = .through(20, 15, 10),
+    .size = .through(50, 100, 150),
+    .colour = .{ .through(0.5, 0.2, 0), .through(0.5, 0.2, 0), .through(0.5, 0.2, 0) },
+};
+
+/// How a part burns (`explode_part_burn`'s last three arguments).
+pub const Burn = struct {
+    /// For good, where its rays and smoke would go after 5000 ticks.
+    forever: bool,
+    /// Its rays flicker.
+    flickers: bool,
+    /// It has its burn lights and smoke as well as its rays.
+    lights: bool,
+};
+
+/// A burning part's rays (`explode_part_burn`): one strand each, 260 either way, straying by up to
+/// a fifth of its length, dimming as it goes dark, a pale cyan. How long they last where they are
+/// not forever, and a stream's life where it is.
+const burn_ray: erayfx.Spec = .{ .life = burn_life, .jitter = 0.2, .width = 260, .flags = .{ .fades = true } };
+const burn_ray_colour: [3]f32 = .{ 0.6, 1, 1 };
+const burn_life = 5000;
+const forever_life = 9_999_999;
+
+/// A burn light's red, how far it reaches, and how fast it fades, a tick (`0x004DC688`): it goes
+/// after 10000 ticks. Each frame it flickers between half its brightness and all of it.
+const burn_colour: [3]f32 = .{ 1, 0, 0 };
+const burn_reach: f32 = 20000;
+const burn_fade_per_tick: f32 = 1e-4;
+
+/// How a wreck's smoke leaves a point: along its vertex's normal, straying up to a quarter either
+/// way across, at 3 to 3.5 a tick (`part_streams`).
+const stream_spread: Vector = .{ 0.5, 0.5, 0 };
+const stream_speed: f32 = 3;
+const stream_speed_range: f32 = 0.5;
+
+/// A burning wreck's red light (`part_burn_lights`, 8 bytes, `Burn light`), at a point of a part.
+pub const BurnLight = struct {
+    on: objects.PartOf,
+    at: Vector,
+    light: srlight.Light,
+    /// What is left of it (`+0x04`), from 1 down to nothing.
+    left: f32 = 1,
+};
+
+/// A burning wreck's smoke streaming from a point of a part (`part_streams`).
+pub const Stream = struct {
+    on: objects.PartOf,
+    emitter: particles.Emitter,
+};
+
+/// `explode_part_burn` (`0x00471290`): the part named `name` of the object in slot `index`, as
+/// `how` says, where it has a list of pairs of points: an electric ray between each pair
+/// (`erayfx`), and, where `how` asks, a burn light at the first point of each of its lists of
+/// them (`part_burn_lights`, `0x00471470`) and smoke from each point of its lists of those
+/// (`part_streams`, `0x004715D0`). Each light and stream takes the first free slot; none is made
+/// once they are all taken.
+///
+/// **Fix:** the game leaves out the last pair of points, and a part with a single pair has no
+/// ray; the port runs a ray between every pair. The game stops with an assertion where the object
+/// has no part of the name; the port burns nothing.
+pub fn burnPart(world: gameobj.World, index: u16, name: []const u8, how: Burn) void {
+    const model = if (world.objects.slots[index].model) |*live| live else return;
+    const ref = model.partNamed(name) orelse return;
+    const data = ref.data() orelse return;
+    const pairs = data.pointList(.rays) orelse return;
+    const on: objects.PartOf = .{ .object = index, .part = ref };
+    if (world.rays) |rays| {
+        var spec = burn_ray;
+        spec.flags.flickers = how.flickers;
+        spec.flags.timed = !how.forever;
+        var each = std.mem.window(shp.Point, pairs.points, 2, 2);
+        while (each.next()) |pair| {
+            if (pair.len < 2) break;
+            const ray = rays.add(spec, world.random) catch return;
+            ray.colour(0, burn_ray_colour);
+            ray.from = gameobj.vector(pair[0].position);
+            ray.to = gameobj.vector(pair[1].position);
+            ray.hang(.{ .part = on });
+            ray.owner = index;
+        }
+    }
+    if (!how.lights) return;
+    const explosions = world.explosions orelse return;
+    explosions.burnLights(on, data);
+    explosions.smoke(world, on, data, how.forever);
 }
 
 pub const testing = struct {
@@ -999,7 +1185,117 @@ pub const testing = struct {
             return reached;
         }
     };
+
+    /// A model of one part, hidden, named `name`, a thousand ahead of its object: two pairs of
+    /// points for rays, one for a light and three for smoke, on a square whose normals face `-Z`.
+    /// `put` hangs it on an object's slot, and `take` takes it off again.
+    pub const Burning = struct {
+        mesh: srapiext.Mesh,
+        levels: [1]srapiext.Level = undefined,
+        rays: [4]shp.Point = .{ point(0, 0, 0, 0), point(0, 0, 100, 1), point(10, 0, 0, 2), point(10, 0, 100, 3) },
+        light: [1]shp.Point = .{point(5, 5, 5, 0)},
+        smoke: [3]shp.Point = .{ point(1, 0, 0, 0), point(2, 0, 0, 1), point(3, 0, 0, 2) },
+        lists: [3]shp.PointList = undefined,
+        data: [1]shp.PartData = undefined,
+        source: shp.Model = undefined,
+        parts: [1]objects.Model.Part = undefined,
+        kept: ?objects.Model = null,
+
+        fn point(x: f32, y: f32, z: f32, vertex: u32) shp.Point {
+            return .{ ._unknown_00 = 0, .vertex = vertex, .position = .{ .x = x, .y = y, .z = z } };
+        }
+
+        pub fn init(burning: *Burning, gpa: Allocator, name: []const u8) !void {
+            burning.* = .{ .mesh = try @import("../surrender/surrenderlib/srmesh.zig").testing.square(gpa) };
+            burning.levels = .{.{ .mesh = &burning.mesh, .until = std.math.inf(f32) }};
+            burning.lists = .{ .{ .kind = .rays, .points = &burning.rays }, .{ .kind = .light, .points = &burning.light }, .{ .kind = .streams, .points = &burning.smoke } };
+            burning.data = .{objects.testing.part()};
+            @memcpy(burning.data[0].part.name_bytes[0..name.len], name);
+            burning.data[0].point_lists = &burning.lists;
+            burning.source = .{ .header = std.mem.zeroes(shp.Header), .parts = &burning.data, .trailing_bytes = 0 };
+            burning.parts = .{.{ .hidden = true, .parent = null, .origin = @splat(0), .object = .{ .flags = .{}, .position = .{ 0, 0, 1000 }, .radius = 100, .levels = &burning.levels } }};
+        }
+
+        pub fn deinit(burning: *Burning, gpa: Allocator) void {
+            burning.mesh.deinit(gpa);
+        }
+
+        pub fn put(burning: *Burning, slot: *create.Slot) void {
+            burning.kept = slot.model;
+            slot.model = .{ .source = &burning.source, .parts = &burning.parts, .order = &.{}, .lights = &.{}, .glows = &.{}, .mounts = &.{} };
+        }
+
+        pub fn take(burning: *Burning, slot: *create.Slot) void {
+            slot.model = burning.kept;
+        }
+    };
 };
+
+test burnPart {
+    const gpa = std.testing.allocator;
+    var stage: testing.Stage = undefined;
+    try stage.init();
+    defer stage.deinit();
+    var rays: erayfx.testing.Built = try .init(gpa);
+    defer rays.deinit(gpa);
+    var world = stage.world();
+    world.rays = &rays.rays;
+    const index = try stage.mission.add(.kamov, @splat(0));
+    const slot = stage.mission.slot(index);
+    var burning: testing.Burning = undefined;
+    try burning.init(gpa, "Wreck");
+    defer burning.deinit(gpa);
+    burning.put(slot);
+    defer burning.take(slot);
+
+    // Nothing burns where the model has no part of the name.
+    burnPart(world, index, "Hull", .{ .forever = true, .flickers = true, .lights = true });
+    try std.testing.expectEqual(null, rays.rays.slots[0]);
+
+    // A ray between each pair, both of them, flickering for good and hanging from the part; its
+    // light; and smoke from each of its three points, along their vertices' normals, for good.
+    burnPart(world, index, "Wreck", .{ .forever = true, .flickers = true, .lights = true });
+    for (rays.rays.slots[0..2]) |made| {
+        const ray = made.?;
+        try std.testing.expect(ray.flags.flickers and ray.flags.fades and !ray.flags.timed);
+        try std.testing.expectEqual(index, ray.owner);
+        try std.testing.expectEqual(100, ray.to[2]);
+    }
+    try std.testing.expectEqual(10, rays.rays.slots[1].?.from[0]);
+    try std.testing.expectEqual(null, rays.rays.slots[2]);
+    const light = &stage.explosions.burn_lights[0].?;
+    try std.testing.expectEqual(@as(Vector, .{ 5, 5, 5 }), light.at);
+    try std.testing.expectEqual(null, stage.explosions.burn_lights[1]);
+    for (stage.explosions.streams[0..3]) |made| {
+        const stream = made.?;
+        try std.testing.expectEqual(@as(Vector, .{ 0, 0, -1 }), stream.emitter.direction);
+        try std.testing.expectEqual(forever_life, stream.emitter.life);
+    }
+    try std.testing.expectEqual(null, stage.explosions.streams[3]);
+
+    // The light flickers where its part stands, fades, and goes once spent.
+    stage.explosions.burnFrame(world, 5000);
+    try std.testing.expectApproxEqAbs(0.5, light.left, 1e-4);
+    try std.testing.expect(light.light.intensity >= 0.5 and light.light.intensity <= 1);
+    try std.testing.expectEqual(@as(Vector, .{ 5, 5, 1005 }), light.light.kind.point.position);
+    stage.explosions.burnFrame(world, 5000);
+    try std.testing.expectEqual(null, stage.explosions.burn_lights[0]);
+
+    // Once the wreck is gone, so is its smoke.
+    burning.take(slot);
+    stage.explosions.burnFrame(world, 1);
+    try std.testing.expectEqual(null, stage.explosions.streams[0]);
+    burning.put(slot);
+
+    // Without lights, a part burns with rays alone, which go after 5000 ticks.
+    stage.explosions.reset();
+    rays.rays.reset();
+    burnPart(world, index, "Wreck", .{ .forever = false, .flickers = false, .lights = false });
+    try std.testing.expect(rays.rays.slots[0].?.flags.timed);
+    try std.testing.expectEqual(burn_life, rays.rays.slots[0].?.life);
+    try std.testing.expectEqual(null, stage.explosions.burn_lights[0]);
+    try std.testing.expectEqual(null, stage.explosions.streams[0]);
+}
 
 test ComponentLoss {
     try std.testing.expectEqual(.capital_ship, ComponentLoss.of(.badanov));

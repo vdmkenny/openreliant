@@ -241,6 +241,15 @@ pub const Type = enum(u32) {
     /// A black box (`black_box.shp`).
     black_box = 0x70,
     satellite = 0x71,
+    /// The wrecks a capital ship leaves as it splits (`explode.split`), which burn
+    /// (`create.wreckMade`): the Mammoth's front and back (`mamdest.shp`, `mamdest2.shp`), the
+    /// Badanov's back and front (`cs_baddead.shp`, `cs_baddead2.shp`), and the Kurgan's
+    /// (`rus_kurgan_dest.shp`).
+    mammoth_wreck_front = 0x72,
+    mammoth_wreck_back = 0x73,
+    badanov_wreck_back = 0x75,
+    badanov_wreck_front = 0x76,
+    kurgan_wreck = 0x77,
     /// The Latov (`latov.shp`).
     latov = 0x81,
     /// The Czar, docked (`czar_docked.shp`).
@@ -290,6 +299,11 @@ pub const Type = enum(u32) {
             .{ .nanny, "nanny.shp" },
             .{ .victorious, "victorious.shp" },
             .{ .darkreign, "darkreign.shp" },
+            .{ .mammoth_wreck_front, "mamdest.shp" },
+            .{ .mammoth_wreck_back, "mamdest2.shp" },
+            .{ .badanov_wreck_back, "cs_baddead.shp" },
+            .{ .badanov_wreck_front, "cs_baddead2.shp" },
+            .{ .kurgan_wreck, "rus_kurgan_dest.shp" },
             .{ .latov, "latov.shp" },
             .{ .czar_docked, "czar_docked.shp" },
             .{ .kafelnikof, "kafelnikof.shp" },
@@ -1177,6 +1191,8 @@ pub const World = struct {
     countermeasures: ?*@import("cloak.zig").Countermeasures = null,
     /// The shields' bubbles' meshes and colours (`shield.cpp`); null where none are drawn.
     shields: ?*@import("shield.zig").Shields = null,
+    /// The electric rays (`erayfx.cpp`); null where none are made.
+    rays: ?*@import("erayfx.zig").Rays = null,
     /// The sparks flying (`sparks.cpp`); null where none are thrown.
     sparks: ?*@import("sparks.zig").Sparks = null,
     /// The head-up display's state (`hud.cpp`'s globals), which smart targeting and the target

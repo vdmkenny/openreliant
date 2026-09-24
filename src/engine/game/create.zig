@@ -33,6 +33,7 @@ const motion = @import("motion.zig");
 const objects = @import("objects.zig");
 const pilots = @import("pilots.zig");
 const shield = @import("shield.zig");
+const explode = @import("explode.zig");
 const smoke = @import("main/smoke.zig");
 const srofiles = @import("srofiles.zig");
 const xtrabits = @import("xtrabits.zig");
@@ -519,6 +520,40 @@ const debris_mass: f32 = 0.1;
 /// The kind of attachment that gets an object `GameObject.Flags._unknown_25`.
 const flagged_kind: shp.Attachment.Kind = @enumFromInt(6);
 
+/// A wreck's part that burns (`create_object`, `0x00466C10`): its name, and whether it shows first,
+/// as a Badanov's half is hidden until then.
+const Wreck = struct {
+    part: []const u8,
+    shown: bool = false,
+};
+
+/// The part each wreck burns.
+fn wreckOf(object_type: gameobj.Type) ?Wreck {
+    return switch (object_type) {
+        .mammoth_wreck_front => .{ .part = "Mam frnt dest 2" },
+        .mammoth_wreck_back => .{ .part = "Mam back dest" },
+        .badanov_wreck_back => .{ .part = "Bad dead back", .shown = true },
+        .badanov_wreck_front => .{ .part = "BAD dead frnt", .shown = true },
+        .kurgan_wreck => .{ .part = "Box07" },
+        else => null,
+    };
+}
+
+/// The part of `create_object` for a wreck, once it is made where the world can see it: its part
+/// burns for good, its rays flickering, with its burn lights and smoke (`explode.burnPart`). The
+/// port does it once the object is made, as the split makes the wreck (`explode.split`).
+///
+/// Not ported: the rest of `create_object` for single types, such as the Protogate's power core,
+/// which burns with rays alone ([#233](https://github.com/vdmkenny/openreliant/issues/233)).
+pub fn wreckMade(world: gameobj.World, index: u16) void {
+    const slot = &world.objects.slots[index];
+    const wreck = wreckOf(slot.object.type) orelse return;
+    if (wreck.shown) if (slot.model) |*model| if (model.partNamed(wreck.part)) |ref| {
+        ref.part().hidden = false;
+    };
+    explode.burnPart(world, index, wreck.part, .{ .forever = true, .flickers = true, .lights = true });
+}
+
 /// `create_object` (`0x00466C10`): fills slot `wanted`, or the next where null, with an object of
 /// `ship_type` at `at`, facing along the world's Z axis, and returns the slot. Types above the
 /// last ship type are stand-ins for markers and nav points: `Flags.standing_in` and a sphere of
@@ -533,7 +568,7 @@ const flagged_kind: shp.Attachment.Kind = @enumFromInt(6);
 /// for each fuel pod.
 ///
 /// Not ported: the components (#40); what it does for capital ships, planets, gates and other
-/// single types; for a player's slot, the ship and the missiles the player chose on the loadout
+/// single types but the wrecks (#233, `wreckMade`); for a player's slot, the ship and the missiles the player chose on the loadout
 /// screen (#44), where the port fits a player's ship by the tier as the game does when the briefing
 /// is skipped, and its `t_` twin from the 14th mission on; and what differs in a multiplayer game.
 pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, ship_type: gameobj.Type, tier: i32, at: Vector, random: *libcmt.Rand) Error!u16 {
@@ -1101,6 +1136,34 @@ pub fn retire(ctx: aigeneric.Context, index: u16) void {
     object.flags.exploding = true;
     object.flags.targetable = false;
     aigeneric.popAll(ctx, index);
+}
+
+test wreckMade {
+    const gpa = std.testing.allocator;
+    var stage: explode.testing.Stage = undefined;
+    try stage.init();
+    defer stage.deinit();
+    var rays: @import("erayfx.zig").testing.Built = try .init(gpa);
+    defer rays.deinit(gpa);
+    var world = stage.world();
+    world.rays = &rays.rays;
+
+    // A Badanov's half shows its part, and burns for good, lit and smoking.
+    const index = try stage.mission.add(.badanov_wreck_back, @splat(0));
+    const slot = stage.mission.slot(index);
+    var burning: explode.testing.Burning = undefined;
+    try burning.init(gpa, "Bad dead back");
+    defer burning.deinit(gpa);
+    burning.put(slot);
+    defer burning.take(slot);
+    wreckMade(world, index);
+    try std.testing.expect(!burning.parts[0].hidden);
+    try std.testing.expect(rays.rays.slots[0].?.flags.flickers);
+    try std.testing.expect(stage.explosions.burn_lights[0] != null);
+
+    // Another type burns nothing.
+    try std.testing.expectEqual(null, wreckOf(.badanov));
+    try std.testing.expectEqualStrings("Box07", wreckOf(.kurgan_wreck).?.part);
 }
 
 test retire {

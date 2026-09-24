@@ -33,6 +33,7 @@ const missiles = @import("missiles.zig");
 const explode = @import("explode.zig");
 const particles = @import("particles.zig");
 const shield = @import("shield.zig");
+const erayfx = @import("erayfx.zig");
 const shockwave = @import("shockwave.zig");
 const sparks = @import("sparks.zig");
 const bigfile = @import("bigfile.zig");
@@ -224,6 +225,8 @@ pub const Frame = struct {
     lock_rings: ?*lock.Rings = null,
     /// The shields' bubbles, which go into the world's layer after the objects.
     shields: ?*shield.Shields = null,
+    /// The electric rays, which go into the world's layer after the explosions.
+    rays: ?*erayfx.Rays = null,
     /// Whether the game is paused, which holds the bubbles' colours still.
     paused: bool = false,
 };
@@ -418,6 +421,7 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     if (frame.particles) |pool| try pool.draw(gpa, scene, frame.ahead);
     if (frame.smoke) |pools| try pools.draw(gpa, scene, frame.ahead);
     if (frame.explosions) |explosions| try explosions.draw(gpa, scene, frame.ahead);
+    if (frame.rays) |rays| if (attachments.random) |random| try rays.draw(gpa, scene, frame.objects, attachments.frame_start, random);
     if (frame.shockwaves) |waves| try waves.draw(gpa, scene, frame.ahead);
     try frame.space.frame(gpa, scene, context, frame.view, frame.cockpit_mode);
     if (context.hardware) try frame.sky.frame(gpa, scene, context);
