@@ -4,7 +4,7 @@ Every ship, station, weapon, asteroid and piece of debris in the game is a `.SHP
 `resource.hog`.
 
 ```bash
-sltool shp info <model>                 # parts, levels, materials, turret limits
+sltool shp info <model>                 # header flags, bounds, arcs, parts, levels, turrets
 sltool shp chunks <model>               # the raw chunk stream
 sltool shp check <model>                # validate indices, parents and bounds
 sltool shp obj <model> <out.obj> [--lod n]

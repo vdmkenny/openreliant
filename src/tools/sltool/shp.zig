@@ -117,19 +117,28 @@ fn chunks(ctx: Context, data: []const u8) !void {
 fn info(ctx: Context, model: shp.Model) !void {
     try ctx.stdout.print(
         \\version:  {d}
-        \\flags:    cloak={}
+        \\flags:    components={} cloak={}
         \\parts:    {d}
         \\vertices: {d}
         \\faces:    {d}
-        \\
+        \\arcs:     {d}
         \\
     , .{
         model.header.version,
+        model.header.flags.components,
         model.header.flags.cloak,
         model.parts.len,
         model.vertexCount(),
         model.faceCount(),
+        model.firing_arcs.len,
     });
+    if (model.bounds()) |box| {
+        const lo, const hi = box;
+        try ctx.stdout.print("bounds:   ({d:.0},{d:.0},{d:.0}) to ({d:.0},{d:.0},{d:.0}), {d:.0} x {d:.0} x {d:.0}\n", .{
+            lo.x, lo.y, lo.z, hi.x, hi.y, hi.z, hi.x - lo.x, hi.y - lo.y, hi.z - lo.z,
+        });
+    }
+    try ctx.stdout.writeByte('\n');
 
     for (model.parts, 0..) |entry, index| {
         const part = entry.part;

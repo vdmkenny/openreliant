@@ -802,6 +802,23 @@ pub const Model = struct {
         };
     }
 
+    /// The box the model's parts stand in at rest, by each part's first level of detail put at the
+    /// part's origin; null for a model with no vertices.
+    pub fn bounds(model: Model) ?struct { Vec3, Vec3 } {
+        var box: ?struct { Vec3, Vec3 } = null;
+        for (model.parts) |part| {
+            if (part.meshes.len == 0 or part.meshes[0].vertices.len == 0) continue;
+            const lo, const hi = part.meshes[0].bounds();
+            const at = part.part.position;
+            const placed: struct { Vec3, Vec3 } = .{
+                .{ .x = lo.x + at.x, .y = lo.y + at.y, .z = lo.z + at.z },
+                .{ .x = hi.x + at.x, .y = hi.y + at.y, .z = hi.z + at.z },
+            };
+            box = if (box) |so_far| .{ Vec3.min(so_far[0], placed[0]), Vec3.max(so_far[1], placed[1]) } else placed;
+        }
+        return box;
+    }
+
     pub fn vertexCount(model: Model) usize {
         var total: usize = 0;
         for (model.parts) |part| {
@@ -924,6 +941,11 @@ test "parses a model" {
     const lo, const hi = mesh.bounds();
     try std.testing.expectEqual(@as(f32, 0), lo.x);
     try std.testing.expectEqual(@as(f32, 2), hi.x);
+
+    // The model's box is its one part's, put at the part's origin, the origin here.
+    const box = model.bounds().?;
+    try std.testing.expectEqual(@as(f32, 0), box[0].x);
+    try std.testing.expectEqual(@as(f32, 2), box[1].x);
 
     // The firing arc opens the one direction its mask sets.
     try std.testing.expectEqual(@as(usize, 1), model.firing_arcs.len);
