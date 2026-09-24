@@ -431,6 +431,29 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     try srcore.render(arena, context, scene, driver, frame.overlay);
 }
 
+/// Where `mission_frame` holds `detail_divisor` (`srapi.Context.detail`) at the high detail
+/// setting on a machine that keeps up: it raises it by 0.05 each frame whose timed sections take
+/// under 1/60 s, up to 3, and lowers it by 0.5 each frame over 1/40 s, down to 1.5. The port holds
+/// it at the top.
+pub const high_detail: f32 = 3;
+
+/// How far the finer levels of detail reach (`srapi.Context.finer`).
+pub const DetailReach = enum {
+    /// **Improvement:** eight times as far as the original has them, so that a ship keeps its
+    /// finest mesh until it is far off and no level change shows up close; its last level still
+    /// ends, and the ship leaves sight, where the original's does.
+    far,
+    /// As far as the original has them.
+    original,
+
+    pub fn finer(reach: DetailReach) f32 {
+        return switch (reach) {
+            .far => 8,
+            .original => 1,
+        };
+    }
+};
+
 /// `mission_frame`'s pass that draws the objects: each live object, save stand-ins and disabled
 /// and jumping ones, is drawn with `object_draw` (`objects.Model.draw`), with its own offset into
 /// its lights' blinks, its lights unless `lights_disabled`, its engine glows burning by the

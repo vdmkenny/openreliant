@@ -120,6 +120,10 @@ Deliberate differences from the original, each marked **Improvement** where it i
   where the original uses indices left over from the last list it drew.
 - A vertex with no counterpart in the next level of detail morphs toward itself, where the original
   reads whatever lies before that level's vertices.
+- The finer levels of detail reach eight times as far as the original's (`srapi.Context.finer`),
+  so that a ship keeps its finest mesh until it is far off. Its last level still ends where the
+  original's does at the high detail setting, depths divided by 3 (`game.main.high_detail`), and
+  the ship leaves sight there.
 - The GPU device draws at the display's own resolution, with four samples a pixel, where the
   original drew one.
 - It filters textures trilinearly, sixteen times anisotropic, where the original sampled bilinearly
@@ -173,8 +177,8 @@ Deliberate differences from the original, each marked **Improvement** where it i
 - It draws in 32-bit colour, where the original drew in 16 bits, and dithers that too, which costs
   nothing and keeps a dark gradient, such as the nebula or a light's falloff, from banding. `--original` restores the
   original's look: 16-bit colour, dithered, into a 16-bit buffer where the GPU has one, with a
-  16-bit depth buffer, one sample a pixel, bilinear filtering, lighting each vertex, lights
-  from the latest shots only, an explosion's debris lit by every light, its fireballs, rings and
+  16-bit depth buffer, one sample a pixel, bilinear filtering, lighting each vertex, the
+  levels of detail changing as near as the original's, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings and
   particles as few and plain as the original's, no shadows, and light worked out on encoded
   colours.
 
