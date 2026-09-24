@@ -123,6 +123,7 @@ pub const Kind = enum(u32) {
     light = 2,
     sprites = 4,
     stars = 7,
+    portal = 8,
     _,
 };
 
@@ -130,8 +131,9 @@ pub const Kind = enum(u32) {
 pub const ObjectFlags = packed struct(u32) {
     /// Left out of the scene by `scene_add`, and of the lights by `mesh_light`.
     hidden: bool = false,
-    /// Its polygons are clipped against a sixth plane as well (`0x004C5FB0`). **Unknown:** which.
-    _unknown_1: bool = false,
+    /// Its polygons are clipped by its portal (`MeshObject.portal`) as well as by the view:
+    /// `0x004C5FB0` gives every one of them the portal's clip code (`srapi.Outcode.portal`).
+    portal_clipped: bool = false,
     /// The driver sorts all its polygons, farthest first, and draws them at once, as it does
     /// every mesh on the overlay layer (`0x10002D10`).
     sorted: bool = false,
@@ -366,7 +368,60 @@ pub const MeshObject = struct {
     own_uv: [2]?[][2]f32 = .{ null, null },
     /// The object's own baked colours (`+0x110`), for `baked_object`.
     baked: ?[]const [4]f32 = null,
+    /// `+0xAC`: the portal that clips it, where its flags ask (`portal_clipped`); none clips
+    /// nothing.
+    portal: ?*const Portal = null,
 };
+
+/// `portal_create` (`0x004C50D0`) for a portal of no corners, a single plane (flag `0x100`): a
+/// plane through its place, facing along `normal` in its own frame, that clips the mesh objects
+/// that name it (`MeshObject.portal`). `portal_transform` (`0x004CE9F0`) puts the plane in the
+/// camera's frame each frame the portal is in the scene (`srcore.Scene.portals`), and the plane
+/// stays as it was put there until the next. A polygon it clips keeps what lies on the side its
+/// normal points away from (`portal_clip`, `0x004CCF30`).
+///
+/// Not ported: a portal with corners (flag `0x200`), which the game never makes.
+pub const Portal = struct {
+    position: Vector = @splat(0),
+    orientation: math.Matrix = math.identity,
+    /// `+0xB8`, in its own frame. A portal is made with none, which clips nothing.
+    normal: Vector = @splat(0),
+    /// In the camera's frame, as `transform` last left it (`+0xC8`, `+0xA0`).
+    view: View = .{},
+
+    /// Its plane in the camera's frame: a normal, and a point it passes through.
+    pub const View = struct {
+        normal: Vector = @splat(0),
+        point: Vector = @splat(0),
+
+        /// How far `v` lies on the side the portal keeps: what it keeps is at 0 or more.
+        pub fn inside(plane: View, v: Vector) f32 {
+            return math.dot(plane.normal, plane.point) - math.dot(plane.normal, v);
+        }
+    };
+
+    /// `portal_transform` (`0x004CE9F0`): the plane, in the frame of a camera standing at `camera`.
+    pub fn transform(portal: *Portal, camera: math.Place) void {
+        const normal = math.transform(portal.orientation, portal.normal);
+        portal.view = .{
+            .normal = math.transformTransposed(camera.orientation, normal),
+            .point = math.transformTransposed(camera.orientation, portal.position - camera.position),
+        };
+    }
+};
+
+test "Portal.transform" {
+    // A portal 100 ahead of a camera facing along Z, its normal turned from X to Z: it keeps what
+    // lies nearer than it.
+    var portal: Portal = .{ .position = .{ 0, 0, 100 }, .orientation = math.rotation(.y, -std.math.pi / 2.0), .normal = .{ 1, 0, 0 } };
+    portal.transform(.{});
+    try std.testing.expect(math.length(portal.view.normal - Vector{ 0, 0, 1 }) < 1e-5);
+    try std.testing.expect(portal.view.inside(.{ 0, 0, 50 }) > 0);
+    try std.testing.expect(portal.view.inside(.{ 0, 0, 150 }) < 0);
+    // Made with no normal, it keeps everything.
+    const made: Portal = .{};
+    try std.testing.expectEqual(0, made.view.inside(.{ 0, 0, 150 }));
+}
 
 /// A sprite of a set (`sprite_set_create`, `0x004C4DB0`): a rectangle facing the camera.
 pub const Sprite = struct {

@@ -72,11 +72,14 @@ pub const Scene = struct {
     /// The port's: what casts shadows without being drawn, such as the ship the camera sits in
     /// (`srshadow`).
     casters: std.ArrayList(*srapiext.MeshObject) = .empty,
+    /// The portals in the scene (list 4), which `render` puts in the camera's frame first.
+    portals: std.ArrayList(*srapiext.Portal) = .empty,
 
     pub fn deinit(scene: *Scene, gpa: Allocator) void {
         for (&scene.layers.values) |*list| list.deinit(gpa);
         scene.lights.deinit(gpa);
         scene.casters.deinit(gpa);
+        scene.portals.deinit(gpa);
     }
 
     /// Empties the lists, as `mission_frame` does each frame.
@@ -84,6 +87,7 @@ pub const Scene = struct {
         for (&scene.layers.values) |*list| list.clearRetainingCapacity();
         scene.lights.clearRetainingCapacity();
         scene.casters.clearRetainingCapacity();
+        scene.portals.clearRetainingCapacity();
     }
 };
 
@@ -136,8 +140,11 @@ pub const Overlay = struct {
     draw: *const fn (context: *anyopaque) Allocator.Error!void,
 };
 
+/// `sr_draw_layers`: puts the scene's portals in the camera's frame (`portal_transform`), then
+/// draws the layers, the overlay after them.
 pub fn render(arena: Allocator, context: *srapi.Context, scene: *Scene, driver: Driver, overlay: ?Overlay) Allocator.Error!void {
     driver.vtable.begin(driver.ptr, context);
+    for (scene.portals.items) |portal| portal.transform(.{ .position = context.camera.position, .orientation = context.camera.orientation });
     // `mesh_light` walks the lights' list, which runs from the last added.
     const lights = try arena.dupe(srlight.Light, scene.lights.items);
     std.mem.reverse(srlight.Light, lights);

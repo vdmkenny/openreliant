@@ -127,11 +127,11 @@ pub const Outcode = packed struct(u8) {
     top: bool = false,
     bottom: bool = false,
     near: bool = false,
-    /// The sixth plane objects flagged `0x2` are clipped against too. **Unknown:** which.
-    _unknown_5: bool = false,
+    /// The object's portal, for every polygon of an object flagged `portal_clipped`.
+    portal: bool = false,
     _unused: u2 = 0,
 
-    pub const all: Outcode = .{ .left = true, .right = true, .top = true, .bottom = true, .near = true, ._unknown_5 = true };
+    pub const all: Outcode = .{ .left = true, .right = true, .top = true, .bottom = true, .near = true, .portal = true };
 
     pub fn any(code: Outcode) bool {
         return @as(u8, @bitCast(code)) != 0;

@@ -184,8 +184,15 @@ driver, a triangle of its fan at a time (`clip_triangle`, `0x1000BEB0`, from `sr
 A vertex's attributes, its colour and both passes' coordinates, are interpolated along the edge it
 is made on.
 
-An object flagged `0x2` is also cut by planes of its own (`0x1000C7C0`). **Unknown:** what gives an
-object those planes.
+A mesh object flagged `0x2` is also cut by its portal (`+0xAC`), last, after the view's planes
+(`portal_clip`, `0x004CCF30` in the payload, `0x1000C7C0` in the driver): every polygon of it
+takes the portal's clip code (`0x20`, from `0x004C5FB0`). A portal is a scene object of kind 8
+(`portal_create`, `0x004C50D0`) holding a plane: a normal in its own frame (`+0xB8`), through its
+place. `sr_draw_layers` puts each portal in the scene (list 4) in the camera's frame before it
+draws the layers (`portal_transform`, `0x004CE9F0`), and the plane stays as it was put there until
+the portal is next in the scene. The cut keeps what lies on the side the normal points away from.
+A portal of corners (flag `0x200`) cuts by a polygon instead; the game makes only planes (flag
+`0x100`), for a capital ship's split ([Effects](effects.md)).
 
 ## Lighting
 

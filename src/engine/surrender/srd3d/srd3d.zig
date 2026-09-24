@@ -502,7 +502,8 @@ pub const Driver = struct {
             var polygon: [srclip.capacity]srclip.Vertex = undefined;
             const positions: []const usize = if (lines) &.{ p.first, p.first + 1 } else &.{ p.first, p.first + t + 1, p.first + t + 2 };
             for (positions, 0..) |position, i| polygon[i] = clipCorner(drawn, position);
-            const count = srclip.clip(driver.context.projection, v.clip, &polygon, positions.len);
+            const portal = if (drawn.object.portal) |portal| portal.view else null;
+            const count = srclip.clip(driver.context.projection, v.clip, portal, &polygon, positions.len);
             if (count < (if (lines) @as(usize, 2) else 3)) continue;
             driver.single.clearRetainingCapacity();
             for (polygon[0..count]) |c| {
