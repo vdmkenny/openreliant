@@ -293,7 +293,8 @@ pub fn pause(pausing: Pausing, on: bool) !void {
 /// (`particles.Pool.frame`, `smoke.Pools.frame`), which `particles_frame` runs together, the
 /// damaged ships' smoke (`smoke.frame`), the explosions (`explode.Explosions.frame`), the
 /// countermeasures (`cloak.Countermeasures.frame`) and the shockwaves
-/// (`shockwave.Shockwaves.frame`). A mission and the sandbox alike run this once a
+/// (`shockwave.Shockwaves.frame`). Between them the frame's hits on the player's ship push its
+/// controller (`input.force.Forces.pushFrame`). A mission and the sandbox alike run this once a
 /// frame, before the camera's own frame and anything drawn.
 ///
 /// Not ported: the rest of the frame's work, which is the mission's events and its scripts
@@ -308,6 +309,7 @@ pub fn missionFrame(orders: aigeneric.Context, fraction: f32) void {
     if (orders.world.smoke) |pools| pools.frame(orders.clock);
     smoke.frame(orders.world);
     objectsPass(orders);
+    if (orders.world.forces) |forces| forces.pushFrame(orders.clock.frame_start);
     if (orders.world.explosions) |explosions| explosions.frame(orders.world);
     if (orders.world.countermeasures) |dropped| dropped.frame(orders.world);
     if (orders.world.shockwaves) |waves| waves.frame(orders.world);

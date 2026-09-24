@@ -31,6 +31,7 @@ const game = engine.game;
 const camera = game.camera;
 const help = @import("help.zig");
 const install = @import("install.zig");
+const forces = @import("forces.zig");
 const joysticks = @import("joysticks.zig");
 const version = @import("version.zig");
 
@@ -106,7 +107,7 @@ const Doc = struct {
 
 /// Every option's help, which the compiler holds to having one for each.
 const docs: std.enums.EnumArray(Arg, Doc) = .init(.{
-    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, light worked out on encoded colours, no shadows, motion that moves on with the game's ticks, lights from the latest shots only, muzzle flashes that light nothing and none from the turrets, an explosion's debris lit by every light, its fireballs, rings, particles and burning bits as few, plain and brief as the original's, a damaged ship's smoke as even as the original's, the shields' bubbles as coarse as the original's, the levels of detail changing as near as the original's, as little drawn a frame as the original allows, the marker for a target out of sight placed as the original misplaces it, a missile's sound left where it was launched, and the sound mixed plainly in stereo" },
+    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, light worked out on encoded colours, no shadows, motion that moves on with the game's ticks, lights from the latest shots only, muzzle flashes that light nothing and none from the turrets, the force feedback's own effects only, a blow shaking the camera only while the controller rumbles, an explosion's debris lit by every light, its fireballs, rings, particles and burning bits as few, plain and brief as the original's, a damaged ship's smoke as even as the original's, the shields' bubbles as coarse as the original's, the levels of detail changing as near as the original's, as little drawn a frame as the original allows, the marker for a target out of sight placed as the original misplaces it, a missile's sound left where it was launched, and the sound mixed plainly in stereo" },
     .@"--ship" = .{ .section = .sandbox, .value = "<type>", .text = "the ship type to fly, by its number in shipstats.bin; 0, the Predator, by default" },
     .@"--view" = .{ .section = .sandbox, .value = "<0|1|2>", .text = "the view it starts in, as the game's settings keep it: 0 the cockpit; 1 the chase view; 2 no cockpit. The settings' own by default, which the pause menu's video screen changes" },
     .@"--difficulty" = .{ .section = .sandbox, .value = "<easy|medium|hard>", .text = "the game's difficulty: how hard hits land on your ship, and shots on the enemy; medium by default, as in the game" },
@@ -224,6 +225,9 @@ const Options = struct {
     shot_lights: game.guns.ShotLights = .every_shot,
     /// Whether a muzzle's flash lights what stands round it, and whether the turrets' guns flash.
     flashes: game.guns.flash.Settings = .{},
+    /// Whether the effects the game never reads play on the controller, and whether hits shake the
+    /// camera whatever the controller.
+    forces: engine.input.force.Settings = .{},
     /// Which lights reach an explosion's debris: a ship's, or every one as the original lets them.
     debris_lights: game.explode.DebrisLights = .like_ships,
     /// How many burning bits the explosions keep flying, and for how long.
@@ -295,6 +299,7 @@ const Options = struct {
                 options.smooth_motion = false;
                 options.shot_lights = .latest_two;
                 options.flashes = .original;
+                options.forces = .original;
                 options.debris_lights = .every_light;
                 options.bit_pool = .original;
                 options.fireballs = .original;
@@ -648,8 +653,13 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     defer sparks.deinit();
     var shields: game.shield.Shields = try .create(gpa, &textures, explosions.settings.detail, context.hardware, options.shields);
     defer shields.deinit(gpa);
+    // The force feedback's effects, and what plays them on the player's controller.
+    const found_forces = forces.load(io, arena, directory);
+    var lacking = found_forces.lacking.iterator();
+    while (lacking.next()) |effect| std.log.warn("forces\\{s} is missing or isn't an effect file: it plays nothing", .{effect.fileName()});
+    var force_feedback: engine.input.force.Forces = .{ .library = &found_forces.library, .settings = options.forces };
     // What the objects run in, the camera's view brought up to date each frame.
-    var world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .difficulty = options.difficulty, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .smoke = &smoke, .shockwaves = &shockwaves, .trails = &trails, .countermeasures = &countermeasures, .sparks = &sparks, .shields = &shields, .rays = &rays, .flash = &flash, .spawn = .{ .tables = sandbox.tables, .types = sandbox.types.interface() } };
+    var world: game.gameobj.World = .{ .forces = &force_feedback, .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .difficulty = options.difficulty, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .smoke = &smoke, .shockwaves = &shockwaves, .trails = &trails, .countermeasures = &countermeasures, .sparks = &sparks, .shields = &shields, .rays = &rays, .flash = &flash, .spawn = .{ .tables = sandbox.tables, .types = sandbox.types.interface() } };
     try sandbox.start(.{ .world = world, .clock = &clock, .devices = &devices }, @intCast(options.ship));
     // The music, as a mission's script starts it (`cmd_PlayMusic`): from `music\`, for ever, at 80.
     if (options.music) |name| {
@@ -768,7 +778,12 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             sound.updateMusic();
             sound.playBuffered(stdsmp);
             sound.update3D(hearing.scene(world));
+            // Nothing rumbles while the game is paused.
+            devices.joystick.rumble(.{});
         } else {
+            // The force feedback plays while the controller rumbles and its setting lets it.
+            force_feedback.feedback = devices.joystick.rumbles;
+            force_feedback.setting = devices.settings.force_feedback;
             // Each frame `mission_frame` runs every object's orders, which fly the ships and read
             // the player's controls, and then, before anything is drawn, has every object's frames
             // drawn between its last two places, as far into the step as the clock is; the camera
@@ -833,7 +848,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             } else null;
             const subject = playerSubject(slot);
             const marker = if (explosions.marker) |left| left.position else null;
-            if (view.frame(.{ .object = subject, .player = subject, .ticks = ticks, .now = at, .marker = marker, .cockpit = cockpit_input, .random = &rand })) |next| {
+            if (view.frame(.{ .object = subject, .player = subject, .ticks = ticks, .now = at, .marker = marker, .cockpit = cockpit_input, .random = &rand, .forces = &force_feedback })) |next| {
                 _ = view.setView(next, sandbox.objects.player, false, true, at);
             }
             // From its cockpit, the ship is not drawn, as `camera_set_view` sees to.
@@ -845,6 +860,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             sound.updateMusic();
             sound.playBuffered(stdsmp);
             sound.update3D(hearing.scene(world));
+            // The port's: the effects playing turn the controller's motors (`input.force`).
+            devices.joystick.rumble(force_feedback.motors(clock.frame_start));
         }
 
         // The GPU draws at the display's own resolution; the software device at the window's size
@@ -1475,6 +1492,7 @@ fn nextShipType(from: usize, step: isize) usize {
 
 test {
     _ = install;
+    _ = forces;
     _ = joysticks;
     _ = version;
 }
@@ -1565,6 +1583,8 @@ test Options {
     try std.testing.expectEqual(.latest_two, retro.shot_lights);
     try std.testing.expectEqual(game.guns.flash.Settings.original, retro.flashes);
     try std.testing.expectEqual(game.guns.flash.Settings{}, plain.flashes);
+    try std.testing.expectEqual(engine.input.force.Settings.original, retro.forces);
+    try std.testing.expectEqual(engine.input.force.Settings{}, plain.forces);
     try std.testing.expectEqual(.stays, retro.missile_sound);
     try std.testing.expectEqual(.every_light, retro.debris_lights);
     try std.testing.expectEqual(.like_ships, plain.debris_lights);

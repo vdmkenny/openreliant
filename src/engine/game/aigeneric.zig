@@ -284,6 +284,9 @@ fn equalTargets(a: Target, b: Target) bool {
 /// at nothing, an empty tank stops both burns, and only a ship that can reverse keeps reverse
 /// thrust.
 ///
+/// **Improvement** (`input.force.Unread.played`): the player's afterburner lighting and going out
+/// starts and stops `Afterburn` on the controller (`input.force.Forces.afterburner`).
+///
 /// Not ported: the orders other players' machines queue, which are multiplayer's
 /// ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
 pub fn objectOrders(ctx: Context, index: u16) void {
@@ -320,6 +323,7 @@ pub fn objectOrders(ctx: Context, index: u16) void {
         object.reverse_thrust = false;
     }
     if (!object.flags.can_reverse) object.reverse_thrust = false;
+    if (index == ctx.world.objects.player) if (ctx.world.forces) |forces| forces.afterburner(object.afterburner, ctx.world.clock.frame_start);
 }
 
 /// `orders_update` (`0x0040C8F0`): the orders of every object that is not disabled, once a frame,

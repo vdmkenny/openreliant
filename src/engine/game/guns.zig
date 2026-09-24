@@ -1096,7 +1096,8 @@ fn shotColour(player: bool, side: gameobj.Side(i32)) [3]f32 {
 /// whole flight under `ShotLights.every_shot`.
 ///
 /// It lights the muzzle's flash, where the muzzle has one, for the shot's type's ticks, in the
-/// colour of its light (`flash.Flash.fire`).
+/// colour of its light (`flash.Flash.fire`). A shot of the player's plays its gun type's effect on
+/// the player's controller (`forceEffect`).
 ///
 /// A few gun types have rules of their own: two Turret Flak shots in five are Turret Lasers shots,
 /// and a Turret Flak shot lives a random share of its type's life, from a fifth to all of it, and
@@ -1104,8 +1105,7 @@ fn shotColour(player: bool, side: gameobj.Side(i32)) [3]f32 {
 /// comes within `hugeReach` of as well.
 ///
 /// Not ported: how the other gun types' shots are drawn
-/// ([#154](https://github.com/vdmkenny/openreliant/issues/154)); its sound ([#47](https://github.com/vdmkenny/openreliant/issues/47)), the force feedback a
-/// player's shot gives ([#83](https://github.com/vdmkenny/openreliant/issues/83)), and the aim a
+/// ([#154](https://github.com/vdmkenny/openreliant/issues/154)); its sound ([#47](https://github.com/vdmkenny/openreliant/issues/47)), and the aim a
 /// ship firing blind takes at its target
 /// ([#183](https://github.com/vdmkenny/openreliant/issues/183)).
 pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, barrel: Barrel, is_heard: bool) void {
@@ -1168,6 +1168,7 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, barrel: Barr
         bullet.velocity = math.transform(math.fromAngles(pitch, yaw, roll), bullet.velocity);
     }
     if (is_heard) shotSound(world, @intCast(index), kind, record.sound, owner == all.player);
+    if (player) if (world.forces) |forces| forces.start(forceEffect(kind), clock.frame_start);
     candidates(world, bullet, record, lifetime);
     if (barrel.muzzle.flashOf()) |lit| lit.fire(kind, clock.frame_start, shotColour(player, bullet.side));
 }
@@ -1200,6 +1201,25 @@ pub fn clipEventMuzzles(world: gameobj.World, owner: u16, model: *const objects.
         const muzzle: Muzzle = .{ .model = model, .part = index, .attachment = attachment };
         shoot(world, world.clock, owner, .{ .muzzle = muzzle, .type = .fromNumber(attachment.gun_type) }, true);
     }
+}
+
+/// The effect a shot of `kind` plays on the player's controller (`bullet_place`): the file of its
+/// gun type, from the Laser Cannon's to the Nova Cannon's, which the effects are read in the order
+/// of; the Laser Cannon's for a turret's gun type.
+///
+/// **Fix:** the game's switch has no case for the Proton Cannon, which then plays the Laser
+/// Cannon's effect, and its own, `prc.frc`, which the game reads, never plays.
+fn forceEffect(kind: GunType) input.force.Effect {
+    comptime assert(@intFromEnum(input.force.Effect.nc) == @intFromEnum(GunType.nova_cannon));
+    if (@intFromEnum(kind) > @intFromEnum(GunType.nova_cannon)) return .lc;
+    return @enumFromInt(@intFromEnum(kind));
+}
+
+test forceEffect {
+    try std.testing.expectEqual(.lc, forceEffect(.laser_cannon));
+    try std.testing.expectEqual(.prc, forceEffect(.proton_cannon));
+    try std.testing.expectEqual(.nc, forceEffect(.nova_cannon));
+    try std.testing.expectEqual(.lc, forceEffect(.turret_lasers));
 }
 
 /// The sound a shot makes as it is fired (`bullet_fire`), its gun type's, following it: on a voice

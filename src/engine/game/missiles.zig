@@ -295,10 +295,12 @@ pub const Missiles = Linked(Missile, max_missiles);
 /// A fuel pod, and a pod launched once empty, are let fall instead. A pod whose last missile this
 /// was is launched itself, empty, at nothing.
 ///
+/// The player's launch plays the missile's effect on the player's controller.
+///
 /// Where memory runs out for a pod's missile, nothing is launched, and for a trail, the missile
 /// flies without one.
 ///
-/// Not ported: the force feedback of the player's launch, and what a multiplayer game sends.
+/// Not ported: what a multiplayer game sends.
 pub fn launch(world: gameobj.World, launcher: u16, rack: usize, target: aigeneric.Target) void {
     const all = world.objects;
     const missiles = &all.missiles;
@@ -320,6 +322,7 @@ pub fn launch(world: gameobj.World, launcher: u16, rack: usize, target: aigeneri
     };
 
     const at = spawn(world, launcher, racked.type, built, places) orelse return;
+    if (launcher == all.player) if (world.forces) |forces| forces.start(.missile, world.clock.frame_start);
 
     if (world.hearing) |hearing| {
         const class: sound3d.Class = if (launcher == all.player) .guaranteed else .not_reserved;

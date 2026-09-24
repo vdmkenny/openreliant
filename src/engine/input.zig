@@ -8,6 +8,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 pub const controls = @import("input/controls.zig");
+pub const force = @import("input/force.zig");
 pub const power = @import("input/power.zig");
 
 /// DirectInput's `DIJOYSTATE`, which the game polls the joystick into at `joystick` each simulation
@@ -91,6 +92,8 @@ pub const JoystickDevice = struct {
         setRange: *const fn (context: *anyopaque, axis: Axis, min: i32, max: i32) void,
         setDeadZone: *const fn (context: *anyopaque, zone: u16) void,
         poll: *const fn (context: *anyopaque, state: *JoystickState) error{Unplugged}!void,
+        /// The port's: turns the motors of a controller that rumbles.
+        rumble: *const fn (context: *anyopaque, motors: force.Motors) void,
     };
 
     /// What `joystick_found` needs from the device: the counts from `GetCapabilities`, the axes
@@ -105,6 +108,9 @@ pub const JoystickDevice = struct {
         /// Added by the port: whether the controller is a gamepad. A gamepad's buttons are
         /// numbered as in `GamepadButton`, and it has its own default bindings.
         kind: Kind = .joystick,
+        /// Added by the port: whether it rumbles, which is how the port plays the force feedback
+        /// (`force`), in place of DirectInput's force feedback (`DIDC_FORCEFEEDBACK`).
+        rumbles: bool = false,
     };
 
     pub const Kind = enum { joystick, gamepad };
@@ -128,6 +134,11 @@ pub const JoystickDevice = struct {
     pub fn poll(device: JoystickDevice, state: *JoystickState) error{Unplugged}!void {
         return device.vtable.poll(device.context, state);
     }
+
+    /// Turns the motors as hard as `motors` says, until the next call.
+    pub fn rumble(device: JoystickDevice, motors: force.Motors) void {
+        device.vtable.rumble(device.context, motors);
+    }
 };
 
 /// The game's joystick globals: the device (`joystick_device`), its state (`joystick`,
@@ -142,6 +153,8 @@ pub const Joystick = struct {
     hats: u8 = 0,
     name: []const u8 = "",
     kind: JoystickDevice.Kind = .joystick,
+    /// Whether the device rumbles (`force_feedback`, `0x0050E1A4`, for the port's rumble).
+    rumbles: bool = false,
     latched: [32]bool = @splat(false),
 
     /// The state when there is no device: all zero, as `read_joystick` leaves it.
@@ -159,6 +172,7 @@ pub const Joystick = struct {
             .hats = @min(found.hats, 4),
             .name = found.name,
             .kind = found.kind,
+            .rumbles = found.rumbles,
         };
         var axes = found.axes.iterator();
         while (axes.next()) |axis| {
@@ -189,6 +203,12 @@ pub const Joystick = struct {
         for (joystick.latched[0..joystick.buttons], joystick.state.buttons[0..joystick.buttons]) |*latched, state| {
             if (state == 0) latched.* = false;
         }
+    }
+
+    /// Turns the motors of a device that rumbles as hard as `motors` says.
+    pub fn rumble(joystick: *const Joystick, motors: force.Motors) void {
+        const device = joystick.device orelse return;
+        if (joystick.rumbles) device.rumble(motors);
     }
 
     /// Whether `button` is pressed. Numbers beyond the 32 buttons in `JoystickState` never are.
@@ -374,7 +394,7 @@ pub const Keyboard = struct {
 /// The input settings `load_key_config` reads from the `KeyConfig` section of `starlancer.ini`,
 /// with the game's defaults.
 pub const Settings = struct {
-    /// `ForceFeedback` (`0x0051DA4C`). **Unknown:** its use.
+    /// `ForceFeedback` (`0x0051DA4C`): whether the joystick's force feedback plays (`force`).
     force_feedback: bool = true,
     /// `JoystickInvert` (`joystick_invert`, `0x0051D610`): while false, pitch is reversed, from
     /// the stick, the keys and the mouse.
@@ -572,6 +592,7 @@ const TestDevice = struct {
     ranges: std.EnumArray(Axis, ?[2]i32) = .initFill(null),
     dead_zone: ?u16 = null,
     unplugged: bool = false,
+    motors: ?force.Motors = null,
 
     fn device(test_device: *TestDevice) JoystickDevice {
         return .{ .context = test_device, .vtable = &.{
@@ -579,7 +600,13 @@ const TestDevice = struct {
             .setRange = setRange,
             .setDeadZone = setDeadZone,
             .poll = poll,
+            .rumble = rumble,
         } };
+    }
+
+    fn rumble(context: *anyopaque, motors: force.Motors) void {
+        const test_device: *TestDevice = @ptrCast(@alignCast(context));
+        test_device.motors = motors;
     }
 
     fn capabilities_(context: *anyopaque) JoystickDevice.Capabilities {
@@ -636,6 +663,14 @@ test Joystick {
     try std.testing.expectEqual(250, joystick.state.x);
     try std.testing.expect(joystick.latched[3] and !joystick.latched[4]);
     try std.testing.expect(joystick.down(3) and !joystick.down(4) and !joystick.down(200));
+
+    // A stick that doesn't rumble is left alone; one that does turns its motors.
+    joystick.rumble(.{ .low = 1 });
+    try std.testing.expectEqual(null, stick.motors);
+    stick.capabilities.rumbles = true;
+    joystick.open(stick.device(), default_dead_zone);
+    joystick.rumble(.{ .low = 1 });
+    try std.testing.expectEqual(force.Motors{ .low = 1 }, stick.motors.?);
 
     // Once disconnected, it reads as idle and is closed.
     stick.unplugged = true;

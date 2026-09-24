@@ -18,6 +18,7 @@ const objects = @import("objects.zig");
 const shield = @import("shield.zig");
 const hud = @import("hud.zig");
 const input = @import("../input.zig");
+const camera = @import("camera.zig");
 
 /// How far apart a collision sets two objects, as a share of each one's radius from the point
 /// between them (`0x004DC7C0` and `0x004DC7C4`): a tenth further than touching, so that the next
@@ -334,7 +335,8 @@ pub fn byDifficulty(world: gameobj.World, index: u16, kind: Kind, value: f32) f3
 /// its attacker.
 ///
 /// With smart targeting on, a blow the player's ship deals, but by colliding, makes what it
-/// struck the player's target (`input.setPlayerTarget`).
+/// struck the player's target (`input.setPlayerTarget`). A blow the player's ship takes shakes it
+/// and its controller (`feedback`).
 ///
 /// Not ported: the score a player's hit is worth, and what multiplayer makes of it.
 pub fn damage(world: gameobj.World, index: u16, struck: Quadrant, value: f32, factor: f32, attacker: u16, kind: Kind) void {
@@ -347,6 +349,7 @@ pub fn damage(world: gameobj.World, index: u16, struck: Quadrant, value: f32, fa
     const held = object.shields.at(struck);
     const through = @max(value - held.*, 0);
     const scaled = byDifficulty(world, index, kind, value);
+    if (index == all.player) feedback(world, struck, kind, scaled, held.* >= 0);
     if (counted(kind)) object.recent_damage += scaled;
     if (held.* >= 0 and object.invulnerable != ._unknown_4) held.* -= scaled;
     if (held.* < 0) armorDamage(world, index, struck, through * factor, attacker, kind);
@@ -373,7 +376,8 @@ fn smartTargeting(world: gameobj.World, attacker: u16, kind: Kind) ?*hud.State {
 /// no time to eject. Smart targeting makes what the player's ship struck, but by colliding, the
 /// target of its current order. A hit on that target brings up its form of the target display,
 /// and a hit on it or on the player's ship marks the quadrant struck for the ship status indicator
-/// to flash (`hud.State.target_hits`, `ship_hits`).
+/// to flash (`hud.State.target_hits`, `ship_hits`). A blow the player's ship takes shakes it and
+/// its controller (`feedback`).
 ///
 /// Not ported: the display's interference, and what the player's hits on a friend tell the
 /// mission.
@@ -384,6 +388,7 @@ pub fn armorDamage(world: gameobj.World, index: u16, struck: Quadrant, value: f3
     if (object.flags.jumping) return;
     if (slot.combat) |combat| if (combat.class == .debris) return;
     const scaled = byDifficulty(world, index, kind, value);
+    if (index == all.player) feedback(world, struck, kind, scaled, false);
     if (counted(kind)) object.recent_damage += scaled;
     if (object.flags.exploding) return;
     if (kind == .bullet and object.flags.components) return;
@@ -417,6 +422,50 @@ pub fn armorDamage(world: gameobj.World, index: u16, struck: Quadrant, value: f3
 
 /// A blow to the armour heavier than this leaves the player's ship no time to eject (`0x004DC44C`).
 const heavy_blow: f32 = 1000;
+
+/// How much each point of a hit's damage shakes the camera (`0x004DC500`), and the most a shot
+/// shakes it to.
+const shake_per_damage: f32 = 0.05;
+const shot_shake_most: f32 = 1;
+
+/// `damage_feedback` (`0x00463E10`): a blow of `value` on the `struck` side of the player's ship,
+/// after the difficulty's scaling, where the shields took it or not, while the controller rumbles.
+/// A shot's starts the shake from hits on the controller (`input.force.Forces.startUnlessPlaying`)
+/// and, while the camera shakes less than `shot_shake_most`, shakes it more by `shake_per_damage`
+/// of the damage, up to that. Any other pushes the ship (`input.force.Forces.hit`) and shakes the
+/// camera as much more, up to `camera.Cockpit.shake_most`.
+///
+/// **Improvement** (`input.force.HitShake.always`): the camera shakes whatever the controller.
+///
+/// **Improvement** (`input.force.Unread.played`): a collision plays `landhard`, any other blow the
+/// shields take `Shield`, and one on the hull the `Hullshock` of the side struck.
+fn feedback(world: gameobj.World, struck: Quadrant, kind: Kind, value: f32, shielded: bool) void {
+    const forces = world.forces;
+    const settings = if (forces) |playing| playing.settings else input.force.Settings{};
+    const rumbles = if (forces) |playing| playing.feedback else false;
+    if (rumbles or settings.hit_shake == .always) {
+        const shake = world.shake;
+        const more = value * shake_per_damage;
+        if (kind == .bullet) {
+            if (shake.* < shot_shake_most) shake.* = @min(shake.* + more, shot_shake_most);
+        } else {
+            shake.* = @min(shake.* + more, camera.Cockpit.shake_most);
+        }
+    }
+    const playing = forces orelse return;
+    const now = world.clock.frame_start;
+    if (kind == .bullet) playing.startUnlessPlaying(.shake, now) else playing.hit(@intFromEnum(struck), value);
+    const unread: input.force.Effect = switch (kind) {
+        .collision, .crash => .landhard,
+        else => if (shielded) .shield else switch (struck) {
+            .left => .hullshock,
+            .right => .hullshock1,
+            .fore => .hullshock2,
+            .aft => .hullshock3,
+        },
+    };
+    playing.start(unread, now);
+}
 
 /// The damage kinds that hurt a component with armour to spare, whatever its flags.
 fn heavyKind(kind: Kind) bool {

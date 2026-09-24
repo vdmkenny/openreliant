@@ -303,13 +303,20 @@ address	kind	name	type	comment
 0052029c	data	hat_enabled	int	The HatEnable setting, 1 by default: while it is set, frame_controls glances with the joystick's first hat
 0051cf8c	data	hat_glancing	bool	Set while the joystick's hat glances, so that frame_controls looks ahead again once it is let go
 0051d458	data	twist_setting	int	The TwistEnable setting as load_key_config reads it; twist_enabled is whether it is nonzero
-0051da4c	data	force_feedback_setting	int	The ForceFeedback setting, 1 by default. Unknown: its use
+0051da4c	data	force_feedback_setting	int	The ForceFeedback setting, 1 by default: while it is clear no force-feedback effect starts, and the frame's hits push nothing
 005d5644	data	settings_path		The path of starlancer.ini: the game's directory, then the file's name
 005ddb18	data	joystick_caps		The joystick's DIDEVCAPS, which joystick_found takes the button and hat counts from
 005ddd18	data	direct_input		The IDirectInput7 interface
 005ddd1c	data	keyboard_device		The keyboard's IDirectInputDevice7
 005ddd20	data	mouse_device		The mouse's IDirectInputDevice7
 005ddd24	data	joystick_device		The joystick's IDirectInputDevice7, or null without one
+005ddc58	data	force_effects	void **[13]	Each .frc file's effects as force_effects_read made them, in load_force_effects' order: the gun types' from lc to nc, then Missile and Shake; each place that plays one starts its first
+005ddcdc	data	force_slots	void *[9]	The pushes force_hit_pushes plays, a slot each in turn from force_slot_next, freed as its slot comes round again
+005ddd30	data	force_slot_next	int	The force_slots slot the next effect takes; back to 0 past 8
+005ddd2c	data	force_files_read	int	How many .frc files load_force_effects read
+005457b8	data	force_hits	float[40]	The frame's hits on the player's ship for force_hit_pushes, each its push and its quadrant, up to the first of no push; damage_feedback writes them from force_hit_next
+00545858	data	force_hit_next	int	The force_hits entry damage_feedback writes next; back to 0 past 19, and to 0 after force_hit_pushes
+00544430	data	force_knocks	float[40]	A second list force_hit_pushes sums as force_hits, which nothing fills
 005ddb48	data	joystick_name	char[260]	The joystick's product name
 005ddc4c	data	joystick_axes	JoystickAxes	The joystick's axes the game set up: X, Y and Rz run from -1000 to 1000, Z and the first slider from 0 to 1000
 005ddc54	data	joystick_buttons	short	The joystick's button count
@@ -329,7 +336,12 @@ address	kind	name	type	comment
 004bd300	function	read_joystick	int __fastcall (JoystickState *state)	Polls the joystick into state, then clears the latches of released buttons
 004bd3a0	function	read_mouse	int __fastcall (MouseState *state)	Reads the mouse's movement since the previous read, and its buttons
 004bd570	function	key_pressed	int __fastcall (int key, int modifier, int once)	Whether a key is down with a modifier (ControlModifier); with once, only once for each press
-004bd800	function	load_force_effects	int (void)	Loads the force-feedback effects, forces\*.frc
+004bd800	function	load_force_effects	int (void)	Reads forces\lc.frc to Shake.frc, a gun type's each from the Laser Cannon's to the Nova Cannon's then Missile and Shake, into force_effects by force_effects_read, counting those read; then downloads the missile's
+004bdb10	function	force_effects_read	long __fastcall (void *device, void ***effects, int *count, char *path)	The SideWinder Force Feedback SDK's SWFF_CreateDIEffectFromFileEx: has CLSID_VFX, the Visual Force Effects server, make the DirectInput effects of an .frc file, into an array it allocates
+004bd980	function	force_slot_free	void __fastcall (int slot)	Stops, unloads and forgets the effect in force_slots at slot, if any
+004bdd30	function	force_periodic_create	long __fastcall (void *device, void **effect, int type, int duration, int period, int direction, int magnitude, int offset, int attack_time, int attack_level, int fade_time, int fade_level, int button)	The SideWinder Force Feedback SDK's SWFF_CreatePeriodicEffect: a periodic effect of type 1 (sine) to 4, times in microseconds and the direction in hundredths of a degree
+004be000	function	force_shake	void (void)	Starts the Shake effect unless it is playing, while force_feedback_setting is set; camera_frame runs it while hit_shake is above 0.1, and damage_feedback for a shot
+004be060	function	force_hit_pushes	void (void)	Each frame from mission_frame, while force_feedback_setting is set: sums force_hits by the side struck and plays a push across (left less right) and along (fore less aft), a 1-second 2 Hz sine through force_periodic_create in the next of force_slots, for a net stronger than 1; aims the push from the left at 90000, which DirectInput turns down
 00412630	function	control_active	int __fastcall (ControlAction action, int once)	Whether an action's joystick button, or its key with its modifier, is down; with once, only once for each press
 00413410	function	player_controls	void __fastcall (int slot)	The Player Control order's update: steering, throttle, weapons and the other flight actions from the controls
 00412c10	function	match_target_speed	void (void)	Sets the throttle to the target's speed over the player's cruise speed while the target is within 330000 units; otherwise puts the throttle back and stops matching
@@ -787,6 +799,7 @@ address	kind	name	type	comment
 00463ca0	function	damage_quadrant	int __fastcall (GameObject *object, Vec3 *at)	Which quadrant a hit falls in, from where it lies in the object's frame as a share of its bounds: the larger of along and across decides, giving 2 fore, 3 aft, 1 right and 0 left
 00463d70	function	damage_by_difficulty	float10 __fastcall (int slot, DamageKind kind, float value)	Scales damage by difficulty outside multiplayer: a kind equal to player_index, a shot in a single-player game, on a hostile object x1.5, x1 or x0.75 from easy to hard; anything on the player ship x0.75, x1 or x1.5, then x0.5
 00562f14	data	difficulty	Difficulty	The game difficulty: 0 easy, 1 medium, 2 hard; SET GAME DIFFICULTY starts it at 1 and steps through them
+00463e10	function	damage_feedback	void __fastcall (int quadrant, DamageKind kind, float damage)	While force_feedback is set, a hit on the player's ship: a shot starts force_shake and raises hit_shake by 0.05 of the damage while it is below 1, up to 1; any other hit adds 300 times the damage to force_hits on its side and raises hit_shake as much, up to 2
 00463ee0	function	object_damage	void __fastcall (GameObject *object, int quadrant, float value, float factor, int attacker, DamageKind kind)	Damage to an object: its shield in that quadrant takes it first, and what passes through times factor wears the armour; kinds 0, 1 and 5 count toward recent_damage. Debris and a jumping object take none
 004641f0	function	object_armor_damage	void __fastcall (GameObject *object, int quadrant, float value, int attacker, DamageKind kind)	Damage to an object's armour once the shield is down: the quadrant's armour falls by it, the armour conditions follow, and armour below zero destroys the object
 00478360	function	simplex_nearest_point	void __fastcall (int *simplex)	The nearest point of a simplex to the origin, for 1 to 4 points, which the collision code uses for a triangle
