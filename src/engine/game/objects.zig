@@ -943,7 +943,7 @@ pub const Model = struct {
     /// a model whose parts have no volume, which nothing can turn.
     angular_response: math.Matrix = @splat(0),
     /// How far off it stays worth drawing, over what its radius alone gives it
-    /// (`GameObject.visibility`). Nothing in the shipped game moves it off 1.
+    /// (`GameObject.visibility`): 1, but for an asteroid's fragments (`create.Slot.shrink`).
     visibility: f32 = 1,
     bounds: [2]Vector = .{ @splat(0), @splat(0) },
 
@@ -1865,6 +1865,17 @@ pub const Model = struct {
     pub fn numbered(model: *Model, number: usize) ?PartRef {
         var count: Counting = .{ .until = .{ .number = number } };
         return if (model.countParts(&count)) count.found else null;
+    }
+
+    /// The model holding `part`, the model itself or one it carries however deep (`node_holder`,
+    /// for the root it hangs from); null for a part of neither.
+    pub fn holding(model: *Model, part: *const Part) ?*Model {
+        for (model.parts) |*own| if (own == part) return model;
+        for (0..model.parts.len) |index| {
+            var each = model.carriedBy(index);
+            while (each.next()) |mount| if (mount.model.holding(part)) |found| return found;
+        }
+        return null;
     }
 
     /// The number of part `ref` (`numbered`); null for a part neither the model's nor carried by it.

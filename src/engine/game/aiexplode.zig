@@ -12,12 +12,14 @@
 //! The styles leave fireballs, burning bits and a torpedo's shockwave behind
 //! ([`explode.zig`](explode.zig), [`shockwave.zig`](shockwave.zig)).
 //!
+//! A ship that lists components loses its hull, or the one component the order is aimed at, to
+//! the component losses (`objects.loseComponents`). An asteroid goes up in a fireball, a large one
+//! leaving three smaller in its place, and the limpet car leaves its pod.
+//!
 //! A ship's end credits the player with the kill where the player's ship struck it last
 //! (`killCredit`).
 //!
-//! **Not ported:** the other modes, for a ship that lists components, one of its components, an
-//! asteroid and the limpet car ([#41](https://github.com/vdmkenny/openreliant/issues/41)); and
-//! what a ship's end tells the mission, the pilots' records and the Destroyed event
+//! **Not ported:** what a ship's end tells the mission, the pilots' records and the Destroyed event
 //! ([#37](https://github.com/vdmkenny/openreliant/issues/37)).
 
 const std = @import("std");
@@ -34,6 +36,7 @@ const create = @import("create.zig");
 const deathmatch = @import("deathmatch.zig");
 const explode = @import("explode.zig");
 const gameobj = @import("gameobj.zig");
+const objects = @import("objects.zig");
 const shockwave = @import("shockwave.zig");
 const GameObject = gameobj.GameObject;
 const libcmt = @import("../libcmt.zig");
@@ -117,7 +120,10 @@ pub fn init(ctx: Context, index: u16) void {
     state.mode = .of(&slot.object, slot.orders[0].target);
     switch (state.mode) {
         .ship => shipInit(ctx, index),
-        else => {},
+        .hull => hullInit(ctx, index),
+        .component => componentInit(ctx, index),
+        .asteroid => asteroidInit(ctx, index),
+        .limpet_car => limpetCarInit(ctx, index),
     }
 }
 
@@ -125,8 +131,160 @@ pub fn init(ctx: Context, index: u16) void {
 pub fn update(ctx: Context, index: u16) void {
     switch (ctx.world.objects.slots[index].state.explode.mode) {
         .ship => shipUpdate(ctx, index),
-        else => {},
+        .hull => hullUpdate(ctx, index),
+        // `explode_component` (`0x00409260`): the component is lost, and the order is done.
+        .component => _ = aigeneric.pop(ctx, index),
+        .asteroid => asteroidUpdate(ctx, index),
+        .limpet_car => limpetCarUpdate(ctx, index),
     }
+}
+
+// --- A ship that lists components --------------------------------------------------------------
+
+/// `explode_hull_init` (`0x00409170`): each part of the hull hanging from the model's root, but a
+/// part of a damaged model, runs out of armour, for the component losses to take its assembly
+/// away (`objects.loseComponents`).
+fn hullInit(ctx: Context, index: u16) void {
+    const slot = &ctx.world.objects.slots[index];
+    const model = if (slot.model) |*live| live else return;
+    for (model.parts) |*part| {
+        if (part.parent != null or part.flags.damaged or part.class != .hull) continue;
+        part.armor = spent_armor;
+        model.destroyed = true;
+    }
+}
+
+/// `explode_hull` (`0x004091E0`): a disabled ship ends as its hull holding it together does
+/// (`ai.hullLost`); any other's order is done, the hull left to the component losses.
+fn hullUpdate(ctx: Context, index: u16) void {
+    if (ctx.world.objects.slots[index].object.flags.disabled) return ai.hullLost(ctx, index);
+    _ = aigeneric.pop(ctx, index);
+}
+
+/// `explode_component_init` (`0x00409200`): the component the order is aimed at, where it is
+/// shown, runs out of armour, and the model holding it takes it away (`objects.loseComponents`).
+fn componentInit(ctx: Context, index: u16) void {
+    const slot = &ctx.world.objects.slots[index];
+    const model = if (slot.model) |*live| live else return;
+    const component = std.math.cast(usize, slot.orders[0].target.component) orelse return;
+    if (component >= slot.components.len) return;
+    const part = slot.components[component] orelse return;
+    if (part.hidden) return;
+    part.armor = spent_armor;
+    if (model.holding(part)) |holder| holder.destroyed = true;
+}
+
+/// The armour a part is left with to be lost.
+const spent_armor: f32 = -1;
+
+// --- An asteroid -------------------------------------------------------------------------------
+
+/// `explode_asteroid_init` (`0x00409270`): it goes up the frame after, and moves no more.
+fn asteroidInit(ctx: Context, index: u16) void {
+    const slot = &ctx.world.objects.slots[index];
+    slot.state.explode.end = ctx.clock.frame_start;
+    slot.object.flags.unpowered = true;
+    slot.object.flags.frozen = true;
+}
+
+/// A rock's fireball, times its radius, and how large a rock must be, as its `visibility`, for
+/// three smaller to take its place (`0x004DC4E0`, `0x004DC4D8`), each so much the size of the
+/// last (`0x004DC4DC`), standing its radius times `fragment_reach` from where it was, a turn of
+/// `fragment_turn` apart about the X axis (`0x004DC3D8`, `0x004DC4D4`).
+const rock_fireball: f32 = 1.5;
+const least_breaking: f32 = 0.16;
+const fragment_share: f32 = 0.4;
+const fragments = 3;
+const fragment_reach: f32 = 3;
+const fragment_turn: f32 = 1.88496;
+/// The fragments are asteroids from the third of the seven, one of the four from it.
+const fragment_first = 2;
+const fragment_kinds = 4;
+
+/// `explode_asteroid` (`0x004092A0`): once its moment has passed, a fireball as wide as
+/// `rock_fireball` of its radius, lighting what is round it, and it is retired. Where it is large
+/// enough, `fragments` smaller asteroids, `fragment_share` of its size, take its place, each turned
+/// a further `fragment_turn` about the X axis and standing `fragment_reach` of its own radius along
+/// its nose from where the rock was, still and colliding with nothing.
+///
+/// Not ported: the count of asteroids made, which the game keeps for its log alone.
+fn asteroidUpdate(ctx: Context, index: u16) void {
+    const world = ctx.world;
+    const all = world.objects;
+    const slot = &all.slots[index];
+    if (!(slot.state.explode.end < ctx.clock.frame_start)) return;
+    const at = slot.drawn.position;
+    const size = slot.object.visibility * fragment_share;
+    explode.fireballAt(world, at, .{ .size = slot.object.radius * rock_fireball, .light = true });
+    create.retire(ctx, index);
+    if (size < least_breaking) return;
+    const spawn = world.spawn orelse return;
+    var turn_count: usize = fragments;
+    while (turn_count > 0) : (turn_count -= 1) {
+        const kind = gameobj.Type.asteroid(fragment_first + @as(usize, world.random.rand() % fragment_kinds));
+        const fragment = create.createObject(all, spawn.tables, spawn.types, null, kind, 0, @splat(0), world.random) catch return;
+        const piece = &all.slots[fragment];
+        const turn = math.fromAngles(@as(f32, @floatFromInt(turn_count)) * fragment_turn, 0, 0);
+        objects.setPosition(&piece.object, &piece.drawn, at + math.transform(turn, .{ 0, 0, piece.object.radius * fragment_reach }));
+        objects.setOrientation(&piece.object, &piece.drawn, turn);
+        piece.object.throttle = 0;
+        piece.object.flags.no_collisions = true;
+        piece.shrink(size);
+    }
+}
+
+// --- The limpet car ----------------------------------------------------------------------------
+
+/// The bits the limpet car's trail has left, and how fast it may turn about its X and Y axes and
+/// about its Z axis, either way (`0x004DC474`, `0x004DC4C0`).
+const limpet_trail = 50;
+const limpet_spin: Vector = .{ 0.05, 0.05, 0.3 };
+
+/// `explode_limpet_car_init` (`0x004094D0`): the car stops dead, unpowered, with a random turn
+/// and a trail to leave, which its update never reaches, and goes up in a fireball as wide as its
+/// radius.
+///
+/// Not ported: the Destroyed event it queues (`event_destroyed`,
+/// [#37](https://github.com/vdmkenny/openreliant/issues/37)).
+fn limpetCarInit(ctx: Context, index: u16) void {
+    const world = ctx.world;
+    const slot = &world.objects.slots[index];
+    const object = &slot.object;
+    const state = &slot.state.explode;
+    state.trail = limpet_trail;
+    state.end = 0;
+    object.velocity = gameobj.vec3(@splat(0));
+    object.speed = 0;
+    object.throttle = 0;
+    object.flags.unpowered = true;
+    state.spin = gameobj.vec3(world.random.centredVector(limpet_spin));
+    explode.fireballAt(world, slot.drawn.position, .{ .size = object.radius });
+}
+
+/// `explode_limpet_car` (`0x004095F0`): where the car's first part still shows, it is hidden, the
+/// car blows up (`explode.blast`), and a limpet pod takes its slot, where that part was going;
+/// otherwise the car blows up and is retired.
+///
+/// Not ported: the sounds `0x004B9C70` ends and plays.
+fn limpetCarUpdate(ctx: Context, index: u16) void {
+    const world = ctx.world;
+    const all = world.objects;
+    const slot = &all.slots[index];
+    const model = if (slot.model) |*live| live else null;
+    const shown = if (model) |held| held.parts.len > 0 and !held.parts[0].hidden else false;
+    if (!shown) {
+        explode.blast(world, index);
+        return create.retire(ctx, index);
+    }
+    model.?.parts[0].hidden = true;
+    const place = model.?.partPlace(0, .next).within(slot.object.placeAt(.next));
+    explode.blast(world, index);
+    all.resetSlot(index, world.random);
+    const spawn = world.spawn orelse return;
+    const pod = create.createObject(all, spawn.tables, spawn.types, index, .limpet_pod, 0, @splat(0), world.random) catch return;
+    const replaced = &all.slots[pod];
+    objects.setPosition(&replaced.object, &replaced.drawn, place.position);
+    objects.setOrientation(&replaced.object, &replaced.drawn, place.orientation);
 }
 
 /// A ship moving slower than this as it is destroyed is watched from behind, pulling away; one
@@ -172,7 +330,7 @@ fn shipInit(ctx: Context, index: u16) void {
 /// by its type's class, a Kamov, a Kurgan or a Gurevich.
 ///
 /// Not ported: a wingman's remark on the kill (`radio_kill_remark`) and the line the loss of a
-/// ship with `+0x74C` clear draws (`radio_ship_lost`), which wait for the radio
+/// ship in the player's wing draws (`radio_ship_lost`), which wait for the radio
 /// ([#48](https://github.com/vdmkenny/openreliant/issues/48)); the other players' kills in a
 /// multiplayer game; and `0x00529C6C`, which a mission's start sets and two of the radio's states
 /// set and clear, and without which it does nothing.
@@ -390,6 +548,112 @@ test "a ship's end" {
     aigeneric.objectOrders(ctx, player);
     try std.testing.expect(watching.view == .pull_back or watching.view == .watch or watching.view == .watch_marker);
     try std.testing.expectEqual(.destroyed, mission.player.ending);
+}
+
+test "an asteroid goes up, a large one leaving smaller ones" {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    var ctx = mission.orders();
+    ctx.world.spawn = .{ .tables = &mission.tables, .types = create.testing.no_models };
+    const all = mission.objects;
+    _ = try mission.add(.predator, @splat(0));
+    const rock = try mission.add(.asteroid(0), .{ 0, 0, 5000 });
+    mission.clock.frame_start = 10;
+
+    // It stops, and goes the frame after.
+    ai.objectDestroyed(ctx, rock, true, false);
+    aigeneric.objectOrders(ctx, rock);
+    try std.testing.expectEqual(Mode.asteroid, all.slots[rock].state.explode.mode);
+    try std.testing.expect(all.slots[rock].object.flags.frozen);
+    mission.clock.frame_start += 1;
+    aigeneric.objectOrders(ctx, rock);
+    try std.testing.expectEqual(gameobj.Type.stand_in, all.slots[rock].object.type);
+
+    // Three fragments of the next asteroids take its place, smaller, colliding with nothing.
+    try std.testing.expectEqual(rock + 1 + fragments, all.count);
+    const fragment = &all.slots[rock + 1];
+    try std.testing.expect(fragment.object.type.isAsteroid());
+    try std.testing.expectEqual(fragment_share, fragment.object.visibility);
+    try std.testing.expect(fragment.object.flags.no_collisions);
+
+    // A fragment breaks once more; the smallest leave nothing.
+    const smaller = rock + 1;
+    ai.objectDestroyed(ctx, smaller, true, false);
+    aigeneric.objectOrders(ctx, smaller);
+    mission.clock.frame_start += 1;
+    aigeneric.objectOrders(ctx, smaller);
+    const smallest: u16 = @intCast(all.count - 1);
+    try std.testing.expectApproxEqAbs(fragment_share * fragment_share, all.slots[smallest].object.visibility, 1e-6);
+    const count = all.count;
+    ai.objectDestroyed(ctx, smallest, true, false);
+    aigeneric.objectOrders(ctx, smallest);
+    mission.clock.frame_start += 1;
+    aigeneric.objectOrders(ctx, smallest);
+    try std.testing.expectEqual(count, all.count);
+}
+
+test "a ship listing components loses its hull, or a component" {
+    const gpa = std.testing.allocator;
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(gpa);
+    defer mission.deinit();
+    const ctx = mission.orders();
+    var hull: create.testing.Model = undefined;
+    try hull.init(gpa);
+    defer hull.deinit(gpa);
+    hull.source.header.flags.components = true;
+    hull.data[0].part.flags.component = true;
+    hull.data[0].part.class = .hull;
+    const all = mission.objects;
+    _ = try mission.add(.predator, @splat(0));
+    const ship = try create.createObject(all, &mission.tables, hull.types(), null, .reaper, 0, .{ 0, 0, 1000 }, &mission.random);
+    try std.testing.expect(all.slots[ship].object.flags.components);
+    const model = &all.slots[ship].model.?;
+
+    // As a whole, its hull runs out of armour for the losses to take, and the order is done.
+    _ = try aigeneric.push(ctx, ship, .explode, .none);
+    aigeneric.objectOrders(ctx, ship);
+    try std.testing.expectEqual(spent_armor, model.parts[0].armor);
+    try std.testing.expect(model.destroyed);
+    try std.testing.expectEqual(0, all.slots[ship].object.order_count);
+
+    // Aimed at a component, that one does, and again the order is done.
+    model.destroyed = false;
+    model.parts[0].armor = 100;
+    _ = try aigeneric.push(ctx, ship, .explode, .{ .kind = .ship, .index = @intCast(ship), .component = 0 });
+    aigeneric.objectOrders(ctx, ship);
+    try std.testing.expectEqual(spent_armor, model.parts[0].armor);
+    try std.testing.expect(model.destroyed);
+    try std.testing.expectEqual(0, all.slots[ship].object.order_count);
+
+    // A disabled ship ends as its hull holding it together does.
+    all.slots[ship].object.flags.disabled = true;
+    _ = try aigeneric.push(ctx, ship, .explode, .none);
+    aigeneric.objectOrders(ctx, ship);
+    try std.testing.expect(all.slots[ship].object.flags.exploding);
+}
+
+test "the limpet car leaves its pod" {
+    const gpa = std.testing.allocator;
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(gpa);
+    defer mission.deinit();
+    var ctx = mission.orders();
+    var car: create.testing.Model = undefined;
+    try car.init(gpa);
+    defer car.deinit(gpa);
+    ctx.world.spawn = .{ .tables = &mission.tables, .types = car.types() };
+    const all = mission.objects;
+    _ = try mission.add(.predator, @splat(0));
+    const index = try create.createObject(all, &mission.tables, car.types(), null, .limpet_car, 0, .{ 0, 0, 2000 }, &mission.random);
+
+    // It stops dead and, the same step as its order starts, blows up, and a limpet pod takes its
+    // slot where it was.
+    ai.objectDestroyed(ctx, index, true, false);
+    aigeneric.objectOrders(ctx, index);
+    try std.testing.expectEqual(gameobj.Type.limpet_pod, all.slots[index].object.type);
+    try std.testing.expectEqual(@as(Vector, .{ 0, 0, 2000 }), all.slots[index].drawn.position);
 }
 
 test spin {

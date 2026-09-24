@@ -573,6 +573,31 @@ having gone up as it stopped, and anything else in a blast (`explode_blast`, `0x
 play sound 11 again. `object_retire` (`0x004688E0`) then leaves a stand-in, of type 1001, flagged as
 one and exploding, not targetable and with no orders, which nothing moves, draws or collides with.
 
+The other modes:
+
+- A ship that lists components, going as a whole (`explode_hull_init`, `0x00409170`): each part
+  of its hull hanging from the model's root, but a part of a damaged model, is left with -1
+  armour, and the root is flagged for the component losses to take it away ([Components](#components)).
+  Its update (`0x004091E0`) ends a disabled ship as its hull holding it together does
+  (`object_hull_lost`) and pops the order of any other.
+- One of its components, the one the order is aimed at (`explode_component_init`, `0x00409200`):
+  where it is shown, it is left with -1 armour, and the root of the model holding it is flagged.
+  Its update (`explode_component`, `0x00409260`) pops the order.
+- An asteroid, types `0x79` to `0x7F` (`explode_asteroid_init`, `0x00409270`): unpowered and
+  frozen, it goes the frame after (`explode_asteroid`, `0x004092A0`) in a fireball as wide as 1.5
+  times its radius, lighting what is round it, and is retired. Where its `visibility` times 0.4 is
+  at least 0.16, three asteroids of types `0x7B` to `0x7E`, at random, take its place, that much of
+  its size: `visibility`, and the scale of their first part's frame (`+0x48`). Each is turned
+  1.88496 more than the last about the X axis, from 1.88496, and stands 3 of its own radii along its
+  nose from where the rock was, still and colliding with nothing. A whole rock so leaves three of
+  0.4, and each of those three of 0.16.
+- The limpet car, type `0x1D` (`explode_limpet_car_init`, `0x004094D0`): it stops dead, unpowered,
+  with a random turn up to ±0.025 about its first two axes and ±0.15 about its third, and goes up in
+  a fireball as wide as its radius. Its update (`explode_limpet_car`, `0x004095F0`), the same step,
+  hides its first part, blows it up (`explode_blast`), and replaces it in its slot with a limpet pod,
+  type `0xBC`, where that part was going; a car whose first part is already hidden blows up and is
+  retired.
+
 The player's ship has the camera watch its end, locked: a spin-out slower than 100 from behind,
 pulling away (view 8), a faster one from where the camera was (view `0x1A`), a burst from there
 watching where it burst (view `0x1B`), and a halt from behind. `mission_ending` becomes 1.
@@ -586,7 +611,7 @@ watching where it burst (view `0x1B`), and a halt from behind. `mission_ending` 
 
 The blasts' break-up, particles, fireballs, burning bits and shockwaves are in
 [Effects](effects.md). Not ported: the other effects
-([#41](https://github.com/vdmkenny/openreliant/issues/41)); the other modes; Eject Spin
+([#207](https://github.com/vdmkenny/openreliant/issues/207)); Eject Spin
 and the other ejection orders ([#30](https://github.com/vdmkenny/openreliant/issues/30)); and what
 the end tells the mission, the kill and the radio's lines on it, and the Destroyed event
 ([#37](https://github.com/vdmkenny/openreliant/issues/37)).
