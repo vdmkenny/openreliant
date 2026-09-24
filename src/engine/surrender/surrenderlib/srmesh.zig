@@ -78,12 +78,12 @@ pub const Drawn = struct {
 };
 
 /// The vertices and polygons of the objects drawn so far this frame (`0x005E82F4`, `0x005E82F8`):
-/// an object that would take either past the limit is left out.
+/// an object that would take either past the limit is left out. The layers are drawn from what
+/// went into them last, so it is the objects that went in first that are left out.
 pub const Budget = struct {
     vertices: usize = 0,
     polygons: usize = 0,
-
-    pub const limit = 19999;
+    limit: usize = srapi.original_budget,
 };
 
 /// How far a vertex has moved toward its counterpart in the next level, and its normal likewise
@@ -100,8 +100,8 @@ pub fn pipe(
     budget: *Budget,
 ) Allocator.Error!?Drawn {
     const current = object.levels[object.level].mesh;
-    if (current.polygons.len + budget.polygons > Budget.limit) return null;
-    if (current.positions.len + budget.vertices > Budget.limit) return null;
+    if (current.polygons.len + budget.polygons > budget.limit) return null;
+    if (current.positions.len + budget.vertices > budget.limit) return null;
 
     // The object in the camera's frame (`SR_object_rotate`, `0x004C7D00`).
     const relative = context.view(object.position);
@@ -531,6 +531,13 @@ test pipe {
     try std.testing.expect(!near.visible[0].clip.near);
     object.position = .{ 0, 0, 50 };
     try std.testing.expectEqual(null, try pipe(arena, &context, &object, &lights, &budget));
+
+    // An object that would take the frame past its budget is left out.
+    object.position = .{ 0, 0, 1000 };
+    var full: Budget = .{ .limit = 5 };
+    try std.testing.expect(try pipe(arena, &context, &object, &lights, &full) != null);
+    try std.testing.expectEqual(null, try pipe(arena, &context, &object, &lights, &full));
+    try std.testing.expectEqual(srapi.original_budget, (Budget{}).limit);
 }
 
 test "the finer levels of detail reach further, the last one not" {

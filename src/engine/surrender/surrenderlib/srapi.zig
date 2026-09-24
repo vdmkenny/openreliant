@@ -149,6 +149,10 @@ pub const Outcode = packed struct(u8) {
 /// The whole screen, as a viewport.
 pub const full_screen = [4]f32{ 0, 0, 1, 1 };
 
+/// The vertices and the polygons the game lets the objects drawn in a frame take
+/// (`0x005E82F4`, `0x005E82F8` against 19999).
+pub const original_budget = 19999;
+
 /// Surrender's state, `sr` (`0x005E6B50`), as the port keeps it: the camera and its projection,
 /// the level-of-detail divisor, and the sun's point the driver checks triangles against.
 pub const Context = struct {
@@ -164,6 +168,9 @@ pub const Context = struct {
     /// reach, so that an object keeps a finer mesh from further off; its last level still ends
     /// where `detail` has it, and the object leaves sight there. 1 is the original's.
     finer: f32 = 1,
+    /// How many vertices, and how many polygons, the objects drawn in a frame may take
+    /// (`srmesh.Budget`): the original's `original_budget` unless set.
+    budget: usize = original_budget,
     /// A hardware renderer (`sr + 0x1AC`).
     hardware: bool = true,
     /// The sun's point on the screen (`sr + 0x173E`), and how much of it shows (`sr + 0x1746`):

@@ -151,7 +151,7 @@ pub fn render(arena: Allocator, context: *srapi.Context, scene: *Scene, driver: 
     try driver.vtable.lights(driver.ptr, lights);
     try castShadows(arena, context.*, scene, lights, driver);
 
-    var budget: srmesh.Budget = .{};
+    var budget: srmesh.Budget = .{ .limit = context.budget };
     for (std.enums.values(Layer)) |layer| {
         var blended: Blended = .{ .arena = arena };
         const objects = scene.layers.getPtr(layer).items;

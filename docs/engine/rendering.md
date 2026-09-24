@@ -38,6 +38,8 @@ view; the test passes on greater or equal, and the buffer clears to 0. The drive
 
 **Unknown:** types 5 and 6 (`0x004CE830`, `0x004CE7B0`).
 
+A frame's meshes may take 19999 vertices and 19999 polygons between them (`0x005E82F4`, `0x005E82F8`): `SR_meshpipe_init` leaves out a mesh that would take either count past that. Each layer is drawn from what went into it last, so it is what went in first that is left out ([Renderer](../port/renderer.md#improvements)).
+
 The device's render states are set once, with the display mode (`D3D_set_screen_mode`,
 `0x10004840`, or `D3D_set_screen_mode_windowed`, `0x10003C20`); afterwards the driver changes only
 the depth states and the blending. Anti-aliasing, of the scene or of edges, is off, and no setting
