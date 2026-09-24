@@ -65,8 +65,8 @@ pub const Tag = enum(u16) {
     animation_clip = 0x0A,
     keyframe = 0x0B,
     clip_event = 0x0C,
-    face_group = 0x0D,
-    group_entry = 0x0E,
+    point_list = 0x0D,
+    point = 0x0E,
     trigger_polygon = 0x0F,
     firing_arc = 0x10,
     /// Ends the stream.
@@ -309,6 +309,45 @@ pub const TreeNode = extern struct {
 /// directions a turret standing on that component may fire in (`turret_fit_aimed`,
 /// `0x00479160`; `turret_aim_angles`, `0x0047CB10`). Some exporters wrote 12-byte records, with
 /// no mask, which the loader leaves zeroed: nowhere to fire.
+/// A list of points on a part (tag `0x0D`, its kind; each point tag `0x0E`), which the game's
+/// asserts call a "pointlist": where the effects of a wreck and a capital ship's split stand
+/// (`node_point_group`, `0x004ADD50`, finds a part's list of a kind).
+pub const PointList = struct {
+    kind: Kind,
+    points: []Point,
+
+    /// What a list's points are for, by the code that reads them.
+    pub const Kind = enum(u32) {
+        /// Pairs of points an electric ray runs between as a wreck burns (`explode_part_burn`).
+        rays = 1,
+        /// Where a capital ship is cut as it splits in two (`split_create`).
+        cut = 2,
+        /// Where smoke streams from a burning wreck, along each point's vertex's normal
+        /// (`part_streams`).
+        streams = 3,
+        /// Where a burning wreck's light stands: the list's first point (`part_burn_lights`).
+        light = 4,
+        /// Where fireballs go off as a split ship's halves part (`split_update`).
+        fireballs = 5,
+        _,
+    };
+};
+
+/// A point of a list (tag `0x0E`, 20 bytes).
+pub const Point = extern struct {
+    /// **Unknown.** 0 in the models read.
+    _unknown_00: u32,
+    /// The vertex of the part's mesh it stands on.
+    vertex: u32,
+    /// Where it stands in the part's frame.
+    position: Vec3,
+
+    comptime {
+        assert(@offsetOf(Point, "position") == 0x08);
+        assert(@sizeOf(Point) == 0x14);
+    }
+};
+
 pub const FiringArc = extern struct {
     /// **Unknown.** Nothing reads it; (0, -1, 0) or (0, 1, 0) in the shipped models.
     _unknown_00: Vec3,
@@ -720,9 +759,18 @@ pub const PartData = struct {
     /// The faces of each node, as indices into the first level's faces. Empty for a node that has
     /// children rather than faces.
     node_faces: [][]u32,
-    /// Chunks that are read but not yet interpreted, kept as counts.
-    group_count: usize,
+    /// Its point lists, in the order the file lists them.
+    point_lists: []PointList = &.{},
+    /// Trigger polygons, which are read but not yet interpreted, kept as a count.
     trigger_count: usize,
+
+    /// Its list of points of `kind`, or null for none (`node_point_group`).
+    pub fn pointList(data: PartData, kind: PointList.Kind) ?PointList {
+        for (data.point_lists) |list| {
+            if (list.kind == kind) return list;
+        }
+        return null;
+    }
 };
 
 /// A parsed model. Everything is allocated from the allocator passed to `parse`, which is expected
@@ -754,7 +802,7 @@ pub const Model = struct {
             const nodes = try reader.takeRecords(TreeNode, gpa, .tree_node);
             const attachments = try reader.takeRecords(Attachment, gpa, .attachment);
             const clips = try reader.takeRecords(Clip, gpa, .animation_clip);
-            const groups = try reader.take(.face_group);
+            const kinds = try reader.takeRecords(u32, gpa, .point_list);
             const triggers = try reader.take(.trigger_polygon);
 
             const meshes = try gpa.alloc(Mesh, lods.len);
@@ -767,8 +815,6 @@ pub const Model = struct {
                 };
             }
 
-            const group_count = if (groups) |chunk| chunk.count else 0;
-
             // Per-node, per-clip and per-group lists follow the level geometry.
             const node_faces = try gpa.alloc([]u32, nodes.len);
             for (node_faces) |*faces| faces.* = try reader.takeRecords(u32, gpa, .node_face_list);
@@ -780,7 +826,10 @@ pub const Model = struct {
                     .events = try reader.takeRecords(ClipEvent, gpa, .clip_event),
                 };
             }
-            for (0..group_count) |_| _ = try reader.take(.group_entry);
+            const point_lists = try gpa.alloc(PointList, kinds.len);
+            for (kinds, point_lists) |kind, *list| {
+                list.* = .{ .kind = @enumFromInt(kind), .points = try reader.takeRecords(Point, gpa, .point) };
+            }
 
             entry.* = .{
                 .part = part,
@@ -789,7 +838,7 @@ pub const Model = struct {
                 .node_faces = node_faces,
                 .attachments = attachments,
                 .tracks = tracks,
-                .group_count = group_count,
+                .point_lists = point_lists,
                 .trigger_count = if (triggers) |chunk| chunk.count else 0,
             };
         }
@@ -878,6 +927,11 @@ fn buildTestModel(buffer: []u8) []u8 {
     @as(*align(1) Lod, @ptrCast(buffer[pos..][0..@sizeOf(Lod)])).* = .{ .switch_distance = 0 };
     pos += @sizeOf(Lod);
 
+    // One point list, of the points a split cuts the ship at; its points follow the geometry.
+    pos = put.chunk(buffer, pos, .point_list, @sizeOf(u32), 1);
+    std.mem.writeInt(u32, buffer[pos..][0..4], @intFromEnum(PointList.Kind.cut), .little);
+    pos += @sizeOf(u32);
+
     // A 28-byte vertex record: the older form, without the geomorph index.
     const old_vertex_size = 28;
     pos = put.chunk(buffer, pos, .vertex, old_vertex_size, 3);
@@ -900,6 +954,13 @@ fn buildTestModel(buffer: []u8) []u8 {
     material.* = std.mem.zeroes(Material);
     @memcpy(material.name_bytes[0..6], "Yank_1");
     pos += @sizeOf(Material);
+
+    pos = put.chunk(buffer, pos, .point, @sizeOf(Point), 2);
+    for (0..2) |i| {
+        const point: *align(1) Point = @ptrCast(buffer[pos..][0..@sizeOf(Point)]);
+        point.* = .{ ._unknown_00 = 0, .vertex = @intCast(i), .position = .{ .x = 0, .y = 0, .z = @floatFromInt(i * 100) } };
+        pos += @sizeOf(Point);
+    }
 
     pos = put.chunk(buffer, pos, .firing_arc, @sizeOf(FiringArc), 1);
     const arc: *align(1) FiringArc = @ptrCast(buffer[pos..][0..@sizeOf(FiringArc)]);
@@ -936,6 +997,13 @@ test "parses a model" {
     try std.testing.expectEqualStrings("Yank_1", mesh.materials[0].name());
     try std.testing.expectEqual(Face.Shading.Mode.lit, mesh.faces[0].shading.mode);
     try std.testing.expectEqual(@as(f32, 2), mesh.vertices[2].position.x);
+
+    // Its point list, by kind; none of another kind.
+    const cut = part.pointList(.cut).?;
+    try std.testing.expectEqual(@as(usize, 2), cut.points.len);
+    try std.testing.expectEqual(@as(f32, 100), cut.points[1].position.z);
+    try std.testing.expectEqual(@as(u32, 1), cut.points[1].vertex);
+    try std.testing.expectEqual(null, part.pointList(.streams));
 
     // The short vertex records carry no geomorph index, which must read as zero rather than as
     // whatever followed it in the file.
@@ -1085,7 +1153,6 @@ fn testPart(name: []const u8, component: bool, attachments: []Attachment) PartDa
         .tracks = &.{},
         .nodes = &.{},
         .node_faces = &.{},
-        .group_count = 0,
         .trigger_count = 0,
     };
 }

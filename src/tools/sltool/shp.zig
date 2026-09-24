@@ -172,11 +172,14 @@ fn info(ctx: Context, model: shp.Model) !void {
             try ctx.stdout.writeByte('\n');
         }
 
-        if (entry.attachments.len + entry.nodes.len + entry.tracks.len + entry.trigger_count > 0) {
-            try ctx.stdout.print("        {d} nodes, {d} attachments, {d} clips, {d} groups, {d} triggers\n", .{
-                entry.nodes.len,   entry.attachments.len, entry.tracks.len,
-                entry.group_count, entry.trigger_count,
+        if (entry.attachments.len + entry.nodes.len + entry.tracks.len + entry.point_lists.len + entry.trigger_count > 0) {
+            try ctx.stdout.print("        {d} nodes, {d} attachments, {d} clips, {d} point lists, {d} triggers\n", .{
+                entry.nodes.len,       entry.attachments.len, entry.tracks.len,
+                entry.point_lists.len, entry.trigger_count,
             });
+        }
+        for (entry.point_lists) |list| {
+            try ctx.stdout.print("          points kind {d}: {d}\n", .{ @intFromEnum(list.kind), list.points.len });
         }
         for (entry.tracks) |track| {
             try ctx.stdout.print("          clip '{s}' length {d} mode {d}, {d} keyframes, {d} events\n", .{

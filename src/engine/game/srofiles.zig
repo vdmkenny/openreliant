@@ -726,7 +726,7 @@ const TestTextures = struct {
 fn testPart(meshes: []shp.Mesh, flags: shp.Part.Flags) shp.PartData {
     var part = std.mem.zeroes(shp.Part);
     part.flags = flags;
-    return .{ .part = part, .meshes = meshes, .attachments = &.{}, .tracks = &.{}, .nodes = &.{}, .node_faces = &.{}, .group_count = 0, .trigger_count = 0 };
+    return .{ .part = part, .meshes = meshes, .attachments = &.{}, .tracks = &.{}, .nodes = &.{}, .node_faces = &.{}, .trigger_count = 0 };
 }
 
 test "build: surfaces, planes and a wire face's edges" {
