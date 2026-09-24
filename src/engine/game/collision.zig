@@ -536,11 +536,10 @@ const hull_passes = 9;
 /// ship is shoved at its own centre and the hull at the face, so the hull turns about the hit and
 /// the ship does not. The ship takes the damage on the quadrant it was struck in
 /// (`knockDamage`); its shield reserve is drawn by twice that, as the game halves the damage only
-/// once it has drawn the reserve.
+/// once it has drawn the reserve. A force field the ship hits glows whole (`shield.flareCapital`).
 ///
-/// Not ported: what the hit destroys ([#42](https://github.com/vdmkenny/openreliant/issues/42)), the
-/// damage the hull's own part takes ([#40](https://github.com/vdmkenny/openreliant/issues/40)), and a
-/// force field the ship hits flaring ([#179](https://github.com/vdmkenny/openreliant/issues/179)).
+/// Not ported: what the hit destroys ([#42](https://github.com/vdmkenny/openreliant/issues/42)), and
+/// the damage the hull's own part takes ([#40](https://github.com/vdmkenny/openreliant/issues/40)).
 /// The game also tests the player's ship against each part's trigger polygons first, which one
 /// shipped model carries.
 fn hullHit(world: gameobj.World, ship: u16, hull: u16, pass: u8) bool {
@@ -564,6 +563,7 @@ fn hullHit(world: gameobj.World, ship: u16, hull: u16, pass: u8) bool {
     const value = math.length(impulse) * damage_share / hit.mass;
     const struck = quadrant(hit, math.transformTransposed(hit.root.orientation, contact - gameobj.vector(hit.root.position)));
     knockDamage(world, ship, struck, value, value * 2, hull, contact, .after);
+    if (found.part.part().force_field) shield.flareCapital(world, hull, found.part, null);
     return true;
 }
 

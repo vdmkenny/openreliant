@@ -4,16 +4,17 @@
 //! | Kind | Struck by | What it leaves |
 //! |---|---|---|
 //! | 2 | A shot or a missile through to a hull (`bullet_hull_hit`, `missile_hit_hull`) | The hit's sound (`hullHit`), and an emitter of `0x0049FD20`'s orange template on the part's surface nearest the point (`0x0049FEF0`), facing out from it |
-//! | 3 | A shot or a missile on a component (`bullet_hit`, `0x0047B840`, `0x00495AC0`) | A burst of 20 of the orange template's particles |
+//! | 3 | A shot or a missile on a component (`bullet_hit`, `0x0047B840`, `0x00495AC0`) | On an object with a shield generator that isn't exploding, its capital shield instead (`componentHit`); otherwise a burst of 20 of the orange template's particles |
 //! | 4 | Nothing | An emitter of the grey template |
-//! | 5 | Nothing | Sound 71, and `0x00472780` |
+//! | 5 | A shot on a component of an asteroid, a turret asteroid or a hole (`bullet_hit`, `0x0047B840`) | Sound 71, and `0x00472780` |
 //!
 //! Nothing sends the emitters' particles out: `node_draw` updates a node of kind 6 through
 //! `0x00458AB0`, which is the one routine the build keeps of every routine that only returns 1, so
 //! a hull's emitter shows nothing.
 //!
-//! Not ported: the nodes and their emitters, which show nothing; and a component's burst
-//! ([#40](https://github.com/vdmkenny/openreliant/issues/40)). The game hangs a part no more than a
+//! Not ported: the nodes and their emitters, which show nothing; a component's burst, and the
+//! nodes of earlier hits nearby that kind 3 clears first
+//! ([#40](https://github.com/vdmkenny/openreliant/issues/40)); and kind 5's sound. The game hangs a part no more than a
 //! hundred nodes, so a part struck a hundred times no longer sounds; the port keeps no nodes, and
 //! every hit sounds.
 
@@ -22,7 +23,34 @@ const std = @import("std");
 const math = @import("../surrender/math.zig");
 const Vector = math.Vector;
 const gameobj = @import("gameobj.zig");
+const objects = @import("objects.zig");
+const shield = @import("shield.zig");
 const sound3d = @import("sound3d.zig");
+
+/// What a hit leaves where it struck, which `0x004992D0` is handed (the table above).
+pub const Kind = enum(i32) {
+    hull = 2,
+    component = 3,
+    grey = 4,
+    rock = 5,
+
+    /// What a shot leaves on a component of an object of `object_type` (`bullet_hit`,
+    /// `0x0047B840`): `rock` on what is made of rock (`gameobj.Type.rock`).
+    pub fn onComponentOf(object_type: gameobj.Type) Kind {
+        return if (object_type.rock() != null) .rock else .component;
+    }
+};
+
+/// `0x004992D0` for a shot or a missile on part `ref`, a component of the object in slot `index`,
+/// on face `face` of the part's record, leaving `kind`. On an object with a shield generator that
+/// isn't exploding, a component's capital shield glows round the face (`shield.flareCapital`),
+/// and nothing is left on the part.
+pub fn componentHit(world: gameobj.World, index: u16, ref: objects.PartRef, face: usize, kind: Kind) void {
+    if (kind != .component) return;
+    const flags = world.objects.slots[index].object.flags;
+    if (!flags.shield_generator or flags.exploding) return;
+    shield.flareCapital(world, index, ref, ref.polygon(face));
+}
 
 /// How long after a shot last sounded on the player's hull another does (`0x00593794`).
 const player_hit_pause = 30;

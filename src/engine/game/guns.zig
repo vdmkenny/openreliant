@@ -1454,15 +1454,16 @@ const huge_fireball_life = 150;
 
 /// `bullet_hit` striking part `crossing.part` of the object in slot `index`, which lists
 /// components: the shot is spent where it crosses the part's face, as the part stands drawn. A
-/// Huge Gun's sets off a lit fireball there, its own sparks along the face's normal and an
-/// explosion's sound, and does no damage; any other throws sparks along the normal, and the part
-/// takes the type's second damage (`collision.componentDamage`).
+/// force field glows whole (`shield.flareCapital`), and the hit leaves what it leaves on the part
+/// (`shieldfx.componentHit`). A Huge Gun's shot sets off a lit fireball there, its own sparks
+/// along the face's normal and an explosion's sound, and does no damage; any other throws sparks
+/// along the normal, and the part takes the type's second damage (`collision.componentDamage`).
 ///
-/// Not ported: a force field's flare (`capshield_flare`, `0x0049F4A0`), what the hit leaves on the
-/// part (`node_add_effect`, `0x004992D0`), and the cloak a hit reveals
-/// ([#89](https://github.com/vdmkenny/openreliant/issues/89)).
+/// Not ported: the cloak a hit reveals ([#89](https://github.com/vdmkenny/openreliant/issues/89)).
 fn componentHit(world: gameobj.World, bullet: *Bullet, index: u16, crossing: objects.Crossing) void {
     bullet.dies_at = spent;
+    if (crossing.part.part().force_field) shield.flareCapital(world, index, crossing.part, null);
+    shieldfx.componentHit(world, index, crossing.part, crossing.face, .onComponentOf(world.objects.slots[index].object.type));
     const drawn = crossing.part.part().drawn();
     const at = math.transform(drawn.orientation, crossing.point) + drawn.position;
     const normal = math.transform(drawn.orientation, crossing.normal);

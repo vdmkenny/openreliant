@@ -271,8 +271,14 @@ pub const Type = enum(u32) {
     stand_in = 1001,
     _,
 
-    /// The asteroids, `ast_1.shp` to `ast_7.shp`.
-    const asteroids = [2]u32{ 0x79, 0x7F };
+    /// What is made of rock: the asteroids, `ast_1.shp` to `ast_7.shp`; the turret asteroids,
+    /// `turast_1.shp` to `turast_7.shp`; and the holes, `ast_hole1.shp` to `ast_hole4.shp`.
+    pub const Rock = enum { asteroid, turret, hole };
+    const rocks: std.EnumArray(Rock, [2]u32) = .init(.{
+        .asteroid = .{ 0x79, 0x7F },
+        .turret = .{ 0x85, 0x8B },
+        .hole = .{ 0xF0, 0xF3 },
+    });
 
     comptime {
         // The numbers are the game's own, so the models they stand for say which types they are.
@@ -321,8 +327,12 @@ pub const Type = enum(u32) {
             .{ @enumFromInt(Type.rock_chunk.number() + 4), "rockchunk04.SHP" },
             .{ .shell, "shell.shp" },
             .{ .limpet_pod, "limpet_pod.shp" },
-            .{ @enumFromInt(asteroids[0]), "ast_1.shp" },
-            .{ @enumFromInt(asteroids[1]), "ast_7.shp" },
+            .{ @enumFromInt(rocks.get(.asteroid)[0]), "ast_1.shp" },
+            .{ @enumFromInt(rocks.get(.asteroid)[1]), "ast_7.shp" },
+            .{ @enumFromInt(rocks.get(.turret)[0]), "turast_1.shp" },
+            .{ @enumFromInt(rocks.get(.turret)[1]), "turast_7.shp" },
+            .{ @enumFromInt(rocks.get(.hole)[0]), "ast_hole1.shp" },
+            .{ @enumFromInt(rocks.get(.hole)[1]), "ast_hole4.shp" },
         };
         for (models) |named| assert(std.mem.eql(u8, create.models.ship_types[named[0].number()].model.?, named[1]));
     }
@@ -336,8 +346,18 @@ pub const Type = enum(u32) {
         return object_type.number() < create.ship_type_count;
     }
 
+    /// What rock it is, if any.
+    pub fn rock(object_type: Type) ?Rock {
+        const n = object_type.number();
+        for (std.enums.values(Rock)) |kind| {
+            const range = rocks.get(kind);
+            if (n >= range[0] and n <= range[1]) return kind;
+        }
+        return null;
+    }
+
     pub fn isAsteroid(object_type: Type) bool {
-        return object_type.number() >= asteroids[0] and object_type.number() <= asteroids[1];
+        return object_type.rock() == .asteroid;
     }
 
     /// The child of the root the AI aims at on an object of this type, where it aims at a part
@@ -905,6 +925,15 @@ pub const GunMode = packed struct(u16) {
         return .{ .group = 0, ._unknown_3 = false, .all = groups != 1, .synchronised = true, ._unknown_6 = 0 };
     }
 };
+
+test "Type.rock" {
+    try std.testing.expectEqual(.asteroid, Type.rock(@enumFromInt(0x7F)));
+    try std.testing.expectEqual(.turret, Type.rock(@enumFromInt(0x85)));
+    try std.testing.expectEqual(.hole, Type.rock(@enumFromInt(0xF3)));
+    try std.testing.expectEqual(null, Type.rock(@enumFromInt(0x80)));
+    try std.testing.expectEqual(null, Type.predator.rock());
+    try std.testing.expect(!Type.isAsteroid(@enumFromInt(0x85)));
+}
 
 test GunMode {
     try std.testing.expectEqual(0x20, @as(u16, @bitCast(GunMode.created(1))));

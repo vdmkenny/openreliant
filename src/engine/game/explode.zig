@@ -23,6 +23,7 @@ const gameobj = @import("gameobj.zig");
 const libcmt = @import("../libcmt.zig");
 const matmanager = @import("matmanager.zig");
 const objects = @import("objects.zig");
+const shield = @import("shield.zig");
 const particles = @import("particles.zig");
 pub const breakup = @import("explode/breakup.zig");
 pub const split = @import("explode/split.zig");
@@ -907,12 +908,11 @@ pub const ComponentLoss = enum {
 
 /// Runs `routine` for `part`, a component of the object in slot `index` just destroyed: whether
 /// `objects.loseComponents` goes on with it. A capital ship lets it go on for any part but one of
-/// its hull, which ends the ship: it is marked unpowered and exploding, splits in two
-/// (`split.start`), and is lost (`loseHull`). The Ulysses' stops it for every part.
+/// its hull, which ends the ship: it is marked unpowered and exploding, its force fields go dark
+/// (`shield.hideForceFields`), it splits in two (`split.start`), and is lost (`loseHull`). The
+/// Ulysses' stops it for every part.
 ///
-/// Not ported: the force fields going dark (`force_field_mark`,
-/// [#179](https://github.com/vdmkenny/openreliant/issues/179)), and all the Ulysses' does
-/// ([#225](https://github.com/vdmkenny/openreliant/issues/225)).
+/// Not ported: all the Ulysses' does ([#225](https://github.com/vdmkenny/openreliant/issues/225)).
 pub fn loseComponent(ctx: aigeneric.Context, index: u16, routine: ComponentLoss, part: *const objects.Model.Part) bool {
     switch (routine) {
         .capital_ship => {
@@ -920,6 +920,7 @@ pub fn loseComponent(ctx: aigeneric.Context, index: u16, routine: ComponentLoss,
             const flags = &ctx.world.objects.slots[index].object.flags;
             flags.unpowered = true;
             flags.exploding = true;
+            if (ctx.world.objects.slots[index].model) |*model| shield.hideForceFields(model);
             split.start(ctx.world, index);
             loseHull(ctx, index);
             return false;
