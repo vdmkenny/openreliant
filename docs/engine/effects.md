@@ -163,6 +163,8 @@ both key lights and both fill lights, where a ship's part takes one of each pair
 **Improvement:** a bit takes the lights a ship's part takes (`objects.lightMask`), so it is not
 washed out. `--original` restores every light, for the bits and the break-up's pieces alike.
 
+**Improvement:** the port keeps room for 4000 bits whatever the detail, and a thrown bit flies on until its place is needed instead of going after about 20 seconds. A capital ship's split throws hundreds, which the original's pool lets go of within seconds. A stream's spark still goes after its few seconds. `--original` restores the original's pool and times (`explode.BitPool`).
+
 [`explode.zig`](../../src/engine/game/explode.zig) ports the bits as `Explosions.throwBit`,
 `Explosions.throwSpark` and `Bit`, and [`aiexplode.zig`](../../src/engine/game/aiexplode.zig) the
 spin-out's trail. The port
@@ -235,6 +237,43 @@ assembly goes up, and each part of every model mounted on it (`explode_part_burs
   piece does; a lit fireball its size, set off late by as long, waits where it ends.
 
 The hidden parts of the assembly, its damaged model, go up with the rest.
+
+## Splits
+
+When a capital ship loses its hull (`explode_capship_component`, `0x0046F820`), it splits in two. The explosion sequences at `0x004FFB50` say how: 40 records of `0x2C` bytes, looked up by the ship's own type, not the type it takes its stats from (`explode_sequence_find`, `0x00471D30`). `make explode-tables` transcribes them into [`explode/sequences.zig`](../../src/engine/game/explode/sequences.zig). Each record gives the type of the ship's other half, if it has one, whether the split is a sweep or bursts, how long it lasts, and the sizes of its fireballs and burning bits.
+
+`split_create` (`0x0046F480`) sets the split up in one of ten slots (`0x0055335C`):
+
+- The ship's engines stop, and its parts stop playing their tracks.
+- The points of its parts' `cut` lists are gathered in the ship's frame and sorted from stern to bow. A Latov's stay in the order the parts list them.
+- The other half appears where the ship is, turning as it turns but unpowered and disabled. It shows its first part, cut by the second portal.
+- The ship's intact parts, and everything they carry, are cut by the first portal, which keeps what lies ahead of the cut. The last intact hull part is kept for the end.
+- The first hull part of the damaged model is the wreck. A sweep shows it at once, cut by the second portal, which keeps what lies behind the cut. A Latov shows all its damaged hull parts.
+- A kind 7 shockwave spreads from the ship, and a bursts split sets off five to seven bursts straight away.
+
+`split_update` (`0x00470030`) runs each split once a frame:
+
+- **A sweep** moves the cut through the points over the split's time. The ship is held where it split, shaking by up to 10 on each axis. The portals stand at the last point reached, turned with the ship, and are in the scene until the last step (never for a Latov). Each step sets off a lit fireball of `(0.5r + 0.75)` times the sequence's size and `bits` burning bits, heading out from the ship or back along it. Every 14 to 16 steps an explosion is heard, and one step in 30 adds a bigger burst halfway to the bow. The other half is free to move.
+- **Bursts** start after a second. One frame in ten, or five for a Stalag, sets off two lit fireballs and four times `bits` burning bits at a random point, with an explosion's sound. A Latov's or a Stalag's bursts shake the view.
+
+When the time is up, the split ends once (`GameObject` `0x610` bit 1) and the portals go, so nothing is cut any more:
+
+- After a sweep, the other half drifts away by its type, and all the ship's parts but the wreck disappear.
+- After bursts, every point gets a fireball and burning bits, the intact parts disappear and the wreck shows.
+- Either way, the ship drifts at `(2, 1.4, -5)` a step and turns slowly; a few types stop dead instead. `CAPEXP` is heard from it, it is recentred on what is left (`object_recentre`), and three fireballs go off at its hull's `fireballs` points, 50 ticks apart.
+
+`object_draw` leaves out the engine glows of a ship that is splitting.
+
+**Fix:** the port corrects these bugs of the original:
+
+- A type with no sequence doesn't split. The game reads a record from the text before the table, and the split never ends.
+- With no other half, the game frees the player's ship to move each frame and sends it off at the end. The port leaves it alone.
+- The points are sorted properly; the game puts the one that belongs right after the first before it. Each part's points go through the part's place in the ship, and a burst's points through the ship's place, not through the part a list belongs to.
+- The Victorious' front half drifts as its own case says, instead of falling through into the next case.
+- A burst with no points is skipped, where the game divides by zero, and the end reads only as many fireball points as the hull has.
+- When all ten slots are taken, the split whose slot is reused is stopped first, so its parts are no longer cut.
+
+[`explode/split.zig`](../../src/engine/game/explode/split.zig) ports the splits. Not ported: the Dark Reign's hat, the Krasnaya's arms and the Boridin breakaway's core, which a split takes apart first; the wrecks' electric rays, lights and smoke at the end (`explode_part_burn`, `0x00471290`); the screen's flash (`explode_flash_near`, `0x00471D70`); the bodies among the burning bits; and the Ulysses' own routine ([#225](https://github.com/vdmkenny/openreliant/issues/225)).
 
 ## Smoke
 
@@ -315,7 +354,7 @@ far it has now, it acts on by its kind:
 | 4 | `rng_06` | Nothing | Nothing |
 | 5 | `rng_06` | A Havoc's end (`missile_end`, `0x00495870`): 50000 across over 500 ticks, sparing its launcher's side | Ships of other sides are pushed away, disrupted |
 | 6 | `rng_01` | An Imp's end, likewise | Each quadrant of ships of other sides takes 50 more than its shield holds, and their [shield bubbles](#shields) flicker for 100 ticks |
-| 7 | none, unseen | Nothing | The player takes damage by the owner's type |
+| 7 | none, unseen | A capital ship's split ([Splits](#splits)): twice the ship's radius across, lasting half as long again as the split | Shakes the view as kind 0 does, and damages the player by the owner's type |
 | 8 | `rng_01` | A halting torpedo, 6000 across over 100 ticks | The view shakes as for kind 0, and the player takes damage |
 
 A shockwave that harms passes over ships that list components, are stand-ins, exploding or
@@ -338,8 +377,8 @@ a register.
 
 **Improvement:** the port names the shockwave's owner, the torpedo, instead.
 
-[`shockwave.zig`](../../src/engine/game/shockwave.zig) ports the rings and what kinds 0 to 2, 5,
-6 and 8 do, and [`explode.zig`](../../src/engine/game/explode.zig),
+[`shockwave.zig`](../../src/engine/game/shockwave.zig) ports the rings and what kinds 0 to 2 and 5
+to 8 do, and [`explode.zig`](../../src/engine/game/explode.zig),
 [`aiexplode.zig`](../../src/engine/game/aiexplode.zig) and
 [`missiles.zig`](../../src/engine/game/missiles.zig) the blast's, the torpedo's and the missiles'.
 Not ported: kind 3's caller ([#41](https://github.com/vdmkenny/openreliant/issues/41)).

@@ -204,6 +204,15 @@ maneuver-tables: ## Re-derive the combat maneuvers, their scripts and handlers f
 	$(ROOT)/zig-out/bin/tablegen maneuvers $(PAYLOAD) $(MANEUVER_TABLES)
 	$(ZIG) fmt $(MANEUVER_TABLES)
 
+SEQUENCE_TABLES := $(ROOT)/src/engine/game/explode/sequences.zig
+
+.PHONY: explode-tables
+explode-tables: ## Re-derive how each capital ship splits in two as its hull is destroyed, from the payload executable
+	@test -f $(PAYLOAD) || { echo "missing $(PAYLOAD), the game executable with its code readable" >&2; exit 1; }
+	$(ZIG) build tablegen
+	$(ROOT)/zig-out/bin/tablegen sequences $(PAYLOAD) $(SEQUENCE_TABLES)
+	$(ZIG) fmt $(SEQUENCE_TABLES)
+
 VIEW_TABLES := $(ROOT)/src/engine/game/camera/views.zig
 
 .PHONY: view-tables

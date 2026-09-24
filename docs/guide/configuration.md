@@ -14,7 +14,7 @@ OpenReliant improves on the original's look and sound. `--original` turns the im
 
 | Option | Description |
 |---|---|
-| `--original` | The original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, light worked out on encoded colours, no shadows, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings and particles as few and plain as the original's, a damaged ship's smoke as even as the original's, the shields' bubbles as coarse as the original's, the levels of detail changing as near as the original's, the marker for a target out of sight placed as the original misplaces it, a missile's sound left where it was launched, and the sound mixed plainly in stereo |
+| `--original` | The original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, light worked out on encoded colours, no shadows, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings, particles and burning bits as few, plain and brief as the original's, a damaged ship's smoke as even as the original's, the shields' bubbles as coarse as the original's, the levels of detail changing as near as the original's, the marker for a target out of sight placed as the original misplaces it, a missile's sound left where it was launched, and the sound mixed plainly in stereo |
 
 ## The sandbox
 

@@ -1800,6 +1800,7 @@ pub const Model = struct {
             }
         }
         for (model.glows) |*glow| {
+            if (!view.glows) break;
             // A glow goes out with the part that carries it, as a light does.
             if (model.parts[glow.part].hidden) continue;
             const burning = glow.plume(view.throttle, view.random) orelse continue;
@@ -1878,6 +1879,9 @@ pub const View = struct {
     /// Whether its lights are drawn: `DisableLights` puts them out, for which `mission_frame` hands
     /// `node_draw` flag 8, which leaves out the nodes of kind 4 attachments.
     lights: bool = true,
+    /// Whether its engines' glows are drawn: `object_draw` hands `node_draw` flag 4 for a capital
+    /// ship splitting in two, which leaves out the nodes of engine glow attachments.
+    glows: bool = true,
     /// How hard the object is burning, between -1 and 1, which is how far its engine glows reach.
     /// `object_draw` is given the throttle of its last update, dimmed by the share of its engines
     /// still standing.

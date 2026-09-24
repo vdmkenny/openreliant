@@ -150,7 +150,7 @@ pub fn pipe(
             drawn.view[v] = transform(mesh, matrix, relative, morph, v);
             drawn.outcodes[v] = context.projection.outcode(drawn.view[v]);
         }
-        drawn.visible = markClipped(mesh, &drawn, marks, object.flags._unknown_1);
+        drawn.visible = markClipped(mesh, &drawn, marks, object.flags.portal_clipped);
         for (marks, 0..) |mark, v| {
             if (mark == 0) continue;
             try listed.append(arena, @intCast(v));
@@ -248,7 +248,7 @@ fn chooseLevel(
         if (every.any()) return null;
         clip = outside;
     }
-    if (object.flags._unknown_1) clip._unknown_5 = true;
+    if (object.flags.portal_clipped) clip.portal = true;
     return clip;
 }
 
@@ -291,7 +291,7 @@ fn cull(
 
 /// Drops the polygons wholly outside a plane, unmarking their vertices, and notes the planes the
 /// rest cross (`0x004C6A60`). Returns the visible polygons left.
-fn markClipped(mesh: *const Mesh, drawn: *Drawn, marks: []u8, sixth: bool) []Visible {
+fn markClipped(mesh: *const Mesh, drawn: *Drawn, marks: []u8, portal: bool) []Visible {
     var kept: usize = 0;
     var read: usize = 0;
     for (drawn.counts) |*count| {
@@ -311,7 +311,7 @@ fn markClipped(mesh: *const Mesh, drawn: *Drawn, marks: []u8, sixth: bool) []Vis
                 for (mesh.indices[p.first..][0..p.count]) |index| marks[index] -|= 1;
                 continue;
             }
-            if (sixth) any._unknown_5 = true;
+            if (portal) any.portal = true;
             drawn.visible[kept] = .{ .polygon = v.polygon, .clip = any };
             kept += 1;
             count.* += 1;

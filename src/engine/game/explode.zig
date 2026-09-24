@@ -25,6 +25,7 @@ const matmanager = @import("matmanager.zig");
 const objects = @import("objects.zig");
 const particles = @import("particles.zig");
 pub const breakup = @import("explode/breakup.zig");
+pub const split = @import("explode/split.zig");
 const shockwave = @import("shockwave.zig");
 const sound3d = @import("sound3d.zig");
 const table = @import("table.zig");
@@ -44,10 +45,12 @@ pub const Explosions = struct {
     /// (`explosion_bit_next`) takes the place of the oldest. When they last moved on
     /// (`explosion_bits_moved_at`). The game also counts them (`explosion_bit_count`), which
     /// nothing reads.
-    bits: table.Ring(Bit, max_bits) = .{},
+    bits: *Bits,
     moved_at: i32 = 0,
     /// The pieces the ships' break-ups send flying (`0x0055AE88`).
     pieces: breakup.Pieces,
+    /// The capital ships splitting in two (`0x0055335C`).
+    splits: split.Splits,
     /// The fireballs going off (`explosion_fireballs`, `0x00553398`), in as many slots as the
     /// settings give them.
     fireballs: [Fireballs.fuller.slots()]?Fireball = @splat(null),
@@ -55,7 +58,8 @@ pub const Explosions = struct {
     /// the ship blew up; null until it has.
     marker: ?Marker = null,
 
-    pub const max_bits = Detail.high.bits();
+    pub const max_bits = BitPool.lasting.room(.high);
+    const Bits = table.Ring(Bit, max_bits);
 
     pub const Marker = struct {
         position: Vector,
@@ -87,23 +91,30 @@ pub const Explosions = struct {
     };
 
     pub fn init(gpa: Allocator, images: Images) Allocator.Error!Explosions {
-        return .{ .images = images, .pieces = try .create(gpa) };
+        const bits = try gpa.create(Bits);
+        errdefer gpa.destroy(bits);
+        bits.* = .{};
+        return .{ .images = images, .bits = bits, .pieces = try .create(gpa), .splits = .init(gpa) };
     }
 
     pub fn deinit(explosions: *Explosions) void {
+        explosions.pieces.gpa.destroy(explosions.bits);
         explosions.pieces.deinit();
+        explosions.splits.deinit();
     }
 
     /// As a mission starts again: nothing flying or going off, and no marker, with the same
     /// settings; the debris is loaded again (`Debris.load`).
     pub fn reset(explosions: *Explosions) void {
         explosions.pieces.reset();
-        explosions.* = .{ .images = explosions.images, .settings = explosions.settings, .pieces = explosions.pieces };
+        explosions.splits.reset();
+        explosions.bits.* = .{};
+        explosions.* = .{ .images = explosions.images, .settings = explosions.settings, .bits = explosions.bits, .pieces = explosions.pieces, .splits = explosions.splits };
     }
 
     /// `explosions_update` (`0x0046E480`), once a frame, as far as the port goes: the marker drifts
-    /// on, the bits fly on, the pieces fly on (`breakup.Pieces.frame`), and each fireball plays on
-    /// (`Fireball.frame`), until it is done.
+    /// on, the bits fly on, the pieces fly on (`breakup.Pieces.frame`), the splits go on
+    /// (`split.Splits.frame`), and each fireball plays on (`Fireball.frame`), until it is done.
     ///
     /// **Improvement:** the marker drifts by `drift` a tick, where the game adds it once a frame,
     /// which comes to the same at a frame a tick.
@@ -113,10 +124,15 @@ pub const Explosions = struct {
         const seconds = @as(f32, @floatFromInt(clock.frame_start - explosions.moved_at)) * Bit.per_tick;
         for (&explosions.bits.slots) |*slot| {
             const bit = &(slot.* orelse continue);
-            if (bit.born + bit.life < clock.frame_start) slot.* = null else bit.fly(seconds);
+            if (bit.life) |life| if (bit.born + life < clock.frame_start) {
+                slot.* = null;
+                continue;
+            };
+            bit.fly(seconds);
         }
         explosions.moved_at = clock.frame_start;
         explosions.pieces.frame(world);
+        explosions.splits.frame(world);
         for (&explosions.fireballs) |*slot| {
             const fireball = &(slot.* orelse continue);
             if (!fireball.frame(clock)) slot.* = null;
@@ -133,6 +149,7 @@ pub const Explosions = struct {
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &bit.object }, .world);
         }
         try explosions.pieces.draw(gpa, scene, ahead);
+        try explosions.splits.draw(gpa, scene);
         for (&explosions.fireballs) |*slot| {
             const fireball = &(slot.* orelse continue);
             if (!fireball.showing) continue;
@@ -155,7 +172,11 @@ pub const Explosions = struct {
         const leaving = direction * @as(Vector, @splat((random.fraction() + 0.5) * Bit.speed));
         const stray = random.centredVector(@splat(Bit.stray));
         const velocity = math.transform(math.fromAngleVector(stray), leaving) * @as(Vector, @splat(how.speed));
-        explosions.addBit(piece, at, velocity, Bit.flight, clock, random);
+        const life: ?i32 = switch (explosions.settings.bit_pool) {
+            .lasting => null,
+            .original => Bit.flight.draw(random),
+        };
+        explosions.addBit(piece, at, velocity, life, clock, random);
     }
 
     /// `0x00471B20`, a stream's spark (`particles.Emitter.spark`): a small piece of debris thrown
@@ -165,16 +186,17 @@ pub const Explosions = struct {
     /// thrown.
     pub fn throwSpark(explosions: *Explosions, at: Vector, velocity: Vector, clock: *const Clock, random: *libcmt.Rand) void {
         const piece = explosions.debris.pick(Bit.spark_size, random) orelse return;
-        explosions.addBit(piece, at, velocity, Bit.spark_flight, clock, random);
+        explosions.addBit(piece, at, velocity, Bit.spark_flight.draw(random), clock, random);
     }
 
     /// Puts `piece` in the place of the oldest bit, lit, at `at`, flying at `velocity` a second,
-    /// turning a random way each frame, for `flight`'s ticks from now.
-    fn addBit(explosions: *Explosions, piece: Debris.Picked, at: Vector, velocity: Vector, flight: Bit.Flight, clock: *const Clock, random: *libcmt.Rand) void {
+    /// turning a random way each frame, for `life` ticks from now, or until its place is taken.
+    fn addBit(explosions: *Explosions, piece: Debris.Picked, at: Vector, velocity: Vector, life: ?i32, clock: *const Clock, random: *libcmt.Rand) void {
         const spin = random.centredVector(@splat(Bit.tumble));
-        explosions.bits.take(explosions.settings.detail.bits()).* = .{
+        const settings = explosions.settings;
+        explosions.bits.take(settings.bit_pool.room(settings.detail)).* = .{
             .born = clock.frame_start,
-            .life = flight.draw(random),
+            .life = life,
             .object = .{
                 .flags = .{ .lit = true },
                 .light_mask = explosions.settings.debris_lights.mask(objects.lightMask(false)),
@@ -204,6 +226,27 @@ pub const Settings = struct {
     detail: Detail = .high,
     debris_lights: DebrisLights = .like_ships,
     fireballs: Fireballs = .fuller,
+    bit_pool: BitPool = .lasting,
+};
+
+/// How many burning bits the explosions keep flying, and for how long.
+///
+/// **Improvement:** `lasting` keeps room for 4000, where the game keeps 100, 300 or 500 by the
+/// detail, and a bit an explosion throws flies on until its place is needed, where the game's go
+/// after 17.5 to 22.5 seconds; a capital ship's split throws hundreds, which the game's pool lets
+/// go of within seconds. A stream's spark still goes after its few seconds. `--original` restores
+/// the game's.
+pub const BitPool = enum {
+    lasting,
+    original,
+
+    /// Room for how many, at `detail`.
+    pub fn room(pool: BitPool, detail: Detail) usize {
+        return switch (pool) {
+            .lasting => 4000,
+            .original => detail.bits(),
+        };
+    }
 };
 
 /// How many fireballs go off at once, and how they light what is around them.
@@ -343,9 +386,10 @@ pub const Debris = struct {
 /// A bit an explosion throws out (0x28 bytes): a piece of debris, lit, flying off and tumbling for
 /// a time.
 pub const Bit = struct {
-    /// When it was thrown and how long it flies, in ticks (`+0x00`, `+0x04`).
+    /// When it was thrown and how long it flies, in ticks (`+0x00`, `+0x04`); null for as long as
+    /// its place is not taken (`BitPool.lasting`).
     born: i32,
-    life: i32,
+    life: ?i32,
     object: srapiext.MeshObject,
     /// Where it is at the frame's tick, which the game keeps in its object; the object is drawn
     /// from here (`Explosions.draw`).
@@ -863,10 +907,11 @@ pub const ComponentLoss = enum {
 
 /// Runs `routine` for `part`, a component of the object in slot `index` just destroyed: whether
 /// `objects.loseComponents` goes on with it. A capital ship lets it go on for any part but one of
-/// its hull, which ends the ship: it is marked unpowered and exploding, and lost (`loseHull`). The
-/// Ulysses' stops it for every part.
+/// its hull, which ends the ship: it is marked unpowered and exploding, splits in two
+/// (`split.start`), and is lost (`loseHull`). The Ulysses' stops it for every part.
 ///
-/// Not ported: the capital ship splitting in two, and all the Ulysses' does
+/// Not ported: the force fields going dark (`force_field_mark`,
+/// [#179](https://github.com/vdmkenny/openreliant/issues/179)), and all the Ulysses' does
 /// ([#225](https://github.com/vdmkenny/openreliant/issues/225)).
 pub fn loseComponent(ctx: aigeneric.Context, index: u16, routine: ComponentLoss, part: *const objects.Model.Part) bool {
     switch (routine) {
@@ -875,6 +920,7 @@ pub fn loseComponent(ctx: aigeneric.Context, index: u16, routine: ComponentLoss,
             const flags = &ctx.world.objects.slots[index].object.flags;
             flags.unpowered = true;
             flags.exploding = true;
+            split.start(ctx.world, index);
             loseHull(ctx, index);
             return false;
         },
@@ -1183,7 +1229,8 @@ test Bit {
     try std.testing.expect(bit.velocity[2] > 0);
     const speed = math.length(bit.velocity);
     try std.testing.expect(speed >= 300 and speed <= 900);
-    try std.testing.expect(bit.life >= 1750 and bit.life <= 2250);
+    // It flies on until its place is needed; the original's go after 17.5 to 22.5 seconds.
+    try std.testing.expectEqual(null, bit.life);
 
     // A second later it has flown a second's velocity, and turned.
     const from = bit.at;
@@ -1192,10 +1239,21 @@ test Bit {
     try std.testing.expect(math.distance(from + bit.velocity, bit.at) < 1e-3);
     try std.testing.expect(!std.meta.eql(math.identity, bit.object.orientation));
 
-    // Past its life, it is gone.
-    clock.frame_start = bit.born + bit.life + 1;
+    // It flies on long past the original's time.
+    clock.frame_start = 100_000;
     explosions.frame(stage.world());
-    try std.testing.expectEqual(null, explosions.bits.slots[0]);
+    try std.testing.expect(explosions.bits.slots[0] != null);
+
+    // With the original's pool, a bit flies 17.5 to 22.5 seconds, and is then gone.
+    explosions.settings.bit_pool = .original;
+    const brief_at = explosions.bits.next;
+    explosions.throwBit(@splat(0), .{ 0, 0, 1 }, .{ .size = 1, .speed = 1 }, clock, &random);
+    const brief = &explosions.bits.slots[brief_at].?;
+    const life = brief.life.?;
+    try std.testing.expect(life >= 1750 and life <= 2250);
+    clock.frame_start = brief.born + life + 1;
+    explosions.frame(stage.world());
+    try std.testing.expectEqual(null, explosions.bits.slots[brief_at]);
 
     // As the original has it, every light reaches it.
     explosions.settings.debris_lights = .every_light;
@@ -1206,9 +1264,19 @@ test Bit {
     try std.testing.expectEqual(.every_light, explosions.settings.debris_lights);
     explosions.debris = testing.debris(&mesh);
 
-    // The detail sets how many fly: at low, the 101st takes the first's place.
+    // With the original's pool the detail sets how many fly: at low, the 101st takes the first's
+    // place.
     for (0..Detail.low.bits() + 1) |_| explosions.throwBit(@splat(0), .{ 0, 0, 1 }, .{ .size = 1, .speed = 1 }, clock, &random);
     try std.testing.expectEqual(Detail.low.bits(), testing.flying(explosions));
+    try std.testing.expectEqual(1, explosions.bits.next);
+
+    // The port's keeps room for 4000, whatever the detail.
+    explosions.settings.bit_pool = .lasting;
+    explosions.reset();
+    explosions.debris = testing.debris(&mesh);
+    const room = BitPool.lasting.room(.low);
+    for (0..room + 1) |_| explosions.throwBit(@splat(0), .{ 0, 0, 1 }, .{ .size = 1, .speed = 1 }, clock, &random);
+    try std.testing.expectEqual(room, testing.flying(explosions));
     try std.testing.expectEqual(1, explosions.bits.next);
 }
 
@@ -1231,7 +1299,7 @@ test "Explosions.throwSpark" {
     try std.testing.expectEqual(Vector{ 0, 0, 500 }, spark.velocity);
     try std.testing.expectEqual(Vector{ 0, 0, 100 }, spark.at);
     try std.testing.expect(spark.object.scale >= 0.05 and spark.object.scale <= 0.15);
-    try std.testing.expect(spark.life >= -100 and spark.life <= 300);
+    try std.testing.expect(spark.life.? >= -100 and spark.life.? <= 300);
     try std.testing.expectEqual(10, spark.born);
 }
 

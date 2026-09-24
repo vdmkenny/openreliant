@@ -20,10 +20,11 @@ pub const Object = union(enum) {
     light: *const srlight.Light,
     sprites: *srapiext.SpriteSet,
     stars: *srstars.Field,
+    portal: *srapiext.Portal,
 };
 
 /// Puts `object` in the scene for the frame (`scene_add`): at the head of `layer`'s list, or of the
-/// lights' for a light, whatever the layer. A hidden object is left out, as is a mesh object whose
+/// lights' for a light and the portals' for a portal, whatever the layer. A hidden object is left out, as is a mesh object whose
 /// level has no polygons. `mission_frame` empties the lists each frame.
 pub fn sceneAdd(gpa: Allocator, scene: *srcore.Scene, object: Object, layer: srcore.Layer) Allocator.Error!void {
     const list = scene.layers.getPtr(layer);
@@ -36,6 +37,7 @@ pub fn sceneAdd(gpa: Allocator, scene: *srcore.Scene, object: Object, layer: src
         .light => |light| try scene.lights.append(gpa, light.*),
         .sprites => |sprites| if (!sprites.flags.hidden) try list.append(gpa, .{ .sprites = sprites }),
         .stars => |field| if (!field.flags.hidden) try list.append(gpa, .{ .stars = field }),
+        .portal => |portal| try scene.portals.append(gpa, portal),
     }
 }
 
@@ -72,6 +74,12 @@ test sceneAdd {
     try sceneAdd(gpa, &scene, .{ .light = &light }, .background);
     try std.testing.expectEqual(1, scene.lights.items.len);
     try std.testing.expectEqual(0, scene.layers.get(.background).items.len);
+
+    // A portal likewise goes to the portals' list.
+    var portal: srapiext.Portal = .{};
+    try sceneAdd(gpa, &scene, .{ .portal = &portal }, .world);
+    try std.testing.expectEqual(1, scene.portals.items.len);
+    try std.testing.expectEqual(0, scene.layers.get(.world).items.len);
 }
 
 /// `object_random15` (`0x004ADCE0`): the object's own random number from 0 to 32767, which steps

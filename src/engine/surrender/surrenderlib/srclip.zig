@@ -4,13 +4,15 @@
 //! A vertex a cut makes gets clip flags of its own (`SR_clip_vertex_set_clip_flags`,
 //! `0x1000C700`), against the sides as well as the near plane, and each plane they name joins
 //! those still to cut by: a cut through the near plane that lands off the screen is cut again by
-//! the sides it lies beyond.
+//! the sides it lies beyond. An object's portal cuts last (`portal_clip`, `0x004CCF30`).
 
 const std = @import("std");
 
 const math = @import("../math.zig");
 const srapi = @import("srapi.zig");
+const srapiext = @import("srapiext.zig");
 const Outcode = srapi.Outcode;
+const Portal = srapiext.Portal;
 const Projection = srapi.Projection;
 const Vector = math.Vector;
 
@@ -44,13 +46,14 @@ pub const Vertex = struct {
     }
 };
 
-/// The planes of the view volume, in the order the clipper cuts by them.
+/// The planes of the view volume and the object's portal, in the order the clipper cuts by them.
 pub const Plane = enum {
     near,
     left,
     right,
     top,
     bottom,
+    portal,
 
     fn in(plane: Plane, code: Outcode) bool {
         return switch (plane) {
@@ -59,11 +62,13 @@ pub const Plane = enum {
             .right => code.right,
             .top => code.top,
             .bottom => code.bottom,
+            .portal => code.portal,
         };
     }
 
-    /// How far inside the plane a point lies: negative outside.
-    fn inside(plane: Plane, projection: Projection, p: Vector) f32 {
+    /// How far inside the plane a point lies: negative outside. With no portal, a point is inside
+    /// it.
+    fn inside(plane: Plane, projection: Projection, portal: ?Portal.View, p: Vector) f32 {
         const bounds = projection.bounds;
         return switch (plane) {
             .near => p[2] - projection.near,
@@ -71,6 +76,7 @@ pub const Plane = enum {
             .right => bounds[2] * p[2] - p[0],
             .top => p[1] - bounds[1] * p[2],
             .bottom => bounds[3] * p[2] - p[1],
+            .portal => if (portal) |view| view.inside(p) else 1,
         };
     }
 };
@@ -96,8 +102,9 @@ pub fn flags(projection: Projection, point: Vector) Outcode {
 
 /// `clip_triangle` (`0x1000BEB0`): cuts the first `count` vertices of `polygon` by `planes`, the
 /// planes its corners lie outside, and by those the vertices each cut makes lie outside, if their
-/// turn has not passed. Returns how many vertices are left.
-pub fn clip(projection: Projection, planes: Outcode, polygon: *[capacity]Vertex, count: usize) usize {
+/// turn has not passed, and last by `portal` where `planes` names it. Returns how many vertices
+/// are left.
+pub fn clip(projection: Projection, planes: Outcode, portal: ?Portal.View, polygon: *[capacity]Vertex, count: usize) usize {
     var n = count;
     var crossed = planes;
     for (std.enums.values(Plane)) |plane| {
@@ -107,8 +114,8 @@ pub fn clip(projection: Projection, planes: Outcode, polygon: *[capacity]Vertex,
         for (0..n) |i| {
             const a = polygon[i];
             const b = polygon[(i + 1) % n];
-            const da = plane.inside(projection, a.view);
-            const db = plane.inside(projection, b.view);
+            const da = plane.inside(projection, portal, a.view);
+            const db = plane.inside(projection, portal, b.view);
             if (da >= 0 and m < out.len) {
                 out[m] = a;
                 m += 1;
@@ -152,12 +159,12 @@ test clip {
     for (polygon[0..3]) |v| planes = planes.either(projection.outcode(v.view));
     try std.testing.expectEqual(Outcode{ .near = true }, planes);
 
-    const count = clip(projection, planes, &polygon, 3);
+    const count = clip(projection, planes, null, &polygon, 3);
     try std.testing.expectEqual(4, count);
     var on_top: usize = 0;
     for (polygon[0..count]) |v| {
-        for (std.enums.values(Plane)) |plane| try std.testing.expect(plane.inside(projection, v.view) > -1e-3);
-        on_top += @intFromBool(@abs(Plane.top.inside(projection, v.view)) < 1e-3);
+        for (std.enums.values(Plane)) |plane| try std.testing.expect(plane.inside(projection, null, v.view) > -1e-3);
+        on_top += @intFromBool(@abs(Plane.top.inside(projection, null, v.view)) < 1e-3);
     }
     try std.testing.expectEqual(2, on_top);
 
@@ -165,14 +172,24 @@ test clip {
     polygon[0] = corner(.{ 0, 0, 1000 });
     polygon[1] = corner(.{ 100, 0, 1000 });
     polygon[2] = corner(.{ 0, 100, 1000 });
-    try std.testing.expectEqual(3, clip(projection, .{}, &polygon, 3));
+    try std.testing.expectEqual(3, clip(projection, .{}, null, &polygon, 3));
     try std.testing.expectEqual(Vector{ 100, 0, 1000 }, polygon[1].view);
 
     // Wholly behind the near plane, nothing is left.
     polygon[0] = corner(.{ 0, 0, 50 });
     polygon[1] = corner(.{ 100, 0, 50 });
     polygon[2] = corner(.{ 0, 100, -50 });
-    try std.testing.expectEqual(0, clip(projection, .{ .near = true }, &polygon, 3));
+    try std.testing.expectEqual(0, clip(projection, .{ .near = true }, null, &polygon, 3));
+
+    // A portal across the triangle, keeping what lies nearer than 1000 along X: its far corner is
+    // cut away. Without the portal's clip code, the portal is left alone.
+    polygon[0] = corner(.{ 0, 0, 1000 });
+    polygon[1] = corner(.{ 200, 0, 1000 });
+    polygon[2] = corner(.{ 0, 200, 1000 });
+    const portal: Portal.View = .{ .normal = .{ 1, 0, 0 }, .point = .{ 100, 0, 0 } };
+    try std.testing.expectEqual(3, clip(projection, .{}, portal, &polygon, 3));
+    try std.testing.expectEqual(4, clip(projection, .{ .portal = true }, portal, &polygon, 3));
+    for (polygon[0..4]) |v| try std.testing.expect(v.view[0] <= 100 + 1e-3);
 }
 
 test "Vertex.between" {

@@ -52,8 +52,8 @@ order the loader asks for them, because a miss never rewinds.
 | `0x0A` | animation clip | 24, 8 | part |
 | `0x0B` | keyframe | 28 | clip |
 | `0x0C` | clip event | 12 | clip |
-| `0x0D` | face group | 4 | part |
-| `0x0E` | group entry | 20 | group |
+| `0x0D` | point list | 4 | part |
+| `0x0E` | point | 20 | point list |
 | `0x0F` | trigger polygon | 16 | part |
 | `0x10` | firing arc | 76, 12 | model |
 
@@ -61,11 +61,11 @@ order the loader asks for them, because a miss never rewinds.
 
 ```
 header, parts, then for each part:
-    levels, nodes, attachments, clips, groups, trigger polygons
-    for each level:  vertices, faces, materials
-    for each node:   face list
-    for each clip:   keyframes, events
-    for each group:  entries
+    levels, nodes, attachments, clips, point lists, trigger polygons
+    for each level:       vertices, faces, materials
+    for each node:        face list
+    for each clip:        keyframes, events
+    for each point list:  points
 firing arcs
 ```
 
@@ -176,6 +176,28 @@ Older exporters wrote 8-byte records, which stop two bytes into the name.
 | `0x00` | i32 | Time |
 | `0x04` | i32 | Kind: 0 fires the part's muzzle flashes, 2 puffs particles from its attachments of kind 7. The engine's update ignores any other kind, such as 3 |
 | `0x08` | i32 | **Unknown.** `node_tree_update` doesn't read it |
+
+### Point list (tags `0x0D`, `0x0E`)
+
+A part can carry lists of points on its mesh, which the game's asserts call point lists. Each `0x0D` record is a list's kind, a u32, and each list's points follow in a `0x0E` chunk after the part's clips. `model_load` keeps a list as `{kind, count, points}`, and `node_point_group` (`0x004ADD50`) finds a part's list of a kind. A point:
+
+| Off | Type | Field |
+|---|---|---|
+| `0x00` | u32 | **Unknown.** 0 in the models read |
+| `0x04` | u32 | The vertex it stands on |
+| `0x08` | vec3 | Where it stands in the part's frame |
+
+The kinds the game reads:
+
+| Kind | Read by | What the points are |
+|---|---|---|
+| 1 | `explode_part_burn` (`0x00471290`) | Pairs of points an electric ray runs between as a wreck burns |
+| 2 | `split_create` (`0x0046F480`) | Where a capital ship is cut as it splits in two |
+| 3 | `part_streams` (`0x004715D0`) | Where smoke streams from a burning wreck, along each point's vertex's normal |
+| 4 | `part_burn_lights` (`0x00471470`) | Where a burning wreck's light stands: the first point |
+| 5 | `split_update` (`0x00470030`) | Where fireballs go off as a split ship's halves part |
+
+`shp.PointList` holds a list, and `sltool shp info` counts each part's lists.
 
 ### Firing arc (tag `0x10`)
 
