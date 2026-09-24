@@ -28,9 +28,10 @@ these.
 `game_tick` runs `simulation_step` (`0x004774D0`) unless the game is paused. `simulation_step`
 does its work on every fourth call, so 25 times a second: each object's own updates, then
 `objects_update` (`0x00468FA0`), which moves every object with `object_move` and handles
-collisions. The rates and speeds of the [flight model](objects.md#motion) are therefore per
-twenty-fifth of a second, and afterburner fuel, which burns 4 units an update from 100 per second
-of the ship's stat, lasts that many seconds. Each frame draws what moves between its last two
+collisions, then the missiles (`missiles_move`, `0x00495720`) and the shots (`0x0047A4E0`). The
+rates and speeds of the [flight model](objects.md#motion) are therefore per twenty-fifth of a
+second, and afterburner fuel, which burns 4 units an update from 100 per second of the ship's
+stat, lasts that many seconds. Each frame draws what moves between its last two
 places, as far into the step as the ticks since it have gone
 ([Drawing between steps](objects.md#drawing-between-steps)), so motion moves on a hundred times a
 second.

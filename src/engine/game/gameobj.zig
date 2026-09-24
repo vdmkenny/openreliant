@@ -1091,13 +1091,14 @@ pub const World = struct {
 /// updates: the one whose turn it is is orthonormalized (`orthonormalizeTurn`), then comes its
 /// node update (`updateTree`), its shields' recharge (`rechargeShields`) and its guns' step
 /// (`guns.step`). Then
-/// the player's controls fly the player's ship, and `objects_update` moves them all
-/// (`create.objectsUpdate`). Returns whether it did that work.
+/// the player's controls fly the player's ship, `objects_update` moves them all
+/// (`create.objectsUpdate`), and the missiles (`missiles.move`) and the shots (`guns.moveBullets`)
+/// move after them. Returns whether it did that work.
 ///
 /// The player's own order runs here as well as once a frame, while its top order is Player
 /// Control, so the controls are read on every step.
 ///
-/// Not ported yet: the mouse; the missiles `objects_update` is followed by (`0x00495720`).
+/// Not ported yet: the mouse.
 pub fn simulationStep(clock: *Clock, devices: *input.Devices, world: World) bool {
     clock.simulation_counter += 1;
     if (clock.simulation_counter < ticks_per_step) return false;
