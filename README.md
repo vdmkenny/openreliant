@@ -84,15 +84,17 @@ OpenReliant plays the files of StarLancer, which it installs from your own discs
    ```
 
    On Windows, type `.\openreliant.exe` wherever these steps say `./openreliant`. The installer
-   finds the disc by itself and puts the game's files, about 290 MB, in a new folder called
-   `StarLancer`. Any other folder name or path works too.
+   finds the disc by itself, installs from it, and then asks for disc 2. It puts the game's files,
+   about 1.2 GB, in a new folder called `StarLancer`. Any other folder name or path works too.
+   Without disc 2 at hand, type `skip` when asked for it: running the installer again later with
+   disc 2 in the drive adds it.
 
-   If you have an image of disc 1 instead, a `.bin` or an `.iso`, or a folder with the disc's files,
-   tell the installer where it is with `--from`. For a `.bin` with a `.cue` next to it, name the
-   `.bin`:
+   If you have images of the discs instead, `.bin` or `.iso` files, or folders with the discs'
+   files, tell the installer where they are with `--from`, once for each disc. For a `.bin` with a
+   `.cue` next to it, name the `.bin`:
 
    ```bash
-   ./openreliant install --from "StarLancer Disc 1.bin" StarLancer
+   ./openreliant install --from "StarLancer Disc 1.bin" --from "StarLancer Disc 2.bin" StarLancer
    ```
 
    If the installer says it doesn't know your disc, for example because it's from another
@@ -105,8 +107,8 @@ OpenReliant plays the files of StarLancer, which it installs from your own discs
    ./openreliant StarLancer
    ```
 
-Only disc 1 is needed to install. The manual is on disc 2 as `DOCS/MAUNAL.PDF` (misspelled on the
-disc), and the quick reference card as `DOCS/QRC.PDF`.
+The manual is on disc 2 as `DOCS/MAUNAL.PDF` (misspelled on the disc), and the quick reference
+card as `DOCS/QRC.PDF`.
 
 ### Joysticks and gamepads
 

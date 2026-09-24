@@ -14,7 +14,7 @@
 #   game/renders/            reference images drawn by sltool render
 #
 # sltool reads the discs' raw sectors and ISO 9660 itself; `openreliant install` installs the game
-# from disc 1, as a player does.
+# from both discs, as a player does.
 
 ##@ Game files
 
@@ -153,9 +153,9 @@ $(GAME_DIR)/.stamp-cd%: $(DISCS_DIR)/disc%.bin | $(SLTOOL)
 	$(SLTOOL) cd extract $< $(GAME_DIR)/cd$*
 	touch $@
 
-$(GAME_DIR)/.stamp-install: $(GAME_DIR)/.stamp-cd1 | $(OPENRELIANT)
+$(GAME_DIR)/.stamp-install: $(GAME_DIR)/.stamp-cd1 $(GAME_DIR)/.stamp-cd2 | $(OPENRELIANT)
 	rm -rf $(INSTALL_DIR)
-	$(OPENRELIANT) install --from $(GAME_DIR)/cd1 $(INSTALL_DIR) > /dev/null
+	$(OPENRELIANT) install --from $(GAME_DIR)/cd1 --from $(GAME_DIR)/cd2 $(INSTALL_DIR) > /dev/null
 	touch $@
 
 $(PAYLOAD):

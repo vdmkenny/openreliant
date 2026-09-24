@@ -1,12 +1,14 @@
 //! `openreliant install`: puts StarLancer's files where the engine reads them, from your own discs,
-//! as the game's installer did. It unpacks `LANCER.CAB` from disc 1 and copies the files in the
-//! disc's `GAME/CAB` folder next to them.
+//! as the game's installer did for a full install. It unpacks `LANCER.CAB` from disc 1, copies the
+//! files in the disc's `GAME/CAB` folder next to them, and copies each disc's archive, `CD1.HOG`
+//! and `CD2.HOG`, alongside, where the game reads them in a full install.
 //!
-//! The disc can be a disc image, raw (`.bin`) or not (`.iso`), or a folder with the disc's files,
+//! A disc can be a disc image, raw (`.bin`) or not (`.iso`), or a folder with the disc's files,
 //! which is how every system shows a disc in a drive. Without one named, the installer looks for
-//! disc 1 in the CD drives: on Windows the drives it reports as CD drives, on Linux the mounted ISO
-//! 9660 and UDF file systems, and on macOS the mounted volumes. Disc images are read with the
-//! project's own readers, and the cabinet is unpacked with libarchive.
+//! the discs in the CD drives: on Windows the drives it reports as CD drives, on Linux the mounted
+//! ISO 9660 and UDF file systems, and on macOS the mounted volumes. Once disc 1 is done, it asks
+//! for disc 2. Disc images are read with the project's own readers, and the cabinet is unpacked
+//! with libarchive.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -21,10 +23,11 @@ const c = @import("archive");
 const help = @import("help.zig");
 
 pub const usage =
-    \\usage: openreliant install [--from <disc>] [--force] <directory>
+    \\usage: openreliant install [--from <disc>]... [--force] <directory>
     \\  <directory>      where to put the game's files; made if it doesn't exist
-    \\  --from <disc>    StarLancer disc 1, as a disc image (.bin or .iso) or a folder with the
-    \\                   disc's files; without it, the CD drives are searched for the disc
+    \\  --from <disc>    a StarLancer disc, as a disc image (.bin or .iso) or a folder with the
+    \\                   disc's files; once for each disc, in either order. Without it, the CD
+    \\                   drives are searched for the discs. Disc 2 alone adds it to an install
     \\  --force          install from a disc 1 that OpenReliant doesn't know, such as another
     \\                   country's release
     \\  -h, --help       show this page
@@ -33,29 +36,37 @@ pub const usage =
 
 pub const Options = struct {
     directory: []const u8,
-    from: ?[]const u8 = null,
+    /// The discs named with `--from`, one for each disc at most.
+    from: [2]?[]const u8 = @splat(null),
     force: bool = false,
 
     pub fn parse(args: []const [:0]const u8) error{Usage}!Options {
         var directory: ?[]const u8 = null;
-        var from: ?[]const u8 = null;
-        var force = false;
+        var options: Options = .{ .directory = undefined };
+        var named: usize = 0;
         var i: usize = 0;
         while (i < args.len) : (i += 1) {
             const arg = args[i];
             if (std.mem.eql(u8, arg, "--force")) {
-                force = true;
+                options.force = true;
             } else if (std.mem.eql(u8, arg, "--from")) {
                 i += 1;
-                if (i == args.len) return error.Usage;
-                from = args[i];
+                if (i == args.len or named == options.from.len) return error.Usage;
+                options.from[named] = args[i];
+                named += 1;
             } else if (std.mem.startsWith(u8, arg, "-") or directory != null) {
                 return error.Usage;
             } else {
                 directory = arg;
             }
         }
-        return .{ .directory = directory orelse return error.Usage, .from = from, .force = force };
+        options.directory = directory orelse return error.Usage;
+        return options;
+    }
+
+    /// Whether the discs are to be found in the drives, none being named.
+    fn fromDrives(options: Options) bool {
+        return options.from[0] == null;
     }
 };
 
@@ -86,21 +97,24 @@ const issues_url = "https://github.com/vdmkenny/openreliant/issues";
 /// The installer's cabinet on disc 1, and the folder whose files it copies next to the cabinet's.
 const cabinet_path = "LANCER.CAB";
 const extras_path = "GAME/CAB";
+/// Each disc's archive, which a full install copies next to the game's files.
+const first_archive = "GAME/CD1.HOG";
+const second_archive = "GAME/CD2.HOG";
 /// Disc 2 is told apart by its label, or by the archive only it has.
 const second_label = "SL_CD2";
-const second_path = "GAME/CD2.HOG";
 
 /// What a disc turned out to be.
 const Identity = union(enum) {
-    /// Disc 1 of a release the installer knows, and its cabinet.
-    known: struct { release: *const Release, cabinet: Entry },
-    /// A disc with the installer's cabinet, of no release the installer knows.
-    unrecognized: Entry,
-    /// Disc 2, which has nothing to install.
+    /// Disc 1, and its cabinet.
+    first: Cabinet,
+    /// Disc 2.
     second,
     /// Not a StarLancer disc.
     other,
 };
+
+/// Disc 1's cabinet, and the release it is of where the installer knows it.
+const Cabinet = struct { entry: Entry, release: ?*const Release };
 
 /// A file on a disc.
 const Entry = struct {
@@ -206,15 +220,15 @@ const Disc = union(enum) {
 
     fn identify(disc: Disc, io: Io, arena: Allocator, known: []const Release) !Identity {
         if (try disc.find(io, arena, cabinet_path)) |cabinet| {
-            for (known) |*release| {
-                if (release.cabinet_size == cabinet.size) return .{ .known = .{ .release = release, .cabinet = cabinet } };
-            }
-            return .{ .unrecognized = cabinet };
+            const release = for (known) |*release| {
+                if (release.cabinet_size == cabinet.size) break release;
+            } else null;
+            return .{ .first = .{ .entry = cabinet, .release = release } };
         }
         if (try disc.label(arena)) |name| {
             if (std.ascii.eqlIgnoreCase(name, second_label)) return .second;
         }
-        if (try disc.find(io, arena, second_path) != null) return .second;
+        if (try disc.find(io, arena, second_archive) != null) return .second;
         return .other;
     }
 };
@@ -349,7 +363,7 @@ fn installPath(arena: Allocator, name: []const u8) error{ UnsafeName, OutOfMemor
 }
 
 /// Where the system shows the discs in its drives, and the disc images it has mounted.
-fn mountedDiscs(io: Io, arena: Allocator) ![]const []const u8 {
+fn mountedDiscs(io: Io, arena: Allocator) Allocator.Error![]const []const u8 {
     switch (builtin.os.tag) {
         .windows => return cdDrives(arena),
         .linux => return discMounts(arena, mountTable(io, arena) catch return &.{}),
@@ -368,7 +382,7 @@ fn mountedDiscs(io: Io, arena: Allocator) ![]const []const u8 {
 }
 
 /// The drives Windows reports as CD drives, disc image drives among them, that have a disc in them.
-fn cdDrives(arena: Allocator) ![]const []const u8 {
+fn cdDrives(arena: Allocator) Allocator.Error![]const []const u8 {
     const windows = std.os.windows;
     const kernel32 = struct {
         extern "kernel32" fn GetLogicalDrives() callconv(.winapi) u32;
@@ -448,53 +462,151 @@ fn discMounts(arena: Allocator, table: []const u8) ![]const []const u8 {
     return points.items;
 }
 
-const Found = struct { disc: Disc, path: []const u8, identity: Identity };
+/// Where the system shows the discs in its drives: its own drives, or for the tests, folders.
+const Drives = union(enum) {
+    system,
+    listed: []const []const u8,
 
-const Search = struct {
-    found: ?Found,
-    /// Where disc 2 turned up, for when disc 1 didn't.
-    second: ?[]const u8,
+    /// Looked at anew each time, as a disc may have been changed.
+    fn paths(drives: Drives, io: Io, arena: Allocator) Allocator.Error![]const []const u8 {
+        return switch (drives) {
+            .system => mountedDiscs(io, arena),
+            .listed => |listed| listed,
+        };
+    }
 };
 
-/// Looks through `paths` for disc 1: the first of a release the installer knows, or else the first
-/// with the installer's cabinet. Paths that aren't discs, or can't be read, are passed over.
-fn search(io: Io, arena: Allocator, dir: Io.Dir, paths: []const []const u8, known: []const Release) Search {
-    var result: Search = .{ .found = null, .second = null };
-    for (paths) |path| {
-        const disc = Disc.open(io, dir, path) catch continue;
-        const identity = disc.identify(io, arena, known) catch {
-            disc.close(io);
-            continue;
-        };
-        switch (identity) {
-            .known => {
-                if (result.found) |other| other.disc.close(io);
-                result.found = .{ .disc = disc, .path = path, .identity = identity };
-                return result;
-            },
-            .unrecognized => if (result.found == null) {
-                result.found = .{ .disc = disc, .path = path, .identity = identity };
-                continue;
-            },
-            .second => if (result.second == null) {
-                result.second = path;
-            },
-            .other => {},
-        }
-        disc.close(io);
+/// The discs to install from, as far as they have been found, each open.
+const Discs = struct {
+    first: ?First = null,
+    second: ?Second = null,
+
+    const First = struct { disc: Disc, path: []const u8, cabinet: Cabinet };
+    const Second = struct { disc: Disc, path: []const u8 };
+
+    /// Where a disc offered to `keep` comes from, which sets what is kept.
+    const From = enum {
+        /// Named on the command line: either disc, once.
+        named,
+        /// In a drive: either disc, and disc 1 of a release the installer knows over one it doesn't.
+        drives,
+        /// In a drive once disc 1 is installed: disc 2.
+        drives_after_first,
+    };
+
+    /// What became of a disc offered to `keep`.
+    const Kept = union(enum) {
+        kept,
+        /// Passed over, as that disc was already found: disc 1 or 2, at this path.
+        again: struct { number: u8, path: []const u8 },
+        /// Passed over, as it's not a disc wanted.
+        passed,
+    };
+
+    fn closeFirst(discs: *Discs, io: Io) void {
+        if (discs.first) |first| first.disc.close(io);
+        discs.first = null;
     }
-    return result;
+
+    fn close(discs: *Discs, io: Io) void {
+        discs.closeFirst(io);
+        if (discs.second) |second| second.disc.close(io);
+        discs.second = null;
+    }
+
+    /// Keeps `disc`, found at `path` to be `identity`, where it's wanted `from` there. The caller
+    /// closes a disc that isn't kept.
+    fn keep(discs: *Discs, io: Io, disc: Disc, path: []const u8, identity: Identity, from: From) Kept {
+        switch (identity) {
+            .first => |cabinet| {
+                if (from == .drives_after_first) return .passed;
+                if (discs.first) |taken| {
+                    const better = from == .drives and taken.cabinet.release == null and cabinet.release != null;
+                    if (!better) return .{ .again = .{ .number = 1, .path = taken.path } };
+                    taken.disc.close(io);
+                }
+                discs.first = .{ .disc = disc, .path = path, .cabinet = cabinet };
+            },
+            .second => {
+                if (discs.second) |taken| return .{ .again = .{ .number = 2, .path = taken.path } };
+                discs.second = .{ .disc = disc, .path = path };
+            },
+            .other => return .passed,
+        }
+        return .kept;
+    }
+
+    /// Fills in the discs still missing that are wanted `from` the drives. Drives that hold none,
+    /// or can't be read, are passed over.
+    fn search(discs: *Discs, io: Io, arena: Allocator, env: Environment, from: From) Allocator.Error!void {
+        for (try env.drives.paths(io, arena)) |path| {
+            const disc = Disc.open(io, env.dir, path) catch continue;
+            const identity = disc.identify(io, arena, env.known) catch Identity.other;
+            if (discs.keep(io, disc, path, identity, from) != .kept) disc.close(io);
+        }
+    }
+
+    /// The discs `options` names, told apart. Says what is wrong where one can't be read, isn't a
+    /// StarLancer disc, or is named twice.
+    fn named(io: Io, arena: Allocator, options: Options, env: Environment) !Discs {
+        var discs: Discs = .{};
+        errdefer discs.close(io);
+        for (options.from) |maybe| {
+            const path = maybe orelse continue;
+            const disc = try openNamed(io, env, path);
+            const identity = disc.identify(io, arena, env.known) catch |err| {
+                disc.close(io);
+                return err;
+            };
+            switch (discs.keep(io, disc, path, identity, .named)) {
+                .kept => continue,
+                .again => |other| {
+                    disc.close(io);
+                    try env.err.print("openreliant: {s} and {s} are both StarLancer disc {d}.\n", .{ other.path, path, other.number });
+                },
+                .passed => {
+                    disc.close(io);
+                    try env.err.print("openreliant: {s} isn't a StarLancer disc: it has neither {s} nor {s}.\n", .{ path, cabinet_path, second_archive });
+                },
+            }
+            return error.InstallFailed;
+        }
+        return discs;
+    }
+};
+
+/// The disc named at `path`, a folder or a disc image. Says what is wrong where it can't be read.
+fn openNamed(io: Io, env: Environment, path: []const u8) !Disc {
+    return Disc.open(io, env.dir, path) catch |err| switch (err) {
+        error.FileNotFound => {
+            try env.err.print("openreliant: there's no {s}.\n", .{path});
+            return error.InstallFailed;
+        },
+        error.NotADiscImage, error.NotIso9660, error.UnsupportedBlockSize => {
+            if (std.ascii.endsWithIgnoreCase(path, ".cue")) {
+                try env.err.print("openreliant: {s} only describes the disc. Name its .bin instead.\n", .{path});
+            } else {
+                try env.err.print("openreliant: {s} is neither a folder nor a disc image.\n", .{path});
+            }
+            return error.InstallFailed;
+        },
+        else => |e| return e,
+    };
 }
 
 /// What an install works with besides its options, which the tests replace.
 const Environment = struct {
     /// Where relative paths lead from.
     dir: Io.Dir,
-    /// Where to look for disc 1 when none is named.
-    mounted: []const []const u8,
+    /// Where to look for the discs when none is named.
+    drives: Drives,
     known: []const Release = &releases,
     out: *Io.Writer,
     err: *Io.Writer,
+    /// Whether `out` is a terminal, where copying an archive shows how far it has got.
+    terminal: bool = false,
+    /// What the player types, where there is one at a terminal to ask for disc 2.
+    player: ?*Io.Reader = null,
 };
 
 /// `openreliant install`, given its arguments. Returns the exit code.
@@ -515,79 +627,66 @@ pub fn main(io: Io, arena: Allocator, args: []const [:0]const u8) !u8 {
         try err.interface.writeAll(usage);
         return 2;
     };
+    var in_buffer: [256]u8 = undefined;
+    var in: Io.File.Reader = .initStreaming(.stdin(), io, &in_buffer);
     return run(io, arena, options, .{
         .dir = .cwd(),
-        .mounted = if (options.from == null) try mountedDiscs(io, arena) else &.{},
+        .drives = .system,
         .out = &out.interface,
         .err = &err.interface,
+        .terminal = try isTerminal(io, .stdout()),
+        .player = if (try isTerminal(io, .stdin())) &in.interface else null,
     });
 }
 
-fn run(io: Io, arena: Allocator, options: Options, env: Environment) !u8 {
-    const found: Found = if (options.from) |path| found: {
-        const disc = Disc.open(io, env.dir, path) catch |err| switch (err) {
-            error.FileNotFound => {
-                try env.err.print("openreliant: there's no {s}.\n", .{path});
-                return 1;
-            },
-            error.NotADiscImage, error.NotIso9660, error.UnsupportedBlockSize => {
-                if (std.ascii.endsWithIgnoreCase(path, ".cue")) {
-                    try env.err.print("openreliant: {s} only describes the disc. Name its .bin instead.\n", .{path});
-                } else {
-                    try env.err.print("openreliant: {s} is neither a folder nor a disc image.\n", .{path});
-                }
-                return 1;
-            },
-            else => |e| return e,
-        };
-        errdefer disc.close(io);
-        break :found .{ .disc = disc, .path = path, .identity = try disc.identify(io, arena, env.known) };
-    } else found: {
-        try env.out.writeAll("Looking for StarLancer disc 1 in the CD drives.\n");
-        try env.out.flush();
-        const result = search(io, arena, env.dir, env.mounted, env.known);
-        break :found result.found orelse {
-            if (result.second) |path| {
-                try env.err.print("openreliant: {s} is StarLancer disc 2. Installing needs disc 1.\n", .{path});
-            } else {
-                try env.err.writeAll(
-                    \\openreliant: StarLancer disc 1 isn't in any CD drive. Insert it, or name the disc
-                    \\or an image of it with --from.
-                    \\
-                );
-            }
-            return 1;
-        };
+/// Whether `file` is a terminal. On Windows, `GetConsoleMode` says so for a console, which Wine
+/// answers where the standard library's check, made of the console driver directly, finds none.
+fn isTerminal(io: Io, file: Io.File) Io.Cancelable!bool {
+    if (builtin.os.tag != .windows) return file.isTty(io);
+    const windows = std.os.windows;
+    const kernel32 = struct {
+        extern "kernel32" fn GetConsoleMode(console: windows.HANDLE, mode: *u32) callconv(.winapi) windows.BOOL;
     };
-    defer found.disc.close(io);
+    var mode: u32 = undefined;
+    return kernel32.GetConsoleMode(file.handle, &mode).toBool() or try file.isTty(io);
+}
 
-    const cabinet = switch (found.identity) {
-        .known => |known| cabinet: {
-            try env.out.print("Installing StarLancer from {s}, disc 1 of {s}.\n", .{ found.path, known.release.name });
-            break :cabinet known.cabinet;
-        },
-        .unrecognized => |cabinet| cabinet: {
-            if (!options.force) {
-                try env.err.print(
-                    \\openreliant: {s} has StarLancer's installer, but it's not a release OpenReliant
-                    \\knows: its LANCER.CAB is {d} bytes. If it's from another country's release, install
-                    \\from it with --force, and please report it at {s} so it can be added.
-                    \\
-                , .{ found.path, cabinet.size, issues_url });
-                return 1;
-            }
-            try env.out.print("Installing StarLancer from {s}, a disc 1 OpenReliant doesn't know.\n", .{found.path});
-            break :cabinet cabinet;
-        },
-        .second => {
-            try env.err.print("openreliant: {s} is StarLancer disc 2. Installing needs disc 1.\n", .{found.path});
-            return 1;
-        },
-        .other => {
-            try env.err.print("openreliant: {s} isn't StarLancer disc 1: it has no {s}.\n", .{ found.path, cabinet_path });
+fn run(io: Io, arena: Allocator, options: Options, env: Environment) !u8 {
+    installGame(io, arena, options, env) catch |err| switch (err) {
+        error.InstallFailed => return 1,
+        else => {
+            try env.err.print("openreliant: the install failed: {s}\n", .{@errorName(err)});
             return 1;
         },
     };
+    return 0;
+}
+
+/// Installs the game into its directory from the discs named, or else those in the drives: disc 1's
+/// files and archive, then disc 2's archive. Disc 2 alone adds its archive to an install there.
+fn installGame(io: Io, arena: Allocator, options: Options, env: Environment) !void {
+    var discs: Discs = try .named(io, arena, options, env);
+    defer discs.close(io);
+    if (options.fromDrives()) {
+        try env.out.writeAll("Looking for StarLancer's discs in the CD drives.\n");
+        try env.out.flush();
+        try discs.search(io, arena, env, .drives);
+    }
+    const first = discs.first orelse return addSecond(io, arena, options, env, discs.second);
+
+    if (first.cabinet.release) |release| {
+        try env.out.print("Installing StarLancer from {s}, disc 1 of {s}.\n", .{ first.path, release.name });
+    } else if (options.force) {
+        try env.out.print("Installing StarLancer from {s}, a disc 1 OpenReliant doesn't know.\n", .{first.path});
+    } else {
+        try env.err.print(
+            \\openreliant: {s} has StarLancer's installer, but it's not a release OpenReliant
+            \\knows: its LANCER.CAB is {d} bytes. If it's from another country's release, install
+            \\from it with --force, and please report it at {s} so it can be added.
+            \\
+        , .{ first.path, first.cabinet.entry.size, issues_url });
+        return error.InstallFailed;
+    }
     try env.out.flush();
 
     const target = open: {
@@ -595,37 +694,97 @@ fn run(io: Io, arena: Allocator, options: Options, env: Environment) !u8 {
         break :open env.dir.openDir(io, options.directory, .{});
     } catch |err| {
         try env.err.print("openreliant: {s} can't be made: {s}\n", .{ options.directory, @errorName(err) });
-        return 1;
+        return error.InstallFailed;
     };
     defer target.close(io);
-    install(io, arena, found.disc, cabinet, target, env) catch |err| switch (err) {
-        error.InstallFailed => return 1,
-        else => {
-            try env.err.print("openreliant: the install failed: {s}\n", .{@errorName(err)});
-            return 1;
-        },
-    };
+    try unpack(io, arena, first.cabinet.entry, target, env);
+    try copyExtras(io, arena, first.disc, target, env);
+    try copyArchive(io, arena, first.disc, first.path, first_archive, target, env);
     if (missingGameFile(io, target)) |name| {
         try env.err.print("openreliant: the disc is unpacked, but it had no {s}.\n", .{name});
-        return 1;
+        return error.InstallFailed;
+    }
+    // Closed, so that it can be taken out of its drive.
+    discs.closeFirst(io);
+
+    if (discs.second == null and options.fromDrives()) try askSecond(&discs, io, arena, env);
+    if (discs.second) |second| {
+        try env.out.print("Copying disc 2's archive from {s}.\n", .{second.path});
+        try copyArchive(io, arena, second.disc, second.path, second_archive, target, env);
+    } else {
+        try env.out.print(
+            \\Disc 2's archive isn't installed. To add it, run openreliant install {s} again
+            \\with disc 2 in a drive, or named with --from.
+            \\
+        , .{options.directory});
     }
     try env.out.print("StarLancer is installed in {s}. To play it: openreliant {s}\n", .{ options.directory, options.directory });
     try env.out.flush();
-    return 0;
 }
 
-/// Unpacks the cabinet into `target`, and copies the disc's `GAME/CAB` files next to its files.
-fn install(io: Io, arena: Allocator, disc: Disc, cabinet: Entry, target: Io.Dir, env: Environment) !void {
-    try unpack(io, arena, cabinet, target, env);
-    // Named in upper case, as the disc records them: Linux shows a disc's names in lower case.
-    for (try disc.list(io, arena, extras_path) orelse &.{}) |entry| {
-        const name = try std.ascii.allocUpperString(arena, entry.name);
-        try copy(io, arena, entry, target, name);
-        try env.out.print("  {s}\n", .{name});
+/// Finds disc 2 in the drives, asking the player to insert it, where there is one to ask, until it
+/// is there or they'd rather go on without it.
+fn askSecond(discs: *Discs, io: Io, arena: Allocator, env: Environment) !void {
+    try discs.search(io, arena, env, .drives_after_first);
+    if (discs.second != null) return;
+    const player = env.player orelse return;
+    try env.out.writeAll("Insert StarLancer disc 2 and press Enter, or type skip to go on without it.\n");
+    while (true) {
         try env.out.flush();
+        const line = (player.takeDelimiter('\n') catch return) orelse return;
+        if (std.ascii.eqlIgnoreCase(std.mem.trim(u8, line, " \t\r"), "skip")) return;
+        try discs.search(io, arena, env, .drives_after_first);
+        if (discs.second != null) return;
+        try env.out.writeAll("Disc 2 isn't in any CD drive yet. Press Enter once it is, or type skip.\n");
     }
 }
 
+/// With no disc 1 to install from, adds disc 2's archive to the install in the directory, where
+/// there is one.
+fn addSecond(io: Io, arena: Allocator, options: Options, env: Environment, found: ?Discs.Second) !void {
+    // Only the drives can have neither disc: a disc named is one of them.
+    const second = found orelse {
+        try env.err.writeAll(
+            \\openreliant: StarLancer disc 1 isn't in any CD drive. Insert it, or name the disc
+            \\or an image of it with --from.
+            \\
+        );
+        return error.InstallFailed;
+    };
+    const target = env.dir.openDir(io, options.directory, .{}) catch |err| switch (err) {
+        error.FileNotFound, error.NotDir => return needsFirst(env, second.path),
+        else => |e| return e,
+    };
+    defer target.close(io);
+    if (missingGameFile(io, target) != null) return needsFirst(env, second.path);
+    try env.out.print("Adding disc 2's archive from {s} to the install in {s}.\n", .{ second.path, options.directory });
+    try copyArchive(io, arena, second.disc, second.path, second_archive, target, env);
+    try env.out.flush();
+}
+
+fn needsFirst(env: Environment, path: []const u8) error{ InstallFailed, WriteFailed } {
+    try env.err.print("openreliant: {s} is StarLancer disc 2. Installing needs disc 1.\n", .{path});
+    return error.InstallFailed;
+}
+
+/// Copies the disc's `GAME/CAB` files next to the cabinet's. They are named in upper case, as the
+/// disc records them: Linux shows a disc's names in lower case.
+fn copyExtras(io: Io, arena: Allocator, disc: Disc, target: Io.Dir, env: Environment) !void {
+    for (try disc.list(io, arena, extras_path) orelse &.{}) |entry| {
+        try copy(io, arena, entry, target, try std.ascii.allocUpperString(arena, entry.name), .listed, env);
+    }
+}
+
+/// Copies the disc's archive at `path` next to the game's files, where a full install keeps it.
+fn copyArchive(io: Io, arena: Allocator, disc: Disc, disc_path: []const u8, path: []const u8, target: Io.Dir, env: Environment) !void {
+    const entry = try disc.find(io, arena, path) orelse {
+        try env.err.print("openreliant: {s} has no {s}.\n", .{ disc_path, path });
+        return error.InstallFailed;
+    };
+    try copy(io, arena, entry, target, std.fs.path.basenamePosix(path), if (env.terminal) .counted else .listed, env);
+}
+
+/// Unpacks disc 1's cabinet into `target`.
 fn unpack(io: Io, arena: Allocator, cabinet: Entry, target: Io.Dir, env: Environment) !void {
     var reader: Reader = try .open(io, arena, cabinet);
     defer reader.close(io);
@@ -694,7 +853,12 @@ fn failed(archive: *c.struct_archive, feed: *const Feed, err: *Io.Writer) error{
     return error.InstallFailed;
 }
 
-fn copy(io: Io, arena: Allocator, entry: Entry, target: Io.Dir, name: []const u8) !void {
+/// How a copy shows in the output: its name once it's done, or at a terminal, with how far it has
+/// got as it goes.
+const Shown = enum { listed, counted };
+
+/// Copies a file on a disc into `target` as `name`.
+fn copy(io: Io, arena: Allocator, entry: Entry, target: Io.Dir, name: []const u8, shown: Shown, env: Environment) !void {
     var reader: Reader = try .open(io, arena, entry);
     defer reader.close(io);
     const file = try target.createFile(io, name, .{});
@@ -702,18 +866,30 @@ fn copy(io: Io, arena: Allocator, entry: Entry, target: Io.Dir, name: []const u8
     var buffer: [64 * 1024]u8 = undefined;
     var writer = file.writer(io, &buffer);
     var data: [64 * 1024]u8 = undefined;
+    var percent: ?u64 = null;
     while (true) {
         const n = try reader.read(io, &data);
         if (n == 0) break;
         try writer.interface.writeAll(data[0..n]);
+        if (shown == .counted) {
+            const now = reader.position * 100 / reader.size;
+            if (percent != now) {
+                percent = now;
+                try env.out.print("\r  {s} {d}%", .{ name, now });
+                try env.out.flush();
+            }
+        }
     }
     try writer.interface.flush();
+    if (percent == null) try env.out.print("  {s}", .{name});
+    try env.out.writeAll("\n");
+    try env.out.flush();
 }
 
 const TestFile = struct { path: []const u8, data: []const u8 };
 
 /// The records of a Microsoft cabinet, as far as the tests write one.
-const Cabinet = struct {
+const CabinetRecords = struct {
     const Header = extern struct {
         signature: [4]u8 = "MSCF".*,
         _reserved_04: u32 = 0,
@@ -767,29 +943,29 @@ fn testCabinet(gpa: Allocator, files: []const TestFile) ![]u8 {
     var table_size: usize = 0;
     var data_size: usize = 0;
     for (files) |file| {
-        table_size += @sizeOf(Cabinet.File) + file.path.len + 1;
+        table_size += @sizeOf(CabinetRecords.File) + file.path.len + 1;
         data_size += file.data.len;
     }
-    const files_offset = @sizeOf(Cabinet.Header) + @sizeOf(Cabinet.Folder);
+    const files_offset = @sizeOf(CabinetRecords.Header) + @sizeOf(CabinetRecords.Folder);
     const data_offset = files_offset + table_size;
 
-    try out.appendSlice(gpa, std.mem.asBytes(&Cabinet.Header{
-        .size = @intCast(data_offset + @sizeOf(Cabinet.Data) + data_size),
+    try out.appendSlice(gpa, std.mem.asBytes(&CabinetRecords.Header{
+        .size = @intCast(data_offset + @sizeOf(CabinetRecords.Data) + data_size),
         .files_offset = files_offset,
         .folders = 1,
         .files = @intCast(files.len),
     }));
-    try out.appendSlice(gpa, std.mem.asBytes(&Cabinet.Folder{ .data_offset = @intCast(data_offset), .blocks = 1 }));
+    try out.appendSlice(gpa, std.mem.asBytes(&CabinetRecords.Folder{ .data_offset = @intCast(data_offset), .blocks = 1 }));
 
     var at: u32 = 0;
     for (files) |file| {
-        try out.appendSlice(gpa, std.mem.asBytes(&Cabinet.File{ .size = @intCast(file.data.len), .folder_offset = at }));
+        try out.appendSlice(gpa, std.mem.asBytes(&CabinetRecords.File{ .size = @intCast(file.data.len), .folder_offset = at }));
         try out.appendSlice(gpa, file.path);
         try out.append(gpa, 0);
         at += @intCast(file.data.len);
     }
 
-    try out.appendSlice(gpa, std.mem.asBytes(&Cabinet.Data{ .size = @intCast(data_size), .uncompressed_size = @intCast(data_size) }));
+    try out.appendSlice(gpa, std.mem.asBytes(&CabinetRecords.Data{ .size = @intCast(data_size), .uncompressed_size = @intCast(data_size) }));
     for (files) |file| try out.appendSlice(gpa, file.data);
     return out.toOwnedSlice(gpa);
 }
@@ -901,13 +1077,17 @@ fn testImage(gpa: Allocator, label: []const u8, files: []const TestFile, layout:
 }
 
 /// The files of a disc 1, for the tests, with `cabinet` as its `LANCER.CAB`.
-fn testDisc1(cabinet: []const u8) [3]TestFile {
+fn testDisc1(cabinet: []const u8) [4]TestFile {
     return .{
         .{ .path = "LANCER.CAB", .data = cabinet },
         .{ .path = "GAME/CAB/LANGUAGE.DLL", .data = "strings" },
         .{ .path = "GAME/CAB/LANCER.EXE", .data = "loader" },
+        .{ .path = "GAME/CD1.HOG", .data = "first archive" },
     };
 }
+
+/// The files of a disc 2, for the tests.
+const test_disc2 = [_]TestFile{.{ .path = "GAME/CD2.HOG", .data = "second archive" }};
 
 /// A cabinet with the files the engine checks for, and one in a folder.
 fn testGameCabinet(gpa: Allocator) ![]u8 {
@@ -944,8 +1124,42 @@ const TestRun = struct {
         test_run.err.deinit();
     }
 
-    fn environment(test_run: *TestRun, dir: Io.Dir, mounted: []const []const u8, known: []const Release) Environment {
-        return .{ .dir = dir, .mounted = mounted, .known = known, .out = &test_run.out.writer, .err = &test_run.err.writer };
+    fn environment(test_run: *TestRun, dir: Io.Dir, drives: []const []const u8, known: []const Release) Environment {
+        return .{ .dir = dir, .drives = .{ .listed = drives }, .known = known, .out = &test_run.out.writer, .err = &test_run.err.writer };
+    }
+};
+
+/// A player at a terminal, for the tests, who takes a turn each time they're asked for disc 2:
+/// changes the disc in the drive `drive` for the one in `waiting`, or not, and types a line.
+const TestPlayer = struct {
+    reader: Io.Reader,
+    buffer: [16]u8,
+    io: Io,
+    dir: Io.Dir,
+    turns: []const Turn,
+
+    const Turn = struct { change: bool = false, line: []const u8 = "\n" };
+
+    fn init(player: *TestPlayer, io: Io, dir: Io.Dir, turns: []const Turn) void {
+        player.* = .{
+            .reader = .{ .vtable = &.{ .stream = stream }, .buffer = &player.buffer, .seek = 0, .end = 0 },
+            .buffer = undefined,
+            .io = io,
+            .dir = dir,
+            .turns = turns,
+        };
+    }
+
+    fn stream(reader: *Io.Reader, writer: *Io.Writer, limit: Io.Limit) Io.Reader.StreamError!usize {
+        const player: *TestPlayer = @alignCast(@fieldParentPtr("reader", reader));
+        if (player.turns.len == 0) return error.EndOfStream;
+        const turn = player.turns[0];
+        player.turns = player.turns[1..];
+        if (turn.change) {
+            player.dir.rename("drive", player.dir, "taken-out", player.io) catch return error.ReadFailed;
+            player.dir.rename("waiting", player.dir, "drive", player.io) catch return error.ReadFailed;
+        }
+        return writer.write(limit.sliceConst(turn.line));
     }
 };
 
@@ -957,13 +1171,15 @@ fn expectFile(io: Io, dir: Io.Dir, path: []const u8, expected: []const u8) !void
 test Options {
     const plain = try Options.parse(&.{"games/starlancer"});
     try std.testing.expectEqualStrings("games/starlancer", plain.directory);
-    try std.testing.expectEqual(null, plain.from);
+    try std.testing.expect(plain.fromDrives());
     try std.testing.expect(!plain.force);
-    const full = try Options.parse(&.{ "--from", "disc1.bin", "--force", "out" });
+    const full = try Options.parse(&.{ "--from", "disc1.bin", "--force", "out", "--from", "disc2" });
     try std.testing.expectEqualStrings("out", full.directory);
-    try std.testing.expectEqualStrings("disc1.bin", full.from.?);
-    try std.testing.expect(full.force);
+    try std.testing.expectEqualStrings("disc1.bin", full.from[0].?);
+    try std.testing.expectEqualStrings("disc2", full.from[1].?);
+    try std.testing.expect(full.force and !full.fromDrives());
     try std.testing.expectError(error.Usage, Options.parse(&.{}));
+    try std.testing.expectError(error.Usage, Options.parse(&.{ "--from", "a", "--from", "b", "--from", "c", "out" }));
     try std.testing.expectError(error.Usage, Options.parse(&.{"--force"}));
     try std.testing.expectError(error.Usage, Options.parse(&.{ "a", "b" }));
     try std.testing.expectError(error.Usage, Options.parse(&.{ "out", "--from" }));
@@ -1022,6 +1238,16 @@ test mountedDiscs {
     for (try mountedDiscs(std.testing.io, arena_state.allocator())) |path| try std.testing.expect(path.len > 0);
 }
 
+test isTerminal {
+    // A plain file is no terminal, whichever way it's asked.
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const file = try tmp.dir.createFile(io, "plain", .{});
+    defer file.close(io);
+    try std.testing.expect(!try isTerminal(io, file));
+}
+
 test "telling the discs apart" {
     const io = std.testing.io;
     const gpa = std.testing.allocator;
@@ -1034,8 +1260,18 @@ test "telling the discs apart" {
     const cabinet = try testGameCabinet(gpa);
     defer gpa.free(cabinet);
     const known = [_]Release{.{ .name = "the test release", .cabinet_size = cabinet.len }};
-    const Tag = std.meta.Tag(Identity);
-    const Case = struct { path: []const u8, identity: Tag };
+    // What a disc is, with disc 1 told apart by whether its release is known.
+    const Told = enum { known, unrecognized, second, other };
+    const Case = struct { path: []const u8, told: Told };
+    const tell = struct {
+        fn tell(identity: Identity) Told {
+            return switch (identity) {
+                .first => |first| if (first.release == null) .unrecognized else .known,
+                .second => .second,
+                .other => .other,
+            };
+        }
+    }.tell;
     // Linux shows a disc's names in lower case.
     try testFolder(io, tmp.dir, "disc1", &testDisc1(cabinet));
     try testFolder(io, tmp.dir, "copy", &.{.{ .path = "lancer.cab", .data = "a cabinet of another size" }});
@@ -1049,22 +1285,22 @@ test "telling the discs apart" {
     defer gpa.free(labelled);
     try tmp.dir.writeFile(io, .{ .sub_path = "disc2.iso", .data = labelled });
     const cases = [_]Case{
-        .{ .path = "disc1", .identity = .known },
-        .{ .path = "copy", .identity = .unrecognized },
-        .{ .path = "disc2", .identity = .second },
-        .{ .path = "photos", .identity = .other },
-        .{ .path = "disc1.bin", .identity = .known },
-        .{ .path = "disc2.iso", .identity = .second },
+        .{ .path = "disc1", .told = .known },
+        .{ .path = "copy", .told = .unrecognized },
+        .{ .path = "disc2", .told = .second },
+        .{ .path = "photos", .told = .other },
+        .{ .path = "disc1.bin", .told = .known },
+        .{ .path = "disc2.iso", .told = .second },
     };
     for (cases) |case| {
         const disc: Disc = try .open(io, tmp.dir, case.path);
         defer disc.close(io);
-        try std.testing.expectEqual(case.identity, std.meta.activeTag(try disc.identify(io, arena, &known)));
+        try std.testing.expectEqual(case.told, tell(try disc.identify(io, arena, &known)));
     }
     // Of a release the installer doesn't know, disc 1 is still told apart.
     const disc: Disc = try .open(io, tmp.dir, "disc1.bin");
     defer disc.close(io);
-    try std.testing.expectEqual(Tag.unrecognized, std.meta.activeTag(try disc.identify(io, arena, &releases)));
+    try std.testing.expectEqual(Told.unrecognized, tell(try disc.identify(io, arena, &releases)));
 }
 
 test "reading a disc's files" {
@@ -1141,13 +1377,19 @@ test "installing from disc images and folders" {
     try testFolder(io, tmp.dir, "mounted", &.{
         .{ .path = "lancer.cab", .data = cabinet },
         .{ .path = "game/cab/language.dll", .data = "strings" },
+        .{ .path = "game/cd1.hog", .data = "first archive" },
     });
+    const second = try testImage(gpa, "SL_CD2", &test_disc2, .cooked);
+    defer gpa.free(second);
+    try tmp.dir.writeFile(io, .{ .sub_path = "disc2.iso", .data = second });
 
     for ([_][]const u8{ "raw", "cooked", "mounted" }) |from| {
         var test_run: TestRun = .init(gpa);
         defer test_run.deinit();
         const directory = try std.fmt.allocPrint(arena, "games/from-{s}", .{from});
-        const code = try run(io, arena, .{ .directory = directory, .from = from }, test_run.environment(tmp.dir, &.{}, &known));
+        // Disc 2 first: the discs are named in either order.
+        const options: Options = .{ .directory = directory, .from = .{ "disc2.iso", from } };
+        const code = try run(io, arena, options, test_run.environment(tmp.dir, &.{}, &known));
         try std.testing.expectEqualStrings("", test_run.err.written());
         try std.testing.expectEqual(0, code);
         try std.testing.expect(std.mem.indexOf(u8, test_run.out.written(), "disc 1 of the test release") != null);
@@ -1157,8 +1399,20 @@ test "installing from disc images and folders" {
         try expectFile(io, target, "resource.hog", "resources");
         try expectFile(io, target, "music/Theme.fat", "music");
         try expectFile(io, target, "LANGUAGE.DLL", "strings");
+        try expectFile(io, target, "CD1.HOG", "first archive");
+        try expectFile(io, target, "CD2.HOG", "second archive");
         try std.testing.expectEqual(null, missingGameFile(io, target));
     }
+
+    // With disc 1 alone, the install goes without disc 2's archive and says how to add it, which
+    // disc 2 alone then does.
+    var test_run: TestRun = .init(gpa);
+    defer test_run.deinit();
+    try std.testing.expectEqual(0, try run(io, arena, .{ .directory = "games/later", .from = .{ "raw", null } }, test_run.environment(tmp.dir, &.{}, &known)));
+    try std.testing.expect(std.mem.indexOf(u8, test_run.out.written(), "Disc 2's archive isn't installed.") != null);
+    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "games/later/CD2.HOG", .{}));
+    try std.testing.expectEqual(0, try run(io, arena, .{ .directory = "games/later", .from = .{ "disc2.iso", null } }, test_run.environment(tmp.dir, &.{}, &known)));
+    try expectFile(io, tmp.dir, "games/later/CD2.HOG", "second archive");
 }
 
 test "looking for disc 1 in the drives" {
@@ -1176,11 +1430,12 @@ test "looking for disc 1 in the drives" {
     const foreign = try testCabinet(gpa, &.{.{ .path = "CAB\\resource.hog", .data = "another country's" }});
     defer gpa.free(foreign);
     try testFolder(io, tmp.dir, "empty", &.{});
-    try testFolder(io, tmp.dir, "disc2", &.{.{ .path = "GAME/CD2.HOG", .data = "" }});
+    try testFolder(io, tmp.dir, "disc2", &test_disc2);
     try testFolder(io, tmp.dir, "disc1", &testDisc1(cabinet));
     try testFolder(io, tmp.dir, "foreign", &testDisc1(foreign));
 
-    // Drives that aren't there, or hold something else, are passed over.
+    // Drives that aren't there, or hold something else, are passed over, and with both discs in
+    // drives, both are installed from.
     {
         var test_run: TestRun = .init(gpa);
         defer test_run.deinit();
@@ -1188,6 +1443,7 @@ test "looking for disc 1 in the drives" {
         try std.testing.expectEqual(0, try run(io, arena, .{ .directory = "found" }, test_run.environment(tmp.dir, &mounted, &known)));
         try std.testing.expect(std.mem.indexOf(u8, test_run.out.written(), "Installing StarLancer from disc1,") != null);
         _ = try tmp.dir.statFile(io, "found/LANGUAGE.DLL", .{});
+        try expectFile(io, tmp.dir, "found/CD2.HOG", "second archive");
     }
     // With only disc 2 in a drive, that's what's said.
     {
@@ -1219,6 +1475,56 @@ test "looking for disc 1 in the drives" {
     }
 }
 
+test "asking for disc 2" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const cabinet = try testGameCabinet(gpa);
+    defer gpa.free(cabinet);
+    const known = [_]Release{.{ .name = "the test release", .cabinet_size = cabinet.len }};
+    const Turn = TestPlayer.Turn;
+    const Case = struct { turns: ?[]const Turn, installed: bool };
+    const cases = [_]Case{
+        // Enter with disc 1 still in the drive, then again once disc 2 is.
+        .{ .turns = &.{ .{}, .{ .change = true } }, .installed = true },
+        .{ .turns = &.{.{ .line = " Skip\r\n" }}, .installed = false },
+        // The terminal closes.
+        .{ .turns = &.{}, .installed = false },
+        // No one at a terminal to ask.
+        .{ .turns = null, .installed = false },
+    };
+    for (cases, 0..) |case, n| {
+        const path = try std.fmt.allocPrint(arena, "case{d}", .{n});
+        try testFolder(io, tmp.dir, try std.fs.path.join(arena, &.{ path, "drive" }), &testDisc1(cabinet));
+        try testFolder(io, tmp.dir, try std.fs.path.join(arena, &.{ path, "waiting" }), &test_disc2);
+        var dir = try tmp.dir.openDir(io, path, .{});
+        defer dir.close(io);
+        var test_run: TestRun = .init(gpa);
+        defer test_run.deinit();
+        var env = test_run.environment(dir, &.{"drive"}, &known);
+        var player: TestPlayer = undefined;
+        if (case.turns) |turns| {
+            player.init(io, dir, turns);
+            env.player = &player.reader;
+        }
+        try std.testing.expectEqual(0, try run(io, arena, .{ .directory = "game" }, env));
+        const said = test_run.out.written();
+        try std.testing.expectEqual(case.turns != null, std.mem.indexOf(u8, said, "Insert StarLancer disc 2 and press Enter") != null);
+        try std.testing.expectEqual(n == 0, std.mem.indexOf(u8, said, "Disc 2 isn't in any CD drive yet.") != null);
+        try std.testing.expectEqual(!case.installed, std.mem.indexOf(u8, said, "Disc 2's archive isn't installed.") != null);
+        if (case.installed) {
+            try expectFile(io, dir, "game/CD2.HOG", "second archive");
+        } else {
+            try std.testing.expectError(error.FileNotFound, dir.statFile(io, "game/CD2.HOG", .{}));
+        }
+    }
+}
+
 test "what the installer refuses" {
     const io = std.testing.io;
     const gpa = std.testing.allocator;
@@ -1236,21 +1542,28 @@ test "what the installer refuses" {
     try testFolder(io, tmp.dir, "escaping", &testDisc1(escaping));
     try testFolder(io, tmp.dir, "garbage", &testDisc1("not a cabinet"));
     try testFolder(io, tmp.dir, "damaged", &testDisc1(damaged[0 .. damaged.len - 4]));
-    try testFolder(io, tmp.dir, "disc2", &.{.{ .path = "GAME/CD2.HOG", .data = "" }});
+    try testFolder(io, tmp.dir, "disc2", &test_disc2);
     try testFolder(io, tmp.dir, "other", &.{.{ .path = "README.TXT", .data = "" }});
+    try testFolder(io, tmp.dir, "copy", &testDisc1(escaping));
+    // A disc 1 without its archive.
+    const unarchived = testDisc1(damaged);
+    try testFolder(io, tmp.dir, "unarchived", unarchived[0..3]);
     try tmp.dir.writeFile(io, .{ .sub_path = "disc.zip", .data = "PK\x03\x04 not a disc image" });
     try tmp.dir.writeFile(io, .{ .sub_path = "disc.cue", .data = "FILE \"disc.bin\" BINARY\n" });
 
-    const Case = struct { from: []const u8, says: []const u8 };
+    const Case = struct { from: [2]?[]const u8, says: []const u8 };
     const cases = [_]Case{
-        .{ .from = "missing.bin", .says = "openreliant: there's no missing.bin.\n" },
-        .{ .from = "disc.zip", .says = "openreliant: disc.zip is neither a folder nor a disc image.\n" },
-        .{ .from = "disc.cue", .says = "openreliant: disc.cue only describes the disc. Name its .bin instead.\n" },
-        .{ .from = "disc2", .says = "openreliant: disc2 is StarLancer disc 2. Installing needs disc 1.\n" },
-        .{ .from = "other", .says = "openreliant: other isn't StarLancer disc 1: it has no LANCER.CAB.\n" },
-        .{ .from = "escaping", .says = "openreliant: the cabinet has a file named CAB/../../evil.dll, outside the install.\n" },
-        .{ .from = "garbage", .says = "openreliant: the cabinet can't be unpacked: " },
-        .{ .from = "damaged", .says = "openreliant: the cabinet can't be unpacked: " },
+        .{ .from = .{ "missing.bin", null }, .says = "openreliant: there's no missing.bin.\n" },
+        .{ .from = .{ "disc.zip", null }, .says = "openreliant: disc.zip is neither a folder nor a disc image.\n" },
+        .{ .from = .{ "disc.cue", null }, .says = "openreliant: disc.cue only describes the disc. Name its .bin instead.\n" },
+        .{ .from = .{ "disc2", null }, .says = "openreliant: disc2 is StarLancer disc 2. Installing needs disc 1.\n" },
+        .{ .from = .{ "other", null }, .says = "openreliant: other isn't a StarLancer disc: it has neither LANCER.CAB nor GAME/CD2.HOG.\n" },
+        .{ .from = .{ "escaping", "copy" }, .says = "openreliant: escaping and copy are both StarLancer disc 1.\n" },
+        .{ .from = .{ "disc2", "disc2" }, .says = "openreliant: disc2 and disc2 are both StarLancer disc 2.\n" },
+        .{ .from = .{ "escaping", null }, .says = "openreliant: the cabinet has a file named CAB/../../evil.dll, outside the install.\n" },
+        .{ .from = .{ "garbage", null }, .says = "openreliant: the cabinet can't be unpacked: " },
+        .{ .from = .{ "damaged", null }, .says = "openreliant: the cabinet can't be unpacked: " },
+        .{ .from = .{ "unarchived", null }, .says = "openreliant: unarchived has no GAME/CD1.HOG.\n" },
     };
     for (cases) |case| {
         var test_run: TestRun = .init(gpa);
@@ -1258,7 +1571,7 @@ test "what the installer refuses" {
         const code = try run(io, arena, .{ .directory = "install/game", .from = case.from, .force = true }, test_run.environment(tmp.dir, &.{}, &.{}));
         try std.testing.expectEqual(1, code);
         if (!std.mem.startsWith(u8, test_run.err.written(), case.says)) {
-            std.debug.print("installing from {s} said: {s}\n", .{ case.from, test_run.err.written() });
+            std.debug.print("installing from {?s} said: {s}\n", .{ case.from[0], test_run.err.written() });
             return error.TestUnexpectedResult;
         }
     }
