@@ -390,6 +390,10 @@ pub const Model = struct {
     lights: []Light,
     glows: []Glow,
     mounts: []Mount,
+    /// What its missile hardpoints hold, a rack each, as `object_fit_missiles` hangs it: a pod, or
+    /// a missile on its rail, which a launch takes its model from. Empty until the racks are
+    /// fitted.
+    hung: []?Mount = &.{},
     /// Where the model's origin lies from the object's, less (`GameObject + 0x524`): the centres
     /// of mass `recentre` moved the origin to.
     centre: Vector = @splat(0),
@@ -544,6 +548,11 @@ pub const Model = struct {
         origin: Vector,
         orientation: math.Matrix,
         model: Model,
+
+        /// Where the attachment stands in the world, for its part standing at `carrier`.
+        pub fn within(mount: Mount, carrier: math.Place) math.Place {
+            return (math.Place{ .position = mount.origin, .orientation = mount.orientation }).within(carrier);
+        }
     };
 
     pub const Part = struct {
@@ -916,7 +925,8 @@ pub const Model = struct {
             part.origin = local.position;
             part.turn = local.orientation;
         }
-        for (model.mounts) |*mount| mount.model.frame(fraction);
+        var each = model.carried();
+        while (each.next()) |mount| mount.model.frame(fraction);
     }
 
     /// One light for each attachment of kind `light` a part carries, at its place in the model
@@ -1017,8 +1027,10 @@ pub const Model = struct {
     }
 
     pub fn deinit(model: Model, gpa: Allocator) void {
-        for (model.mounts) |mount| mount.model.deinit(gpa);
+        var each = model.carried();
+        while (each.next()) |mount| mount.model.deinit(gpa);
         gpa.free(model.mounts);
+        gpa.free(model.hung);
         gpa.free(model.parts);
         gpa.free(model.order);
         gpa.free(model.lights);
@@ -1070,15 +1082,38 @@ pub const Model = struct {
             const unturned = part.turn[0] == 1 and part.turn[4] == 1 and part.turn[8] == 1;
             part.object.orientation = if (unturned) turn else math.product(turn, part.turn);
         }
-        for (model.mounts) |*mount| {
+        var each = model.carried();
+        while (each.next()) |mount| {
             const carrier = model.parts[mount.part].object;
             // The attachment where the part that carries it stands.
-            const on = (math.Place{ .position = mount.origin, .orientation = mount.orientation })
-                .within(.{ .position = carrier.position, .orientation = carrier.orientation });
+            const on = mount.within(.{ .position = carrier.position, .orientation = carrier.orientation });
             // The mounted model stands on its own centre of mass, so its origin goes back by it.
             mount.model.place(math.transform(on.orientation, mount.model.centre) + on.position, on.orientation);
         }
     }
+
+    /// Each model it carries: those its attachments mount, then those its missile hardpoints
+    /// hold.
+    pub fn carried(model: Model) Carried {
+        return .{ .mounts = model.mounts, .hung = model.hung };
+    }
+
+    pub const Carried = struct {
+        mounts: []Mount,
+        hung: []?Mount,
+
+        pub fn next(each: *Carried) ?*Mount {
+            if (each.mounts.len > 0) {
+                defer each.mounts = each.mounts[1..];
+                return &each.mounts[0];
+            }
+            while (each.hung.len > 0) {
+                defer each.hung = each.hung[1..];
+                if (each.hung[0]) |*mount| return mount;
+            }
+            return null;
+        }
+    };
 
     /// Adds each shown part's object to `layer`, the world's or, for a cockpit, the overlay
     /// (`node_draw`, `0x0049A8C0`, for the model's part nodes), then the lights, unless the view
@@ -1122,7 +1157,8 @@ pub const Model = struct {
             glow.object.orientation = math.product(math.product(carrier.orientation, glow.orientation), scale);
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &glow.object }, layer);
         }
-        for (model.mounts) |*mount| {
+        var each = model.carried();
+        while (each.next()) |mount| {
             // What a hidden part carries is hidden with it, as a light and a glow are.
             if (model.parts[mount.part].hidden) continue;
             try mount.model.draw(gpa, scene, layer, view);
@@ -1135,7 +1171,8 @@ pub const Model = struct {
         for (model.parts) |*part| {
             if (!part.hidden) try scene.casters.append(gpa, &part.object);
         }
-        for (model.mounts) |*mount| {
+        var each = model.carried();
+        while (each.next()) |mount| {
             if (!model.parts[mount.part].hidden) try mount.model.castShadows(gpa, scene);
         }
     }
@@ -1557,7 +1594,7 @@ test "a model's lights: their sprites, and the light a blinking one casts" {
         .position = .{ .x = 0, .y = 0, .z = 0 },
         .orientation = math.identity,
         .id = 0,
-        ._unknown_38 = @splat(0),
+        .later_tiers = @splat(0),
         .size = .{ 2, 3, 0 },
         .blink = .{ 0, 0 },
         .blink_phase = 0,
@@ -1796,7 +1833,7 @@ test "a gun attachment mounts the model its id names" {
         .position = .{ .x = 50, .y = 0, .z = 0 },
         .orientation = math.identity,
         .id = 0,
-        ._unknown_38 = @splat(0),
+        .later_tiers = @splat(0),
         .size = @splat(0),
         .blink = .{ 0, 0 },
         .blink_phase = 0,

@@ -653,7 +653,7 @@ test "a ship that meets a hull is shoved off the face it hit" {
     // The inverse inertia of a body of this mass, about 6 / (mass * size squared), which is what
     // `recentre` works out from a model's parts.
     const hull_turn: math.Matrix = @splat(0);
-    const hull = try create.createObject(all, &mission.tables, model.types(), null, .predator, @splat(0), &mission.random);
+    const hull = try create.createObject(all, &mission.tables, model.types(), null, .predator, 0, @splat(0), &mission.random);
     all.slots[hull].object.flags.components = true;
     all.slots[hull].object.mass = 100000;
     all.slots[hull].object.angular_response = hull_turn;
@@ -894,7 +894,7 @@ test componentDamage {
     // The player's ship, in the first slot, and another, which the difficulty leaves alone. The
     // player's is of another type, whose model the test's types don't give.
     _ = try mission.add(.kamov, @splat(0));
-    const index = try create.createObject(all, &mission.tables, model.types(), null, .predator, @splat(0), &mission.random);
+    const index = try create.createObject(all, &mission.tables, model.types(), null, .predator, 0, @splat(0), &mission.random);
     const part = &all.slots[index].model.?.parts[0];
     try std.testing.expectEqual(100, part.armor);
 

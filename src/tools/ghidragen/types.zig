@@ -77,7 +77,8 @@ pub const exported = [_]Export{
     .{ "ShipSide", engine.game.gameobj.Side(i16) },
     .{ "GunStats", engine.game.guns.Gun },
     .{ "GunKind", engine.game.guns.Kind },
-    .{ "MissileStats", engine.game.missiles.Missile },
+    .{ "MissileStats", engine.game.missiles.Stats },
+    .{ "MissileOrder", engine.game.missiles.Order },
     .{ "PilotStats", engine.game.pilots.Pilot },
     .{ "PilotTimings", engine.game.pilots.Pilot.Timings },
     .{ "PilotRange", engine.game.pilots.Pilot.Range },
@@ -101,6 +102,8 @@ pub const exported = [_]Export{
     .{ "ControlModifier", engine.input.ControlBinding.Modifier },
     .{ "ControlAction", engine.input.controls.Action },
     .{ "ControlMode", engine.input.ControlMode },
+    .{ "MissileRack", engine.game.gameobj.Rack },
+    .{ "MissileType", engine.game.missiles.Type },
 
     // The pause menu.
     .{ "MenuItem", engine.game.hudoptions.menu.Item },

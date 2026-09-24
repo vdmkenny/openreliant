@@ -117,12 +117,12 @@ and tunes the shields to the most dangerous type other than the two capital-ship
 | `0x40` | Speed | float | Screen: **Speed** bar. Mods: MaxVelocity |
 | `0x44` | Turn rate | float | Copied into all three rates of the missile's flight model |
 | `0x48` | Flight time | `x * 100`, truncated | Screen: **Range** is `speed * flight_time`. Mods: Range |
-| `0x4C` | Damage | float | Screen: **Damage** is `0x4C + 0x50` |
-| `0x50` | Damage | float | Screen |
+| `0x4C` | Shield damage | float | Screen: **Damage** is `0x4C + 0x50`. What a hit does to a shield (`missile_collide`) |
+| `0x50` | Hull damage | float | Screen. What a hit does to a hull |
 | `0x54` | Lock time | truncated | Screen: **Locking Time** is `0x54 * 0.01`, labelled ` SECS` |
-| `0x58` | | truncated | **Unknown** |
-| `0x5C` | | float | **Unknown** |
-| `0x60` | | float | **Unknown** |
+| `0x58` | Decoy chance | truncated | In percent: the chance a countermeasure draws the missile off (`object_spend_countermeasure`) |
+| `0x5C` | Lock range | float | How far off a target the missile locks on: the player's lock, the AI's and the missile turret's |
+| `0x60` | Component damage | float | What a hit does to a component of a ship that lists them |
 
 `0x48` is flight time, not range: the loadout screen computes range as speed times it. `0x54` is in
 hundredths of a second.

@@ -26,6 +26,7 @@ const aigeneric = @import("aigeneric.zig");
 const collision = @import("collision.zig");
 const gameobj = @import("gameobj.zig");
 const guns = @import("guns.zig");
+const missiles = @import("missiles.zig");
 const GameObject = gameobj.GameObject;
 const main = @import("main.zig");
 const motion = @import("motion.zig");
@@ -389,6 +390,13 @@ pub const Objects = struct {
     /// `gun_stats` (`0x00500CA4`): every gun type's figures, which `stats_load_guns` fills from
     /// `gunstats.bin`.
     gun_stats: guns.Stats = .initial,
+    /// `missile_stats` and `missile_flight_stats`: every missile type's figures, which
+    /// `stats_load_missiles` fills from `missilestats.bin`.
+    missile_stats: missiles.Table = .initial,
+    /// `campaign_tier` (`0x00562DF0`): the loadout tier the campaign has reached, which a fighter
+    /// asked for none is fitted by. 0 for a new pilot; the missions after the 11th, 19th and 21st
+    /// raise it to 1, 2 and 3 (`mission_end_record`).
+    campaign_tier: u2 = 0,
     /// `pilot_stats` (`0x0058A968`): every pilot, which `stats_load_pilots` fills from
     /// `pilotstats.bin`.
     pilots: pilots.Table = .{},
@@ -516,11 +524,15 @@ const flagged_kind: shp.Attachment.Kind = @enumFromInt(6);
 /// and is not debris gets its shields' bubble (`shield.Bubble`). A type that is another under a
 /// second number takes the other's stats (`donor`), and its number once it is made.
 ///
-/// Not ported: the tier, which chooses the guns (#131); the guns and their groups, the loadout and
-/// its pods (#131, #38, #39); the components (#40); what it does for
-/// capital ships, planets, gates and other single types; for a player's slot, the ship the player
-/// chose and its `t_` twin from the 14th mission on; and what differs in a multiplayer game.
-pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, ship_type: gameobj.Type, at: Vector, random: *libcmt.Rand) Error!u16 {
+/// Its missile racks are fitted by the loadout `tier` a mission's ship record asks for, as
+/// `settledTier` settles it (`loadoutByTier`, `fitRacks`), with 5000 more of the afterburner's fuel
+/// for each fuel pod.
+///
+/// Not ported: the components (#40); what it does for capital ships, planets, gates and other
+/// single types; for a player's slot, the ship and the missiles the player chose on the loadout
+/// screen (#44), where the port fits a player's ship by the tier as the game does when the briefing
+/// is skipped, and its `t_` twin from the 14th mission on; and what differs in a multiplayer game.
+pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, ship_type: gameobj.Type, tier: i32, at: Vector, random: *libcmt.Rand) Error!u16 {
     const index = wanted orelse all.count;
     if (index >= gameobj.max_objects) return error.Overrun;
     const slot = &all.slots[index];
@@ -668,9 +680,124 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.gun_charge = combat.gun_energy;
     object.rounds = combat.rounds;
     object.gun_mode = .created(combat.gun_groups);
+    if (slot.model) |*model| {
+        loadoutByTier(object, model, settledTier(tier, ship_type, all.campaign_tier));
+        try fitRacks(all.gpa, object, model, if (slot.type) |loaded| loaded.effects else .{});
+    }
+    for (object.racks[0..@intCast(object.rack_count)]) |rack| {
+        if (rack.type == .fuel_pod) object.afterburner_fuel += fuel_pod_fuel;
+    }
     ai.setTargetable(object, combat, true);
     object.type = @enumFromInt(becomes);
     return index;
+}
+
+/// The afterburner's fuel a fuel pod adds, in hundredths of a second: 50 seconds.
+pub const fuel_pod_fuel = 5000;
+
+/// The last ship type the campaign's tier fits: the player's twelve fighters.
+const last_fighter = 11;
+
+/// The loadout tier `create_object` settles on for an object of `ship_type` asked for `asked`: 5
+/// is 4, and what lies outside 0 to 4 is 0. A fighter asked for 0 takes the campaign's `campaign`,
+/// and then any 4 is 0. So a mission's record asks for the campaign's tier with 0 or 255, and for
+/// tier 0 with 4 or 5.
+pub fn settledTier(asked: i32, ship_type: gameobj.Type, campaign: u2) u2 {
+    var tier: i32 = if (asked == 5) 4 else if (asked < 0 or asked > 4) 0 else asked;
+    if (tier == 0 and @intFromEnum(ship_type) <= last_fighter) tier = campaign;
+    return if (tier == 4) 0 else @intCast(tier);
+}
+
+/// A missile hardpoint: an attachment of kind `missile` on a part of the model.
+pub const Hardpoint = struct {
+    part: usize,
+    attachment: *const shp.Attachment,
+};
+
+/// The missile hardpoints the loadout walks, in turn: those of the parts that hang from the root,
+/// each part's in order. **Unverified:** that the root lists its parts in the order the model does.
+/// The hardpoints of a part that hangs from another part are passed over, as the game's walk never
+/// reaches them.
+pub fn hardpoints(model: *const objects.Model) Hardpoints {
+    return .{ .parts = model.parts };
+}
+
+pub const Hardpoints = struct {
+    parts: []const objects.Model.Part,
+    part: usize = 0,
+    attachment: usize = 0,
+
+    pub fn next(each: *Hardpoints) ?Hardpoint {
+        while (each.part < each.parts.len) : ({
+            each.part += 1;
+            each.attachment = 0;
+        }) {
+            const part = &each.parts[each.part];
+            if (part.parent != null) continue;
+            while (each.attachment < part.attachments.len) {
+                const attachment = &part.attachments[each.attachment];
+                each.attachment += 1;
+                if (attachment.kind == .missile) return .{ .part = each.part, .attachment = attachment };
+            }
+        }
+        return null;
+    }
+};
+
+/// `object_loadout_by_tier` (`0x0045E500`): each missile hardpoint, in turn, takes a rack of the
+/// missile its attachment names for `tier`.
+///
+/// Not ported: the player's own ship in the simulator and in missions 30 to 35, which takes a
+/// Vagabond, a Jack Hammer and a Raptor in turn.
+pub fn loadoutByTier(object: *GameObject, model: *const objects.Model, tier: u2) void {
+    object.rack_count = 0;
+    var each = hardpoints(model);
+    while (each.next()) |hardpoint| {
+        if (object.rack_count == gameobj.max_racks) break;
+        object.racks[@intCast(object.rack_count)] = .{ .type = .of(hardpoint.attachment.idFor(tier)) };
+        object.rack_count += 1;
+    }
+}
+
+/// `object_fit_missiles` (`0x0045E1A0`): hangs on each missile hardpoint, in turn, what its rack
+/// holds, a pod or a missile on its rail, and fills the rack: a pod's capacity, or 1. A rack of no
+/// missile ends the loadout: its count is 0, and each hardpoint after it reads the same rack, so
+/// stays empty. What hung there before is let go first, as a re-arm does. A model the game lacks
+/// hangs nothing, and its rack stays filled.
+pub fn fitRacks(gpa: Allocator, object: *GameObject, model: *objects.Model, effects: objects.Effects) Allocator.Error!void {
+    if (model.hung.len == 0) {
+        model.hung = try gpa.alloc(?objects.Model.Mount, gameobj.max_racks);
+        @memset(model.hung, null);
+    }
+    for (model.hung) |*held| if (held.*) |mount| {
+        mount.model.deinit(gpa);
+        held.* = null;
+    };
+    object.rack_count = 0;
+    var each = hardpoints(model);
+    while (each.next()) |hardpoint| {
+        if (object.rack_count == gameobj.max_racks) break;
+        const at: usize = @intCast(object.rack_count);
+        const rack = &object.racks[at];
+        const held = models.attachment(.missile, @intCast(rack.type.index() orelse {
+            rack.count = 0;
+            continue;
+        })) orelse models.Attachment{};
+        rack.count = @intCast(held.count);
+        model.hung[at] = try hang(gpa, effects, hardpoint, held.model);
+        object.rack_count += 1;
+    }
+}
+
+/// What a hardpoint holds, built from `file` and standing on its own centre of mass at the
+/// hardpoint's place; null where the game lacks the model.
+fn hang(gpa: Allocator, effects: objects.Effects, hardpoint: Hardpoint, file: ?[]const u8) Allocator.Error!?objects.Model.Mount {
+    const mounts = effects.mounts orelse return null;
+    const mounted = mounts.load(mounts.context, file orelse return null) orelse return null;
+    var built: objects.Model = try .create(gpa, mounted.model, mounted.loaded, effects);
+    gameobj.linkParts(&built, mounted.model);
+    const at = hardpoint.attachment.position;
+    return .{ .part = hardpoint.part, .origin = .{ at.x, at.y, at.z }, .orientation = hardpoint.attachment.orientation, .model = built };
 }
 
 /// `objects_update` (`0x00468FA0`), once a simulation step after the objects' own updates: moves
@@ -1075,6 +1202,67 @@ test collectComponents {
     try std.testing.expectEqual(gameobj.max_components, slot.object.component_count);
 }
 
+test settledTier {
+    // A fighter asked for 0 or 255 takes the campaign's tier; asked for 4 or 5, tier 0.
+    try std.testing.expectEqual(2, settledTier(0, .predator, 2));
+    try std.testing.expectEqual(2, settledTier(255, .predator, 2));
+    try std.testing.expectEqual(0, settledTier(4, .predator, 2));
+    try std.testing.expectEqual(0, settledTier(5, .predator, 2));
+    try std.testing.expectEqual(3, settledTier(3, .predator, 2));
+    // What isn't a fighter keeps what it was asked for.
+    try std.testing.expectEqual(0, settledTier(0, .sabre, 2));
+}
+
+test "a ship's racks are fitted by its tier" {
+    const gpa = std.testing.allocator;
+    var random: libcmt.Rand = .{};
+    const all = try Objects.create(gpa, &random);
+    defer all.destroy();
+    var tables = testing.tables();
+    var model: testing.Model = undefined;
+    try model.init(gpa);
+    defer model.deinit(gpa);
+    // Four hardpoints: for tier 0 a Screamer pod, a Havoc, none, and a Raptor after the gap; for
+    // tier 1 a fuel pod first. A light among them is passed over.
+    var points: [5]shp.Attachment = @splat(std.mem.zeroes(shp.Attachment));
+    for (&points, [_]u32{ 0, 2, 0xFFFF, 1, 0 }) |*point, id| {
+        point.kind = .missile;
+        point.id = id;
+    }
+    points[0].later_tiers[0] = 10;
+    points[2].kind = .light;
+    points[2].id = 0;
+    points[3].id = 0xFFFF;
+    points[4].id = 1;
+    model.data[0].attachments = &points;
+    // Every model a hardpoint holds is the fixture's own part.
+    const Loader = struct {
+        fn load(context: *anyopaque, _: []const u8) ?objects.Mounts.Mounted {
+            const fixture: *testing.Model = @ptrCast(@alignCast(context));
+            return .{ .model = &fixture.source, .loaded = &fixture.loaded };
+        }
+    };
+    model.type.effects.mounts = .{ .context = &model, .load = Loader.load };
+    var index = try createObject(all, &tables, model.types(), null, .predator, 0, @splat(0), &random);
+    var object = &all.slots[index].object;
+    // The gap ends the loadout: the Raptor after it stays off.
+    try std.testing.expectEqual(2, object.rack_count);
+    try std.testing.expectEqual(missiles.Type.screamer, object.racks[0].type);
+    try std.testing.expectEqual(20, object.racks[0].count);
+    try std.testing.expectEqual(missiles.Type.havoc, object.racks[1].type);
+    try std.testing.expectEqual(1, object.racks[1].count);
+    const hung = all.slots[index].model.?.hung;
+    try std.testing.expect(hung[0] != null and hung[1] != null and hung[2] == null);
+
+    // At tier 1, the first holds a fuel pod, which adds to the afterburner's fuel.
+    all.campaign_tier = 1;
+    const fuel = object.afterburner_fuel;
+    index = try createObject(all, &tables, model.types(), null, .predator, 0, @splat(0), &random);
+    object = &all.slots[index].object;
+    try std.testing.expectEqual(missiles.Type.fuel_pod, object.racks[0].type);
+    try std.testing.expectEqual(fuel + fuel_pod_fuel, object.afterburner_fuel);
+}
+
 test createObject {
     const gpa = std.testing.allocator;
     var mission: gameobj.testing.Mission = undefined;
@@ -1087,7 +1275,7 @@ test createObject {
     mission.tables.combat[0x2B].side = .hostile;
 
     // The player first, in the next slot, at rest where it is put and facing along Z.
-    const player = try createObject(all, &mission.tables, model.types(), null, .predator, .{ 0, 0, 500 }, &mission.random);
+    const player = try createObject(all, &mission.tables, model.types(), null, .predator, 0, .{ 0, 0, 500 }, &mission.random);
     try std.testing.expectEqual(0, player);
     try std.testing.expectEqual(1, all.count);
     const made = &all.slots[player];
@@ -1114,17 +1302,17 @@ test createObject {
     try std.testing.expect(!object.flags.ecm);
 
     // A Coalition fighter: hostile, flown by the Coalition's pilot, with its ECM on.
-    const enemy = try createObject(all, &mission.tables, model.types(), null, .sabre, .{ 0, 0, 0 }, &mission.random);
+    const enemy = try createObject(all, &mission.tables, model.types(), null, .sabre, 0, .{ 0, 0, 0 }, &mission.random);
     try std.testing.expectEqual(.hostile, all.slots[enemy].object.side);
     try std.testing.expectEqual(coalition_pilot, all.slots[enemy].object.pilot);
     try std.testing.expect(all.slots[enemy].object.flags.ecm);
 
     // A slot filled once is not filled again, and nothing lies past the last.
-    try std.testing.expectError(error.CreatedTwice, createObject(all, &mission.tables, model.types(), player, .predator, @splat(0), &mission.random));
-    try std.testing.expectError(error.Overrun, createObject(all, &mission.tables, model.types(), gameobj.max_objects, .predator, @splat(0), &mission.random));
+    try std.testing.expectError(error.CreatedTwice, createObject(all, &mission.tables, model.types(), player, .predator, 0, @splat(0), &mission.random));
+    try std.testing.expectError(error.Overrun, createObject(all, &mission.tables, model.types(), gameobj.max_objects, .predator, 0, @splat(0), &mission.random));
 
     // Above the last ship type, a stand-in for a marker, at a slot of its own.
-    const marker = try createObject(all, &mission.tables, model.types(), 20, @enumFromInt(1000), @splat(0), &mission.random);
+    const marker = try createObject(all, &mission.tables, model.types(), 20, @enumFromInt(1000), 0, @splat(0), &mission.random);
     try std.testing.expectEqual(20, marker);
     try std.testing.expectEqual(2, all.count);
     const stand_in = all.slots[marker];
@@ -1137,7 +1325,7 @@ test createObject {
     all.resetSlot(player, &mission.random);
     try std.testing.expectEqual(GameObject.Flags.standing_in, all.slots[player].object.flags);
     try std.testing.expectEqual(null, all.slots[player].model);
-    _ = try createObject(all, &mission.tables, model.types(), player, .predator, @splat(0), &mission.random);
+    _ = try createObject(all, &mission.tables, model.types(), player, .predator, 0, @splat(0), &mission.random);
 }
 
 test "an object is created with the guns its model holds" {
@@ -1158,7 +1346,7 @@ test "an object is created with the guns its model holds" {
     }
     model.data[0].attachments = &muzzles;
 
-    const index = try createObject(all, &mission.tables, model.types(), null, @enumFromInt(7), @splat(0), &mission.random);
+    const index = try createObject(all, &mission.tables, model.types(), null, @enumFromInt(7), 0, @splat(0), &mission.random);
     const slot = &all.slots[index];
     // The guns are fitted after the count is cleared, so the object holds them all.
     try std.testing.expectEqual(2, slot.object.gun_count);

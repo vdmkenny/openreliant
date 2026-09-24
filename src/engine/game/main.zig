@@ -386,7 +386,7 @@ test "the objects are framed and drawn, save those left out" {
     var tables = create.testing.tables();
     for (0..4) |place| {
         const at: math.Vector = .{ @floatFromInt(place * 100), 0, 0 };
-        _ = try create.createObject(all, &tables, model.types(), null, .predator, at, &random);
+        _ = try create.createObject(all, &tables, model.types(), null, .predator, 0, at, &random);
     }
     // The first is the ship the camera sits in, the second is disabled and the third jumping.
     all.slots[0].object.flags.hidden = true;

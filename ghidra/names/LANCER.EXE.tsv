@@ -128,7 +128,7 @@ address	kind	name	type	comment
 00500f64	data	gun_flash_ticks	int[15]	How long a muzzle's flash lasts, by gun type less one, which bullet_fire sets on the part it fires from
 00508700	data	gun_sound_periods	int[16]	The steps a firing gun of each type goes between the sounds of its shots. The player's shots are all heard
 005035e8	data	missile_flight_stats	FlightModel[11]	
-005037a8	data	missile_stats	MissileStats[11]	
+005037a0	data	missile_stats	MissileStats[11]	Every missile type's figures: the executable's own words and what stats_load_missiles reads of missilestats.bin
 0058a968	data	pilot_stats	PilotStats[194]	
 00441aa0	function	loadout_load		Preloads the loadout screen: stats, models, sounds
 00444f20	function	loadout_draw_stats		Draws the stat rows the layout table describes

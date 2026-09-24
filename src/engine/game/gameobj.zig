@@ -20,6 +20,7 @@ const Node = objects.Node;
 const Pointer = engine.Pointer;
 const create = @import("create.zig");
 const guns = @import("guns.zig");
+const missiles = @import("missiles.zig");
 const libcmt = @import("../libcmt.zig");
 const motion = @import("motion.zig");
 const input = @import("../input.zig");
@@ -154,6 +155,25 @@ pub const Component = extern struct {
 
     comptime {
         assert(@sizeOf(Component) == 0x0C);
+    }
+};
+
+/// Missile racks an object can carry: one for each of its missile hardpoints.
+pub const max_racks = 20;
+
+/// One of an object's missile racks (`GameObject + 0x158`): what a missile hardpoint of its model
+/// holds, a pod of missiles or one missile hung on a rail, and how many are left.
+pub const Rack = extern struct {
+    type: missiles.Type,
+    _unknown_02: u16 = 0,
+    /// Where the node of the part that carries the hardpoint lists the hung pod or missile.
+    slot: Pointer(Pointer(Node)) = .null,
+    /// Missiles left: a pod's capacity, or 1 for a rail, when fitted; -1 once an empty pod is let
+    /// fall.
+    count: i32 = 0,
+
+    comptime {
+        assert(@sizeOf(Rack) == 0x0C);
     }
 };
 
@@ -353,9 +373,12 @@ pub const GameObject = extern struct {
     /// Which side of a gun group fires next, 0 or 1, while the ship fires one group out of step
     /// (`guns.step`).
     gun_turn: guns.GroupSide,
-    _unknown_150: i16,
+    /// Its missile racks, `rack_count` of them, which `create_object` fits from its missile
+    /// hardpoints and each launch takes from.
+    rack_count: i16,
     component_count: i16,
-    _unknown_154: [0xF4]u8,
+    _unknown_154: [4]u8,
+    racks: [max_racks]Rack,
     /// The parts of its model whose flags mark them as components, in the order `0x00468760`
     /// finds them: each node's marked children, then each child's in turn.
     components: [max_components]Component,
@@ -452,7 +475,9 @@ pub const GameObject = extern struct {
     /// Its side: its type's (`ShipCombat.side`) when created, save for other players' ships in a
     /// multiplayer game, and hostile or friendly once `SetHostile` says.
     side: Side(i32),
-    _unknown_648: u32,
+    /// The loadout tier a re-arm fits its racks by (`order_dock`, `cmd_ReplenishWeapons`).
+    /// **Unverified:** nothing writes it, so it holds what the allocator leaves.
+    loadout_tier: u32,
     /// Nonzero while a missile homes on it, which lights the display's missile warning.
     /// `mission_frame` zeroes it on every object each frame, and `missiles_update` (`0x004960F0`)
     /// then sets it on the object each live missile's order targets. **Unverified:** the
@@ -1444,7 +1469,7 @@ pub const testing = struct {
 
         /// An object of `ship_type` at `at`, in the next slot.
         pub fn add(mission: *Mission, ship_type: Type, at: Vector) !u16 {
-            return create.createObject(mission.objects, &mission.tables, create.testing.no_models, null, ship_type, at, &mission.random);
+            return create.createObject(mission.objects, &mission.tables, create.testing.no_models, null, ship_type, 0, at, &mission.random);
         }
 
         /// A ship that is nobody's, at `at`, which takes the orders the player's refuses: the

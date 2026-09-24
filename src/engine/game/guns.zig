@@ -655,7 +655,7 @@ const testing = struct {
         /// An object of type `of` at `at`, of the same model.
         fn add(ship: *Ship, of: gameobj.Type, at: Vector) !u16 {
             const mission = &ship.mission;
-            return create.createObject(mission.objects, &mission.tables, ship.model.types(), null, of, at, &mission.random);
+            return create.createObject(mission.objects, &mission.tables, ship.model.types(), null, of, 0, at, &mission.random);
         }
 
         fn world(ship: *Ship) gameobj.World {

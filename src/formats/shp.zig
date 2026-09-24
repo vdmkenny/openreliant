@@ -295,9 +295,11 @@ pub const Attachment = extern struct {
     orientation: [9]f32,
     /// Which model of its kind the engine mounts: `models.attachment(kind, id)`. A `light` takes
     /// its colour from it instead: 0 blue, 1 green, 2 yellow, 3 red, and nothing beyond
-    /// (`static_lights_bake`).
+    /// (`static_lights_bake`). A missile hardpoint's id is its missile for loadout tier 0.
     id: u32,
-    _unknown_38: [0x10]u8,
+    /// A missile hardpoint's missile for loadout tiers 1 to 4, the low half of each
+    /// (`object_loadout_by_tier`, `0x0045E500`).
+    later_tiers: [4]u32,
     /// How large what the attachment holds is drawn. An `engine_glow` is scaled by all three, its
     /// length along Z then stretched by the throttle; a `light`'s sprite takes the second, seven
     /// times over, as how far it reaches either side of its centre (`node_draw`).
@@ -336,6 +338,12 @@ pub const Attachment = extern struct {
         pod = 5,
         _,
     };
+
+    /// The id the hardpoint holds for loadout `tier`: its own for tier 0, else the tier's.
+    pub fn idFor(attachment: Attachment, tier: u3) u16 {
+        const word = if (tier == 0) attachment.id else attachment.later_tiers[tier - 1];
+        return @truncate(word);
+    }
 
     comptime {
         assert(@offsetOf(Attachment, "id") == 0x34);

@@ -324,7 +324,7 @@ test frame {
     glow[0].position = .{ .x = 0, .y = 0, .z = -50 };
     glow[0].orientation = math.identity;
     model.data[0].attachments = &glow;
-    const index = try create.createObject(mission.objects, &mission.tables, model.types(), null, .predator, @splat(0), &mission.random);
+    const index = try create.createObject(mission.objects, &mission.tables, model.types(), null, .predator, 0, @splat(0), &mission.random);
     const slot = mission.slot(index);
     @import("../main.zig").frameObjects(mission.objects, 0);
 
