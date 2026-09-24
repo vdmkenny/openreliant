@@ -634,9 +634,21 @@ pub fn main(io: Io, arena: Allocator, args: []const [:0]const u8) !u8 {
         .drives = .system,
         .out = &out.interface,
         .err = &err.interface,
-        .terminal = try Io.File.stdout().isTty(io),
-        .player = if (try Io.File.stdin().isTty(io)) &in.interface else null,
+        .terminal = try isTerminal(io, .stdout()),
+        .player = if (try isTerminal(io, .stdin())) &in.interface else null,
     });
+}
+
+/// Whether `file` is a terminal. On Windows, `GetConsoleMode` says so for a console, which Wine
+/// answers where the standard library's check, made of the console driver directly, finds none.
+fn isTerminal(io: Io, file: Io.File) Io.Cancelable!bool {
+    if (builtin.os.tag != .windows) return file.isTty(io);
+    const windows = std.os.windows;
+    const kernel32 = struct {
+        extern "kernel32" fn GetConsoleMode(console: windows.HANDLE, mode: *u32) callconv(.winapi) windows.BOOL;
+    };
+    var mode: u32 = undefined;
+    return kernel32.GetConsoleMode(file.handle, &mode).toBool() or try file.isTty(io);
 }
 
 fn run(io: Io, arena: Allocator, options: Options, env: Environment) !u8 {
@@ -1224,6 +1236,16 @@ test mountedDiscs {
     var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena_state.deinit();
     for (try mountedDiscs(std.testing.io, arena_state.allocator())) |path| try std.testing.expect(path.len > 0);
+}
+
+test isTerminal {
+    // A plain file is no terminal, whichever way it's asked.
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const file = try tmp.dir.createFile(io, "plain", .{});
+    defer file.close(io);
+    try std.testing.expect(!try isTerminal(io, file));
 }
 
 test "telling the discs apart" {

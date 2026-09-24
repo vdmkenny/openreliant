@@ -153,7 +153,9 @@ Without `--from`, the installer searches the drives for the discs:
 
 It installs from disc 1, then looks for disc 2. When disc 2 isn't in a drive and the installer runs
 in a terminal, it asks for disc 2 and looks again each time Enter is pressed, until disc 2 is found
-or `skip` is typed. At a terminal, copying an archive shows how far it has got.
+or `skip` is typed. At a terminal, copying an archive shows how far it has got. On Windows the
+installer finds the console with `GetConsoleMode`, which also answers under Wine, where the
+standard library's check reports none.
 
 Without disc 2, the install goes on without its archive and says how to add it: disc 2 alone, named
 or in a drive, adds its archive to the install already in the directory.
