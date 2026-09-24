@@ -609,12 +609,13 @@ since a mounted turret's parts are not the hull's, and marks each one as a compo
 model asks, as targetable. A model with more components than the object holds leaves the
 rest unlisted, where the game stops with a fatal error.
 
-`sltool shp components` lists a model's components in that order, finding the mounted models beside
-it, and `sltool dte triggers` and `sltool dte script` name the components missions refer to. Every
-component a trigger names in the shipped missions is on its ship's list, and nearly every one a
-squad member or `push_component` names. The rest point past the end of the list, mostly by one;
-the missions do not always agree among themselves, as when one squad of the Kiev Morzov in
-`mission19` holds its turrets as components 3 to 9 and others hold them one by one as 4 to 10.
+`sltool shp components` lists a model's components in that order, with their armour, finding the
+mounted models beside it, and `sltool dte triggers` and `sltool dte script` name the components
+missions refer to. Every component a trigger names in the shipped missions is on its ship's list,
+and nearly every one a squad member or `push_component` names. The rest point past the end of the
+list, mostly by one; the missions do not always agree among themselves, as when one squad of the
+Kiev Morzov in `mission19` holds its turrets as components 3 to 9 and others hold them one by one as
+4 to 10.
 
 Mission data names a component by its index in that list: a trigger's qualifier, a squad member's
 component, the operand of `push_component`. Events on a component carry its index, and destroying
