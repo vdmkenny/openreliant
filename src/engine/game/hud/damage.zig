@@ -1,9 +1,7 @@
 //! Window 4 of the display, the damage display (`hud_window_draw`'s case at `0x00487DC5`): how
 //! well the player's weapons, engines and shields still work as the armour wears
-//! (`main.armorConditions`), a bar each (`hud_damage_bar`).
-//!
-//! Not ported: the shake the display's interference gives the icons (`hud_blit`,
-//! [#236](https://github.com/vdmkenny/openreliant/issues/236)).
+//! (`main.armorConditions`), a bar each (`hud_damage_bar`). The icons shake with the display
+//! (`hud.Shake`).
 
 const std = @import("std");
 
@@ -81,7 +79,7 @@ pub const Shown = struct {
 pub fn draw(shown: Shown, canvas: hud.windows.Canvas) hud.windows.Canvas.Error!void {
     try canvas.string(title, title_at, .right);
     for (rows.values) |row| {
-        try canvas.shape(row.icon, row.icon_at);
+        try canvas.shaky(row.icon, row.icon_at);
         try canvas.string(row.name, row.name_at, .left);
     }
     for (rows.values) |row| try canvas.shape(rule_shape, row.rule_at);

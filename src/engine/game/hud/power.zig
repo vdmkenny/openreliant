@@ -84,7 +84,7 @@ pub const Ball = struct {
         var row: i32 = -radius;
         while (row < radius) : (row += 1) {
             const span = whole(@sqrt(@as(f32, @floatFromInt(radius * radius - row * row))) + 0.5);
-            const jitter = @min(shake(hit_shake, random), most_jitter);
+            const jitter = @min(hud.rowShift(hit_shake, random), most_jitter);
             const first: usize = @intCast((row + radius) * size + radius - span);
             const into: usize = @intCast((row + radius) * image_width + radius - span + jitter);
             for (0..@intCast(2 * span)) |across| {
@@ -98,15 +98,6 @@ pub const Ball = struct {
         ball.image.changed = true;
     }
 };
-
-/// How far the shake moves a row: nothing while `hit_shake` is not above zero, and otherwise a
-/// random share of `10 * hit_shake` pixels, rounded as `sr_round` rounds.
-fn shake(hit_shake: f32, random: ?*libcmt.Rand) i32 {
-    if (!(hit_shake > 0)) return 0;
-    const source = random orelse return 0;
-    const share = @as(f32, @floatFromInt(source.rand())) * (1.0 / @as(f32, libcmt.Rand.max));
-    return @intFromFloat(math.roundEven(share * 10 * hit_shake));
-}
 
 /// `x` cut down to a whole number, as the runtime's `__ftol` does.
 fn whole(x: f32) i32 {

@@ -157,7 +157,7 @@ pub fn draw(shown: Shown, canvas: hud.windows.Canvas) hud.windows.Canvas.Error!v
             try canvas.print("{d}", .{entry.count}, count_at, .centre);
             try canvas.string(@intCast(entry.name), name_at, .centre);
         }
-        try canvas.shape(@intCast(entry.shape + entry.place), ring_at);
+        try canvas.shaky(@intCast(entry.shape + entry.place), ring_at);
     }
 }
 

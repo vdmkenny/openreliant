@@ -336,7 +336,7 @@ pub fn byDifficulty(world: gameobj.World, index: u16, kind: Kind, value: f32) f3
 ///
 /// With smart targeting on, a blow the player's ship deals, but by colliding, makes what it
 /// struck the player's target (`input.setPlayerTarget`). A blow the player's ship takes shakes it
-/// and its controller (`feedback`).
+/// and its controller (`feedback`), and the display (`hud.Interference.start`).
 ///
 /// Not ported: the score a player's hit is worth, and what multiplayer makes of it.
 pub fn damage(world: gameobj.World, index: u16, struck: Quadrant, value: f32, factor: f32, attacker: u16, kind: Kind) void {
@@ -344,6 +344,7 @@ pub fn damage(world: gameobj.World, index: u16, struck: Quadrant, value: f32, fa
     const slot = &all.slots[index];
     const object = &slot.object;
     if (object.flags.jumping) return;
+    if (index == all.player) if (world.display) |display| display.interference.start(world);
     if (slot.combat) |combat| if (combat.class == .debris) return;
 
     const held = object.shields.at(struck);
@@ -377,15 +378,15 @@ fn smartTargeting(world: gameobj.World, attacker: u16, kind: Kind) ?*hud.State {
 /// target of its current order. A hit on that target brings up its form of the target display,
 /// and a hit on it or on the player's ship marks the quadrant struck for the ship status indicator
 /// to flash (`hud.State.target_hits`, `ship_hits`). A blow the player's ship takes shakes it and
-/// its controller (`feedback`).
+/// its controller (`feedback`), and the display (`hud.Interference.start`).
 ///
-/// Not ported: the display's interference, and what the player's hits on a friend tell the
-/// mission.
+/// Not ported: what the player's hits on a friend tell the mission.
 pub fn armorDamage(world: gameobj.World, index: u16, struck: Quadrant, value: f32, attacker: u16, kind: Kind) void {
     const all = world.objects;
     const slot = &all.slots[index];
     const object = &slot.object;
     if (object.flags.jumping) return;
+    if (index == all.player) if (world.display) |display| display.interference.start(world);
     if (slot.combat) |combat| if (combat.class == .debris) return;
     const scaled = byDifficulty(world, index, kind, value);
     if (index == all.player) feedback(world, struck, kind, scaled, false);
