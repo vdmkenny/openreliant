@@ -50,7 +50,7 @@ A ship executing a jump fires nothing, though its weapons continue recharging. S
 
 ## Shots
 
-`bullet_fire` (`0x0047C5F0`) allocates the first available of 200 projectile records at `0x00563148` (`0xC4` bytes each), and `bullet_place` (`0x0047BDB0`) populates it. The projectile spawns at the muzzle node and travels along that node's forward vector at the gun type's velocity for its defined lifetime in ticks, which determines range. A ship aiming blind aims directly at its target instead of along the muzzle vector, and gun type 12 scatters.
+`bullet_fire` (`0x0047C5F0`) allocates the first available of 200 projectile records at `0x00563148` (`0xC4` bytes each), and `bullet_place` (`0x0047BDB0`) populates it. The projectile spawns at the muzzle node and travels along that node's forward vector at the gun type's velocity for its defined lifetime in ticks, which determines range. A ship aiming blind aims directly at its target instead of along the muzzle vector, and gun type 12 scatters. The player's shot plays its gun type's force-feedback effect ([Controls](controls.md#force-feedback)).
 
 Special gun rules:
 - Two in five Turret Flak shots spawn as Turret Lasers shots instead (`bullet_fire`). Turret Flak shots have randomized lifetimes between 20% and 100% of their base duration, scattering up to 0.06 radians on each axis.

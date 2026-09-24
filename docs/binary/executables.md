@@ -36,7 +36,7 @@ DirectDraw, Direct3D, DirectInput and DirectPlay are reached through those libra
 | `shipstats.bin`, `gunstats.bin`, `missilestats.bin`, `pilotstats.bin` | Stat tables: see [`stats.md`](../formats/stats.md). |
 | `missions/*.dte` | Missions 18 and 25, installed loose; `resource.hog` holds all 44. See [`dte.md`](../formats/dte.md). |
 | `*.ccb` | Colour lookup tables for Surrender (`palette`, `power`, `softpal`). |
-| `Forces/*.FRC` | Force-feedback effects, one per weapon and event. |
+| `Forces/*.FRC` | Force-feedback effects: see [`frc.md`](../formats/frc.md). |
 | `interface/*.bik`, `inter/`, `*.bik` | Bink video: menu transitions, branding, cutscenes. |
 | `music/*.wav` | Music, one file per mission and state. |
 

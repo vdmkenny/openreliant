@@ -70,6 +70,18 @@ pub fn hatCount(plain: *c.SDL_Joystick) u32 {
     return @intCast(@max(c.SDL_GetNumJoystickHats(plain), 0));
 }
 
+/// A motor's speed as SDL takes it, from a share of full speed.
+fn motorSpeed(share: f32) u16 {
+    return std.math.lossyCast(u16, @round(std.math.clamp(share, 0, 1) * std.math.maxInt(u16)));
+}
+
+test motorSpeed {
+    try std.testing.expectEqual(0, motorSpeed(0));
+    try std.testing.expectEqual(std.math.maxInt(u16), motorSpeed(1));
+    try std.testing.expectEqual(32768, motorSpeed(0.5));
+    try std.testing.expectEqual(0, motorSpeed(-1));
+}
+
 /// A controller SDL has detected, before it is opened.
 pub const Found = struct {
     id: c.SDL_JoystickID,
@@ -319,6 +331,16 @@ pub const Controller = struct {
     /// The axis ranges and dead zone the game set.
     ranges: std.EnumArray(Axis, ?[2]i32) = .initFill(null),
     dead_zone: u16 = input.default_dead_zone,
+    /// The motors' speeds last sent, low then high, and when (`SDL_GetTicks`).
+    rumbled: [2]u16 = .{ 0, 0 },
+    rumbled_at: u64 = 0,
+
+    /// How long a rumble runs unless another follows, so that the motors stop soon after the game
+    /// stops turning them, as when it pauses.
+    const rumble_ms = 100;
+    /// How often the motors' speeds are sent at most, while they turn, which spares a wireless
+    /// controller a report every frame.
+    const rumble_every_ms = 40;
 
     pub const Handle = union(enum) {
         joystick: *c.SDL_Joystick,
@@ -374,6 +396,7 @@ pub const Controller = struct {
             .setRange = setRange,
             .setDeadZone = setDeadZone,
             .poll = poll,
+            .rumble = rumble,
         } };
     }
 
@@ -387,6 +410,7 @@ pub const Controller = struct {
             .buttons = 32,
             .hats = 1,
             .kind = .gamepad,
+            .rumbles = c.SDL_GetBooleanProperty(c.SDL_GetJoystickProperties(plain), c.SDL_PROP_JOYSTICK_CAP_RUMBLE_BOOLEAN, false),
         };
         switch (controller.handle) {
             .gamepad => for (gamepad_axes) |pair| found.axes.insert(pair[0]),
@@ -400,6 +424,21 @@ pub const Controller = struct {
             },
         }
         return found;
+    }
+
+    /// Turns the motors (`SDL_RumbleJoystick`): their speeds every `rumble_every_ms` at most while
+    /// they turn, and a stop as soon as they are to stop.
+    fn rumble(context: *anyopaque, motors: input.force.Motors) void {
+        const controller: *Controller = @ptrCast(@alignCast(context));
+        const speeds: [2]u16 = .{ motorSpeed(motors.low), motorSpeed(motors.high) };
+        const now = c.SDL_GetTicks();
+        const stopped = std.mem.allEqual(u16, &controller.rumbled, 0);
+        if (std.mem.allEqual(u16, &speeds, 0)) {
+            if (stopped) return;
+        } else if (!stopped and now -% controller.rumbled_at < rumble_every_ms) return;
+        controller.rumbled = speeds;
+        controller.rumbled_at = now;
+        _ = c.SDL_RumbleJoystick(controller.sdlJoystick(), speeds[0], speeds[1], rumble_ms);
     }
 
     fn setRange(context: *anyopaque, axis: Axis, min: i32, max: i32) void {

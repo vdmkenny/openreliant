@@ -108,7 +108,8 @@ flies at, and whose order is one of the table at `0x00503D20`, each with an `ini
 ### The launch
 
 `missile_launch` (`0x00496290`) takes a rack, a target and its component. It does nothing for a
-ship whose missiles are disabled, or with no record free.
+ship whose missiles are disabled, or with no record free. The player's launch plays the `Missile`
+force-feedback effect ([Controls](controls.md#force-feedback)).
 
 - A pod with missiles left builds a missile of its own from the pod's second model, where the pod
   hangs; anything else, a rail's missile, a fuel pod or an empty pod, is itself let go of.

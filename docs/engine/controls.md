@@ -8,7 +8,7 @@ How the payload reads the player's keyboard, joystick and mouse, and turns them 
 
 - the keyboard, shared with other programs and read only while the game is in the foreground;
 - the mouse, held exclusively while the game is in the foreground;
-- a joystick. `input_init` first enumerates the attached joysticks that have force feedback, and `joystick_found` (`0x004BD190`) opens each it is handed. With none, `input_init` enumerates any attached joystick and clears `force_feedback` (`0x50E1A4`); otherwise, while that flag is set, `load_force_effects` (`0x004BD800`) loads the effects from `forces*.frc`.
+- a joystick. `input_init` first enumerates the attached joysticks that have force feedback, and `joystick_found` (`0x004BD190`) opens each it is handed. With none, `input_init` enumerates any attached joystick and clears `force_feedback` (`0x50E1A4`); otherwise, while that flag is set, `load_force_effects` (`0x004BD800`) loads the effects from `forces\*.frc` ([Force feedback](#force-feedback)).
 
 For the joystick, `joystick_object_found` (`0x004BD050`) sets the range of each axis the game uses and records that the device has it in `joystick_axes` (`0x5DDC4C`), a `JoystickAxes` with a flag for each axis in the order of `DIJOYSTATE`:
 
@@ -51,7 +51,7 @@ and `JoyConfig` sections of `starlancer.ini` in the game's directory. The settin
 
 | Entry | Default | Meaning |
 |---|---|---|
-| `ForceFeedback` | 1 | Stored at `0x51DA4C`. **Unknown:** its use. |
+| `ForceFeedback` | 1 | `force_feedback_setting` (`0x51DA4C`). While it is 0, no force-feedback effect plays ([Force feedback](#force-feedback)). |
 | `JoystickInvert` | 1 | `joystick_invert` (`0x51D610`). While it is 0, pitch is reversed, from the stick, the keys and the mouse. |
 | `HatEnable` | 1 | `hat_enabled` (`0x52029C`). While it is set, the hat looks around ([The hat](#the-hat)). |
 | `TwistEnable` | 0 | `twist_enabled` (`0x595D88`). While it is set, the joystick's twist rolls the ship. |
@@ -235,6 +235,62 @@ out of the shield. The shield it goes to holds at most five times the shield pow
 beyond that is added to its reserve, which holds as much again. A reserve keeps the other side's
 shield from [recharging](objects.md#shields) to full. The ship status display shows each reserve as a
 second arc outside the fore or aft shield's ([Head-up display](hud.md#the-elements)).
+
+## Force feedback
+
+With a force-feedback joystick, `load_force_effects` reads 13 of the files in `forces\`
+([`.frc`](../formats/frc.md)) into `force_effects` (`0x5DDC58`), each through the SideWinder Force
+Feedback SDK (`force_effects_read`, `0x004BDB10`), and downloads the missile's. While
+`ForceFeedback` is on, each place that plays an effect starts the first of its file's:
+
+| File | Played by |
+|---|---|
+| `lc`, `pc`, `mb`, `gl`, `tc`, `np`, `cg`, `gp`, `vb`, `nc` | The player's shot of that gun type, from the Laser Cannon to the Nova Cannon (`bullet_place`); `nc` also as the Nova Cannon releases its charge (`object_release_guns`) |
+| `prc` | Nothing: `bullet_place`'s switch has no case for the Proton Cannon, whose shot plays `lc` |
+| `Missile` | The player's missile launch (`missile_launch`) |
+| `Shake` | A shot striking the player's ship, and each frame while the camera shakes from hits by more than 0.1 (`force_shake`, `0x004BE000`), unless it is playing |
+
+A blow to the player's ship, with a force-feedback joystick only (`damage_feedback`, `0x00463E10`,
+from `object_damage` and `object_armor_damage`, with the damage after the difficulty's scaling):
+
+- A shot's starts `Shake`, and raises the camera's shake (`hit_shake`) by 0.05 of its damage while
+  it is below 1, up to 1.
+- Any other adds a push of 300 times its damage on the side struck to the frame's hits
+  (`force_hits`, the latest 20), and raises the shake as much, up to 2.
+
+Each frame `mission_frame` sums the frame's hits by side (`force_hit_pushes`, `0x004BE060`): the
+left's less the right's push across, the fore's less the aft's along. A net above 1 plays a push, a
+one-second sine at 2 Hz toward that side, as strong as the net out of 10000, in the next of nine
+play slots (`force_slots`), freeing what played there. A push from the left is aimed at 90000, a
+typo for 9000 hundredths of a degree, which DirectInput turns down.
+
+The game never reads the folder's other files: `Accl`, `AcDc`, `Afterburn`, `Decl`, `Guns` (the
+same as `lc`), `Hullshock` to `Hullshock3`, `landhard`, `Shield`, `Shock` and `shiver`.
+
+### In the port
+
+[`input/force.zig`](../../src/engine/input/force.zig) plays the effects as rumble. Each frame it
+works out how hard every effect playing pushes at that moment: a waveform slower than 10 Hz swings
+the controller's low-frequency motor as it swings, a faster one buzzes the high-frequency motor at
+its strength, and envelopes and gains scale both. A file of several effects plays whole, a
+sequence one member after the other and a superimposition all at once; the game starts only the
+first of the effects the SDK made of it. The platform sends the motors' speeds to SDL at most every
+40 ms. Rumble cannot show which way an effect or a push pushes, which a force-feedback joystick
+would ([#244](https://github.com/vdmkenny/openreliant/issues/244)).
+
+- **Improvement:** any controller that rumbles plays the effects, gamepads among them.
+- **Fix:** the Proton Cannon's shot plays `prc`.
+- **Improvement:** a blow shakes the camera whatever the controller (`input.force.HitShake`).
+- **Improvement:** the files the game never reads play where they fit (`input.force.Unread`):
+  `Shield` as a blow strikes the player's shields, the `Hullshock` of the side struck as one
+  strikes the hull (left, right, fore and aft in turn), `landhard` for a collision, `Shock` as a
+  shockwave passes, and `Afterburn` while the afterburner burns.
+
+`--original` plays the game's own effects alone, and shakes the camera for blows only while the
+controller rumbles.
+
+Not ported: the Nova Cannon's release of its charge
+([#150](https://github.com/vdmkenny/openreliant/issues/150)).
 
 ## Porting
 

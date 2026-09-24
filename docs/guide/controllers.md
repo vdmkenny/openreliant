@@ -32,6 +32,12 @@ Some mapped actions (such as gun groups, comms and damage windows) are not imple
 
 The left stick works like a flight stick: pushing it forward points the nose down. To invert this, set `JoystickInvert=0` (see [Settings](#settings)).
 
+## Rumble
+
+A controller with rumble motors, such as an Xbox, PlayStation or Nintendo Switch controller, plays StarLancer's force-feedback effects as rumble: each gun has its own, and so do launching a missile, hits on your shields and hull, crashes, shockwaves and the afterburner. `ForceFeedback=0` turns it off (see [Settings](#settings)).
+
+Rumble can't push a stick the way the original's force-feedback joysticks did. Flight sticks without motors play nothing.
+
 ## Flight stick controls
 
 | Control | Action |
@@ -98,6 +104,7 @@ A setting you leave out keeps its default.
 | `TwistEnable` | `KeyConfig` | 0 (1 for gamepads) | 1: the stick's twist, or a gamepad's right stick, rolls the ship |
 | `HatEnable` | `KeyConfig` | 1 | 1: the hat, or a gamepad's D-pad, looks around |
 | `Controller` | `KeyConfig` | 0 | 0: use the joystick or gamepad. 1: use the keyboard |
+| `ForceFeedback` | `KeyConfig` | 1 | 1: the controller rumbles, where it can. 0: it doesn't |
 | `DeadZone` | `JoyConfig` | 10 | How far an axis must move before it registers, in percent of its travel (0 to 100) |
 | `Joystick` | `JoyConfig` | | Part of the name of the controller to use |
 | `ThrottleAxis` | `JoyConfig` | automatic | Number of the throttle axis, or -1 for none |

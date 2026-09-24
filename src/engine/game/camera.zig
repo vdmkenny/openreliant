@@ -213,6 +213,8 @@ pub const World = struct {
     cockpit: ?Cockpit.Input = null,
     /// The runtime's `rand`, which the cockpit's jitter and the shake from hits draw on.
     random: ?*libcmt.Rand = null,
+    /// The force feedback the player's controller plays, which the shake from hits shakes too.
+    forces: ?*input.force.Forces = null,
 };
 
 /// The camera: the state `camera_set_view` and `camera_frame` keep in globals, and Surrender's
@@ -352,9 +354,12 @@ pub const Camera = struct {
         if (chosen) |view| _ = camera.setView(view, player, false, false, now);
     }
 
-    /// Places the camera for a frame (`camera_frame`): moves the bars, then puts the camera where
-    /// the view says. Returns a view to switch to when this one cannot go on, as the game does.
+    /// Places the camera for a frame (`camera_frame`): while it shakes from hits by more than
+    /// `shake_rumbles`, plays the shake on the controller too (`force_shake`, `0x004BE000`); moves
+    /// the bars, then puts the camera where the view says. Returns a view to switch to when this
+    /// one cannot go on, as the game does.
     pub fn frame(camera: *Camera, world: World) ?View {
+        if (world.forces) |forces| if (camera.hit_shake > shake_rumbles) forces.startUnlessPlaying(.shake, @intCast(world.now));
         const ticks: f32 = @floatFromInt(world.ticks);
         // What the shake from hits jitters by this frame, before it dies away some more.
         var shake: f32 = 0;
@@ -458,6 +463,9 @@ fn nextMissile(records: *const missiles.Missiles, from: u8, launcher: u16) ?u8 {
     }
     return null;
 }
+
+/// How hard the camera shakes from hits before the controller shakes with it (`0x004DC420`).
+const shake_rumbles: f32 = 0.1;
 
 // --- Cockpit ------------------------------------------------------------------------------------
 

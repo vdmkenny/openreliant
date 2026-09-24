@@ -28,6 +28,7 @@ Guides for installing, configuring and playing OpenReliant:
 | [`formats/tcache.md`](formats/tcache.md) | Texture caches: every model and effect texture, their palettes and colour cubes. |
 | [`formats/fat.md`](formats/fat.md) | `.fat` sound banks. |
 | [`formats/fnt.md`](formats/fnt.md) | `.fnt` bitmap fonts. |
+| [`formats/frc.md`](formats/frc.md) | `.frc` force-feedback effects. |
 | [`formats/dte.md`](formats/dte.md) | `.DTE` missions: directory, ships, triggers, and the script VM. |
 | [`formats/stats.md`](formats/stats.md) | Ship, gun, missile and pilot stat tables. |
 | [`engine/script-vm.md`](engine/script-vm.md) | The script VM at run time: threads, calls, commands, timers, events. |

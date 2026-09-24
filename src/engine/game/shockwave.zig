@@ -397,8 +397,12 @@ pub fn setOff(world: gameobj.World, at: math.Place, spec: Spec) void {
 
 /// Shakes the player's view by how far through its life the shockwave passing is, where it shakes
 /// no harder already.
+///
+/// **Improvement** (`input.force.Unread.played`): the player's controller plays `Shock`, unless it
+/// is playing already.
 fn shake(world: gameobj.World, done: f32) void {
     world.shake.* = @max(world.shake.*, @min(done * shake_scale, camera.Cockpit.shake_most));
+    if (world.forces) |forces| forces.startUnlessPlaying(.shock, world.clock.frame_start);
 }
 
 /// `0x004A0B30`: a ring's mesh, over `image`.

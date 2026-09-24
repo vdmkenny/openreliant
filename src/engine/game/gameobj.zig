@@ -1186,6 +1186,8 @@ pub const World = struct {
     rays: ?*@import("erayfx.zig").Rays = null,
     /// The screen's flash (`main.cpp`); null where nothing flashes.
     flash: ?*@import("main/flash.zig").Flash = null,
+    /// The force feedback the player's controller plays; null where it plays none.
+    forces: ?*input.force.Forces = null,
     /// The sparks flying (`sparks.cpp`); null where none are thrown.
     sparks: ?*@import("sparks.zig").Sparks = null,
     /// The head-up display's state (`hud.cpp`'s globals), which smart targeting and the target

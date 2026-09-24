@@ -34,7 +34,7 @@ zig build -Dtarget=aarch64-macos               # Apple silicon, from any Zig
 
 | Option | Does |
 |---|---|
-| `--original` | The original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks, lights from the latest shots only, muzzle flashes that light nothing and none from the turrets, an explosion's debris lit by every light, its fireballs, rings and particles as few and plain as the original's, the shields' bubbles as coarse as the original's, the marker for a target out of sight placed as the original misplaces it, and sound mixed plainly in stereo with no master bus |
+| `--original` | The original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks, lights from the latest shots only, muzzle flashes that light nothing and none from the turrets, the force feedback's own effects only, a blow shaking the camera only while the controller rumbles, an explosion's debris lit by every light, its fireballs, rings and particles as few and plain as the original's, the shields' bubbles as coarse as the original's, the marker for a target out of sight placed as the original misplaces it, and sound mixed plainly in stereo with no master bus |
 
 **The sandbox.**
 
@@ -165,7 +165,8 @@ SDL's built-in database covers Xbox, PlayStation and Nintendo controllers and ma
 Deliberate differences from the original's joystick support:
 
 - Gamepads get their own default bindings (`input.gamepad_buttons`) and have `TwistEnable` on by default, so the right stick rolls. The original treated a gamepad like any other joystick.
-- A joystick is preferred over a gamepad. The original preferred joysticks with force feedback, which the port does not support yet.
+- A joystick is preferred over a gamepad. The original preferred joysticks with force feedback.
+- Any controller that rumbles plays the force-feedback effects as rumble, gamepads among them, where the original played them on a force-feedback joystick alone ([Controls](../engine/controls.md#force-feedback)). The `ForceFeedback` setting in `starlancer.ini` turns them off.
 - Controllers can be connected and disconnected while the game runs. The original only looked for a joystick at startup.
 - The `DeadZone`, `Joystick`, `ThrottleAxis`, `TwistAxis` and `ThrottleInvert` settings and the `gamecontrollerdb.txt` file are new; the original game ignores them.
 - Two bugs in how `load_key_config` reads bindings are fixed ([Controls](../engine/controls.md#bindings)).
