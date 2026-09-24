@@ -308,11 +308,36 @@ pub const max_groups = 20;
 pub const no_groups: [max_groups]Group = @splat(.{});
 
 /// A ship type's gun group: a gun and the one nearest its mirror image across the ship, or one
-/// alone.
+/// alone. Each is its place among the ship's guns, or -1 for none, as the game's table holds them.
 pub const Group = struct {
     first: i16 = -1,
     second: i16 = -1,
+
+    /// Its first gun's place, where it has one.
+    pub fn lead(group: Group) ?usize {
+        return place(group.first);
+    }
+
+    /// Whether it is a pair of guns.
+    pub fn paired(group: Group) bool {
+        return place(group.second) != null;
+    }
+
+    /// Its guns' places: the first and the second, where it has them.
+    pub fn members(group: Group) [2]?usize {
+        return .{ place(group.first), place(group.second) };
+    }
+
+    fn place(at: i16) ?usize {
+        return if (at < 0) null else @intCast(at);
+    }
 };
+
+/// The gun at `place` among `fitted`, where there is one.
+pub fn gunAt(fitted: []Fitted, place: ?usize) ?*Fitted {
+    const at = place orelse return null;
+    return if (at < fitted.len) &fitted[at] else null;
+}
 
 /// The barrel of a gun `gun_groups_build` groups: a fixed gun's or a spinning gun's, not an
 /// aimed turret's nor a missile turret's.
@@ -480,6 +505,98 @@ pub const Trigger = struct {
     /// `frame_start`: the tick this frame began.
     frame_start: i32,
 };
+
+/// GUNNERY WINDOW's turn (`frame_controls`, `0x00414060`): out of firing every group, where the
+/// ship fires them all, or else on to its next group of `groups`, round to the first after the
+/// last. The group is three bits, which go round by themselves for a ship of no groups.
+pub fn nextGroup(object: *gameobj.GameObject, groups: i16) void {
+    if (object.gun_mode.all) {
+        object.gun_mode.all = false;
+        return;
+    }
+    const next = @as(i16, object.gun_mode.group) + 1;
+    object.gun_mode.group = if (next == groups) 0 else object.gun_mode.group +% 1;
+}
+
+/// FULL GUNS (`frame_controls`), for a ship of `groups` groups, at least `full_guns_groups`: flips
+/// firing every group. Turning it on for a ship of `evened_groups` lines their guns that fire by
+/// the trigger up to fire together, each next firing as the later of the groups' first guns does.
+/// Whether it flipped.
+pub fn fullGuns(object: *gameobj.GameObject, fitted: []Fitted, table: *const [max_groups]Group, groups: i16) bool {
+    if (groups < full_guns_groups) return false;
+    object.gun_mode.all = !object.gun_mode.all;
+    if (!object.gun_mode.all or groups != evened_groups) return true;
+    var latest: i32 = 0;
+    for (table[0..evened_groups]) |group| {
+        const gun = triggered(fitted, group.lead()) orelse continue;
+        latest = @max(latest, gun.next_shot);
+    }
+    for (table[0..evened_groups]) |group| {
+        for (group.members()) |at| {
+            const gun = triggered(fitted, at) orelse continue;
+            gun.next_shot = latest;
+        }
+    }
+    return true;
+}
+
+/// The fewest groups FULL GUNS flips between firing one and firing them all.
+const full_guns_groups = 2;
+
+/// How many groups a ship has whose guns FULL GUNS lines up to fire together.
+const evened_groups = 2;
+
+/// The gun at `place` of `fitted`, where it fires by the trigger: a fixed gun or a spinning one.
+fn triggered(fitted: []Fitted, place: ?usize) ?*Fitted {
+    const gun = gunAt(fitted, place) orelse return null;
+    return switch (gun.turret) {
+        .fixed, .spin => gun,
+        else => null,
+    };
+}
+
+test nextGroup {
+    var object = std.mem.zeroes(gameobj.GameObject);
+    object.gun_mode.all = true;
+    object.gun_mode.group = 1;
+    // Out of firing them all, on the group it had.
+    nextGroup(&object, 3);
+    try std.testing.expect(!object.gun_mode.all);
+    try std.testing.expectEqual(1, object.gun_mode.group);
+    // On to the next, and round.
+    nextGroup(&object, 3);
+    try std.testing.expectEqual(2, object.gun_mode.group);
+    nextGroup(&object, 3);
+    try std.testing.expectEqual(0, object.gun_mode.group);
+}
+
+test fullGuns {
+    var object = std.mem.zeroes(gameobj.GameObject);
+    const barrel: Barrel = .{ .muzzle = undefined, .type = .laser_cannon };
+    var fitted = [_]Fitted{
+        .{ .turret = .{ .fixed = barrel }, .next_shot = 30 },
+        .{ .turret = .{ .fixed = barrel }, .next_shot = 10 },
+        .{ .turret = .{ .fixed = barrel }, .next_shot = 50 },
+        .{ .turret = .gone, .next_shot = 5 },
+    };
+    var table = no_groups;
+    table[0] = .{ .first = 0, .second = 1 };
+    table[1] = .{ .first = 2, .second = 3 };
+    // A ship of one group has nothing to flip.
+    try std.testing.expect(!fullGuns(&object, &fitted, &table, 1));
+    try std.testing.expect(!object.gun_mode.all);
+    // On, both groups' guns fire next as the later first gun does; a gun that isn't triggered is
+    // left as it was.
+    try std.testing.expect(fullGuns(&object, &fitted, &table, 2));
+    try std.testing.expect(object.gun_mode.all);
+    for (fitted[0..3]) |gun| try std.testing.expectEqual(50, gun.next_shot);
+    try std.testing.expectEqual(5, fitted[3].next_shot);
+    // Off again, nothing moves.
+    fitted[0].next_shot = 7;
+    try std.testing.expect(fullGuns(&object, &fitted, &table, 2));
+    try std.testing.expect(!object.gun_mode.all);
+    try std.testing.expectEqual(7, fitted[0].next_shot);
+}
 
 /// The ticks FIRE LASERS holds the trigger for (`player_controls`), so the player's guns fire
 /// this frame and stop unless the key is held into the next.
@@ -649,7 +766,7 @@ pub fn step(world: gameobj.World, clock: *const Clock, index: u16) void {
 fn takesTurn(object: *const gameobj.GameObject, groups: *const [max_groups]Group, gun: *const Fitted) ?bool {
     const mode = object.gun_mode;
     if (mode.all or mode.synchronised) return null;
-    if (groups[mode.group].second < 0) return null;
+    if (!groups[mode.group].paired()) return null;
     return gun.side == object.gun_turn;
 }
 

@@ -439,7 +439,7 @@ pub fn playerControl(ctx: Context, index: u16) void {
     const devices = ctx.devices orelse return;
     const slot = &ctx.world.objects.slots[index];
     const combat = slot.combat orelse return;
-    input.playerControls(ctx.world.player, devices, &slot.object, combat, ctx.world.view, ctx.clock.frame_duration, slot.trigger(ctx.clock.frame_start));
+    input.playerControls(ctx.world.player, devices, &slot.object, combat, ctx.world.view, ctx.clock.frame_duration);
     input.matchSpeed(ctx.world.player, devices, ctx.world.objects, ctx.world.view);
     input.playerWeapons(ctx.world, devices, index);
 }

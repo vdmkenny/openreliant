@@ -196,6 +196,11 @@ pub const NetworkFlags = packed struct(u32) {
 /// which have no stats. The names are the port's, for the types the game's code singles out.
 pub const Type = enum(u32) {
     predator = 0x00,
+    /// The Grendel, the Wolverine and the Reaper, whose guns fire rounds, which the gunnery display
+    /// counts.
+    grendel = 0x02,
+    wolverine = 0x08,
+    reaper = 0x09,
     /// The Phoenix (`uspf_phx.shp`), which carries the Nova Cannon.
     phoenix = 0x0B,
     reliant = 0x0C,

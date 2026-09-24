@@ -52,12 +52,15 @@ const Clock = @import("main.zig").Clock;
 const Vector = math.Vector;
 
 pub const windows = @import("hud/windows.zig");
+pub const gunnery = @import("hud/gunnery.zig");
 pub const missile_display = @import("hud/missile_display.zig");
 const missile_lock = @import("main/lock.zig");
 pub const power = @import("hud/power.zig");
 pub const target_display = @import("hud/target_display.zig");
 
 test {
+    _ = gunnery;
+    _ = missile_display;
     _ = windows;
     _ = power;
     _ = target_display;
@@ -806,6 +809,7 @@ pub fn draw(state: *State, resources: *Resources, frame: Frame) (spr.Error || Al
     try drawViewName(&resources.font, frame.gpa, frame.target, frame.screen, frame.last_view, frame.strings.*, colour, scale);
     if (ahead) try state.drawInstruments(resources, frame, lead, colour, scale);
     const contents: windows.Contents = .{
+        .gunnery = .{ .slot = slot, .wire_frame = state.wire_frame, .font = &resources.font, .strings = frame.strings },
         .missiles = .{ .ring = &state.missiles, .font = &resources.font, .strings = frame.strings },
         .power = .{
             .ball = resources.ball,
@@ -823,9 +827,15 @@ pub fn draw(state: *State, resources: *Resources, frame: Frame) (spr.Error || Al
 /// The first gun of the group the ship has chosen (`GunMode.group`), which blind fire and the
 /// charge arc look at, or null for none.
 fn groupLead(slot: *const create.Slot) ?guns.GunType {
-    const first = slot.gun_groups[slot.object.gun_mode.group].first;
-    if (first < 0 or first >= slot.guns.len) return null;
-    const barrel = slot.guns[@intCast(first)].barrel() orelse return null;
+    return groupLeadOf(slot, slot.object.gun_mode.group);
+}
+
+/// The gun type of the first gun of the ship's group `group`, or null for a group of none or of a
+/// gun that fires no shots.
+pub fn groupLeadOf(slot: *const create.Slot, group: usize) ?guns.GunType {
+    if (group >= guns.max_groups) return null;
+    const first = guns.gunAt(slot.guns, slot.gun_groups[group].lead()) orelse return null;
+    const barrel = first.barrel() orelse return null;
     return barrel.type;
 }
 
@@ -1277,6 +1287,9 @@ pub const State = struct {
     }),
     /// `blind_fire_fitted` (`0x00566F8C`): whether the ship carries blind fire.
     blind_fire_fitted: bool = false,
+    /// The gunnery display's wire frame of the player's ship (`0x005883C0`), which the mission's
+    /// start picks for its type (`main.fitDevices`); null for a ship it has none for.
+    wire_frame: ?u16 = null,
     /// `blind_fire` (`0x00579990`), which TOGGLE BLINDFIRE flips.
     blind_fire: bool = true,
     /// `smart_targeting` (`0x0056996C`), which SMART TARGET flips.

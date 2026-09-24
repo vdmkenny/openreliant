@@ -21,7 +21,7 @@ The display's elements as the game's manual names them, with where the code that
 | Ship status | foot, left of middle | always shown | the ship's image in two rings of segments, forward, aft and the two sides: shields outside, armour inside. A shield dims as it wears; an armour segment goes as it is lost. Shifting power fore or aft doubles the shields there | `hud_ship_status` (`0x00489350`). For the player's own ship, what [SHIELD BALANCING](controls.md#the-shield-balance) shifted beyond the fore and aft shields shows as a second arc outside each: shapes `0xB2` less the level at `(-0x1A, -0x24)` from the point for the fore reserve, and `0xB7` less the level at `(-0x26, 0x1D)` for the aft one, the level worked out as for a shield. [The ship status indicator](#the-ship-status-indicator) |
 | Missile display | top, middle | M | the missile's name, the ship's missiles in a ring, how many of the chosen one are left, and the one armed at six o'clock. Comma and full stop turn the ring | [Window](#the-windows) 2: the ring (`hud_missile_ring`, `0x00501CC8`, ten entries of five halfwords), its keys and what it shows ([The ring](missiles.md#the-ring)). LAUNCH MISSILE and the ring's keys open it held |
 | Mission objectives | right | B | the mission's goals, the current one first; B pages through them | [Window](#the-windows) 10: the mission's objectives from the table at `0x00504120`, ten a mission. The frame is ported; what it shows is not |
-| Gunnery display | foot, left | G | the gun's name, the ship as a wire frame with the gun lit, the rounds left for a gun that fires them, and whether the guns fire together or in turn. G picks the next gun, F fires them all, CTRL and G switches the two ways of firing them all | [Window](#the-windows) 1: the ship's wire frame is the shape `0x005883C0` names. The frame is ported; what it shows is not |
+| Gunnery display | foot, left | G | the gun's name, the ship as a wire frame with the gun lit, the rounds left for a gun that fires them, and whether the guns fire together or in turn. G picks the next gun, F fires them all, CTRL and G switches the two ways of firing them all | [Window](#the-windows) 1, [The gunnery display](#the-gunnery-display) |
 | Damage display | top, right | D | a segmented bar each for the weapons, the engines and the shields, shortening with damage | [Window](#the-windows) 4: the bars read the player's `+0x66C`, `+0x668` and `+0x664`. The frame is ported; what it shows is not |
 | Power distribution | left | P | the guns, the shields and the engines round a ball, each with its share of the power, a third each at first. P held with the stick moves power toward one; U, I and O give all of it to the guns, the engines or the shields, and `[` shares it out again | [Window](#the-windows) 7, [The power distribution](#the-power-distribution) |
 | Communications | top, left | C | the units in range, numbered, which the number keys call. Landing, rearming and a nanny ship are asked of the base ship | [Window](#the-windows) 11, which draws the radio's menu with `0x00453A70`. The frame is ported; what it shows is not |
@@ -610,7 +610,7 @@ The keys, which `frame_controls` and `hud_target_keys` read:
 | --- | --- |
 | COMMS WINDOW | opens window 11 held, and starts the radio's menu; pressed once it is open, closes it. Read only while the player's order is Player Control |
 | WING STATUS WINDOW | closes window 10, then opens window 13, or closes it if it is up. The locked form holds it open as it opens it |
-| GUNNERY WINDOW | opens window 1, and turns to the next group of guns, or out of firing them all |
+| GUNNERY WINDOW | opens window 1, and turns to the next group of guns, or out of firing them all ([The gunnery display](#the-gunnery-display)) |
 | GUNNERY WINDOW LOCKED | opens window 1 held, or closes it once it is open |
 | SYNCHRONISE GUNS | opens window 1, and flips whether the guns fire together |
 | DAMAGE WINDOW | opens window 4, or closes it if it is up. The locked form holds it open as it opens it |
@@ -628,6 +628,32 @@ number, `OpenInstrument` and `CloseInstrument` (`0x0045D9D0`, `0x0045DA30`): a w
 held, window 11 starts the radio's menu too, and window 10 closes window 13 first; one it closes is
 let go of. The display beeps with `hud_beep` 1 as a window opens, 2 as it closes, and 0 for most of
 the keys.
+
+## The gunnery display
+
+Window 1 shows the player's guns, drawn by `hud_window_draw` in the view ahead from the window's
+place `(x, y)`. The mission's start picks the ship's wire frame by its type, `gunnery_wire_frame`
+(`0x005883C0`); a ship with none shows nothing. The shapes after the wire frame light each group of
+guns on it, the first group's next.
+
+1. The wire frame at `(x + 11, y - 134)`.
+2. Firing one group:
+   - its first gun's name, strings `0x3A9` to `0x3B3` from the Laser Cannon to the Nova Cannon, at
+     `(x + 1, y - 157)`;
+   - with more than one group, the chosen group lit;
+   - for a pair of guns but the Nova Cannons, whether they fire together, shape `0xF0`, or in
+     turn, `0xF1`, at `(x + 1, y - 139)`. The game takes the gun mode's bits from `synchronised` up
+     off `0xF1`; those above it nothing sets.
+3. Firing every group: FULL GUNS, string `0x297`, at `(x + 1, y - 157)`, and with more than one
+   group each group lit but one whose first gun is a Nova Cannon.
+4. On the Grendel, the Wolverine and the Reaper, whose guns fire rounds, shape `0xEE` at
+   `(x + 4, y - 17)` and the rounds left at `(x + 21, y - 19)`.
+
+GUNNERY WINDOW turns to the ship's next group, round to the first after the last, or, firing them
+all, only stops that. FULL GUNS, on a ship of more than one group, flips firing them all; turned on
+for a ship of two groups, it has every gun of both that fires by the trigger next fire when the
+later of the two groups' first guns does, so that they fire together. FIRE LASERS opens the window
+as the guns fire.
 
 ## The power distribution
 

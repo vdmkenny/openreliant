@@ -363,6 +363,12 @@ pub const Slot = struct {
         slot.shield = null;
     }
 
+    /// How many groups of guns its type has (`ShipCombat.gun_groups`); none for a stand-in.
+    pub fn groupCount(slot: *const Slot) i16 {
+        const combat = slot.combat orelse return 0;
+        return combat.gun_groups;
+    }
+
     /// Its guns and their groups, for firing them from `frame_start` (`guns.fire`).
     pub fn trigger(slot: *const Slot, frame_start: i32) guns.Trigger {
         return .{ .fitted = slot.guns, .groups = slot.gun_groups, .frame_start = frame_start };
@@ -714,9 +720,10 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     }
     slot.gun_groups = &all.gun_groups[stats_type];
     for (all.gun_groups[stats_type][0..@intCast(tables.combat[stats_type].gun_groups)]) |group| {
-        if (group.first < 0 or group.first >= slot.guns.len) continue;
-        slot.guns[@intCast(group.first)].side = .first;
-        if (group.second >= 0 and group.second < slot.guns.len) slot.guns[@intCast(group.second)].side = .second;
+        const first, const second = group.members();
+        const lead = guns.gunAt(slot.guns, first) orelse continue;
+        lead.side = .first;
+        if (guns.gunAt(slot.guns, second)) |other| other.side = .second;
     }
     // Its guns charged.
     object.gun_charge = combat.gun_energy;

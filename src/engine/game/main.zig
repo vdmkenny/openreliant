@@ -853,8 +853,9 @@ test armorConditions {
 pub const PlayerShip = struct {
     /// The model of the cockpit's frame, which the start loads into `0x0057E048`.
     cockpit: []const u8,
-    /// **Unknown.** What the start keeps at `0x005883C0` for the ship.
-    _unknown_5883c0: u16,
+    /// The gunnery display's wire frame of the ship, a shape of the display's set, which the start
+    /// keeps at `0x005883C0` (`hud.gunnery`).
+    wire_frame: u16,
     spectral_shields: bool = false,
     blind_fire: bool = false,
 };
@@ -864,18 +865,18 @@ pub const PlayerShip = struct {
 /// **Unverified:** the start also loads `kamg_frm.shp` for any ship when the word at `0x00562DC8`,
 /// which looks like the mission's number, is 25 and `0x00587CDC` is clear.
 pub const player_ships = [_]PlayerShip{
-    .{ .cockpit = "preg_frm.shp", ._unknown_5883c0 = 0x116, .blind_fire = true },
-    .{ .cockpit = "nagg_frm.shp", ._unknown_5883c0 = 0x10E, .spectral_shields = true },
-    .{ .cockpit = "gre2_frm.shp", ._unknown_5883c0 = 0x108 },
-    .{ .cockpit = "cru3_frm.shp", ._unknown_5883c0 = 0x107, .spectral_shields = true },
-    .{ .cockpit = "coyg_frm.shp", ._unknown_5883c0 = 0x106, .blind_fire = true },
-    .{ .cockpit = "mirg_frm.shp", ._unknown_5883c0 = 0x10B },
-    .{ .cockpit = "temg_frm.shp", ._unknown_5883c0 = 0x11B, .spectral_shields = true },
-    .{ .cockpit = "pat2_frm.shp", ._unknown_5883c0 = 0x10F, .blind_fire = true },
-    .{ .cockpit = "wolv_frm.shp", ._unknown_5883c0 = 0x11E },
-    .{ .cockpit = "rea2_frm.shp", ._unknown_5883c0 = 0x117, .blind_fire = true },
-    .{ .cockpit = "shr2_frm.shp", ._unknown_5883c0 = 0x11A, .spectral_shields = true, .blind_fire = true },
-    .{ .cockpit = "phe2_frm.shp", ._unknown_5883c0 = 0x112, .blind_fire = true },
+    .{ .cockpit = "preg_frm.shp", .wire_frame = 0x116, .blind_fire = true },
+    .{ .cockpit = "nagg_frm.shp", .wire_frame = 0x10E, .spectral_shields = true },
+    .{ .cockpit = "gre2_frm.shp", .wire_frame = 0x108 },
+    .{ .cockpit = "cru3_frm.shp", .wire_frame = 0x107, .spectral_shields = true },
+    .{ .cockpit = "coyg_frm.shp", .wire_frame = 0x106, .blind_fire = true },
+    .{ .cockpit = "mirg_frm.shp", .wire_frame = 0x10B },
+    .{ .cockpit = "temg_frm.shp", .wire_frame = 0x11B, .spectral_shields = true },
+    .{ .cockpit = "pat2_frm.shp", .wire_frame = 0x10F, .blind_fire = true },
+    .{ .cockpit = "wolv_frm.shp", .wire_frame = 0x11E },
+    .{ .cockpit = "rea2_frm.shp", .wire_frame = 0x117, .blind_fire = true },
+    .{ .cockpit = "shr2_frm.shp", .wire_frame = 0x11A, .spectral_shields = true, .blind_fire = true },
+    .{ .cockpit = "phe2_frm.shp", .wire_frame = 0x112, .blind_fire = true },
 };
 
 /// Where the second set of the player's ship types starts: types `0xF4` to `0xFF`, whose models
@@ -899,6 +900,7 @@ pub fn fitDevices(display: *hud.State, ship_type: u32, can_cloak: bool) void {
     display.devices.getPtr(.spectral_shields).setting = if (spectral) .off else .absent;
     display.devices.getPtr(.cloak).setting = if (can_cloak) .off else .absent;
     display.blind_fire_fitted = if (ship) |known| known.blind_fire else false;
+    display.wire_frame = if (ship) |known| known.wire_frame else null;
     if (display.blind_fire_fitted) display.blind_fire = true;
 }
 
