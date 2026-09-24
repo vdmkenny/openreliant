@@ -53,6 +53,7 @@ const Clock = @import("main.zig").Clock;
 const Vector = math.Vector;
 
 pub const windows = @import("hud/windows.zig");
+pub const chase = @import("hud/chase.zig");
 pub const damage = @import("hud/damage.zig");
 pub const gunnery = @import("hud/gunnery.zig");
 pub const missile_display = @import("hud/missile_display.zig");
@@ -62,6 +63,7 @@ pub const target_display = @import("hud/target_display.zig");
 pub const wing_status = @import("hud/wing_status.zig");
 
 test {
+    _ = chase;
     _ = damage;
     _ = gunnery;
     _ = missile_display;
@@ -1436,6 +1438,12 @@ pub const State = struct {
     lock_warning: ?u8 = null,
     /// The display's interference as the player's ship is hit.
     interference: Interference = .{},
+    /// `target_under_reticle` (`0x00566550`): whether the reticle was drawn bright, a target under
+    /// it or blind fire aiming at it, which the chase view's sight shows (`chase.Chase`).
+    reticle_bright: bool = false,
+    /// The chase view's pointer to the target this frame, where `drawTarget` has found it out of
+    /// sight in the chase view; null where it doesn't show.
+    chase_pointer: ?chase.Pointer = null,
     /// `player_ejected` (`0x00579986`), which the Eject Player order sets.
     ejected: bool = false,
     icons: Icons = .{},
@@ -2882,6 +2890,7 @@ pub fn drawReticle(
     if (drawn) try drawShapeWith(art, gpa, target, reticle_shape, middle, colour, scale, how);
     const found = target_at orelse {
         if (drawn) try drawShapeWith(art, gpa, target, reticle_shape, middle, colour, scale, how);
+        state.reticle_bright = false;
         return false;
     };
     const near = round(@as(f32, @floatFromInt(under_reticle)) * scale);
@@ -2916,6 +2925,7 @@ pub fn drawReticle(
         state.sight = sight;
     }
     if (drawn) try drawShapeWith(art, gpa, target, if (bright) sight_shape else reticle_shape, at, colour, scale, how);
+    state.reticle_bright = bright;
     return aims;
 }
 
@@ -3027,7 +3037,8 @@ pub fn pointerDirection(ship: math.Place, at: Vector) [2]f32 {
 ///
 /// A target whose node (`ai.targetPart`) stands off the screen or behind the camera gets an arrow
 /// from the middle of the screen pointing its way, red for a hostile one and green for the rest,
-/// and a marker where a line its way leaves the screen, with the range in kilometres. One on the
+/// or in the chase view the pointer in the scene (`State.chase_pointer`, `chase.Chase`), and a
+/// marker where a line its way leaves the screen, with the range in kilometres. One on the
 /// screen gets four brackets at the corners of its box, the component's for a subtarget, as the
 /// camera sees it, with the range under them; and, if it lists no components and is not friendly,
 /// the lead cursor where to aim with the guns (`ai.leadAim`), which it keeps (`State.lead_point`),
@@ -3035,8 +3046,7 @@ pub fn pointerDirection(ship: math.Place, at: Vector) [2]f32 {
 ///
 /// Not yet ported: the corners it marks on the object the radio's window names (`0x0048B0F0`);
 /// the pointer to the next nav point (`GameObject.nav_point`), which needs the mission's
-/// ([#36](https://github.com/vdmkenny/openreliant/issues/36)); in the chase view, the pointers
-/// in the scene in place of the arrows ([#182](https://github.com/vdmkenny/openreliant/issues/182));
+/// ([#36](https://github.com/vdmkenny/openreliant/issues/36)), and its pointer in the chase view;
 /// the players' names over their ships in a multiplayer game.
 pub fn drawTarget(
     state: *State,
@@ -3049,6 +3059,7 @@ pub fn drawTarget(
     colour: [4]f32,
     scale: f32,
 ) (spr.Error || Allocator.Error)!?[2]i32 {
+    state.chase_pointer = null;
     const index = state.target orelse return null;
     const all = scene.all;
     const sight = scene.sight;
@@ -3062,7 +3073,9 @@ pub fn drawTarget(
     const node: math.Place = if (part) |found| found.drawn() else struck.drawn;
     const seen = sight.view(node.position);
     if (!sight.onScreen(sight.pixel(seen)) or seen[2] < 0) {
-        try drawOffScreen(art, &fonts.small, gpa, target, sight, pointerDirection(ship.drawn, node.position), hostile, range, scene.mode, edge_line, colour, scale);
+        const way = pointerDirection(ship.drawn, node.position);
+        if (scene.mode == .chase) state.chase_pointer = .toward(way, hostile);
+        try drawOffScreen(art, &fonts.small, gpa, target, sight, way, hostile, range, scene.mode, edge_line, colour, scale);
         return null;
     }
     if (!(seen[2] > 0)) return null;
@@ -3511,9 +3524,9 @@ test "a target out of sight gets an arrow and a marker" {
     try std.testing.expectEqual(3, drawing.lines);
     // The chase view draws none.
     drawing.lines = 0;
-    var chase = scene;
-    chase.mode = .chase;
-    _ = try drawing.draw(gpa, &t.state, chase);
+    var from_behind = scene;
+    from_behind.mode = .chase;
+    _ = try drawing.draw(gpa, &t.state, from_behind);
     try std.testing.expectEqual(0, drawing.lines);
 }
 
