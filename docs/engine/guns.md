@@ -103,6 +103,24 @@ On hardware renderers (`sr + 0x1AC`), shots cast dynamic point lights: blue `(0,
 
 **Improvement:** the port allows all shots to cast light (`ShotLights.every_shot`) so sustained fire illuminates passing hulls; `--original` and `--few-shot-lights` restore the original two-shot limit ([Renderer](../port/renderer.md#improvements)).
 
+### Muzzle flashes
+
+Every gun muzzle a model carries has a flash, hung from the muzzle's part and standing and turned as its attachment does (`node_mount_muzzle`, `0x00499680`). It starts hidden. `bullet_fire` lights it for a shot, whether a fighter's or a turret's, to go out after the shot's type's ticks (`gun_flash_ticks`, `0x00500F64`). While it lasts, `node_draw` draws it into the world's layer (`muzzle_flash_draw`, `0x0047BA80`), as large as the share of its muzzle's gun type's ticks it has left. A flash goes out of sight with the part that carries it.
+
+| Gun types | Flash lasts, in ticks |
+|---|---|
+| Laser Cannon, Pulse Cannon | 50 |
+| Messon Blaster | 30 |
+| Proton Cannon | 20 |
+| Gattling Lasers to Vulcan Battery | 50 |
+| Nova Cannon, Turret Flak, Turret Lasers, Huge Guns | None |
+
+A type whose flash lasts no time shows none: the game divides by its ticks and takes what it gets for a share of 0.
+
+`guns_init` builds a flash mesh for each gun type (`muzzle_flash_mesh_build`, `0x004786E0`), all the same shape: a plume, as an engine glow's ([Effects](effects.md)), twice as wide and as high as the Laser Cannon's bolt and half as long, 120 across and 600 long. The quad across the muzzle draws `matflarea3` and the three down the flare `matflareb3`, added and unlit, with the flash's own texture coordinates, a texel in from each edge (`muzzle_flash_create`, `0x0047B150`). The Gattling Plasma Cannon's draws `gunflare\sfxalpha1` for both, a sheet of three frames 32 texels apart, one a tick: the quad across the muzzle takes a frame 30 texels square from a quarter of the way down, the others 30 across and 62 high from the top. The port builds the two meshes that differ.
+
+**Improvement:** a flash casts a point light while it lasts, reaching 1500 at its brightest and dimming and drawing in as the flare shrinks, so that each shot lights the hull round the gun (`flash.Lights.cast`). Its colour is its flares' own: what their textures add where the flash draws from them, brought up to full brightness. `--original` leaves the flashes unlit.
+
 ## Turrets
 
 A turret part of kind 1, 2 or 3 forms a turret assembly: visible parts of its model sharing its link id, placed in slots defined at `+0xF8`. Setup initializes the gun record, sets node flag `0x400` on slot 0 (the base), and stores the model pointer at `+0x34` (`+0x30` for kind 2). The muzzle is the last part of the assembly; slot indices reference model parts.
@@ -157,4 +175,6 @@ Gun groups exclude kinds 1 and 3, and `FULL GUNS` excludes kind 1 ([The trigger]
 
 [`guns.zig`](../../src/engine/game/guns.zig) implements weapon fitting (`fit`), grouping (`buildGroups`), trigger evaluation (`fire`), simulation steps (`step`), projectile handling (`shoot`, `moveBullets`, `bulletsFrame`), and visual rendering (`Looks`, `dress`, `animate`, `drawBullets`). Procedural geometries use compile-time recipe tables replacing the original eleven shape builders. Shapes are built once, keeping Turret Lasers variations distinct. `simulationStep` updates steps and moves projectiles; `missionFrame` executes per-frame updates; `drawFrame` queues render objects; and `playerControls` maps `FIRE LASERS`. `gun_stats` and active projectiles reside in `create.Objects`, and static binary records are defined in [`guns/stats.zig`](../../src/engine/game/guns/stats.zig), generated via `make gun-tables`.
 
-Not ported: Huge Gun particle trails, impact sparks and audible flak bursts ([#41](https://github.com/vdmkenny/openreliant/issues/41)), muzzle flashes ([#63](https://github.com/vdmkenny/openreliant/issues/63)), Nova Cannon charging ([#150](https://github.com/vdmkenny/openreliant/issues/150)), and gunnery selection hotkeys ([#92](https://github.com/vdmkenny/openreliant/issues/92)).
+The muzzle flashes are [`guns/flash.zig`](../../src/engine/game/guns/flash.zig)'s, which every model's muzzles draw (`objects.Model.flashes`).
+
+Not ported: Huge Gun particle trails, impact sparks and audible flak bursts ([#41](https://github.com/vdmkenny/openreliant/issues/41)), Nova Cannon charging ([#150](https://github.com/vdmkenny/openreliant/issues/150)), and gunnery selection hotkeys ([#92](https://github.com/vdmkenny/openreliant/issues/92)).

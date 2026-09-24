@@ -315,7 +315,8 @@ it (`+0x768`, `+0x798`) instead.
 ## What an attachment point holds
 
 `node_mount` (`0x00499A10`) mounts what a part's attachment points carry, by the attachment's kind:
-an engine glow for kind 2 and a light for kind 4, which are nodes of the part's own, and for a gun
+an engine glow for kind 2, a muzzle's flash for kind 3 ([Guns](guns.md#muzzle-flashes)) and a light
+for kind 4, which are nodes of the part's own, and for a gun
 or a pod an object of its own, whose model `attachment_models` names by the attachment's kind and
 id, twenty ids to a kind.
 

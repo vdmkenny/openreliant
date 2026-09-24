@@ -208,9 +208,18 @@ pub const Muzzle = struct {
     fn onPart(muzzle: Muzzle) math.Place {
         return .{ .position = gameobj.vector(muzzle.attachment.position), .orientation = muzzle.attachment.orientation };
     }
+
+    /// Its flash, where its model carries one (`node_mount_muzzle`).
+    pub fn flashOf(muzzle: Muzzle) ?*flash.Flash {
+        for (muzzle.model.flashes) |*lit| {
+            if (lit.attachment == muzzle.attachment) return lit;
+        }
+        return null;
+    }
 };
 
 pub const turrets = @import("guns/turrets.zig");
+pub const flash = @import("guns/flash.zig");
 
 /// Which of its group's two guns a gun is, as `create_object` marks them (`+0x14`), and which
 /// fires next while a ship fires one group out of step (`GameObject.gun_turn`).
@@ -1081,6 +1090,9 @@ const hostile_shot_light: [3]f32 = .{ 1, 0.5, 0 };
 /// It casts a light while it is one of the latest two of its ring (`Bullets.Ring`), or for its
 /// whole flight under `ShotLights.every_shot`.
 ///
+/// It lights the muzzle's flash, where the muzzle has one, for the shot's type's ticks
+/// (`flash.Flash.fire`).
+///
 /// A few gun types have rules of their own: two Turret Flak shots in five are Turret Lasers shots,
 /// and a Turret Flak shot lives a random share of its type's life, from a fifth to all of it, and
 /// scatters up to `flak_scatter` about each axis; a Huge Gun's shot is given the objects its path
@@ -1152,6 +1164,7 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, barrel: Barr
     }
     if (is_heard) shotSound(world, @intCast(index), kind, record.sound, owner == all.player);
     candidates(world, bullet, record, lifetime);
+    if (barrel.muzzle.flashOf()) |lit| lit.fire(kind, clock.frame_start);
 }
 
 /// The game's own effects of the events the tracks of the model of the object in slot `owner`
@@ -1558,6 +1571,31 @@ test shoot {
     for (&world.objects.bullets.pool) |*record| record.live = true;
     shoot(world, &ship.mission.clock, ship.index, ship.guns()[0].turret.fixed, false);
     try std.testing.expectEqual(max_bullets, flying(world));
+}
+
+test "a shot lights its muzzle's flash" {
+    const gpa = std.testing.allocator;
+    const built: flash.testing.Built = try .init(gpa, .cast);
+    defer built.deinit(gpa);
+    var ship: testing.Ship = undefined;
+    try ship.init(gpa);
+    defer ship.deinit(gpa);
+    // A second ship of the model, made with the flashes, which each of its muzzles carries.
+    ship.model.type.effects.flashes = &built.looks;
+    const flashing = try ship.add(@enumFromInt(testing.ship_type), .{ 0, 0, 5000 });
+    const world = ship.world();
+    const slot = &world.objects.slots[flashing];
+    try std.testing.expectEqual(2, slot.model.?.flashes.len);
+    const barrel = slot.guns[0].turret.fixed;
+    const lit = barrel.muzzle.flashOf().?;
+    try std.testing.expectEqual(null, lit.until);
+
+    // Lit for the Laser Cannon's 50 ticks from the frame's start; the other muzzle's stays out.
+    shoot(world, &ship.mission.clock, flashing, barrel, false);
+    try std.testing.expectEqual(ship.mission.clock.frame_start + 50, lit.until);
+    for (slot.model.?.flashes) |*other| {
+        if (other != lit) try std.testing.expectEqual(null, other.until);
+    }
 }
 
 test bulletsFrame {
