@@ -987,7 +987,7 @@ pub const Bullets = struct {
     pool: [max_bullets]Bullet = @splat(.{}),
     /// What the shots are drawn with, where the caller has built it; without, they fly unseen and
     /// draw none of the numbers their looks would.
-    looks: ?*const Looks = null,
+    looks: ?*Looks = null,
     /// Which shots cast a light.
     shot_lights: ShotLights = .latest_two,
     /// The shots that cast a light under `latest_two`: the player's latest two (`0x0056317C`), and
@@ -1845,12 +1845,12 @@ pub const Built = struct {
 pub const Looks = struct {
     shapes: std.EnumArray(Shape, Built),
     images: std.EnumArray(Image, *srtexture.Image),
-    /// The Turret Flak's shell (`0x00479140`): the first mesh of the first part of ship type
-    /// `shell_type`'s model, drawn at every distance. Null where the model cannot be loaded, and a
-    /// Turret Flak shot is then not drawn.
-    shell: ?srapiext.Level,
+    /// The Turret Flak's shell (`loadShell`): the first mesh of the first part of ship type
+    /// `shell_type`'s model, drawn at every distance. Null until it is loaded, or where the model
+    /// cannot be, and a Turret Flak shot is then not drawn.
+    shell: ?srapiext.Level = null,
 
-    pub fn create(gpa: Allocator, textures: *srtexture.Table, types: ShipTypes) (Allocator.Error || matmanager.Error)!*Looks {
+    pub fn create(gpa: Allocator, textures: *srtexture.Table) (Allocator.Error || matmanager.Error)!*Looks {
         const looks = try gpa.create(Looks);
         errdefer gpa.destroy(looks);
         for (std.enums.values(Image)) |image| {
@@ -1862,13 +1862,16 @@ pub const Looks = struct {
             try build(looks.shapes.getPtr(shape), gpa, recipes.get(shape), &looks.images);
             made += 1;
         }
-        looks.shell = shell: {
-            const loaded = types.load(types.context, shell_type) orelse break :shell null;
-            const parts = loaded.loaded.parts;
-            if (parts.len == 0 or parts[0].levels.len == 0) break :shell null;
-            break :shell .{ .mesh = parts[0].levels[0].mesh, .until = std.math.inf(f32) };
-        };
+        looks.shell = null;
         return looks;
+    }
+
+    /// `guns_load_shell` (`0x00479140`), as a mission starts, once the objects are reset: the
+    /// Turret Flak's shell, the first level of the first part of ship type `shell_type`'s model,
+    /// counted as used so that it stays loaded (`xtrabits.firstLevels`).
+    pub fn loadShell(looks: *Looks, all: *Objects, types: ShipTypes) void {
+        const levels = xtrabits.firstLevels(all, types, shell_type) orelse &.{};
+        looks.shell = if (levels.len > 0) .{ .mesh = levels[0].mesh, .until = std.math.inf(f32) } else null;
     }
 
     pub fn destroy(looks: *Looks, gpa: Allocator) void {
@@ -2335,7 +2338,7 @@ const test_looks = struct {
             for (&names, std.enums.values(Image)) |*name, image| name.* = std.fs.path.basenameWindows(image.name());
             const textures = try @import("backdrop.zig").testing.Textures.initNames(gpa, &names);
             errdefer textures.deinit(gpa);
-            return .{ .textures = textures, .looks = try .create(gpa, &textures.table, create.testing.no_models) };
+            return .{ .textures = textures, .looks = try .create(gpa, &textures.table) };
         }
 
         fn deinit(built: Fixture, gpa: Allocator) void {
@@ -2379,6 +2382,14 @@ test Looks {
     try std.testing.expectEqual(std.math.inf(f32), huge.levels[0].until);
     // Without the shell's model, a Turret Flak shot is not drawn.
     try std.testing.expectEqual(null, built.looks.shell);
+    // Its shell is loaded as a mission starts, its type counted as used so that the types no
+    // object uses, let go between missions, keep it.
+    var random: libcmt.Rand = .{};
+    const all = try create.Objects.create(gpa, &random);
+    defer all.destroy();
+    built.looks.loadShell(all, create.testing.no_models);
+    try std.testing.expectEqual(null, built.looks.shell);
+    try std.testing.expectEqual(1, all.types[shell_type].objects);
 }
 
 test dress {
@@ -2512,6 +2523,7 @@ const shieldfx = @import("shieldfx.zig");
 const sparks = @import("sparks.zig");
 const create = @import("create.zig");
 const ShipTypes = create.Types;
+const Objects = create.Objects;
 const formats = @import("../../formats/stats.zig");
 const gameobj = @import("gameobj.zig");
 const gun_stats = @import("guns/stats.zig");

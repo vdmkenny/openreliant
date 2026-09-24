@@ -158,7 +158,7 @@ does its type's own work on the pieces, then places them between the shot's last
 | Gattling Plasma Cannon | Four bolts of different lengths at random about the flight |
 | Vulcan Battery | Four short bolts in two pairs that wheel about the flight in opposite ways |
 | Nova Cannon | A bolt 360 across and 10000 long |
-| Turret Flak | The first part of the shell model, `shell.shp` |
+| Turret Flak | The first part of the shell model, `shell.shp`, which `guns_load_shell` (`0x00479140`) takes as each mission starts, once the objects are reset, counting its ship type, `0xB1`, as used |
 | Turret Lasers | A bolt 400 across and 2400 long, with two diamonds across it |
 | Allied and Coalition Huge Guns | Three squares crossed in the three planes, tumbling and fading, a glow, a light of their own and a trail of particles |
 
