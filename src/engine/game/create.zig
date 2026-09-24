@@ -624,7 +624,6 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
         }
         gameobj.linkParts(&model, loaded.model);
         slot.model = model;
-        slot.guns = try guns.fit(all.gpa, &slot.model.?);
         // `object_recentre` puts what it works out in the record.
         object.mass = model.mass;
         object.centre = gameobj.vec3(model.centre);
@@ -666,8 +665,12 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.gun_count = 0;
     object.component_count = 0;
     // The components are listed once the count is clear, as the game lists them, and the guns are
-    // fitted after them (`object_fit_guns`).
+    // fitted after them (`object_fit_guns`): a turret fires within its component's firing arc.
     if (object.flags.components) collectComponents(slot);
+    if (slot.model) |*model| slot.guns = try guns.fit(all.gpa, model, .{
+        .components = slot.components[0..@intCast(object.component_count)],
+        .arcs = if (slot.type) |loaded| loaded.model.firing_arcs else &.{},
+    });
     object.gun_count = @intCast(slot.guns.len);
     // The type's gun groups follow from this object's guns, and each gun learns its side.
     // `gun_groups_build` leaves a type with no model alone.
@@ -715,6 +718,8 @@ pub fn settledTier(asked: i32, ship_type: gameobj.Type, campaign: u2) u2 {
 /// A missile hardpoint: an attachment of kind `missile` on a part of the model.
 pub const Hardpoint = struct {
     part: usize,
+    /// Which of the part's attachments it is.
+    index: usize,
     attachment: *const shp.Attachment,
 };
 
@@ -741,7 +746,7 @@ pub const Hardpoints = struct {
             while (each.attachment < part.attachments.len) {
                 const attachment = &part.attachments[each.attachment];
                 each.attachment += 1;
-                if (attachment.kind == .missile) return .{ .part = each.part, .attachment = attachment };
+                if (attachment.kind == .missile) return .{ .part = each.part, .index = each.attachment - 1, .attachment = attachment };
             }
         }
         return null;
@@ -801,7 +806,13 @@ fn hang(gpa: Allocator, effects: objects.Effects, hardpoint: Hardpoint, file: ?[
     var built: objects.Model = try .create(gpa, mounted.model, mounted.loaded, effects);
     gameobj.linkParts(&built, mounted.model);
     const at = hardpoint.attachment.position;
-    return .{ .part = hardpoint.part, .origin = .{ at.x, at.y, at.z }, .orientation = hardpoint.attachment.orientation, .model = built };
+    return .{
+        .part = hardpoint.part,
+        .attachment = hardpoint.index,
+        .origin = .{ at.x, at.y, at.z },
+        .orientation = hardpoint.attachment.orientation,
+        .model = built,
+    };
 }
 
 /// `objects_update` (`0x00468FA0`), once a simulation step after the objects' own updates: moves

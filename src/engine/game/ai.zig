@@ -131,10 +131,11 @@ pub fn leadAim(all: *const create.Objects, index: u16, target: aigeneric.Target,
     var best: f32 = -1;
     var chosen: guns.Chosen = .of(&slot.object, slot.guns, slot.gun_groups);
     while (chosen.next()) |gun| {
-        const speed = gun.type.stats(&all.gun_stats).speed;
+        const barrel = gun.barrel() orelse continue;
+        const speed = barrel.type.stats(&all.gun_stats).speed;
         if (speed > best) {
             best = speed;
-            fastest = gun.type;
+            fastest = barrel.type;
         }
     }
     return leadAimWithGun(all, slot.drawn.position, target, fastest, lead);

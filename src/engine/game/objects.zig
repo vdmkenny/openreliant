@@ -798,8 +798,9 @@ pub const Model = struct {
     /// as an object of its own, hung from the node of the part that carries the attachment. Its own
     /// parts, lights, glows and mounts come with it.
     pub const Mount = struct {
-        /// The part that carries the attachment.
+        /// The part that carries the attachment, and which of the part's attachments it is.
         part: usize,
+        attachment: usize,
         /// Where the attachment stands on that part, and how it is turned there.
         origin: Vector,
         orientation: math.Matrix,
@@ -844,6 +845,12 @@ pub const Model = struct {
         targetable: bool = false,
         /// What its part is (part `+0x40`), which the target display names a subtarget by.
         class: shp.Part.Class = @enumFromInt(0),
+        /// The turret its part makes of its assembly, and which of the turret's parts it is (part
+        /// `+0xF4`, `+0xF8`).
+        turret_kind: shp.Part.TurretKind = .fixed,
+        turret_slot: i32 = -1,
+        /// Its node's `turret` flag: the base of a turret, which the turret fits mark.
+        turret: bool = false,
         /// The part its node hangs from (`object_link_part`), or null for one hanging from the
         /// root. A part names its parent by index, or -1 for none.
         parent: ?usize,
@@ -1017,6 +1024,8 @@ pub const Model = struct {
                 .armor = @floatFromInt(source.part.component_armor),
                 .component_armor = source.part.component_armor,
                 .class = source.part.class,
+                .turret_kind = source.part.turret_kind,
+                .turret_slot = source.part.turret_slot,
                 .link_id = source.part.link_id,
                 .parent = parentOf(model, index),
                 .origin = @splat(0),
@@ -1350,10 +1359,11 @@ pub const Model = struct {
             made.deinit(gpa);
         }
         for (model.parts, 0..) |part, index| {
-            for (part.attachments) |attachment| {
+            for (part.attachments, 0..) |attachment, at| {
                 const mounted = mounts.of(attachment) orelse continue;
                 try made.append(gpa, .{
                     .part = index,
+                    .attachment = at,
                     .origin = .{ attachment.position.x, attachment.position.y, attachment.position.z },
                     .orientation = attachment.orientation,
                     .model = try build(gpa, mounted.model, mounted.loaded, effects, depth + 1),

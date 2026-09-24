@@ -250,6 +250,15 @@ pub const Part = extern struct {
         warp_projector = 21,
         fuel_pod = 22,
         _,
+
+        /// Whether a part of the class is a turret, which takes a gun of its own by its turret
+        /// kind (`part_is_turret`, `0x00479610`).
+        pub fn isTurret(class: Class) bool {
+            return switch (class) {
+                .turret, .laser_turret, .missile_turret, .ion_cannon => true,
+                else => false,
+            };
+        }
     };
 
     comptime {
