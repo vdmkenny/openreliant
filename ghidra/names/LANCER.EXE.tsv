@@ -442,7 +442,7 @@ address	kind	name	type	comment
 00409f00	function	fight_find_ship_to_run_to	bool __fastcall (int slot, FightData *data)	Finds the nearest friendly ship with components and combat class 2 or 3 to run to; false when there is none or the ship is near one already
 00409be0	function	fight_aim	void __fastcall (int slot, FightState *state, OrderEntry *entry)	Aims the guns: every aim_interval ticks of the pilot at the target, led where it can be, and reckons its drift as a quarter of the target velocity; moves the aim by it each update, then calls fight_fire
 00409d10	function	fight_call_for_help		Has a ship the player has hurt badly send its nearest fighting wingman at the player
-004096b0	function	fight_fire	void __fastcall (int slot, FightState *state, ModelNode *node)	Fires for the pilot burst once its pause has passed, with the aim along the nose within fire_spread target radii and the node within a quarter of a laser range; a friendly ship holds fire with a player in line. Then times the missiles and countermeasures
+004096b0	function	fight_fire	void __fastcall (int slot, FightState *state, ModelNode *node)	Fires for the pilot burst once its pause has passed, with the aim along the nose within fire_spread target radii and the node within a quarter of a laser cannon's range; then locks the first rack that is not a Jack Hammer's on the target within its lock range and 0.7 of the nose, ready (+0x2F) once locked_at has passed, launching one time in five once missile_at has; and with a missile homing on it spends a countermeasure once countermeasure_at has passed
 00409ec0	function	fight_update_cloak	void __fastcall (int slot, FightState *state)	Uncloaks the ship when its maneuver asked for no cloak, and cloaks it once cloak_at passes when it asked for one
 00462550	function	object_spend_countermeasure	void __fastcall (int slot, int missile)	Spends one of an object's countermeasures (+0x5EC), the player's with hud_beep 0, or 3 with none left: drops one at its tail at its next place, drifting at a quarter of its velocity plus 5 along its Y axis and 5 back, trailing decoy_particles fore and aft, for 1000 ticks; then, outside a network client, the first missile in record order homing on it undecoyed that rolls under its decoy chance (30 more against a player, 50 more against a pilot whose countermeasures least is 50) chases it. A client takes the host's missile
 004c3830	function	SR_init	void * __fastcall (void)	Clears sr_context and returns it
@@ -664,7 +664,7 @@ address	kind	name	type	comment
 0057998c	data	hud_window_pane	void *	The 225 by 170 pane hud_init makes, which hud_draw draws a display window into as it opens and closes and then draws onto the display with VFX_buffer_transform, scaled about the window's place
 00566600	data	hud_window_picture	void *	A second 225 by 170 pane, the picture of the target display hud_window_close keeps for windows 3 and 8 to close with
 0051cef8	data	powerball_held	short	Set while POWERBALL WINDOW is held, and for the frame its locked form opens the power window; the player's controls read it
-00501cc8	data	hud_missile_ring	short[10][5]	The missile window's ring, one entry of five halfwords for each missile type: the count left, or -1 for none, its place round the ring, 0 the armed one, and the base of its shapes
+00501cc8	data	hud_missile_ring	MissileRingEntry[10]	The missile window's ring, an entry of five halfwords for each missile type the player's racks hold: the count left, or -1 for none, its place round the ring, 0 the armed one at six o'clock, the first of its ten shapes, its name's text id, and its type
 00504120	data	mission_objectives		The objectives of each mission, ten to a mission from mission 1, each its state and the string that names it, which the objectives window shows
 0056997e	data	objectives_shown	short	Which of the mission's objectives the objectives window shows, which OBJECTIVES WINDOW pages through while the window is open
 00562dc8	data	mission_number	int	The number of the mission being flown, from 1, by which the objectives window finds its objectives; missions 25 and 29 have display rules of their own
@@ -1004,7 +1004,7 @@ address	kind	name	type	comment
 00489c70	function	hud_target	void (void)	Draws the player's target in view 0. Off the screen or behind: an arrow from the middle, lines of palette 0x26 for a hostile target and 0x62 for the rest (0xB1 and 200 in software), none in the chase view, which shows chase_target_pointer instead; and a marker where a line its way leaves the screen, shapes 0x16C to 0x16F hostile or 0x170 to 0x173, with the range in font_small. On it: brackets 0x122, or 0x126 hostile, at the corners of its box as the camera sees it, dimmed by missile_lock_count; the range in font_new; and for a target that lists no components and is not friendly the lead cursor 0x12F at ai_lead_aim's point with a line toward the target, which sets hud_target_x and hud_target_y. Also marks the radio window's object (hud_comms_marker) and the nav point
 00489bc0	function	hud_pointer_direction	void __fastcall (OrderTarget *target, Vec3 *way, Vec3 *across)	The unit way across and down to a target's node in hud_object's frame, turned a half round, and that way turned a quarter round more
 0048b0f0	function	hud_comms_marker	void (void)	Draws shapes 0x12A to 0x12D at the corners of the object 0x0057BDF4 names, which the radio's window sets
-00491520	function	hud_missile_lock	void (void)	Runs the missile lock, its state at 0x0057DFF0 and missile_lock_count, and in the chase view adds chase_target_pointer and chase_nav_pointer to the scene
+00491520	function	hud_missile_lock	void (void)	Runs the player's missile lock: its state at 0x0057DFF0 (0 idle, 1 closing, 2 waiting out the lock time, 3 locked, 5 lost), missile_lock_count and the ticks from minus the lock time, and places the three lock_rings on the line from the camera to the target node; in the chase view adds chase_target_pointer and chase_nav_pointer to the scene. Its building sound (0x0057DFC0) never plays, and it ends 2D voice 0 every frame
 004aafc0	function	line_clip	void __fastcall (void *pane, int *x0, int *y0, int *x1, int *y1)	Clips a line to a pane in whole numbers, cutting an end outside back to the edge it crosses, then keeps both ends on the screen if any of the line is on the pane, which it counts at 0x005D60DC
 004a2af0	function	fonts_open	void (void)	Once: builds the remap tables text is drawn through, text_colours and the side tables among them, and opens the fonts, font_small and font_new among them
 005799e8	data	hud_shown_target	OrderEntry	The player's target as the display has it, an order's entry of which only the target's index (0x005799EC) and component (0x005799EE) are set: hud_draw copies the Player Control order's target each frame, as hud_target_changed does
@@ -1227,3 +1227,22 @@ address	kind	name	type	comment
 00541420	data	decoy_model	void *	ships\decoy.shp
 00541424	data	decoy_particles	ParticleTemplate *	The countermeasures' smoke
 00501c78	data	hud_beep_sounds	int[6][2]	hud_beep's sample of bank_stdsmp and volume for each sound: 15 to 20, at 60
+005656b0	data	hud_missile_armed	short	The armed entry of hud_missile_ring, at six o'clock
+0052a400	data	player_missiles_left	int	The ring's counts summed; nothing reads it
+00569978	data	missile_empty_warned_at	int	game_ticks until which Betty says no more that the armed missile has run out as a launch is refused
+00484060	function	hud_missile_ring_build	void (void)	Builds hud_missile_ring from the player's racks: an entry a type but the fuel pod, counts summed, the middle entry armed and the places round it
+00412820	function	player_launch_missile	void __fastcall (int slot)	LAUNCH MISSILE: nothing with missiles disabled or jumping; the Kamov lets its launched craft go; types 1 to 5, 7 and 8 need the lock (else stdsmp 1 and, with none left, betty 0 at most once in 500 ticks); cloaked outside multiplayer drops the cloak; opens window 2 held; launches from the first rack of the armed type with a missile, at the target while locked; counts one off the ring
+0057dff0	data	missile_lock_state	MissileLockState	The player's lock: 0 idle, 1 closing, 2 waiting out the lock time, 3 locked, 5 lost
+0057dfec	data	missile_lock_ticks	int	From minus the armed type's lock time up while the lock builds and holds; down as it is lost
+0057e000	data	missile_lock_turn	int	The ticks past the lock a lost lock kept, which turn the rings in degrees
+0057dfb8	data	missile_lock_type	int	The missile type the lock began on
+0057dfe4	data	missile_lock_entry	OrderEntry *	The player's Player Control entry, refreshed each frame
+0057dfc8	data	missile_lock_point	Vec3	Where the lock rings close in on: the target node while the lock holds
+0057dfc0	data	missile_lock_build_voice	int	The voice meant for the lock's building sound; starts 0, never -1, so the sound never plays
+0057dff4	data	lock_rings	void *[3]	The lock's three ring objects over lock_ring_mesh
+0057dfc4	data	lock_ring_mesh	void *	A square 256 across over tarring
+00491080	function	lock_ring_mesh_create	void (void)	Makes lock_ring_mesh: one quad of 4 corners at 128 either way over tarring, its own coordinates, lit and added
+004911d0	function	lock_rings_init	void (void)	Makes lock_rings, each over a quarter of tarring, and sets missile_lock_state to 0
+004af190	function	player_missile_guiding	bool (void)	Whether a live missile the player launched still has a target
+00539a94	data	camera_missile	int	The missile record the missile view (0x12) follows
+00539a7c	data	camera_missile_gone	int	Set once the missile the missile view follows has ended

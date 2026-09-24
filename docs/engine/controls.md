@@ -197,7 +197,8 @@ it is out, each at most once every 1000 ticks, ten seconds; `fuel_warning_tick` 
 the tick before which neither sounds again.
 
 `player_controls` also reads FIRE LASERS, LAUNCH MISSILE, CLOAK SHIP, JUMP DRIVE, EJECT and
-COUNTERMEASURES, all but FIRE LASERS once for each press. While the byte at `0x529FB8` is set, it
+COUNTERMEASURES, all but FIRE LASERS once for each press. LAUNCH MISSILE and COUNTERMEASURES are in
+[Missiles](missiles.md#the-players). While the byte at `0x529FB8` is set, it
 reads none of them, nor MATCH SPEED, AFTERBURNER TOGGLE, the throttle keys or the keys that turn
 the ship. **Unknown:** what sets that byte.
 

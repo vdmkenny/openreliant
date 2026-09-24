@@ -39,7 +39,7 @@ landings, jumps and deaths among others.
 | 6 | Target | Round the player's target | Target Camera |
 | 0xC | External | Round the player's ship | External Camera |
 | 8 | | Behind the object, turning with it about its own `Y` at 0.005 a tick and pulling away from 3000 at 10 a tick, as the player's ship is destroyed | a space |
-| 0x12 | Missile | Behind a missile | Missile Camera |
+| 0x12 | Missile | Behind a missile the object launched ([Missiles](missiles.md#the-missile-camera)) | Missile Camera |
 | 0x1A | | From where the camera was, watching the object | a space |
 | 0x1B | | From where the camera was, watching where the player's ship burst (`explode_marker`), which drifts on at a quarter of its velocity a frame | a space |
 | 0x24 | Flyby | From a point the player flies past | a space |

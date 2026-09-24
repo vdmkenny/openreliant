@@ -724,7 +724,7 @@ test "a trail's pieces" {
     const ship = try stage.armed.add(.friendly, @splat(0));
 
     // A Raptor's: a ribbon of 5 rings and three side ribbons, every corner at the tail's first.
-    try missiles.launch(world, ship, 0, .none);
+    missiles.launch(world, ship, 0, .none);
     const raptor = stage.trails.get(stage.armed.missile(0).trail.?).?;
     const ribbon = raptor.ribbon.?;
     try std.testing.expectEqual(15, ribbon.mesh.polygons.len);
@@ -738,7 +738,7 @@ test "a trail's pieces" {
     try std.testing.expectEqualSlices(u16, &.{ 16, 18, 2, 0 }, ribbon.mesh.indices[4 * 12 ..][0..4]);
 
     // A Havoc's: a ribbon and a plume, of six rings, the last 630 behind and 210 across.
-    try missiles.launch(world, ship, 1, .none);
+    missiles.launch(world, ship, 1, .none);
     const havoc = stage.trails.get(stage.armed.missile(1).trail.?).?;
     const plume = havoc.plume.?;
     try std.testing.expectEqual(90, plume.mesh.polygons.len);
@@ -758,7 +758,7 @@ test "Trails.frame" {
     const world = stage.world();
     const clock = &stage.armed.mission.clock;
     const ship = try stage.armed.add(.friendly, @splat(0));
-    try missiles.launch(world, ship, 0, .none);
+    missiles.launch(world, ship, 0, .none);
     const at = stage.armed.missile(0).trail.?;
     const trail = stage.trails.get(at).?;
     const ribbon = trail.ribbon.?;
@@ -792,7 +792,7 @@ test "Trails.start" {
     const ship = try stage.armed.add(.friendly, @splat(0));
     // With every trail taken, a missile flies without one.
     for (&stage.trails.records) |*record| record.* = .{ .type = .none, .follows = .nothing, .scrolled = 0 };
-    try missiles.launch(world, ship, 1, .none);
+    missiles.launch(world, ship, 1, .none);
     try std.testing.expectEqual(null, stage.armed.missile(0).trail);
     for (&stage.trails.records) |*record| record.* = null;
 }

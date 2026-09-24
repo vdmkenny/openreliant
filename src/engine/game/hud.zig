@@ -51,6 +51,8 @@ const Clock = @import("main.zig").Clock;
 const Vector = math.Vector;
 
 pub const windows = @import("hud/windows.zig");
+pub const missile_display = @import("hud/missile_display.zig");
+const missile_lock = @import("main/lock.zig");
 pub const power = @import("hud/power.zig");
 pub const target_display = @import("hud/target_display.zig");
 
@@ -763,10 +765,15 @@ pub const Frame = struct {
     scanning: bool = false,
     edge_line: EdgeLine,
     multiplayer: bool = false,
+    /// The view this frame (`camera_view`), and the sound the locked tone plays through; none
+    /// where nothing is heard.
+    view: camera.View = .cockpit,
+    sound: ?*@import("hog_snd.zig").Sound = null,
 };
 
 /// `hud_draw` (`0x004843B0`): the display for a frame, in its order. First it takes the player's
-/// target and runs the devices' charges, in every view. In the view ahead from the cockpit it
+/// target, plays or ends the missile lock's tone (`missile_lock.Lock.sound`) and runs the devices'
+/// charges, in every view. In the view ahead from the cockpit it
 /// then draws the jump prompt, the target, the eject marker, the scanner and the status lights;
 /// in the others the view's name. Then, in the view ahead, the instruments: the readouts, the
 /// ship status indicator, the targeting cluster, the radar, the reticle and the clock. Last, in
@@ -780,6 +787,7 @@ pub fn draw(state: *State, resources: *Resources, frame: Frame) (spr.Error || Al
     const art = &resources.art;
     const ahead = instrumented(frame.last_view);
     state.followTarget(frame.all, frame.multiplayer);
+    if (frame.sound) |sound| state.lock.sound(sound, frame.view);
     state.runCharges(live, frame_duration, frame.multiplayer);
     // Where the lead cursor stands, which the reticle closes on.
     var lead: ?[2]i32 = null;
@@ -1272,9 +1280,7 @@ pub const State = struct {
     smart_targeting: bool = false,
     /// `enemy_lock` (`0x00579988`): whether an enemy has a missile lock on the player.
     /// `mission_frame` sets it each frame when a ship whose order is Fight, against the player,
-    /// has byte `0x2F` of its fight state set. **Unverified:** that the byte is a missile lock;
-    /// nothing in the payload writes it at that offset, and the light's shape is a ship in a
-    /// sight.
+    /// has its missile ready (`aifight.FightState.missile_ready`).
     enemy_lock: bool = false,
     /// `player_ejected` (`0x00579986`), which the Eject Player order sets.
     ejected: bool = false,
@@ -1318,12 +1324,11 @@ pub const State = struct {
     /// The object that stood under the reticle as the targeting keys were last read
     /// (`0x00566664`), which TARGET UNDER RETICULE takes.
     under_reticle: ?u16 = null,
-    /// The missile lock's count (`0x0057DFBC`): 100 while no lock is building, down to 0 as one
-    /// does, and back up as it is lost. The target's brackets are drawn at its hundredths of their
-    /// brightness, and the lead cursor's line is shorter by `lock_shortening` for each short of
-    /// 100. The missiles, which count it, are not ported yet
-    /// ([#39](https://github.com/vdmkenny/openreliant/issues/39)).
-    lock: i32 = lock_none,
+    /// The player's missile lock (`main.cpp`'s), whose count dims the target's brackets and
+    /// shortens the lead cursor's line by `lock_shortening` for each short of 100.
+    lock: missile_lock.Lock = .{},
+    /// The missile display's ring of the player's missiles.
+    missiles: missile_display.Ring = .{},
 
     /// `hud_draw`'s work on the devices' charges for a frame, which it does in every view: a
     /// device that runs dry is turned off.
@@ -1633,9 +1638,8 @@ pub fn rangeText(buffer: *[16]u8, km: i32) []const u8 {
     return std.fmt.bufPrint(buffer, "{d}k", .{km}) catch "";
 }
 
-/// The missile lock's count while no lock builds (`State.lock`), and how much shorter each unit
-/// short of it makes the lead cursor's line, in the display's pixels (`0x004DC928`).
-pub const lock_none: i32 = 100;
+/// How much shorter each unit the missile lock's count is short of 100 makes the lead cursor's
+/// line, in the display's pixels (`0x004DC928`).
 pub const lock_shortening: f32 = 0.28;
 
 /// How far MATCH SPEED follows a target (`0x00501CB4`), and the targeting keys reach from the
@@ -2846,7 +2850,7 @@ pub fn drawTarget(
     high = @max(high, low + @as(Point, @splat(least_brackets * scale)));
 
     // The brackets dim as a missile's lock builds, and go at a tenth.
-    const brightness = @min(@as(f32, @floatFromInt(state.lock)) * 0.01, 1);
+    const brightness = @min(@as(f32, @floatFromInt(state.lock.count)) * 0.01, 1);
     if (brightness > 0.1) {
         const dim: [4]f32 = .{ colour[0] * brightness, colour[1] * brightness, colour[2] * brightness, colour[3] };
         const first = brackets_shape.of(hostile);
@@ -2866,7 +2870,7 @@ pub fn drawTarget(
     const cursor: [2]i32 = .{ round(aim[0]), round(aim[1]) };
     try drawShape(art, gpa, target, lead_shape, cursor, colour, scale);
     const toward: Point = sight.projection.project(sight.view(struck.drawn.position));
-    if (leadLine(aim, toward, state.lock, scale)) |line| {
+    if (leadLine(aim, toward, state.lock.count, scale)) |line| {
         drawLine(target, whole(line[0]), whole(line[1]), art.paletteColour(line_colour.hostile), scale);
     }
     return cursor;
@@ -2904,7 +2908,7 @@ pub fn leadLine(aim: Point, toward: Point, lock: i32, scale: f32) ?[2]Point {
     start[minor] = (start[major] - to[major]) * apart[minor] / apart[major] + to[minor];
     const from: Point = start;
     const length = distance(from, toward);
-    const shortening = @as(f32, @floatFromInt(lock_none - lock)) * lock_shortening * scale;
+    const shortening = @as(f32, @floatFromInt(missile_lock.idle_count - lock)) * lock_shortening * scale;
     if (!(shortening < length)) return null;
     return .{ from, from + (toward - from) * @as(Point, @splat((length - shortening) / length)) };
 }
@@ -3185,14 +3189,14 @@ fn drawContacts(
 test leadLine {
     // From five pixels out of the cursor, along the axis the target lies farther on, to the
     // target.
-    const line = leadLine(.{ 100, 100 }, .{ 200, 150 }, lock_none, 1).?;
+    const line = leadLine(.{ 100, 100 }, .{ 200, 150 }, missile_lock.idle_count, 1).?;
     try std.testing.expectEqual(Point{ 105, 102.5 }, line[0]);
     try std.testing.expectEqual(Point{ 200, 150 }, line[1]);
     // Farther down than across, it leaves by the top or the bottom.
-    const steep = leadLine(.{ 100, 100 }, .{ 110, 0 }, lock_none, 1).?;
+    const steep = leadLine(.{ 100, 100 }, .{ 110, 0 }, missile_lock.idle_count, 1).?;
     try std.testing.expectEqual(95, steep[0][1]);
     // Within the gap there is none.
-    try std.testing.expectEqual(null, leadLine(.{ 100, 100 }, .{ 103, 101 }, lock_none, 1));
+    try std.testing.expectEqual(null, leadLine(.{ 100, 100 }, .{ 103, 101 }, missile_lock.idle_count, 1));
     // A lock building shortens it at the target's end, to nothing.
     const shortened = leadLine(.{ 100, 100 }, .{ 200, 100 }, 50, 1).?;
     try std.testing.expectApproxEqAbs(200 - 50 * lock_shortening, shortened[1][0], 1e-3);

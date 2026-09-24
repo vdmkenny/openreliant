@@ -415,6 +415,8 @@ fn runUpdate(ctx: Context, index: u16, info: orders.Info) void {
         .eject_player => aieject.player(ctx, index),
         .fight => aifight.update(ctx, index),
         .disrupted => aiorders.disrupted(ctx, index),
+        .launch_missile => aiorders.launchMissile(ctx, index),
+        .unnamed_3 => aiorders.launchJackHammer(ctx, index),
         else => {},
     }
 }
@@ -435,6 +437,7 @@ pub fn playerControl(ctx: Context, index: u16) void {
     const combat = slot.combat orelse return;
     input.playerControls(ctx.world.player, devices, &slot.object, combat, ctx.world.view, ctx.clock.frame_duration, slot.trigger(ctx.clock.frame_start));
     input.matchSpeed(ctx.world.player, devices, ctx.world.objects, ctx.world.view);
+    input.playerWeapons(ctx.world, devices, index);
 }
 
 test {

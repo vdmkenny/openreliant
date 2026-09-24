@@ -1,5 +1,5 @@
 //! The orders a ship flies by: Do Nothing, Fly, Run Away, Slow Rotate, the Random Spins, Match
-//! Speed and Disrupted. [`aigeneric.zig`](aigeneric.zig) runs them, [`ai.zig`](ai.zig) steers for them, and
+//! Speed and Disrupted; and the two that launch a missile. [`aigeneric.zig`](aigeneric.zig) runs them, [`ai.zig`](ai.zig) steers for them, and
 //! `docs/engine/orders.md` describes what each does.
 //!
 //! **Unknown:** its source file. The code lies after `aifight.cpp`'s and before `aifuncs.cpp`'s,
@@ -16,6 +16,7 @@ const aigeneric = @import("aigeneric.zig");
 const Context = aigeneric.Context;
 const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
+const missiles = @import("missiles.zig");
 const objects = @import("objects.zig");
 const xtrabits = @import("xtrabits.zig");
 
@@ -187,6 +188,29 @@ pub fn matchSpeed(ctx: Context, index: u16) void {
     const flight = slot.flight orelse return;
     const speed = all.slots[@intCast(target.index)].object.speed;
     slot.object.throttle = speed / ai.cruiseSpeed(&slot.object, flight, ctx.world.view);
+}
+
+/// `order_launch_missile` (`0x0040B940`): the update of Launch Missile (2), which runs once over
+/// the ship's order: a missile from the first of its racks with any left, but Jack Hammers, at the
+/// order's target.
+pub fn launchMissile(ctx: Context, index: u16) void {
+    launchFrom(ctx, index, false);
+}
+
+/// `0x0040B990`: the update of order 3, which the game names nothing, likewise for a Jack Hammer,
+/// which the Fight order never launches.
+pub fn launchJackHammer(ctx: Context, index: u16) void {
+    launchFrom(ctx, index, true);
+}
+
+fn launchFrom(ctx: Context, index: u16, jack_hammer: bool) void {
+    const slot = &ctx.world.objects.slots[index];
+    const ship = &slot.object;
+    for (ship.racks[0..@intCast(@max(ship.rack_count, 0))], 0..) |rack, at| {
+        if (rack.count < 1 or (rack.type == .jack_hammer) != jack_hammer) continue;
+        missiles.launch(ctx.world, index, at, slot.orders[0].target);
+        return;
+    }
 }
 
 /// What a Havoc's shockwave leaves in Disrupted's data (`shockwave.Shockwave.strike`): how many
@@ -407,4 +431,21 @@ test runAway {
     all.resetSlot(other, &mission.random);
     aigeneric.objectOrders(ctx, index);
     try std.testing.expectEqual(0, all.slots[index].object.order_count);
+}
+
+test launchMissile {
+    var armed: missiles.testing.Armed = undefined;
+    try armed.init(std.testing.allocator);
+    defer armed.deinit();
+    const ship = try armed.add(.hostile, @splat(0));
+    const target = try armed.add(.friendly, .{ 0, 0, 20000 });
+    armed.mission.slot(ship).orders[0] = .{ .order = .launch_missile, .target = .{ .kind = .ship, .index = @intCast(target), .component = -1 }, .sequence = 0, .data = .{ .words = @splat(0) } };
+    const ctx = armed.mission.orders();
+    // The first rack with missiles, the Raptor pod, at the order's target.
+    launchMissile(ctx, ship);
+    try std.testing.expectEqual(missiles.Type.raptor, armed.missile(0).type);
+    try std.testing.expectEqual(@as(i16, @intCast(target)), armed.missile(0).target.index);
+    // The fixture carries no Jack Hammer.
+    launchJackHammer(ctx, ship);
+    try std.testing.expectEqual(1, armed.live());
 }

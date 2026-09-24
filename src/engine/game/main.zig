@@ -27,6 +27,7 @@ const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
 const guns = @import("guns.zig");
 const cloak = @import("cloak.zig");
+pub const lock = @import("main/lock.zig");
 const missiles = @import("missiles.zig");
 const explode = @import("explode.zig");
 const particles = @import("particles.zig");
@@ -216,6 +217,10 @@ pub const Frame = struct {
     shockwaves: ?*shockwave.Shockwaves = null,
     trails: ?*missiles.trail.Trails = null,
     countermeasures: ?*cloak.Countermeasures = null,
+    /// The player's missile lock and its rings, which go into the overlay's layer while it builds,
+    /// from the cockpit's views and the chase view.
+    lock: ?*const lock.Lock = null,
+    lock_rings: ?*lock.Rings = null,
     /// The shields' bubbles, which go into the world's layer after the objects.
     shields: ?*shield.Shields = null,
     /// Whether the game is paused, which holds the bubbles' colours still.
@@ -296,6 +301,25 @@ pub fn missionFrame(orders: aigeneric.Context, fraction: f32) void {
     if (orders.world.explosions) |explosions| explosions.frame(orders.world);
     if (orders.world.countermeasures) |dropped| dropped.frame(orders.world);
     if (orders.world.shockwaves) |waves| waves.frame(orders.world);
+    if (orders.world.display) |display| {
+        display.enemy_lock = enemyLock(orders);
+        // Only from the cockpit's views and the chase view.
+        if (@intFromEnum(orders.world.view) < @intFromEnum(camera.View.chase) + 1) display.lock.frame(orders.world, &display.missiles);
+    }
+}
+
+/// Whether an enemy has a missile locked on the player (`mission_frame`'s pass that draws the
+/// objects): a ship drawn this frame, fighting the player, whose missile is ready.
+fn enemyLock(orders: aigeneric.Context) bool {
+    const all = orders.world.objects;
+    var walk = all.walk();
+    while (walk.next()) |index| {
+        const slot = &all.slots[index];
+        if (slot.object.flags.outOfFrame() or slot.object.order_count == 0) continue;
+        const order = slot.orders[0];
+        if (order.order == .fight and order.target.index == all.player and slot.state.fight.missile_ready) return true;
+    }
+    return false;
 }
 
 /// `mission_frame`'s pass over the objects before the camera's frame: each live object, save
@@ -327,6 +351,9 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     try missiles.draw(frame.objects, gpa, scene, attachments);
     if (frame.trails) |trails| try trails.draw(gpa, scene);
     if (frame.countermeasures) |dropped| try dropped.draw(gpa, scene, attachments);
+    if (frame.lock_rings) |rings| if (frame.lock) |held| if (@intFromEnum(frame.view) <= @intFromEnum(camera.View.chase)) {
+        try rings.draw(gpa, scene, held, .{ .position = context.camera.position, .orientation = context.camera.orientation }, context.projection);
+    };
     if (frame.shields) |bubbles| try bubbles.draw(gpa, arena, scene, frame.objects, .{
         .camera = attachments.camera,
         .inside = camera.inCockpit(frame.view, frame.cockpit_mode),
@@ -646,6 +673,9 @@ pub fn armorConditions(object: *gameobj.GameObject, combat: *const create.ShipCo
     object.shield_condition = fore * 0.25 + aft * 0.25 + sides;
 }
 
+/// Betty's warning of the armour failing.
+const armor_warning = 1;
+
 /// The rest of `object_armor_conditions` (`0x00492370`), for the player's ship: once a quadrant has
 /// lost its shield and half its armour, the cockpit's warning, sound 1 of `betty.fat`, no more than
 /// once in 500 ticks.
@@ -656,7 +686,7 @@ pub fn armorWarning(hearing: hog_snd.Hearing, object: *const gameobj.GameObject,
     const half = (combat.fullArmor() - 1) * 0.5;
     for (object.shields.values(), object.armor.values()) |held, armor| {
         if (held > 0 or armor >= half) continue;
-        if (sound.betty) |bank| _ = sound.play(bank, 1, 127, 1, 64, 0);
+        sound.say(armor_warning);
         sound.armor_warned_at = frame_start;
         return;
     }

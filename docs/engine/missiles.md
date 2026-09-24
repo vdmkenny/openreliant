@@ -226,8 +226,7 @@ record are freed.
 
 `missiles_reset` (`0x00494D80`) frees every missile as a mission ends.
 
-The port keeps the missiles with the objects (`create.Objects.missiles`). Not yet ported: the
-lock and what launches them.
+The port keeps the missiles with the objects (`create.Objects.missiles`).
 
 ## Trails
 
@@ -375,4 +374,161 @@ drift by their velocity times the frame's ticks, and trail their smoke.
 it in a fireball from the sheet, 200 across over 50 ticks, drifting as it did.
 
 The port reads the model once for the whole run.
+
+## Who launches
+
+Only these launch the missiles of `missiles.cpp`: the player (`player_launch_missile`), the Fight
+order (`fight_fire`), orders 2 and 3, and a missile turret (`turret_missile_step`, `0x0047D560`,
+not ported: [#191](https://github.com/vdmkenny/openreliant/issues/191)). A turret named a missile
+turret in the models' tables is a gun.
+
+### The ring
+
+The missile display (window 2) shows the player's missiles in a ring (`hud_missile_ring`,
+`0x00501CC8`), ten entries of five halfwords, and the armed entry (`hud_missile_armed`,
+`0x005656B0`):
+
+| Halfword | Field |
+|---|---|
+| 0 | Missiles left, -1 for no entry |
+| 1 | Where it stands round the ring, 0 the armed one at six o'clock |
+| 2 | The first of its type's ten shapes in the display's set; the shape drawn is this and its place |
+| 3 | Its name's text |
+| 4 | Its type |
+
+`hud_missile_ring_build` (`0x00484060`) builds it as a mission starts and after each re-arm: an entry
+for each type the player's racks hold, but the fuel pod, in the order the racks first come, with the
+missiles of all its racks. The middle entry is armed; each entry's place is the armed entry's index
+less its own, and ten more below 0. `player_missiles_left` (`0x0052A400`) sums the counts, and
+nothing reads it.
+
+| Type | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|---|
+| First shape | `0x56` | `0x4C` | `0x24` | `0x42` | `0x1A` | `0x6A` | `0x60` | `0x38` | `0x2E` |
+| Name | `0x124` | `0x123` | `0x121` | `0x11E` | `0x127` | `0x126` | `0x125` | `0x120` | `0x122` |
+
+The table's own words, overwritten before anything reads them, hold a test ring of four halfwords
+an entry. Turning the ring and drawing it are [#93](https://github.com/vdmkenny/openreliant/issues/93).
+
+### The player's
+
+LAUNCH MISSILE (`player_controls`, `0x00413BE7`, once a press) runs `player_launch_missile`
+(`0x00412820`). Nothing happens while the ship's missiles are disabled or it jumps. Then, by the armed
+type:
+
+1. A Raptor, Havoc, Jack Hammer, Bandit, Vagabond, Imp or Hawk needs the lock to hold. Without it
+   the display refuses (`stdsmp` 1), and where the armed entry has none left, Betty says so (sound 0
+   of `betty.fat`), no more than once in 500 ticks; nothing more. A Screamer and a Solomon need no
+   lock.
+2. A cloaked ship outside a multiplayer game drops its cloak instead.
+3. The missile display opens, held. With none of the armed type left, Betty says so.
+4. The first rack of the armed type with a missile left launches one, at the ship's target while the
+   lock holds, else at nothing, and the armed entry counts one off.
+
+In a multiplayer game a missile is a power-up; and the Kamov of mission 25 lets the craft it
+carries go instead. The right mouse button launches too, in the mouse's mode.
+
+COUNTERMEASURES (`0x00413E80`, once a press), outside a mission's ending: with none left Betty says
+so (sound `0xF`), and with 6, 4 or 2 left she warns they run low (`0xD`); then
+`object_spend_countermeasure` ([Countermeasures](#countermeasures)).
+
+The port reads both in `input.playerWeapons`, after the throttle's keys. Not ported: the mouse,
+the cloak ([#89](https://github.com/vdmkenny/openreliant/issues/89)), the Kamov, and the
+multiplayer game's power-up.
+
+### The lock
+
+The player's lock is `main.cpp`'s, by where its code lies: `hud_missile_lock` (`0x00491520`), once
+a frame from `mission_frame` while the view is one of the cockpit's or the chase view, and while the
+player's ship has its Player Control order. `lock_rings_init` (`0x004911D0`) clears it as a mission
+runs.
+
+A lock is possible (`missile_lock_possible`, `0x00491350`) while:
+
+1. the armed entry has missiles left, or a missile the player launched still flies at a target
+   (`player_missile_guiding`, `0x004AF190`);
+2. it is not a Solomon's;
+3. the target is one to aim at, and the player's missiles are not disabled;
+4. outside a multiplayer game, the target is hostile and the missile not a Screamer;
+5. the target's node lies within the type's lock range of where the ship goes next, and within 0.7
+   of the ship's nose.
+
+`missile_lock_same` (`0x004914D0`) asks that the target, its component and the armed type are those
+the lock began on, so turning the ring loses it.
+
+| State (`0x0057DFF0`) | Each frame |
+|---|---|
+| 0 idle | The count (`missile_lock_count`, `0x0057DFBC`) at 100. Where a lock is possible, it begins: the target and the type kept, the ticks (`0x0057DFEC`) at minus the type's lock time, the rings' turn (`0x0057E000`) at 0 |
+| 1 closing | While possible and the same, the count down and the ticks up by the frame's ticks; at 0, to 2. Otherwise lost |
+| 2 waiting | Likewise the ticks up; at 0, to 3 |
+| 3 locked | Likewise the ticks up |
+| 4 | Nothing sets it; taken as lost |
+| 5 lost | The count up and the ticks down; past 99, to 0 |
+
+As a lock is lost, ticks it had counted past the lock go to the rings' turn. So a lock takes 100
+ticks for the rings to close, and holds the type's lock time after it began, whichever is longer.
+`0x0057DFE8` counts too, but nothing reads it.
+
+The rings (`lock_rings`, `0x0057DFF4`) are three scene objects on one square 256 across
+(`lock_ring_mesh_create`, `0x00491080`), each over a quarter of `tarring`, lit by their own colours
+and added over the overlay's layer. In every state but 0, outside view 13:
+
+- They stand on the line from the camera to the target's node (kept while the lock holds, and
+  left as it was once lost), as far out as the screen's scale across over its width, times 2560,
+  times what the count is short of 100 in hundredths: so they close in from the camera onto the
+  target as the count runs down.
+- They face the camera, turned about its axis by the turn kept in degrees, and before the lock the
+  first by up to a radian to and fro at one and a half times the ticks in degrees, the second by up
+  to 0.6 at two and a half times, the third a degree a tick; once locked, all three a degree a tick.
+- They are drawn at 0.7 of their size times 1.33, 1.11 and 1, drawing together over the last 50
+  ticks before the lock, and as one once locked.
+- Their colour is 0.65 of dark red `(0.5, 0, 0)`, whitening over the last 50 ticks before the lock.
+
+Once locked, in the view ahead from the cockpit, `hud_draw` plays the locked tone (`stdsmp`
+`0x15`, twice over) and holds its voice (`missile_lock_tone`, `0x00566644`); out of that view, or
+once the lock is lost, it ends the voice, whatever plays on it by then. The pause menu ends it too.
+
+**Fix:** `hud_missile_lock` means to play `stdsmp` 2 while the rings close and end it after, keeping
+the voice at `0x0057DFC0`; but nothing sets that to none first, so the sound never plays, and the
+game ends the first voice every frame instead, cutting what plays there. The port leaves that voice
+alone, and the sound unplayed.
+
+The target's brackets are drawn at the count's hundredths of their brightness
+([The target](hud.md#the-target)).
+
+### The AI's missiles
+
+`fight_fire` (`0x004096B0`), after the guns, each update of the Fight order, unless the ship is
+cloaked:
+
+1. The missile ready flag (`FightState + 0x2F`) is cleared.
+2. The first rack with missiles left, but a Jack Hammer's, is the only one looked at. Where the
+   target's node lies beyond the type's lock range, or outside 0.7 of the ship's nose, the lock
+   starts again: `locked_at` is the type's lock time from now. Once `locked_at` has passed, the
+   missile is ready. Ready, once the pilot's wait for the next missile (`missile_at`) has passed,
+   one time in five it launches one at the target; either way the wait is drawn again (from the
+   pilot's `missiles` range), the lock starts again and the missile is no longer ready.
+3. Not ready, the wait is drawn again: so it runs down only while the lock holds, which is
+   seldom, for four to sixteen seconds by the pilot.
+4. With no missile homing on the ship, the wait for a countermeasure is held at the pilot's least;
+   with one, once the wait has passed, it is drawn again and a countermeasure dropped.
+
+`order_fight_init` leaves `locked_at` as the order's state starts it, at 0, so a fresh Fight
+order's lock is ready as soon as its target is in reach. The AI locks Screamers and Solomons, and a
+ship with its missiles disabled still locks, lighting the player's enemy lock, though
+`missile_launch` refuses it.
+
+Orders 2, Launch Missile (`order_launch_missile`, `0x0040B940`), and 3 (`0x0040B990`, which the
+game names nothing), both run once over the ship's orders, launch a missile at their target from
+the first rack with missiles left: of any type but the Jack Hammer, and a Jack Hammer.
+
+### The missile camera
+
+MISSILE CAMERA switches to view `0x12` on the player's ship. `camera_set_view` steps
+`camera_missile` (`0x00539A94`) round the records from the one it last followed to the next live
+missile that ship launched, refusing the view with none. `camera_frame` then keeps behind that
+missile, as the chase view does but 800 back and 400 more at full throttle, 300 above, easing
+toward its swings a two hundredth of the way each frame, and rolling with a twentieth of its yaw
+too. Once the missile ends (`0x00539A7C`), the camera holds still for 150 ticks and goes back to the
+cockpit. A mission's script starts it too (`StartMissileCam`).
 

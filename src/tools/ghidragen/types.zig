@@ -106,6 +106,8 @@ pub const exported = [_]Export{
     .{ "MissileType", engine.game.missiles.Type },
     .{ "MissileLook", engine.game.missiles.trail.Look },
     .{ "MissileLookPieces", engine.game.missiles.trail.Look.Pieces },
+    .{ "MissileRingEntry", engine.game.hud.missile_display.Entry },
+    .{ "MissileLockState", engine.game.main.lock.Phase },
 
     // The pause menu.
     .{ "MenuItem", engine.game.hudoptions.menu.Item },

@@ -10,6 +10,7 @@ const input = @import("../input.zig");
 const controls = @import("../input/controls.zig");
 const libcmt = @import("../libcmt.zig");
 const gameobj = @import("gameobj.zig");
+const missiles = @import("missiles.zig");
 const Vector = math.Vector;
 
 /// The view table, which [`camera/views.zig`](camera/views.zig) transcribes.
@@ -245,6 +246,12 @@ pub const Camera = struct {
     /// Set while the joystick's hat is held (`0x0051CF8C`), so that the view returns to the front
     /// when it is released.
     hat_glancing: bool = false,
+    /// The missiles in flight, which the missile view follows one of: the record it follows
+    /// (`camera_missile`, `0x00539A94`), and whether that has ended (`0x00539A7C`), after which the
+    /// camera holds still for `missile_linger` ticks and goes back to the cockpit.
+    missiles: ?*const missiles.Missiles = null,
+    missile: u8 = 0,
+    missile_gone: bool = false,
 
     /// Bars grow this share of the screen a tick, times their speed.
     pub const bar_rate: f32 = 0.001;
@@ -252,8 +259,16 @@ pub const Camera = struct {
     /// Switches view (`camera_set_view`): `object` is the one the view shows, `lock` keeps the
     /// camera keys off it. Refused while the camera is locked, unless `force`. The game then
     /// places the camera at once, as `frame` does, and has the stars draw no streaks this frame.
+    ///
+    /// The missile view follows the next missile in flight, from the one it last followed, that
+    /// `object` launched; with none, it is refused.
     pub fn setView(camera: *Camera, view: View, object: ?u16, lock: bool, force: bool, now: u32) bool {
         if (camera.locked and !force) return false;
+        if (view == .missile) {
+            const records = camera.missiles orelse return false;
+            camera.missile = nextMissile(records, camera.missile, object orelse return false) orelse return false;
+            camera.missile_gone = false;
+        }
         if (view.letterboxed()) {
             camera.bar_speed = 1;
         } else {
@@ -396,6 +411,23 @@ pub const Camera = struct {
             .watch_marker => if (world.marker) |marker| {
                 camera.place.orientation = math.lookAt(marker - camera.place.position);
             },
+            .missile => {
+                if (camera.missile_gone) return if (camera.switched < world.now) .cockpit else null;
+                const followed = if (camera.missiles) |records| records.records[camera.missile] else null;
+                const missile = followed orelse {
+                    camera.switched = world.now + missile_linger;
+                    camera.missile_gone = true;
+                    return null;
+                };
+                if (!world.object.motion.ship_type.hasStats()) return .cockpit;
+                const object = &missile.slot.object;
+                camera.place = camera.chase.follow(.{
+                    .throttle = object.throttle,
+                    .pitch_rate = object.pitch_rate,
+                    .yaw_rate = object.yaw_rate,
+                    .roll_rate = object.roll_rate,
+                }, missile.slot.drawn.position, missile.slot.drawn.orientation);
+            },
             else => {},
         }
         return null;
@@ -410,6 +442,22 @@ pub const Camera = struct {
 
 /// View 0x1E, which is the chase view again.
 pub const chase_too: View = @enumFromInt(0x1E);
+
+/// How long the missile view holds still once its missile has ended, before it goes back to the
+/// cockpit.
+const missile_linger = 150;
+
+/// The next missile in flight after `from`, going round the records, that `launcher` launched
+/// (`camera_set_view`), or null for none.
+fn nextMissile(records: *const missiles.Missiles, from: u8, launcher: u16) ?u8 {
+    var at = from;
+    for (0..missiles.max_missiles) |_| {
+        at = @intCast((@as(usize, at) + 1) % missiles.max_missiles);
+        const missile = records.records[at] orelse continue;
+        if (missile.launcher == launcher) return at;
+    }
+    return null;
+}
 
 // --- Cockpit ------------------------------------------------------------------------------------
 
@@ -634,18 +682,49 @@ pub const Chase = struct {
         const throttle = if (motion.afterburner) afterburner_throttle else motion.throttle;
         chase.distance += (-(throttle * throttle_distance + to.distance) - chase.distance) * distance_smoothing;
 
+        var swing = swings(motion);
         // Nose up swings the camera half as far as nose down.
-        var pitch = std.math.clamp(-pitch_swing * motion.pitch_rate, -pitch_limit, pitch_limit);
-        pitch *= if (pitch < 0) 0.5 else 1.5;
-        const yaw = std.math.clamp(-yaw_swing * motion.yaw_rate, -turn_limit, turn_limit);
-        const roll = std.math.clamp(-roll_swing * motion.roll_rate, -turn_limit, turn_limit);
-        chase.pitch += (pitch - chase.pitch) * turn_smoothing;
-        chase.yaw += (yaw - chase.yaw) * turn_smoothing;
-        chase.roll += (roll - chase.roll + yaw) * turn_smoothing;
+        swing.pitch *= if (swing.pitch < 0) 0.5 else 1.5;
+        chase.pitch += (swing.pitch - chase.pitch) * turn_smoothing;
+        chase.yaw += (swing.yaw - chase.yaw) * turn_smoothing;
+        chase.roll += (swing.roll - chase.roll + swing.yaw) * turn_smoothing;
+        return chase.placed(position, orientation, to.height);
+    }
 
+    /// The missile view's `camera_frame` (`0x0045FC90`, view `0x12`): the chase view's, behind a
+    /// missile, 800 back and 400 more at full throttle, 300 above, swinging ten times slower, and
+    /// rolling with a twentieth of its yaw.
+    pub fn follow(chase: *Chase, motion: Motion, position: Vector, orientation: Matrix) Place {
+        chase.distance += (-(motion.throttle * throttle_distance + missile_distance) - chase.distance) * distance_smoothing;
+        const swing = swings(motion);
+        chase.pitch += (swing.pitch - chase.pitch) * missile_smoothing;
+        chase.yaw += (swing.yaw - chase.yaw) * missile_smoothing;
+        chase.roll += swing.yaw * missile_roll + (swing.roll - chase.roll) * missile_smoothing;
+        return chase.placed(position, orientation, missile_height);
+    }
+
+    /// Behind a missile at no throttle, and above it (`0x004DC5EC`); how far the missile view's
+    /// swings go a frame (`0x004DC4D0`), and how much of its yaw it rolls with (`0x004DC474`).
+    pub const missile_distance: f32 = 800;
+    pub const missile_height: f32 = -300;
+    pub const missile_smoothing: f32 = 0.005;
+    pub const missile_roll: f32 = 0.05;
+
+    /// The swings the object's rates of turn ask for, each within its limit.
+    fn swings(motion: Motion) struct { pitch: f32, yaw: f32, roll: f32 } {
+        return .{
+            .pitch = std.math.clamp(-pitch_swing * motion.pitch_rate, -pitch_limit, pitch_limit),
+            .yaw = std.math.clamp(-yaw_swing * motion.yaw_rate, -turn_limit, turn_limit),
+            .roll = std.math.clamp(-roll_swing * motion.roll_rate, -turn_limit, turn_limit),
+        };
+    }
+
+    /// The camera `height` below the object and `distance` along it, swung by the pitch and then
+    /// the yaw, and rolled by the roll.
+    fn placed(chase: *const Chase, position: Vector, orientation: Matrix, height: f32) Place {
         const swung = math.turned(math.turned(orientation, .x, chase.pitch), .y, chase.yaw);
         return .{
-            .position = position + math.transform(swung, .{ 0, to.height, chase.distance }),
+            .position = position + math.transform(swung, .{ 0, height, chase.distance }),
             .orientation = math.turned(orientation, .z, chase.roll),
         };
     }
@@ -820,7 +899,7 @@ test Camera {
     try std.testing.expect(camera.place.position[2] > 1000);
 
     // A locked camera refuses a switch unless forced; cutaways bring in the bars.
-    try std.testing.expect(camera.setView(.missile, 0, true, false, 20));
+    try std.testing.expect(camera.setView(.pull_back, 0, true, false, 20));
     try std.testing.expect(!camera.setView(.external, 0, false, false, 30));
     try std.testing.expectEqual(1, camera.bar_speed);
     for (0..40) |_| _ = camera.frame(.{ .object = ship, .player = ship, .ticks = 3 });
@@ -975,4 +1054,31 @@ test "the hat switches views while it is held" {
     devices.settings.hat_enabled = true;
     camera.frameControls(&devices, 0, 1, 600);
     try std.testing.expectEqual(View.cockpit_rear, camera.view);
+}
+
+test "the missile view" {
+    var armed: missiles.testing.Armed = undefined;
+    try armed.init(std.testing.allocator);
+    defer armed.deinit();
+    const player = try armed.add(.friendly, @splat(0));
+    const other = try armed.add(.hostile, .{ 0, 0, 50000 });
+    var camera: Camera = .{ .missiles = &armed.mission.objects.missiles };
+    // With none of the player's in flight, the view is refused.
+    try std.testing.expect(!camera.setView(.missile, player, false, false, 0));
+    missiles.launch(armed.mission.world(), other, 0, .none);
+    missiles.launch(armed.mission.world(), player, 0, .none);
+    try std.testing.expect(!camera.setView(.missile, other + 1, false, false, 0));
+    // It follows the player's, behind and above it, easing out from where the chase view left it.
+    try std.testing.expect(camera.setView(.missile, player, false, false, 0));
+    try std.testing.expectEqual(1, camera.missile);
+    const subject: Subject = .{ .position = @splat(0), .orientation = math.identity, .motion = .{ .ship_type = .predator } };
+    try std.testing.expectEqual(null, camera.frame(.{ .object = subject, .player = subject, .ticks = 1, .now = 10 }));
+    const missile = armed.missile(1);
+    try std.testing.expectEqual(missile.slot.drawn.position[1] + Chase.missile_height, camera.place.position[1]);
+    // Once it ends, the camera holds for a second and a half, then goes back to the cockpit.
+    missiles.end(armed.mission.world(), 1);
+    try std.testing.expectEqual(null, camera.frame(.{ .object = subject, .player = subject, .ticks = 1, .now = 20 }));
+    try std.testing.expect(camera.missile_gone);
+    try std.testing.expectEqual(null, camera.frame(.{ .object = subject, .player = subject, .ticks = 1, .now = 170 }));
+    try std.testing.expectEqual(View.cockpit, camera.frame(.{ .object = subject, .player = subject, .ticks = 1, .now = 171 }).?);
 }

@@ -341,6 +341,11 @@ pub const Sound = struct {
         return @intCast(chosen);
     }
 
+    /// Betty's warning `index` (`bank_betty`), at full volume in the middle.
+    pub fn say(sound: *Sound, index: usize) void {
+        if (sound.betty) |bank| _ = sound.play(bank, index, 127, 1, 64, 0);
+    }
+
     /// `sound_play_on_voice` (`0x004820C0`): plays it on voice `v`, ending what it was playing.
     pub fn playOn(sound: *Sound, v: u8, bank: fat.Bank, index: usize, volume: i32, loops: u32, pan: i32, pitch: i32) void {
         const driver = sound.driver orelse return;

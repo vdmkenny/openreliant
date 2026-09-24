@@ -590,7 +590,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     const video = game.hudoptions.screens.Video;
     var cockpit_setting: camera.CockpitSetting = options.cockpit orelse @enumFromInt(settings_file.profile.int(video.section, video.view_key, 0));
     var brightness = @as(f32, @floatFromInt(settings_file.profile.int(video.section, video.gamma_key, video.gamma_scale))) / video.gamma_scale;
-    var view: camera.Camera = .{ .cockpit_mode = cockpit_setting.mode() };
+    var view: camera.Camera = .{ .cockpit_mode = cockpit_setting.mode(), .missiles = &sandbox.objects.missiles };
     var last_view = view.view;
     // The mission's clocks, which `mission_run` zeroes before it loops.
     var clock: game.main.Clock = .{};
@@ -614,6 +614,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     var effects_library: Library = .{ .gpa = arena, .resources = &resources, .textures = &textures };
     var countermeasures: game.cloak.Countermeasures = .init(gpa, effects_library.mounts());
     defer countermeasures.reset();
+    const lock_rings: *game.main.lock.Rings = try .create(gpa, &textures);
+    defer lock_rings.destroy(gpa);
     var sparks: game.sparks.Sparks = try .create(gpa, &textures);
     defer sparks.deinit();
     var shields: game.shield.Shields = try .create(gpa, &textures, explosions.settings.detail, context.hardware, options.shields);
@@ -663,8 +665,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .brightness = &brightness,
         },
     };
-    // What the mission's start fits the player's ship with, once `hud_init` has set the display up.
-    game.main.fitDevices(&display.state, sandbox.player_type, sandbox.canCloak());
+    // What the mission's start readies the display with, once `hud_init` has set it up.
+    readyDisplay(&display.state, &sandbox);
     world.display = &display.state;
 
     var scene: srcore.Scene = .{};
@@ -862,6 +864,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .shockwaves = &shockwaves,
             .trails = &trails,
             .countermeasures = &countermeasures,
+            .lock = &display.state.lock,
+            .lock_rings = lock_rings,
             .shields = &shields,
             .paused = clock.paused,
             .attachments = .{
@@ -1249,10 +1253,19 @@ const TypeCache = struct {
 /// How long the camera watches the player's ship's end before the sandbox starts again, in ticks.
 const restart_after = 500;
 
-/// What a start of the sandbox leaves the player: its devices fitted to the ship, and the camera
+/// What a mission's start readies the display with for the player's ship: its devices fitted
+/// (`fitDevices`), its missiles in the missile display once the ships are made (`mission_start`),
+/// and no missile lock (`mission_run`).
+fn readyDisplay(state: *game.hud.State, sandbox: *Sandbox) void {
+    game.main.fitDevices(state, sandbox.player_type, sandbox.canCloak());
+    state.missiles.build(&sandbox.player().object);
+    state.lock.reset();
+}
+
+/// What a start of the sandbox leaves the player: the display readied for the ship, and the camera
 /// where a start puts it, since a ship of another size wants another view to be seen in.
 fn settleStart(display: *Display, sandbox: *Sandbox, view: *camera.Camera, at: u32) void {
-    game.main.fitDevices(&display.state, sandbox.player_type, sandbox.canCloak());
+    readyDisplay(&display.state, sandbox);
     // The start let go of the types no object is of any more, whose schematics what the target
     // display last showed may hold.
     display.state.target_pictures = .{};
@@ -1335,6 +1348,8 @@ const Display = struct {
             .mode = display.cockpit_mode,
             .strings = display.strings,
             .hit_shake = display.view.hit_shake,
+            .view = display.view.view,
+            .sound = display.settings.sound,
             .random = display.random,
             .ready = &display.ready,
             .edge_line = display.edge_line,

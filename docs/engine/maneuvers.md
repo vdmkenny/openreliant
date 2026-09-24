@@ -190,9 +190,9 @@ chooses a new maneuver when the last one's time is up and starts one chosen, and
    within a quarter of a laser cannon's range (its speed times its lifetime), it fires for the
    pilot's `burst` ticks. A friendly ship holds its fire while a player's ship is ahead of it
    within 50000 units and within a tenth of that distance, plus the player's radius and 500
-   units, of the line along its nose. It then times its missiles, from the pilot's `missiles`
-   range, and its countermeasures, from its `countermeasures` range, which it spends while a
-   missile homes on it.
+   units, of the line along its nose. It then locks and launches its missiles, timed from the
+   pilot's `missiles` range, and drops its countermeasures, timed from its `countermeasures`
+   range, while a missile homes on it ([Missiles](missiles.md#the-ais-missiles)).
 3. **Calls for help** (`fight_call_for_help`, `0x00409D10`). When the target is the player, the
    player hit the ship last, its `recent_damage` has reached 1.2 times its armor class, and one of
    its armor values is below 3 times its armor class, about half what it starts with, it zeroes
@@ -222,13 +222,10 @@ The Fight order and its maneuvers read the ship's pilot, a record of `pilot_stat
 
 The Fight order and every command run as described, with these left out: steering around what
 the ship could hit ([#140](https://github.com/vdmkenny/openreliant/issues/140)), the cloak
-([#89](https://github.com/vdmkenny/openreliant/issues/89)), the missiles and countermeasures
-([#39](https://github.com/vdmkenny/openreliant/issues/39)), the points a model gives its components
+([#89](https://github.com/vdmkenny/openreliant/issues/89)), the points a model gives its components
 ([#40](https://github.com/vdmkenny/openreliant/issues/40)), multiplayer, where the host chooses the
 maneuvers ([#55](https://github.com/vdmkenny/openreliant/issues/55)), and the mission's
-`SetActionCentre` ([#36](https://github.com/vdmkenny/openreliant/issues/36)). With no missiles, no
-missile is ever ready, so the wait for the next is drawn afresh each update, as the game does for a
-ship with no missile racks.
+`SetActionCentre` ([#36](https://github.com/vdmkenny/openreliant/issues/36)).
 
 Where the game would stop or hang, the port goes on: a script that runs off its end ends the
 maneuver, a loop that starts 256 lines in one update without one waiting is left for the next

@@ -58,6 +58,15 @@ pub const Type = enum(i16) {
         return @intCast(number);
     }
 
+    /// Whether the player needs a lock to launch it: not for a Screamer or a Solomon, which fly
+    /// without one (`player_launch_missile`).
+    pub fn needsLock(missile: Type) bool {
+        return switch (missile) {
+            .raptor, .havoc, .jack_hammer, .bandit, .vagabond, .imp, .hawk => true,
+            else => false,
+        };
+    }
+
     /// The type a hardpoint's id names.
     pub fn of(id: u16) Type {
         return @enumFromInt(@as(i16, @bitCast(id)));
@@ -321,8 +330,11 @@ pub const Missiles = struct {
 /// A fuel pod, and a pod launched once empty, are let fall instead. A pod whose last missile this
 /// was is launched itself, empty, at nothing.
 ///
+/// Where memory runs out for a pod's missile, nothing is launched, and for a trail, the missile
+/// flies without one.
+///
 /// Not ported: the force feedback of the player's launch, and what a multiplayer game sends.
-pub fn launch(world: gameobj.World, launcher: u16, rack: usize, target: aigeneric.Target) Allocator.Error!void {
+pub fn launch(world: gameobj.World, launcher: u16, rack: usize, target: aigeneric.Target) void {
     const all = world.objects;
     const missiles = &all.missiles;
     const carrier = &all.slots[launcher];
@@ -336,7 +348,7 @@ pub fn launch(world: gameobj.World, launcher: u16, rack: usize, target: aigeneri
     const held = create.models.attachment(.missile, @intCast(number)) orelse create.models.Attachment{};
     const pod = held.second_model != null;
     const built: objects.Model = if (pod and racked.count > 0)
-        (try buildModel(all.gpa, carrier, held.second_model.?)) orelse return
+        (buildModel(all.gpa, carrier, held.second_model.?) catch return) orelse return
     else taken: {
         defer model.hung[rack] = null;
         break :taken model.hung[rack].?.model;
@@ -369,19 +381,19 @@ pub fn launch(world: gameobj.World, launcher: u16, rack: usize, target: aigeneri
     racked.count -= 1;
     const order: Order = if (pod and racked.count < 0) .jettison else if (pod) .pod_launch else if (racked.type == .fuel_pod) .jettison else .rail_launch;
     // The game lays a rail's trail after the launch's first run, and a pod's before it.
-    if (order == .pod_launch) try startTrail(world, at);
+    if (order == .pod_launch) startTrail(world, at);
     setOrder(world, at, order);
-    if (order == .rail_launch) try startTrail(world, at);
+    if (order == .rail_launch) startTrail(world, at);
     if (missiles.get(at)) |live| live.target = target;
-    if (pod and racked.count == 0) try launch(world, launcher, rack, .none);
+    if (pod and racked.count == 0) launch(world, launcher, rack, .none);
 }
 
 /// `missile_trail_create` for the missile at `at`, where it is still flying and the world has
 /// trails.
-fn startTrail(world: gameobj.World, at: u8) Allocator.Error!void {
+fn startTrail(world: gameobj.World, at: u8) void {
     const trails = world.trails orelse return;
     const missile = world.objects.missiles.get(at) orelse return;
-    missile.trail = try trails.start(world, .{ .missile = at }, missile.type);
+    missile.trail = trails.start(world, .{ .missile = at }, missile.type) catch null;
 }
 
 /// Where the pod or missile a rack holds stands: at its launcher's place, at the place the step
@@ -959,7 +971,7 @@ test launch {
 
     // A pod launches a missile of its own, at the target, and keeps hanging.
     const target: aigeneric.Target = .{ .kind = .ship, .index = @intCast(enemy), .component = -1 };
-    try launch(world, ship, 0, target);
+    launch(world, ship, 0, target);
     try std.testing.expectEqual(2, object.racks[0].count);
     try std.testing.expect(hung[0] != null);
     const first = armed.missile(0);
@@ -970,14 +982,14 @@ test launch {
     try std.testing.expect(first.object().root.flags.committed);
 
     // A rail lets its missile go.
-    try launch(world, ship, 1, target);
+    launch(world, ship, 1, target);
     try std.testing.expect(hung[1] == null);
     try std.testing.expectEqual(Order.rail_launch, armed.missile(1).order);
     try std.testing.expectEqual(1, armed.mission.objects.missiles.newest);
 
     // The pod's last missile takes the pod with it, fallen away at nothing.
-    try launch(world, ship, 0, target);
-    try launch(world, ship, 0, target);
+    launch(world, ship, 0, target);
+    launch(world, ship, 0, target);
     try std.testing.expect(hung[0] == null);
     try std.testing.expectEqual(-1, object.racks[0].count);
     try std.testing.expectEqual(5, armed.live());
@@ -985,7 +997,7 @@ test launch {
     try std.testing.expectEqual(Order.jettison, pod.order);
     try std.testing.expectEqual(aigeneric.Target.none, pod.target);
     // An empty rack launches nothing more.
-    try launch(world, ship, 0, target);
+    launch(world, ship, 0, target);
     try std.testing.expectEqual(5, armed.live());
 }
 
@@ -994,7 +1006,7 @@ test move {
     try armed.init(std.testing.allocator);
     defer armed.deinit();
     const ship = try armed.add(.friendly, @splat(0));
-    try launch(armed.mission.world(), ship, 0, .none);
+    launch(armed.mission.world(), ship, 0, .none);
     const object = armed.missile(0).object();
 
     // In its launch it burns at twice its thrust, undamped: 0.16 of 600 a step.
@@ -1018,8 +1030,8 @@ test frame {
     const ship = try armed.add(.friendly, @splat(0));
     const enemy = try armed.add(.hostile, .{ 0, 0, 200000 });
     const target: aigeneric.Target = .{ .kind = .ship, .index = @intCast(enemy), .component = -1 };
-    try launch(world, ship, 0, target);
-    try launch(world, ship, 0, .none);
+    launch(world, ship, 0, target);
+    launch(world, ship, 0, .none);
 
     // Through the launch both burn, and are drawn; the one at a target warns it.
     clock.frame_start = 49;
@@ -1046,8 +1058,8 @@ test "a player's Screamer flies straight" {
     const world = armed.mission.world();
     const player = try armed.add(.friendly, @splat(0));
     const other = try armed.add(.hostile, .{ 0, 0, 50000 });
-    try launch(world, player, 0, .none);
-    try launch(world, other, 0, .none);
+    launch(world, player, 0, .none);
+    launch(world, other, 0, .none);
     armed.mission.clock.frame_start = 50;
     frame(world, 0);
     // The player's flies on at nothing; another's has nothing to home on and ends.
@@ -1085,7 +1097,7 @@ test choose {
     const behind = try armed.add(.hostile, .{ 0, 0, -3000 });
     const ahead = try armed.add(.hostile, .{ 0, 0, 9000 });
     _ = try armed.add(.friendly, .{ 0, 0, 1000 });
-    try launch(world, player, 0, .none);
+    launch(world, player, 0, .none);
     // The nearest ahead, though another is nearer behind.
     const all = armed.mission.objects;
     try std.testing.expectEqual(@as(i16, @intCast(ahead)), choose(all, armed.missile(0)).?.index);
@@ -1107,7 +1119,7 @@ test collide {
     all.slots[enemy].object.radius = 100;
 
     // A missile passing through its sphere with its shields up spends itself on them.
-    try launch(world, player, 0, .none);
+    launch(world, player, 0, .none);
     var missile = armed.missile(0);
     missile.slot.drawn.position = .{ 0, 0, 4800 };
     missile.object().root.next_position = .{ .x = 0, .y = 0, .z = 5200 };
@@ -1117,7 +1129,7 @@ test collide {
     try std.testing.expect(all.slots[enemy].object.shields.aft < shields.aft);
 
     // One that passes wide touches nothing.
-    try launch(world, player, 0, .none);
+    launch(world, player, 0, .none);
     missile = armed.missile(0);
     missile.slot.drawn.position = .{ 500, 0, 4800 };
     missile.object().root.next_position = .{ .x = 500, .y = 0, .z = 5200 };
@@ -1126,7 +1138,7 @@ test collide {
     // The enemy's on the player's fore shield is taken only as a reserve runs out; with none, the
     // shield is left alone.
     all.slots[player].object.radius = 100;
-    try launch(world, enemy, 0, .none);
+    launch(world, enemy, 0, .none);
     const theirs: u8 = all.missiles.newest.?;
     missile = armed.missile(theirs);
     missile.slot.drawn.position = .{ 0, 0, 300 };

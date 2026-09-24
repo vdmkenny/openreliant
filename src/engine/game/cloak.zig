@@ -108,9 +108,9 @@ pub const Countermeasures = struct {
     /// the ship with no decoy, in the order of their records, rolls to be drawn away: its type's
     /// decoy chance, 30 more against a player's ship and 50 more against a sharp pilot's, in
     /// percent. The first drawn away takes it, and the rest keep homing: a countermeasure draws
-    /// away one missile at most. With every countermeasure flying, the ship's is spent for
-    /// nothing.
-    pub fn spend(countermeasures: *Countermeasures, world: gameobj.World, slot: u16) Allocator.Error!void {
+    /// away one missile at most. With every countermeasure flying, or where memory runs out for
+    /// its model, the ship's is spent for nothing.
+    pub fn spend(countermeasures: *Countermeasures, world: gameobj.World, slot: u16) void {
         const all = world.objects;
         const ship = &all.slots[slot];
         const object = &ship.object;
@@ -126,7 +126,7 @@ pub const Countermeasures = struct {
         } else return;
         const mounted = countermeasures.model orelse return;
 
-        var model: objects.Model = try .create(countermeasures.gpa, mounted.model, mounted.loaded, .{});
+        var model: objects.Model = objects.Model.create(countermeasures.gpa, mounted.model, mounted.loaded, .{}) catch return;
         gameobj.linkParts(&model, mounted.model);
         const orientation = object.root.next_orientation;
         model.place(math.transform(orientation, .{ 0, 0, object.bounds_min.z }) + object.nextPosition(), orientation);
@@ -249,13 +249,13 @@ test "Countermeasures.spend" {
     // Two Raptors at the player, sure to be drawn away.
     all.missile_stats.stats[1].decoy_chance = 100;
     const at_player: @import("aigeneric.zig").Target = .{ .kind = .ship, .index = @intCast(player), .component = -1 };
-    try missiles.launch(world, enemy, 0, at_player);
-    try missiles.launch(world, enemy, 0, at_player);
+    missiles.launch(world, enemy, 0, at_player);
+    missiles.launch(world, enemy, 0, at_player);
 
     // One drops behind the ship, drifting at a quarter of its speed, down and back, and draws one
     // missile away, the first in its records.
     const before = all.slots[player].object.countermeasures;
-    try stage.dropped.spend(world, player);
+    stage.dropped.spend(world, player);
     try std.testing.expectEqual(before - 1, all.slots[player].object.countermeasures);
     const countermeasure = stage.dropped.get(0).?;
     try std.testing.expectEqual(math.Vector{ 0, drop, 10 - drop }, countermeasure.velocity);
@@ -265,7 +265,7 @@ test "Countermeasures.spend" {
 
     // With none left, nothing is dropped.
     all.slots[player].object.countermeasures = 0;
-    try stage.dropped.spend(world, player);
+    stage.dropped.spend(world, player);
     try std.testing.expectEqual(null, stage.dropped.get(1));
 }
 
@@ -279,8 +279,8 @@ test "Countermeasures.frame" {
     const player = try stage.armed.add(.friendly, @splat(0));
     const enemy = try stage.armed.add(.hostile, .{ 0, 0, 20000 });
     all.missile_stats.stats[1].decoy_chance = 100;
-    try missiles.launch(world, enemy, 0, .{ .kind = .ship, .index = @intCast(player), .component = -1 });
-    try stage.dropped.spend(world, player);
+    missiles.launch(world, enemy, 0, .{ .kind = .ship, .index = @intCast(player), .component = -1 });
+    stage.dropped.spend(world, player);
 
     // It drifts by its velocity a tick, turning about its Y axis.
     clock.frame_duration = 2;
@@ -305,8 +305,8 @@ test "a missile drawn away catches its countermeasure" {
     const player = try stage.armed.add(.friendly, @splat(0));
     const enemy = try stage.armed.add(.hostile, .{ 0, 0, 20000 });
     all.missile_stats.stats[1].decoy_chance = 100;
-    try missiles.launch(world, enemy, 0, .{ .kind = .ship, .index = @intCast(player), .component = -1 });
-    try stage.dropped.spend(world, player);
+    missiles.launch(world, enemy, 0, .{ .kind = .ship, .index = @intCast(player), .component = -1 });
+    stage.dropped.spend(world, player);
     // Past its launch, it homes on the countermeasure and ends with it within 1000.
     const missile = stage.armed.missile(0);
     missile.slot.drawn.position = stage.dropped.get(0).?.model.position + math.Vector{ 0, 0, 500 };

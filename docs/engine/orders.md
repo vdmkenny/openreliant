@@ -183,8 +183,8 @@ set from C's `rand()` when the object is created, that steps as `seed * 0x343FD 
 |---|---|
 | Do Nothing (0) | Zeroes the throttle and the turning inputs. |
 | Explode (11) | A destroyed object's end, by what it is and in one of three styles ([Destruction](objects.md#destruction)). |
-| Launch Missile (2) | One-shot: fires a missile at the target from the first of the ship's mounts that has ammunition and is not of kind 3 (`0x00496290`). |
-| 3, nameless | One-shot: as Launch Missile, from the first mount of kind 3. |
+| Launch Missile (2) | One-shot: launches a missile at the target from the first of the ship's racks with missiles left that is not a Jack Hammer's ([Missiles](missiles.md#the-ais-missiles)). |
+| 3, nameless | One-shot: as Launch Missile, from the first rack of Jack Hammers. |
 | Fly (6) | Flies at the speed in its data, or at full throttle for zero. With a target it flies to it and pops within 2000 units; otherwise it keeps the heading it had when it started, steering at a point 20000 units along it. It steers with flags `0x7` and halves the throttle while avoiding. An object without flight stats is moved along that heading instead. |
 | Run Away (7) | Flies away from the target at half throttle, steering with flags `0x3`. Pops when the target's slot holds a stand-in. |
 | Toggle Cloak (16) | One-shot: cloaks or uncloaks the ship if its model's header allows a cloak, and the ships being launched from it do the same. |
