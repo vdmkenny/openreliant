@@ -68,7 +68,9 @@ Potential targets are assigned at spawn: up to 20 objects whose radius, expanded
 
 Objects listing components resolve collisions part by part. Within the component bounding box, candidates are tested against the segment at their next positions (`node_hit_test` with `missile_hull_test`), striking the last face crossed. Huge Gun shots trigger a lit fireball 5000 units across for 150 ticks, 40 [sparks](effects.md#sparks) along the surface normal, and the `EXPLOSION01` sound, inflicting no component damage. Other weapons emit 10 sparks of kind 1 along the normal and apply secondary damage to the component (`component_damage`). Shots missing all parts continue flying. Before any of that, a force field glows whole, and a ship with a shield generator glows round the hit ([Capital shields](effects.md#capital-shields)).
 
-Not ported: attached impact effects (`node_add_effect`, `0x004992D0`, [#40](https://github.com/vdmkenny/openreliant/issues/40)), and cloaks revealed by weapon hits ([#89](https://github.com/vdmkenny/openreliant/issues/89)).
+What the hit leaves on the part (`node_add_effect`, `0x004992D0`) bursts into orange puffs, or glows on a shield generator's ship ([Effects](effects.md#sparks)).
+
+Not ported: cloaks revealed by weapon hits ([#89](https://github.com/vdmkenny/openreliant/issues/89)).
 
 Expired shots are freed on the next frame. A shot striking a shield triggers a shield [flare](effects.md#shields) at the impact point unless the ship is cloaked.
 

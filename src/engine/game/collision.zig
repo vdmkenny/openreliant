@@ -33,12 +33,8 @@ pub const push_apart: f32 = 1.1;
 /// parts. Anything else is pushed apart along the line between the two, each to `push_apart` of its
 /// radius from the point between them, after both have moved again.
 ///
-/// Not ported: the damage the impact does, through the shields and the armour
-/// ([#42](https://github.com/vdmkenny/openreliant/issues/42)), the torpedo's and the mine's
-/// explosions ([#41](https://github.com/vdmkenny/openreliant/issues/41)), and the test against the
-/// parts of a ship that lists components
-/// ([#143](https://github.com/vdmkenny/openreliant/issues/143)), which leaves those pairs passing
-/// through each other for now.
+/// Not ported: the torpedo's and the mine's explosions
+/// ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
 pub fn collide(world: gameobj.World, first: u16, second: u16, pass: u8) bool {
     const all = world.objects;
     var near = first;
@@ -539,7 +535,8 @@ const hull_passes = 9;
 /// once it has drawn the reserve. A force field the ship hits glows whole (`shield.flareCapital`).
 ///
 /// Not ported: what the hit destroys ([#42](https://github.com/vdmkenny/openreliant/issues/42)), and
-/// the damage the hull's own part takes ([#40](https://github.com/vdmkenny/openreliant/issues/40)).
+/// a torpedo's hit, which damages the hull's own parts
+/// ([#239](https://github.com/vdmkenny/openreliant/issues/239)).
 /// The game also tests the player's ship against each part's trigger polygons first, which one
 /// shipped model carries.
 fn hullHit(world: gameobj.World, ship: u16, hull: u16, pass: u8) bool {

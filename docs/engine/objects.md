@@ -136,8 +136,7 @@ where the record holds the original's pointers. Not ported yet: the tier, which 
 the guns and their groups, the loadout and its pods
 ([#131](https://github.com/vdmkenny/openreliant/issues/131),
 [#38](https://github.com/vdmkenny/openreliant/issues/38),
-[#39](https://github.com/vdmkenny/openreliant/issues/39)); the components
-([#40](https://github.com/vdmkenny/openreliant/issues/40)); the shield's effect
+[#39](https://github.com/vdmkenny/openreliant/issues/39)); the shield's effect
 ([#133](https://github.com/vdmkenny/openreliant/issues/133)); the special types; the ship a player
 chose for the mission; and the multiplayer cases.
 
