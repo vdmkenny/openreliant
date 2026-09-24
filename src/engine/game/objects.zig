@@ -809,6 +809,13 @@ pub const Model = struct {
         pub fn within(mount: Mount, carrier: math.Place) math.Place {
             return (math.Place{ .position = mount.origin, .orientation = mount.orientation }).within(carrier);
         }
+
+        /// Where the mounted model's root stands, for its part standing at `carrier`: at the
+        /// attachment, gone back by the model's centre of mass, which it stands on.
+        pub fn rootAt(mount: Mount, carrier: math.Place) math.Place {
+            const on = mount.within(carrier);
+            return .{ .position = math.transform(on.orientation, mount.model.centre) + on.position, .orientation = on.orientation };
+        }
     };
 
     pub const Part = struct {
@@ -915,6 +922,14 @@ pub const Model = struct {
         unframed: bool = false,
         posed: bool = false,
         animating: bool = false,
+
+        /// The node's place in the frame it hangs from at `step`.
+        pub fn at(a: Animation, step: Step) Local {
+            return switch (step) {
+                .now => a.now.place,
+                .next => a.next.place,
+            };
+        }
     };
 
     /// The part `index` hangs from, or null where it hangs from the root: the index a part names,
@@ -1371,11 +1386,49 @@ pub const Model = struct {
         var each = model.carried();
         while (each.next()) |mount| {
             const carrier = model.parts[mount.part].object;
-            // The attachment where the part that carries it stands.
-            const on = mount.within(.{ .position = carrier.position, .orientation = carrier.orientation });
-            // The mounted model stands on its own centre of mass, so its origin goes back by it.
-            mount.model.place(math.transform(on.orientation, mount.model.centre) + on.position, on.orientation);
+            const at = mount.rootAt(.{ .position = carrier.position, .orientation = carrier.orientation });
+            mount.model.place(at.position, at.orientation);
         }
+    }
+
+    /// Which of a node's places: the one the last simulation step committed, or the one the next
+    /// takes it to.
+    pub const Step = enum { now, next };
+
+    /// Where part `index` stands in the model's frame at `step`: its place in the part it hangs
+    /// from, and that part's in its own, up to the root. Parents that run in a circle end the walk
+    /// once it has taken as many steps as there are parts.
+    pub fn partPlace(model: *const Model, index: usize, step: Step) math.Place {
+        var stands = model.parts[index].animation.at(step);
+        var at = model.parts[index].parent;
+        for (model.parts) |_| {
+            const parent = at orelse break;
+            stands = stands.within(model.parts[parent].animation.at(step));
+            at = model.parts[parent].parent;
+        }
+        return stands;
+    }
+
+    /// Where the root of `held`, this model or one it carries however deep, stands at `step`, with
+    /// this model's root at `root`; null where it carries no such model. Its parts stand from
+    /// there by `partPlace`: together, `node_world_place` (`0x004AD960`) and `node_next_place`
+    /// (`0x004AD8D0`).
+    ///
+    /// **Quirk:** the game skips a parent's turn where its diagonal reads 1, 1 and anything but 1,
+    /// which no turn does.
+    pub fn mountedAt(model: *const Model, root: math.Place, held: *const Model, step: Step) ?math.Place {
+        if (held == model) return root;
+        var each = model.carried();
+        while (each.next()) |mount| {
+            if (mount.model.mountedAt(model.mountRoot(mount, root, step), held, step)) |found| return found;
+        }
+        return null;
+    }
+
+    /// Where the root of `mount`, one this model carries, stands at `step`, with this model's
+    /// root at `root`.
+    pub fn mountRoot(model: *const Model, mount: *const Mount, root: math.Place, step: Step) math.Place {
+        return mount.rootAt(model.partPlace(mount.part, step).within(root));
     }
 
     /// Each model it carries: those its attachments mount, then those its missile hardpoints
@@ -2165,6 +2218,12 @@ test "a gun attachment mounts the model its id names" {
     // Placed, the mounted model stands at the attachment on the part that carries it.
     built.place(.{ 0, 0, 1000 }, math.identity);
     try std.testing.expectEqual(@as(Vector, .{ 50, 0, 1000 }), built.mounts[0].model.parts[0].object.position);
+    // At the steps' places, its root stands where placing puts it; a model it doesn't carry
+    // stands nowhere.
+    const root: math.Place = .{ .position = .{ 0, 0, 1000 }, .orientation = math.identity };
+    try std.testing.expectEqual(@as(Vector, .{ 50, 0, 1000 }), built.mountedAt(root, &built.mounts[0].model, .next).?.position);
+    try std.testing.expectEqual(root.position, built.mountedAt(root, &built, .now).?.position);
+    try std.testing.expectEqual(null, built.mounts[0].model.mountedAt(root, &built, .now));
     // Turned a quarter about Y, the attachment goes with the hull.
     built.place(@splat(0), math.rotation(.y, std.math.pi / 2.0));
     try std.testing.expectApproxEqAbs(0, built.mounts[0].model.parts[0].object.position[0], 1e-3);
@@ -2373,6 +2432,29 @@ test "Model.swivel" {
     a.angles_max[2] = 10;
     model.swivel(1, .{ 0, 0, 0.5 });
     try std.testing.expectEqual(0.5, a.turret[2]);
+}
+
+test "Model.partPlace" {
+    const gpa = std.testing.allocator;
+    const srmesh = @import("../surrender/surrenderlib/srmesh.zig");
+    const mesh = try srmesh.testing.square(gpa);
+    defer mesh.deinit(gpa);
+    var animated: Animated = undefined;
+    animated.init(&mesh, &.{});
+    var model: Model = try .create(gpa, &animated.source, &animated.loaded, .{});
+    defer model.deinit(gpa);
+    testingLink(&model);
+
+    // Each part stands 100 along Z from the one it hangs from.
+    try std.testing.expectEqual(@as(Vector, .{ 0, 0, 200 }), model.partPlace(2, .now).position);
+    // The middle part swivelled a quarter about Y for the next step carries the last with it
+    // there, but not yet now.
+    model.swivel(1, .{ 0, std.math.pi / 2.0, 0 });
+    model.pose(1);
+    const next = model.partPlace(2, .next);
+    try std.testing.expectApproxEqAbs(100, next.position[0], 1e-3);
+    try std.testing.expectApproxEqAbs(100, next.position[2], 1e-3);
+    try std.testing.expectEqual(@as(Vector, .{ 0, 0, 200 }), model.partPlace(2, .now).position);
 }
 
 test "a part's first track poses it where it is linked" {

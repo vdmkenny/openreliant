@@ -307,15 +307,16 @@ pub fn launch(world: gameobj.World, launcher: u16, rack: usize, target: aigeneri
     const racked = &carrier.object.racks[rack];
     const number = racked.type.index() orelse return;
     const model = if (carrier.model) |*carried| carried else return;
-    if (rack >= model.hung.len or model.hung[rack] == null) return;
-    const places = hungPlaces(carrier, model, rack);
+    if (rack >= model.hung.len) return;
+    const hung = if (model.hung[rack]) |*mount| mount else return;
+    const places = hungPlaces(carrier, model, hung);
     const held = create.models.attachment(.missile, @intCast(number)) orelse create.models.Attachment{};
     const pod = held.second_model != null;
     const built: objects.Model = if (pod and racked.count > 0)
         (buildModel(all.gpa, carrier, held.second_model.?) catch return) orelse return
     else taken: {
         defer model.hung[rack] = null;
-        break :taken model.hung[rack].?.model;
+        break :taken hung.model;
     };
 
     // Its object's type is the missile's, as in the game.
@@ -361,21 +362,14 @@ fn startTrail(world: gameobj.World, at: u8) void {
 
 /// Where the pod or missile a rack holds stands: at its launcher's place, at the place the step
 /// is taking it to, and where the launcher is drawn (`node_world_place`, `node_next_place`, and
-/// its node's frame). The launcher's model is left placed as it is drawn.
-fn hungPlaces(carrier: *const create.Slot, model: *objects.Model, rack: usize) struct { now: math.Place, next: math.Place, drawn: math.Place } {
+/// its node's frame).
+fn hungPlaces(carrier: *const create.Slot, model: *const objects.Model, hung: *const objects.Model.Mount) struct { now: math.Place, next: math.Place, drawn: math.Place } {
     const root = &carrier.object.root;
-    const drawn = hungAt(model, rack);
-    model.place(gameobj.vector(root.position), root.orientation);
-    const now = hungAt(model, rack);
-    model.place(gameobj.vector(root.next_position), root.next_orientation);
-    const next = hungAt(model, rack);
-    model.place(carrier.drawn.position, carrier.drawn.orientation);
-    return .{ .now = now, .next = next, .drawn = drawn };
-}
-
-fn hungAt(model: *const objects.Model, rack: usize) math.Place {
-    const held = &model.hung[rack].?.model;
-    return .{ .position = held.position, .orientation = held.orientation };
+    return .{
+        .now = model.mountRoot(hung, .{ .position = gameobj.vector(root.position), .orientation = root.orientation }, .now),
+        .next = model.mountRoot(hung, .{ .position = gameobj.vector(root.next_position), .orientation = root.next_orientation }, .next),
+        .drawn = .{ .position = hung.model.position, .orientation = hung.model.orientation },
+    };
 }
 
 /// The model of `file`, a pod's missile, built as the launcher's own mounts are; null where the

@@ -204,7 +204,11 @@ A node (`objects.cpp`, `node_alloc` at `0x004991D0`) is `0x104` bytes:
 | `0xF8` | 4 | Children |
 | `0x100` | 4 | The child list |
 
-`node_owner` (`0x00499F20`) finds a node's object by climbing to its root.
+`node_owner` (`0x00499F20`) finds a node's object by climbing to its root. `node_world_place`
+(`0x004AD960`) and `node_next_place` (`0x004AD8D0`) find where a node stands in the world, at its
+committed place or at its next: its own place in the node it hangs from, turned and moved by each
+parent's in turn, up through a mounted object's root to the ship's. They skip a parent's turn where
+its diagonal reads 1, 1 and anything but 1, which no turn does.
 
 A part's node holds no turn: `node_add_part` (`0x00499430`) copies the part's position and leaves
 the node's orientation the identity it was allocated with. It hides a part whose part flag `0x04`
