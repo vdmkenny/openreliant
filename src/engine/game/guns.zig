@@ -1211,16 +1211,22 @@ fn candidates(world: gameobj.World, bullet: *Bullet, record: Gun, lifetime: i32)
         const moving = if (slot.flight) |flight| ai.cruiseSpeed(object, flight, world.view) else 0;
         const reach = moving * when + object.radius + hugeReach(bullet.kind);
         if (math.lengthSquared(nearest - to) >= reach * reach) continue;
-        const model = if (slot.model) |*live| live else null;
-        if (object.flags.components and model != null) {
+        if (componentModel(slot)) |model| {
             const end = bullet.at + (bullet.velocity - gameobj.vector(object.velocity)) * @as(Vector, @splat(life));
             var listing: Listing = .{ .bullet = bullet, .object = index, .from = bullet.at, .to = end };
-            objects.hitWalk(model.?, object.placeAt(.next), &listing);
+            objects.hitWalk(model, object.placeAt(.next), &listing);
         } else {
             bullet.candidates[bullet.candidate_count] = .{ .object = index };
             bullet.candidate_count += 1;
         }
     }
+}
+
+/// The model of the object in `slot` where the object lists components, which shots test part by
+/// part.
+fn componentModel(slot: *create.Slot) ?*objects.Model {
+    if (!slot.object.flags.components) return null;
+    return if (slot.model) |*live| live else null;
 }
 
 /// `0x0047BC90`, what `bullet_place` tests each part of an object that lists components with:
@@ -1239,9 +1245,8 @@ const Listing = struct {
     pub fn part(listing: *Listing, ref: objects.PartRef, place: math.Place, moving: bool) void {
         const shot = listing.bullet;
         if (shot.candidate_count == max_candidates) return;
-        const data = ref.data() orelse return;
-        if (data.nodes.len == 0) return;
-        if (!moving and !objects.meetsTree(ref, place, listing.from, listing.to)) return;
+        const tree = ref.rootBox() orelse return;
+        if (!moving and !tree.meetsSegment(place.inverse(listing.from), place.inverse(listing.to))) return;
         shot.candidates[shot.candidate_count] = .{ .object = listing.object, .part = ref };
         shot.candidate_count += 1;
     }
@@ -1380,8 +1385,7 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
         const point = segment.point(segment.sphereEntry(slot.drawn.position, reach));
         const struck = collision.quadrant(object, math.transformTransposed(slot.drawn.orientation, point - slot.drawn.position));
 
-        const huge = bullet.kind == .allied_huge_gun or bullet.kind == .coalition_huge_gun;
-        if (!huge and (object.shields.get(struck) <= 0 or object.invulnerable == ._unknown_4 or object.invulnerable == ._unknown_5)) {
+        if (!bullet.kind.huge() and (object.shields.get(struck) <= 0 or object.invulnerable == ._unknown_4 or object.invulnerable == ._unknown_5)) {
             hullHit(world, bullet, candidate.object, struck);
             return;
         }
@@ -1415,7 +1419,7 @@ const hull_sparks_carry: f32 = 0.25;
 /// (`objects.crossPart`). Null where it crosses none, and the shot flies on.
 fn componentStruck(world: gameobj.World, bullet: *const Bullet, segment: objects.Segment, index: u16, run: []const Candidate) ?objects.Crossing {
     const slot = &world.objects.slots[index];
-    const model = if (slot.model) |*live| live else return null;
+    const model = componentModel(slot) orelse return null;
     const root = slot.object.placeAt(.next);
     if (!objects.Box.ofBounds(model, root).meetsSegment(bullet.last, bullet.at)) return null;
     var struck: ?objects.Crossing = null;

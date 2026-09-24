@@ -275,6 +275,12 @@ pub const PartRef = struct {
         return if (ref.index < parts.len) parts[ref.index] else null;
     }
 
+    /// The root box of its part's collision tree, in the part's frame; null for a part with none.
+    pub fn rootBox(ref: PartRef) ?Box {
+        const found = ref.data() orelse return null;
+        return if (found.nodes.len > 0) .ofNode(found.nodes[0]) else null;
+    }
+
     /// Its part's record where it has a collision tree over a mesh to test.
     fn tree(ref: PartRef) ?shp.PartData {
         const found = ref.data() orelse return null;
@@ -302,14 +308,6 @@ fn walkHits(model: *Model, root: math.Place, query: anytype, carried_moving: boo
             walkHits(&mount.model, model.mountRoot(mount, root, .next), query, moving);
         }
     }
-}
-
-/// Whether the segment from `from` to `to` meets the root box of the collision tree of the part
-/// `ref`, standing at `place`; never for a part with no tree.
-pub fn meetsTree(ref: PartRef, place: math.Place, from: Vector, to: Vector) bool {
-    const found = ref.data() orelse return false;
-    if (found.nodes.len == 0) return false;
-    return Box.ofNode(found.nodes[0]).meetsSegment(place.inverse(from), place.inverse(to));
 }
 
 /// How many boxes of a part's tree wait to be tested at once. The trees the game ships are far
@@ -725,8 +723,9 @@ test hitSegment {
     try std.testing.expectEqual(null, hitSegment(&live, .{ .position = .{ 1000, 0, 0 } }, .{ 5, 5, -60 }, .{ 5, 5, 60 }));
     // Its root box and its tree's root box meet the segment; one beside them doesn't.
     try std.testing.expect(Box.ofBounds(&live, root).meetsSegment(.{ 5, 5, -60 }, .{ 5, 5, 60 }));
-    try std.testing.expect(meetsTree(.{ .model = &live, .index = 0 }, root, .{ 5, 5, -60 }, .{ 5, 5, 60 }));
-    try std.testing.expect(!meetsTree(.{ .model = &live, .index = 0 }, root, .{ 900, 0, -60 }, .{ 900, 0, 60 }));
+    const tree = (PartRef{ .model = &live, .index = 0 }).rootBox().?;
+    try std.testing.expect(tree.meetsSegment(root.inverse(.{ 5, 5, -60 }), root.inverse(.{ 5, 5, 60 })));
+    try std.testing.expect(!tree.meetsSegment(root.inverse(.{ 900, 0, -60 }), root.inverse(.{ 900, 0, 60 })));
 }
 
 /// `node_tree_frames` (`0x0049A880`) for an object, once a frame before it is drawn and before the
@@ -1077,13 +1076,33 @@ pub const Model = struct {
     }
 
     /// The part hanging from the root that `part` hangs from, however deep, or `part` itself where
-    /// it hangs from the root. Parents that run in a circle end the walk once it has taken as many
-    /// steps as there are parts.
+    /// it hangs from the root.
     pub fn topOf(model: *const Model, part: *const Part) *const Part {
         var top = part;
-        for (model.parts) |_| top = &model.parts[top.parent orelse break];
+        var up = model.lineage(part.parent orelse return part);
+        while (up.next()) |index| top = &model.parts[index];
         return top;
     }
+
+    /// Part `index`, then the part it hangs from, and so on up to the root. Parents that run in a
+    /// circle end the walk once it has taken as many steps as there are parts.
+    pub fn lineage(model: *const Model, index: usize) Lineage {
+        return .{ .parts = model.parts, .at = index };
+    }
+
+    pub const Lineage = struct {
+        parts: []const Part,
+        at: ?usize,
+        steps: usize = 0,
+
+        pub fn next(up: *Lineage) ?usize {
+            const index = up.at orelse return null;
+            if (up.steps == up.parts.len) return null;
+            up.steps += 1;
+            up.at = up.parts[index].parent;
+            return index;
+        }
+    };
 
     /// The part the root holds `child` of, counting only the parts hanging from the root, in the
     /// order they were linked. **Unverified:** the root lists nothing else before them.
@@ -1532,12 +1551,10 @@ pub const Model = struct {
     /// Whether part `index` plays a track, or a part it hangs from does: a node whose track has a
     /// mode and a speed.
     pub fn moving(model: *const Model, index: usize) bool {
-        var at: ?usize = index;
-        for (model.parts) |_| {
-            const part = at orelse return false;
-            const a = &model.parts[part].animation;
-            if (a.mode != .none and a.speed != 0) return true;
-            at = model.parts[part].parent;
+        var up = model.lineage(index);
+        while (up.next()) |part| {
+            const track = &model.parts[part].animation;
+            if (track.mode != .none and track.speed != 0) return true;
         }
         return false;
     }
@@ -1547,16 +1564,11 @@ pub const Model = struct {
     pub const Step = enum { now, next };
 
     /// Where part `index` stands in the model's frame at `step`: its place in the part it hangs
-    /// from, and that part's in its own, up to the root. Parents that run in a circle end the walk
-    /// once it has taken as many steps as there are parts.
+    /// from, and that part's in its own, up to the root (`lineage`).
     pub fn partPlace(model: *const Model, index: usize, step: Step) math.Place {
-        var stands = model.parts[index].animation.at(step);
-        var at = model.parts[index].parent;
-        for (model.parts) |_| {
-            const parent = at orelse break;
-            stands = stands.within(model.parts[parent].animation.at(step));
-            at = model.parts[parent].parent;
-        }
+        var stands: math.Place = .{};
+        var up = model.lineage(index);
+        while (up.next()) |part| stands = stands.within(model.parts[part].animation.at(step));
         return stands;
     }
 
@@ -2615,6 +2627,33 @@ test "Model.partPlace" {
     try std.testing.expectApproxEqAbs(100, next.position[0], 1e-3);
     try std.testing.expectApproxEqAbs(100, next.position[2], 1e-3);
     try std.testing.expectEqual(@as(Vector, .{ 0, 0, 200 }), model.partPlace(2, .now).position);
+}
+
+test "Model.lineage" {
+    const gpa = std.testing.allocator;
+    const srmesh = @import("../surrender/surrenderlib/srmesh.zig");
+    const mesh = try srmesh.testing.square(gpa);
+    defer mesh.deinit(gpa);
+    var animated: Animated = undefined;
+    animated.init(&mesh, &.{});
+    var model: Model = try .create(gpa, &animated.source, &animated.loaded, .{});
+    defer model.deinit(gpa);
+    testingLink(&model);
+
+    // The last part, the middle one it hangs from, and the first, which hangs from the root.
+    var seen: std.ArrayList(usize) = .empty;
+    defer seen.deinit(gpa);
+    var up = model.lineage(2);
+    while (up.next()) |index| try seen.append(gpa, index);
+    try std.testing.expectEqualSlices(usize, &.{ 2, 1, 0 }, seen.items);
+    try std.testing.expect(model.topOf(&model.parts[2]) == &model.parts[0]);
+
+    // Parents that run in a circle end the walk after as many steps as there are parts.
+    model.parts[0].parent = 2;
+    seen.clearRetainingCapacity();
+    up = model.lineage(2);
+    while (up.next()) |index| try seen.append(gpa, index);
+    try std.testing.expectEqualSlices(usize, &.{ 2, 1, 0 }, seen.items);
 }
 
 test "a segment strikes a part of a model mounted on another" {
