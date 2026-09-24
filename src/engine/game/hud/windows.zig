@@ -292,6 +292,8 @@ pub const Contents = struct {
     gunnery: ?hud.gunnery.Shown = null,
     /// Window 2's.
     missiles: ?hud.missile_display.Shown = null,
+    /// Window 4's.
+    damage: ?hud.damage.Shown = null,
     /// Window 7's.
     power: ?hud.power.Shown = null,
     /// Windows 3 and 8's, the target display's two forms.
@@ -364,6 +366,7 @@ fn draw(
     switch (window) {
         .gunnery => if (contents.gunnery) |gunnery| try hud.gunnery.draw(gunnery, art, gpa, target, inside, colour),
         .missiles => if (contents.missiles) |missiles| try hud.missile_display.draw(missiles, art, gpa, target, inside, colour),
+        .damage => if (contents.damage) |damage| try hud.damage.draw(damage, art, gpa, target, inside, colour),
         .power => if (contents.power) |power| try hud.power.draw(power, art, gpa, target, inside, colour),
         else => if (hud.target_display.Form.of(window)) |form| if (contents.target_display) |scene| {
             try scene.draw(form, phase == .closing, art, gpa, target, inside, colour);

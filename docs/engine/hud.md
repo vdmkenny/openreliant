@@ -22,7 +22,7 @@ The display's elements as the game's manual names them, with where the code that
 | Missile display | top, middle | M | the missile's name, the ship's missiles in a ring, how many of the chosen one are left, and the one armed at six o'clock. Comma and full stop turn the ring | [Window](#the-windows) 2: the ring (`hud_missile_ring`, `0x00501CC8`, ten entries of five halfwords), its keys and what it shows ([The ring](missiles.md#the-ring)). LAUNCH MISSILE and the ring's keys open it held |
 | Mission objectives | right | B | the mission's goals, the current one first; B pages through them | [Window](#the-windows) 10: the mission's objectives from the table at `0x00504120`, ten a mission. The frame is ported; what it shows is not |
 | Gunnery display | foot, left | G | the gun's name, the ship as a wire frame with the gun lit, the rounds left for a gun that fires them, and whether the guns fire together or in turn. G picks the next gun, F fires them all, CTRL and G switches the two ways of firing them all | [Window](#the-windows) 1, [The gunnery display](#the-gunnery-display) |
-| Damage display | top, right | D | a segmented bar each for the weapons, the engines and the shields, shortening with damage | [Window](#the-windows) 4: the bars read the player's `+0x66C`, `+0x668` and `+0x664`. The frame is ported; what it shows is not |
+| Damage display | top, right | D | a segmented bar each for the weapons, the engines and the shields, shortening with damage | [Window](#the-windows) 4, [The damage display](#the-damage-display) |
 | Power distribution | left | P | the guns, the shields and the engines round a ball, each with its share of the power, a third each at first. P held with the stick moves power toward one; U, I and O give all of it to the guns, the engines or the shields, and `[` shares it out again | [Window](#the-windows) 7, [The power distribution](#the-power-distribution) |
 | Communications | top, left | C | the units in range, numbered, which the number keys call. Landing, rearming and a nanny ship are asked of the base ship | [Window](#the-windows) 11, which draws the radio's menu with `0x00453A70`. The frame is ported; what it shows is not |
 | Wing status | right | X | the wing's fighters in a grid, the player's wing first, each with a bar for its damage | [Window](#the-windows) 13. The frame is ported; what it shows is not |
@@ -653,6 +653,31 @@ all, only stops that. FULL GUNS, on a ship of more than one group, flips firing 
 for a ship of two groups, it has every gun of both that fires by the trigger next fire when the
 later of the two groups' first guns does, so that they fire together. FIRE LASERS opens the window
 as the guns fire.
+
+## The damage display
+
+Window 4 shows how well the player's weapons, engines and shields still work as the armour wears,
+the object's `gun_condition` (`+0x66C`), `armor_speed_factor` (`+0x668`) and `shield_condition`
+(`+0x664`), each from 0 to 1 ([Objects](objects.md#shields)). `hud_window_draw` draws it in the
+view ahead from the window's place `(x, y)`:
+
+1. DAMAGE, string `0x28D`, right-aligned at `(x - 2, y + 2)`.
+2. An icon and a name for each row, the names left-aligned:
+
+   | Row | Icon | Name |
+   | --- | --- | --- |
+   | Weapons | `0xC1` at `(x - 136, y + 23)` | WEAPONS, `0x285`, at `(x - 102, y + 24)` |
+   | Engines | `0xBD` at `(x - 134, y + 59)` | ENGINES, `0x286`, at `(x - 102, y + 62)` |
+   | Shields | `0xBE` at `(x - 135, y + 97)` | SHIELDS, `0x287`, at `(x - 102, y + 101)` |
+
+3. Shape `0x160`, a rule under each row, at `(x - 132, y + 42)`, `(x - 132, y + 80)` and
+   `(x - 132, y + 119)`.
+4. The rows' bars at `(x - 98, y + 45)`, `(x - 98, y + 83)` and `(x - 98, y + 122)`.
+
+A bar (`hud_damage_bar`, `0x00488B30`) is shape `0xE0`, orange, drawn whole, then shape `0xDF`,
+red, at the same place in the pane `hud_bar_pane`. The pane's left edge stands a pixel before
+`round(77 * level)` along the bar (`0x004DC91C`), its right edge `0x4D` further, and it runs from
+a pixel above the bar 6 down, all inclusive, so the red shows past the level.
 
 ## The power distribution
 

@@ -52,6 +52,7 @@ const Clock = @import("main.zig").Clock;
 const Vector = math.Vector;
 
 pub const windows = @import("hud/windows.zig");
+pub const damage = @import("hud/damage.zig");
 pub const gunnery = @import("hud/gunnery.zig");
 pub const missile_display = @import("hud/missile_display.zig");
 const missile_lock = @import("main/lock.zig");
@@ -59,6 +60,7 @@ pub const power = @import("hud/power.zig");
 pub const target_display = @import("hud/target_display.zig");
 
 test {
+    _ = damage;
     _ = gunnery;
     _ = missile_display;
     _ = windows;
@@ -810,6 +812,7 @@ pub fn draw(state: *State, resources: *Resources, frame: Frame) (spr.Error || Al
     if (ahead) try state.drawInstruments(resources, frame, lead, colour, scale);
     const contents: windows.Contents = .{
         .gunnery = .{ .slot = slot, .wire_frame = state.wire_frame, .font = &resources.font, .strings = frame.strings },
+        .damage = .{ .object = live, .font = &resources.font, .strings = frame.strings },
         .missiles = .{ .ring = &state.missiles, .font = &resources.font, .strings = frame.strings },
         .power = .{
             .ball = resources.ball,
