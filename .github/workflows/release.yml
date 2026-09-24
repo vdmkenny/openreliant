@@ -45,7 +45,11 @@ jobs:
           - { name: macos-aarch64, os: macos-latest, target: aarch64-macos }
     runs-on: ${{ matrix.os }}
     steps:
+      # The whole history with its tags, so that the build can name the commit a build by hand is
+      # past the last release.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.16.0

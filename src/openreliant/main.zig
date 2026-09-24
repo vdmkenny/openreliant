@@ -32,6 +32,7 @@ const camera = game.camera;
 const help = @import("help.zig");
 const install = @import("install.zig");
 const joysticks = @import("joysticks.zig");
+const version = @import("version.zig");
 
 /// Everything `openreliant` takes on its command line, in the order the help page lists them.
 const Arg = enum {
@@ -63,6 +64,7 @@ const Arg = enum {
     @"--no-sound",
     @"--screenshot",
     @"--screenshot-ticks",
+    @"--version",
     @"--help",
 
     /// The value it takes, as the help page shows it, or null for none.
@@ -131,12 +133,13 @@ const docs: std.enums.EnumArray(Arg, Doc) = .init(.{
     .@"--no-sound" = .{ .section = .sound, .text = "play without sound" },
     .@"--screenshot" = .{ .section = .other, .value = "<file.png>", .text = "draw one frame, with the camera settled, to a PNG, and quit; the controls are not read, so that it comes out the same each time" },
     .@"--screenshot-ticks" = .{ .section = .other, .value = "<ticks>", .text = "with --screenshot, how many game ticks to run first, one a frame, so that the scene plays out; 2 by default" },
+    .@"--version" = .{ .section = .other, .text = "show the version" },
     .@"--help" = .{ .section = .other, .alias = "-h", .text = "show this page" },
 });
 
 /// `openreliant --help`.
 const help_page = page: {
-    var out: []const u8 = help.paragraph("OpenReliant plays StarLancer from an installed copy of the game.", 0) ++
+    var out: []const u8 = help.paragraph("OpenReliant " ++ version.string ++ " plays StarLancer from an installed copy of the game.", 0) ++
         \\
         \\usage: openreliant [<game-directory>] [<option>...]
         \\       openreliant install [--from <disc>] [--force] <directory>
@@ -174,6 +177,7 @@ const help_page = page: {
 const Command = union(enum) {
     play: Options,
     help,
+    version,
     wrong: Problem,
 };
 
@@ -241,7 +245,8 @@ const Options = struct {
         return &sound.player.openal;
     }
 
-    /// What `args` ask for: to play with these options, the help page, or what is wrong with them.
+    /// What `args` ask for: to play with these options, the help page, the version, or what is
+    /// wrong with them.
     fn parse(args: []const [:0]const u8) Command {
         var options: Options = .{};
         var i: usize = 0;
@@ -259,7 +264,11 @@ const Options = struct {
                 break :value args[i];
             };
             options.apply(arg, value) catch return .{ .wrong = .{ .bad = .{ .arg = arg, .value = value } } };
-            if (arg == .@"--help") return .help;
+            switch (arg) {
+                .@"--help" => return .help,
+                .@"--version" => return .version,
+                else => {},
+            }
         }
         return .{ .play = options };
     }
@@ -338,7 +347,7 @@ const Options = struct {
             .@"--no-sound" => options.sound = null,
             .@"--screenshot" => options.screenshot = value,
             .@"--screenshot-ticks" => options.screenshot_ticks = @max(std.fmt.parseInt(u32, value, 10) catch return error.BadValue, minimum_screenshot_ticks),
-            .@"--help" => {},
+            .@"--help", .@"--version" => {},
         }
     }
 
@@ -378,6 +387,15 @@ const Screen = union(enum) {
     }
 };
 
+/// Writes `text` to standard output, for a command that only says something: 0, its exit status.
+fn say(io: Io, text: []const u8) !u8 {
+    var buffer: [4096]u8 = undefined;
+    var stdout: Io.File.Writer = .initStreaming(.stdout(), io, &buffer);
+    try stdout.interface.writeAll(text);
+    try stdout.interface.flush();
+    return 0;
+}
+
 pub fn main(init: std.process.Init) !u8 {
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
@@ -385,13 +403,8 @@ pub fn main(init: std.process.Init) !u8 {
     if (args.len > 1 and std.mem.eql(u8, args[1], "joysticks")) return joysticks.main(init.io, arena, args[2..]);
     const options = switch (Options.parse(args[1..])) {
         .play => |options| options,
-        .help => {
-            var buffer: [4096]u8 = undefined;
-            var stdout: Io.File.Writer = .initStreaming(.stdout(), init.io, &buffer);
-            try stdout.interface.writeAll(help_page);
-            try stdout.interface.flush();
-            return 0;
-        },
+        .help => return say(init.io, help_page),
+        .version => return say(init.io, "openreliant " ++ version.string ++ "\n"),
         .wrong => |problem| {
             std.debug.print("openreliant: {f}\nRun 'openreliant --help' to see the options.\n", .{problem});
             return 2;
@@ -1254,6 +1267,7 @@ fn nextShipType(from: usize, step: isize) usize {
 test {
     _ = install;
     _ = joysticks;
+    _ = version;
 }
 
 test nextShipType {
@@ -1282,7 +1296,7 @@ test "the sandbox's Reliant flies at a crawl" {
 fn play(args: []const [:0]const u8) error{Usage}!Options {
     return switch (Options.parse(args)) {
         .play => |options| options,
-        .help, .wrong => error.Usage,
+        .help, .version, .wrong => error.Usage,
     };
 }
 
@@ -1364,9 +1378,10 @@ test Options {
     try std.testing.expectError(error.Usage, play(&.{ "--fps", "nan" }));
 }
 
-test "Options asks for help, and says what is wrong" {
+test "Options asks for help or the version, and says what is wrong" {
     try std.testing.expectEqual(.help, std.meta.activeTag(Options.parse(&.{"--help"})));
     try std.testing.expectEqual(.help, std.meta.activeTag(Options.parse(&.{ "game", "-h" })));
+    try std.testing.expectEqual(.version, std.meta.activeTag(Options.parse(&.{ "game", "--version" })));
     var buffer: [128]u8 = undefined;
     const cases = [_]struct { []const [:0]const u8, []const u8 }{
         .{ &.{"--bogus"}, "unknown option '--bogus'" },
@@ -1381,7 +1396,8 @@ test "Options asks for help, and says what is wrong" {
 }
 
 test help_page {
-    // Every option is on it, and it fits in 80 columns.
+    // It starts with the version, every option is on it, and it fits in 80 columns.
+    try std.testing.expect(std.mem.startsWith(u8, help_page, "OpenReliant " ++ version.string ++ " plays"));
     for (std.enums.values(Arg)) |arg| {
         try std.testing.expect(std.mem.indexOf(u8, help_page, @tagName(arg)) != null);
     }

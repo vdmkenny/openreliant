@@ -97,6 +97,7 @@ improvements off, and an option after it turns one back on.
 | Option | Does |
 |---|---|
 | `--screenshot <file.png>` | Draws one frame, with the camera settled, to a PNG and quits |
+| `--version` | Shows the version |
 | `-h`, `--help` | Shows the options |
 
 It runs a sandbox of its own, drawn through the ported pipeline and driver with the GPU
@@ -285,6 +286,17 @@ its notes. The workflow then builds `openreliant` for each system and attaches t
 
 Run by hand from the Actions tab, the workflow builds all six and keeps the archives as the run's
 artifacts, but publishes nothing.
+
+The build gives `openreliant` its version ([`version.zig`](../../src/openreliant/version.zig)),
+which `--version` and the top of `--help` show. It is the version in `build.zig.zon`, followed by
+what `git describe` says of the checkout as SemVer build metadata when it isn't exactly a release:
+
+| Checkout | Version |
+|---|---|
+| The release's tag | `0.2.0` |
+| 12 commits past it | `0.2.0+12.gabc1234` |
+| With uncommitted changes | `0.2.0+12.gabc1234.dirty` |
+| No git or no tags, as in a source archive | `0.2.0` |
 
 Each archive holds the executable, the README, the license and the changelog, and no game files.
 Every build names its target explicitly, so it is built for its architecture's baseline processor
