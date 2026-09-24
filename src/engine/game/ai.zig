@@ -115,15 +115,16 @@ pub fn playerControlEntry(all: *create.Objects) ?*aigeneric.Entry {
     return null;
 }
 
-/// How much further a Turret Flak's shot is led for, over its type's lifetime (`0x004DC3D8`), and
-/// the share of a gun's range within which a shot is led at all (`0x004DC3D4`).
+/// How much further a Turret Flak's shot is led for, over the Laser Cannon's lifetime
+/// (`0x004DC3D8`), and the share of a gun's life within which a shot is led at all (`0x004DC3D4`).
 const flak_lead: f32 = 3;
 const lead_range: f32 = 0.25;
 
-/// `0x00401280`: where to aim at `target` for the fastest of the guns the ship fires together to
-/// hit it: ahead of it along its heading by how far it flies, times `lead`, while that gun's shot
-/// flies to it (`0x00401180`). Null where that takes longer than a quarter of the gun's life, when
-/// the caller aims at it unled.
+/// `ai_lead_aim` (`0x00401280`): where to aim at `target` for the fastest of the guns the ship
+/// fires together to hit it, from its root (`leadAimWithGun`).
+///
+/// **Fix:** the game reads each gun's turret kind as its type, which leads every ship's shots as
+/// a Laser Cannon's; the port leads by the fastest gun's own type.
 pub fn leadAim(all: *const create.Objects, index: u16, target: aigeneric.Target, lead: f32) ?Vector {
     const slot = &all.slots[index];
     var fastest: guns.GunType = .laser_cannon;
@@ -136,12 +137,25 @@ pub fn leadAim(all: *const create.Objects, index: u16, target: aigeneric.Target,
             fastest = gun.type;
         }
     }
-    const record = fastest.stats(&all.gun_stats);
-    const life: f32 = @floatFromInt(record.lifetime);
-    const lifetime = if (fastest == .turret_flak) life * flak_lead else life;
+    return leadAimWithGun(all, slot.drawn.position, target, fastest, lead);
+}
+
+/// `ai_lead_aim_with_gun` (`0x00401180`): where to aim from `from` at `target` for a shot of `gun`
+/// to hit it: ahead of it along its heading by how far it flies, times `lead`, while the shot
+/// flies to it. Null where that takes longer than a quarter of the gun's life, when the caller
+/// aims at it unled or not at all.
+///
+/// **Quirk:** a Turret Flak's shot is led within three times the Laser Cannon's lifetime, the
+/// table's first gun's, rather than its own.
+pub fn leadAimWithGun(all: *const create.Objects, from: Vector, target: aigeneric.Target, gun: guns.GunType, lead: f32) ?Vector {
+    const record = gun.stats(&all.gun_stats);
+    const lifetime: f32 = switch (gun) {
+        .turret_flak => @as(f32, @floatFromInt(guns.GunType.laser_cannon.stats(&all.gun_stats).lifetime)) * flak_lead,
+        else => @floatFromInt(record.lifetime),
+    };
     const aimed = aimedAt(all, target);
-    const flight = math.distance(slot.drawn.position, aimed.position) / record.speed;
-    if (!(flight < lifetime * lead_range)) return null;
+    const flight = math.distance(from, aimed.position) / record.speed;
+    if (!(flight <= lifetime * lead_range)) return null;
     const struck = &all.slots[@intCast(target.index)];
     return aimed.position + math.forward(struck.drawn.orientation) * @as(Vector, @splat(flight * struck.object.speed * lead));
 }
@@ -809,6 +823,15 @@ test "aiming at a target" {
     const led = leadAim(all, ship, aimed, 1).?;
     try std.testing.expectApproxEqAbs(100, led[0], 1e-3);
     try std.testing.expectApproxEqAbs(1000, led[2], 1e-3);
+
+    // A Turret Flak's shot is led within three of the Laser Cannon's lifetimes, not its own.
+    const flak = &all.gun_stats.types[guns.GunType.turret_flak.number()];
+    flak.speed = 100;
+    flak.lifetime = 1;
+    laser.lifetime = 13;
+    try std.testing.expectEqual(null, leadAimWithGun(all, @splat(0), aimed, .turret_flak, 1));
+    laser.lifetime = 14;
+    try std.testing.expect(leadAimWithGun(all, @splat(0), aimed, .turret_flak, 1) != null);
 }
 
 test collisionCourse {

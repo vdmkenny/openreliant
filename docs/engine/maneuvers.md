@@ -181,7 +181,12 @@ chooses a new maneuver when the last one's time is up and starts one chosen, and
 
 1. **Aims** (`fight_aim`, `0x00409BE0`). Every pilot's `aim_interval` ticks it aims afresh: ahead
    of the target where `ai_lead_aim` (`0x00401280`) can lead it with the fastest of the guns it
-   fires together, and otherwise at the target, or at its part for a component. The aim point's
+   fires together, and otherwise at the target, or at its part for a component.
+   `ai_lead_aim_with_gun` (`0x00401180`) leads it along its heading by its speed times the time
+   the gun's shot takes to reach it, where that is within a quarter of the gun's lifetime; a
+   Turret Flak's within three times the Laser Cannon's, the table's first gun's, which the port
+   keeps. **Fix:** the game reads each gun's turret kind as its type, so it leads every ship's
+   shots as a Laser Cannon's; the port leads by the fastest gun's own type. The aim point's
    velocity is a quarter of the target's, turned by the target's per-update turn half
    `aim_interval` times. Each update the aim point moves by that velocity times `frame_duration`.
 2. **Fires** (`fight_fire`, `0x004096B0`), unless the ship is cloaked. Once the pilot's `pause`
