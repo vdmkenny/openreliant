@@ -8,8 +8,8 @@
 //! into place as it opens, the reverse as it closes, and in place while it is open.
 //!
 //! Ported so far: the windows' phases and times, their frames and how they open and close, and
-//! what windows 3, 7 and 8 show ([`target_display.zig`](target_display.zig),
-//! [`power.zig`](power.zig)). Not yet: what the other windows show, which
+//! what windows 2, 3, 7 and 8 show ([`missile_display.zig`](missile_display.zig),
+//! [`target_display.zig`](target_display.zig), [`power.zig`](power.zig)). Not yet: what the other windows show, which
 //! [`hud.md`](../../../../docs/engine/hud.md) lists with the state each reads; the display's sounds for a window opening and closing
 //! (`hud_beep` 1 and 2); and, in mission 25 before `0x00587CDC` is set, the gunnery, missile and
 //! wing status windows standing still and unseen.
@@ -288,6 +288,8 @@ pub fn bufferClip(window: Window, at: [2]i32, size: f32) hud.Clip {
 
 /// What the windows show, for those the port draws the contents of.
 pub const Contents = struct {
+    /// Window 2's.
+    missiles: ?hud.missile_display.Shown = null,
     /// Window 7's.
     power: ?hud.power.Shown = null,
     /// Windows 3 and 8's, the target display's two forms.
@@ -358,6 +360,7 @@ fn draw(
     }
     const inside: Inside = .{ .at = at, .size = size, .clip = clip };
     switch (window) {
+        .missiles => if (contents.missiles) |missiles| try hud.missile_display.draw(missiles, art, gpa, target, inside, colour),
         .power => if (contents.power) |power| try hud.power.draw(power, art, gpa, target, inside, colour),
         else => if (hud.target_display.Form.of(window)) |form| if (contents.target_display) |scene| {
             try scene.draw(form, phase == .closing, art, gpa, target, inside, colour);

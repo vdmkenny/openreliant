@@ -1261,3 +1261,5 @@ address	kind	name	type	comment
 005887fc	data	missile_net_ids	int[8][200]	In a network game, each remote player's missile id to a local record, -1 for none
 00588400	data	player_loadouts	byte[8][84]	The loadout screen's choice for each player slot, 0x54 bytes: the ship, then 20 rack types, -1 for none
 005883b4	data	skip_briefing	byte	Set when a mission starts without its briefing and loadout; the player's ship then takes the tier's loadout
+00566660	data	missile_name_voice	int	The voice Betty last said the armed missile's name on, as ROTATE MISSILES turns the ring; ended before the next
+0057bf3c	data	missile_name_until	int	game_ticks + 150 as Betty says a missile's name; nothing reads it

@@ -791,6 +791,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
                 .last_view = last_view,
                 .scale = game.hud.scaleFor(display.screen),
                 .multiplayer = false,
+                .world = world,
             });
             engine.input.frameKeys(&display.state, &player, &devices, &slot.object, view.view, display.clock.game_ticks, false);
             // What moves the cockpit's model: the ship's rates of turn over its full ones, and its
