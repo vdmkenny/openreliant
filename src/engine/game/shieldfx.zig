@@ -3,7 +3,7 @@
 //!
 //! | Kind | Struck by | What it leaves |
 //! |---|---|---|
-//! | 2 | A shot or a missile through to a hull (`bullet_hull_hit`, `0x00495BB0`) | The hit's sound (`hullHit`), and an emitter of `0x0049FD20`'s orange template on the part's surface nearest the point (`0x0049FEF0`), facing out from it |
+//! | 2 | A shot or a missile through to a hull (`bullet_hull_hit`, `missile_hit_hull`) | The hit's sound (`hullHit`), and an emitter of `0x0049FD20`'s orange template on the part's surface nearest the point (`0x0049FEF0`), facing out from it |
 //! | 3 | A shot or a missile on a component (`bullet_hit`, `0x0047B840`, `0x00495AC0`) | A burst of 20 of the orange template's particles |
 //! | 4 | Nothing | An emitter of the grey template |
 //! | 5 | Nothing | Sound 71, and `0x00472780` |
@@ -12,9 +12,8 @@
 //! `0x00458AB0`, which is the one routine the build keeps of every routine that only returns 1, so
 //! a hull's emitter shows nothing.
 //!
-//! Not ported: the nodes and their emitters, which show nothing; a component's burst
-//! ([#40](https://github.com/vdmkenny/openreliant/issues/40)); and a missile's hits
-//! ([#39](https://github.com/vdmkenny/openreliant/issues/39)). The game hangs a part no more than a
+//! Not ported: the nodes and their emitters, which show nothing; and a component's burst
+//! ([#40](https://github.com/vdmkenny/openreliant/issues/40)). The game hangs a part no more than a
 //! hundred nodes, so a part struck a hundred times no longer sounds; the port keeps no nodes, and
 //! every hit sounds.
 

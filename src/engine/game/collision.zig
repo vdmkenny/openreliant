@@ -200,9 +200,9 @@ fn push(world: gameobj.World, first: u16, second: u16, pass: u8) bool {
 pub const Kind = enum(i32) {
     /// A shot from a gun (`guns.bulletHit`).
     bullet = 0,
-    /// **Unknown.** A missile's hit, where the missile's object is of any type but 0
-    /// (`0x00495AC0`, `0x00495BB0`, `0x00495CF0`), and what `0x004A0F00` does to the shields.
-    _unknown_1 = 1,
+    /// A missile's hit, but a Screamer's (`missiles.collide`), and what an Imp's shockwave does to
+    /// the shields (`shockwave.Shockwave.strike`).
+    missile = 1,
     collision = 2,
     /// What a ship does to what it dies crashing into: 5000 to an object (`objects_collide`), 5001
     /// to the component of a hull it hit (`collision_test_hull`).
@@ -210,8 +210,8 @@ pub const Kind = enum(i32) {
     /// **Unknown.** Also 5001 from a ship dying against a hull, to another part of the component's
     /// assembly (`collision_test_hull`).
     _unknown_4 = 4,
-    /// **Unknown.** A missile's hit, where the missile's object is of type 0.
-    _unknown_5 = 5,
+    /// A Screamer's hit.
+    screamer = 5,
     _,
 };
 
@@ -498,7 +498,7 @@ pub fn componentDamage(world: gameobj.World, index: u16, component: *objects.Mod
 /// Whether the damage counts toward what an object has taken lately, which `order_retaliate` reads.
 fn counted(kind: Kind) bool {
     return switch (kind) {
-        .bullet, ._unknown_1, ._unknown_5 => true,
+        .bullet, .missile, .screamer => true,
         else => false,
     };
 }
@@ -653,7 +653,7 @@ test "a ship that meets a hull is shoved off the face it hit" {
     // The inverse inertia of a body of this mass, about 6 / (mass * size squared), which is what
     // `recentre` works out from a model's parts.
     const hull_turn: math.Matrix = @splat(0);
-    const hull = try create.createObject(all, &mission.tables, model.types(), null, .predator, @splat(0), &mission.random);
+    const hull = try create.createObject(all, &mission.tables, model.types(), null, .predator, 0, @splat(0), &mission.random);
     all.slots[hull].object.flags.components = true;
     all.slots[hull].object.mass = 100000;
     all.slots[hull].object.angular_response = hull_turn;
@@ -894,7 +894,7 @@ test componentDamage {
     // The player's ship, in the first slot, and another, which the difficulty leaves alone. The
     // player's is of another type, whose model the test's types don't give.
     _ = try mission.add(.kamov, @splat(0));
-    const index = try create.createObject(all, &mission.tables, model.types(), null, .predator, @splat(0), &mission.random);
+    const index = try create.createObject(all, &mission.tables, model.types(), null, .predator, 0, @splat(0), &mission.random);
     const part = &all.slots[index].model.?.parts[0];
     try std.testing.expectEqual(100, part.armor);
 

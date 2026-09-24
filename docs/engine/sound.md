@@ -147,8 +147,13 @@ place, direction and velocity goes over with `y` negated.
 
 Once a frame `sound_3d_update` (`0x00481BF0`) runs the engine's sound, then each voice playing. A
 voice past its sound's length, `length / 441` ticks of 16-bit sound at 22,050 Hz, is freed but for
-the engine's and the afterburner's. The rest are placed again by what they follow, and freed once
-beyond their maximum distance or once their object has gone.
+the engine's and the afterburner's. A shot's and a missile's stay where they started; the rest are
+placed again by what they follow, and freed once beyond their maximum distance or once their object
+has gone. Nothing gives an object its voice (`+0xB96` stays `0xFFFF`), so `missile_end`, which ends
+a missile's, never does.
+
+**Improvement:** a missile's voice follows it as an object's does, and is its own, so it ends with
+it; it keeps its full volume half as far again (`sound3d.MissileSound.follows`).
 
 ### The player's engine
 

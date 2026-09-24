@@ -20,6 +20,7 @@ const Node = objects.Node;
 const Pointer = engine.Pointer;
 const create = @import("create.zig");
 const guns = @import("guns.zig");
+const missiles = @import("missiles.zig");
 const libcmt = @import("../libcmt.zig");
 const motion = @import("motion.zig");
 const input = @import("../input.zig");
@@ -154,6 +155,25 @@ pub const Component = extern struct {
 
     comptime {
         assert(@sizeOf(Component) == 0x0C);
+    }
+};
+
+/// Missile racks an object can carry: one for each of its missile hardpoints.
+pub const max_racks = 20;
+
+/// One of an object's missile racks (`GameObject + 0x158`): what a missile hardpoint of its model
+/// holds, a pod of missiles or one missile hung on a rail, and how many are left.
+pub const Rack = extern struct {
+    type: missiles.Type,
+    _unknown_02: u16 = 0,
+    /// Where the node of the part that carries the hardpoint lists the hung pod or missile.
+    slot: Pointer(Pointer(Node)) = .null,
+    /// Missiles left: a pod's capacity, or 1 for a rail, when fitted; -1 once an empty pod is let
+    /// fall.
+    count: i32 = 0,
+
+    comptime {
+        assert(@sizeOf(Rack) == 0x0C);
     }
 };
 
@@ -353,9 +373,12 @@ pub const GameObject = extern struct {
     /// Which side of a gun group fires next, 0 or 1, while the ship fires one group out of step
     /// (`guns.step`).
     gun_turn: guns.GroupSide,
-    _unknown_150: i16,
+    /// Its missile racks, `rack_count` of them, which `create_object` fits from its missile
+    /// hardpoints and each launch takes from.
+    rack_count: i16,
     component_count: i16,
-    _unknown_154: [0xF4]u8,
+    _unknown_154: [4]u8,
+    racks: [max_racks]Rack,
     /// The parts of its model whose flags mark them as components, in the order `0x00468760`
     /// finds them: each node's marked children, then each child's in turn.
     components: [max_components]Component,
@@ -452,7 +475,9 @@ pub const GameObject = extern struct {
     /// Its side: its type's (`ShipCombat.side`) when created, save for other players' ships in a
     /// multiplayer game, and hostile or friendly once `SetHostile` says.
     side: Side(i32),
-    _unknown_648: u32,
+    /// The loadout tier a re-arm fits its racks by (`order_dock`, `cmd_ReplenishWeapons`).
+    /// **Unverified:** nothing writes it, so it holds what the allocator leaves.
+    loadout_tier: u32,
     /// Nonzero while a missile homes on it, which lights the display's missile warning.
     /// `mission_frame` zeroes it on every object each frame, and `missiles_update` (`0x004960F0`)
     /// then sets it on the object each live missile's order targets. **Unverified:** the
@@ -679,6 +704,11 @@ pub const GameObject = extern struct {
         return vector(object.root.next_position);
     }
 
+    /// Its racks, `rack_count` of them.
+    pub fn fittedRacks(object: *const GameObject) []const Rack {
+        return object.racks[0..@intCast(@max(object.rack_count, 0))];
+    }
+
     /// The way its nose will point at the next step.
     pub fn nextHeading(object: *const GameObject) Vector {
         return math.forward(object.root.next_orientation);
@@ -882,6 +912,14 @@ pub const ShieldReserves = struct {
         reserve.* = 0;
         return false;
     }
+
+    /// A missile's `amount` on the fore shield (`missile_collide`), taken off the fore reserve
+    /// while it holds anything, else off the aft's: whether it ran that reserve out, and the shield
+    /// takes the whole hit. With neither holding anything, nothing reaches the shield.
+    pub fn missileHit(reserves: *ShieldReserves, amount: f32) bool {
+        const drawn: collision.Quadrant = if (reserves.fore > 0) .fore else .aft;
+        return reserves.of(drawn).?.* > 0 and !reserves.spare(drawn, amount);
+    }
 };
 
 test ShieldReserves {
@@ -897,6 +935,17 @@ test ShieldReserves {
     try std.testing.expectEqual(0, reserves.fore);
     try std.testing.expect(!reserves.spare(.fore, 1));
     try std.testing.expect(!reserves.spare(.left, 1));
+
+    // A missile draws the fore reserve, then the aft's, and reaches the shield only as one runs
+    // out.
+    reserves = .{ .fore = 1, .aft = 2 };
+    try std.testing.expect(!reserves.missileHit(0.5));
+    try std.testing.expect(reserves.missileHit(1));
+    try std.testing.expectEqual(0, reserves.fore);
+    try std.testing.expect(!reserves.missileHit(1));
+    try std.testing.expectEqual(1, reserves.aft);
+    try std.testing.expect(reserves.missileHit(1));
+    try std.testing.expect(!reserves.missileHit(1));
 }
 
 /// `object_recharge_shields` (`0x00476FC0`), which `simulation_step` runs for every object after
@@ -1012,6 +1061,10 @@ pub const World = struct {
     particles: ?*@import("particles.zig").Pool = null,
     /// The shockwaves spreading (`shockwave.cpp`); null where none spread.
     shockwaves: ?*@import("shockwave.zig").Shockwaves = null,
+    /// The missiles' and torpedoes' trails; null where none are left.
+    trails: ?*missiles.trail.Trails = null,
+    /// The countermeasures in flight (`cloak.cpp`); null where none are dropped.
+    countermeasures: ?*@import("cloak.zig").Countermeasures = null,
     /// The shields' bubbles' meshes and colours (`shield.cpp`); null where none are drawn.
     shields: ?*@import("shield.zig").Shields = null,
     /// The sparks flying (`sparks.cpp`); null where none are thrown.
@@ -1038,13 +1091,14 @@ pub const World = struct {
 /// updates: the one whose turn it is is orthonormalized (`orthonormalizeTurn`), then comes its
 /// node update (`updateTree`), its shields' recharge (`rechargeShields`) and its guns' step
 /// (`guns.step`). Then
-/// the player's controls fly the player's ship, and `objects_update` moves them all
-/// (`create.objectsUpdate`). Returns whether it did that work.
+/// the player's controls fly the player's ship, `objects_update` moves them all
+/// (`create.objectsUpdate`), and the missiles (`missiles.move`) and the shots (`guns.moveBullets`)
+/// move after them. Returns whether it did that work.
 ///
 /// The player's own order runs here as well as once a frame, while its top order is Player
 /// Control, so the controls are read on every step.
 ///
-/// Not ported yet: the mouse; the missiles `objects_update` is followed by (`0x00495720`).
+/// Not ported yet: the mouse.
 pub fn simulationStep(clock: *Clock, devices: *input.Devices, world: World) bool {
     clock.simulation_counter += 1;
     if (clock.simulation_counter < ticks_per_step) return false;
@@ -1070,6 +1124,7 @@ pub fn simulationStep(clock: *Clock, devices: *input.Devices, world: World) bool
         aigeneric.objectOrders(.{ .world = world, .clock = clock, .devices = devices }, all.player);
     }
     create.objectsUpdate(world);
+    missiles.move(world.objects);
     guns.moveBullets(world);
     return true;
 }
@@ -1444,7 +1499,7 @@ pub const testing = struct {
 
         /// An object of `ship_type` at `at`, in the next slot.
         pub fn add(mission: *Mission, ship_type: Type, at: Vector) !u16 {
-            return create.createObject(mission.objects, &mission.tables, create.testing.no_models, null, ship_type, at, &mission.random);
+            return create.createObject(mission.objects, &mission.tables, create.testing.no_models, null, ship_type, 0, at, &mission.random);
         }
 
         /// A ship that is nobody's, at `at`, which takes the orders the player's refuses: the

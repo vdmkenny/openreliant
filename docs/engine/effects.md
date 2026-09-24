@@ -302,8 +302,8 @@ far it has now, it acts on by its kind:
 | 0 to 2 | `rng_02` to `rng_04` | A blast, one time in four: a random one of the three, ten times the ship's radius across, over 100 to 149 ticks, standing and drifting as the blast's flame emitter does | The player's view shakes by ten times how far through its life it is, at most 2 |
 | 3 | `rng_01` | `0x00472AB0`, a pair | Nothing |
 | 4 | `rng_06` | Nothing | Nothing |
-| 5 | `rng_06` | A missile's end (`0x00495870`), for missile type 2: 50000 across over 500 ticks | Ships of other sides are pushed away (order `0x72`) |
-| 6 | `rng_01` | A missile's end, for missile type 7, likewise | Each quadrant of ships of other sides takes 50 more than its shield holds, and their [shield bubbles](#shields) flicker for 100 ticks |
+| 5 | `rng_06` | A Havoc's end (`missile_end`, `0x00495870`): 50000 across over 500 ticks, sparing its launcher's side | Ships of other sides are pushed away, disrupted |
+| 6 | `rng_01` | An Imp's end, likewise | Each quadrant of ships of other sides takes 50 more than its shield holds, and their [shield bubbles](#shields) flicker for 100 ticks |
 | 7 | none, unseen | Nothing | The player takes damage by the owner's type |
 | 8 | `rng_01` | A halting torpedo, 6000 across over 100 ticks | The view shakes as for kind 0, and the player takes damage |
 
@@ -313,16 +313,25 @@ disabled, or that another harmed less than 50 ticks before (`GameObject` `0x654`
 take it first: a reserve that holds spares the shield, and one that runs out passes on to the
 shield what it held.
 
+Kinds 5 and 6 also pass over torpedoes and the Ripper, and shake the player's view as kind 0 does
+as they pass the player's ship. Kind 5 puts a ship whose order ranks no higher than Disrupted
+(114) into it, with a push of the ship's mass times the ring's size over its life, and a duration
+of 500 ticks for a player's ship and 2000 for another's, both times 1.5 of what is left of the
+ring's life, at most 1: so at full strength through its first third. The push points from the ring's
+centre to the ship, in the world's frame, and Disrupted takes it in the ship's own
+([Orders](orders.md)). Kind 6 does its damage as the missiles' kind, with no share passing to the
+armour, and names the ship itself as the attacker.
+
 The game names object 16 as kind 8's attacker, whatever its loop over the ring's colours left in
 a register.
 
 **Improvement:** the port names the shockwave's owner, the torpedo, instead.
 
-[`shockwave.zig`](../../src/engine/game/shockwave.zig) ports the rings, kinds 0 to 2 and 8, and
-[`explode.zig`](../../src/engine/game/explode.zig) and
-[`aiexplode.zig`](../../src/engine/game/aiexplode.zig) the blast's and the torpedo's. Not ported:
-kind 3's caller ([#41](https://github.com/vdmkenny/openreliant/issues/41)), and a missile's end,
-with what kinds 5 and 6 do ([#39](https://github.com/vdmkenny/openreliant/issues/39)).
+[`shockwave.zig`](../../src/engine/game/shockwave.zig) ports the rings and what kinds 0 to 2, 5,
+6 and 8 do, and [`explode.zig`](../../src/engine/game/explode.zig),
+[`aiexplode.zig`](../../src/engine/game/aiexplode.zig) and
+[`missiles.zig`](../../src/engine/game/missiles.zig) the blast's, the torpedo's and the missiles'.
+Not ported: kind 3's caller ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
 
 ## Shields
 
@@ -392,8 +401,7 @@ triangles.
 [`shield.zig`](../../src/engine/game/shield.zig) ports the bubbles, and
 [`guns.zig`](../../src/engine/game/guns.zig) and
 [`collision.zig`](../../src/engine/game/collision.zig) the shots and knocks that flare them. Not
-ported: kind 6's shockwave ([#39](https://github.com/vdmkenny/openreliant/issues/39)); a cloaked
-ship's shimmer where it is struck ([#89](https://github.com/vdmkenny/openreliant/issues/89)); and
+ported: a cloaked ship's shimmer where it is struck ([#89](https://github.com/vdmkenny/openreliant/issues/89)); and
 the shields of ships that list components, which flare on the part struck, with their force
 fields ([#179](https://github.com/vdmkenny/openreliant/issues/179)).
 

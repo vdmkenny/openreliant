@@ -13,6 +13,7 @@ pub const aiorders = @import("game/aiorders.zig");
 pub const backdrop = @import("game/backdrop.zig");
 pub const bigfile = @import("game/bigfile.zig");
 pub const camera = @import("game/camera.zig");
+pub const cloak = @import("game/cloak.zig");
 pub const collision = @import("game/collision.zig");
 pub const create = @import("game/create.zig");
 pub const deathmatch = @import("game/deathmatch.zig");

@@ -23,13 +23,13 @@ been found. An element whose code is not found yet is marked so.
 | Targeting cluster | middle | | the reticle where the guns aim; speed on an arc to the left, the speed the throttle sets and the speed the ship is making; the weapons' charge on an arc to the right; an indicator pointing to the next nav point, and one pointing to the target, red for hostile and green for friendly | [The targeting cluster](#the-targeting-cluster): the arcs, the two markers with their figures, the fills and the reticle. The indicator for the target is the arrow `hud_target` draws for a target out of sight ([The target](#the-target)); the nav point's is drawn the same way and not ported ([#36](https://github.com/vdmkenny/openreliant/issues/36)) |
 | Target ring | round the target | | a ring round a target in sight, red or green, with its range in metres under it; a lead cursor, a box with a line trailing from it, where to shoot | `hud_target` (`0x00489C70`): brackets at the corners of the target's box, its range in kilometres, and the lead cursor with its line ([The target](#the-target)) |
 | Directional calipers | the display's edges | | the direction and range of a target out of sight | `hud_target`: a marker where a line toward the target leaves the screen, with the range ([The target](#the-target)) |
-| Missile lock ring | round the target | | a ring that closes in round the target and turns white once a missile has locked, with a tone | `hud_missile_lock` (`0x00491520`), whose count dims the target's brackets as a lock builds. Not ported ([#39](https://github.com/vdmkenny/openreliant/issues/39)) |
+| Missile lock ring | round the target | | a ring that closes in round the target and turns white once a missile has locked, with a tone | `hud_missile_lock` (`0x00491520`), whose count dims the target's brackets as a lock builds ([The lock](missiles.md#the-lock)) |
 | Jump icon | above the middle | J | the prompt to press JUMP DRIVE, once the mission has a jump ready | [The jump prompt](#the-jump-prompt-the-eject-marker-and-the-scanner) |
 | Target display | foot, right | | the target's image with its shields and armour in a ring, its name, its type, its range and its speed; a larger form for a big target, with its current subtarget and a bar for each | [Windows](#the-windows) 3 and 8, [The target display](#the-target-display) |
 | Subtarget | on the target's model | S, SHIFT+S | the parts of the subtarget picked out in red | `hud_subtarget` (`0x0048CC30`), which walks the target's assembly by `link_id` |
 | Radar | foot, middle | V | three rings with the ship at their middle and a wedge for its view ahead; each object a dot, red for hostile, green for friendly, blue for one calling on the radio, on a line up or down from the rings by its height. V narrows and widens its range, the middle ring filling the display at the narrowest | `hud_radar` (`0x00488BD0`), [The radar](#the-radar). The rings and V's ranges are ported; the dots are not |
 | Ship status | foot, left of middle | always shown | the ship's image in two rings of segments, forward, aft and the two sides: shields outside, armour inside. A shield dims as it wears; an armour segment goes as it is lost. Shifting power fore or aft doubles the shields there | `hud_ship_status` (`0x00489350`). For the player's own ship, what [SHIELD BALANCING](controls.md#the-shield-balance) shifted beyond the fore and aft shields shows as a second arc outside each: shapes `0xB2` less the level at `(-0x1A, -0x24)` from the point for the fore reserve, and `0xB7` less the level at `(-0x26, 0x1D)` for the aft one, the level worked out as for a shield. [The ship status indicator](#the-ship-status-indicator) |
-| Missile display | top, middle | M | the missile's name, the ship's missiles in a ring, how many of the chosen one are left, and the one armed at six o'clock. Comma and full stop turn the ring | [Window](#the-windows) 2: the ring from the table at `0x00501CC8`, ten entries of five halfwords. The frame is ported; what it shows is not |
+| Missile display | top, middle | M | the missile's name, the ship's missiles in a ring, how many of the chosen one are left, and the one armed at six o'clock. Comma and full stop turn the ring | [Window](#the-windows) 2: the ring (`hud_missile_ring`, `0x00501CC8`, ten entries of five halfwords: [The ring](missiles.md#the-ring)). LAUNCH MISSILE opens it held. The frame and the ring are ported; what it shows is not ([#93](https://github.com/vdmkenny/openreliant/issues/93)) |
 | Mission objectives | right | B | the mission's goals, the current one first; B pages through them | [Window](#the-windows) 10: the mission's objectives from the table at `0x00504120`, ten a mission. The frame is ported; what it shows is not |
 | Gunnery display | foot, left | G | the gun's name, the ship as a wire frame with the gun lit, the rounds left for a gun that fires them, and whether the guns fire together or in turn. G picks the next gun, F fires them all, CTRL and G switches the two ways of firing them all | [Window](#the-windows) 1: the ship's wire frame is the shape `0x005883C0` names. The frame is ported; what it shows is not |
 | Damage display | top, right | D | a segmented bar each for the weapons, the engines and the shields, shortening with damage | [Window](#the-windows) 4: the bars read the player's `+0x66C`, `+0x668` and `+0x664`. The frame is ported; what it shows is not |
@@ -474,12 +474,11 @@ that runs past 100 carries what it ran over into the next hundred, lit. `hud_dra
 the light's own condition does not already hold, so an icon's flash stands still while it does. The
 display reads icons 0 to 5: 3 is the countermeasures readout, 5 the eject marker.
 
-`enemy_lock` is set by `mission_frame` each frame when a ship whose order is Fight, against the
-player, has byte `0x2F` of its fight state set. **Unverified:** that the byte is a missile lock.
-Nothing in the payload writes it at that offset; the light's shape is a ship in a gun sight, and the
-manual has countermeasures answer an enemy's missile lock. `missile_homing` is zeroed on every
-object by `mission_frame` and set by `missiles_update` (`0x004960F0`) on the object a live missile's
-order targets.
+`enemy_lock` is set by `mission_frame` each frame, in its pass that draws the objects, when a ship
+whose order is Fight, against the player, has its missile ready (byte `0x2F` of its fight state,
+which `fight_fire` sets once its lock on its target is complete: [Missiles](missiles.md#the-ais-missiles)).
+`missile_homing` is zeroed on every object by `mission_frame` and set by `missiles_update`
+(`0x004960F0`) on the object a live missile homes on.
 
 A bar is a line of `hud_colour(0xE7, 0x68, 0x00)` drawn with `VFX_line_draw` from one pixel right of
 the light's point to the charge times a scale further: `1/62` for the ECM, `1/312` for the cloak and
@@ -521,7 +520,9 @@ same twelve. The same switch picks the cockpit's frame model ([`main.zig`](../..
   ship through `object_set_cloak`, which sets `cloak_state` for the player.
 
 SMART TARGET, ECM and SPECTRAL SHIELDS play `hud_beep` (`0x0048CE70`) 4 turning a device on and 5
-turning it off: sample 15 + n of `bank_stdsmp`, in the four cockpit views only.
+turning it off: sample 15 + n of `bank_stdsmp`, at a volume of 60 (`0x00501C78`), in the four
+cockpit views only. The port's is `hud.beep`, which only the countermeasures play so far
+([#101](https://github.com/vdmkenny/openreliant/issues/101)).
 
 Ported: the charges, the fitting, SMART TARGET, TOGGLE BLINDFIRE, ECM and SPECTRAL SHIELDS
 ([`input.zig`](../../src/engine/input.zig)). Not yet: the sounds and Betty, the tuning of the spectral
@@ -717,7 +718,6 @@ the instruments and the windows.
 
 ## What is not known yet
 
-- What sets byte `0x2F` of a fight state, which lights the enemy lock warning.
 - The names of the display's elements, which `hud_init` copies from `0x00515D70`.
 - What windows 5, 6, 9, 12 and 14 are for, which no key opens and a mission's script may, and
   what window 14 shows.

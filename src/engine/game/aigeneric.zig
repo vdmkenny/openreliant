@@ -74,6 +74,7 @@ pub const Entry = extern struct {
         fly: i32 align(2),
         /// Explode's and Eject Spin's: what `object_destroyed` was told.
         destroyed: aiexplode.Data,
+        disrupted: aiorders.DisruptedData,
     };
 
     comptime {
@@ -107,6 +108,7 @@ pub const State = extern union {
     fly: aiorders.FlyState,
     explode: aiexplode.State,
     eject_player: aieject.PlayerState,
+    disrupted: aiorders.DisruptedState,
 
     comptime {
         assert(@sizeOf(State) == 0x90);
@@ -393,6 +395,7 @@ fn runInit(ctx: Context, index: u16, info: orders.Info) void {
         .explode => aiexplode.init(ctx, index),
         .eject_player => aieject.playerInit(ctx, index),
         .fight => aifight.init(ctx, index),
+        .disrupted => aiorders.disruptedInit(ctx, index),
         else => {},
     }
 }
@@ -411,15 +414,19 @@ fn runUpdate(ctx: Context, index: u16, info: orders.Info) void {
         .explode => aiexplode.update(ctx, index),
         .eject_player => aieject.player(ctx, index),
         .fight => aifight.update(ctx, index),
+        .disrupted => aiorders.disrupted(ctx, index),
+        .launch_missile => aiorders.launchMissile(ctx, index),
+        .unnamed_3 => aiorders.launchJackHammer(ctx, index),
         else => {},
     }
 }
 
-/// The `exit` of the order. None of the orders with one is ported yet.
+/// The `exit` of the order, where the port runs it.
 fn runExit(ctx: Context, index: u16, info: orders.Info) void {
-    _ = ctx;
-    _ = index;
-    _ = info;
+    switch (info.order) {
+        .disrupted => aiorders.disruptedExit(ctx, index),
+        else => {},
+    }
 }
 
 /// The update of Player Control (100), which is the player's own
@@ -430,6 +437,7 @@ pub fn playerControl(ctx: Context, index: u16) void {
     const combat = slot.combat orelse return;
     input.playerControls(ctx.world.player, devices, &slot.object, combat, ctx.world.view, ctx.clock.frame_duration, slot.trigger(ctx.clock.frame_start));
     input.matchSpeed(ctx.world.player, devices, ctx.world.objects, ctx.world.view);
+    input.playerWeapons(ctx.world, devices, index);
 }
 
 test {

@@ -22,6 +22,7 @@ const mss = @import("../mss.zig");
 const profile = @import("../profile.zig");
 const camera = @import("camera.zig");
 const Clock = @import("main.zig").Clock;
+const gameobj = @import("gameobj.zig");
 const sound3d = @import("sound3d.zig");
 
 const log = std.log.scoped(.sound);
@@ -281,10 +282,14 @@ pub const Sound = struct {
     objects: ?*@import("create.zig").Objects = null,
     /// `betty.fat` (`bank_betty`, `0x0056654C`): the cockpit's warnings.
     betty: ?fat.Bank = null,
+    /// `bank_stdsmp`: the display's sounds and the frame's positional ones.
+    stdsmp: ?fat.Bank = null,
     /// When the player's armour last warned (`0x00588334`, `main.armorWarning`).
     armor_warned_at: i32 = 0,
     /// When a shot last sounded on the player's hull (`0x00593794`, `shieldfx.hullHit`).
     player_hit_at: i32 = 0,
+    /// Where a missile's sound is heard from.
+    missile_sound: sound3d.MissileSound = .follows,
 
     /// `sound_init` (`0x00481440`), as far as the port goes: up to 16 voices for the banks, each a
     /// sample of `driver`, and the timer that steps the fades. `driver` is null where the platform
@@ -336,6 +341,11 @@ pub const Sound = struct {
         };
         sound.start(bank, index, volume, pitch, loops, pan, @intCast(chosen));
         return @intCast(chosen);
+    }
+
+    /// Betty's warning `index` (`bank_betty`), at full volume in the middle.
+    pub fn say(sound: *Sound, index: usize) void {
+        if (sound.betty) |bank| _ = sound.play(bank, index, 127, 1, 64, 0);
     }
 
     /// `sound_play_on_voice` (`0x004820C0`): plays it on voice `v`, ending what it was playing.
@@ -564,15 +574,23 @@ pub const Sound = struct {
     }
 
     /// `sound_3d_voice_end` (`0x00481AF0`): ends what a 3D voice plays and frees it, and the
-    /// object it followed has none. Not ported: a missile's, whose object the missiles' records
-    /// name (#39).
+    /// object or the missile it followed has none.
     pub fn end3D(sound: *Sound, v: u8) void {
         const driver = sound.driver orelse return;
         const voice = &sound.voices_3d[v];
         if (voice.owner == -1) return;
-        if (voice.follows == .object) if (sound.objects) |all| {
-            if (voice.owner < all.slots.len) all.slots[@intCast(voice.owner)].object.sound_voice = 0xFFFF;
-        };
+        if (sound.objects) |all| {
+            const followed: ?*gameobj.GameObject = switch (voice.follows) {
+                .object => if (voice.owner < all.slots.len) &all.slots[@intCast(voice.owner)].object else null,
+                .missile => if (all.missiles.get(@intCast(voice.owner))) |missile| &missile.slot.object else null,
+                else => null,
+            };
+            // The game lets go of the object's voice whichever it is; only a missile's sound that
+            // follows it gives it one (`sound3d.MissileSound`).
+            if (followed) |object| if (object.sound_voice == v) {
+                object.sound_voice = 0xFFFF;
+            };
+        }
         voice.priority = 0;
         voice._unknown_0c = 0;
         voice.owner = -1;
@@ -623,7 +641,20 @@ pub const Sound = struct {
             var face = true;
             var move = true;
             switch (voice.follows) {
-                .shot, .missile, .none, _ => {
+                .shot, .none, _ => {
+                    place = false;
+                    face = false;
+                    move = false;
+                },
+                // Where missiles' sounds follow them, one moves with its missile while the voice
+                // is still that missile's.
+                .missile => follow: {
+                    if (sound.missile_sound == .follows) if (scene.objects.missiles.get(@intCast(voice.owner))) |missile| if (missile.slot.object.sound_voice == v) {
+                        position = missile.slot.drawn.position;
+                        velocity = vector(missile.slot.object.velocity);
+                        direction = math.forward(missile.slot.drawn.orientation);
+                        break :follow;
+                    };
                     place = false;
                     face = false;
                     move = false;

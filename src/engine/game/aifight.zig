@@ -19,6 +19,7 @@ const Order = @import("ai/orders.zig").Order;
 const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
 const guns = @import("guns.zig");
+const missiles = @import("missiles.zig");
 const pilots = @import("pilots.zig");
 const xtrabits = @import("xtrabits.zig");
 
@@ -499,10 +500,6 @@ const in_line_margin: f32 = 500;
 ///
 /// A cloaked target is fired at only where the ship can see through the cloak (`0x00463BD0`), but
 /// the order doesn't keep a cloaked target (`ai.target_barred`), so that doesn't come up here.
-///
-/// Not ported: the missile racks, and firing the missiles and countermeasures
-/// ([#39](https://github.com/vdmkenny/openreliant/issues/39)). No missile is ever ready, so the wait
-/// for the next is drawn afresh each update, as the game does for a ship without them.
 fn fire(fighter: Fighter) void {
     const ship = fighter.ship();
     if (ship.flags.cloaked) return;
@@ -521,9 +518,55 @@ fn fire(fighter: Fighter) void {
         }
         ship.fire_at = @as(i32, timings.pause) + fighter.now();
     }
-    fighter.state.missile_ready = false;
-    drawMissileWait(fighter);
-    if (ship.missile_homing == 0) ship.countermeasure_at = @as(i32, timings.countermeasures.least) + fighter.now();
+    aimMissile(fighter);
+    if (!fighter.state.missile_ready) drawMissileWait(fighter);
+    counterMissiles(fighter);
+}
+
+/// The odds of launching a missile ready each time the wait for it comes round (`0x004DC3F8`).
+const launch_odds: f32 = 0.2;
+
+/// `fight_fire`'s missiles: of the first rack with missiles left but for Jack Hammers, which the
+/// ship keeps for order 3, a lock builds while the target's node lies within the type's lock range
+/// and 0.7 of the ship's nose, and is ready once the type's lock time has passed. Ready, each time
+/// the wait comes round the ship launches one time in five, and either way draws its wait again
+/// and locks again from the start.
+///
+/// Not ported: a multiplayer game's client, which leaves the launch to the host.
+fn aimMissile(fighter: Fighter) void {
+    const ship = fighter.ship();
+    const all = fighter.objects();
+    const state = fighter.state;
+    state.missile_ready = false;
+    const now = fighter.now();
+    for (ship.fittedRacks(), 0..) |rack, at| {
+        if (rack.count <= 0 or rack.type == .jack_hammer) continue;
+        const stats = all.missile_stats.of(rack.type) orelse break;
+        if (!missiles.inLockReach(stats, fighter.aimed().position - fighter.position(), fighter.heading())) state.locked_at = stats.lock_time + now;
+        if (state.locked_at < now) state.missile_ready = true;
+        if (state.missile_ready and ship.missile_at < now) {
+            if (fighter.ctx.world.random.fraction() < launch_odds) missiles.launch(fighter.ctx.world, fighter.index, at, fighter.target());
+            drawMissileWait(fighter);
+            state.locked_at = stats.lock_time + now;
+            state.missile_ready = false;
+        }
+        break;
+    }
+}
+
+/// `fight_fire`'s countermeasures: with no missile homing on the ship, the wait for the next is
+/// held at the pilot's least; with one, once the wait has passed, the ship draws it again and
+/// drops a countermeasure.
+fn counterMissiles(fighter: Fighter) void {
+    const ship = fighter.ship();
+    const range = fighter.pilot.timings.countermeasures;
+    if (ship.missile_homing == 0) {
+        ship.countermeasure_at = @as(i32, range.least) + fighter.now();
+        return;
+    }
+    if (ship.countermeasure_at >= fighter.now()) return;
+    ship.countermeasure_at = fighter.randomBetween(range.least, range.most) + fighter.now();
+    if (fighter.ctx.world.countermeasures) |dropped| dropped.spend(fighter.ctx.world, fighter.index);
 }
 
 /// Whether a player's ship still in the action is in the way of the ship's guns.
@@ -629,8 +672,8 @@ test init {
     // from the pilot's range.
     try std.testing.expectEqual(0, fighter.ship().fighting);
     try std.testing.expectEqual(1, all.slots[0].object.fought_by);
-    const missiles = fighter.pilot.timings.missiles;
-    try std.testing.expect(fighter.ship().missile_at >= missiles.least and fighter.ship().missile_at < missiles.most);
+    const wait = fighter.pilot.timings.missiles;
+    try std.testing.expect(fighter.ship().missile_at >= wait.least and fighter.ship().missile_at < wait.most);
     // The player is at rest, so taken at a quarter of its top speed, and far off for a pilot of
     // middling skill: the Sabre pursues it for a length drawn from the maneuver's range.
     try std.testing.expectEqual(Maneuver.attack_pursue, fighter.state.maneuver);
@@ -769,4 +812,27 @@ test "a Sabre fights the player" {
     try std.testing.expectEqual(1, fighter.ship().order_count);
     try std.testing.expect(nearest < 20000);
     try std.testing.expect(changes > 1);
+}
+
+test aimMissile {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const fighter = try testFight(&mission, 20000);
+    const ship = fighter.ship();
+    ship.rack_count = 2;
+    ship.racks[0] = .{ .type = .jack_hammer, .count = 1 };
+    ship.racks[1] = .{ .type = .raptor, .count = 3 };
+    ship.root.next_orientation = math.rotation(.y, std.math.pi);
+    mission.clock.frame_start = 10;
+
+    // The Raptors lock on, the Jack Hammer passed over: a fresh order counts its lock from tick 0,
+    // so it is ready as soon as the target is in reach.
+    aimMissile(fighter);
+    try std.testing.expect(fighter.state.missile_ready);
+    // Facing away, the lock starts again, ready once the Raptor's lock time has passed.
+    ship.root.next_orientation = math.identity;
+    aimMissile(fighter);
+    try std.testing.expect(!fighter.state.missile_ready);
+    try std.testing.expectEqual(10 + mission.objects.missile_stats.of(.raptor).?.lock_time, fighter.state.locked_at);
 }

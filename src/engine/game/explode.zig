@@ -641,18 +641,34 @@ fn flames(world: gameobj.World, at: Vector, velocity: Vector, how: Flames) ?part
     return emitter;
 }
 
-/// A burst of 150 of `sparkle` from a ship at `at`, moving at `velocity`, carrying `carried` of
-/// it, drifting every way.
-fn sparkles(world: gameobj.World, at: Vector, velocity: Vector, carried: f32) void {
+/// How a burst of sparkle leaves: of which template, how fast, a tick, and how many.
+const Sparkles = struct {
+    template: *const particles.Template = &sparkle,
+    speed_range: f32 = 7,
+    count: i32 = 150,
+};
+
+/// The sparkle a missile leaves (`missile_explode`), `sparkle`'s for one to three seconds: 50 of
+/// it, slower than a ship's.
+const missile_sparkle: particles.Template = sparkled: {
+    var template = sparkle;
+    template.life_spread = 200;
+    break :sparkled template;
+};
+const missile_sparkles: Sparkles = .{ .template = &missile_sparkle, .speed_range = 4, .count = 50 };
+
+/// A burst of sparkle from something at `at`, moving at `velocity`, carrying `carried` of it,
+/// drifting every way.
+fn sparkles(world: gameobj.World, at: Vector, velocity: Vector, carried: f32, how: Sparkles) void {
     var emitter: particles.Emitter = .{
         .born = world.clock.frame_start,
-        .template = &sparkle,
+        .template = how.template,
         .place = .{ .position = at },
         .spread = .{ 1, 1, 1 },
-        .speed_range = 7,
+        .speed_range = how.speed_range,
         .inherited = velocity * @as(Vector, @splat(carried)),
     };
-    burstFrom(world, &emitter, 150);
+    burstFrom(world, &emitter, how.count);
 }
 
 /// Sets a fireball off at `at`, where the world has explosions.
@@ -733,9 +749,29 @@ pub fn blast(world: gameobj.World, index: u16) void {
         });
     }
     const carried = 0.25;
-    sparkles(world, at, velocity, carried);
+    sparkles(world, at, velocity, carried, .{});
     fireballAt(world, at, .{ .size = slot.object.radius, .light = true, .velocity = velocity * @as(Vector, @splat(carried)) });
     sound(world, at, soundClass(world, at) orelse return);
+}
+
+/// A missile's fireball: three times its radius across, over a second.
+const missile_fireball_size: f32 = 3;
+const missile_fireball_life = 100;
+
+/// `missile_explode` (`0x0046E370`), from a missile's end at `at`: a burst of sparkle and a lit
+/// fireball from the sheet, both drifting on at a quarter of its velocity, and the first
+/// explosion's sound, heard among the explosions.
+pub fn missileBlast(world: gameobj.World, at: Vector, velocity: Vector, radius: f32) void {
+    const carried = 0.25;
+    sparkles(world, at, velocity, carried, missile_sparkles);
+    fireballAt(world, at, .{
+        .kind = .sheet,
+        .size = radius * missile_fireball_size,
+        .life = missile_fireball_life,
+        .light = true,
+        .velocity = velocity * @as(Vector, @splat(carried)),
+    });
+    sound(world, at, .explosions);
 }
 
 /// `0x00471DB0`: the blast of a ship that bursts: a slower burst of flame and one of sparkle, heard
@@ -758,7 +794,7 @@ pub fn burst(world: gameobj.World, index: u16) void {
     };
     _ = flames(world, at, velocity, .{ .speed = 20, .speed_range = 5, .carried = .{ .share = 0.25 }, .count = 200 });
     const carried = 0.5;
-    sparkles(world, at, velocity, carried);
+    sparkles(world, at, velocity, carried, .{});
     const random = world.random;
     for (0..burst_fireballs) |_| {
         const out: Vector = .{ random.fraction() * radius * burst_spread, 0, 0 };

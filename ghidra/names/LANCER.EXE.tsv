@@ -128,7 +128,7 @@ address	kind	name	type	comment
 00500f64	data	gun_flash_ticks	int[15]	How long a muzzle's flash lasts, by gun type less one, which bullet_fire sets on the part it fires from
 00508700	data	gun_sound_periods	int[16]	The steps a firing gun of each type goes between the sounds of its shots. The player's shots are all heard
 005035e8	data	missile_flight_stats	FlightModel[11]	
-005037a8	data	missile_stats	MissileStats[11]	
+005037a0	data	missile_stats	MissileStats[11]	Every missile type's figures: the executable's own words and what stats_load_missiles reads of missilestats.bin
 0058a968	data	pilot_stats	PilotStats[194]	
 00441aa0	function	loadout_load		Preloads the loadout screen: stats, models, sounds
 00444f20	function	loadout_draw_stats		Draws the stat rows the layout table describes
@@ -442,9 +442,9 @@ address	kind	name	type	comment
 00409f00	function	fight_find_ship_to_run_to	bool __fastcall (int slot, FightData *data)	Finds the nearest friendly ship with components and combat class 2 or 3 to run to; false when there is none or the ship is near one already
 00409be0	function	fight_aim	void __fastcall (int slot, FightState *state, OrderEntry *entry)	Aims the guns: every aim_interval ticks of the pilot at the target, led where it can be, and reckons its drift as a quarter of the target velocity; moves the aim by it each update, then calls fight_fire
 00409d10	function	fight_call_for_help		Has a ship the player has hurt badly send its nearest fighting wingman at the player
-004096b0	function	fight_fire	void __fastcall (int slot, FightState *state, ModelNode *node)	Fires for the pilot burst once its pause has passed, with the aim along the nose within fire_spread target radii and the node within a quarter of a laser range; a friendly ship holds fire with a player in line. Then times the missiles and countermeasures
+004096b0	function	fight_fire	void __fastcall (int slot, FightState *state, ModelNode *node)	Fires for the pilot burst once its pause has passed, with the aim along the nose within fire_spread target radii and the node within a quarter of a laser cannon's range; then locks the first rack that is not a Jack Hammer's on the target within its lock range and 0.7 of the nose, ready (+0x2F) once locked_at has passed, launching one time in five once missile_at has; and with a missile homing on it spends a countermeasure once countermeasure_at has passed
 00409ec0	function	fight_update_cloak	void __fastcall (int slot, FightState *state)	Uncloaks the ship when its maneuver asked for no cloak, and cloaks it once cloak_at passes when it asked for one
-00462550	function	object_spend_countermeasure	void __fastcall (int slot, int unknown)	Spends one of an object's countermeasures, its word at +0x5EC: with none left it plays the display's sound 3 for the player (hud_beep) and does nothing else; otherwise it takes one, plays sound 0 for the player, and carries on
+00462550	function	object_spend_countermeasure	void __fastcall (int slot, int missile)	Spends one of an object's countermeasures (+0x5EC), the player's with hud_beep 0, or 3 with none left: drops one at its tail at its next place, drifting at a quarter of its velocity plus 5 along its Y axis and 5 back, trailing decoy_particles fore and aft, for 1000 ticks; then, outside a network client, the first missile in record order homing on it undecoyed that rolls under its decoy chance (30 more against a player, 50 more against a pilot whose countermeasures least is 50) chases it. A client takes the host's missile
 004c3830	function	SR_init	void * __fastcall (void)	Clears sr_context and returns it
 005e6b50	data	sr_context		Surrender's state: the device, its texture limits, the palette and colour cube in use
 00588730	data	sr	void *	What SR_init returned: sr_context
@@ -604,7 +604,7 @@ address	kind	name	type	comment
 0048d780	function	hud_colour	uint __fastcall (int red, int green, int blue)	A colour as the display's pane holds one: looked up through the renderer's 6-6-6 table on an 8-bit pane, or shifted into the pixel format
 00494890	function	hud_interference_start	void (void)	Sets hud_interference to 0.3 and, no more than every 15 to 29 ticks, plays sound 12 at the player's ship through 0x00482160. Called from 0x00463EE0 and 0x004641F0
 004948f0	function	hud_interference_fade	void (void)	Lowers hud_interference by 0.005 for each tick since it last ran, to nothing
-004960f0	function	missiles_update	void (void)	Runs each live missile's order for the frame, ends those past their flight time, and sets missile_homing (+0x64C) on the object a missile's order targets. Unverified: the conditions it sets it under, not all read
+004960f0	function	missiles_update	void (void)	Once a frame after the objects are framed: runs each live missile's order update; within its flight time tests it for contact (missile_collide) and, with none, frames and draws it by its throttle and sets missile_homing (+0x64C) on its target, with no decoy, but not for a player's Screamer outside multiplayer; past its flight time ends it. Then each trail's updates by its look's flags. In multiplayer, drops the target of a player's missile whose lock broke and ends one whose launcher is gone
 0052a3f0	data	jump_ready	int	Whether the mission has a jump ready for JUMP DRIVE: 1 when it becomes ready, 2 once hud_jump_prompt shows it; player_jump clears it
 0052a3f4	data	warp_ready	int	As jump_ready, for a warp, which the prompt shows first
 005656a8	data	hud_shapes	void *	The display's shapes: hudhard.spr under the hardware renderers, hudsoft.spr under the software one
@@ -664,7 +664,7 @@ address	kind	name	type	comment
 0057998c	data	hud_window_pane	void *	The 225 by 170 pane hud_init makes, which hud_draw draws a display window into as it opens and closes and then draws onto the display with VFX_buffer_transform, scaled about the window's place
 00566600	data	hud_window_picture	void *	A second 225 by 170 pane, the picture of the target display hud_window_close keeps for windows 3 and 8 to close with
 0051cef8	data	powerball_held	short	Set while POWERBALL WINDOW is held, and for the frame its locked form opens the power window; the player's controls read it
-00501cc8	data	hud_missile_ring	short[10][5]	The missile window's ring, one entry of five halfwords for each missile type: the count left, or -1 for none, its place round the ring, 0 the armed one, and the base of its shapes
+00501cc8	data	hud_missile_ring	MissileRingEntry[10]	The missile window's ring, an entry of five halfwords for each missile type the player's racks hold: the count left, or -1 for none, its place round the ring, 0 the armed one at six o'clock, the first of its ten shapes, its name's text id, and its type
 00504120	data	mission_objectives		The objectives of each mission, ten to a mission from mission 1, each its state and the string that names it, which the objectives window shows
 0056997e	data	objectives_shown	short	Which of the mission's objectives the objectives window shows, which OBJECTIVES WINDOW pages through while the window is open
 00562dc8	data	mission_number	int	The number of the mission being flown, from 1, by which the objectives window finds its objectives; missions 25 and 29 have display rules of their own
@@ -1004,7 +1004,7 @@ address	kind	name	type	comment
 00489c70	function	hud_target	void (void)	Draws the player's target in view 0. Off the screen or behind: an arrow from the middle, lines of palette 0x26 for a hostile target and 0x62 for the rest (0xB1 and 200 in software), none in the chase view, which shows chase_target_pointer instead; and a marker where a line its way leaves the screen, shapes 0x16C to 0x16F hostile or 0x170 to 0x173, with the range in font_small. On it: brackets 0x122, or 0x126 hostile, at the corners of its box as the camera sees it, dimmed by missile_lock_count; the range in font_new; and for a target that lists no components and is not friendly the lead cursor 0x12F at ai_lead_aim's point with a line toward the target, which sets hud_target_x and hud_target_y. Also marks the radio window's object (hud_comms_marker) and the nav point
 00489bc0	function	hud_pointer_direction	void __fastcall (OrderTarget *target, Vec3 *way, Vec3 *across)	The unit way across and down to a target's node in hud_object's frame, turned a half round, and that way turned a quarter round more
 0048b0f0	function	hud_comms_marker	void (void)	Draws shapes 0x12A to 0x12D at the corners of the object 0x0057BDF4 names, which the radio's window sets
-00491520	function	hud_missile_lock	void (void)	Runs the missile lock, its state at 0x0057DFF0 and missile_lock_count, and in the chase view adds chase_target_pointer and chase_nav_pointer to the scene
+00491520	function	hud_missile_lock	void (void)	Runs the player's missile lock: its state at 0x0057DFF0 (0 idle, 1 closing, 2 waiting out the lock time, 3 locked, 5 lost), missile_lock_count and the ticks from minus the lock time, and places the three lock_rings on the line from the camera to the target node; in the chase view adds chase_target_pointer and chase_nav_pointer to the scene. Its building sound (0x0057DFC0) never plays, and it ends 2D voice 0 every frame
 004aafc0	function	line_clip	void __fastcall (void *pane, int *x0, int *y0, int *x1, int *y1)	Clips a line to a pane in whole numbers, cutting an end outside back to the edge it crosses, then keeps both ends on the screen if any of the line is on the pane, which it counts at 0x005D60DC
 004a2af0	function	fonts_open	void (void)	Once: builds the remap tables text is drawn through, text_colours and the side tables among them, and opens the fonts, font_small and font_new among them
 005799e8	data	hud_shown_target	OrderEntry	The player's target as the display has it, an order's entry of which only the target's index (0x005799EC) and component (0x005799EE) are set: hud_draw copies the Player Control order's target each frame, as hud_target_changed does
@@ -1176,3 +1176,88 @@ address	kind	name	type	comment
 005dc1e8	data	net_session	int	Nonzero in a multiplayer session
 005ddd28	data	window_suspended	int	Set while the game's window is put away, from 0x004A8260 until input_init clears it; the message pump pauses the sound, and in a multiplayer session the mission, while it is set and the renderer runs. Unverified: what putting the window away is
 004a8260	function	window_suspend	void (void)	Unverified name: where the window is full-screen (0x004F634C), saves its style and placement, changes them and sets window_suspended; then acquires the input again
+00494cb0	function	missiles_init	void (void)	Once, guarded by missiles_initialised: allocates missiles (200 of 0x28) and missile_trails (200 of 0x48), marks them free, fills missile_net_ids with -1, loads the stats (stats_load_missiles) and missiletrail\mtrail2
+00494d80	function	missiles_reset	void (void)	Frees every live missile's object and every trail's meshes as a mission ends, marks both pools free and empties missile_list and missile_trail_list
+00495720	function	missiles_move	void (void)	The simulation step's move of each live missile, after objects_update: takes its next place, eases pitch and yaw rates toward input times turn rate by the rate inertias, turns by them, damps velocity by the inertia outside orders 0, 1 and 11, adds (1 - inertia) * throttle * max_speed along the nose, moves, and flags the root committed and unframed
+00495870	function	missile_end	void __fastcall (int *missile)	Ends a missile: the voice its object holds, shockwave kind 5 for a Havoc and 6 for an Imp (50000 over 500 ticks, sparing the launcher's side), a remote id, missile_explode, detaches its trail, frees the object and the record
+004959a0	function	missile_hull_test	bool __fastcall (void *box, void *query)	The test object_hit_test calls for missile_hit_components: the missile's segment against a tree box, then at a leaf the faces through tree_leaf_segment_test, keeping the point, normal and node struck
+00495ac0	function	missile_hit_components	bool __fastcall (int *missile, GameObject *object)	Tests a missile's segment against the collision trees of an object that lists components, at their next places; on a hit, but for a Havoc or an Imp, marks the node (effect 3) and gives its component component_damage, then ends the missile
+00495bb0	function	missile_hit_hull	bool __fastcall (int *missile, int slot, int quadrant)	A missile past an object's shields: where the segment meets the mesh box of a root child, but for a Havoc or an Imp, the quadrant's armour takes hull_damage and the part a mark (effect 2), and the missile ends. Returns 1 even when no box is met, leaving the missile undrawn for the frame
+00495cf0	function	missile_collide	bool __fastcall (int *missile)	A missile's contact this frame, its drawn place to its next: each object but the launcher, spheres for those without components (the shield by object_damage, the player's only as a fore hit empties a shield reserve; missile_hit_hull with the shield below 0), collision trees for the rest (missile_hit_components); a Havoc or an Imp just ends
+00496290	function	missile_launch	void __fastcall (GameObject *launcher, int rack, int target, int component, int player, int net_id)	Launches from a rack at +0x158: a new object of a pod's second model, or the hung object itself, at the hung node's world, next and drawn places; the launcher's velocity and side, the type's launch sound, one off the count, then order 0 and a trail from a pod, 1 and a trail from a rail, 11 for an emptied pod or a fuel pod; launches an emptied pod again to drop it
+00496aa0	function	missile_order_set	void __fastcall (int *missile, int order)	Allocates the missile object's order stack and state on first use, runs the order's init from missile_orders, sets it, and runs its update once
+00496b10	function	missile_order_launch_init	void __fastcall (int *missile)	Init of missile orders 0 and 1: started becomes frame_start
+00496b20	function	missile_order_pod_launch	void __fastcall (int *missile)	Missile order 0: throttle 2 and no steering for 50 ticks, then the type's order
+00496b60	function	missile_order_rail_launch	void __fastcall (int *missile)	Missile order 1: no steering; throttle 0 with a push along its Y axis of 0.005 max_speed a tick for 25 ticks and back for 25, throttle 1 until 100, then the type's order
+00496c60	function	missile_fly_straight	void __fastcall (int *missile)	Throttle 1, no pitch or yaw
+00496c90	function	missile_home	void __fastcall (int *missile)	Guidance: the target node led along the target's nose by distance * speed / max_speed, or the decoy (caught within 1000); throttle by the cosine off the nose; pitch and yaw inputs from the angles less 4 times the rates, times 5.72958; a lost target, or one beyond 1000000, ends it, but a Solomon flies straight. A Vagabond may chase a cloaked target
+00497f10	function	missile_order_screamer	void __fastcall (int *missile)	Missile order 2: straight for a player's outside multiplayer, else missile_home
+00497f30	function	missile_order_proximity	void __fastcall (int *missile)	Missile orders 4 and 9 (Havoc, Imp): ends within 10000 of the target's root, else missile_home
+00497f80	function	missile_order_solomon	void __fastcall (int *missile)	Missile order 8: without a valid target, takes the nearest of another side within 0.7 of its nose, else the nearest, among objects without components, then among components; with none flies straight; then missile_home
+004983b0	function	missile_order_home	void __fastcall (int *missile)	Missile orders 3, 5, 6, 7 and 10: missile_home
+004983c0	function	missile_order_jettison_init	void __fastcall (int *missile)	Init of missile order 11: started becomes frame_start and the object is pushed 50 along its Y axis
+00498410	function	missile_order_jettison	void __fastcall (int *missile)	Missile order 11: no thrust or steering, ending 100 ticks on
+0046e370	function	missile_explode	void __fastcall (int *missile)	A missile's blast: 50 sparkles of the sparkle template at a life spread of 200, a lit sheet fireball of 3 radii for 100 ticks, both drifting at a quarter of its velocity, and EXPLOSION01 at it among the explosions
+0049bae0	function	tree_leaf_segment_test	bool __fastcall (Vec3 *from, Vec3 *to, void *leaf, Vec3 *point, Vec3 *normal, int *face)	A segment in a part's frame against a collision tree leaf: its box, then each face the segment starts in front of by no more than its length, fanned into triangles (segment_meets_triangle); the last crossed wins
+004ad700	function	segment_meets_triangle	bool __fastcall (Vec3 *from, Vec3 *to, Vec3 *a, Vec3 *b, Vec3 *c, Vec3 *point)	Where a segment crosses a triangle, solved through a 3x3 inverse for the share along it and across the edges from c
+0046ac50	function	eray_add	void * __fastcall (float width, float length, int strands)	Takes the first free of the 100 electric rays at 0x005531B0, freeing the first where all are taken, made by eray_create; order_disrupted_init plays fifteen
+0046ace0	function	eray_create	void * __fastcall (short strands, float width, float length)	An electric ray of 0x1B0 bytes (erayfx.cpp): 17 meshes a strand named Eray Mesh and a light named Eray Light
+005887f0	data	missiles	int *	200 missile records of 0x28: started, object, launcher, decoy, trail, stats, net player, net id, older, newer
+005887f4	data	missile_list	int *	The newest live missile; they link to the older through +0x20
+00503d20	data	missile_orders	void *[12][2]	The missile orders' init and update
+00494e40	function	missile_trail_create	void __fastcall (int *missile, int slot, int kind, int type)	The first free trail, at the head of missile_trail_list: kind 1 follows the missile (and sets its +0x10), kind 2 an object slot; by missile_looks[type]'s pieces its side ribbons (black, at full strength), its ribbon, its plume and its glow, laid at the followed object's tail. Takes the record past the pool when every trail is taken
+00495200	function	missile_trail_free	void __fastcall (int *trail)	Clears a trail's kind, frees its ribbons, plume and glow, and unlinks it
+00495280	function	missile_trail_update	void __fastcall (int *trail)	The ribbon once a frame: fades each corner by frame_duration * 0.015 / (rings * 0.04); while following, lays the cursor ring at the tail at max(throttle, 0.5) times the look's colour, twisted or jittered by the look, hides the quads from it and shows those to it, and moves on 3 tail widths from the ring before; freed once faded with nothing to follow
+004970a0	function	missile_trail_mesh_create	void * __fastcall (int rings)	A ribbon mesh of rings of 4 corners, each joined to the next by two crossed quads and capped across the next, over missile_trail_texture, lit and added
+004974b0	function	missile_side_trails_update	void __fastcall (int *trail)	The side ribbons once a frame: fade; while following, the rings round the tail, a fifth of it and up to as much again, pushed out 0.5 to 0.8 of its half-width and turned by strand and by the turning; only the first moves the shared cursor. Once the last has faded, frees them, or the trail without a ribbon
+00497450	function	missile_glow_create	void * (void)	The glow: a set of 2 sprites named MissileTrail BMO over gunflare\partic6, lit and added
+00497980	function	missile_glow_update	void __fastcall (int *trail)	The glow 50 behind a missile's or a Russian torpedo's tail, its first sprite as wide as the tail and up to a sixth more at random, its second half that
+00497aa0	function	missile_plume_create	void * (void)	The exhaust plume, Missilebursttrail mesh: 6 rings of 9 widening from nothing to 210 at 630 behind, over shield128, scaled by the alpha and added
+00497d60	function	missile_plume_colour	void __fastcall (void *object, Vec3 *colour, float brightness)	Colours the plume's corners by nines from the first, 0.5 of the colour times brightness down to 0
+00497de0	function	missile_plume_update	void __fastcall (int *trail)	The plume at a missile's tail, its axis tilted up to 0.05 either way, coloured by the look, its texture turned by 0.091 a tick
+005887ec	data	missile_trails	int *	200 trail records of 0x48: look, kind, missile, slot, cursors, ribbon, side ribbons, plume, glow, last scroll, next, previous
+005887f8	data	missile_trail_list	int *	The newest live trail; they link through +0x40
+005887c4	data	missile_trail_texture	TextureImage *	missiletrail\mtrail2
+00503958	data	missile_looks	MissileLook[11]	Each missile type's trail: its pieces, its ribbon's rings and colour, its side ribbons' and its plume's colour
+00462390	function	decoys_init	void (void)	Clears countermeasures, loads ships\decoy.shp into decoy_model and makes decoy_particles: life 100 and up to 10 more, rate 50, size 50 to 100, grey from 0.25 to nothing
+00462460	function	countermeasure_end	void __fastcall (int index)	Ends a countermeasure: every missile chasing it turns back to its target, and it ends in a sheet fireball of 200 over 50 ticks, drifting at its velocity
+004624f0	function	decoys_free	void (void)	Frees every countermeasure and decoy_particles
+00462900	function	decoys_update	void (void)	Once a frame after explosions_update: each countermeasure past its time ends; the rest turn about their Y axis by 0.01 for each tick and one more, drift by their velocity times the ticks, and stream their smoke
+00540610	data	countermeasures	byte[100][36]	Countermeasures in flight: live, until, owner slot, velocity, scene object and two emitters
+00541420	data	decoy_model	void *	ships\decoy.shp
+00541424	data	decoy_particles	ParticleTemplate *	The countermeasures' smoke
+00501c78	data	hud_beep_sounds	int[6][2]	hud_beep's sample of bank_stdsmp and volume for each sound: 15 to 20, at 60
+005656b0	data	hud_missile_armed	short	The armed entry of hud_missile_ring, at six o'clock
+0052a400	data	player_missiles_left	int	The ring's counts summed; nothing reads it
+00569978	data	missile_empty_warned_at	int	game_ticks until which Betty says no more that the armed missile has run out as a launch is refused
+00484060	function	hud_missile_ring_build	void (void)	Builds hud_missile_ring from the player's racks: an entry a type but the fuel pod, counts summed, the middle entry armed and the places round it
+00412820	function	player_launch_missile	void __fastcall (int slot)	LAUNCH MISSILE: nothing with missiles disabled or jumping; the Kamov lets its launched craft go; types 1 to 5, 7 and 8 need the lock (else stdsmp 1 and, with none left, betty 0 at most once in 500 ticks); cloaked outside multiplayer drops the cloak; opens window 2 held; launches from the first rack of the armed type with a missile, at the target while locked; counts one off the ring
+0057dff0	data	missile_lock_state	MissileLockState	The player's lock: 0 idle, 1 closing, 2 waiting out the lock time, 3 locked, 5 lost
+0057dfec	data	missile_lock_ticks	int	From minus the armed type's lock time up while the lock builds and holds; down as it is lost
+0057e000	data	missile_lock_turn	int	The ticks past the lock a lost lock kept, which turn the rings in degrees
+0057dfb8	data	missile_lock_type	int	The missile type the lock began on
+0057dfe4	data	missile_lock_entry	OrderEntry *	The player's Player Control entry, refreshed each frame
+0057dfc8	data	missile_lock_point	Vec3	Where the lock rings close in on: the target node while the lock holds
+0057dfc0	data	missile_lock_build_voice	int	The voice meant for the lock's building sound; starts 0, never -1, so the sound never plays
+0057dff4	data	lock_rings	void *[3]	The lock's three ring objects over lock_ring_mesh
+0057dfc4	data	lock_ring_mesh	void *	A square 256 across over tarring
+00491080	function	lock_ring_mesh_create	void (void)	Makes lock_ring_mesh: one quad of 4 corners at 128 either way over tarring, its own coordinates, lit and added
+004911d0	function	lock_rings_init	void (void)	Makes lock_rings, each over a quarter of tarring, and sets missile_lock_state to 0
+004af190	function	player_missile_guiding	bool (void)	Whether a live missile the player launched still has a target
+00539a94	data	camera_missile	int	The missile record the missile view (0x12) follows
+00539a7c	data	camera_missile_gone	int	Set once the missile the missile view follows has ended
+0045e500	function	object_loadout_by_tier	void __fastcall (GameObject *object, int tier)	Rack types for each missile attachment (kind 0) of the root's child parts: the attachment's id for the tier (+0x34 + 4 * tier); the player's ship in simulator mode 1 or missions 30 to 35 gets 5, 3, 1 in turn
+0045e1a0	function	object_fit_missiles	void __fastcall (GameObject *object, bool multiplayer_models)	Hangs each rack's pod or missile (attachment_models kind 0, the second model in multiplayer) on the missile attachments of the root's child parts, its count from the model table; a type below 0 leaves count 0 and stops the fitting there; fatal past 20
+00491320	function	lock_rings_free	void (void)	Frees the lock rings and their mesh
+00456a80	function	radio_missile_warning	void (void)	While a missile homes on the player's ship in action, at most every 1000 ticks, Moose says one of plck_001 to plck_008
+0041a390	function	launch_tube_boost	void __fastcall (int slot)	A stage of the Launch order: throttle 2 at the carrier's velocity with sound 0x18 and a trail of the torpedo's look for 200 ticks, then flies forward, pops the order, becomes targetable and collides, and posts Launched
+00461c40	function	camera_set_view_call	void __fastcall (int view, int object, bool force, bool unknown)	Calls camera_set_view
+00494e10	function	missiles_free	void (void)	Frees the missile and trail pools and clears missiles_initialised
+0057e020	data	missile_lock_target	OrderEntry	The target and component the lock began on, at +4 and +6, laid out as an order entry for ai_target_node
+0057dfe8	data	missile_lock_unused	int	Counted in lock states 2, 3 and 5, capped at 90; never read
+0057e014	data	lock_ring_angles	float[3]	Each lock ring's own turn this frame
+0057bf50	data	enemy_lock_voice	int	stdsmp sound 0 on voice 1, played again while the enemy lock light shows; -1 for none
+00562df0	data	campaign_tier	int	The tier fighters asked for tier 0 take in single player: 0, then 1 after mission 11, 2 after 19, 3 after 21
+005887fc	data	missile_net_ids	int[8][200]	In a network game, each remote player's missile id to a local record, -1 for none
+00588400	data	player_loadouts	byte[8][84]	The loadout screen's choice for each player slot, 0x54 bytes: the ship, then 20 rack types, -1 for none
+005883b4	data	skip_briefing	byte	Set when a mission starts without its briefing and loadout; the player's ship then takes the tier's loadout

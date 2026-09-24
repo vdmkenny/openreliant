@@ -1,12 +1,10 @@
 //! `C:\lancer\game\shockwave.cpp`: the rings that spread out from an explosion, fading as they go,
 //! and what they do to what they pass.
 //!
-//! Ported: the rings, a blast's (`explode.blast`) and a halting torpedo's
-//! ([`aiexplode.zig`](aiexplode.zig)), and what those do to the player. **Not ported:** the
-//! callers of the rest, and what those do: `0x00472AB0`'s pair of kind 3 in `explode.cpp`
-//! ([#41](https://github.com/vdmkenny/openreliant/issues/41)), and a missile's end
-//! (`0x00495870`), which sets off kind 5 or 6 by the missile's type
-//! ([#39](https://github.com/vdmkenny/openreliant/issues/39)).
+//! Ported: the rings, a blast's (`explode.blast`), a halting torpedo's
+//! ([`aiexplode.zig`](aiexplode.zig)) and a Havoc's and an Imp's ([`missiles.zig`](missiles.zig)),
+//! and what those do. **Not ported:** `0x00472AB0`'s pair of kind 3 in `explode.cpp`
+//! ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -18,8 +16,10 @@ const srapiext = @import("../surrender/surrenderlib/srapiext.zig");
 const srcore = @import("../surrender/surrenderlib/srcore.zig");
 const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
 const camera = @import("camera.zig");
+const aigeneric = @import("aigeneric.zig");
 const collision = @import("collision.zig");
 const gameobj = @import("gameobj.zig");
+const orders = @import("ai/orders.zig");
 const matmanager = @import("matmanager.zig");
 const table = @import("table.zig");
 const xtrabits = @import("xtrabits.zig");
@@ -45,12 +45,11 @@ pub const Kind = enum(u4) {
     _unknown_3 = 3,
     /// **Unknown.** No caller makes one: it does nothing but show.
     _unknown_4 = 4,
-    /// **Unknown.** `0x00495870`'s: it pushes the ships of other sides it passes away (order
-    /// `0x72`).
-    _unknown_5 = 5,
-    /// **Unknown.** `0x00495870`'s: it damages each quadrant of the ships of other sides it passes
-    /// by 50 more than the quadrant's shield holds.
-    _unknown_6 = 6,
+    /// A Havoc's end's (`missiles.end`): it pushes the ships of other sides it passes away,
+    /// disrupted (`Shockwave.strike`).
+    havoc = 5,
+    /// An Imp's end's: it empties the shields of the ships of other sides it passes.
+    imp = 6,
     /// **Unknown.** No caller makes one: unseen, it damages the player as it passes, by its
     /// owner's type.
     _unknown_7 = 7,
@@ -63,8 +62,8 @@ pub const Kind = enum(u4) {
             .blast_02 => .rng_02,
             .blast_03 => .rng_03,
             .blast_04 => .rng_04,
-            ._unknown_3, ._unknown_6, ._unknown_7, .torpedo => .rng_01,
-            ._unknown_4, ._unknown_5 => .rng_06,
+            ._unknown_3, .imp, ._unknown_7, .torpedo => .rng_01,
+            ._unknown_4, .havoc => .rng_06,
         };
     }
 
@@ -80,6 +79,8 @@ pub const Spec = struct {
     life: i32,
     velocity: Vector = @splat(0),
     owner: u16,
+    /// The side a missile's shockwave spares, its launcher's; null for the rest.
+    side: ?gameobj.Side(i32) = null,
 };
 
 /// A shockwave spreading (0x2C bytes): a ring that grows from nothing to its size over its life,
@@ -97,20 +98,88 @@ pub const Shockwave = struct {
     done: f32 = 0,
     reach: f32 = 0,
     /// How far it drifts a tick (`+0x08`), how far it spreads (`+0x14`), when it was set off and
-    /// for how long (`+0x18`, `+0x1C`), and whose it is (`+0x20`). The game also keeps the side
-    /// of `0x00495870`'s (`+0x24`), which only kinds 5 and 6 read.
+    /// for how long (`+0x18`, `+0x1C`), whose it is (`+0x20`), and the side a missile's spares
+    /// (`+0x24`).
     velocity: Vector,
     size: f32,
     born: i32,
     life: i32,
     owner: u16,
+    side: ?gameobj.Side(i32),
 
-    /// Whether the ring passed the player's ship this frame: from how far it had spread to how
+    /// Whether the ring passed what stands at `at` this frame: from how far it had spread to how
     /// far it has now.
-    fn passesPlayer(wave: *const Shockwave, world: gameobj.World, reach: f32) bool {
-        const player = &world.objects.slots[world.objects.player];
-        const distance = math.distance(wave.at, player.drawn.position);
+    fn passes(wave: *const Shockwave, at: Vector, reach: f32) bool {
+        const distance = math.distance(wave.at, at);
         return wave.reach <= distance and distance < reach;
+    }
+
+    fn passesPlayer(wave: *const Shockwave, world: gameobj.World, reach: f32) bool {
+        return wave.passes(world.objects.slots[world.objects.player].drawn.position, reach);
+    }
+
+    /// Whether a shockwave can harm the object now: not one that lists components, a stand-in, one
+    /// exploding or disabled, or one another shockwave harmed less than `harm_pause` ticks ago.
+    fn harms(object: *const gameobj.GameObject, frame_start: i32) bool {
+        if (object.flags.components or object.flags.stand_in or object.flags.exploding or object.flags.disabled) return false;
+        return object.shockwave_until <= frame_start;
+    }
+
+    /// A Havoc's or an Imp's shockwave passing the ships of other sides than its missile's, but
+    /// torpedoes and the Ripper, each as `harms` allows, and shaking the player's view as it
+    /// passes the player's ship. A Havoc's pushes each away from where it stands, into Disrupted
+    /// (`aiorders.disruptedInit`), unless its order ranks above that: hardest while the ring is
+    /// young, by the ship's mass times the ring's size over its life, and for as long as 500 ticks
+    /// for a player's ship and 2000 for another's, both less as the ring grows past a third of its
+    /// life. An Imp's flickers each one's shield bubble for a second and damages each quadrant by
+    /// 50 more than its shield holds, none of it passing to the armour, as if the ship had hit
+    /// itself.
+    fn strike(wave: *const Shockwave, world: gameobj.World, done: f32, reach: f32, how: Strike) void {
+        const all = world.objects;
+        const now = world.clock.frame_start;
+        var walk = all.walk();
+        while (walk.next()) |index| {
+            const slot = &all.slots[index];
+            const object = &slot.object;
+            if (!harms(object, now) or object.type == .torpedo or object.type == .ripper) continue;
+            if (wave.side) |own| if (object.side == own) continue;
+            if (!wave.passes(slot.drawn.position, reach)) continue;
+            object.shockwave_until = now + harm_pause;
+            if (index == all.player) shake(world, done);
+            switch (how) {
+                .disrupt => wave.disrupt(world, index, done),
+                .drain => {
+                    if (slot.shield) |bubble| {
+                        bubble.flicker_until = now + imp_flicker;
+                        bubble.struck = now;
+                    }
+                    for (std.enums.values(collision.Quadrant)) |quadrant| {
+                        collision.damage(world, index, quadrant, object.shields.get(quadrant) + imp_drain, 0, index, .missile);
+                    }
+                },
+            }
+        }
+    }
+
+    /// What a missile's shockwave does to a ship it passes.
+    const Strike = enum { disrupt, drain };
+
+    /// A Havoc's shockwave's push on the ship at `index`, `done` of the way through its life.
+    fn disrupt(wave: *const Shockwave, world: gameobj.World, index: u16, done: f32) void {
+        const all = world.objects;
+        const slot = &all.slots[index];
+        if (slot.object.order_count > 0) {
+            const running = orders.info(slot.orders[0].order);
+            if (running) |info| if (info.priority > orders.info(.disrupted).?.priority) return;
+        }
+        const ctx: aigeneric.Context = .{ .world = world, .clock = world.clock };
+        const took = aigeneric.push(ctx, index, .disrupted, .none) catch false;
+        if (!took) return;
+        const strength = @min(disrupt_strength * (1 - done), 1);
+        const ticks: f32 = if (index < all.players) disrupt_player_ticks else disrupt_ticks;
+        const away = math.normalize(slot.drawn.position - wave.at);
+        const push = away * @as(Vector, @splat(slot.object.mass * wave.size * strength / @as(f32, @floatFromInt(wave.life))));
+        slot.orders[0].data = .{ .disrupted = .{ .ticks = @intFromFloat(strength * ticks), .push = push } };
     }
 
     /// A torpedo's shockwave passing the player's ship shakes the view and damages each quadrant by
@@ -124,9 +193,7 @@ pub const Shockwave = struct {
     fn harmPlayer(wave: *const Shockwave, world: gameobj.World, done: f32, reach: f32) void {
         const all = world.objects;
         const object = &all.slots[all.player].object;
-        if (object.flags.components or object.flags.stand_in or object.flags.exploding or object.flags.disabled) return;
-        if (object.shockwave_until > world.clock.frame_start) return;
-        if (!wave.passesPlayer(world, reach)) return;
+        if (!harms(object, world.clock.frame_start) or !wave.passesPlayer(world, reach)) return;
         shake(world, done);
         object.shockwave_until = world.clock.frame_start + harm_pause;
         const value = (1 - done) * wave.size * torpedo_harm;
@@ -188,6 +255,18 @@ const shake_scale: f32 = 10;
 const harm_pause = 50;
 const torpedo_harm: f32 = 0.05;
 
+/// A Havoc's shockwave's push: its strength is 1.5 times what is left of its life, up to 1, and
+/// the ticks it disrupts a player's ship and another for at full strength (`0x004DC4E0`,
+/// `0x004DC4A8`, `0x004DC438`).
+const disrupt_strength: f32 = 1.5;
+const disrupt_player_ticks: f32 = 500;
+const disrupt_ticks: f32 = 2000;
+
+/// How long an Imp's shockwave flickers a bubble, and how far past its shield it damages a
+/// quadrant (`0x004DC48C`).
+const imp_flicker = 100;
+const imp_drain: f32 = 50;
+
 /// The shockwaves spreading, and the rings they show.
 pub const Shockwaves = struct {
     meshes: std.EnumArray(Ring, srapiext.Mesh),
@@ -241,6 +320,7 @@ pub const Shockwaves = struct {
             .born = clock.frame_start,
             .life = spec.life,
             .owner = spec.owner,
+            .side = spec.side,
         };
     }
 
@@ -264,7 +344,9 @@ pub const Shockwaves = struct {
             switch (wave.kind) {
                 .blast_02, .blast_03, .blast_04 => if (wave.passesPlayer(world, reach)) shake(world, done),
                 .torpedo => wave.harmPlayer(world, done, reach),
-                ._unknown_3, ._unknown_4, ._unknown_5, ._unknown_6, ._unknown_7 => {},
+                .havoc => wave.strike(world, done, reach, .disrupt),
+                .imp => wave.strike(world, done, reach, .drain),
+                ._unknown_3, ._unknown_4, ._unknown_7 => {},
             }
             wave.reach = reach;
         }
@@ -375,7 +457,7 @@ test Ring {
     const octagon = try ringMesh(std.testing.allocator, (try built.textures.table.find("rng_03")).?, .octagon);
     defer octagon.deinit(std.testing.allocator);
     try std.testing.expectEqual(16, octagon.positions.len);
-    try std.testing.expectEqual(Ring.rng_06, Kind._unknown_5.ring());
+    try std.testing.expectEqual(Ring.rng_06, Kind.havoc.ring());
 }
 
 test Shockwaves {

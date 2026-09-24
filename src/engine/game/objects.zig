@@ -232,62 +232,255 @@ const hit_stack = 100;
 /// leaves, and the faces of a leaf the sphere reaches are tested. A part with no tree is passed
 /// over, as is a hidden one. `place` must have run for the frame the sphere is given in.
 pub fn hitSphere(model: *const Model, source: *const shp.Model, at: Vector, radius: f32) ?Hit {
-    var best = radius * radius;
-    var hit: ?Hit = null;
-    for (model.parts, source.parts, 0..) |part, data, index| {
-        if (part.hidden or data.nodes.len == 0 or data.meshes.len == 0) continue;
-        const level = data.meshes[0];
-        // The sphere in the part's frame, which the tree's boxes and the faces are given in.
-        const local = math.transformTransposed(part.object.orientation, at - part.object.position);
+    const Sphere = struct {
+        /// Its centre in the part's frame, which the tree's boxes and the faces are given in.
+        local: Vector,
+        radius: f32,
+        best: f32,
+        hit: ?Hit = null,
 
-        var stack: [hit_stack]u32 = undefined;
-        var top: usize = 1;
-        stack[0] = 0;
-        // A well formed tree holds each node once, so a file that names one twice cannot keep the
-        // descent going.
-        var left = data.nodes.len;
-        while (top > 0 and left > 0) {
-            left -= 1;
-            top -= 1;
-            const at_node = stack[top];
-            if (at_node >= data.nodes.len) continue;
-            const node = data.nodes[at_node];
-            const inside = math.transformTransposed(node.orientation, local - gameobj.vector(node.centre));
+        fn reaches(sphere: @This(), node: shp.TreeNode) bool {
+            const inside = @abs(math.transformTransposed(node.orientation, sphere.local - gameobj.vector(node.centre)));
+            return @reduce(.And, inside <= gameobj.vector(node.half_size) + @as(Vector, @splat(sphere.radius)));
+        }
+
+        fn face(sphere: *@This(), part: usize, index: usize, triangle: [3]Vector, normal: Vector) void {
+            // Only a sphere in front of the face, and near enough, is worth the triangle.
+            const ahead = math.dot(sphere.local - triangle[0], normal);
+            if (ahead < 0 or ahead * ahead > sphere.best) return;
+            const point = closestOnTriangle(sphere.local, triangle);
+            const away = math.lengthSquared(sphere.local - point);
+            if (away >= sphere.best) return;
+            sphere.best = away;
+            sphere.hit = .{ .part = part, .face = index, .point = point, .normal = normal, .distance = @sqrt(away) };
+        }
+    };
+    var sphere: Sphere = .{ .local = undefined, .radius = radius, .best = radius * radius };
+    var parts = shownParts(model, source);
+    while (parts.next()) |part| {
+        sphere.local = math.transformTransposed(part.object.orientation, at - part.object.position);
+        descend(source.parts[parts.at - 1], parts.at - 1, &sphere);
+    }
+    return sphere.hit;
+}
+
+/// What a segment crosses of a model: the part and the face, and where, in the part's frame.
+pub const Crossing = struct {
+    part: usize,
+    face: usize,
+    point: Vector,
+    normal: Vector,
+};
+
+/// `object_hit_test` with `missile_hull_test` (`0x004959A0`) and `0x0049BAE0`: the face of the
+/// model a segment crosses, or null where it crosses none. Each part's collision tree is descended
+/// through the boxes the segment meets, and at a leaf each face the segment starts in front of, no
+/// further off than the segment is long, is tested. The last face crossed counts, not the nearest.
+/// `place` must have run for the frame the segment is given in.
+pub fn hitSegment(model: *const Model, source: *const shp.Model, from: Vector, to: Vector) ?Crossing {
+    const Crosser = struct {
+        /// Its ends in the part's frame.
+        from: Vector,
+        to: Vector,
+        reach: f32,
+        hit: ?Crossing = null,
+
+        fn reaches(segment: @This(), node: shp.TreeNode) bool {
+            const centre = gameobj.vector(node.centre);
             const half = gameobj.vector(node.half_size);
-            if (@abs(inside[0]) > half[0] + radius) continue;
-            if (@abs(inside[1]) > half[1] + radius) continue;
-            if (@abs(inside[2]) > half[2] + radius) continue;
+            const start = math.transformTransposed(node.orientation, segment.from - centre);
+            const end = math.transformTransposed(node.orientation, segment.to - centre);
+            return boxEntry(start, end, .{ -half, half }) != null;
+        }
 
-            const faces = data.node_faces[at_node];
-            if (faces.len == 0) {
-                for (node.children) |child| {
-                    if (child < 0 or top >= stack.len) continue;
-                    stack[top] = @intCast(child);
-                    top += 1;
-                }
-                continue;
+        fn face(segment: *@This(), part: usize, index: usize, triangle: [3]Vector, normal: Vector) void {
+            const ahead = math.dot(segment.from - triangle[0], normal);
+            if (ahead < 0 or ahead * ahead > segment.reach) return;
+            const point = segmentMeetsTriangle(segment.from, segment.to, triangle) orelse return;
+            segment.hit = .{ .part = part, .face = index, .point = point, .normal = normal };
+        }
+    };
+    var segment: Crosser = .{ .from = undefined, .to = undefined, .reach = math.lengthSquared(to - from) };
+    var parts = shownParts(model, source);
+    while (parts.next()) |part| {
+        segment.from = math.transformTransposed(part.object.orientation, from - part.object.position);
+        segment.to = math.transformTransposed(part.object.orientation, to - part.object.position);
+        descend(source.parts[parts.at - 1], parts.at - 1, &segment);
+    }
+    return segment.hit;
+}
+
+/// The parts of a model that are tested for what meets them: shown, with a collision tree and a
+/// mesh.
+fn shownParts(model: *const Model, source: *const shp.Model) ShownParts {
+    return .{ .model = model, .source = source };
+}
+
+const ShownParts = struct {
+    model: *const Model,
+    source: *const shp.Model,
+    /// The part after the one handed out last.
+    at: usize = 0,
+
+    fn next(each: *ShownParts) ?*const Model.Part {
+        while (each.at < @min(each.model.parts.len, each.source.parts.len)) {
+            const index = each.at;
+            each.at += 1;
+            const data = each.source.parts[index];
+            if (each.model.parts[index].hidden or data.nodes.len == 0 or data.meshes.len == 0) continue;
+            return &each.model.parts[index];
+        }
+        return null;
+    }
+};
+
+/// `node_hit_test` for one part: its collision tree descended from the root box, passing over the
+/// boxes `query.reaches` does not, with each triangle of a leaf it reaches handed to `query.face`,
+/// in the leaf's order. The children of a box are tested last first.
+fn descend(data: shp.PartData, part: usize, query: anytype) void {
+    const level = data.meshes[0];
+    var stack: [hit_stack]u32 = undefined;
+    var top: usize = 1;
+    stack[0] = 0;
+    // A well formed tree holds each node once, so a file that names one twice cannot keep the
+    // descent going.
+    var left = data.nodes.len;
+    while (top > 0 and left > 0) {
+        left -= 1;
+        top -= 1;
+        const at_node = stack[top];
+        if (at_node >= data.nodes.len) continue;
+        const node = data.nodes[at_node];
+        if (!query.reaches(node)) continue;
+
+        const faces = data.node_faces[at_node];
+        if (faces.len == 0) {
+            for (node.children) |child| {
+                if (child < 0 or top >= stack.len) continue;
+                stack[top] = @intCast(child);
+                top += 1;
             }
-            for (faces) |face| {
-                if (face >= level.faces.len) continue;
-                const record = level.faces[face];
-                const triangle: [3]Vector = .{
-                    corner(level, record.vertices[0]) orelse continue,
-                    corner(level, record.vertices[1]) orelse continue,
-                    corner(level, record.vertices[2]) orelse continue,
-                };
-                const normal = gameobj.vector(record.normal);
-                // Only a sphere in front of the face, and near enough, is worth the triangle.
-                const ahead = math.dot(local - triangle[0], normal);
-                if (ahead < 0 or ahead * ahead > best) continue;
-                const point = closestOnTriangle(local, triangle);
-                const away = math.lengthSquared(local - point);
-                if (away >= best) continue;
-                best = away;
-                hit = .{ .part = index, .face = face, .point = point, .normal = normal, .distance = @sqrt(away) };
-            }
+            continue;
+        }
+        for (faces) |face| {
+            if (face >= level.faces.len) continue;
+            const record = level.faces[face];
+            const triangle: [3]Vector = .{
+                corner(level, record.vertices[0]) orelse continue,
+                corner(level, record.vertices[1]) orelse continue,
+                corner(level, record.vertices[2]) orelse continue,
+            };
+            query.face(part, face, triangle, gameobj.vector(record.normal));
         }
     }
-    return hit;
+}
+
+/// Where the segment from `from` to `to` crosses a triangle, or null where it misses it
+/// (`0x004AD700`): solved for how far along the segment and across the triangle's two edges from
+/// its last corner, each within 0 and 1 and the two edges' together too. A segment in the
+/// triangle's plane misses it.
+fn segmentMeetsTriangle(from: Vector, to: Vector, triangle: [3]Vector) ?Vector {
+    const span = to - from;
+    const first = triangle[0] - triangle[2];
+    const second = triangle[1] - triangle[2];
+    const across = math.cross(span, second);
+    const determinant = math.dot(first, across);
+    if (determinant == 0) return null;
+    const start = from - triangle[2];
+    const u = math.dot(start, across) / determinant;
+    const turned = math.cross(start, first);
+    const v = math.dot(span, turned) / determinant;
+    const t = math.dot(second, turned) / determinant;
+    if (t < 0 or t > 1 or u < 0 or v < 0 or u + v > 1) return null;
+    return from + span * @as(Vector, @splat(t));
+}
+
+/// A segment from `from` to `to`, for what it passes.
+pub const Segment = struct {
+    from: Vector,
+    span: Vector,
+
+    pub fn between(from: Vector, to: Vector) Segment {
+        return .{ .from = from, .span = to - from };
+    }
+
+    /// How far along it passes nearest `at`, as a share of its length within 0 and 1.
+    pub fn nearest(segment: Segment, at: Vector) f32 {
+        return std.math.clamp(math.dot(segment.span, at - segment.from) / math.dot(segment.span, segment.span), 0, 1);
+    }
+
+    /// How far from `at` it passes at `along`, squared.
+    pub fn missSquared(segment: Segment, at: Vector, along: f32) f32 {
+        return math.lengthSquared(segment.point(along) - at);
+    }
+
+    /// How far along it first meets the sphere of `radius` about `at`, as a share of its length.
+    pub fn sphereEntry(segment: Segment, at: Vector, radius: f32) f32 {
+        const to = at - segment.from;
+        const a = math.dot(segment.span, segment.span);
+        const b = math.dot(segment.span, to) * -2;
+        const c = math.dot(to, to) - radius * radius;
+        const root = @sqrt(@max(b * b - 4 * a * c, 0));
+        return (-b - root) / (a + a);
+    }
+
+    /// The point `along` of the way from its start.
+    pub fn point(segment: Segment, along: f32) Vector {
+        return segment.from + segment.span * @as(Vector, @splat(along));
+    }
+};
+
+/// Which of a model's parts a segment's box test walks, and which of those it meets counts.
+pub const PartWalk = enum {
+    /// Every shown part; the last met (`bullet_hull_hit`, `0x00479940`).
+    last_shown,
+    /// The parts hanging from the root; the first met (`missile_hit_hull`, `0x00495BB0`, which
+    /// walks on with the segment cut short in the frame of the part met, not the world's, so no
+    /// part after it is truly tested).
+    first_at_root,
+};
+
+/// How far along the segment from `from` to `to` it enters the box a part of the model stands in,
+/// the part `walk` picks, by its first level's mesh: how a shot or a missile finds what it has hit
+/// of a hull. Null where it enters none.
+pub fn partEntry(model: *const Model, from: Vector, to: Vector, walk: PartWalk) ?f32 {
+    var entry: ?f32 = null;
+    for (model.parts) |*part| {
+        switch (walk) {
+            .last_shown => if (part.hidden) continue,
+            .first_at_root => if (part.parent != null) continue,
+        }
+        if (part.object.levels.len == 0) continue;
+        const mesh = part.object.levels[0].mesh;
+        // The segment in the part's own frame, where its mesh's box stands.
+        const start = math.transformTransposed(part.object.orientation, from - part.object.position);
+        const end = math.transformTransposed(part.object.orientation, to - part.object.position);
+        if (boxEntry(start, end, mesh.bounds)) |along| {
+            entry = along;
+            if (walk == .first_at_root) break;
+        }
+    }
+    return entry;
+}
+
+/// How far along a segment it enters a box (`segment_meets_box`, `0x0049B6A0`), by the slab test:
+/// 0 where it starts inside; null where it misses.
+pub fn boxEntry(from: Vector, to: Vector, bounds: [2]Vector) ?f32 {
+    var near: f32 = 0;
+    var far: f32 = 1;
+    const span = to - from;
+    inline for (0..3) |axis| {
+        if (span[axis] == 0) {
+            if (from[axis] < bounds[0][axis] or from[axis] > bounds[1][axis]) return null;
+        } else {
+            const first = (bounds[0][axis] - from[axis]) / span[axis];
+            const second = (bounds[1][axis] - from[axis]) / span[axis];
+            near = @max(near, @min(first, second));
+            far = @min(far, @max(first, second));
+            if (near > far) return null;
+        }
+    }
+    return near;
 }
 
 /// A face's corner, or null where the file names a vertex the level does not hold.
@@ -334,6 +527,40 @@ fn closestOnTriangle(from: Vector, triangle: [3]Vector) Vector {
     return triangle[0] + ab * @as(Vector, @splat(vb * denominator)) + ac * @as(Vector, @splat(vc * denominator));
 }
 
+test boxEntry {
+    const bounds: [2]Vector = .{ .{ -10, -10, -10 }, .{ 10, 10, 10 } };
+    // Through the middle, entering 40 of 100 in; from a corner; ending inside; and from inside.
+    try std.testing.expectEqual(0.4, boxEntry(.{ 0, 0, -50 }, .{ 0, 0, 50 }, bounds));
+    try std.testing.expect(boxEntry(.{ -50, -50, -50 }, .{ 50, 50, 50 }, bounds) != null);
+    try std.testing.expect(boxEntry(.{ 0, 0, -50 }, .{ 0, 0, 0 }, bounds) != null);
+    try std.testing.expectEqual(0, boxEntry(.{ 0, 0, 0 }, .{ 0, 0, 50 }, bounds));
+    // Past it, short of it, and alongside it.
+    try std.testing.expectEqual(null, boxEntry(.{ 50, 0, -50 }, .{ 50, 0, 50 }, bounds));
+    try std.testing.expectEqual(null, boxEntry(.{ 0, 0, -50 }, .{ 0, 0, -20 }, bounds));
+    try std.testing.expectEqual(null, boxEntry(.{ 0, 20, -50 }, .{ 0, 20, 50 }, bounds));
+}
+
+test segmentMeetsTriangle {
+    const triangle: [3]Vector = .{ .{ -10, -10, 0 }, .{ 10, -10, 0 }, .{ 0, 10, 0 } };
+    // Through it, a quarter of the way along, and where.
+    try std.testing.expectEqual(Vector{ 0, 0, 0 }, segmentMeetsTriangle(.{ 0, 0, -25 }, .{ 0, 0, 75 }, triangle).?);
+    // Short of it, beside it, and along its plane.
+    try std.testing.expectEqual(null, segmentMeetsTriangle(.{ 0, 0, -25 }, .{ 0, 0, -5 }, triangle));
+    try std.testing.expectEqual(null, segmentMeetsTriangle(.{ 20, 0, -25 }, .{ 20, 0, 75 }, triangle));
+    try std.testing.expectEqual(null, segmentMeetsTriangle(.{ -20, 0, 0 }, .{ 20, 0, 0 }, triangle));
+}
+
+test Segment {
+    const segment: Segment = .between(.{ 0, 0, -100 }, .{ 0, 0, 100 });
+    // Nearest a point off its middle, and one past its end.
+    try std.testing.expectEqual(0.5, segment.nearest(.{ 30, 0, 0 }));
+    try std.testing.expectEqual(1, segment.nearest(.{ 0, 0, 500 }));
+    try std.testing.expectEqual(900, segment.missSquared(.{ 30, 0, 0 }, 0.5));
+    // Into a sphere of 50 about the middle a quarter of the way along.
+    try std.testing.expectEqual(0.25, segment.sphereEntry(@splat(0), 50));
+    try std.testing.expectEqual(Vector{ 0, 0, -50 }, segment.point(0.25));
+}
+
 test hitSphere {
     const gpa = std.testing.allocator;
     var model: create.testing.Model = undefined;
@@ -354,6 +581,30 @@ test hitSphere {
     // Behind the face, and too far off to the side, it meets nothing.
     try std.testing.expectEqual(null, hitSphere(&live, &model.source, .{ 0, 0, 60 }, 100));
     try std.testing.expectEqual(null, hitSphere(&live, &model.source, .{ 900, 0, -60 }, 100));
+}
+
+test hitSegment {
+    const gpa = std.testing.allocator;
+    var model: create.testing.Model = undefined;
+    try model.init(gpa);
+    defer model.deinit(gpa);
+    model.withHull();
+
+    var live = try Model.create(gpa, &model.source, &model.loaded, .{});
+    defer live.deinit(gpa);
+    live.place(@splat(0), math.identity);
+
+    // The part is a square in the XY plane facing -Z; a segment through it from in front crosses
+    // it where it passes.
+    const hit = hitSegment(&live, &model.source, .{ 5, 5, -60 }, .{ 5, 5, 60 }) orelse return error.TestExpectedHit;
+    try std.testing.expectEqual(0, hit.part);
+    try std.testing.expectEqual(math.Vector{ 5, 5, 0 }, hit.point);
+    try std.testing.expectEqual(math.Vector{ 0, 0, -1 }, hit.normal);
+
+    // From behind, short of it, and beside it, it crosses nothing.
+    try std.testing.expectEqual(null, hitSegment(&live, &model.source, .{ 5, 5, 60 }, .{ 5, 5, -60 }));
+    try std.testing.expectEqual(null, hitSegment(&live, &model.source, .{ 5, 5, -60 }, .{ 5, 5, -30 }));
+    try std.testing.expectEqual(null, hitSegment(&live, &model.source, .{ 900, 0, -60 }, .{ 900, 0, 60 }));
 }
 
 /// `node_tree_frames` (`0x0049A880`) for an object, once a frame before it is drawn and before the
@@ -390,6 +641,10 @@ pub const Model = struct {
     lights: []Light,
     glows: []Glow,
     mounts: []Mount,
+    /// What its missile hardpoints hold, a rack each, as `object_fit_missiles` hangs it: a pod, or
+    /// a missile on its rail, which a launch takes its model from. Empty until the racks are
+    /// fitted.
+    hung: []?Mount = &.{},
     /// Where the model's origin lies from the object's, less (`GameObject + 0x524`): the centres
     /// of mass `recentre` moved the origin to.
     centre: Vector = @splat(0),
@@ -544,6 +799,11 @@ pub const Model = struct {
         origin: Vector,
         orientation: math.Matrix,
         model: Model,
+
+        /// Where the attachment stands in the world, for its part standing at `carrier`.
+        pub fn within(mount: Mount, carrier: math.Place) math.Place {
+            return (math.Place{ .position = mount.origin, .orientation = mount.orientation }).within(carrier);
+        }
     };
 
     pub const Part = struct {
@@ -916,7 +1176,8 @@ pub const Model = struct {
             part.origin = local.position;
             part.turn = local.orientation;
         }
-        for (model.mounts) |*mount| mount.model.frame(fraction);
+        var each = model.carried();
+        while (each.next()) |mount| mount.model.frame(fraction);
     }
 
     /// One light for each attachment of kind `light` a part carries, at its place in the model
@@ -1017,8 +1278,10 @@ pub const Model = struct {
     }
 
     pub fn deinit(model: Model, gpa: Allocator) void {
-        for (model.mounts) |mount| mount.model.deinit(gpa);
+        var each = model.carried();
+        while (each.next()) |mount| mount.model.deinit(gpa);
         gpa.free(model.mounts);
+        gpa.free(model.hung);
         gpa.free(model.parts);
         gpa.free(model.order);
         gpa.free(model.lights);
@@ -1070,15 +1333,38 @@ pub const Model = struct {
             const unturned = part.turn[0] == 1 and part.turn[4] == 1 and part.turn[8] == 1;
             part.object.orientation = if (unturned) turn else math.product(turn, part.turn);
         }
-        for (model.mounts) |*mount| {
+        var each = model.carried();
+        while (each.next()) |mount| {
             const carrier = model.parts[mount.part].object;
             // The attachment where the part that carries it stands.
-            const on = (math.Place{ .position = mount.origin, .orientation = mount.orientation })
-                .within(.{ .position = carrier.position, .orientation = carrier.orientation });
+            const on = mount.within(.{ .position = carrier.position, .orientation = carrier.orientation });
             // The mounted model stands on its own centre of mass, so its origin goes back by it.
             mount.model.place(math.transform(on.orientation, mount.model.centre) + on.position, on.orientation);
         }
     }
+
+    /// Each model it carries: those its attachments mount, then those its missile hardpoints
+    /// hold.
+    pub fn carried(model: Model) Carried {
+        return .{ .mounts = model.mounts, .hung = model.hung };
+    }
+
+    pub const Carried = struct {
+        mounts: []Mount,
+        hung: []?Mount,
+
+        pub fn next(each: *Carried) ?*Mount {
+            if (each.mounts.len > 0) {
+                defer each.mounts = each.mounts[1..];
+                return &each.mounts[0];
+            }
+            while (each.hung.len > 0) {
+                defer each.hung = each.hung[1..];
+                if (each.hung[0]) |*mount| return mount;
+            }
+            return null;
+        }
+    };
 
     /// Adds each shown part's object to `layer`, the world's or, for a cockpit, the overlay
     /// (`node_draw`, `0x0049A8C0`, for the model's part nodes), then the lights, unless the view
@@ -1122,7 +1408,8 @@ pub const Model = struct {
             glow.object.orientation = math.product(math.product(carrier.orientation, glow.orientation), scale);
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &glow.object }, layer);
         }
-        for (model.mounts) |*mount| {
+        var each = model.carried();
+        while (each.next()) |mount| {
             // What a hidden part carries is hidden with it, as a light and a glow are.
             if (model.parts[mount.part].hidden) continue;
             try mount.model.draw(gpa, scene, layer, view);
@@ -1135,7 +1422,8 @@ pub const Model = struct {
         for (model.parts) |*part| {
             if (!part.hidden) try scene.casters.append(gpa, &part.object);
         }
-        for (model.mounts) |*mount| {
+        var each = model.carried();
+        while (each.next()) |mount| {
             if (!model.parts[mount.part].hidden) try mount.model.castShadows(gpa, scene);
         }
     }
@@ -1557,7 +1845,7 @@ test "a model's lights: their sprites, and the light a blinking one casts" {
         .position = .{ .x = 0, .y = 0, .z = 0 },
         .orientation = math.identity,
         .id = 0,
-        ._unknown_38 = @splat(0),
+        .later_tiers = @splat(0),
         .size = .{ 2, 3, 0 },
         .blink = .{ 0, 0 },
         .blink_phase = 0,
@@ -1796,7 +2084,7 @@ test "a gun attachment mounts the model its id names" {
         .position = .{ .x = 50, .y = 0, .z = 0 },
         .orientation = math.identity,
         .id = 0,
-        ._unknown_38 = @splat(0),
+        .later_tiers = @splat(0),
         .size = @splat(0),
         .blink = .{ 0, 0 },
         .blink_phase = 0,

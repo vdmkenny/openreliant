@@ -596,7 +596,7 @@ test breakUp {
     try model.init(gpa);
     defer model.deinit(gpa);
     const mission = &stage.mission;
-    const index = try create.createObject(mission.objects, &mission.tables, model.types(), null, .predator, @splat(0), &mission.random);
+    const index = try create.createObject(mission.objects, &mission.tables, model.types(), null, .predator, 0, @splat(0), &mission.random);
     const slot = &mission.objects.slots[index];
     slot.object.velocity = .{ .x = 0, .y = 0, .z = 8 };
 

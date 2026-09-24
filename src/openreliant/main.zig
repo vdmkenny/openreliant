@@ -106,7 +106,7 @@ const Doc = struct {
 
 /// Every option's help, which the compiler holds to having one for each.
 const docs: std.enums.EnumArray(Arg, Doc) = .init(.{
-    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, light worked out on encoded colours, no shadows, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings and particles as few and plain as the original's, a damaged ship's smoke as even as the original's, the shields' bubbles as coarse as the original's, the marker for a target out of sight placed as the original misplaces it, and the sound mixed plainly in stereo" },
+    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, light worked out on encoded colours, no shadows, motion that moves on with the game's ticks, lights from the latest shots only, an explosion's debris lit by every light, its fireballs, rings and particles as few and plain as the original's, a damaged ship's smoke as even as the original's, the shields' bubbles as coarse as the original's, the marker for a target out of sight placed as the original misplaces it, a missile's sound left where it was launched, and the sound mixed plainly in stereo" },
     .@"--ship" = .{ .section = .sandbox, .value = "<type>", .text = "the ship type to fly, by its number in shipstats.bin; 0, the Predator, by default" },
     .@"--view" = .{ .section = .sandbox, .value = "<0|1|2>", .text = "the view it starts in, as the game's settings keep it: 0 the cockpit; 1 the chase view; 2 no cockpit. The settings' own by default, which the pause menu's video screen changes" },
     .@"--difficulty" = .{ .section = .sandbox, .value = "<easy|medium|hard>", .text = "the game's difficulty: how hard hits land on your ship, and shots on the enemy; medium by default, as in the game" },
@@ -237,6 +237,8 @@ const Options = struct {
     edge_line: game.hud.EdgeLine = .from_tip,
     /// How the sound plays, or null for none.
     sound: ?platform.audio.Options = .{},
+    /// Where a missile's sound is heard from.
+    missile_sound: game.sound3d.MissileSound = .follows,
     /// The piece of music the sandbox plays, from `music\`, or none.
     music: ?[]const u8 = default_music,
 
@@ -292,6 +294,7 @@ const Options = struct {
                 options.shields = .original;
                 options.edge_line = .original;
                 if (options.sound) |*sound| sound.* = .{ .player = .software, .master = null };
+                options.missile_sound = .stays;
             },
             .@"--ship" => {
                 const ship = std.fmt.parseInt(usize, value, 0) catch return error.BadValue;
@@ -494,6 +497,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     const ship_stats = (try stats.File.parse(.ships, try directory.readFileAlloc(io, "shipstats.bin", arena, .limited(4 << 20)))).ships;
     // Every gun type's figures, which `stats_load_guns` reads.
     const gun_stats = (try stats.File.parse(.guns, try directory.readFileAlloc(io, "gunstats.bin", arena, .limited(4 << 20)))).guns;
+    // And every missile type's, which `stats_load_missiles` reads.
+    const missile_stats = (try stats.File.parse(.missiles, try directory.readFileAlloc(io, "missilestats.bin", arena, .limited(4 << 20)))).missiles;
     const pilot_stats = (try stats.File.parse(.pilots, try directory.readFileAlloc(io, "pilotstats.bin", arena, .limited(4 << 20)))).pilots;
     // The strings `language_init` reads out of `language.dll` at start-up.
     const strings: game.language.Language = try .load(arena, try .parse(try directory.readFileAlloc(io, game.language.file_name, arena, .limited(16 << 20))));
@@ -532,7 +537,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     const tables = try arena.create(game.create.Stats);
     tables.* = .initial;
     tables.load(ship_stats);
-    var sandbox: Sandbox = try .init(gpa, tables, gun_stats, pilot_stats, &rand, .{
+    var sandbox: Sandbox = try .init(gpa, tables, gun_stats, missile_stats, pilot_stats, &rand, .{
         .gpa = gpa,
         .resources = &resources,
         .textures = &textures,
@@ -576,10 +581,12 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     defer sound.shutdown();
     sound.volumes = .read(settings_file.profile);
     sound.objects = sandbox.objects;
+    sound.missile_sound = options.missile_sound;
     // `bank_stdsmp`, which the positional sounds of a frame play from, and `smp3d.fat`, which the
     // 3D sounds do.
     const stdsmp = try openreliant.fat.Bank.parse(try resources.readFile(arena, "stdsmp.fat"));
     sound.betty = try openreliant.fat.Bank.parse(try resources.readFile(arena, "betty.fat"));
+    sound.stdsmp = stdsmp;
     sound.open3D(try openreliant.fat.Bank.parse(try resources.readFile(arena, "smp3d.fat")));
 
     // The options' cockpit setting and the brightness, as `[Device]` keeps them, and the camera as
@@ -587,7 +594,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     const video = game.hudoptions.screens.Video;
     var cockpit_setting: camera.CockpitSetting = options.cockpit orelse @enumFromInt(settings_file.profile.int(video.section, video.view_key, 0));
     var brightness = @as(f32, @floatFromInt(settings_file.profile.int(video.section, video.gamma_key, video.gamma_scale))) / video.gamma_scale;
-    var view: camera.Camera = .{ .cockpit_mode = cockpit_setting.mode() };
+    var view: camera.Camera = .{ .cockpit_mode = cockpit_setting.mode(), .missiles = &sandbox.objects.missiles };
     var last_view = view.view;
     // The mission's clocks, which `mission_run` zeroes before it loops.
     var clock: game.main.Clock = .{};
@@ -605,12 +612,20 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     defer smoke.deinit();
     var shockwaves: game.shockwave.Shockwaves = try .create(gpa, &textures, options.rings);
     defer shockwaves.deinit(gpa);
+    var trails: game.missiles.trail.Trails = .init(gpa, try .load(&textures));
+    defer trails.deinit();
+    // The countermeasures' model, read once for the whole run, as `decoys_init` reads it.
+    var effects_library: Library = .{ .gpa = arena, .resources = &resources, .textures = &textures };
+    var countermeasures: game.cloak.Countermeasures = .init(gpa, effects_library.mounts());
+    defer countermeasures.reset();
+    const lock_rings: *game.main.lock.Rings = try .create(gpa, &textures);
+    defer lock_rings.destroy(gpa);
     var sparks: game.sparks.Sparks = try .create(gpa, &textures);
     defer sparks.deinit();
     var shields: game.shield.Shields = try .create(gpa, &textures, explosions.settings.detail, context.hardware, options.shields);
     defer shields.deinit(gpa);
     // What the objects run in, the camera's view brought up to date each frame.
-    var world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .difficulty = options.difficulty, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .smoke = &smoke, .shockwaves = &shockwaves, .sparks = &sparks, .shields = &shields };
+    var world: game.gameobj.World = .{ .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .difficulty = options.difficulty, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .smoke = &smoke, .shockwaves = &shockwaves, .trails = &trails, .countermeasures = &countermeasures, .sparks = &sparks, .shields = &shields };
     try sandbox.start(.{ .world = world, .clock = &clock, .devices = &devices }, @intCast(options.ship));
     // The music, as a mission's script starts it (`cmd_PlayMusic`): from `music\`, for ever, at 80.
     if (options.music) |name| {
@@ -654,8 +669,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .brightness = &brightness,
         },
     };
-    // What the mission's start fits the player's ship with, once `hud_init` has set the display up.
-    game.main.fitDevices(&display.state, sandbox.player_type, sandbox.canCloak());
+    // What the mission's start readies the display with, once `hud_init` has set it up.
+    readyDisplay(&display.state, &sandbox);
     world.display = &display.state;
 
     var scene: srcore.Scene = .{};
@@ -851,6 +866,10 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .ahead = game.objects.pastTick(&clock, options.smooth_motion),
             .explosions = &explosions,
             .shockwaves = &shockwaves,
+            .trails = &trails,
+            .countermeasures = &countermeasures,
+            .lock = &display.state.lock,
+            .lock_rings = lock_rings,
             .shields = &shields,
             .paused = clock.paused,
             .attachments = .{
@@ -1017,13 +1036,20 @@ const Sandbox = struct {
     const wing_size = 4;
     const wing_ahead: f32 = 150000;
     const wing_spacing: f32 = 3000;
+    /// The wing's pilot, record 42 of `pilotstats.bin` (`Jackel Plt`), where a mission names each
+    /// ship's own and `create_object` gives a Sabre the sharp pilot of record 66: one of the
+    /// file's weakest, who drops a countermeasure every 300 to 600 ticks while a missile homes
+    /// on it, with no sharp pilot's bonus to draw the missile away, so the player's missiles
+    /// mostly reach it.
+    const wing_pilot = 42;
 
-    fn init(gpa: Allocator, tables: *game.create.Stats, gun_stats: []align(1) const stats.Gun, pilot_stats: []align(1) const stats.Pilot, random: *engine.libcmt.Rand, types: TypeCache) !Sandbox {
+    fn init(gpa: Allocator, tables: *game.create.Stats, gun_stats: []align(1) const stats.Gun, missile_stats: []align(1) const stats.Missile, pilot_stats: []align(1) const stats.Pilot, random: *engine.libcmt.Rand, types: TypeCache) !Sandbox {
         const cache = try gpa.create(TypeCache);
         errdefer gpa.destroy(cache);
         cache.* = types;
         const objects = try game.create.Objects.create(gpa, random);
         objects.gun_stats.load(gun_stats);
+        objects.missile_stats.load(missile_stats);
         objects.pilots.load(pilot_stats);
         return .{
             .gpa = gpa,
@@ -1067,6 +1093,9 @@ const Sandbox = struct {
         if (orders.world.sparks) |thrown| thrown.reset();
         if (orders.world.particles) |pool| pool.reset();
         if (orders.world.smoke) |pools| pools.reset();
+        sandbox.objects.missiles.reset(sandbox.objects.gpa);
+        if (orders.world.trails) |trails| trails.reset();
+        if (orders.world.countermeasures) |dropped| dropped.reset();
         sandbox.objects.reset(sandbox.random);
         // The debris models, counted as used so the sweep below keeps them (`explosions_init`).
         if (orders.world.explosions) |explosions| explosions.debris = .load(sandbox.objects, sandbox.types.interface());
@@ -1096,7 +1125,7 @@ const Sandbox = struct {
     }
 
     fn create(sandbox: *Sandbox, ship_type: game.gameobj.Type, at: math.Vector) game.create.Error!u16 {
-        return game.create.createObject(sandbox.objects, sandbox.tables, sandbox.types.interface(), null, ship_type, at, sandbox.random);
+        return game.create.createObject(sandbox.objects, sandbox.tables, sandbox.types.interface(), null, ship_type, 0, at, sandbox.random);
     }
 
     /// A wing of fighters `wing_ahead` in front of the player, side by side and facing it, each
@@ -1114,6 +1143,7 @@ const Sandbox = struct {
             };
             const slot = &sandbox.objects.slots[index];
             game.objects.setOrientation(&slot.object, &slot.drawn, facing);
+            game.pilots.setPilot(&slot.object, wing_pilot);
             _ = game.aigeneric.pushShip(orders, index, .fight, sandbox.objects.player, -1) catch |err| {
                 std.log.warn("a Sabre won't fight: {s}", .{@errorName(err)});
             };
@@ -1234,10 +1264,19 @@ const TypeCache = struct {
 /// How long the camera watches the player's ship's end before the sandbox starts again, in ticks.
 const restart_after = 500;
 
-/// What a start of the sandbox leaves the player: its devices fitted to the ship, and the camera
+/// What a mission's start readies the display with for the player's ship: its devices fitted
+/// (`fitDevices`), its missiles in the missile display once the ships are made (`mission_start`),
+/// and no missile lock (`mission_run`).
+fn readyDisplay(state: *game.hud.State, sandbox: *Sandbox) void {
+    game.main.fitDevices(state, sandbox.player_type, sandbox.canCloak());
+    state.missiles.build(&sandbox.player().object);
+    state.lock.reset();
+}
+
+/// What a start of the sandbox leaves the player: the display readied for the ship, and the camera
 /// where a start puts it, since a ship of another size wants another view to be seen in.
 fn settleStart(display: *Display, sandbox: *Sandbox, view: *camera.Camera, at: u32) void {
-    game.main.fitDevices(&display.state, sandbox.player_type, sandbox.canCloak());
+    readyDisplay(&display.state, sandbox);
     // The start let go of the types no object is of any more, whose schematics what the target
     // display last showed may hold.
     display.state.target_pictures = .{};
@@ -1320,6 +1359,8 @@ const Display = struct {
             .mode = display.cockpit_mode,
             .strings = display.strings,
             .hit_shake = display.view.hit_shake,
+            .view = display.view.view,
+            .sound = display.settings.sound,
             .random = display.random,
             .ready = &display.ready,
             .edge_line = display.edge_line,
@@ -1419,6 +1460,7 @@ test Options {
     try std.testing.expectEqual(0, retro.fps.?);
     try std.testing.expect(!retro.smooth_motion);
     try std.testing.expectEqual(.latest_two, retro.shot_lights);
+    try std.testing.expectEqual(.stays, retro.missile_sound);
     try std.testing.expectEqual(.every_light, retro.debris_lights);
     try std.testing.expectEqual(.like_ships, plain.debris_lights);
     try std.testing.expectEqual(.original, retro.fireballs);

@@ -33,13 +33,30 @@ pub const Follows = enum(i32) {
     point_facing = 1,
     /// A point given as it starts, facing the listener.
     point = 2,
-    /// A missile, by its record (`0x005887F0`, `0x28` bytes each), whose object it follows.
+    /// A missile, by its record (`0x005887F0`, `0x28` bytes each): where it goes next as it
+    /// starts, facing the way it flies, and there after, still; or with `MissileSound.follows`,
+    /// where it is, its heading and its velocity.
     missile = 3,
     /// An object, by its slot: where it is, its heading and its velocity. The player's own sounds
     /// 200 units from its ship.
     object = 4,
     _,
 };
+
+/// Where a missile's sound is heard from (`hog_snd.Sound.missile_sound`).
+pub const MissileSound = enum {
+    /// **Improvement:** from the missile as it flies, moving with it, so it can be told where it
+    /// is and its pitch shifts as it passes; it ends with the missile, as `missile_end` would end
+    /// the voice it held.
+    follows,
+    /// From where the missile was launched, still, as the original leaves it: `sound_3d_update`
+    /// places a missile's voice no further, and nothing gives the missile its voice.
+    stays,
+};
+
+/// **Improvement:** how much farther than its definition has it a missile's sound that follows it
+/// keeps its full volume, so it carries a little as the missile flies off.
+const followed_missile_reach: f32 = 1.5;
 
 /// Which of the 3D voices a sound may take (`0x0058CB1C`): voices set aside for a class, which
 /// other sounds borrow only while they are free. The names are the executable's own (`0x00508614`).
@@ -171,8 +188,7 @@ pub fn endAll(sound: *Sound) void {
 /// voice of `class`, else one not reserved, else borrows a free one of another class. Returns the
 /// voice, or null.
 ///
-/// The game passes a fourth argument it never reads. Not ported: a missile's sound, which follows
-/// its object (#39).
+/// The game passes a fourth argument it never reads.
 pub fn play(sound: *Sound, scene: Scene, at: ?Vector, facing: ?Vector, owner: i32, which: sounds.Sound, volume: f32, class: Class) ?u8 {
     const driver = sound.driver orelse return null;
     if (!sound.effects.ready) return null;
@@ -184,6 +200,8 @@ pub fn play(sound: *Sound, scene: Scene, at: ?Vector, facing: ?Vector, owner: i3
     var velocity: Vector = @splat(0);
     var direction: ?Vector = null;
     var radius: f32 = 0;
+    var followed: ?*gameobj.GameObject = null;
+    var min_distance = definition.min_distance;
     switch (definition.follows) {
         .shot => {
             if (owner < 0 or owner >= scene.objects.bullets.pool.len) return null;
@@ -196,7 +214,20 @@ pub fn play(sound: *Sound, scene: Scene, at: ?Vector, facing: ?Vector, owner: i3
             direction = facing orelse return null;
         },
         .point => position = at orelse return null,
-        .missile, .none, _ => return null,
+        // Where the missile goes next, facing the way it flies, still; or moving with it, and
+        // its voice its own.
+        .missile => {
+            if (owner < 0) return null;
+            const missile = scene.objects.missiles.get(@intCast(owner)) orelse return null;
+            position = missile.slot.object.nextPosition();
+            direction = math.normalize(gameobj.vector(missile.slot.object.velocity));
+            if (sound.missile_sound == .follows) {
+                velocity = gameobj.vector(missile.slot.object.velocity);
+                followed = &missile.slot.object;
+                min_distance *= followed_missile_reach;
+            }
+        },
+        .none, _ => return null,
         .object => {
             if (owner < 0 or owner >= scene.objects.slots.len) return null;
             const slot = &scene.objects.slots[@intCast(owner)];
@@ -238,7 +269,7 @@ pub fn play(sound: *Sound, scene: Scene, at: ?Vector, facing: ?Vector, owner: i3
     driver.set3DOrientation(voice.sample, hog_snd.miles(heading), .{ 0, 1, 0 });
     driver.set3DVelocity(voice.sample, hog_snd.miles(moving));
     driver.set3DSampleCone(voice.sample, definition.cone_inner, definition.cone_outer, @intFromFloat(@trunc(definition.cone_outer_volume)));
-    driver.set3DSampleDistances(voice.sample, range, definition.min_distance * hog_snd.distance_scale);
+    driver.set3DSampleDistances(voice.sample, range, min_distance * hog_snd.distance_scale);
     // Not the game's: how far the sound of what it follows spreads, its model's radius, which the
     // software mixer leaves out.
     driver.set3DSampleRadius(voice.sample, radius * hog_snd.distance_scale);
@@ -249,6 +280,7 @@ pub fn play(sound: *Sound, scene: Scene, at: ?Vector, facing: ?Vector, owner: i3
     };
     driver.set3DSamplePlaybackRate(voice.sample, rate);
     driver.start3DSample(voice.sample);
+    if (followed) |object| object.sound_voice = v;
     return v;
 }
 
@@ -494,6 +526,48 @@ test play {
     const borrowed = play(&sound, scene, .{ 0, 0, 1000 }, null, -1, .explosion01, 1, .explosions).?;
     try std.testing.expect(sound.voices_3d[borrowed].borrowed);
     try std.testing.expect(sound.effects.classes[borrowed] != .guaranteed);
+}
+
+test MissileSound {
+    const missiles = @import("missiles.zig");
+    var mixer: mss.Mixer = .init(22050);
+    const driver = mixer.driver();
+    var sound: Sound = undefined;
+    try testing.open(driver, &sound);
+    var armed: missiles.testing.Armed = undefined;
+    try armed.init(std.testing.allocator);
+    defer armed.deinit();
+    sound.objects = armed.mission.objects;
+    const scene = testing.scene(&armed.mission);
+    const player = try armed.add(.friendly, @splat(0));
+    missiles.launch(armed.mission.world(), player, 0, .none);
+    const missile = armed.missile(0);
+    const placed = struct {
+        fn at(on: *mss.Mixer, voice: hog_snd.Voice3D) mss.Vector {
+            return on.samples_3d[@intFromEnum(voice.sample)].state.placing.position;
+        }
+    }.at;
+
+    // Following, the voice is the missile's, carries farther, and moves with it.
+    const v = play(&sound, scene, null, null, 0, .missile01, 1, .guaranteed).?;
+    try std.testing.expectEqual(v, missile.slot.object.sound_voice);
+    const reach = mixer.samples_3d[@intFromEnum(sound.voices_3d[v].sample)].state.placing.min_distance;
+    try std.testing.expectApproxEqAbs(sounds.definitions[@intFromEnum(sounds.Sound.missile01)].min_distance * followed_missile_reach * hog_snd.distance_scale, reach, 1e-6);
+    missile.slot.drawn.position = .{ 0, 0, 5000 };
+    sound.update3D(scene);
+    try std.testing.expectApproxEqAbs(5000 * hog_snd.distance_scale, placed(&mixer, sound.voices_3d[v])[2], 1e-6);
+    // Ended, the missile has no voice.
+    sound.end3D(v);
+    try std.testing.expectEqual(0xFFFF, missile.slot.object.sound_voice);
+
+    // Staying, the missile has no voice, and the sound keeps where it started.
+    sound.missile_sound = .stays;
+    const still = play(&sound, scene, null, null, 0, .missile01, 1, .guaranteed).?;
+    try std.testing.expectEqual(0xFFFF, missile.slot.object.sound_voice);
+    const started = placed(&mixer, sound.voices_3d[still]);
+    missile.slot.drawn.position = .{ 0, 0, 20000 };
+    sound.update3D(scene);
+    try std.testing.expectEqual(started, placed(&mixer, sound.voices_3d[still]));
 }
 
 test engineSound {

@@ -708,6 +708,7 @@ const hud = @import("game/hud.zig");
 const ai = @import("game/ai.zig");
 const aigeneric = @import("game/aigeneric.zig");
 const objects = @import("game/objects.zig");
+const missiles = @import("game/missiles.zig");
 const math = @import("surrender/math.zig");
 
 /// What the player's controls keep between updates, which the game holds in globals.
@@ -978,6 +979,81 @@ pub fn setPlayerTarget(display: *hud.State, all: *create.Objects, index: i16, co
     entry.target.index = index;
     entry.target.component = component;
     display.targetChanged(all, multiplayer);
+}
+
+/// LAUNCH MISSILE and COUNTERMEASURES, which `player_controls` reads after the guns
+/// (`0x00413BE7`, `0x00413E80`), each once a press: the one launches the armed missile
+/// (`launchMissile`); the other, outside a mission's ending, drops a countermeasure, Betty
+/// warning as they run out: at 6, 4 and 2 left, and with none. `aigeneric.playerControl` runs it
+/// after `matchSpeed`, since nothing between reads what it does.
+///
+/// Not ported: in the mouse's mode, the right button, which launches too; and in a multiplayer
+/// game, typing a message, which leaves both unread.
+pub fn playerWeapons(world: gameobj.World, devices: *Devices, index: u16) void {
+    if (devices.active(.launch_missile, true)) launchMissile(world, index);
+    if (devices.active(.countermeasures, true) and world.player.ending == .playing) {
+        const left = world.objects.slots[index].object.countermeasures;
+        if (world.hearing) |hearing| switch (left) {
+            0 => hearing.sound.say(countermeasures_gone),
+            2, 4, 6 => hearing.sound.say(countermeasures_low),
+            else => {},
+        };
+        if (world.countermeasures) |dropped| dropped.spend(world, index);
+    }
+}
+
+/// Betty's warnings: the armed missile run out, countermeasures running low, and gone.
+const missiles_gone = 0;
+const countermeasures_low = 0xD;
+const countermeasures_gone = 0xF;
+
+/// The display's sound for a launch refused (`bank_stdsmp`).
+const refused_sample = 1;
+
+/// How long Betty says no more that the armed missile has run out, as a launch is refused, in
+/// ticks.
+const gone_pause = 500;
+
+/// `player_launch_missile` (`0x00412820`): the armed missile of the missile display
+/// (`hud.missile_display`), from the first of the ship's racks of its type that has any, at the
+/// ship's target while the lock holds, else at nothing. Nothing is launched while the ship's
+/// missiles are disabled or it jumps; nor, for a type that needs a lock, without one, which the
+/// display refuses, Betty saying so too where none is left, but no more than once in 500 ticks.
+/// A launch opens the missile display and holds it open, Betty says so where the armed type has
+/// run out, and the display counts one off.
+///
+/// Not ported: a cloaked ship dropping its cloak instead
+/// ([#89](https://github.com/vdmkenny/openreliant/issues/89)); the Kamov of mission 25 letting the
+/// craft it carries go instead; and in a multiplayer game, the missile being a power-up.
+pub fn launchMissile(world: gameobj.World, index: u16) void {
+    const all = world.objects;
+    const ship = &all.slots[index].object;
+    if (ship.flags.missiles_disabled or ship.flags.jumping) return;
+    const display = world.display orelse return;
+    const ring = &display.missiles;
+    const armed = ring.armedEntry();
+    const locked = display.lock.locked();
+    const sound = if (world.hearing) |hearing| hearing.sound else null;
+    if (armed.type.needsLock() and !locked) {
+        if (sound) |player| if (player.stdsmp) |bank| {
+            _ = player.play(bank, refused_sample, 127, 1, 64, 0);
+        };
+        if (armed.count != 0 or world.clock.game_ticks <= ring.empty_warned_until) return;
+        if (sound) |player| player.say(missiles_gone);
+        ring.empty_warned_until = world.clock.game_ticks + gone_pause;
+        return;
+    }
+    if (ship.flags.cloaked) return;
+    if (display.windows.open(.missiles, false)) display.windows.status.getPtr(.missiles).held = true;
+    if (armed.count == 0) if (sound) |player| player.say(missiles_gone);
+    for (ship.fittedRacks(), 0..) |rack, at| {
+        if (rack.type != armed.type or rack.count < 1) continue;
+        const target: aigeneric.Target = if (locked and ship.order_count > 0) all.slots[index].orders[0].target else .none;
+        missiles.launch(world, index, at, target);
+        armed.count -= 1;
+        ring.left -= 1;
+        return;
+    }
 }
 
 /// What `player_controls` (`0x00413410`) does about the target's speed, which reads the objects:
@@ -1652,4 +1728,31 @@ test "the burns last while their keys are held, and stop without fuel" {
     playerControls(&player, &devices, &object, &testing_combat, .cockpit, 16, no_guns);
     try std.testing.expect(!object.afterburner);
     try std.testing.expect(!object.reverse_thrust);
+}
+
+test launchMissile {
+    var armed: missiles.testing.Armed = undefined;
+    try armed.init(std.testing.allocator);
+    defer armed.deinit();
+    const player = try armed.add(.friendly, @splat(0));
+    const enemy = try armed.add(.hostile, .{ 0, 0, 20000 });
+    const target: aigeneric.Target = .{ .kind = .ship, .index = @intCast(enemy), .component = -1 };
+    _ = try aigeneric.push(armed.mission.orders(), player, .player_control, target);
+    var display: hud.State = .{};
+    display.missiles.build(&armed.mission.slot(player).object);
+    var world = armed.mission.world();
+    world.display = &display;
+
+    // The Havoc armed needs a lock: without one, nothing flies.
+    launchMissile(world, player);
+    try std.testing.expectEqual(0, armed.live());
+    // Locked, it flies at the target, the display holds its window open, and counts one off.
+    display.lock.phase = .locked;
+    launchMissile(world, player);
+    try std.testing.expectEqual(target, armed.missile(0).target);
+    try std.testing.expectEqual(0, display.missiles.armedEntry().count);
+    try std.testing.expect(display.windows.status.get(.missiles).held);
+    // None left on its rack, the next launches nothing.
+    launchMissile(world, player);
+    try std.testing.expectEqual(1, armed.live());
 }

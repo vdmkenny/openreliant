@@ -1,5 +1,5 @@
-//! The orders a ship flies by: Do Nothing, Fly, Run Away, Slow Rotate, the Random Spins and Match
-//! Speed. [`aigeneric.zig`](aigeneric.zig) runs them, [`ai.zig`](ai.zig) steers for them, and
+//! The orders a ship flies by: Do Nothing, Fly, Run Away, Slow Rotate, the Random Spins, Match
+//! Speed and Disrupted; and the two that launch a missile. [`aigeneric.zig`](aigeneric.zig) runs them, [`ai.zig`](ai.zig) steers for them, and
 //! `docs/engine/orders.md` describes what each does.
 //!
 //! **Unknown:** its source file. The code lies after `aifight.cpp`'s and before `aifuncs.cpp`'s,
@@ -16,6 +16,7 @@ const aigeneric = @import("aigeneric.zig");
 const Context = aigeneric.Context;
 const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
+const missiles = @import("missiles.zig");
 const objects = @import("objects.zig");
 const xtrabits = @import("xtrabits.zig");
 
@@ -189,6 +190,88 @@ pub fn matchSpeed(ctx: Context, index: u16) void {
     slot.object.throttle = speed / ai.cruiseSpeed(&slot.object, flight, ctx.world.view);
 }
 
+/// `order_launch_missile` (`0x0040B940`): the update of Launch Missile (2), which runs once over
+/// the ship's order: a missile from the first of its racks with any left, but Jack Hammers, at the
+/// order's target.
+pub fn launchMissile(ctx: Context, index: u16) void {
+    launchFrom(ctx, index, false);
+}
+
+/// `0x0040B990`: the update of order 3, which the game names nothing, likewise for a Jack Hammer,
+/// which the Fight order never launches.
+pub fn launchJackHammer(ctx: Context, index: u16) void {
+    launchFrom(ctx, index, true);
+}
+
+fn launchFrom(ctx: Context, index: u16, jack_hammer: bool) void {
+    const slot = &ctx.world.objects.slots[index];
+    const ship = &slot.object;
+    for (ship.fittedRacks(), 0..) |rack, at| {
+        if (rack.count < 1 or (rack.type == .jack_hammer) != jack_hammer) continue;
+        missiles.launch(ctx.world, index, at, slot.orders[0].target);
+        return;
+    }
+}
+
+/// What a Havoc's shockwave leaves in Disrupted's data (`shockwave.Shockwave.strike`): how many
+/// ticks the ship is disrupted for, and the push it takes.
+pub const DisruptedData = extern struct {
+    ticks: i32 align(2),
+    push: [3]f32 align(2),
+
+    comptime {
+        assert(@sizeOf(DisruptedData) == @sizeOf(aigeneric.Entry.Data));
+    }
+};
+
+/// What Disrupted keeps in `order_state`: the tick it ends at, where Explode keeps its own.
+pub const DisruptedState = extern struct {
+    _unknown_00: u32,
+    end: i32,
+    _unknown_08: [0x88]u8,
+
+    comptime {
+        assert(@offsetOf(DisruptedState, "end") == 0x4);
+        assert(@sizeOf(DisruptedState) == 0x90);
+    }
+};
+
+/// How far either way each of a disrupted ship's rates is knocked, in radians a step.
+const disrupted_spin: f32 = 0.1;
+
+/// `order_disrupted_init` (`0x0040C140`): the init of Disrupted (114). The ship is left unpowered
+/// until the tick its data counts to, takes the push in its data, and has each rate knocked by up
+/// to 0.05 either way, at random, which it tumbles by.
+///
+/// **Quirk:** the push is given in the world's frame and taken in the ship's own
+/// (`gameobj.knockLocal`), so the ship is thrown off at a turn from straight away from the blast.
+///
+/// Not ported: the fifteen electric rays that play over the ship (`erayfx.cpp`,
+/// [#213](https://github.com/vdmkenny/openreliant/issues/213)).
+pub fn disruptedInit(ctx: Context, index: u16) void {
+    const slot = &ctx.world.objects.slots[index];
+    const object = &slot.object;
+    const data = slot.orders[0].data.disrupted;
+    object.flags.unpowered = true;
+    slot.state.disrupted.end = data.ticks + ctx.clock.frame_start;
+    gameobj.knockLocal(object, data.push, @splat(0));
+    const random = ctx.world.random;
+    object.yaw_rate += random.centred() * disrupted_spin;
+    object.pitch_rate += random.centred() * disrupted_spin;
+    object.roll_rate += random.centred() * disrupted_spin;
+    object.rotation = math.fromAngles(object.pitch_rate, object.yaw_rate, object.roll_rate);
+}
+
+/// `order_disrupted` (`0x0040C370`): the update of Disrupted, which pops past its end.
+pub fn disrupted(ctx: Context, index: u16) void {
+    if (ctx.world.objects.slots[index].state.disrupted.end < ctx.clock.frame_start) _ = aigeneric.pop(ctx, index);
+}
+
+/// `order_disrupted_exit` (`0x0040C390`): the exit of Disrupted, which powers the ship again.
+pub fn disruptedExit(ctx: Context, index: u16) void {
+    ctx.world.objects.slots[index].object.flags.unpowered = false;
+}
+
 test doNothing {
     var mission: gameobj.testing.Mission = undefined;
     try mission.init(std.testing.allocator);
@@ -348,4 +431,21 @@ test runAway {
     all.resetSlot(other, &mission.random);
     aigeneric.objectOrders(ctx, index);
     try std.testing.expectEqual(0, all.slots[index].object.order_count);
+}
+
+test launchMissile {
+    var armed: missiles.testing.Armed = undefined;
+    try armed.init(std.testing.allocator);
+    defer armed.deinit();
+    const ship = try armed.add(.hostile, @splat(0));
+    const target = try armed.add(.friendly, .{ 0, 0, 20000 });
+    armed.mission.slot(ship).orders[0] = .{ .order = .launch_missile, .target = .{ .kind = .ship, .index = @intCast(target), .component = -1 }, .sequence = 0, .data = .{ .words = @splat(0) } };
+    const ctx = armed.mission.orders();
+    // The first rack with missiles, the Raptor pod, at the order's target.
+    launchMissile(ctx, ship);
+    try std.testing.expectEqual(missiles.Type.raptor, armed.missile(0).type);
+    try std.testing.expectEqual(@as(i16, @intCast(target)), armed.missile(0).target.index);
+    // The fixture carries no Jack Hammer.
+    launchJackHammer(ctx, ship);
+    try std.testing.expectEqual(1, armed.live());
 }

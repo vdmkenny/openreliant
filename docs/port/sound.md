@@ -95,8 +95,11 @@ count but once loops it for ever.
   output is looked at again every second, and HRTF turns on or off as it changes. `--hrtf` and
   `--no-hrtf` have it whatever the output. A device with 4, 6 or 8 channels gets them all.
 - The listener moves with the player's ship, so a sound's Doppler shift comes of how the two move
-  against each other, and the player's own engine is not shifted. The listener's speed is held
-  within half the speed of sound.
+  against each other, and the player's own engine is not shifted.
+- The Doppler shift is ten times what the game's velocities give. In Miles's metres a missile flies
+  at a few metres a second, where at the models' scale, about a centimetre a unit, it flies at over
+  a hundred. The listener's speed, and a sound's along the line to it, are held within half the
+  speed of sound over that.
 - A sound that follows an object spreads around the listener as it comes within the object's
   model's radius (`AL_SOURCE_RADIUS`), so a capital ship close by fills the space rather than
   sitting at a point.
@@ -150,6 +153,10 @@ another or `none`; `--no-sound` runs silent ([Platform](platform.md#running)).
 
 - **Improvement:** `sound_pitch_factor` works a quarter tone's factor out, `2^(n/24)`, where the game
   looks it up in a table of rounded values.
+- **Improvement:** a missile's sound follows the missile, moving with it, so it can be told where it
+  is and heard passing by, and ends with it (`sound3d.MissileSound.follows`). It keeps its full
+  volume half as far again as its definition has it, so it carries a little as the missile flies
+  off. The game leaves it where the missile was launched. `--original` leaves it there too.
 - OpenAL Soft's resampling, placing, moving listener, sizes, air absorption, subwoofer and reverbs,
   and the master bus, above.
 

@@ -233,19 +233,24 @@ pub const Missile = extern struct {
     /// **Range** on the loadout screen is `speed * flight_time`. The loader stores the field
     /// multiplied by 100, truncated.
     flight_time: f32,
-    /// **Damage** on the loadout screen is the sum of the two.
+    /// **Damage** on the loadout screen is the sum of the two. The first is what a hit does to a
+    /// shield, the second to a hull (`missile_collide`).
     damage: [2]f32,
     /// Shown as **Locking Time**, in hundredths of a second: the screen multiplies it by 0.01 and
     /// labels the result in seconds. Truncated to an integer on load.
     lock_time: f32,
+    /// In percent, the chance a countermeasure draws the missile off (`object_spend_countermeasure`).
     /// Truncated to an integer on load.
-    _unknown_58: f32,
-    _unknown_5c: f32,
-    _unknown_60: f32,
+    decoy_chance: f32,
+    /// How far off a target the missile can be locked on to, by the player, the AI and the missile
+    /// turret.
+    lock_range: f32,
+    /// What a hit does to a component of a ship that lists them.
+    component_damage: f32,
     _unread: [record_size - 0x64]u8,
 
-    /// The range the loadout screen compares missiles by.
-    pub fn range(missile: Missile) f32 {
+    /// The range the loadout screen compares missiles by: how far the missile flies.
+    pub fn loadoutRange(missile: Missile) f32 {
         return missile.speed * missile.flight_time;
     }
 
@@ -397,7 +402,7 @@ test Missile {
     missile.speed = 500;
     missile.flight_time = 50;
     missile.lock_time = 300;
-    try std.testing.expectEqual(@as(f32, 25000), missile.range());
+    try std.testing.expectEqual(@as(f32, 25000), missile.loadoutRange());
     try std.testing.expectApproxEqAbs(@as(f32, 3.0), missile.lockSeconds(), 1e-5);
 }
 
