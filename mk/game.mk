@@ -121,10 +121,11 @@ $(RENDERS_DIR)/predator-sun.png:
 	$(RENDER) $@ --model USLF_Prd.SHP --toward 1,-0.3,0.45 --heading -0.3,0.2,1
 
 .PHONY: check-missions
-check-missions: | $(GAME_DIR)/.stamp-hog-resource $(SLTOOL) ## Parse every .DTE mission
+check-missions: | $(GAME_DIR)/.stamp-hog-resource $(GAME_DIR)/.stamp-install $(SLTOOL) ## Parse every .DTE mission, and bind each as a mission's start does
 	@bad=0; for f in $(ASSETS_DIR)/resource/*.dte; do \
 	    $(SLTOOL) dte info "$$f" > /dev/null || { echo "FAILED: $$f"; bad=$$((bad + 1)); }; \
 	done; echo "$$(ls $(ASSETS_DIR)/resource/*.dte | wc -l | tr -d ' ') missions checked, $$bad with problems"
+	@$(OPENRELIANT) missions $(INSTALL_DIR) | tail -1
 
 .PHONY: check-models
 check-models: | $(GAME_DIR)/.stamp-hog-resource $(SLTOOL) ## Validate every .SHP model for internal consistency

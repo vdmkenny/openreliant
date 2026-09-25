@@ -131,6 +131,10 @@ The original game reads its paths from the registry key `HKLM\Software\Microsoft
 
 The cabinet is unpacked with [libarchive](https://libarchive.org), which [`deps/libarchive`](../../deps/libarchive) builds from source for the target, using the build script of the [allyourcodebase/libarchive](https://github.com/allyourcodebase/libarchive) package with libarchive pinned to the 3.7.9 release. The LZX decoder in libarchive 3.8.9 fails on `LANCER.CAB` ([libarchive#3542](https://github.com/libarchive/libarchive/issues/3542)).
 
+## Missions
+
+`openreliant missions [<game-directory>]` ([`missions.zig`](../../src/openreliant/missions.zig)) lists the missions a game's folder holds, the loose files in its `missions` folder and the members of `resource.hog`, and reads and binds each as a mission's start does ([Missions](../engine/missions.md)), showing where each comes from and what its file holds: its counts of ships, flight groups, triggers and script bytes, its format flags, and the ship type and name of the player's own record. It exits with status 1 where a mission fails to bind, so a mission of one's own can be checked before it is played. `make check-missions` runs it on `game/install`.
+
 ## Joysticks and gamepads
 
 [`platform/joystick.zig`](../../src/platform/joystick.zig) replaces DirectInput's joystick support. Each controller that SDL detects is presented to the game as a DirectInput-style joystick device (`engine.input.JoystickDevice`). As in the original, the game sets a range for each axis it uses and a dead zone for the device, and reads the device into a `DIJOYSTATE` at every simulation step ([Controls](../engine/controls.md#devices)). [`docs/guide/controllers.md`](../guide/controllers.md) is the user guide.

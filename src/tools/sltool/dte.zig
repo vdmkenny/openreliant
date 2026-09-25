@@ -107,7 +107,7 @@ fn sections(ctx: Context, mission: dte.Mission) !void {
             try ctx.stdout.print("{d:>3}  {s:>5}  {s:>5}  {s:>8}  ", .{ i, "-", "-", "unused" });
         } else {
             try ctx.stdout.print("{d:>3}  {d:>5}   0x{x:0>2}  {x:0>8}  ", .{
-                i, entry.count, entry.relocation_flags, entry.offset,
+                i, entry.count, entry.formats, entry.offset,
             });
         }
         try dte.formatTag(dte.Section, section, ctx.stdout);

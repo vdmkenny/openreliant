@@ -17,9 +17,10 @@ make check-missions              # parse all 44
 ## Container
 
 A mission inside a `.HOG` is RefPack compressed; one loose in `missions\` is stored expanded. The
-engine tells them apart by the first two bytes, so either is legal anywhere. A retail install
-carries two loose missions, `mission18.dte` and `mission25.dte`, which begin `08 33` where their
-archive copies begin `10 FB`. `sltool hog` expands members as it extracts.
+archive's reader expands a member that begins `10 FB`, but a loose file is read as it is, so it
+must be stored expanded ([Missions](../engine/missions.md#the-file)). A retail install carries two
+loose missions, `mission18.dte` and `mission25.dte`, which begin `08 33` where their archive copies
+begin `10 FB`. `sltool hog` expands members as it extracts.
 
 ## Directory
 
@@ -29,7 +30,7 @@ The image opens with **27 entries of 8 bytes**:
 |---|---|---|
 | 0 | u16 | Records in use, except where noted below |
 | 2 | u8 | Unused |
-| 3 | u8 | Which of the section's fields the loader turns into live pointers |
+| 3 | u8 | Four format flags, in the low bits, which the binder notes and nothing reads. Every entry of a shipped mission holds the same: 15 in most, 7 in `mission191` and `mission271`, 3 in `mission801` and 1 in `mission88` |
 | 4 | u32 | Offset of the section, or `0xFFFF` when unused |
 
 Capacity is fixed: a section's offset is the same in every mission built from the same template, and
@@ -81,7 +82,8 @@ Stride `0x4C`, one per placed object, nav points included.
 | `0x14` | u8 | Flight group, or `0xFF` for none |
 | `0x15` | u8 | Pilot: the record of `pilotstats.bin` the ship gets. 255 marks the player's own record |
 | `0x17` | u8 | Flags, the engine's own: bit 0 marks the ship destroyed. Zero in the files |
-| `0x18` | u16 | Role. Ships stay below `0x100`; nav points and markers use 999 and `0x3E3` to `0x3E8` |
+| `0x18` | u16 | Role. Ships stay below `0x100`; nav points and markers use 999 and `0x3E3` to `0x3E8`, waypoints `0x3E5` |
+| `0x1B` | u8 | Set for a waypoint once binding the mission has listed it |
 | `0x1C` | f32 x3 | Position as authored |
 | `0x2E`, `0x3A`, `0x4A` | i16 | Yaw, pitch, roll, in whole degrees |
 | `0x30` | u32 | The ship's intact components, a bit each |
@@ -93,6 +95,20 @@ of the flags and raises its Destroyed event, which it raises no more.
 Each angle sits two bytes after its runtime copy, at `0x2C`, `0x38` and `0x48`. Every record holds
 angles within [-360, 360]. Positions are absolute, on the order of 10^7. `in_flight_group` reads
 the flight group byte.
+
+## Flight groups
+
+Stride `0x14`.
+
+| Offset | Type | Field |
+|---|---|---|
+| `0x00` | u16 | Object ID |
+| `0x08` | u8 | The wing the mission lists the group's ships in: 0 the player's, 1 and 2 two more, `0xFF` none |
+| `0x09` | u8 | How many of the mission's ships are in the group |
+| `0x0C` | u32 | Where the group's first ship stands in the list of the groups' ships, or -1 |
+
+Binding the mission works out `0x09` and `0x0C`, whatever the file holds
+([Missions](../engine/missions.md#binding)).
 
 ## Objects
 

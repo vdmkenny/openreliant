@@ -7,6 +7,7 @@ const Io = std.Io;
 
 const openreliant = @import("openreliant");
 const force = openreliant.engine.input.force;
+const files = openreliant.engine.files;
 const frc = openreliant.frc;
 
 /// The effects read, and those the game lacks.
@@ -21,33 +22,15 @@ pub const Found = struct {
 /// case of their names, as Windows finds them.
 pub fn load(io: Io, arena: Allocator, directory: Io.Dir) Found {
     var found: Found = .{};
-    var folder = openFolder(io, arena, directory) orelse return found;
-    defer folder.close(io);
     for (std.enums.values(force.Effect)) |effect| {
-        const name = entryNamed(io, arena, folder, effect.fileName()) orelse continue;
-        const bytes = folder.readFileAlloc(io, name, arena, .limited(1 << 20)) catch continue;
+        var path: [files.max_path]u8 = undefined;
+        const name = std.fmt.bufPrint(&path, "forces\\{s}", .{effect.fileName()}) catch continue;
+        const bytes = (files.readFile(io, arena, directory, name, .limited(1 << 20)) catch continue) orelse continue;
         const file = frc.File.parse(arena, bytes) catch continue;
         found.library.files.set(effect, file);
         found.lacking.remove(effect);
     }
     return found;
-}
-
-/// The `forces` folder under `directory`, however its name is spelled.
-fn openFolder(io: Io, arena: Allocator, directory: Io.Dir) ?Io.Dir {
-    var listed = directory.openDir(io, ".", .{ .iterate = true }) catch return null;
-    defer listed.close(io);
-    const name = entryNamed(io, arena, listed, "forces") orelse return null;
-    return directory.openDir(io, name, .{ .iterate = true }) catch null;
-}
-
-/// The name of the entry of `dir` spelled `name` whatever its case.
-fn entryNamed(io: Io, arena: Allocator, dir: Io.Dir, name: []const u8) ?[]const u8 {
-    var entries = dir.iterate();
-    while (entries.next(io) catch return null) |entry| {
-        if (std.ascii.eqlIgnoreCase(entry.name, name)) return arena.dupe(u8, entry.name) catch null;
-    }
-    return null;
 }
 
 test load {

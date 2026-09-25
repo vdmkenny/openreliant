@@ -94,6 +94,26 @@ A few kinds of improvement recur:
 - **Graceful limits.** An enhancement with a hard limit keeps the most important items on the
   enhanced path, and sends the rest through the original's.
 
+### Missions and custom content
+
+OpenReliant plays any mission made for StarLancer, not only the ones the game ships, so the mission
+files stay the standard format:
+
+- **Read what the original reads.** Missions load and run exactly as the original loads and runs
+  them. Accept every file the original accepts, and keep fields that are not understood yet, rather
+  than rely on anything the shipped missions happen to share. A command or order that is not yet
+  ported never stops a mission from loading or running.
+- **No mission-specific code.** Nothing in the port singles out a mission by its number, name or
+  file: a mission does what its file says, through the engine every mission goes through. What the
+  original executable itself does by mission number, such as mission 25's second part, is ported as
+  the engine's own behaviour.
+- **No format of the port's own.** The port's own missions, such as the sandbox, are standard
+  `.DTE` files. Anything the port adds stays outside the file format, so that the files work in the
+  original too.
+
+`openreliant missions` binds every mission a game's folder holds; run `make check-missions` after a
+change to how missions load or run.
+
 ## Writing Zig
 
 Write idiomatic Zig 0.16. A decompiled C shape is a starting point: express the same behaviour

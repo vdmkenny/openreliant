@@ -77,8 +77,19 @@ OpenReliant improves on the original's look and sound. `--original` turns the im
 |---|---|
 | `openreliant install` | Install the game's files from the StarLancer discs into a directory |
 | `openreliant joysticks` | List the joysticks and gamepads, and which one the game uses |
+| `openreliant missions` | List the game's missions, its own and those added to its `missions` folder, and check that each loads |
 
 Each command's `--help` shows its options.
+
+### Missions of your own
+
+A mission file named `mission<number>.dte`, stored expanded, in the `missions` folder of the game's directory plays in place of that mission, as it does in the original: the game reads a loose file before its own copy in `resource.hog`. The retail game ships two, `mission18.dte` and `mission25.dte`. Check that a mission loads with:
+
+```bash
+./openreliant missions StarLancer
+```
+
+It lists every mission, where each comes from (`loose` or `archive`), and what its file holds, including the ship type and name of the player's own record, and says which fail to load.
 
 ## In-flight keys
 

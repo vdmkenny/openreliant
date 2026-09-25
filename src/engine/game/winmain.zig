@@ -97,6 +97,27 @@ test followActivation {
     try std.testing.expectEqual(mss.Status.playing, driver.sampleStatus(sound.voices[v].sample));
 }
 
+/// The longest name `missionPath` makes; the game's buffer is far larger.
+pub const mission_path_size = 32;
+
+/// The mission file `WinMain` names for mission `number` at the mission's start (`0x004A9C42`,
+/// `0x004AA40A`): `.\missions\mission<number>.dte`. Mission 25, once its first part is won
+/// (`mission25_second_part`, `0x00587CDC`), is `mission251.dte`, its second part; and in a
+/// multiplayer game mission 3 is `mission311.dte`.
+pub fn missionPath(buffer: *[mission_path_size]u8, number: u16, second_part: bool, multiplayer: bool) []const u8 {
+    if (number == second_part_mission and second_part) return second_part_path;
+    if (number == multiplayer_mission and multiplayer) return multiplayer_path;
+    return std.fmt.bufPrint(buffer, "{s}{d}.dte", .{ path_start, number }) catch unreachable;
+}
+
+const path_start = ".\\missions\\mission";
+/// Mission 25, whose second part is a file of its own (`0x00509728`), and mission 3, whose
+/// multiplayer game is (`0x0050970C`).
+const second_part_mission = 25;
+const second_part_path = path_start ++ "251.dte";
+const multiplayer_mission = 3;
+const multiplayer_path = path_start ++ "311.dte";
+
 /// What `WinMain` does before each single-player mission (`0x004A99CC`): puts back the pilot's
 /// kills as the last mission the pilot came through kept them (`gameflow.endMission`). **Not
 /// ported:** the rank, the medals and the other tallies it puts back with them, which no screen
@@ -109,4 +130,14 @@ test startMission {
     var player: input.Player = .{ .kills = .{ .count = 9, .kept = 4 } };
     startMission(&player);
     try std.testing.expectEqual(4, player.kills.count);
+}
+
+test missionPath {
+    var buffer: [mission_path_size]u8 = undefined;
+    try std.testing.expectEqualStrings(".\\missions\\mission1.dte", missionPath(&buffer, 1, false, false));
+    try std.testing.expectEqualStrings(".\\missions\\mission25.dte", missionPath(&buffer, 25, false, false));
+    try std.testing.expectEqualStrings(".\\missions\\mission251.dte", missionPath(&buffer, 25, true, false));
+    try std.testing.expectEqualStrings(".\\missions\\mission3.dte", missionPath(&buffer, 3, false, false));
+    try std.testing.expectEqualStrings(".\\missions\\mission311.dte", missionPath(&buffer, 3, false, true));
+    try std.testing.expectEqualStrings(".\\missions\\mission65535.dte", missionPath(&buffer, 65535, false, false));
 }

@@ -39,8 +39,28 @@ address	kind	name	type	comment
 00538c98	data	part_table_b	VmFunction *	Runtime parts for script_b
 004f6340	data	vm_component_tags	ComponentTag *	The components push_component named since the last command
 00537420	data	vm_component_tag_list	ComponentTag[9]	
-00451d90	function	mission_bind_sections		Binds each directory section to its pointer and count
-00452a20	function	mission_bind_section		
+00451d90	function	mission_bind_sections	void * __fastcall (char *path)	Reads the mission file, binds each directory section to its pointer and count, resets the ships to their spawn places and makes the mission's tables
+00452010	function	mission_ships_reset	void __fastcall (void)	Sets each mission ship's runtime position, yaw, pitch and roll to its spawn ones
+00452100	function	mission_list_waypoints	void __fastcall (void)	Lists the waypoints (kind 0x3E5) in flight groups, a group at a time, in waypoints
+00452db0	function	mission_resolve_objects	void __fastcall (void)	Fills object_records with the record each object table entry stands for
+00452df0	function	mission_object_record	void * __fastcall (MissionObject *object)	The first ship, flight group or squad, by the entry's kind, whose object ID is the entry's
+00452ec0	function	mission_list_group_ships	void __fastcall (void)	Lists each flight group's ships in flight_group_ships, setting the group's count and first place
+00453050	function	mission_bind_tables	void __fastcall (void)	Makes the bound mission's tables: the part tables, the waypoints, the groups' ships, the object records and the trigger lists
+0045a300	function	mission_file_read		Reads a mission file: the loose file where there is one, as it is, into a buffer of 0xFA000 bytes, or else the archive's member through hog_load
+0045a3e0	function	file_read		Reads up to a count of bytes of a file into a buffer, ending them with 0x1A
+0045a570	function	process_mission	void __fastcall (void)	Runs the mission's script for the frame: its timers and its threads
+004ad6e0	function	file_exists	bool __fastcall (char *path)	Whether a file exists, through _access
+004ef2f8	data	flight_group_ships	MissionShip **	Each flight group's ships, group after group
+00525710	data	waypoints		The waypoints, a flight group and a ship each, grouped by flight group and ending with a pair of nulls
+0052527e	data	waypoint_count	ushort	
+00538c90	data	object_records	void **	The record each object table entry stands for, by object ID
+00525f9a	data	mission_format_flags	byte	Set where any section has the first of the directory's four flags; nothing reads it
+00525fa4	data	mission_format_flags_2	byte	The second flag, likewise
+005267c6	data	mission_format_flags_3	byte	The third flag, likewise
+005294e8	data	mission_format_flags_4	byte	The fourth flag, likewise
+00529524	data	mission_image	void *	The bound mission's file, as mission_bind_sections read it
+00587cdc	data	mission25_second_part	byte	Set once mission 25's first part is won: the next start plays mission251.dte
+00452a20	function	mission_bind_section		Binds the next directory entry to a section's count and pointer, noting its format flags
 0045cb40	function	mission_alloc_part_tables	void __fastcall (void)	Allocates the part tables, 256 entries each
 0045cb80	function	mission_alloc_table		Frees and reallocates a table of count x size bytes
 00452f50	function	mission_build_part_tables	void __fastcall (void)	Fills the runtime part tables from sections 8 and 17

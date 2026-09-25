@@ -14,6 +14,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 const fat = @import("../../formats/fat.zig");
+const paths = @import("../files.zig");
 const shp = @import("../../formats/shp.zig");
 const wave = @import("../../formats/wave.zig");
 const math = @import("../surrender/math.zig");
@@ -810,30 +811,10 @@ pub fn musicLoopStart(path: []const u8) i32 {
     return 0;
 }
 
-/// Reads the music file at `path`, a path of the game's with backslashes, from the game's directory:
-/// as named, or else by a name that differs only in case, as Windows would find it.
+/// Reads the music file at `path`, a path of the game's with backslashes, from the game's directory,
+/// found whatever the case of its names, as Windows finds it (`files.find`).
 fn readMusic(files: Files, path: []const u8) ![]u8 {
-    var buffer: [256]u8 = undefined;
-    if (path.len > buffer.len) return error.NameTooLong;
-    const native = buffer[0..path.len];
-    for (native, path) |*out, char| out.* = if (char == '\\') '/' else char;
-    return files.dir.readFileAlloc(files.io, native, files.gpa, .limited(64 << 20)) catch |err| switch (err) {
-        error.FileNotFound => {
-            const slash = std.mem.lastIndexOfScalar(u8, native, '/');
-            const folder = if (slash) |at| native[0..at] else ".";
-            const name = if (slash) |at| native[at + 1 ..] else native;
-            var dir = try files.dir.openDir(files.io, folder, .{ .iterate = true });
-            defer dir.close(files.io);
-            var entries = dir.iterate();
-            while (try entries.next(files.io)) |entry| {
-                if (std.ascii.eqlIgnoreCase(entry.name, name)) {
-                    return dir.readFileAlloc(files.io, entry.name, files.gpa, .limited(64 << 20));
-                }
-            }
-            return err;
-        },
-        else => return err,
-    };
+    return try paths.readFile(files.io, files.gpa, files.dir, path, .limited(64 << 20)) orelse error.FileNotFound;
 }
 
 pub fn vector(v: shp.Vec3) Vector {
