@@ -18,6 +18,9 @@ const Pointer = engine.Pointer;
 
 pub const opcodes = @import("vm/opcodes.zig");
 pub const conditions = @import("vm/conditions.zig");
+pub const machine = @import("vm/machine.zig");
+pub const Machine = machine.Machine;
+pub const Implementation = machine.Implementation;
 
 /// An opcode handler, called through `vm_dispatch_table`. `ip` points at the thread's instruction
 /// pointer, already past the opcode, and `frame` at its frame pointer. `previous` is what the last
@@ -51,8 +54,9 @@ pub const Thread = extern struct {
     _unknown_ac: u8,
     /// Parts called and not yet returned from. A `return` at depth zero ends the thread.
     call_depth: u8,
-    /// **Unknown.** Zero when the thread starts; cleared when its trigger fires again.
-    _unknown_ae: u8,
+    /// Set by `InterruptTriggerCode`: the thread waits for its trigger to fire again, which clears
+    /// it, and the pass over the threads (`vm_threads_run`) leaves it alone until then.
+    interrupted: bool,
     /// Index of the trigger that started the thread, or `0xFF` for none.
     trigger: u8,
     /// The last command's result, or the value the last part returned: what `push_result` reads.
@@ -140,6 +144,64 @@ pub const Timer = extern struct {
         assert(@sizeOf(Timer) == 0x10);
     }
 };
+
+/// An entry of a part table (`part_table`, `part_table_b`) as OpenReliant keeps it: the part's
+/// block, by where it lies in the mission image, and its argument count. `mission_fill_part`
+/// (`0x00452FD0`) fills the game's `Function` with the same two.
+pub const Part = struct {
+    /// Where the block's length halfword lies in the mission image; null for a part with no block.
+    block: ?u32 = null,
+    argument_count: u8 = 0,
+};
+
+/// Entries each part table has room for (`mission_alloc_part_tables`, `0x0045CB40`).
+pub const part_table_size = 256;
+
+/// A part table: the mission's parts, then entries of no block. **Fix:** the game leaves the
+/// entries past the mission's parts as `malloc` gave them, and a call to one runs whatever they
+/// hold.
+pub const Parts = [part_table_size]Part;
+
+/// The game's variables a script reads and writes by number (`push_array`, `select_array`): the
+/// dwords from `jump_ready` (`0x0052A3F0`) on. **Unknown:** most of them, and where the block
+/// ends. The shipped missions use the first 38.
+pub const Variables = extern struct {
+    /// `jump_ready`: whether the mission has a jump ready for JUMP DRIVE (`hud.Ready`).
+    jump_ready: u32 = 0,
+    /// `warp_ready`: as `jump_ready`, for a warp.
+    warp_ready: u32 = 0,
+    _unknown_2: [2]u32 = @splat(0),
+    /// `player_missiles_left`: the missile display's counts together.
+    player_missiles_left: u32 = 0,
+    _unknown_5: [4]u32 = @splat(0),
+    /// `mission_over`: set once the camera has watched the mission's end long enough.
+    mission_over: u32 = 0,
+    _unknown_10: [28]u32 = @splat(0),
+    /// Room for every number a byte names. In the game these are the globals after the block,
+    /// which no shipped mission touches.
+    beyond: [218]u32 = @splat(0),
+
+    /// Variable `index`, as the script numbers them.
+    pub fn slot(variables: *Variables, index: u8) *u32 {
+        return &@as(*[256]u32, @ptrCast(variables))[index];
+    }
+
+    comptime {
+        assert(@offsetOf(Variables, "player_missiles_left") == 0x0052A400 - 0x0052A3F0);
+        assert(@offsetOf(Variables, "mission_over") == 0x0052A414 - 0x0052A3F0);
+        assert(@sizeOf(Variables) == 256 * @sizeOf(u32));
+    }
+};
+
+test Variables {
+    var variables: Variables = .{};
+    variables.slot(0).* = 1;
+    variables.slot(9).* = 1;
+    variables.slot(255).* = 7;
+    try std.testing.expectEqual(1, variables.jump_ready);
+    try std.testing.expectEqual(1, variables.mission_over);
+    try std.testing.expectEqual(7, variables.beyond[217]);
+}
 
 /// One condition of the catalogue at `condition_descriptors`.
 pub const ConditionDescriptor = extern struct {
