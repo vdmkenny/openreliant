@@ -59,28 +59,26 @@ pub fn main(io: Io, arena: Allocator, args: []const [:0]const u8) !u8 {
         std.debug.print("{s}", .{usage});
         return 2;
     };
-    const settings_file: Profile = .{ .text = settings: {
-        var directory = Io.Dir.cwd().openDir(io, options.directory, .{}) catch break :settings "";
+    const settings_file: Profile = settings: {
+        var directory = Io.Dir.cwd().openDir(io, options.directory, .{}) catch break :settings .empty;
         defer directory.close(io);
-        break :settings directory.readFileAlloc(io, "starlancer.ini", arena, .limited(1 << 20)) catch "";
-    } };
+        break :settings .read(io, arena, directory);
+    };
+    const setup: joystick.Setup = .read(settings_file);
 
     try joystick.init(.tool);
     defer joystick.deinit();
-    const mappings = joystick.addMappings(try std.fs.path.joinZ(arena, &.{ options.directory, "gamecontrollerdb.txt" }));
-    if (mappings > 0) try out.print("Read {d} gamepad {s} from gamecontrollerdb.txt.\n", .{ mappings, if (mappings == 1) "mapping" else "mappings" });
+    const mappings = joystick.addMappings(try std.fs.path.joinZ(arena, &.{ options.directory, joystick.mappings_name }));
+    if (mappings > 0) try out.print("Read {d} gamepad {s} from {s}.\n", .{ mappings, if (mappings == 1) "mapping" else "mappings", joystick.mappings_name });
     joystick.update();
     const found = try joystick.attached(arena);
     if (found.len == 0) {
         try out.writeAll("No joystick or gamepad is attached.\n");
         return 1;
     }
-    const chosen = joystick.choose(found, settings_file.value("JoyConfig", "Joystick")).?;
-    const throttle: joystick.Choice = .parse(settings_file.value("JoyConfig", "ThrottleAxis"));
-    const twist: joystick.Choice = .parse(settings_file.value("JoyConfig", "TwistAxis"));
-    const inverted = settings_file.int("JoyConfig", "ThrottleInvert", 0) != 0;
+    const chosen = joystick.choose(found, setup.preference).?;
     for (found, 1..) |each, number| {
-        var controller = joystick.Controller.openInverted(each, throttle, twist, inverted) catch {
+        var controller = joystick.Controller.open(each, setup) catch {
             try out.print("{d}. {s}: can't be opened.\n", .{ number, each.name });
             continue;
         };
@@ -90,7 +88,7 @@ pub fn main(io: Io, arena: Allocator, args: []const [:0]const u8) !u8 {
     try out.flush();
     if (!options.watch) return 0;
 
-    var controller = try joystick.Controller.openInverted(chosen, throttle, twist, inverted);
+    var controller = try joystick.Controller.open(chosen, setup);
     defer controller.close();
     var devices: input.Devices = .{};
     devices.joystick.open(controller.device(), interface.deadZone(settings_file));

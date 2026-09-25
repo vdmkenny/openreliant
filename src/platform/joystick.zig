@@ -10,6 +10,8 @@ const std = @import("std");
 const c = @import("sdl");
 const openreliant = @import("openreliant");
 const input = openreliant.engine.input;
+const interface = openreliant.engine.game.interface;
+const Profile = openreliant.engine.profile.Profile;
 const Axis = input.Axis;
 const JoystickState = input.JoystickState;
 const GamepadButton = input.GamepadButton;
@@ -127,6 +129,41 @@ pub fn choose(found: []const Found, preference: ?[]const u8) ?Found {
         if (each.kind == .gamepad) return each;
     }
     return if (found.len > 0) found[0] else null;
+}
+
+/// Added by OpenReliant: an optional file in the game folder with extra gamepad mappings in SDL's
+/// format, for gamepads missing from SDL's database (`addMappings`).
+pub const mappings_name = "gamecontrollerdb.txt";
+
+/// What `JoyConfig` in `starlancer.ini` says of the controller the game uses, in settings added by
+/// OpenReliant: `Joystick`, part of the name of the controller to choose (`choose`);
+/// `ThrottleAxis` and `TwistAxis`, the axes of a joystick's throttle and twist; and
+/// `ThrottleInvert`, which reverses its throttle.
+pub const Setup = struct {
+    preference: ?[]const u8 = null,
+    throttle: Choice = .guess,
+    twist: Choice = .guess,
+    throttle_inverted: bool = false,
+
+    /// The setup `settings_file` gives, each setting it lacks left to the automatic choice.
+    pub fn read(settings_file: Profile) Setup {
+        const section = interface.joy_section;
+        return .{
+            .preference = settings_file.value(section, "Joystick"),
+            .throttle = .parse(settings_file.value(section, "ThrottleAxis")),
+            .twist = .parse(settings_file.value(section, "TwistAxis")),
+            .throttle_inverted = settings_file.int(section, "ThrottleInvert", 0) != 0,
+        };
+    }
+};
+
+test Setup {
+    try std.testing.expectEqual(Setup{}, Setup.read(.empty));
+    const given = Setup.read(.{ .text = "[JoyConfig]\nJoystick=T.16000M\nThrottleAxis=3\nTwistAxis=-1\nThrottleInvert=1\n" });
+    try std.testing.expectEqualStrings("T.16000M", given.preference.?);
+    try std.testing.expectEqual(Choice{ .axis = 3 }, given.throttle);
+    try std.testing.expectEqual(Choice.none, given.twist);
+    try std.testing.expect(given.throttle_inverted);
 }
 
 /// The value of `ThrottleAxis` or `TwistAxis` in `JoyConfig` (settings added by OpenReliant): an
@@ -348,14 +385,9 @@ pub const Controller = struct {
         gamepad: *c.SDL_Gamepad,
     };
 
-    /// Opens `found`, applying the throttle and twist settings from `starlancer.ini` to a plain
+    /// Opens `found`, applying `setup`'s throttle and twist, and its reversed throttle, to a plain
     /// joystick.
-    pub fn open(found: Found, throttle: Choice, twist: Choice) Error!Controller {
-        return openInverted(found, throttle, twist, false);
-    }
-
-    /// Like `open`, and reverses the throttle axis when `throttle_inverted` is set.
-    pub fn openInverted(found: Found, throttle: Choice, twist: Choice, throttle_inverted: bool) Error!Controller {
+    pub fn open(found: Found, setup: Setup) Error!Controller {
         switch (found.kind) {
             .gamepad => {
                 const gamepad = c.SDL_OpenGamepad(found.id) orelse return fail("SDL_OpenGamepad");
@@ -363,9 +395,9 @@ pub const Controller = struct {
             },
             .joystick => {
                 const plain = c.SDL_OpenJoystick(found.id) orelse return fail("SDL_OpenJoystick");
-                const axes: u8 = @intCast(@min(axisCount(plain), 255));
-                var layout = Layout.guess(axes, found.sdl_type).with(axes, throttle, twist);
-                layout.throttle_inverted = throttle_inverted;
+                const axes: u8 = @intCast(@min(axisCount(plain), std.math.maxInt(u8)));
+                var layout = Layout.guess(axes, found.sdl_type).with(axes, setup.throttle, setup.twist);
+                layout.throttle_inverted = setup.throttle_inverted;
                 return .{ .handle = .{ .joystick = plain }, .layout = layout };
             },
         }
@@ -616,7 +648,7 @@ test "reading a flight stick" {
     defer arena_state.deinit();
     const found = choose(try attached(arena_state.allocator()), "OpenReliant Test").?;
     try std.testing.expectEqual(input.JoystickDevice.Kind.joystick, found.kind);
-    var controller: Controller = try .open(found, .guess, .guess);
+    var controller: Controller = try .open(found, .{});
     defer controller.close();
     var joystick: input.Joystick = .{};
     joystick.open(controller.device(), input.default_dead_zone);
@@ -666,7 +698,7 @@ test "reading a gamepad" {
     defer arena_state.deinit();
     const found = choose(try attached(arena_state.allocator()), "OpenReliant Test").?;
     try std.testing.expectEqual(input.JoystickDevice.Kind.gamepad, found.kind);
-    var controller: Controller = try .open(found, .guess, .guess);
+    var controller: Controller = try .open(found, .{});
     defer controller.close();
     var joystick: input.Joystick = .{};
     joystick.open(controller.device(), input.default_dead_zone);
@@ -757,7 +789,7 @@ test "controllers of many kinds" {
             if (candidate.id == id) break candidate;
         } else return error.TestUnexpectedResult;
         try std.testing.expectEqual(model.kind, each.kind);
-        var controller: Controller = try .open(each, .guess, .guess);
+        var controller: Controller = try .open(each, .{});
         defer controller.close();
         var joystick: input.Joystick = .{};
         joystick.open(controller.device(), input.default_dead_zone);

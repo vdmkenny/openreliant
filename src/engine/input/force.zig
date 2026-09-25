@@ -16,8 +16,12 @@
 //! game plays them on a DirectInput joystick with force feedback alone.
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const frc = @import("../../formats/frc.zig");
+const files = @import("../files.zig");
+const main = @import("../game/main.zig");
 
 /// The effects, each read from its own file.
 pub const Effect = enum {
@@ -102,6 +106,34 @@ pub const Settings = struct {
 pub const Library = struct {
     files: std.EnumArray(Effect, ?frc.File) = .initFill(null),
 };
+
+/// The effects `load` read, and those the game lacks.
+pub const Found = struct {
+    library: Library = .{},
+    /// The effects whose files are missing, can't be read or aren't effect files, which play
+    /// nothing.
+    lacking: std.EnumSet(Effect) = .initFull(),
+};
+
+/// The folder the effects' files are in (`0x0050E1D8`).
+const folder = "forces\\";
+
+/// `load_force_effects` (`0x004BD800`): each effect's file in `folder` under the game's folder
+/// `directory`, into `arena`, the folder and the files found whatever the case of their names, as
+/// Windows finds them. OpenReliant reads the files the game never reads with its own (`Unread`),
+/// and reads them all whatever the controller.
+pub fn load(io: Io, arena: Allocator, directory: Io.Dir) Found {
+    var found: Found = .{};
+    for (std.enums.values(Effect)) |effect| {
+        var path: [files.max_path]u8 = undefined;
+        const name = std.fmt.bufPrint(&path, folder ++ "{s}", .{effect.fileName()}) catch continue;
+        const bytes = (files.readFile(io, arena, directory, name, .limited(files.max_file_size)) catch continue) orelse continue;
+        const file = frc.File.parse(arena, bytes) catch continue;
+        found.library.files.set(effect, file);
+        found.lacking.remove(effect);
+    }
+    return found;
+}
 
 /// How hard the controller's two motors turn, from 0 to 1: the low-frequency one, a heavy rumble,
 /// and the high-frequency one, a light buzz.
@@ -276,7 +308,14 @@ pub const Forces = struct {
 
 /// Ticks as milliseconds.
 fn millis(ticks: i32) f32 {
-    return @as(f32, @floatFromInt(ticks)) * 10;
+    return @as(f32, @floatFromInt(ticks)) * ms_per_tick;
+}
+
+/// The milliseconds in each of the game's ticks.
+const ms_per_tick = std.time.ms_per_s / main.ticks_per_second;
+
+comptime {
+    std.debug.assert(ms_per_tick * main.ticks_per_second == std.time.ms_per_s);
 }
 
 /// How deep groups may hold groups; one deeper plays nothing, as a group that holds itself would.
@@ -419,6 +458,36 @@ pub const testing = struct {
         }
     };
 };
+
+test load {
+    const io = std.testing.io;
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+
+    // Without the folder, nothing plays.
+    try std.testing.expect(load(io, arena, tmp.dir).lacking.contains(.lc));
+
+    // The folder and its files are found whatever the case of their names; a file that isn't one
+    // is left out.
+    try tmp.dir.createDirPath(io, "Forces");
+    const bytes = try frc.testing.file(arena, &.{.{ .id = 0, .name = "Sine1", .kind = 2, .type = 102, .duration = 305, .rest = &.{ 4, 30, @bitCast(@as(i32, -30)) } }});
+    try tmp.dir.writeFile(io, .{ .sub_path = "Forces/Lc.FRC", .data = bytes });
+    try tmp.dir.writeFile(io, .{ .sub_path = "Forces/SHAKE.frc", .data = "not an effect" });
+    const found = load(io, arena, tmp.dir);
+    try std.testing.expectEqual(305, found.library.files.get(.lc).?.effects[0].duration);
+    try std.testing.expect(!found.lacking.contains(.lc));
+    try std.testing.expectEqual(null, found.library.files.get(.shake));
+    try std.testing.expect(found.lacking.contains(.shake) and found.lacking.contains(.missile));
+}
+
+test millis {
+    // A tick is a hundredth of a second.
+    try std.testing.expectEqual(10, millis(1));
+    try std.testing.expectEqual(1000, millis(main.ticks_per_second));
+}
 
 test "Effect.fileName" {
     try std.testing.expectEqualStrings("lc.frc", Effect.lc.fileName());

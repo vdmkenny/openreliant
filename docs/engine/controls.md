@@ -277,8 +277,9 @@ same as `lc`), `Hullshock` to `Hullshock3`, `landhard`, `Shield`, `Shock` and `s
 
 ### In OpenReliant
 
-[`input/force.zig`](../../src/engine/input/force.zig) plays the effects as rumble. Each frame it
-works out how hard every effect playing pushes at that moment: a waveform slower than 10 Hz swings
+[`input/force.zig`](../../src/engine/input/force.zig) reads the effects as `load_force_effects`
+does (`load`), whatever the controller, and plays them as rumble. Each frame it works out how hard
+every effect playing pushes at that moment: a waveform slower than 10 Hz swings
 the controller's low-frequency motor as it swings, a faster one buzzes the high-frequency motor at
 its strength, and envelopes and gains scale both. A file of several effects plays whole, a
 sequence one member after the other and a superimposition all at once; the game starts only the

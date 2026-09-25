@@ -107,16 +107,39 @@ pub const mission_path_size = 32;
 pub fn missionPath(buffer: *[mission_path_size]u8, number: u16, second_part: bool, multiplayer: bool) []const u8 {
     if (number == second_part_mission and second_part) return second_part_path;
     if (number == multiplayer_mission and multiplayer) return multiplayer_path;
-    return std.fmt.bufPrint(buffer, "{s}{d}.dte", .{ path_start, number }) catch unreachable;
+    return std.fmt.bufPrint(buffer, "{s}{d}" ++ file_end, .{ path_start, number }) catch unreachable;
 }
 
-const path_start = ".\\missions\\mission";
+/// A mission's file, `mission<number>.dte`, and where it lies.
+const file_start = "mission";
+const file_end = ".dte";
+const path_start = ".\\missions\\" ++ file_start;
 /// Mission 25, whose second part is a file of its own (`0x00509728`), and mission 3, whose
 /// multiplayer game is (`0x0050970C`).
 const second_part_mission = 25;
-const second_part_path = path_start ++ "251.dte";
+const second_part_path = path_start ++ "251" ++ file_end;
 const multiplayer_mission = 3;
-const multiplayer_path = path_start ++ "311.dte";
+const multiplayer_path = path_start ++ "311" ++ file_end;
+
+/// The number in a mission file's name, `mission<number>.dte` as `missionPath` names it, whatever
+/// its case; null for any other name. Added for OpenReliant, which lists the missions a game's
+/// folder holds (`openreliant missions`).
+pub fn missionNumber(name: []const u8) ?u16 {
+    if (name.len <= file_start.len + file_end.len) return null;
+    if (!std.ascii.startsWithIgnoreCase(name, file_start) or !std.ascii.endsWithIgnoreCase(name, file_end)) return null;
+    return std.fmt.parseInt(u16, name[file_start.len .. name.len - file_end.len], 10) catch null;
+}
+
+test missionNumber {
+    try std.testing.expectEqual(1, missionNumber("mission1.dte"));
+    try std.testing.expectEqual(251, missionNumber("MISSION251.DTE"));
+    try std.testing.expectEqual(null, missionNumber("mission.dte"));
+    try std.testing.expectEqual(null, missionNumber("missionx.dte"));
+    try std.testing.expectEqual(null, missionNumber("mission1.shp"));
+    // Every name `missionPath` makes reads back.
+    var buffer: [mission_path_size]u8 = undefined;
+    try std.testing.expectEqual(25, missionNumber(std.fs.path.basenameWindows(missionPath(&buffer, 25, false, false))));
+}
 
 /// What `WinMain` does before each single-player mission (`0x004A99CC`): puts back the pilot's
 /// kills as the last mission the pilot came through kept them (`gameflow.endMission`). **Not

@@ -31,7 +31,6 @@ const game = engine.game;
 const camera = game.camera;
 const help = @import("help.zig");
 const install = @import("install.zig");
-const forces = @import("forces.zig");
 const joysticks = @import("joysticks.zig");
 const missions = @import("missions.zig");
 const version = @import("version.zig");
@@ -329,9 +328,11 @@ const Options = struct {
                 options.ship = ship;
             },
             .@"--view" => {
-                const setting = std.fmt.parseInt(u32, value, 10) catch return error.BadValue;
-                if (setting > 2) return error.BadValue;
-                options.cockpit = @enumFromInt(setting);
+                const number = std.fmt.parseInt(u32, value, 10) catch return error.BadValue;
+                options.cockpit = switch (@as(camera.CockpitSetting, @enumFromInt(number))) {
+                    .cockpit, .chase, .none => |setting| setting,
+                    _ => return error.BadValue,
+                };
             },
             .@"--difficulty" => options.difficulty = std.meta.stringToEnum(game.collision.Difficulty, value) orelse return error.BadValue,
             .@"--music" => options.music = if (std.mem.eql(u8, value, "none")) null else value,
@@ -452,22 +453,16 @@ pub fn main(init: std.process.Init) !u8 {
     return 0;
 }
 
-/// The game's settings file, in its directory, which it names in lower case.
-const settings_name = "starlancer.ini";
-
-/// Added by OpenReliant: an optional file in the game folder with extra gamepad mappings in SDL's
-/// format, for gamepads missing from SDL's database.
-pub const mappings_name = "gamecontrollerdb.txt";
-
 /// Opens the controller the game should use, unless it is already open, and loads the input
 /// settings and bindings, which depend on the controller. The original does this once at startup in
 /// `input_init` and `load_key_config`; OpenReliant also does it whenever a controller is connected
-/// or disconnected. `platform.joystick.choose` selects the controller; `ThrottleAxis`, `TwistAxis`
-/// and `ThrottleInvert` in `JoyConfig` configure a joystick's throttle and twist axes.
+/// or disconnected. `platform.joystick.choose` selects the controller, and the rest of
+/// `JoyConfig`'s setup (`platform.joystick.Setup`) configures a joystick's throttle and twist axes.
 fn connectController(arena: Allocator, devices: *engine.input.Devices, controller: *?platform.joystick.Controller, settings_file: engine.profile.Profile) void {
     const joystick = platform.joystick;
+    const setup: joystick.Setup = .read(settings_file);
     const found = joystick.attached(arena) catch &.{};
-    const chosen = joystick.choose(found, settings_file.value("JoyConfig", "Joystick"));
+    const chosen = joystick.choose(found, setup.preference);
     if (controller.*) |*open| {
         if (chosen != null and chosen.?.id == open.id() and devices.joystick.device != null) return;
         devices.joystick.close();
@@ -475,10 +470,7 @@ fn connectController(arena: Allocator, devices: *engine.input.Devices, controlle
         controller.* = null;
     }
     if (chosen) |which| {
-        const throttle: joystick.Choice = .parse(settings_file.value("JoyConfig", "ThrottleAxis"));
-        const twist: joystick.Choice = .parse(settings_file.value("JoyConfig", "TwistAxis"));
-        const inverted = settings_file.int("JoyConfig", "ThrottleInvert", 0) != 0;
-        controller.* = joystick.Controller.openInverted(which, throttle, twist, inverted) catch null;
+        controller.* = joystick.Controller.open(which, setup) catch null;
         if (controller.*) |*open| devices.joystick.open(open.device(), game.interface.deadZone(settings_file));
     }
     game.interface.loadKeyConfig(devices, settings_file);
@@ -505,6 +497,30 @@ fn missingGameFiles(directory: []const u8, file: ?[]const u8) error{MissingGameF
     return error.MissingGameFiles;
 }
 
+/// The window's size in points as it opens, which the software device draws at until the first
+/// frame takes the window's own. OpenReliant's: the original took the display mode `[Device]` names.
+const initial_size = [2]u32{ 1280, 720 };
+
+/// The voices `WinMain` asks `sound_init` for (`0x004A9421`).
+const sound_voices = 10;
+
+comptime {
+    // The platform counts the game's ticks.
+    std.debug.assert(platform.window.tick_nanoseconds * game.main.ticks_per_second == std.time.ns_per_s);
+}
+
+/// One of the game's files in its folder `directory`, whole, into `arena`.
+fn readGameFile(io: Io, arena: Allocator, directory: Io.Dir, name: []const u8) ![]u8 {
+    return directory.readFileAlloc(io, name, arena, .limited(engine.files.max_file_size));
+}
+
+/// The records of the stats table `table`, from its file in the game's folder `directory`, as its
+/// loader reads them (`stats_load_ships` and the others).
+fn readStats(io: Io, arena: Allocator, directory: Io.Dir, comptime table: stats.Table) ![]align(1) const stats.Table.Record(table) {
+    const file = try stats.File.parse(table, try readGameFile(io, arena, directory, table.fileName()));
+    return @field(file, @tagName(table));
+}
+
 fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     const directory = Io.Dir.cwd().openDir(io, options.directory, .{}) catch |err| switch (err) {
         error.FileNotFound, error.NotDir => return missingGameFiles(options.directory, null),
@@ -516,26 +532,26 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     // What `WinMain` opens at start-up, and the texture cache `renderer_start` opens.
     var resources: game.bigfile.Hog = try .open(arena, io, directory, game.bigfile.resource_name);
     defer resources.close(arena);
-    const cache_bytes = try directory.readFileAlloc(io, "tcachehw.dat", arena, .limited(256 << 20));
+    const cache_bytes = try readGameFile(io, arena, directory, install.texture_cache_name);
     const cache: tcache.Cache = try .parse(arena, cache_bytes);
     const palette = try tga.palette(try resources.readFile(arena, "palette.tga"));
     var textures: srtexture.Table = .init(arena, cache, palette);
-    // The flight and combat stats `stats_load_ships` reads.
-    const ship_stats = (try stats.File.parse(.ships, try directory.readFileAlloc(io, "shipstats.bin", arena, .limited(4 << 20)))).ships;
-    // Every gun type's figures, which `stats_load_guns` reads.
-    const gun_stats = (try stats.File.parse(.guns, try directory.readFileAlloc(io, "gunstats.bin", arena, .limited(4 << 20)))).guns;
-    // And every missile type's, which `stats_load_missiles` reads.
-    const missile_stats = (try stats.File.parse(.missiles, try directory.readFileAlloc(io, "missilestats.bin", arena, .limited(4 << 20)))).missiles;
-    const pilot_stats = (try stats.File.parse(.pilots, try directory.readFileAlloc(io, "pilotstats.bin", arena, .limited(4 << 20)))).pilots;
+    // The flight and combat stats `stats_load_ships` reads; every gun type's figures, which
+    // `stats_load_guns` reads; every missile type's, which `stats_load_missiles` reads; and the
+    // pilots'.
+    const ship_stats = try readStats(io, arena, directory, .ships);
+    const gun_stats = try readStats(io, arena, directory, .guns);
+    const missile_stats = try readStats(io, arena, directory, .missiles);
+    const pilot_stats = try readStats(io, arena, directory, .pilots);
     // The strings `language_init` reads out of `language.dll` at start-up.
-    const strings: game.language.Language = try .load(arena, try .parse(try directory.readFileAlloc(io, game.language.file_name, arena, .limited(16 << 20))));
+    const strings: game.language.Language = try .load(arena, try .parse(try readGameFile(io, arena, directory, game.language.file_name)));
 
-    var window: platform.window.Window = try .open("OpenReliant", 1280, 720, options.fullscreen);
+    var window: platform.window.Window = try .open("OpenReliant", initial_size[0], initial_size[1], options.fullscreen);
     defer window.close();
     // The device the driver draws with, and the driver.
     const screen = try arena.create(Screen);
     screen.* = if (options.software)
-        .{ .software = try .init(arena, 1280, 720) }
+        .{ .software = try .init(arena, initial_size[0], initial_size[1]) }
     else
         .{ .gpu = try .init(gpa, window.gpu, window.handle, options.settings) };
     defer switch (screen.*) {
@@ -547,7 +563,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     var pacer: platform.window.Pacer = .{};
 
     var context: srapi.Context = .{
-        .projection = (camera.Camera{}).projection(1280, 720),
+        .projection = (camera.Camera{}).projection(initial_size[0], initial_size[1]),
         .detail = game.main.high_detail,
         .finer = options.detail_reach.finer(),
         .budget = options.draw_budget.limit(),
@@ -587,22 +603,19 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     var devices: engine.input.Devices = .{};
     // The game's settings file, which `load_key_config` reads the input settings from and the
     // pause menu's screens write to. If it's missing, every setting keeps its default.
-    var settings_file: engine.profile.File = .{
-        .arena = arena,
-        .profile = .{ .text = directory.readFileAlloc(io, settings_name, arena, .limited(1 << 20)) catch "" },
-    };
+    var settings_file: engine.profile.File = .{ .arena = arena, .profile = .read(io, arena, directory) };
     // The joystick or gamepad the game uses, opened as `input_init` opens a joystick, and again
     // whenever a controller is connected or disconnected.
     try platform.joystick.init(.game);
     defer platform.joystick.deinit();
-    _ = platform.joystick.addMappings(try std.fs.path.joinZ(arena, &.{ options.directory, mappings_name }));
+    _ = platform.joystick.addMappings(try std.fs.path.joinZ(arena, &.{ options.directory, platform.joystick.mappings_name }));
     var controller: ?platform.joystick.Controller = null;
     defer if (controller) |*open| open.close();
     // A screenshot reads no controls, so that it comes out the same whatever is plugged in.
     if (options.screenshot == null) connectController(arena, &devices, &controller, settings_file.profile);
 
     // Sound: Miles's calls, played by OpenAL Soft or OpenReliant's own mixer through SDL3's audio,
-    // with the ten voices `WinMain` asks `sound_init` for, the volumes of `[Sound]`, and the 3D
+    // with the voices `WinMain` asks `sound_init` for, the volumes of `[Sound]`, and the 3D
     // provider it opens; silent where there is no device, or with `--no-sound`.
     const output: ?*platform.audio.Output = if (options.sound) |chosen| platform.audio.Output.create(gpa, chosen) catch |err| none: {
         std.log.warn("playing without sound: {s}", .{@errorName(err)});
@@ -610,7 +623,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     } else null;
     defer if (output) |open| open.destroy();
     const sound = try arena.create(game.hog_snd.Sound);
-    sound.init(if (output) |open| open.driver() else null, 10, .{ .gpa = gpa, .io = io, .dir = directory });
+    sound.init(if (output) |open| open.driver() else null, sound_voices, .{ .gpa = gpa, .io = io, .dir = directory });
     defer sound.shutdown();
     sound.volumes = .read(settings_file.profile);
     sound.objects = sandbox.objects;
@@ -669,7 +682,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     var shields: game.shield.Shields = try .create(gpa, &textures, explosions.settings.detail, context.hardware, options.shields);
     defer shields.deinit(gpa);
     // The force feedback's effects, and what plays them on the player's controller.
-    const found_forces = forces.load(io, arena, directory);
+    const found_forces = engine.input.force.load(io, arena, directory);
     var lacking = found_forces.lacking.iterator();
     while (lacking.next()) |effect| std.log.warn("forces\\{s} is missing or isn't an effect file: it plays nothing", .{effect.fileName()});
     var force_feedback: engine.input.force.Forces = .{ .library = &found_forces.library, .settings = options.forces };
@@ -980,8 +993,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         // What the menu's screens saved goes to the file.
         if (settings_file.changed) {
             settings_file.changed = false;
-            directory.writeFile(io, .{ .sub_path = settings_name, .data = settings_file.profile.text }) catch |err|
-                std.log.warn("the settings can't be saved to {s}: {s}", .{ settings_name, @errorName(err) });
+            directory.writeFile(io, .{ .sub_path = engine.profile.settings_name, .data = settings_file.profile.text }) catch |err|
+                std.log.warn("the settings can't be saved to {s}: {s}", .{ engine.profile.settings_name, @errorName(err) });
         }
         if (screen.* == .software) try window.present(try screen.software.rgba(frame_arena.allocator()), size[0], size[1]);
         if (frames_left) |*left| {
@@ -1403,7 +1416,6 @@ fn nextShipType(from: usize, step: isize) usize {
 
 test {
     _ = install;
-    _ = forces;
     _ = joysticks;
     _ = missions;
     _ = version;

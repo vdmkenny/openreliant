@@ -18,6 +18,7 @@ const Allocator = std.mem.Allocator;
 const openreliant = @import("openreliant");
 const cdimage = openreliant.cdimage;
 const iso9660 = openreliant.iso9660;
+const stats = openreliant.stats;
 const game = openreliant.engine.game;
 const c = @import("archive");
 const help = @import("help.zig");
@@ -71,7 +72,10 @@ pub const Options = struct {
 };
 
 /// The game's files the engine reads before anything else. It has none of its own.
-pub const game_files = [_][]const u8{ game.bigfile.resource_name, "tcachehw.dat", "shipstats.bin", game.language.file_name };
+pub const game_files = [_][]const u8{ game.bigfile.resource_name, texture_cache_name, stats.Table.ships.fileName(), game.language.file_name };
+
+/// The texture cache of the hardware renderers, which `renderer_start` opens (`0x0050A800`).
+pub const texture_cache_name = "tcachehw.dat";
 
 /// The first of the game's files `dir` lacks, or null when it has them all. It asks with `statFile`:
 /// `access` fails for files that exist when the Windows build runs under Wine.
@@ -916,6 +920,10 @@ const CabinetRecords = struct {
         data_offset: u32,
         blocks: u16,
         compression: u16 = 0,
+
+        comptime {
+            std.debug.assert(@sizeOf(Folder) == 8);
+        }
     };
 
     /// A file's record, which its name follows, up to a NUL.
@@ -927,12 +935,20 @@ const CabinetRecords = struct {
         date: u16 = 0x5421,
         time: u16 = 0,
         attributes: u16 = 0x20,
+
+        comptime {
+            std.debug.assert(@sizeOf(File) == 16);
+        }
     };
 
     const Data = extern struct {
         checksum: u32 = 0,
         size: u16,
         uncompressed_size: u16,
+
+        comptime {
+            std.debug.assert(@sizeOf(Data) == 8);
+        }
     };
 };
 
