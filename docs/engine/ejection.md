@@ -176,8 +176,9 @@ too.
   on the shields' finer sphere of 48 slices by 40 bands, so its outline is round. Its glow is worked
   out on the game's sphere's vertices, and the finer sphere's take their colours from between them,
   so its waves run as the game's do. `--original` keeps the game's sphere.
-- The pod is placed a tick at a time as it is drawn in, so it steps even with smooth motion
-  ([#269](https://github.com/vdmkenny/openreliant/issues/269)).
+- **Improvement:** with smooth motion the pod glides on between the ticks as it is drawn in, as
+  what flies does (`create.Slot.glide`); the game places it a tick at a time. Scoop Up measures from
+  where it placed the pod, which the game's frame has it at.
 - **Fix:** `tractor_create` returns -1 with all five tractors in use, which Scoop Up then reads past
   the five with; the port has the ship take the pod in without beams, bubble or light.
 - **Fix:** odds of nothing at all divide by zero in the game; the port has the pilot rescued.

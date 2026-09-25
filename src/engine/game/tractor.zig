@@ -468,9 +468,6 @@ const bubble_turn: f32 = 0.5;
 /// heard (`doorclos`), as the beams, no longer aimed, the bubble and the light go out; and after a while has the pod
 /// aboard, gone from the mission. Should the pod be gone first, it closes its doors and gives up.
 ///
-/// The pod is placed a tick at a time, so it steps even with smooth motion
-/// ([#269](https://github.com/vdmkenny/openreliant/issues/269)).
-///
 /// Not ported: the mission's Scooped event ([#37](https://github.com/vdmkenny/openreliant/issues/37));
 /// a multiplayer game's wait for every player, as the beams are made and before the pod is gone
 /// ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
@@ -536,10 +533,14 @@ pub fn scoopUp(ctx: Context, index: u16) void {
             const pulling = state.stage == .pulling;
             const out = if (pulling) pull_out else if (object.type == .nanny) stow_nanny else stow_antanov;
             const to = door.position + math.forward(door.orientation) * @as(Vector, @splat(out));
-            const reach = math.distance(to, pod.drawn.position);
+            // Where the pod was placed, which the game's frame has it at; the port draws it on
+            // between the ticks (`create.Slot.glide`).
+            const was = gameobj.vector(pod.object.root.position);
+            const reach = math.distance(to, was);
             const speed = if (pulling) @min(math.lerp(pull_slowest, pull_fastest, reach / pull_ramp), pull_fastest) else stow_speed;
-            const step = math.normalize(to - pod.drawn.position) * @as(Vector, @splat(speed * seconds));
-            objects.setPosition(&pod.object, &pod.drawn, pod.drawn.position + step);
+            const way = math.normalize(to - was);
+            objects.setPosition(&pod.object, &pod.drawn, was + way * @as(Vector, @splat(speed * seconds)));
+            pod.glide = way * @as(Vector, @splat(speed * tick_seconds));
             if (tractor) |held| {
                 if (held.bubble) |bubble| bubble.glow(1, @as(f32, @floatFromInt(now - state.since)) * tick_seconds);
                 held.show(light_reach, .aimed);

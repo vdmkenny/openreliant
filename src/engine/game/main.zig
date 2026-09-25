@@ -337,13 +337,13 @@ pub fn pause(pausing: Pausing, on: bool) !void {
 ///
 /// Not ported: the rest of the frame's work, which is the mission's events and its scripts
 /// ([#30](https://github.com/vdmkenny/openreliant/issues/30)).
-pub fn missionFrame(orders: aigeneric.Context, fraction: f32) bool {
+pub fn missionFrame(orders: aigeneric.Context, timing: objects.Timing) bool {
     const over = missionOver(orders.world);
     if (orders.world.display) |display| display.uncloakSpent(orders.world);
     aigeneric.ordersUpdate(orders);
-    frameObjects(orders.world.objects, fraction, orders.clock.frame_start);
-    missiles.frame(orders.world, fraction);
-    guns.bulletsFrame(orders.world, orders.clock, fraction);
+    frameObjects(orders.world.objects, timing, orders.clock.frame_start);
+    missiles.frame(orders.world, timing.fraction);
+    guns.bulletsFrame(orders.world, orders.clock, timing.fraction);
     if (orders.world.sparks) |thrown| thrown.frame(orders.clock);
     if (orders.world.particles) |pool| pool.frame(orders.clock);
     if (orders.world.smoke) |pools| pools.frame(orders.clock);
@@ -455,17 +455,24 @@ fn avoidanceScan(world: gameobj.World, index: u16) void {
 }
 
 /// `mission_frame`'s pass over the objects before the camera's frame: each live object, save
-/// stand-ins and disabled and jumping ones, has `missile_homing` cleared and is framed `fraction`
-/// of the way through the simulation's step (`objects.frameTree`); a cloaked one's frame then
-/// wobbles as its cloak changes, by the frame's tick `now` (`cloak.wobble`).
-pub fn frameObjects(all: *create.Objects, fraction: f32, now: i32) void {
+/// stand-ins and disabled and jumping ones, has `missile_homing` cleared and is framed as far
+/// through the simulation's step as `timing` says (`objects.frameTree`), one the orders placed
+/// going on by its glide for the time past the tick, which the orders set afresh each frame; a
+/// cloaked one's frame then wobbles as its cloak changes, by the frame's tick `now`
+/// (`cloak.wobble`).
+pub fn frameObjects(all: *create.Objects, timing: objects.Timing, now: i32) void {
     var walk = all.walk();
     while (walk.next()) |index| {
         const slot = &all.slots[index];
         const object = &slot.object;
         if (object.flags.outOfFrame()) continue;
         object.missile_homing = 0;
-        objects.frameTree(&object.root, if (slot.model) |*model| model else null, &slot.drawn, fraction);
+        // Gliding, or the frame after, it is drawn from where the orders placed it.
+        const gliding = @reduce(.Or, slot.glide != @as(math.Vector, @splat(0)));
+        const glide: ?math.Vector = if (gliding or slot.glided) slot.glide * @as(math.Vector, @splat(timing.ahead)) else null;
+        slot.glided = gliding;
+        slot.glide = @splat(0);
+        objects.frameTree(&object.root, if (slot.model) |*model| model else null, &slot.drawn, timing.fraction, glide);
         cloak.wobble(slot, now);
     }
 }
@@ -638,7 +645,7 @@ test "the objects are framed and drawn, save those left out" {
     all.slots[1].object.flags.disabled = true;
     all.slots[2].object.flags.jumping = true;
     all.slots[3].object.missile_homing = 1;
-    frameObjects(all, 0, 0);
+    frameObjects(all, .{}, 0);
     // Each framed one stands where it was made, and the pass clears the missile warning.
     try std.testing.expectEqual(math.Vector{ 300, 0, 0 }, all.slots[3].drawn.position);
     try std.testing.expectEqual(0, all.slots[3].object.missile_homing);
@@ -655,12 +662,32 @@ test "the objects are framed and drawn, save those left out" {
     // The ejection's cutaway shows the player's pod and the cutaway slot's ship alone.
     all.slots[0].object.flags.hidden = false;
     const seen = try create.createObject(all, &tables, model.types(), create.cutaway_slot, .predator, 0, .{ 0, 0, 500 }, &random);
-    frameObjects(all, 0, 0);
+    frameObjects(all, .{}, 0);
     scene.clear();
     try drawObjects(gpa, &scene, all, .{}, null, null, .ejection);
     const drawn = scene.layers.get(.world).items;
     try std.testing.expectEqual(2, drawn.len);
     for (drawn) |item| try std.testing.expect(std.meta.eql(item.mesh.position, all.slots[0].drawn.position) or std.meta.eql(item.mesh.position, all.slots[seen].drawn.position));
+}
+
+test "an object the orders place is drawn on by its glide, for the time past the tick" {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const index = try mission.add(.predator, .{ 0, 0, 100 });
+    const slot = mission.slot(index);
+    // Placed at 100 and going 8 a tick, half a tick on it is drawn 4 further along.
+    slot.glide = .{ 0, 0, 8 };
+    frameObjects(mission.objects, .{ .ahead = 0.5 }, 0);
+    try std.testing.expectEqual(math.Vector{ 0, 0, 104 }, slot.drawn.position);
+    // Its glide goes once used: placed no more, it is drawn back where it was placed.
+    try std.testing.expectEqual(math.Vector{ 0, 0, 0 }, slot.glide);
+    frameObjects(mission.objects, .{ .ahead = 0.5 }, 0);
+    try std.testing.expectEqual(math.Vector{ 0, 0, 100 }, slot.drawn.position);
+    try std.testing.expect(!slot.glided);
+    slot.glide = .{ 0, 0, 8 };
+    frameObjects(mission.objects, .{ .ahead = 0.25 }, 0);
+    try std.testing.expectEqual(math.Vector{ 0, 0, 102 }, slot.drawn.position);
 }
 
 test "the passes draw a cloaked object through its cloak" {
@@ -676,7 +703,7 @@ test "the passes draw a cloaked object through its cloak" {
     // Halfway on, the frame wobbles, and the part is drawn see-through, half solid, under its
     // shimmer.
     const halfway = cloak.change_ticks / 2;
-    frameObjects(stage.mission.objects, 0, halfway);
+    frameObjects(stage.mission.objects, .{}, halfway);
     try std.testing.expect(!std.meta.eql(math.identity, stage.slot().drawn.orientation));
     try drawObjects(gpa, &scene, stage.mission.objects, .{ .frame_start = halfway }, null, null, .everything);
     const drawn = scene.layers.get(.world).items;
@@ -1167,7 +1194,7 @@ test missionFrame {
     const orders = mission.orders();
     try std.testing.expect(try aigeneric.push(orders, 1, .slow_rotate, .{ .kind = .ship, .index = -1, .component = -1 }));
 
-    _ = missionFrame(orders, 0);
+    _ = missionFrame(orders, .{});
     // The frame ran the ship's order, and framed every object where it is drawn.
     try std.testing.expect(mission.objects.slots[1].object.yaw_input > 0);
     try std.testing.expect(!mission.objects.slots[1].object.root.flags.unframed);

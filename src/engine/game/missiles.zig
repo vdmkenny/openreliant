@@ -688,7 +688,7 @@ pub fn frame(world: gameobj.World, fraction: f32) void {
             continue;
         }
         if (collide(world, index)) continue;
-        objects.frameTree(&live.object().root, if (live.slot.model) |*model| model else null, &live.slot.drawn, fraction);
+        objects.frameTree(&live.object().root, if (live.slot.model) |*model| model else null, &live.slot.drawn, fraction, null);
         live.shown = true;
         const warns = live.type != .screamer or live.launcher >= all.players;
         if (live.target.index >= 0 and live.decoy == null and warns) {

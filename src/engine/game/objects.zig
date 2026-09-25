@@ -798,8 +798,18 @@ test hitSegment {
 /// `node_tree_frames` (`0x0049A880`) for an object, once a frame before it is drawn and before the
 /// camera's frame: its root's frame (`Node.framePlace`), which `drawn` keeps, then each of its
 /// part nodes' (`Model.frame`), and the model placed where the root's frame has it.
-pub fn frameTree(root: *Node, model: ?*Model, drawn: *Model.Local, fraction: f32) void {
-    if (root.framePlace(fraction)) |place| drawn.* = place;
+///
+/// **Improvement:** an object the orders place from tick to tick, rather than move, goes on by
+/// `glide` from where they placed it (`create.Slot.glide`), so it moves on every frame as what
+/// flies does. The game draws it where it was placed. Null leaves an object that no step has moved
+/// where it was drawn.
+pub fn frameTree(root: *Node, model: ?*Model, drawn: *Model.Local, fraction: f32, glide: ?Vector) void {
+    if (root.framePlace(fraction)) |place| {
+        drawn.* = place;
+        if (glide) |on| drawn.position += on;
+    } else if (glide) |on| {
+        drawn.position = Vector{ root.position.x, root.position.y, root.position.z } + on;
+    }
     const parts = model orelse return;
     parts.frame(fraction);
     parts.place(drawn.position, drawn.orientation);
@@ -2138,6 +2148,17 @@ pub fn stepFraction(clock: *const Clock, smooth: bool) f32 {
 pub fn pastTick(clock: *const Clock, smooth: bool) f32 {
     return if (!smooth or clock.paused) 0 else clock.past_tick;
 }
+
+/// How far along a frame is drawn: `fraction` of the way through the simulation's step
+/// (`stepFraction`), and `ahead` of a tick past the last tick (`pastTick`).
+pub const Timing = struct {
+    fraction: f32 = 0,
+    ahead: f32 = 0,
+
+    pub fn of(clock: *const Clock, smooth: bool) Timing {
+        return .{ .fraction = stepFraction(clock, smooth), .ahead = pastTick(clock, smooth) };
+    }
+};
 
 /// Where `node_frame_update` draws a node that moved rather than posed, `fraction` of the way from
 /// `now` to `next`: along the straight line between, and turned from `now` by that share of the
