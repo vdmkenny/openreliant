@@ -23,7 +23,7 @@ pub const template = struct {
     /// The directory's slots before the first section, of which the game reads the first 27.
     pub const slots = offsets[0] / @sizeOf(DirectoryEntry);
     /// The flags every entry of the template's missions carries.
-    pub const formats: u8 = 0x0F;
+    pub const formats: DirectoryEntry.Formats = .all;
 
     /// The bytes section `index` has before the next section, or the file's end: none for section
     /// 21, which starts where section 22 does.
@@ -47,7 +47,7 @@ pub const Contents = struct {
 pub const Sections = [dte.section_count]Contents;
 
 pub const Options = struct {
-    formats: u8 = template.formats,
+    formats: DirectoryEntry.Formats = template.formats,
     /// OpenReliant's own name for the mission, which goes in section 21 (`dte.OpenReliantName`),
     /// written after the template's end, since the template gives the section no room.
     name: ?[]const u8 = null,

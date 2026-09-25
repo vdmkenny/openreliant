@@ -84,7 +84,7 @@ fn check(io: Io, gpa: Allocator, directory: Io.Dir, resources: *const game.bigfi
         (try mission.flightGroups()).len,
         (try mission.file.triggers()).len,
         (try mission.file.script()).len,
-        @as(u4, @bitCast(mission.formats)),
+        mission.formats.byte(),
     });
     // The player's own record: its ship type and its name, as the file holds them.
     if (try mission.file.player()) |player| {

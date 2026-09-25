@@ -34,6 +34,7 @@ const Export = struct { []const u8, type };
 pub const exported = [_]Export{
     // Mission records, which the engine uses in place.
     .{ "SectionEntry", dte.DirectoryEntry },
+    .{ "SectionFormats", dte.DirectoryEntry.Formats },
     .{ "MissionGlobal", dte.Global },
     .{ "MissionShip", dte.Ship },
     .{ "MissionShipFlags", dte.Ship.Flags },

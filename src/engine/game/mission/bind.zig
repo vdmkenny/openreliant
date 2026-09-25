@@ -58,8 +58,9 @@ pub const Mission = struct {
     gpa: Allocator,
     image: []u8,
     file: dte.Mission,
-    /// The flags of the directory's entries, noted where any section has them.
-    formats: Formats,
+    /// `mission_format_flags` (`0x00525F9A`, `0x00525FA4`, `0x005267C6`, `0x005294E8`): the four
+    /// flags of the directory's entries, each set where any section has it. Nothing reads them.
+    formats: dte.DirectoryEntry.Formats,
     /// The flight groups' ships, group after group (`flight_group_ships`, `0x004EF2F8`), each by
     /// its index among the mission's ships. A group's `first_ship` and `ship_count` give its run.
     group_ships: []u16,
@@ -70,16 +71,6 @@ pub const Mission = struct {
     /// The record each entry of the object table stands for (`object_records`, `0x00538C90`),
     /// by object ID; null where none does.
     records: []?Record,
-
-    /// `mission_format_flags` (`0x00525F9A`, `0x00525FA4`, `0x005267C6`, `0x005294E8`): the
-    /// four flags of `DirectoryEntry.formats`, each set where any section has it. Nothing reads
-    /// them.
-    pub const Formats = packed struct(u4) {
-        first: bool = false,
-        second: bool = false,
-        third: bool = false,
-        fourth: bool = false,
-    };
 
     pub const Waypoint = struct {
         /// The waypoint's flight group, by its index.
@@ -103,7 +94,7 @@ pub const Mission = struct {
         errdefer gpa.free(image);
         const file: dte.Mission = try .parse(image);
         var mission: Mission = .{ .gpa = gpa, .image = image, .file = file, .formats = .{}, .group_ships = &.{}, .waypoints = &.{}, .records = &.{} };
-        for (file.directory) |entry| mission.formats = @bitCast(@as(u4, @bitCast(mission.formats)) | @as(u4, @truncate(entry.formats)));
+        for (file.directory) |entry| mission.formats = mission.formats.noting(entry.formats);
         resetShips(try mission.ships());
         // What `0x00453050` makes of the sections once they are bound.
         mission.waypoints = try listWaypoints(gpa, try mission.ships());
@@ -133,8 +124,7 @@ pub const Mission = struct {
 
     /// The ships of flight group `group`.
     pub fn groupShips(mission: Mission, group: dte.FlightGroup) []const u16 {
-        if (group.first_ship == dte.FlightGroup.no_ship) return &.{};
-        const first = @min(group.first_ship, mission.group_ships.len);
+        const first = @min(group.firstShip() orelse return &.{}, mission.group_ships.len);
         return mission.group_ships[first..][0..@min(group.ship_count, mission.group_ships.len - first)];
     }
 };
@@ -160,11 +150,12 @@ fn listWaypoints(gpa: Allocator, ships: []align(1) dte.Ship) Allocator.Error![]M
     while (true) {
         var group: ?u8 = null;
         for (ships, 0..) |*ship, index| {
-            if (ship.kind != dte.Ship.waypoint_kind or ship.flight_group == dte.Ship.no_flight_group or ship.waypoint_listed != 0) continue;
-            if (group == null) group = ship.flight_group;
-            if (ship.flight_group != group.?) continue;
+            if (!ship.isWaypoint() or ship.waypoint_listed != 0) continue;
+            const own = ship.flightGroup() orelse continue;
+            if (group == null) group = own;
+            if (own != group.?) continue;
             ship.waypoint_listed = 1;
-            try listed.append(gpa, .{ .group = ship.flight_group, .ship = @intCast(index) });
+            try listed.append(gpa, .{ .group = own, .ship = @intCast(index) });
         }
         if (group == null) break;
     }
@@ -181,7 +172,7 @@ fn listGroupShips(gpa: Allocator, groups: []align(1) dte.FlightGroup, ships: []a
         group.first_ship = dte.FlightGroup.no_ship;
         for (ships, 0..) |ship, at| {
             if (ship.flight_group != index) continue;
-            if (group.first_ship == dte.FlightGroup.no_ship) group.first_ship = @intCast(listed.items.len);
+            if (group.firstShip() == null) group.first_ship = @intCast(listed.items.len);
             try listed.append(gpa, @intCast(at));
             group.ship_count +%= 1;
         }
@@ -223,7 +214,7 @@ pub const testing = struct {
         flight_groups: []const dte.FlightGroup = &.{},
         objects: []const dte.Object = &.{},
         squads: []const dte.Squad = &.{},
-        formats: u8 = 0xF,
+        formats: dte.DirectoryEntry.Formats = .all,
     };
 
     pub fn image(gpa: Allocator, sections: Sections) Allocator.Error![]u8 {
@@ -289,12 +280,12 @@ test "Mission.bind" {
             .{ .kind = .squad, .count = 0, .first = 0, ._unknown_04 = 0 },
             .{ .kind = @enumFromInt(7), .count = 0, .first = 0, ._unknown_04 = 0 },
         },
-        .formats = 0x7,
+        .formats = .{ .first = true, .second = true, .third = true },
     });
     var mission: Mission = try .bind(gpa, image);
     defer mission.deinit();
 
-    try std.testing.expectEqual(Mission.Formats{ .first = true, .second = true, .third = true }, mission.formats);
+    try std.testing.expectEqual(dte.DirectoryEntry.Formats{ .first = true, .second = true, .third = true }, mission.formats);
     // Each ship stands where it is placed.
     const ships = try mission.ships();
     try std.testing.expectEqual([3]f32{ 100, 200, 300 }, ships[0].runtime_position);

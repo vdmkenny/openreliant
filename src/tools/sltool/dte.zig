@@ -78,11 +78,10 @@ pub const Command = union(enum) {
 fn info(ctx: Context, mission: dte.Mission) !void {
     const ship_list = try mission.ships();
     var named: usize = 0;
-    var player: ?[]const u8 = null;
     for (ship_list) |ship| {
         if (mission.name(ship.name).len > 0) named += 1;
-        if (ship.iff == 255 and player == null) player = mission.name(ship.name);
     }
+    const player: ?[]const u8 = if (try mission.player()) |ship| mission.name(ship.name) else null;
 
     try ctx.stdout.print(
         \\image:     {Bi:.1}
@@ -113,7 +112,7 @@ fn sections(ctx: Context, mission: dte.Mission) !void {
             try ctx.stdout.print("{d:>3}  {s:>5}  {s:>5}  {s:>8}  ", .{ i, "-", "-", "unused" });
         } else {
             try ctx.stdout.print("{d:>3}  {d:>5}   0x{x:0>2}  {x:0>8}  ", .{
-                i, entry.count, entry.formats, entry.offset,
+                i, entry.count, entry.formats.byte(), entry.offset,
             });
         }
         try dte.formatTag(dte.Section, section, ctx.stdout);
@@ -128,10 +127,10 @@ fn ships(ctx: Context, mission: dte.Mission) !void {
         try ctx.stdout.print("{d:>5}  {d:>6}  {s:>5}  {d:>4}  {d:>4}  {s:<30} ({d:>12.0}, {d:>12.0}, {d:>12.0})  {d:>4}  {d:>5}  {d:>4}{s}\n", .{
             i,
             ship.object_id,
-            if (ship.flight_group == dte.Ship.no_flight_group)
-                "-"
+            if (ship.flightGroup()) |in_group|
+                std.fmt.bufPrint(&group, "{d}", .{in_group}) catch "?"
             else
-                std.fmt.bufPrint(&group, "{d}", .{ship.flight_group}) catch "?",
+                "-",
             ship.iff,
             ship.kind,
             mission.name(ship.name),
@@ -160,10 +159,10 @@ fn triggers(ctx: Context, mission: dte.Mission, models: ?*Library) !void {
         try ctx.stdout.print("{d:>5}  {s:<26}  {s:>9}  {s:<7}  {s:<5}  {s:>5}  ", .{
             i,
             std.fmt.bufPrint(&condition, "{f}", .{trigger.condition}) catch "?",
-            if (trigger.qualifier == dte.Trigger.whole_object)
-                "-"
+            if (trigger.component()) |component|
+                std.fmt.bufPrint(&qualifier, "{d}", .{component}) catch "?"
             else
-                std.fmt.bufPrint(&qualifier, "{d}", .{trigger.qualifier}) catch "?",
+                "-",
             std.fmt.bufPrint(&repeat, "{f}", .{trigger.repeat}) catch "?",
             if (trigger.deferred == 0) "now" else "later",
             if (trigger.block()) |at| std.fmt.bufPrint(&block, "{d}", .{at}) catch "?" else "-",
@@ -178,9 +177,9 @@ fn triggers(ctx: Context, mission: dte.Mission, models: ?*Library) !void {
             for (all_ships) |ship| {
                 if (ship.object_id == id) {
                     try ctx.stdout.print("  {s}", .{mission.name(ship.name)});
-                    if (trigger.qualifier != dte.Trigger.whole_object) {
+                    if (trigger.component()) |component| {
                         try ctx.stdout.writeAll(", component");
-                        try printComponent(ctx, models, ship, trigger.qualifier);
+                        try printComponent(ctx, models, ship, component);
                     }
                     break;
                 }
