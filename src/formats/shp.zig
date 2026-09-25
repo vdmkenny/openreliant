@@ -420,7 +420,7 @@ pub const Attachment = extern struct {
     light_brightness: f32,
 
     /// Named after the models the engine loads for each kind, or what `node_mount` (`0x00499A10`)
-    /// makes of them. **Unknown:** kinds 6 to 9.
+    /// makes of them. **Unknown:** kinds 6, 8 and 9.
     pub const Kind = enum(u32) {
         missile = 0,
         /// Mounted as an object of its own, whose components follow the model's.
@@ -433,6 +433,8 @@ pub const Attachment = extern struct {
         light = 4,
         /// Mounted as an object of its own, like a gun.
         pod = 5,
+        /// Where a spinning gun's spent cases fly from, back along it (`clip_event_particles`).
+        case_ejector = 7,
         _,
     };
 

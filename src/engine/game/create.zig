@@ -376,6 +376,16 @@ pub const Slot = struct {
         return combat.gun_groups;
     }
 
+    /// Draws the object at `size` of its own, as `explode_asteroid` makes its fragments: its
+    /// `visibility`, which scales the sphere it collides by and how far off it is drawn, and the
+    /// scale its model's first part is drawn at (that part's frame's `+0x48`).
+    pub fn shrink(slot: *Slot, size: f32) void {
+        slot.object.visibility = size;
+        const model = if (slot.model) |*live| live else return;
+        model.visibility = size;
+        if (model.parts.len > 0) model.parts[0].object.scale = size;
+    }
+
     /// The gun type leading its group `group` (`guns.groupLead`).
     pub fn groupLead(slot: *const Slot, group: usize) ?guns.GunType {
         return guns.groupLead(slot.guns, slot.gun_groups, group);

@@ -213,6 +213,7 @@ pub const Frame = struct {
     sparks: ?*sparks.Sparks = null,
     particles: ?*particles.Pool = null,
     smoke: ?*smoke.Pools = null,
+    gun_particles: ?*guns.effects.Pools = null,
     /// How far past the frame's tick the effects are drawn, as a share of a tick
     /// (`objects.pastTick`).
     ahead: f32 = 0,
@@ -296,7 +297,7 @@ pub fn pause(pausing: Pausing, on: bool) !void {
 /// `mission_frame` (`0x004924B0`), as far as the objects go: every object's orders, which fly the
 /// ships and read the player's controls, then the frames they are drawn at, then the missiles
 /// (`missiles.frame`) and the shots in flight (`guns.bulletsFrame`), then the sparks (`sparks.Sparks.frame`) and the particles
-/// (`particles.Pool.frame`, `smoke.Pools.frame`), which `particles_frame` runs together, the
+/// (`particles.Pool.frame`, `smoke.Pools.frame`, `guns.effects.Pools.frame`), which `particles_frame` runs together, the
 /// damaged ships' smoke (`smoke.frame`), the explosions (`explode.Explosions.frame`), the
 /// countermeasures (`cloak.Countermeasures.frame`) and the shockwaves
 /// (`shockwave.Shockwaves.frame`). Between them the frame's hits on the player's ship push its
@@ -313,6 +314,7 @@ pub fn missionFrame(orders: aigeneric.Context, fraction: f32) void {
     if (orders.world.sparks) |thrown| thrown.frame(orders.clock);
     if (orders.world.particles) |pool| pool.frame(orders.clock);
     if (orders.world.smoke) |pools| pools.frame(orders.clock);
+    if (orders.world.gun_particles) |pools| pools.frame(orders.clock);
     smoke.frame(orders.world);
     objectsPass(orders);
     if (orders.world.forces) |forces| forces.pushFrame(orders.clock.frame_start);
@@ -438,6 +440,7 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     if (frame.sparks) |thrown| try thrown.draw(gpa, scene, frame.ahead);
     if (frame.particles) |pool| try pool.draw(gpa, scene, frame.ahead);
     if (frame.smoke) |pools| try pools.draw(gpa, scene, frame.ahead);
+    if (frame.gun_particles) |pools| try pools.draw(gpa, scene, frame.ahead);
     if (frame.explosions) |explosions| try explosions.draw(gpa, scene, frame.ahead);
     if (frame.rays) |rays| if (attachments.random) |random| try rays.draw(gpa, scene, frame.objects, attachments.frame_start, random);
     if (frame.flash) |lit| if (!frame.paused) {
@@ -511,8 +514,10 @@ pub const DrawBudget = enum {
 /// `splits`, and nothing at all while it is `hidden`, as the ship the camera sits in is. That ship, `seat`, still casts its shadow
 /// (`objects.Model.castShadows`).
 ///
-/// Not ported yet: the cloak; what else the pass draws for a few types (#41); the cutaway scenes'
-/// own rules, and the gate's tunnel, in which no object is drawn. The pass's smoke is `smoke.frame`.
+/// Not ported yet: the cloak; what else the pass draws for a few types, the protogate's power core
+/// pulsing, the Boridin breakaway's core and the Dark Reign's hat
+/// ([#238](https://github.com/vdmkenny/openreliant/issues/238)); the cutaway scenes' own rules, and
+/// the gate's tunnel, in which no object is drawn. The pass's smoke is `smoke.frame`.
 pub fn drawObjects(gpa: Allocator, scene: *srcore.Scene, all: *create.Objects, attachments: objects.View, seat: ?u16, splits: ?*const explode.split.Splits) Allocator.Error!void {
     var walk = all.walk();
     while (walk.next()) |index| {

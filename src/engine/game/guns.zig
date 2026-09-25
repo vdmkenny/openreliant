@@ -231,6 +231,7 @@ pub const Muzzle = struct {
 pub const turrets = @import("guns/turrets.zig");
 pub const flash = @import("guns/flash.zig");
 pub const nova = @import("guns/nova.zig");
+pub const effects = @import("guns/effects.zig");
 
 /// Which of its group's two guns a gun is, as `create_object` marks them (`+0x14`), and which
 /// fires next while a ship fires one group out of step (`GameObject.gun_turn`).
@@ -690,10 +691,10 @@ pub const Chosen = struct {
 /// one aiming blind fires more slowly. While it fires one group of guns out of step, the group's
 /// two guns fire in turn (`takesTurn`).
 ///
+/// A spinning gun throws the spent cases of each round it fires (`effects.throwCases`).
+///
 /// An object whose components are listed steps no guns of its own, and one that is jumping fires
 /// none.
-///
-/// Not ported: the particles a spinning gun puffs.
 pub fn step(world: gameobj.World, clock: *const Clock, index: u16) void {
     const all = world.objects;
     const slot = &all.slots[index];
@@ -773,8 +774,8 @@ pub fn step(world: gameobj.World, clock: *const Clock, index: u16) void {
                     if (!takes) continue;
                     alternated = true;
                 }
-                // Not ported: the particles the muzzle puffs (`clip_event_particles`).
                 shoot(world, clock, index, barrel.*, is_heard);
+                effects.throwCases(world, index, barrel.muzzle.model, barrel.muzzle.part);
                 object.rounds -= 1;
             },
             // An aimed turret fires by its parts' tracks (`clipEventMuzzles`).
@@ -1175,6 +1176,8 @@ pub const Bullet = struct {
     /// The light it casts (`+0x60`), while it is one of the latest two of its ring
     /// (`Bullets.player_lights`, `Bullets.other_lights`).
     light: ?srlight.Light = null,
+    /// A Huge Gun's shot's trail (`+0x5C`), hung from its frame, the first of its pieces.
+    trail: ?effects.Streaming = null,
 
     /// Its type's figures.
     pub fn stats(bullet: Bullet, table: *const Stats) Gun {
@@ -1317,6 +1320,7 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, barrel: Barr
     };
     // What it is drawn with comes first, and draws its numbers before the rest (`bullet_place`).
     if (all.bullets.looks) |looks| dress(bullet, looks, world.random, turn);
+    if (effects.Trail.of(kind)) |trail| bullet.trail = trail.start(clock.frame_start);
 
     // The light it casts, which the oldest shot of its ring gives up.
     const player = owner == all.player;
@@ -1370,10 +1374,8 @@ fn blindAim(world: gameobj.World, owner: u16, kind: GunType) ?Vector {
 }
 
 /// The game's own effects of the events the tracks of the model of the object in slot `owner`
-/// pass (`node_tree_update`): a `muzzles` event fires the part's muzzles (`clipEventMuzzles`).
-///
-/// Not ported: the particles a `puff` event sends out (`clip_event_particles`, `0x0047C800`,
-/// [#41](https://github.com/vdmkenny/openreliant/issues/41)).
+/// pass (`node_tree_update`): a `muzzles` event fires the part's muzzles (`clipEventMuzzles`), and
+/// a `puff` event throws the part's spent cases (`effects.throwCases`).
 pub fn clipEvents(world: *gameobj.World, owner: u16) gameobj.Events {
     return .{ .context = world, .owner = owner, .fire = clipEvent };
 }
@@ -1382,7 +1384,8 @@ fn clipEvent(context: *anyopaque, owner: u16, model: *objects.Model, part: usize
     const world: *const gameobj.World = @ptrCast(@alignCast(context));
     switch (kind) {
         .muzzles => clipEventMuzzles(world.*, owner, model, part),
-        .puff, _ => {},
+        .puff => effects.throwCases(world.*, owner, model, part),
+        _ => {},
     }
 }
 
@@ -1421,13 +1424,12 @@ test forceEffect {
 /// The sound a shot makes as it is fired (`bullet_fire`), its gun type's, following it: on a voice
 /// of the player's guns for the player's shots, and on a guaranteed one for the huge guns'.
 fn shotSound(world: gameobj.World, index: u8, kind: GunType, sound: i32, player: bool) void {
-    const hearing = world.hearing orelse return;
     const which = std.enums.fromInt(sound3d.sounds.Sound, sound) orelse return;
     const class: sound3d.Class = switch (kind) {
         .allied_huge_gun, .coalition_huge_gun => .guaranteed,
         else => if (player) .player_guns else .not_reserved,
     };
-    _ = sound3d.play(hearing.sound, hearing.scene(world), null, null, index, which, 1, class);
+    sound3d.playIn(world, null, null, index, which, 1, class);
 }
 
 /// The objects `bullet_place` gives a new shot: those its path comes near enough to over its life,
@@ -1545,9 +1547,12 @@ pub fn moveBullets(world: gameobj.World) void {
 /// against the objects it may reach, and one that is spent or out of life is let go. A shot that
 /// has struck something is tested no further.
 ///
+/// A Huge Gun's shot streams its trail (`effects.Streaming`), and a Turret Flak shell that ends
+/// without striking anything bursts (`effects.flakBurst`).
+///
 /// Not ported: how the shots are drawn, their colours fading with their life, and the lights they
-/// carry ([#154](https://github.com/vdmkenny/openreliant/issues/154)); a flak shell's burst
-/// ([#41](https://github.com/vdmkenny/openreliant/issues/41)); what multiplayer makes of a hit.
+/// carry ([#154](https://github.com/vdmkenny/openreliant/issues/154)); what multiplayer makes of a
+/// hit.
 pub fn bulletsFrame(world: gameobj.World, clock: *const Clock, fraction: f32) void {
     const bullets = &world.objects.bullets;
     for (&bullets.pool, 0..) |*bullet, index| {
@@ -1559,6 +1564,7 @@ pub fn bulletsFrame(world: gameobj.World, clock: *const Clock, fraction: f32) vo
             animate(bullet, clock, bullet.stats(&world.objects.gun_stats), world.random);
             placePieces(bullet);
         }
+        if (bullet.trail) |*trail| trail.frame(world, .{ .position = bullet.place, .orientation = bullet.pieces[0].turn });
         if (clock.frame_start < bullet.dies_at) {
             if (bullet.candidate_count > 0) bulletHit(world, bullet);
             // A hit marks it spent, which frees it below rather than flying on.
@@ -1567,10 +1573,7 @@ pub fn bulletsFrame(world: gameobj.World, clock: *const Clock, fraction: f32) vo
                 continue;
             }
         }
-        // A flak shell bursts as it ends. Not ported: the burst itself (#41).
-        if (bullet.kind == .turret_flak) if (world.hearing) |hearing| {
-            _ = sound3d.play(hearing.sound, hearing.scene(world), null, null, @intCast(index), .flak01, 1, .explosions);
-        };
+        if (bullet.kind == .turret_flak) effects.flakBurst(world, @intCast(index), bullet.place);
         bullets.release(@intCast(index));
     }
     bullets.beams.frame(world.objects, clock.frame_start);
@@ -1713,7 +1716,7 @@ fn componentHit(world: gameobj.World, bullet: *Bullet, index: u16, crossing: obj
     if (huge) |kind| {
         explode.fireballAt(world, at, .{ .size = huge_fireball_size, .life = huge_fireball_life, .light = true });
         sparks.spray(world, kind, at, normal, @splat(0), huge_sparks);
-        if (world.hearing) |hearing| _ = sound3d.play(hearing.sound, hearing.scene(world), at, null, -1, .explosion01, 1, .explosions);
+        explode.sound(world, at, .explosions);
         return;
     }
     sparks.spray(world, .component, at, normal, @splat(0), component_sparks);
@@ -2755,9 +2758,6 @@ const huge_light_range: f32 = 60000;
 
 /// The work `bullets_frame` does for each type before the shot is tested: its colours by the life
 /// it has left, and the turns of the types that spin or wheel.
-///
-/// Not ported: the Huge Guns' trails of particles (`0x0049C600`, `0x0049C680`,
-/// [#41](https://github.com/vdmkenny/openreliant/issues/41)).
 fn animate(bullet: *Bullet, clock: *const Clock, record: Gun, random: *libcmt.Rand) void {
     const left = fade(bullet, clock, record);
     const friendly = bullet.side == .friendly;

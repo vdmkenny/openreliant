@@ -6,7 +6,7 @@ What the game shows besides its objects and their shots: for now, the particles,
 
 The game moves its effects on by the ticks, a hundred a second, and draws each where the last tick left it, so at a display rate the ticks don't divide evenly, they move on unevenly.
 
-**Improvement:** each is drawn as far past its tick as the frame is, the share of a tick the clock keeps (`objects.pastTick`): a particle, a spark, a bit, a fireball and its light, a piece of the break-up and a shockwave all that much further along by their velocities, a piece turned that much further by its spin, and a shockwave's ring spread that much further. What they do stays on the ticks. `--no-smooth-motion` and `--original` draw them where the ticks leave them.
+**Improvement:** each is drawn as far past its tick as the frame is, the share of a tick the clock keeps (`objects.pastTick`): a particle, a spark, a bit, a chunk of rock, a fireball and its light, a piece of the break-up and a shockwave all that much further along by their velocities, a piece and a chunk turned that much further by their spin, and a shockwave's ring spread that much further. What they do stays on the ticks. `--no-smooth-motion` and `--original` draw them where the ticks leave them.
 
 ## Particles
 
@@ -16,7 +16,9 @@ their life. A particle comes from one of the ten `particle_pools` (`0x0058A948`)
 of sprites that take their own texture coordinates, are coloured by their own colour and combine
 with what is behind them as the pool says. `particles_init` (`0x0049BF60`) makes the explosions'
 pool (`particle_pool`, `0x0058A94C`), 1000 particles over `gunflare\partic4` that add to what is
-behind them, and the mission's start makes three for the [smoke](#smoke). A particle is a record of
+behind them, the mission's start makes three for the [smoke](#smoke), and `guns_init` two for the
+guns ([Guns](guns.md#particles-and-bursts)). A pool's sprites can instead show their texture's own
+colours. A particle is a record of
 0x18 bytes, its birth and life in ticks, its velocity a tick and its template, and the sprite of the
 same index. It is free once its birth plus its life is before the frame.
 
@@ -60,8 +62,8 @@ velocity they inherit (`0xDC`); and the span of the texture they show (`0xE8`).
   [burning bit](#burning-bits) where the emitter stands.
 
 **Improvement:** a burst and a stream are not thinned by their distance, so an explosion far off
-is as full as one close by, and the pool has room for 4000 to hold them. The half behind the camera
-is still left out. `--original` restores the thinning and the pool of 1000.
+is as full as one close by, and each pool has room for four times the game's to hold them. The half
+behind the camera is still left out. `--original` restores the thinning and the game's pools.
 
 `particles_frame` (`0x0049C8E0`), once a frame after the shots, moves each particle alive in each
 pool on by its velocity times the frame's ticks, sets its sprite's half-size and colour from its
@@ -96,8 +98,11 @@ an animation where it was set off:
 | 0, the bang | The sixteen textures `explosion\bang_00000` to `bang_00015` (`explosion_bang_images`), one after another over its life |
 | 1, the sheet | The nine cells of `explosion\explosion sheet` (`explosion_sheet_image`), three across and three down, 82 texels apart and 81 across, mirrored left for right and top for bottom by two random bits |
 
-It is blended over what is behind it by its texture's alpha. It waits out a delay before it shows,
-drifts at a velocity a tick, and plays for its life, 150 ticks from every caller here. A fireball
+It is blended over what is behind it by its texture's alpha. A special fireball, the flak's
+(`+0x28`), plays the nine cells of `flak04` (`0x00562CCC`) instead, three across and three down a
+third apart, unmirrored, and is added to what is behind it. A fireball waits out a delay before it
+shows, drifts at a velocity a tick, and plays for its life, 150 ticks from every caller here but a
+chunk of rock's puff. A fireball
 told it is lit is coloured by how far it has played, from black to white. One with a light carries
 a point light coloured (1, 0.5, 0.1) that starts at intensity 10 and fades to nothing as it plays,
 reaching its intensity times 50 times the square root of its size. The light stays where the
@@ -117,11 +122,12 @@ last frames play, where the game's vanishes after the last. `--original` restore
 | A burst (`explode_burst`), 18 of them | Within 0.3 of the radius, a random way | 0.8 of the radius | Yes | Up to 9 ticks | Half of it |
 | A spin-out and a halt, as they begin | At the ship | Its radius | No | None | None |
 | A halting torpedo, 5 more | Within 750 each way | 1000 to 1500 | Yes | 30 ticks apart, and up to 19 later | None |
+| A chunk of rock, its puff: special, over 40 ticks | Where it is thrown | 200 | Yes | None | None |
+| The Uber Explode's ball, 5 on each ship it reaches | Within half the ship's radius each way | Half its radius | Yes | 30 ticks apart | None |
 
 [`explode.zig`](../../src/engine/game/explode.zig) ports the fireballs as `Explosions.setOff` and
 `Fireball`, and [`aiexplode.zig`](../../src/engine/game/aiexplode.zig) the spin-out's, the halt's
-and the torpedo's. Not ported: a special fireball's own texture (`0x00562CCC`), which none of these
-sets off, and the rest of `explosions_update` but the [burning wrecks](#burning-wrecks).
+and the torpedo's.
 
 ## Burning bits
 
@@ -145,6 +151,7 @@ once its life is over.
 | A blast of an escape pod, a proximity mine or a ship its pilot left | 5 | Every way | 0.2 | 0.1 |
 | A burst | 25 | Every way | 0.2 | 0.2 |
 | A spin-out, each frame while fewer ticks are left than ten times its trail, from 50 | 1 | Backwards, from within 250 of the ship each way | 0.1 | 1 |
+| The Uber Explode, each frame from half way through | 12 to 24 | At the camera, from 10000 beyond it toward the blast and up to 2000 to each side | 0.1 | 1 |
 
 A ship with flag 24 set leaves only every other bit of its trail.
 
@@ -166,6 +173,24 @@ washed out. `--original` restores every light, for the bits and the break-up's p
 [`explode.zig`](../../src/engine/game/explode.zig) ports the bits as `Explosions.throwBit`,
 `Explosions.throwSpark` and `Bit`, and [`aiexplode.zig`](../../src/engine/game/aiexplode.zig) the
 spin-out's trail. The port leaves a piece out where the game has no model for it.
+
+## Rock chunks
+
+`rock_chunk_throw` (`0x00472780`) throws a chunk of rock into the next of 300 (`rock_chunks`,
+`0x00558778`), in place of the oldest. A chunk is one of the five models of types `0xB2` to `0xB6`
+at random, which `explosions_init` loads, lit as a burning bit is. It turns a random way at first,
+and tumbles up to 0.05 radians a tick either way about each axis. It leaves along its direction at
+6 to 12 a tick, turned up to 0.1 radians either way about each axis, and flies for 20000 ticks and
+up to as many more. A puff of flak goes off where it starts ([Fireballs](#fireballs)).
+`explosions_update` moves each chunk on by its velocity and turns it by its tumble for each tick
+since it last did, and lets it go once its time is past.
+
+| Who | From | Direction | Drawn | Speed |
+|---|---|---|---|---|
+| A shot striking a rock ([Sparks](#sparks)) | The point struck on the rock's part | Out along the face's normal | As modelled | As above |
+| A Latov coming apart, the sequence's `bits` a step ([Splits](#splits)) | The step's point | Straight out from the ship's middle | 10 to 15 times as large | 4 times as fast |
+
+[`explode/chunks.zig`](../../src/engine/game/explode/chunks.zig) ports the chunks.
 
 ## Break-up
 
@@ -275,7 +300,7 @@ When the time is up, the split ends once (`GameObject` `0x610` bit 1) and the po
 
 The flash (`0x00587CC8`) lasts 100 ticks. Once a frame, `mission_frame` draws it and counts it down by the frame's ticks (`0x00494940`): a sprite over the whole view, just beyond the near plane in the overlay's layer, untextured and added to what is drawn, white at 0.012 for each tick left, at most 1. So it holds white for 17 ticks and fades out over the rest. The same sprite shows red while the player's display is shaken by a hit ([The interference](hud.md#the-interference)).
 
-[`explode/split.zig`](../../src/engine/game/explode/split.zig) ports the splits, and [`main/flash.zig`](../../src/engine/game/main/flash.zig) the flash. Not ported: the Dark Reign's hat, the Krasnaya's arms and the Boridin breakaway's core, which a split takes apart first ([#238](https://github.com/vdmkenny/openreliant/issues/238)); a Latov's rock chunks ([#41](https://github.com/vdmkenny/openreliant/issues/41)), in whose place it throws nothing. The Ulysses' own routine is [#232](https://github.com/vdmkenny/openreliant/issues/232).
+[`explode/split.zig`](../../src/engine/game/explode/split.zig) ports the splits, and [`main/flash.zig`](../../src/engine/game/main/flash.zig) the flash. Not ported: the Dark Reign's hat, the Krasnaya's arms and the Boridin breakaway's core, which a split takes apart first ([#238](https://github.com/vdmkenny/openreliant/issues/238)). The Ulysses' own routine is [#232](https://github.com/vdmkenny/openreliant/issues/232).
 
 ### Burning wrecks
 
@@ -306,6 +331,69 @@ Each frame, `explosions_update` streams the smoke and fades the lights. A light 
 - The game stops with an assertion where the object has no part of the name. The port burns nothing.
 
 [`explode.zig`](../../src/engine/game/explode.zig) ports the burning as `burnPart`, and [`create.zig`](../../src/engine/game/create.zig) the wrecks' part of `create_object` as `wreckMade`. Not ported: the Protogate's power core, which burns with rays alone ([#233](https://github.com/vdmkenny/openreliant/issues/233)).
+
+## The Uber Explode
+
+The Huuuuuuuge Explosion order (43, `order_huuuuuuuge_explosion`, `0x004086C0`) sets off the Uber
+Explode where the object stands, of size 50000 over 1500 ticks, and pops ([Orders](orders.md)). One
+goes off at a time; another takes its place.
+
+`uber_explode_start` (`0x00472AB0`) lists up to 80 objects it may reach (`uber_caught`,
+`0x00562B88`): each but the player's ship that is created and not disabled, with combat stats of a
+side but the neutral one and an order stack, and within 5 times its size, but for the gates (types
+`0x6D` and `0x6E`), the Boridin and its breakaway (`0xA8`). It makes:
+
+- Two halves of a hemisphere (`uber_hemisphere`, `0x00562CD0`, which `explosions_init` makes
+  through `0x00473BF0`), the second turned half round: a pole and seven rings of 18 vertices, a
+  sixteenth of a half turn apart, and a last pole that no triangle uses, over `ring3`, lit and
+  blended by alpha. Each vertex takes its texture from where it lies across, halved and moved in by
+  a half. The halves start dark at alpha 0.3, the last ring and pole clear.
+- A ball, a sphere of 18 by 8 (`sphere_mesh_create`) over `shield128`, and its glow (`Uber BMO`), a
+  sprite over `gunflare\partic6`, lit and added, red at 0.75, hanging from the ball.
+- Two squares (`UberWave1`, `UberWave2`) over `bigshock1` and `bigshock2`, and a light
+  (`UberExplosion_Light`), lilac (0.7, 0.5, 1) at intensity 2, reaching 20 times its size, none of
+  which it ever adds to the scene.
+
+It sounds `UBEREXP` from the owner, flashes the view for 100 ticks, and sets off two shockwaves of
+kind 3: 16 times its size across over a quarter of its duration, and 6 times over half
+([Shockwaves](#shockwaves)).
+
+`uber_explode_update` (`0x00473210`) runs first in `explosions_update`. By how far through its
+duration it is:
+
+| Share | What happens |
+|---|---|
+| Up to 0.5 | The halves show, 1.3 times its size. Until 0.3 they open out: `0x00473EA0` lays the rings that share of the way round from the pole, from a point to the whole bowl. They brighten from nothing to full by 0.05, hold until 0.3 and fade to nothing by 0.5, their alpha 0.3 of it |
+| From 0.3 | The ball shows and spreads from 0.001 to 5 times its size, in a straight line over the rest of the duration. It takes one texel of its texture, (45, 18), and each vertex flickers red at a random number to the fifth, its green 0.3 of its red. The view shakes (`hit_shake`) by twice the share of its spread. Its glow is twice as wide as the ball |
+| From 0.3 | Each listed ship the ball reaches, but one exploding, is knocked away from the blast by 2000 times its mass at a point 0.6 of its radius from its middle a random way, spins up to 0.15 radians a tick either way about each axis, sets off five fireballs ([Fireballs](#fireballs)), and drops its orders for Do Nothing |
+| From 0.5 | 12 to 24 burning bits a frame fly at the camera ([Burning bits](#burning-bits)) |
+| From 0.95 | The view flashes for 2000 ticks a share past 0.95, so 100 at the end |
+
+Past its duration it frees its objects and sounds `CAPEXP` from the owner. Each ship the ball
+reached stops turning and, unless it is exploding already, is destroyed (`object_destroyed`,
+neither spinning nor ejecting). The owner's mission ship then raises its explosion event
+(`0x0045AB50`). In a multiplayer game the blast spares its owner in place of the player, and counts
+and tells the players the kills.
+
+**Fix:** the game lists every object in reach, running past the end of its list with more than 80;
+the port lists the first 80. It colours one vertex of the halves' last ring with the rest, which
+shows a sliver of the rim; the port keeps the whole rim clear.
+
+**Improvement:** the game opens the halves and spreads the ball by rounded factors; the port
+divides.
+
+**Improvement:** the halves and the ball are drawn on grids three times as fine, so neither shows
+its facets. The halves fade to their rim across the three rings that stand in the game's last band,
+and the ball's vertices take the flicker of the game's vertices round them, so its blotches keep
+their size. The ball flickers and the bits are thrown once each simulation step, 25 times a second,
+where the game does both each frame, so a higher frame rate neither quickens the flicker nor throws
+more bits. And the light lights what is round the blast while the halves show, as bright as they
+are. `--original` restores the game's.
+
+[`explode/uber.zig`](../../src/engine/game/explode/uber.zig) ports the Uber Explode, and
+[`aiexplode.zig`](../../src/engine/game/aiexplode.zig) the order. Not ported: the multiplayer part
+([#55](https://github.com/vdmkenny/openreliant/issues/55)) and the explosion event
+([#37](https://github.com/vdmkenny/openreliant/issues/37)).
 
 ## Electric rays
 
@@ -405,7 +493,7 @@ far it has now, it acts on by its kind:
 | Kind | Ring | Set off by | As it passes |
 |---|---|---|---|
 | 0 to 2 | `rng_02` to `rng_04` | A blast, one time in four: a random one of the three, ten times the ship's radius across, over 100 to 149 ticks, standing and drifting as the blast's flame emitter does | The player's view shakes by ten times how far through its life it is, at most 2 |
-| 3 | `rng_01` | `0x00472AB0`, a pair | Nothing |
+| 3 | `rng_01` | The Uber Explode, a pair ([The Uber Explode](#the-uber-explode)) | Nothing |
 | 4 | `rng_06` | Nothing | Nothing |
 | 5 | `rng_06` | A Havoc's end (`missile_end`, `0x00495870`): 50000 across over 500 ticks, sparing its launcher's side | Ships of other sides are pushed away, disrupted |
 | 6 | `rng_01` | An Imp's end, likewise | Each quadrant of ships of other sides takes 50 more than its shield holds, and their [shield bubbles](#shields) flicker for 100 ticks |
@@ -435,8 +523,8 @@ a register.
 [`shockwave.zig`](../../src/engine/game/shockwave.zig) ports the rings and what kinds 0 to 2 and 5
 to 8 do, and [`explode.zig`](../../src/engine/game/explode.zig),
 [`aiexplode.zig`](../../src/engine/game/aiexplode.zig) and
-[`missiles.zig`](../../src/engine/game/missiles.zig) the blast's, the torpedo's and the missiles'.
-Not ported: kind 3's caller ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
+[`missiles.zig`](../../src/engine/game/missiles.zig) the blast's, the torpedo's and the missiles', and
+[`explode/uber.zig`](../../src/engine/game/explode/uber.zig) the Uber Explode's.
 
 ## Shields
 
@@ -554,7 +642,7 @@ a last colour, a life in ticks and a drag, what is left of its speed after a tic
 | 0 | An allied Huge Gun's shot striking a component | 90 by 90, 500 long | White to dark blue | 300 | 0.9999 |
 | 1 | A shot striking a component | 30 by 30, 140 long | White to black | 100 | 0.995 |
 | 2 | A shot striking a hull | 30 by 30, 90 long | White to black | 100 | 0.995 |
-| 3 | A shot striking a shield, and `0x004B02A0` | 20 by 20, 90 long | Blue to black | 100 | 0.995 |
+| 3 | A shot striking a shield, and a shot or a ship meeting a multiplayer arena's wall (`arena_wall_hit`, `0x004B02A0`) | 20 by 20, 90 long | Blue to black | 100 | 0.995 |
 | 4 | A coalition Huge Gun's shot striking a component | 90 by 90, 500 long | Warm white to dark red | 300 | 0.9999 |
 
 `sparks_init` (`0x004A1AF0`), which `particles_init` runs, builds each kind's shape
@@ -591,13 +679,15 @@ orange template (`shieldfx_init`, `0x0049FD20`) on the part's surface nearest th
 updates a node of kind 6 through `0x00458AB0`, the one routine the build keeps of every routine that
 only returns 1, so it shows nothing.
 
-A component's burst (kind 3, `shieldfx_create`, `0x004A0310`) is an emitter of the orange template (`shieldfx_orange`, `0x0049FD20`) at the point struck, facing out along the face's normal, which bursts 20 puffs at once. They leave at 10 to 12 a tick, straying up to an eighth either way across, and grow from 50 to 100 across as they fade from orange over about a second. Before it adds a component's node, `node_add_effect` clears the nodes of earlier hits within reach of the new one, and the oldest past ten. A rock's hit (kind 5) plays `COLL02` where it struck, and throws a rock chunk (`0x00472780`).
+A component's burst (kind 3, `shieldfx_create`, `0x004A0310`) is an emitter of the orange template (`shieldfx_orange`, `0x0049FD20`) at the point struck, facing out along the face's normal, which bursts 20 puffs at once. They leave at 10 to 12 a tick, straying up to an eighth either way across, and grow from 50 to 100 across as they fade from orange over about a second. Before it adds a component's node, `node_add_effect` clears the nodes of earlier hits within reach of the new one, and the oldest past ten. A rock's hit (kind 5) plays `COLL02` where it struck, and throws a chunk of rock from there along the face's normal ([Rock chunks](#rock-chunks)).
+
+**Fix:** the game throws the chunk along the normal in the part's own frame, taken for a direction in the world's, so a chunk from a tumbling rock flies off any way. The port turns the normal into the world's.
 
 **Fix:** a normal along `X` leaves the game's emitter with no frame; the port faces it along the normal all the same.
 
-[`shieldfx.zig`](../../src/engine/game/shieldfx.zig) ports the sound, the burst and the rock's sound, keeping no nodes, as none shows anything once made. So a hull's part struck a hundred times, which the game's hundred nodes a part would leave silent, still sounds. Not ported: the rock chunk ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
+[`shieldfx.zig`](../../src/engine/game/shieldfx.zig) ports the sound, the burst and the rock's sound, keeping no nodes, as none shows anything once made. So a hull's part struck a hundred times, which the game's hundred nodes a part would leave silent, still sounds.
 
 [`sparks.zig`](../../src/engine/game/sparks.zig) ports the sparks,
 [`guns.zig`](../../src/engine/game/guns.zig) the hull's, and [`shield.zig`](../../src/engine/game/shield.zig)
-a shield's ([Shields](#shields)), and [`guns.zig`](../../src/engine/game/guns.zig) a component's. Not ported: `0x004B02A0`
-([#41](https://github.com/vdmkenny/openreliant/issues/41)).
+a shield's ([Shields](#shields)), and [`guns.zig`](../../src/engine/game/guns.zig) a component's. Not ported: the multiplayer
+arena's wall's ([#55](https://github.com/vdmkenny/openreliant/issues/55)).

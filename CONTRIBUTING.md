@@ -70,7 +70,9 @@ The port is faithful by default, and every difference is marked where it is made
 
 - An **Improvement** is a deliberate change, such as widescreen, per-pixel lighting or a smoother
   effect. `--original` brings back the original's behaviour.
-- A **Fix** corrects a clear bug of the original, such as reading the wrong variable.
+- A **Fix** corrects a clear bug of the original, such as reading the wrong variable. A fix needs
+  no switch: it stays in under `--original`, which brings back the original's look and sound, not
+  its bugs.
 
 Both appear in the doc comment and in the docs where the behaviour is described:
 

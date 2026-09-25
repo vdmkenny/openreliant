@@ -25,16 +25,19 @@ const sparks = @import("sparks.zig");
 const xtrabits = @import("xtrabits.zig");
 
 /// A sphere's grid: its slices round the axis through its poles, and its bands from pole to pole.
-const Grid = struct {
+pub const Grid = struct {
     around: u16,
     down: u16,
 
-    fn vertices(grid: Grid) usize {
+    pub fn vertices(grid: Grid) usize {
         return (@as(usize, grid.down) - 1) * grid.around + 2;
     }
 
-    fn triangles(grid: Grid) usize {
-        return (@as(usize, grid.down) - 1) * grid.around * 2;
+    /// How many triangles the grid's first `bands` bands hold: `around` in a fan round a pole, and
+    /// twice that in a band between.
+    pub fn triangles(grid: Grid, bands: usize) usize {
+        const fans = @as(usize, @intFromBool(bands > 0)) + @intFromBool(bands == grid.down);
+        return (bands * 2 - fans) * grid.around;
     }
 
     /// Vertex `index` of a sphere of a unit radius on the grid: the pole on +Z first, then each
@@ -50,16 +53,17 @@ const Grid = struct {
     }
 
     /// Vertex `slice` of the ring round band `band`, from 1.
-    fn ring(grid: Grid, band: usize, slice: usize) u16 {
+    pub fn ring(grid: Grid, band: usize, slice: usize) u16 {
         return @intCast(1 + (band - 1) * grid.around + slice % grid.around);
     }
 
-    /// The sphere's triangles, three corners each, band by band as `0x0049E3D0` lays them: a fan
-    /// round each pole, and two triangles to each slice of each band between.
-    fn corners(grid: Grid, out: []u16) void {
+    /// The triangles of the grid's first `bands` bands, three corners each, band by band as
+    /// `0x0049E3D0` lays them: a fan round each pole, and two triangles to each slice of each band
+    /// between.
+    pub fn corners(grid: Grid, bands: usize, out: []u16) void {
         const last: u16 = @intCast(grid.vertices() - 1);
         var at: usize = 0;
-        for (0..grid.down) |band| {
+        for (0..bands) |band| {
             for (0..grid.around) |slice| {
                 const triangle: [3]u16 = if (band == 0)
                     .{ 0, grid.ring(1, slice + 1), grid.ring(1, slice) }
@@ -391,15 +395,16 @@ pub const Shields = struct {
     }
 };
 
-/// `0x0049E3D0`: a sphere of a unit radius on `grid`, over `image`.
+/// `sphere_mesh_create` (`0x0049E3D0`): a sphere of a unit radius on `grid`, over `image`, lit and
+/// added.
 ///
 /// Not ported: its vertices' normals, which nothing lights.
-fn sphereMesh(gpa: Allocator, grid: Grid, image: *srtexture.Image) Allocator.Error!srapiext.Mesh {
-    const triangles = grid.triangles();
+pub fn sphereMesh(gpa: Allocator, grid: Grid, image: *srtexture.Image) Allocator.Error!srapiext.Mesh {
+    const triangles = grid.triangles(grid.down);
     var mesh: srapiext.Mesh = try .create(gpa, .{ .polygons = triangles, .vertices = grid.vertices(), .indices = triangles * 3 });
     errdefer mesh.deinit(gpa);
     for (mesh.positions, 0..) |*position, index| position.* = grid.vertex(index);
-    grid.corners(mesh.indices);
+    grid.corners(grid.down, mesh.indices);
     mesh.numberPolygons(3);
     mesh.surfaces[0] = .{ .polygons = @intCast(triangles), .material = bubble_material, .textures = .{ .{ .image = image }, .none } };
     srapi.calcPolyNormals(&mesh);

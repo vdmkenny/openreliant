@@ -17,13 +17,13 @@
 //! part struck a hundred times no longer sounds; the port's sounds every time. A component's are
 //! never that many: kind 3 first clears the nodes of earlier hits nearby, and the oldest past ten.
 //!
-//! Not ported: the rock chunk kind 5 throws (`0x00472780`,
-//! [#41](https://github.com/vdmkenny/openreliant/issues/41)).
+//! A rock's also throws a chunk of rock from the point struck (`explode.rocks.throw`).
 
 const std = @import("std");
 
 const math = @import("../surrender/math.zig");
 const Vector = math.Vector;
+const explode = @import("explode.zig");
 const gameobj = @import("gameobj.zig");
 const objects = @import("objects.zig");
 const particles = @import("particles.zig");
@@ -47,7 +47,12 @@ pub const Kind = enum(i32) {
 /// `0x004992D0` for a shot or a missile that `crossing` has striking a component of the object in
 /// slot `index`, leaving `kind`. On an object with a shield generator that isn't exploding, the
 /// part's capital shield glows round the face struck (`shield.flareCapital`); otherwise the hit
-/// bursts (`burst`). A rock's sounds `COLL02` where it struck.
+/// bursts (`burst`). A rock's sounds `COLL02` where it struck and throws a chunk of rock from
+/// there, along the face's normal.
+///
+/// **Fix:** the game throws the chunk along the normal in the part's own frame, taken for a
+/// direction in the world's, so a chunk from a tumbling rock flies off any way. The port turns the
+/// normal into the world's.
 pub fn componentHit(world: gameobj.World, index: u16, crossing: objects.Crossing, kind: Kind) void {
     switch (kind) {
         .component => {
@@ -56,10 +61,10 @@ pub fn componentHit(world: gameobj.World, index: u16, crossing: objects.Crossing
             burst(world, crossing);
         },
         .rock => {
-            const hearing = world.hearing orelse return;
             const drawn = crossing.part.part().drawn();
             const at = math.transform(drawn.orientation, crossing.point) + drawn.position;
-            _ = sound3d.play(hearing.sound, hearing.scene(world), at, @splat(0), -1, .coll02, 1, .not_reserved);
+            sound3d.playIn(world, at, @splat(0), -1, .coll02, 1, .not_reserved);
+            explode.throwChunk(world, crossing.point, math.transform(drawn.orientation, crossing.normal), .{ .from_part = drawn });
         },
         .hull, .grey => {},
     }

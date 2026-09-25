@@ -10,6 +10,7 @@ const std = @import("std");
 const math = @import("../surrender/math.zig");
 const Vector = math.Vector;
 const ai = @import("ai.zig");
+const aigeneric = @import("aigeneric.zig");
 const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
 const main = @import("main.zig");
@@ -29,13 +30,15 @@ pub const push_apart: f32 = 1.1;
 /// whether they were moved, which has `objects_update` look again.
 ///
 /// Two of one type never collide while a torpedo is one of them, nor do two torpedoes, two pieces
-/// of debris or two satellites. A torpedo or a mine goes off instead of being pushed
-/// (`explode.cpp`), and a ship that meets something which lists components is tested against its
-/// parts. Anything else is pushed apart along the line between the two, each to `push_apart` of its
-/// radius from the point between them, after both have moved again.
+/// of debris or two satellites. A torpedo goes off against what it meets and a mine against a
+/// fighter, instead of being pushed (`goOff`), and a ship that meets something which lists
+/// components is tested against its parts. Anything else is pushed apart along the line between the
+/// two, each to `push_apart` of its radius from the point between them, after both have moved
+/// again.
 ///
-/// Not ported: the torpedo's and the mine's explosions
-/// ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
+/// Not ported: what a mine does in a multiplayer game, 5000 and the kill to its owner, and what the
+/// destruction tells the other players, which are multiplayer's
+/// ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
 pub fn collide(world: gameobj.World, first: u16, second: u16, pass: u8) bool {
     const all = world.objects;
     var near = first;
@@ -64,10 +67,31 @@ pub fn collide(world: gameobj.World, first: u16, second: u16, pass: u8) bool {
     if (all.slots[near].object.type == .satellite and all.slots[far].object.type == .satellite) return false;
 
     // A mine goes off against a fighter, and a torpedo against whatever it met.
-    if (classes[0] == .mine or classes[1] == .mine) return false;
-    if (classes[0] == .torpedo) return true;
+    if (classes[0] == .mine or classes[1] == .mine) {
+        if (classes[0] != .fighter and classes[1] != .fighter) return false;
+        const mine, const fighter = if (classes[0] == .mine) .{ near, far } else .{ far, near };
+        goOff(world, mine, fighter, mine_blow, .collision, false);
+        return false;
+    }
+    if (classes[0] == .torpedo) {
+        goOff(world, near, far, torpedo_blow, .crash, true);
+        return true;
+    }
 
     return push(world, near, far, pass);
+}
+
+/// What a torpedo does to what it meets, and a mine to a fighter.
+const torpedo_blow: f32 = 5001;
+const mine_blow: f32 = 500;
+
+/// A torpedo or a mine in slot `from` going off against what it met in slot `struck`: `blow` to the
+/// fore quadrant of what it met as `kind`, which is named its own attacker, and the torpedo or the
+/// mine destroyed (`object_destroyed_net`, `0x00402100`), never spinning; a torpedo ejects no
+/// pilot.
+fn goOff(world: gameobj.World, from: u16, struck: u16, blow: f32, kind: Kind, no_eject: bool) void {
+    damage(world, struck, .fore, blow, 1, struck, kind);
+    ai.objectDestroyed(.{ .world = world, .clock = world.clock }, from, false, no_eject);
 }
 
 /// The class of the ship type in a slot, or null for an object with no stats, which the game would
@@ -201,8 +225,8 @@ pub const Kind = enum(i32) {
     /// the shields (`shockwave.Shockwave.strike`).
     missile = 1,
     collision = 2,
-    /// What a ship does to what it dies crashing into: 5000 to an object (`objects_collide`), 5001
-    /// to the component of a hull it hit (`collision_test_hull`).
+    /// What a torpedo does to what it meets, 5001 (`objects_collide`), and a ship to the component
+    /// of a hull it dies crashing into, 5001 (`collision_test_hull`).
     crash = 3,
     /// **Unknown.** Also 5001 from a ship dying against a hull, to another part of the component's
     /// assembly (`collision_test_hull`).
@@ -968,6 +992,39 @@ test componentDamage {
     try std.testing.expectEqual(20000, part.armor);
     componentDamage(world, index, struck, 600, 1, .crash);
     try std.testing.expectEqual(19400, part.armor);
+}
+
+test goOff {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const world = mission.world();
+    _ = try mission.add(.predator, .{ 0, 0, -100000 });
+
+    // The test's stats make every type a fighter; a torpedo, of a type of its own, strikes one's
+    // fore quadrant and goes off itself.
+    const ship = try testing.ship(&mission, @splat(0), 1000);
+    const torpedo = try testing.ship(&mission, .{ 100, 0, 0 }, 1000);
+    mission.tables.combat[1].class = .torpedo;
+    all.slots[torpedo].object.type = @enumFromInt(1);
+    all.slots[torpedo].combat = &mission.tables.combat[1];
+    const shielded = all.slots[ship].object.shields.fore;
+    try std.testing.expect(collide(world, ship, torpedo, 0));
+    try std.testing.expect(all.slots[ship].object.shields.fore < shielded);
+    try std.testing.expectEqual(ship, all.slots[ship].object.last_attacker);
+    try std.testing.expectEqual(.explode, aigeneric.current(all, torpedo).?.order);
+
+    // A mine goes off against a fighter, which is not pushed.
+    const mine = try testing.ship(&mission, .{ 0, 100, 0 }, 1000);
+    mission.tables.combat[2].class = .mine;
+    all.slots[mine].object.type = @enumFromInt(2);
+    all.slots[mine].combat = &mission.tables.combat[2];
+    all.slots[ship].object.shields.fore = 1000;
+    try std.testing.expect(!collide(world, ship, mine, 0));
+    try std.testing.expectApproxEqAbs(1000 - mine_blow, all.slots[ship].object.shields.fore, 1);
+    try std.testing.expectEqual(.explode, aigeneric.current(all, mine).?.order);
+    try std.testing.expectEqual(0, all.slots[ship].object.root.position.x);
 }
 
 test "what never collides" {

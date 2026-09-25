@@ -143,8 +143,9 @@ The engine's attachment table, filled when the game starts, gives the models and
 kind and id; [`src/engine/game/create/models.zig`](../../src/engine/game/create/models.zig)
 transcribes it (`make model-tables`). Kind 0 holds missiles and their pods, 1 guns and turrets, 4
 flare and light sprites, 5 cargo and fuel pods. Kind 3 is a gun's muzzle: an object takes one gun
-for each, of the type at `0x64`, and its muzzle flash is drawn there. **Unknown:** kinds 2 and 6 to
-9.
+for each, of the type at `0x64`, and its muzzle flash is drawn there. Kind 7 is where a spinning
+gun's spent cases fly from ([Guns](../engine/guns.md#particles-and-bursts)). **Unknown:** kinds 2, 6,
+8 and 9.
 
 For kinds 1 and 5 the engine mounts the model as an object of its own, hanging from the part's
 node, whose components join the owner's.

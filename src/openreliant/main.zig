@@ -107,7 +107,7 @@ const Doc = struct {
 
 /// Every option's help, which the compiler holds to having one for each.
 const docs: std.enums.EnumArray(Arg, Doc) = .init(.{
-    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, light worked out on encoded colours, no shadows, motion that moves on with the game's ticks, lights from the latest shots only, muzzle flashes that light nothing and none from the turrets, the force feedback's own effects only, a blow shaking the camera only while the controller rumbles, an explosion's debris lit by every light, its fireballs, rings, particles and burning bits as few, plain and brief as the original's, a damaged ship's smoke as even as the original's, the shields' bubbles as coarse as the original's, the levels of detail changing as near as the original's, as little drawn a frame as the original allows, the marker for a target out of sight placed as the original misplaces it, a missile's sound left where it was launched, and the sound mixed plainly in stereo" },
+    .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, light worked out on encoded colours, no shadows, motion that moves on with the game's ticks, lights from the latest shots only, muzzle flashes that light nothing and none from the turrets, the force feedback's own effects only, a blow shaking the camera only while the controller rumbles, an explosion's debris lit by every light, its fireballs, rings, particles and burning bits as few, plain and brief as the original's, the Uber Explode as coarse, unlit and tied to the frame rate as the original's, a damaged ship's smoke as even as the original's, the shields' bubbles as coarse as the original's, the levels of detail changing as near as the original's, as little drawn a frame as the original allows, the marker for a target out of sight placed as the original misplaces it, a missile's sound left where it was launched, and the sound mixed plainly in stereo" },
     .@"--ship" = .{ .section = .sandbox, .value = "<type>", .text = "the ship type to fly, by its number in shipstats.bin; 0, the Predator, by default" },
     .@"--view" = .{ .section = .sandbox, .value = "<0|1|2>", .text = "the view it starts in, as the game's settings keep it: 0 the cockpit; 1 the chase view; 2 no cockpit. The settings' own by default, which the pause menu's video screen changes" },
     .@"--difficulty" = .{ .section = .sandbox, .value = "<easy|medium|hard>", .text = "the game's difficulty: how hard hits land on your ship, and shots on the enemy; medium by default, as in the game" },
@@ -235,6 +235,8 @@ const Options = struct {
     /// How full the explosions look: their fireballs, their shockwaves' rings, and the particles
     /// sent far from the camera.
     fireballs: game.explode.Fireballs = .fuller,
+    /// How the Uber Explode is shown.
+    uber: game.explode.uber.Style = .fuller,
     rings: game.shockwave.Roundness = .round,
     distant: game.particles.Pool.Distant = .whole,
     /// How alike a damaged ship's smoke's particles are.
@@ -303,6 +305,7 @@ const Options = struct {
                 options.debris_lights = .every_light;
                 options.bit_pool = .original;
                 options.fireballs = .original;
+                options.uber = .original;
                 options.rings = .octagon;
                 options.distant = .thinned;
                 options.smoke = .alike;
@@ -631,11 +634,14 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     explosions.settings.debris_lights = options.debris_lights;
     explosions.settings.bit_pool = options.bit_pool;
     explosions.settings.fireballs = options.fireballs;
+    explosions.settings.uber = options.uber;
     var particles: game.particles.Pool = try .load(gpa, &textures, .standard, .{ .distant = options.distant });
     defer particles.deinit();
     // The damaged ships' smoke, from pools of its own.
     var smoke: game.main.smoke.Pools = try .load(gpa, &textures, .{ .distant = options.distant, .variety = options.smoke });
     defer smoke.deinit();
+    var gun_particles: game.guns.effects.Pools = try .load(gpa, &textures, .{ .distant = options.distant });
+    defer gun_particles.deinit();
     var shockwaves: game.shockwave.Shockwaves = try .create(gpa, &textures, options.rings);
     defer shockwaves.deinit(gpa);
     var trails: game.missiles.trail.Trails = .init(gpa, try .load(&textures));
@@ -661,7 +667,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     while (lacking.next()) |effect| std.log.warn("forces\\{s} is missing or isn't an effect file: it plays nothing", .{effect.fileName()});
     var force_feedback: engine.input.force.Forces = .{ .library = &found_forces.library, .settings = options.forces };
     // What the objects run in, the camera's view brought up to date each frame.
-    var world: game.gameobj.World = .{ .forces = &force_feedback, .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .difficulty = options.difficulty, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .smoke = &smoke, .shockwaves = &shockwaves, .trails = &trails, .countermeasures = &countermeasures, .sparks = &sparks, .shields = &shields, .rays = &rays, .flash = &flash, .spawn = .{ .tables = sandbox.tables, .types = sandbox.types.interface() } };
+    var world: game.gameobj.World = .{ .forces = &force_feedback, .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .difficulty = options.difficulty, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .smoke = &smoke, .gun_particles = &gun_particles, .shockwaves = &shockwaves, .trails = &trails, .countermeasures = &countermeasures, .sparks = &sparks, .shields = &shields, .rays = &rays, .flash = &flash, .spawn = .{ .tables = sandbox.tables, .types = sandbox.types.interface() } };
     try sandbox.start(.{ .world = world, .clock = &clock, .devices = &devices }, @intCast(options.ship));
     // The music, as a mission's script starts it (`cmd_PlayMusic`): from `music\`, for ever, at 80.
     if (options.music) |name| {
@@ -915,6 +921,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .kills_shown = devices.active(.display_kills, false),
             .particles = &particles,
             .smoke = &smoke,
+            .gun_particles = &gun_particles,
             .sparks = &sparks,
             .ahead = game.objects.pastTick(&clock, options.smooth_motion),
             .explosions = &explosions,
@@ -1175,6 +1182,7 @@ const Sandbox = struct {
         if (orders.world.sparks) |thrown| thrown.reset();
         if (orders.world.particles) |pool| pool.reset();
         if (orders.world.smoke) |pools| pools.reset();
+        if (orders.world.gun_particles) |pools| pools.reset();
         sandbox.objects.missiles.reset(sandbox.objects.gpa);
         if (orders.world.trails) |trails| trails.reset();
         if (orders.world.rays) |rays| rays.reset();
@@ -1650,6 +1658,8 @@ test Options {
     try std.testing.expectEqual(.lasting, plain.bit_pool);
     try std.testing.expectEqual(.original, retro.bit_pool);
     try std.testing.expectEqual(.original, retro.fireballs);
+    try std.testing.expectEqual(.original, retro.uber);
+    try std.testing.expectEqual(.fuller, plain.uber);
     try std.testing.expectEqual(.octagon, retro.rings);
     try std.testing.expectEqual(.thinned, retro.distant);
     try std.testing.expectEqual(.alike, retro.smoke);

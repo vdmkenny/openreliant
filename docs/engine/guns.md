@@ -125,6 +125,29 @@ A type whose flash lasts no time shows none: the game divides by its ticks and t
 
 `--original` leaves the flashes unlit and the turrets' guns without them.
 
+### Particles and bursts
+
+`guns_init` (`0x00478990`) makes the guns' [particle](effects.md#particles) templates and two pools of their own: the flak's (`0x005636D0`), 1000 over `gunflare\partic7`, which darkens what is behind it by its alpha; and the spent cases' (`0x0056315C`), 100 over `gunflare\case1`, which shows the texture's own colours.
+
+A Huge Gun's shot trails particles from the explosions' pool: `bullet_build` hangs an emitter from the shot's frame for 10000 ticks, and `bullets_frame` streams from it once a frame, then stands it afresh behind the shot and off it each way across by up to half its stray. It points back along the shot at a speed below nothing, so the particles leave forward, up to 20 slower than that speed, and fall behind the faster shot.
+
+| Gun | Particles | Half-size | Colour | Speed | Spread | Behind, stray |
+|---|---|---|---|---|---|---|
+| Allied Huge Gun (`0x005635D0`) | 120 to 129 ticks, 12 a tick | 700, 500, 250 | Blue (0.3, 0.8, 0.8) to nothing | 200 to 220 | 0.15 | 700, 400 |
+| Coalition Huge Gun (`0x0056318C`) | 120 to 129 ticks, 12 a tick | 500, 700, 1100 | Orange (1, 0.9, 0.7) to nothing | 230 to 250 | 0.1 | 850, 850 |
+
+A Turret Flak shell that ends without striking anything sounds `FLAK01` and bursts where it stands. Within 10000 of the camera:
+
+- two flashes of flak ([Fireballs](effects.md#fireballs)), 280 across with a light and 245 across 20 to 39 ticks late, each over 130 ticks;
+- 30 of the flak's particles (`0x00563104`) every way at 1.4 to 1.75 a tick, 150 to 159 ticks long, dimming from half grey and growing from a half-size of 42 to 119, a spark one time in 200;
+- ten fireballs of the bang or the sheet at random, then ten of flak, each drifting out a random way at 10.5 a tick, lit, 0 to 19 ticks late, 50 to 119 ticks long and 14 to 70 across.
+
+Farther off it is one flash of flak 600 across with a light, over 40 ticks.
+
+A spinning gun throws a spent case as it fires each round, and so does a model's `puff` event (`clip_event_particles`, `0x0047C800`): one from each of the part's attachments of kind 7, back along it at 10 a tick, strayed up to an eighth either way across, carrying a quarter of the ship's velocity, showing one of the eight cells of `gunflare\case1`, four across and two down, at random. A case lasts 100 to 109 ticks at a half-size of 15.
+
+[`guns/effects.zig`](../../src/engine/game/guns/effects.zig) ports the pools, the trails, the burst and the cases.
+
 ## The Nova Cannon
 
 The Phoenix's Nova Cannon charges while the trigger is held and strikes when it is let go. Holding the trigger with one group chosen whose first gun is a Nova Cannon (`object_fire_guns`) adds 0.0025 times the guns' share of the power to the ship's `nova_charge` (`+0x148`), up to 1. Past 0.5 the player's view shakes at 0.3, and full at 0.6. The guns' charge doesn't recharge while `nova_charge` holds any.
@@ -199,4 +222,4 @@ Gun groups exclude kinds 1 and 3, and `FULL GUNS` excludes kind 1 ([The trigger]
 
 The muzzle flashes are [`guns/flash.zig`](../../src/engine/game/guns/flash.zig)'s, which every model's muzzles draw (`objects.Model.flashes`).
 
-Not ported: Huge Gun particle trails, impact sparks and audible flak bursts ([#41](https://github.com/vdmkenny/openreliant/issues/41)). Choosing a group and FULL GUNS are the gunnery display's keys ([Head-up display](hud.md#the-gunnery-display)).
+Choosing a group and FULL GUNS are the gunnery display's keys ([Head-up display](hud.md#the-gunnery-display)).
