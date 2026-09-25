@@ -475,8 +475,8 @@ pub fn engineUpdate(sound: *Sound, scene: Scene) void {
 /// ship.
 fn flybys(sound: *Sound, scene: Scene) void {
     const all = scene.objects;
-    // The index the player's order aims at, which the game takes for a ship's whatever its kind.
-    const aimed_at: ?i16 = if (aigeneric.current(all, all.player)) |entry| entry.target.index else null;
+    // The slot the player's order aims at, which the game takes for a ship's whatever its kind.
+    const aimed_at: ?u16 = if (aigeneric.current(all, all.player)) |entry| entry.target.slot() else null;
     const looking = math.forward(scene.camera.orientation);
     for (all.slots[0..all.count], 0..) |*slot, index| {
         const combat = slot.combat orelse continue;

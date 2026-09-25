@@ -1672,7 +1672,7 @@ pub const State = struct {
     pub fn targetChanged(state: *State, all: *create.Objects, multiplayer: bool) void {
         const entry = ai.playerControlEntry(all) orelse return;
         state.show(all, entry.target, multiplayer);
-        const index = state.shown.ship() orelse {
+        const index = state.shown.slot() orelse {
             state.windows.close(.target);
             state.windows.close(.big_target);
             return;
@@ -1687,7 +1687,7 @@ pub const State = struct {
     fn show(state: *State, all: *const create.Objects, target: aigeneric.Target, multiplayer: bool) void {
         state.shown.index = target.index;
         state.shown.component = target.component;
-        const shown_ship = state.shown.ship();
+        const shown_ship = state.shown.slot();
         const friendly = if (shown_ship) |index| index < all.slots.len and all.slots[index].object.side == .friendly else false;
         const allowed: gameobj.GameObject.Flags = .{ .cloaked = friendly and !multiplayer };
         state.target = if (ai.targetValid(all, state.shown, allowed)) shown_ship else null;

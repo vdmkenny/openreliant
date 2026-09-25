@@ -140,10 +140,11 @@ values are scaled by 0.001, so the stick's travel spans -1 to 1.
   right launches a missile as LAUNCH MISSILE does, once for each press, which
   `mouse_missile_latched` (`0x51CEFA`) records.
 
-**Fix:** `player_controls` adds the movement of the last read each time it runs, once a frame as
-well as once a step, so the faster the frames, the further a movement steers. OpenReliant adds each
-read's movement once. OpenReliant holds the mouse to the window, its pointer hidden, while the
-player flies in this mode, as the game holds DirectInput's mouse, and lets it go for the pause menu.
+  **Fix:** `player_controls` adds the movement of the last read each time it runs, once a frame as
+  well as once a step, so the faster the frames, the further a movement steers. OpenReliant adds
+  each read's movement once. OpenReliant holds the mouse to the window, its pointer hidden, while
+  the player flies in this mode, as the game holds DirectInput's mouse, and lets it go for the pause
+  menu.
 
 In each mode, half the yaw input is added to the roll input, so the ship banks into turns, and
 `joystick_invert` sets the sign of pitch. STRAFE LEFT and STRAFE RIGHT set the lateral input to -1

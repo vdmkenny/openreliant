@@ -428,7 +428,7 @@ pub fn armorDamage(world: gameobj.World, index: u16, struck: Quadrant, value: f3
     const current = &all.slots[all.player].orders[0].target;
     if (smartTargeting(world, attacker, kind) != null) current.index = @intCast(index);
     const display = world.display orelse return;
-    if (current.ship() == index) {
+    if (current.slot() == index) {
         _ = display.bringUp(hud.targetWindow(slot), false);
         display.target_hits.insert(struck);
     }
@@ -553,7 +553,7 @@ pub fn componentDamage(world: gameobj.World, index: u16, struck_part: objects.Pa
     if (object.side != .hostile) return;
     if (std.mem.indexOfScalar(?*objects.Model.Part, slot.listed(), struck)) |n| {
         input.setPlayerTarget(display, all, @intCast(index), @intCast(n), false);
-    } else if (all.slots[all.player].orders[0].target.ship() != index) {
+    } else if (all.slots[all.player].orders[0].target.slot() != index) {
         input.setPlayerTarget(display, all, @intCast(index), aigeneric.Target.whole, false);
     }
 }

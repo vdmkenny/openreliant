@@ -234,7 +234,7 @@ const look_spread = 100;
 /// the frame before.
 fn aimedStep(world: gameobj.World, index: u16, gun: *guns.Fitted, aimed: *Aimed) void {
     const clock = world.clock;
-    if (aimed.target.ship() != null) {
+    if (aimed.target.slot() != null) {
         track(world, index, gun, aimed);
         const rate = @as(f32, @floatFromInt(clock.frame_duration)) * turn_rate;
         const model = aimed.model;
@@ -244,7 +244,7 @@ fn aimedStep(world: gameobj.World, index: u16, gun: *guns.Fitted, aimed: *Aimed)
         if (aimed.slots[0]) |part| turn(model, part, pitch);
     }
     if (aimed.looks_at < clock.frame_start) {
-        if (aimed.target.ship() == null) pickTarget(world, index, aimed);
+        if (aimed.target.slot() == null) pickTarget(world, index, aimed);
         aimed.looks_at = clock.frame_start + look_least + @rem(world.random.rand(), look_spread);
     }
 }
@@ -274,7 +274,7 @@ const fire_speed: f32 = 2;
 /// **Quirk:** the muzzle points along its own nose, from where the base stands.
 fn track(world: gameobj.World, index: u16, gun: *guns.Fitted, aimed: *Aimed) void {
     const all = world.objects;
-    const target = aimed.target.ship() orelse return drop(aimed);
+    const target = aimed.target.slot() orelse return drop(aimed);
     if (!ai.targetValid(all, aimed.target, .{})) return drop(aimed);
     const struck = &all.slots[target];
     const lead: f32 = if (struck.object.flags.ecm) world.random.fraction() * ecm_lead_spread + ecm_lead_least else 1;
@@ -411,7 +411,7 @@ fn pickTarget(world: gameobj.World, index: u16, aimed: *Aimed) void {
     for (all.slots[0..all.count], 0..) |*slot, at| {
         const candidate: u16 = @intCast(at);
         const object = &slot.object;
-        if (aimed.target.ship() == candidate or candidate == index) continue;
+        if (aimed.target.slot() == candidate or candidate == index) continue;
         if (!object.type.hasStats() or object.side == own.side or object.side == .neutral) continue;
         if (huge and !object.flags.components) continue;
         aimed.target = .at(candidate, null);
@@ -542,11 +542,11 @@ fn missileStep(world: gameobj.World, index: u16, launcher: *Launcher) void {
                     launcher.target = .at(@intCast(candidate), null);
                 }
             }
-            if (launcher.target.ship() != null) launcher.state = .tracking;
+            if (launcher.target.slot() != null) launcher.state = .tracking;
         },
         .tracking => {
             if (launcher.missiles == 0) return empty(launcher, now);
-            const target = launcher.target.ship() orelse return lose(launcher, now);
+            const target = launcher.target.slot() orelse return lose(launcher, now);
             if (!ai.targetValid(all, launcher.target, .{})) return lose(launcher, now);
             const seen: Bearing = .of(from, all.slots[target].object.nextPosition());
             if (seen.distance > reach * keep_range or !seen.level()) return lose(launcher, now);

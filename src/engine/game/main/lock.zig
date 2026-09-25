@@ -194,7 +194,7 @@ pub fn possible(world: gameobj.World, ring: *missile_display.Ring, target: aigen
     if (!ai.targetValid(all, target, .{})) return false;
     const ship = &all.slots[all.player].object;
     if (ship.flags.missiles_disabled) return false;
-    const aimed = target.ship() orelse return false;
+    const aimed = target.slot() orelse return false;
     if (all.slots[aimed].object.side != .hostile) return false;
     if (armed.type == .screamer) return false;
     const stats = all.missile_stats.of(armed.type) orelse return false;
@@ -207,7 +207,7 @@ pub fn guiding(all: *create.Objects) bool {
     var walk = all.missiles.walk();
     while (walk.next()) |index| {
         const missile = all.missiles.get(index) orelse continue;
-        if (missile.launcher == all.player and missile.target.ship() != null) return true;
+        if (missile.launcher == all.player and missile.target.slot() != null) return true;
     }
     return false;
 }

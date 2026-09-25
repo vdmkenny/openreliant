@@ -822,11 +822,11 @@ with everything placed from the window's place `(x, y)`, in this order:
    over it through a pane cut to the share. The guns' arc on the left fills upward, the
    engines' on the right fills downward, and the shields' across the top empties from the left.
 
-| System | Empty | Full | At | Pane | |---|---|---|---|---| | Guns | `0x84` | `0x81` |
-`(x + 34, y - 13)` | `x + 33` to `x + 64`, `y - 14 + round(48 - 48 * share)` to `y + 34` | | Engines
-| `0x85` | `0x82` | `(x + 70, y - 13)` | `x + 69` to `x + 100`, `y - 14` to
-`y - 14 + round(48 * share)` | | Shields | `0x83` | `0x80` | `(x + 41, y - 32)` |
-`x + 40 + round(54 - 54 * share)` to `x + 94`, `y - 33` to `y - 17` |
+   | System | Empty | Full | At | Pane |
+   |---|---|---|---|---|
+   | Guns | `0x84` | `0x81` | `(x + 34, y - 13)` | `x + 33` to `x + 64`, `y - 14 + round(48 - 48 * share)` to `y + 34` |
+   | Engines | `0x85` | `0x82` | `(x + 70, y - 13)` | `x + 69` to `x + 100`, `y - 14` to `y - 14 + round(48 * share)` |
+   | Shields | `0x83` | `0x80` | `(x + 41, y - 32)` | `x + 40 + round(54 - 54 * share)` to `x + 94`, `y - 33` to `y - 17` |
 
 5. The icons for the three systems: shape `0xBE` at `(x + 53, y - 67)`, `0xBD` at `(x + 103, y + 1)`
    and `0xC1` at `(x + 2, y + 4)`.

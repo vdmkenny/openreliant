@@ -413,7 +413,7 @@ fn objectsPass(orders: aigeneric.Context) void {
         if (slot.object.flags.outOfFrame()) continue;
         if (slot.object.order_count > 0) {
             const order = slot.orders[0];
-            if (order.order == .fight and order.target.ship() == all.player and slot.state.fight.missile_ready) enemy_lock = true;
+            if (order.order == .fight and order.target.slot() == all.player and slot.state.fight.missile_ready) enemy_lock = true;
         }
         objects.loseComponents(orders, index);
         avoidanceScan(world, index);
@@ -1121,10 +1121,6 @@ pub const player_ships = [_]PlayerShip{
     .{ .cockpit = "shr2_frm.shp", .wire_frame = 0x11A, .wing_icon = 0xFD, .spectral_shields = true, .blind_fire = true },
     .{ .cockpit = "phe2_frm.shp", .wire_frame = 0x112, .wing_icon = 0x104, .blind_fire = true },
 };
-
-/// Where the second set of the player's ship types starts: types `0xF4` to `0xFF`, whose models
-/// are the first twelve's `t_` twins, are the same twelve ships to the start.
-pub const player_twins_first = 0xF4;
 
 /// The player's ship of `ship_type`, a twin as the ship it twins (`gameobj.Type.untwinned`), or null
 /// for a type the start has none for.
