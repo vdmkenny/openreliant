@@ -32,6 +32,7 @@ const help = @import("help.zig");
 const install = @import("install.zig");
 const forces = @import("forces.zig");
 const joysticks = @import("joysticks.zig");
+const missions = @import("missions.zig");
 const version = @import("version.zig");
 
 /// Everything `openreliant` takes on its command line, in the order the help page lists them.
@@ -146,6 +147,7 @@ const help_page = page: {
         \\usage: openreliant [<game-directory>] [<option>...]
         \\       openreliant install [--from <disc>]... [--force] <directory>
         \\       openreliant joysticks [<game-directory>] [--watch]
+        \\       openreliant missions [<game-directory>]
         \\
         \\
     ++ help.table(&.{.{ .typed = "<game-directory>", .text = "where StarLancer is installed, with resource.hog and tcachehw.dat; the current directory by default" }});
@@ -172,6 +174,7 @@ const help_page = page: {
         help.table(&.{
             .{ .typed = "install", .text = "install the game's files from the StarLancer discs into a directory" },
             .{ .typed = "joysticks", .text = "list the joysticks and gamepads, and which one the game uses" },
+            .{ .typed = "missions", .text = "list the game's missions, its own and those added to its missions folder, and check that each loads" },
         }) ++ help.paragraph("Each command's --help shows its options.", 2);
 };
 
@@ -431,6 +434,7 @@ pub fn main(init: std.process.Init) !u8 {
     const args = try init.minimal.args.toSlice(arena);
     if (args.len > 1 and std.mem.eql(u8, args[1], "install")) return install.main(init.io, arena, args[2..]);
     if (args.len > 1 and std.mem.eql(u8, args[1], "joysticks")) return joysticks.main(init.io, arena, args[2..]);
+    if (args.len > 1 and std.mem.eql(u8, args[1], "missions")) return missions.main(init.io, arena, args[2..]);
     const options = switch (Options.parse(args[1..])) {
         .play => |options| options,
         .help => return say(init.io, help_page),
@@ -1400,6 +1404,7 @@ test {
     _ = install;
     _ = forces;
     _ = joysticks;
+    _ = missions;
     _ = version;
 }
 

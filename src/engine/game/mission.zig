@@ -8,6 +8,9 @@
 
 const std = @import("std");
 
+pub const bind = @import("mission/bind.zig");
+pub const Mission = bind.Mission;
+
 const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
 
@@ -51,4 +54,8 @@ test listPlayerWing {
     // More ships than the wing holds list as many as fit.
     listPlayerWing(all, &(.{wingman} ** (wing_size + 1)));
     try std.testing.expectEqual(@as(WingSlots, @splat(wingman)), all.wing);
+}
+
+test {
+    std.testing.refAllDecls(@This());
 }

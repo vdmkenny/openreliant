@@ -17,9 +17,10 @@ make check-missions              # parse all 44
 ## Container
 
 A mission inside a `.HOG` is RefPack compressed; one loose in `missions\` is stored expanded. The
-engine tells them apart by the first two bytes, so either is legal anywhere. A retail install
-carries two loose missions, `mission18.dte` and `mission25.dte`, which begin `08 33` where their
-archive copies begin `10 FB`. `sltool hog` expands members as it extracts.
+archive's reader expands a member that begins `10 FB`, but a loose file is read as it is, so it
+must be stored expanded ([Missions](../engine/missions.md#the-file)). A retail install carries two
+loose missions, `mission18.dte` and `mission25.dte`, which begin `08 33` where their archive copies
+begin `10 FB`. `sltool hog` expands members as it extracts.
 
 ## Directory
 
@@ -29,7 +30,7 @@ The image opens with **27 entries of 8 bytes**:
 |---|---|---|
 | 0 | u16 | Records in use, except where noted below |
 | 2 | u8 | Unused |
-| 3 | u8 | Which of the section's fields the loader turns into live pointers |
+| 3 | u8 | Four format flags, in the low bits, which the binder notes and nothing reads. Every entry of a shipped mission holds the same: 15 in most, 7 in `mission191` and `mission271`, 3 in `mission801` and 1 in `mission88` |
 | 4 | u32 | Offset of the section, or `0xFFFF` when unused |
 
 Capacity is fixed: a section's offset is the same in every mission built from the same template, and
@@ -53,15 +54,41 @@ the count says how much of the reserved room is filled, so most missions are exa
 | 16 | sub_objects | `0x44` | |
 | 17 | parts_b | `0x1C` | Part descriptors for section 18 |
 | 18 | script_b | | A second bytecode section |
+| 21 | openreliant_name | 1 | **OpenReliant's own:** the mission's name, see [OpenReliant's mission name](#openreliants-mission-name) |
 | 22 | operands_b | 2 | |
 | 24 | command_flags | 2 | One `u16` per Executor command |
 | 25 | command_flags_b | 2 | The same for the second command catalogue |
 
-Sections 17 to 21 and 25 are empty in all 44 missions. Section 24, where a mission has it, holds one
+Sections 17 to 21 and 25 are empty in all 44 missions. The engine reads nothing of sections 9, 20,
+21 and 23: the binder binds 21 into a local variable of its own, and the rest into globals nothing
+reads. Sections 9 and 23 hold records in some missions, likely the original editor's. Of the
+directory's 128 slots before the first section, at `0x400`, the binder reads the first 27. Slot 27
+holds the file's size in most missions and is unused in the rest, and slots 28 on are unused in
+all of them. Section 24, where a mission has it, holds one
 entry per command of the [catalogue](#commands): `command` passes bit 0 of the entry, inverted, to
 the engine before each call. **Unknown:** what the flags mean; their values are cumulative masks
 such as 1, 3 and 7. In every mission `script_flags` holds twice
 the count of section 6: one entry per script byte.
+
+## OpenReliant's mission name
+
+**This is OpenReliant's convention, not the game's.** OpenReliant keeps a name for a mission in
+section 21, which the game binds but never reads and no shipped mission uses. The port shows it
+(`openreliant missions`); the game plays a mission with it as it plays any other, and a mission is
+complete without it.
+
+The section's count is its size in bytes. It holds an 8-byte header, then the name:
+
+| Offset | Type | Field |
+|---|---|---|
+| `0x00` | char x4 | Tag: `ORMN` |
+| `0x04` | u16 | Version: 1 |
+| `0x06` | u16 | The name's length in bytes |
+| `0x08` | | The name, in UTF-8, then a NUL |
+
+The port reads a name only where the tag is `ORMN`, the version 1, and the name fits in the section;
+anything else in section 21 it leaves alone. Other mission tools may not keep the section when they
+write a mission out.
 
 ## String pool
 
@@ -81,7 +108,8 @@ Stride `0x4C`, one per placed object, nav points included.
 | `0x14` | u8 | Flight group, or `0xFF` for none |
 | `0x15` | u8 | Pilot: the record of `pilotstats.bin` the ship gets. 255 marks the player's own record |
 | `0x17` | u8 | Flags, the engine's own: bit 0 marks the ship destroyed. Zero in the files |
-| `0x18` | u16 | Role. Ships stay below `0x100`; nav points and markers use 999 and `0x3E3` to `0x3E8` |
+| `0x18` | u16 | Role. Ships stay below `0x100`; nav points and markers use 999 and `0x3E3` to `0x3E8`, waypoints `0x3E5` |
+| `0x1B` | u8 | Set for a waypoint once binding the mission has listed it |
 | `0x1C` | f32 x3 | Position as authored |
 | `0x2E`, `0x3A`, `0x4A` | i16 | Yaw, pitch, roll, in whole degrees |
 | `0x30` | u32 | The ship's intact components, a bit each |
@@ -93,6 +121,20 @@ of the flags and raises its Destroyed event, which it raises no more.
 Each angle sits two bytes after its runtime copy, at `0x2C`, `0x38` and `0x48`. Every record holds
 angles within [-360, 360]. Positions are absolute, on the order of 10^7. `in_flight_group` reads
 the flight group byte.
+
+## Flight groups
+
+Stride `0x14`.
+
+| Offset | Type | Field |
+|---|---|---|
+| `0x00` | u16 | Object ID |
+| `0x08` | u8 | The wing the mission lists the group's ships in: 0 the player's, 1 and 2 two more, `0xFF` none |
+| `0x09` | u8 | How many of the mission's ships are in the group |
+| `0x0C` | u32 | Where the group's first ship stands in the list of the groups' ships, or -1 |
+
+Binding the mission works out `0x09` and `0x0C`, whatever the file holds
+([Missions](../engine/missions.md#binding)).
 
 ## Objects
 

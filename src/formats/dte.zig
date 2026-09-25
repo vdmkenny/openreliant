@@ -72,7 +72,10 @@ pub const Section = enum(u8) {
     script_b = 18,
     unused_19 = 19,
     unused_20 = 20,
-    transient_21 = 21,
+    /// **OpenReliant's own:** the mission's name, as `OpenReliantName` keeps it. The game binds this
+    /// section into a local variable of its binder and reads nothing of it, and no shipped mission
+    /// has one.
+    openreliant_name = 21,
     operands_b = 22,
     unknown_23 = 23,
     /// One `u16` of flags per Executor command. `command` passes bit 0, inverted, to the engine
@@ -88,8 +91,11 @@ pub const DirectoryEntry = extern struct {
     /// Records in use, not the capacity reserved for them.
     count: u16,
     _unused: u8,
-    /// Which of the section's fields the loader turns into live pointers.
-    relocation_flags: u8,
+    /// Four flags, in the low bits, which binding the mission notes where any section has them
+    /// (`mission_bind_section`); nothing reads them. Every entry of a shipped mission holds the
+    /// same: 15 in most, 7 in `mission191` and `mission271`, 3 in `mission801` and 1 in
+    /// `mission88`.
+    formats: u8,
     offset: u32,
 
     /// Sections the template reserves but this mission does not use.
@@ -125,7 +131,9 @@ pub const Ship = extern struct {
     /// Role. Ordinary ships stay below `0x100`; nav points and markers use 999 and the `0x3E3` to
     /// `0x3E8` range, so reading this as a byte truncates many of them.
     kind: u16,
-    _unknown_1a: u16,
+    _unknown_1a: u8,
+    /// Set for a waypoint once binding the mission has listed it (`mission_list_waypoints`).
+    waypoint_listed: u8,
     /// As authored. The loader copies it into `runtime_position`.
     position: [3]f32,
     _unknown_28: u32,
@@ -144,6 +152,13 @@ pub const Ship = extern struct {
 
     /// The `flight_group` of a ship in none.
     pub const no_flight_group: u8 = 0xFF;
+
+    /// The `iff` of the player's own record.
+    pub const player_iff: u8 = 0xFF;
+
+    /// The `kind` of a waypoint: a point a flight group's Patrol Route flies through, in the order
+    /// the mission lists them.
+    pub const waypoint_kind: u16 = 0x3E5;
 
     pub const Flags = packed struct(u8) {
         /// Set when the engine raises the ship's Destroyed event, which it then raises no more.
@@ -457,12 +472,58 @@ pub const Object = extern struct {
     }
 };
 
-/// A flight group. Only its object ID is identified.
-pub const FlightGroup = extern struct {
-    object_id: u16,
-    _unknown_02: [0x12]u8,
+/// **OpenReliant's own:** a mission's name, which the port keeps in section `openreliant_name`, a
+/// section the game binds but never reads. The section's count is its size in bytes: this header,
+/// then `length` bytes of the name in UTF-8, then a NUL. A mission is complete without it, and the
+/// game plays one with it as it plays any other.
+pub const OpenReliantName = extern struct {
+    tag: [4]u8 = OpenReliantName.expected_tag,
+    version: u16 = OpenReliantName.current_version,
+    length: u16,
+
+    /// The tag that marks the section as holding a name of this kind, and the one version so far.
+    pub const expected_tag = "ORMN".*;
+    pub const current_version: u16 = 1;
+
+    /// The name `section` holds, where it starts with a header of this kind and the name fits;
+    /// null for anything else, which the port leaves alone.
+    pub fn read(section: []const u8) ?[]const u8 {
+        if (section.len < @sizeOf(OpenReliantName)) return null;
+        const header: *align(1) const OpenReliantName = @ptrCast(section[0..@sizeOf(OpenReliantName)]);
+        if (!std.mem.eql(u8, &header.tag, &expected_tag) or header.version != current_version) return null;
+        const name = section[@sizeOf(OpenReliantName)..];
+        if (header.length > name.len) return null;
+        return name[0..header.length];
+    }
 
     comptime {
+        assert(@sizeOf(OpenReliantName) == 8);
+    }
+};
+
+/// A flight group: its object ID, the wing it is listed in, and where its ships stand in the list
+/// of the groups' ships that binding the mission makes.
+pub const FlightGroup = extern struct {
+    object_id: u16,
+    _unknown_02: [6]u8,
+    /// The wing the mission lists the group's ships in (`mission_wings_build`): 0 the player's, 1
+    /// and 2 two more, or `no_wing`.
+    wing: u8,
+    /// How many of the mission's ships are in the group, and where the first stands in the list of
+    /// the groups' ships, or `no_ship`: both worked out as the mission is bound
+    /// (`mission_list_group_ships`, `0x00452EC0`), whatever the file holds.
+    ship_count: u8,
+    _unknown_0a: u16,
+    first_ship: u32,
+    _unknown_10: u32,
+
+    pub const no_wing: u8 = 0xFF;
+    pub const no_ship: u32 = 0xFFFFFFFF;
+
+    comptime {
+        assert(@offsetOf(FlightGroup, "wing") == 0x08);
+        assert(@offsetOf(FlightGroup, "ship_count") == 0x09);
+        assert(@offsetOf(FlightGroup, "first_ship") == 0x0C);
         assert(@sizeOf(FlightGroup) == 0x14);
     }
 };
@@ -1092,7 +1153,7 @@ pub const Mission = struct {
         return if (index < mission.directory.len) mission.directory[index] else .{
             .count = 0,
             ._unused = 0,
-            .relocation_flags = 0,
+            .formats = 0,
             .offset = DirectoryEntry.unused_offset,
         };
     }
@@ -1116,6 +1177,15 @@ pub const Mission = struct {
         return mission.image[slot.offset..][0..bytes];
     }
 
+    /// The mission's name as OpenReliant keeps it in section `openreliant_name`; null for a mission
+    /// without one, or one whose section holds anything else.
+    pub fn openReliantName(mission: Mission) ?[]const u8 {
+        const slot = mission.entry(.openreliant_name);
+        if (!slot.isUsed() or slot.offset > mission.image.len) return null;
+        const bytes = mission.image[slot.offset..];
+        return OpenReliantName.read(bytes[0..@min(slot.count, bytes.len)]);
+    }
+
     /// The script's named routines, in the order the loader installs them.
     pub fn parts(mission: Mission) Error![]align(1) const Part {
         return mission.records(Part, .parts);
@@ -1123,6 +1193,14 @@ pub const Mission = struct {
 
     pub fn ships(mission: Mission) Error![]align(1) const Ship {
         return mission.records(Ship, .ships);
+    }
+
+    /// The player's own record, the first whose `iff` is `Ship.player_iff`; null for none.
+    pub fn player(mission: Mission) Error!?Ship {
+        for (try mission.ships()) |ship| {
+            if (ship.iff == Ship.player_iff) return ship;
+        }
+        return null;
     }
 
     pub fn triggers(mission: Mission) Error![]align(1) const Trigger {
@@ -1252,7 +1330,7 @@ test "directory and records line up" {
     for (directory) |*slot| slot.* = .{
         .count = 0,
         ._unused = 0,
-        .relocation_flags = 0,
+        .formats = 0,
         .offset = DirectoryEntry.unused_offset,
     };
 
@@ -1260,7 +1338,7 @@ test "directory and records line up" {
     directory[@intFromEnum(Section.strings)] = .{
         .count = 2,
         ._unused = 0,
-        .relocation_flags = 0xF,
+        .formats = 0xF,
         .offset = pool_at,
     };
     @memcpy(image[pool_at..][0..12], "Player_Ship\x00");
@@ -1269,7 +1347,7 @@ test "directory and records line up" {
     directory[@intFromEnum(Section.ships)] = .{
         .count = 1,
         ._unused = 0,
-        .relocation_flags = 0xF,
+        .formats = 0xF,
         .offset = ships_at,
     };
     const ship: *align(1) Ship = @ptrCast(image[ships_at..][0..@sizeOf(Ship)]);
@@ -1288,8 +1366,32 @@ test "directory and records line up" {
     try std.testing.expectEqual(@as(u16, 999), list[0].kind);
     try std.testing.expectEqual(@as(i16, 90), list[0].yaw);
 
+    // The player's own record is the one of the player's side.
+    try std.testing.expectEqual(@as(u32, 3), (try mission.player()).?.object_id);
+    // Without OpenReliant's section, the mission has no name of the port's.
+    try std.testing.expectEqual(null, mission.openReliantName());
+    const name_at = 0x300;
+    directory[@intFromEnum(Section.openreliant_name)] = .{ .count = 8 + 12, ._unused = 0, .formats = 0xF, .offset = name_at };
+    @as(*align(1) OpenReliantName, @ptrCast(image[name_at..][0..8])).* = .{ .length = 11 };
+    @memcpy(image[name_at + 8 ..][0..12], "The Sandbox\x00");
+    try std.testing.expectEqualStrings("The Sandbox", (try Mission.parse(&image)).openReliantName().?);
+
     // An unused section yields nothing rather than reading stray bytes.
     try std.testing.expectEqual(@as(usize, 0), (try mission.triggers()).len);
+}
+
+test OpenReliantName {
+    var section: [@sizeOf(OpenReliantName) + 8]u8 = undefined;
+    @as(*align(1) OpenReliantName, @ptrCast(section[0..8])).* = .{ .length = 7 };
+    @memcpy(section[8..], "Sandbox\x00");
+    try std.testing.expectEqualStrings("Sandbox", OpenReliantName.read(&section).?);
+    // Too short for its name, of another tag or of a later version, it is left alone.
+    try std.testing.expectEqual(null, OpenReliantName.read(section[0..10]));
+    section[0] = 'X';
+    try std.testing.expectEqual(null, OpenReliantName.read(&section));
+    section[0] = 'O';
+    section[4] = 2;
+    try std.testing.expectEqual(null, OpenReliantName.read(&section));
 }
 
 test "rejects a compressed or truncated image" {
@@ -1447,12 +1549,12 @@ test "maps the script into trigger blocks and parts, with their constants" {
     for (directory) |*slot| slot.* = .{
         .count = 0,
         ._unused = 0,
-        .relocation_flags = 0,
+        .formats = 0,
         .offset = DirectoryEntry.unused_offset,
     };
     const place = struct {
         fn at(dir: []align(1) DirectoryEntry, section: Section, count: u16, offset: u32) void {
-            dir[@intFromEnum(section)] = .{ .count = count, ._unused = 0, .relocation_flags = 0xF, .offset = offset };
+            dir[@intFromEnum(section)] = .{ .count = count, ._unused = 0, .formats = 0xF, .offset = offset };
         }
     }.at;
 
