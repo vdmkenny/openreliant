@@ -210,7 +210,7 @@ set from C's `rand()` when the object is created, that steps as `seed * 0x343FD 
 | Match Speed (32) | Sets the throttle to the target's speed over the ship's cruise speed. Pops when the target is no longer valid. |
 | Turns object lights on (35) | Switches on the lights of the parts with the lightmap flag, with a sound, and pops. Ship type 165 instead switches on the first part's four lights one by one, then those of every lightmap part, a step each 100 ticks with a sound at each, and pops after 500 ticks. While the setting at `0x5D5618` is not 1 it pops at once. |
 | Turns object lights off (42) | Switches them off. |
-| Huuuuuuuge explosion (43) | An explosion at the object, through `0x00472AB0` with 50000 and 1500, then it pops. |
+| Huuuuuuuge explosion (43) | The Uber Explode at the object, of size 50000 over 1500 ticks ([Effects](effects.md#the-uber-explode)), then it pops. |
 | Immediately set ship to zero velocity and rotation (44) | `object_stop` (`0x00403000`), then it pops. |
 | Fly ship backwards (45) | Throttle -0.5, no turning. |
 | Multiplayer Control (101) | Disables the object once it has object flag `0x10000000`. |

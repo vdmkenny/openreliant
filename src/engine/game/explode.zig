@@ -2,12 +2,13 @@
 //! ([`aiexplode.zig`](aiexplode.zig)) runs the ship down to it; here are the blast that ends it
 //! and what the explosions leave for the frames after.
 //!
-//! Ported so far: the final blasts' sound, their bursts of flame and sparkle
-//! ([`particles.zig`](particles.zig)), their fireballs, burning bits and shockwaves
-//! ([`shockwave.zig`](shockwave.zig)), the break-up that cuts a ship's parts into pieces that fly
-//! apart ([`explode/breakup.zig`](explode/breakup.zig)), and the point the camera watches a
-//! break-up from. **Not ported:** the rest of the explosions' update
-//! ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
+//! The final blasts' sound, their bursts of flame and sparkle ([`particles.zig`](particles.zig)),
+//! their fireballs, burning bits and shockwaves ([`shockwave.zig`](shockwave.zig)), the break-up
+//! that cuts a ship's parts into pieces that fly apart ([`explode/breakup.zig`](explode/breakup.zig)),
+//! the capital ships' splits ([`explode/split.zig`](explode/split.zig)), the chunks of rock
+//! ([`explode/chunks.zig`](explode/chunks.zig)), the Uber Explode
+//! ([`explode/uber.zig`](explode/uber.zig)), the burning wrecks, and the point the camera watches a
+//! break-up from.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -28,6 +29,7 @@ const particles = @import("particles.zig");
 pub const breakup = @import("explode/breakup.zig");
 pub const rocks = @import("explode/chunks.zig");
 pub const split = @import("explode/split.zig");
+pub const uber = @import("explode/uber.zig");
 const shockwave = @import("shockwave.zig");
 const sound3d = @import("sound3d.zig");
 const table = @import("table.zig");
@@ -57,6 +59,8 @@ pub const Explosions = struct {
     splits: split.Splits,
     /// The chunks of rock flying (`rock_chunks`).
     chunks: *rocks.Chunks,
+    /// The Uber Explode's hemisphere and sphere, and its blast going off.
+    uber: *uber.Uber,
     /// The fireballs going off (`explosion_fireballs`, `0x00553398`), in as many slots as the
     /// settings give them.
     fireballs: [Fireballs.fuller.slots()]?Fireball = @splat(null),
@@ -86,6 +90,7 @@ pub const Explosions = struct {
         /// The flak's nine frames, three by three, which a special fireball plays (`flak04`,
         /// `0x00562CCC`).
         flak: *srtexture.Image,
+        uber: uber.Images,
 
         /// The names `explosions_init` makes of `explosion\bang_000%02d`.
         const bang_names = names: {
@@ -99,6 +104,7 @@ pub const Explosions = struct {
             for (&images.bang, bang_names) |*image, name| image.* = try matmanager.textureRequire(textures, name);
             images.sheet = try matmanager.textureRequire(textures, "explosion\\explosion sheet");
             images.flak = try matmanager.textureRequire(textures, "flak04");
+            images.uber = try .load(textures);
             return images;
         }
     };
@@ -110,12 +116,15 @@ pub const Explosions = struct {
         const chunks = try gpa.create(rocks.Chunks);
         errdefer gpa.destroy(chunks);
         chunks.* = .{};
-        return .{ .images = images, .bits = bits, .chunks = chunks, .pieces = try .create(gpa), .splits = .init(gpa) };
+        const huge: *uber.Uber = try .create(gpa, images.uber);
+        errdefer huge.destroy(gpa);
+        return .{ .images = images, .bits = bits, .chunks = chunks, .uber = huge, .pieces = try .create(gpa), .splits = .init(gpa) };
     }
 
     pub fn deinit(explosions: *Explosions) void {
         explosions.pieces.gpa.destroy(explosions.bits);
         explosions.pieces.gpa.destroy(explosions.chunks);
+        explosions.uber.destroy(explosions.pieces.gpa);
         explosions.pieces.deinit();
         explosions.splits.deinit();
     }
@@ -127,17 +136,19 @@ pub const Explosions = struct {
         explosions.splits.reset();
         explosions.bits.* = .{};
         explosions.chunks.* = .{};
-        explosions.* = .{ .images = explosions.images, .settings = explosions.settings, .bits = explosions.bits, .chunks = explosions.chunks, .pieces = explosions.pieces, .splits = explosions.splits };
+        explosions.uber.blast = null;
+        explosions.* = .{ .images = explosions.images, .settings = explosions.settings, .bits = explosions.bits, .chunks = explosions.chunks, .uber = explosions.uber, .pieces = explosions.pieces, .splits = explosions.splits };
     }
 
-    /// `explosions_update` (`0x0046E480`), once a frame, as far as the port goes: the marker drifts
-    /// on, the bits fly on, the wrecks burn on (`burnFrame`), the pieces fly on
+    /// `explosions_update` (`0x0046E480`), once a frame, as far as the port goes: the Uber Explode
+    /// goes on (`uber.Uber.frame`), the marker drifts on, the bits fly on, the wrecks burn on (`burnFrame`), the pieces fly on
     /// (`breakup.Pieces.frame`), the splits go on (`split.Splits.frame`), each fireball plays on
     /// (`Fireball.frame`) until it is done, and the chunks of rock fly on (`rocks.Chunks.frame`).
     ///
     /// **Improvement:** the marker drifts by `drift` a tick, where the game adds it once a frame,
     /// which comes to the same at a frame a tick.
     pub fn frame(explosions: *Explosions, world: gameobj.World) void {
+        explosions.uber.frame(world);
         const clock = world.clock;
         if (explosions.marker) |*marker| marker.position += marker.drift * @as(Vector, @splat(@floatFromInt(@max(clock.frame_duration, 0))));
         const ticks: f32 = @floatFromInt(clock.frame_start - explosions.moved_at);
@@ -161,10 +172,11 @@ pub const Explosions = struct {
         explosions.chunks.frame(clock);
     }
 
-    /// The rest of `explosions_update`: the bits and the pieces go into the world's layer, the
-    /// burning wrecks' lights among the lights, and each fireball showing, with its light among the lights, `ahead` of a tick past the frame's
-    /// tick.
+    /// The rest of `explosions_update`: the Uber Explode's objects, the bits and the pieces go into
+    /// the world's layer, the burning wrecks' lights among the lights, and each fireball showing,
+    /// with its light among the lights, `ahead` of a tick past the frame's tick.
     pub fn draw(explosions: *Explosions, gpa: Allocator, scene: *srcore.Scene, ahead: f32) Allocator.Error!void {
+        try explosions.uber.draw(gpa, scene);
         for (&explosions.bits.slots) |*slot| {
             const bit = &(slot.* orelse continue);
             bit.object.position = bit.at + bit.velocity * @as(Vector, @splat(ahead * Bit.per_tick));
@@ -884,6 +896,12 @@ pub fn fireballAt(world: gameobj.World, at: Vector, spec: Fireball.Spec) void {
     explosions.setOff(at, spec, world.clock, world.random);
 }
 
+/// Sets the Uber Explode off for `owner` (`uber.Uber.start`), where the world has explosions.
+pub fn uberExplode(world: gameobj.World, owner: u16, place: math.Place, size: f32, duration: i32) void {
+    const explosions = world.explosions orelse return;
+    explosions.uber.start(world, owner, place, size, duration);
+}
+
 /// Throws a chunk of rock from `at` along `direction` (`rocks.throw`), where the world has
 /// explosions.
 pub fn throwChunk(world: gameobj.World, at: Vector, direction: Vector, how: rocks.Throw) void {
@@ -1228,7 +1246,7 @@ pub const testing = struct {
     var flak: srtexture.Image = undefined;
 
     fn images() Explosions.Images {
-        var found: Explosions.Images = .{ .bang = undefined, .sheet = &sheet, .flak = &flak };
+        var found: Explosions.Images = .{ .bang = undefined, .sheet = &sheet, .flak = &flak, .uber = uber.testing.images() };
         for (&found.bang, &bang) |*image, *texture| image.* = texture;
         return found;
     }
@@ -1250,7 +1268,7 @@ pub const testing = struct {
         return count;
     }
 
-    fn flying(explosions: *const Explosions) usize {
+    pub fn flying(explosions: *const Explosions) usize {
         var count: usize = 0;
         for (explosions.bits.slots) |slot| count += @intFromBool(slot != null);
         return count;

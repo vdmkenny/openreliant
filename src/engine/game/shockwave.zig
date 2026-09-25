@@ -1,10 +1,9 @@
 //! `C:\lancer\game\shockwave.cpp`: the rings that spread out from an explosion, fading as they go,
 //! and what they do to what they pass.
 //!
-//! Ported: the rings, a blast's (`explode.blast`), a halting torpedo's
-//! ([`aiexplode.zig`](aiexplode.zig)) and a Havoc's and an Imp's ([`missiles.zig`](missiles.zig)),
-//! and what those do. **Not ported:** `0x00472AB0`'s pair of kind 3 in `explode.cpp`
-//! ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
+//! Ported: the rings, a blast's (`explode.blast`), the Uber Explode's
+//! ([`explode/uber.zig`](explode/uber.zig)), a halting torpedo's ([`aiexplode.zig`](aiexplode.zig))
+//! and a Havoc's and an Imp's ([`missiles.zig`](missiles.zig)), and what those do.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -42,8 +41,8 @@ pub const Kind = enum(u4) {
     blast_02 = 0,
     blast_03 = 1,
     blast_04 = 2,
-    /// **Unknown.** `0x00472AB0`'s pair, which do nothing but show.
-    _unknown_3 = 3,
+    /// The Uber Explode's pair (`explode.uber`), which do nothing but show.
+    uber = 3,
     /// **Unknown.** No caller makes one: it does nothing but show.
     _unknown_4 = 4,
     /// A Havoc's end's (`missiles.end`): it pushes the ships of other sides it passes away,
@@ -63,7 +62,7 @@ pub const Kind = enum(u4) {
             .blast_02 => .rng_02,
             .blast_03 => .rng_03,
             .blast_04 => .rng_04,
-            ._unknown_3, .imp, .split, .torpedo => .rng_01,
+            .uber, .imp, .split, .torpedo => .rng_01,
             ._unknown_4, .havoc => .rng_06,
         };
     }
@@ -364,7 +363,7 @@ pub const Shockwaves = struct {
                 .torpedo, .split => wave.harmPlayer(world, done, reach),
                 .havoc => wave.strike(world, done, reach, .disrupt),
                 .imp => wave.strike(world, done, reach, .drain),
-                ._unknown_3, ._unknown_4 => {},
+                .uber, ._unknown_4 => {},
             }
             wave.reach = reach;
         }

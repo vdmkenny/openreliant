@@ -266,6 +266,10 @@ pub const Type = enum(u32) {
     crewman = 0x58,
     /// The Russian torpedo (`rus_torp.shp`).
     russian_torpedo = 0x5C,
+    /// The Coalition's gates: the prototype (`coalprotogate.shp`) and the advanced one
+    /// (`coaladvgate.shp`).
+    proto_gate = 0x6D,
+    advanced_gate = 0x6E,
     /// The proximity mine (`mine_prox.shp`).
     proximity_mine = 0x6F,
     /// A black box (`black_box.shp`).
@@ -288,6 +292,8 @@ pub const Type = enum(u32) {
     dm_beacon = 0x8E,
     /// The Kafelnikof (`kafelnikof.shp`).
     kafelnikof = 0x95,
+    /// The part of the Boridin that breaks away (`boridin breakaway.shp`).
+    boridin_breakaway = 0xA8,
     /// Another escape pod (`ber_escape.shp`).
     other_escape_pod = 0x90,
     /// The Turret Flak's shell (`shell.shp`).
@@ -352,6 +358,9 @@ pub const Type = enum(u32) {
             .{ .saladin, "saladin.shp" },
             .{ .kronstadt, "kronstadt.shp" },
             .{ .boridin, "boridin.shp" },
+            .{ .proto_gate, "coalprotogate.shp" },
+            .{ .advanced_gate, "coaladvgate.shp" },
+            .{ .boridin_breakaway, "boridin breakaway.shp" },
             .{ .torpedo, "torpedo.shp" },
             .{ .russian_torpedo, "rus_torp.shp" },
             .{ .proximity_mine, "mine_prox.shp" },

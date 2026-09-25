@@ -19,6 +19,9 @@
 //! A ship's end credits the player with the kill where the player's ship struck it last
 //! (`killCredit`).
 //!
+//! Order 43, Huuuuuuuge Explosion, lies with Explode (`huge`): it sets the Uber Explode off where the
+//! object stands ([`explode/uber.zig`](explode/uber.zig)).
+//!
 //! **Not ported:** what a ship's end tells the mission, the pilots' records and the Destroyed event
 //! ([#37](https://github.com/vdmkenny/openreliant/issues/37)).
 
@@ -137,6 +140,18 @@ pub fn update(ctx: Context, index: u16) void {
         .asteroid => asteroidUpdate(ctx, index),
         .limpet_car => limpetCarUpdate(ctx, index),
     }
+}
+
+/// How far the Huuuuuuuge Explosion reaches, and for how long, in ticks.
+const huge_size: f32 = 50000;
+const huge_duration = 1500;
+
+/// `order_huuuuuuuge_explosion` (`0x004086C0`), the update of order 43, whose init does nothing:
+/// sets the Uber Explode off where the object stands, the object its owner (`explode.uberExplode`),
+/// and pops.
+pub fn huge(ctx: Context, index: u16) void {
+    explode.uberExplode(ctx.world, index, ctx.world.objects.slots[index].drawn, huge_size, huge_duration);
+    _ = aigeneric.pop(ctx, index);
 }
 
 // --- A ship that lists components --------------------------------------------------------------
@@ -654,6 +669,26 @@ test "the limpet car leaves its pod" {
     aigeneric.objectOrders(ctx, index);
     try std.testing.expectEqual(gameobj.Type.limpet_pod, all.slots[index].object.type);
     try std.testing.expectEqual(@as(Vector, .{ 0, 0, 2000 }), all.slots[index].drawn.position);
+}
+
+test huge {
+    var stage: explode.testing.Stage = undefined;
+    try stage.init();
+    defer stage.deinit();
+    const ctx: Context = .{ .world = stage.world(), .clock = &stage.mission.clock };
+    _ = try stage.mission.add(.predator, @splat(0));
+    const ship = try stage.mission.add(.sabre, .{ 0, 0, 1000 });
+    _ = try aigeneric.push(ctx, ship, .do_nothing, .none);
+    _ = try aigeneric.push(ctx, ship, .huuuuuuuge_explosion, .none);
+
+    // It sets the Uber Explode off where the ship stands, the ship its owner, and gives way to the
+    // order below.
+    aigeneric.objectOrders(ctx, ship);
+    const blast = &stage.explosions.uber.blast.?;
+    try std.testing.expectEqual(ship, blast.owner);
+    try std.testing.expectEqual(@as(Vector, .{ 0, 0, 1000 }), blast.place.position);
+    try std.testing.expectEqual(huge_size, blast.size);
+    try std.testing.expectEqual(.do_nothing, aigeneric.current(stage.mission.objects, ship).?.order);
 }
 
 test spin {

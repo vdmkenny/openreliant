@@ -416,6 +416,7 @@ fn runUpdate(ctx: Context, index: u16, info: orders.Info) void {
         .fly_ship_backwards => flyBackwards(ctx, index),
         .player_control => playerControl(ctx, index),
         .explode => aiexplode.update(ctx, index),
+        .huuuuuuuge_explosion => aiexplode.huge(ctx, index),
         .eject_player => aieject.player(ctx, index),
         .fight => aifight.update(ctx, index),
         .disrupted => aiorders.disrupted(ctx, index),
