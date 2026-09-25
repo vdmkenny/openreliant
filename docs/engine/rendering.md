@@ -214,7 +214,8 @@ code lies in `environfx.cpp`, in the stretch the linker gave it between `Create.
 `erayfx.cpp`'s.
 
 The Predator carries two, at the back of its hull either side of the centre line, each 120 across,
-60 up and 440 long.
+60 up and 440 long. A capital ship's glows burn the player's ship flying into them
+([Effects](effects.md#engine-exhaust)).
 
 ### The meshes
 

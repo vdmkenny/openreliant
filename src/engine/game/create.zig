@@ -35,6 +35,7 @@ const motion = @import("motion.zig");
 const objects = @import("objects.zig");
 const pilots = @import("pilots.zig");
 const shield = @import("shield.zig");
+const environfx = @import("environfx.zig");
 const explode = @import("explode.zig");
 const smoke = @import("main/smoke.zig");
 const srofiles = @import("srofiles.zig");
@@ -455,6 +456,9 @@ pub const Objects = struct {
     damage_cleared_at: u32 = 0,
     /// The sphere the action keeps to.
     action_sphere: aigeneric.ActionSphere = .default,
+    /// The ships whose engine exhaust burns the player's ship, which the game keeps in
+    /// `environfx.cpp`'s own globals. The port keeps them here, as `create_object` adds to them.
+    exhaust: environfx.Exhaust = .{},
 
     /// Every slot standing in, as a mission's start leaves them (`reset`), made in `gpa`.
     pub fn create(gpa: Allocator, random: *libcmt.Rand) Allocator.Error!*Objects {
@@ -485,6 +489,8 @@ pub const Objects = struct {
         }
         all.types = @splat(.{});
         all.count = 0;
+        // The game lets the exhaust's list go as the mission before ends (`exhaust_ships_reset`).
+        all.exhaust.reset();
     }
 
     /// `object_reset` (`0x004688B0`): replaces the object in slot `index` with a new stand-in
@@ -769,6 +775,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
         if (rack.type == .fuel_pod) object.afterburner_fuel += fuel_pod_fuel;
     }
     ai.setTargetable(object, combat, true);
+    all.exhaust.offer(all, index);
     object.type = @enumFromInt(becomes);
     return index;
 }

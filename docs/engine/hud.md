@@ -135,9 +135,9 @@ sound 12 of the buffered sounds plays at the ship at a loudness of 10000 once mo
 and a random share of 15 more have passed since the last (`0x00587CD0`). Once a frame
 `screen_flash_draw` (`0x00494940`) shows the screen's flash sprite red at `hud_interference`, with
 no green or blue, in view 0 unless `exhaust_burning` (`0x0054EA7C`) is set, while the player's ship
-stands in a capital ship's engine exhaust and the flash shows white instead (`exhaust_burn`,
-`0x00469850`, [#271](https://github.com/vdmkenny/openreliant/issues/271)), and then fades it by
-0.005 for each tick since it last did (`0x00588728`, `hud_interference_fade`, `0x004948F0`).
+stands in a capital ship's engine exhaust and the flash shows white instead
+([Effects](effects.md#engine-exhaust)), and then fades it by 0.005 for each tick since it last did
+(`0x00588728`, `hud_interference_fade`, `0x004948F0`).
 
 While it is above 0, the display draws much of what it shows through `hud_blit` (`0x0048C6E0`)
 rather than `VFX_shape_draw`: under the hardware renderers each row of the shape moves right by a

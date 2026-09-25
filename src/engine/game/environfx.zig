@@ -1,10 +1,11 @@
 //! `C:\lancer\game\environfx.cpp`: the effects a mission's space is drawn with. The port has the
 //! engine glows, the flares a ship's thrusters burn, which `engine_glows_build` (`0x00469620`)
-//! makes once at start-up and every ship's attachments of kind `engine_glow` then draw. The file
-//! also holds the environment effects a script turns on (`environment_effect_set`, `0x00469C60`),
-//! which [`backdrop.zig`](backdrop.zig) draws. Only that one asserts, so only its code names the
-//! file; the glows lie in the stretch the linker gave it, between `Create.cpp`'s code and
-//! `erayfx.cpp`'s ([`sources.zig`](../sources.zig)).
+//! makes once at start-up and every ship's attachments of kind `engine_glow` then draw, and the
+//! capital ships' exhaust, which burns the player's ship flying into it (`Exhaust`). The file also
+//! holds the environment effects a script turns on (`environment_effect_set`, `0x00469C60`), which
+//! [`backdrop.zig`](backdrop.zig) draws. Only that one asserts, so only its code names the file;
+//! the glows and the exhaust lie in the stretch the linker gave it, between `Create.cpp`'s code
+//! and `erayfx.cpp`'s ([`sources.zig`](../sources.zig)).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -13,7 +14,12 @@ const math = @import("../surrender/math.zig");
 const srapi = @import("../surrender/surrenderlib/srapi.zig");
 const srapiext = @import("../surrender/surrenderlib/srapiext.zig");
 const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
+const aigeneric = @import("aigeneric.zig");
+const collision = @import("collision.zig");
+const create = @import("create.zig");
+const gameobj = @import("gameobj.zig");
 const matmanager = @import("matmanager.zig");
+const objects = @import("objects.zig");
 const Vector = math.Vector;
 
 /// How many engine glows the game builds. An attachment's id picks one, clamped to these
@@ -132,6 +138,165 @@ pub fn plumeMesh(gpa: Allocator, size: Vector, material: srapiext.Material, nozz
     return mesh;
 }
 
+// --- The exhaust ---------------------------------------------------------------------------------
+
+/// The ships whose engine exhaust burns the player's ship (`exhaust_ships`, `0x0054EA80`, and
+/// `exhaust_ship_count`, `0x0054F0C0`): those that list components and carry an engine glow, by
+/// their slots, listed the first time they are looked at (`exhaust_ships_listed`, `0x0054F0C4`),
+/// with each one `create_object` makes after (`offer`). And whether the player's ship stands in
+/// one's exhaust this frame (`exhaust_burning`, `0x0054EA7C`), which keeps the display's red away
+/// (`main.drawFrame`).
+///
+/// A slot stays listed whatever it comes to hold, and an object made in a listed slot is listed
+/// again, as the game lists them.
+pub const Exhaust = struct {
+    ships: [capacity]u16 = undefined,
+    count: usize = 0,
+    listed: bool = false,
+    burning: bool = false,
+
+    /// The slots the list has room for.
+    pub const capacity = gameobj.max_objects;
+
+    /// `exhaust_ships_reset` (`0x00469840`), as a mission ends (`0x004AD260`): the ships to be
+    /// listed afresh.
+    pub fn reset(exhaust: *Exhaust) void {
+        exhaust.listed = false;
+    }
+
+    /// `create_object`'s offer (`0x004684E4`): once the ships are listed, the object it made in
+    /// slot `index` joins them where it would have been listed.
+    pub fn offer(exhaust: *Exhaust, all: *const create.Objects, index: u16) void {
+        if (exhaust.listed) exhaust.add(all, index);
+    }
+
+    /// `exhaust_ship_add` (`0x004699E0`): the object in slot `index` listed, where it lists
+    /// components and carries an engine glow (`0x00469BC0`).
+    ///
+    /// **Fix:** the game lists past its room, for a list that a slot made again has grown; the port
+    /// lists no more.
+    fn add(exhaust: *Exhaust, all: *const create.Objects, index: u16) void {
+        const slot = &all.slots[index];
+        if (!slot.object.flags.components) return;
+        const model = if (slot.model) |*held| held else return;
+        if (!carriesGlow(model)) return;
+        if (exhaust.count == capacity) return;
+        exhaust.ships[exhaust.count] = index;
+        exhaust.count += 1;
+    }
+
+    /// `exhaust_ships_list` (`0x00469810`): the slots handed out, each in turn.
+    fn list(exhaust: *Exhaust, all: *const create.Objects) void {
+        exhaust.count = 0;
+        for (0..all.count) |index| exhaust.add(all, @intCast(index));
+        exhaust.listed = true;
+    }
+
+    /// `exhaust_burn` (`0x00469850`), once a frame as `mission_frame` runs: while the player's ship
+    /// flies under Player Control, each listed ship whose throttle is not at nothing, and whose reach
+    /// of `reach_radii` of its radius meets the player's ship, measures how deep the player's ship
+    /// stands in its exhaust (`depth`), by its throttle and its engines. Anywhere in it, the
+    /// display's red keeps away (`burning`). The screen's flash lasts `flash_per_depth` ticks for
+    /// each of the depth, which also cuts short a flash where the depth is nothing, and on a tick
+    /// that `burn_ticks` divides, a depth above nothing burns the ship on its fore quadrant as a
+    /// collision, by `burn_damage` for each of the depth, no more than one.
+    ///
+    /// The ships meet where the distance between them, squared, is no more than the reach squared
+    /// and the player's ship's radius squared together, as the game has it.
+    ///
+    /// The game lets go of `burning` each time round its loop (`mission_run`); the port as this
+    /// starts.
+    pub fn burn(exhaust: *Exhaust, world: gameobj.World) void {
+        const all = world.objects;
+        if (!exhaust.listed) exhaust.list(all);
+        exhaust.burning = false;
+        const flying = aigeneric.current(all, all.player) orelse return;
+        if (flying.order != .player_control) return;
+        const player = &all.slots[all.player];
+        const at = player.drawn.position;
+        for (exhaust.ships[0..exhaust.count]) |index| {
+            const ship = &all.slots[index];
+            const object = &ship.object;
+            if (object.last_throttle == 0) continue;
+            const reach = object.radius * reach_radii;
+            const radius = player.object.radius;
+            if (math.lengthSquared(ship.drawn.position - at) > reach * reach + radius * radius) continue;
+            const model = if (ship.model) |*held| held else continue;
+            const strength = @abs(object.last_throttle * object.engines_intact) * reach_share;
+            const deep = depth(model, object.placeAt(.next), at, strength);
+            if (deep > 0) exhaust.burning = true;
+            if (world.flash) |flash| flash.left = @intFromFloat(deep * flash_per_depth);
+            if (@rem(world.clock.frame_start, burn_ticks) == 0 and deep > 0) {
+                collision.damage(world, all.player, .fore, @min(deep, 1) * burn_damage, burn_through, all.player, .collision);
+            }
+        }
+    }
+};
+
+/// How far a ship's exhaust reaches, in its radii (`0x004DC7EC`); how far a glow's exhaust reaches
+/// beyond its size, at full throttle (`0x004DC780`); how long the screen's flash lasts for each of
+/// the depth, in ticks (`0x004DC440`); and how often the exhaust burns, in ticks, how much it burns
+/// at a depth of one, and how much of what passes the shields wears the armour (`0x00469968`,
+/// `0x004DC7E8`, `0x004699A5`).
+const reach_radii: f32 = 1.2;
+const reach_share: f32 = 1.7;
+const flash_per_depth: f32 = 100;
+const burn_ticks = 7;
+const burn_damage: f32 = 23;
+const burn_through: f32 = 0.5;
+
+/// Whether `model`, or a model it carries, carries an engine glow on a part not taken out of it
+/// (`0x00469BC0`).
+fn carriesGlow(model: *const objects.Model) bool {
+    for (model.glows) |glow| {
+        if (!model.parts[glow.part].removed) return true;
+    }
+    var each = model.carried();
+    while (each.next()) |mount| {
+        if (!model.parts[mount.part].removed and carriesGlow(&mount.model)) return true;
+    }
+    return false;
+}
+
+/// `exhaust_depth` (`0x00469A10`): how deep `point`, in the world, stands in the exhaust of
+/// `model`'s engine glows and of the models it carries, with its root at `root`, summed over them
+/// (`glowDepth`), each glow where it next stands and its exhaust `strength` times its size.
+fn depth(model: *const objects.Model, root: math.Place, point: Vector, strength: f32) f32 {
+    var sum: f32 = 0;
+    for (model.glows) |glow| {
+        if (model.parts[glow.part].removed) continue;
+        const part = model.partPlace(glow.part, .next).within(root);
+        const place = (math.Place{ .position = glow.origin, .orientation = glow.orientation }).within(part);
+        sum += glowDepth(glow.level[0].mesh.bounds, glow.size * @as(Vector, @splat(strength)), place.inverse(point));
+    }
+    var each = model.carried();
+    while (each.next()) |mount| {
+        if (model.parts[mount.part].removed) continue;
+        sum += depth(&mount.model, model.mountRoot(mount, root, .next), point, strength);
+    }
+    return sum;
+}
+
+/// How deep a point at `local` in a glow's own frame stands in its exhaust: its mesh's `bounds`
+/// times `scale`, their ends along the plume changing places where the scale turns it back. Inside,
+/// 1 at the glow's origin down to nothing at the bounds' far corner; outside, nothing.
+///
+/// **Fix:** an exhaust of no size, as a ship whose engines are out burns, leaves a point at its
+/// origin nothing deep, where the game divides nothing by nothing.
+fn glowDepth(bounds: [2]Vector, scale: Vector, local: Vector) f32 {
+    var low = bounds[0] * scale;
+    var high = bounds[1] * scale;
+    if (high[2] < low[2]) {
+        const near = high[2];
+        high[2] = low[2];
+        low[2] = near;
+    }
+    if (@reduce(.Or, local > high) or @reduce(.Or, local < low)) return 0;
+    const far = math.length(high);
+    if (!(far > 0)) return 0;
+    return 1 - math.length(local) / far;
+}
+
 pub const testing = struct {
     /// The glows built over a table holding nothing but their flares, for tests that draw them.
     pub const Built = struct {
@@ -228,4 +393,99 @@ test Glows {
 
 test {
     std.testing.refAllDecls(@This());
+}
+
+test glowDepth {
+    const bounds: [2]Vector = .{ .{ -1, -1, 0 }, .{ 1, 1, 1 } };
+    const size: Vector = .{ 2, 2, 10 };
+    // The whole depth at the glow's origin, nothing at the far corner, and nothing outside.
+    try std.testing.expectEqual(1, glowDepth(bounds, size, @splat(0)));
+    try std.testing.expectApproxEqAbs(0, glowDepth(bounds, size, size), 1e-6);
+    try std.testing.expectEqual(0, glowDepth(bounds, size, .{ 0, 0, -1 }));
+    try std.testing.expectEqual(0, glowDepth(bounds, size, .{ 3, 0, 5 }));
+    try std.testing.expectApproxEqAbs(1 - 5 / math.length(size), glowDepth(bounds, size, .{ 0, 0, 5 }), 1e-5);
+    // A plume turned back along its length reaches the other way.
+    const back: Vector = .{ 2, 2, -10 };
+    try std.testing.expect(glowDepth(bounds, back, .{ 0, 0, -1 }) > 0);
+    try std.testing.expectEqual(0, glowDepth(bounds, back, .{ 0, 0, 1 }));
+    // An exhaust of no size, as of a ship whose engines are out, is nothing deep.
+    try std.testing.expectEqual(0, glowDepth(bounds, @splat(0), @splat(0)));
+}
+
+test Exhaust {
+    const gpa = std.testing.allocator;
+    const built: testing.Built = try .init(gpa);
+    defer built.deinit(gpa);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(gpa);
+    defer mission.deinit();
+    const all = mission.objects;
+    const player = try mission.add(.predator, @splat(0));
+    // A capital ship behind the player, its one engine's plume burning forward along +Z through
+    // where the player's ship stands.
+    const capital = try mission.addOther(.{ 0, 0, -200 });
+    var parts = [_]objects.Model.Part{.{
+        .hidden = false,
+        .parent = null,
+        .origin = @splat(0),
+        .object = .{ .flags = .{}, .position = @splat(0), .radius = 1, .levels = &.{} },
+    }};
+    var glows = [_]objects.Model.Glow{.{
+        .part = 0,
+        .origin = .{ 0, 0, -50 },
+        .orientation = math.identity,
+        .size = .{ 100, 100, 200 },
+        .retro = false,
+        .steady = false,
+        .level = .{.{ .mesh = built.glows.mesh(1), .until = std.math.inf(f32) }},
+        .object = .{ .flags = .{}, .position = @splat(0), .radius = 1, .levels = &.{} },
+    }};
+    const ship = mission.slot(capital);
+    ship.model = .{ .parts = &parts, .order = &.{0}, .lights = &.{}, .glows = &glows, .mounts = &.{} };
+    defer ship.model = null;
+    ship.object.flags.components = true;
+    ship.object.radius = 400;
+    ship.object.last_throttle = 1;
+    var flash: @import("main/flash.zig").Flash = .{};
+    var world = mission.world();
+    world.flash = &flash;
+    const exhaust = &all.exhaust;
+
+    // Listed once looked at, it burns nothing while the player's ship is not under its controls.
+    exhaust.burn(world);
+    try std.testing.expect(exhaust.listed);
+    try std.testing.expectEqualSlices(u16, &.{capital}, exhaust.ships[0..exhaust.count]);
+    try std.testing.expect(!exhaust.burning);
+
+    // Under them, in the plume: the red keeps away, the view whites out by the depth, and on a
+    // seventh tick the ship's fore quadrant burns.
+    try std.testing.expect(try aigeneric.push(mission.orders(), player, .player_control, .none));
+    const deep = depth(&ship.model.?, ship.object.placeAt(.next), @splat(0), reach_share);
+    try std.testing.expect(deep > 0 and deep < 1);
+    const shields = all.slots[player].object.shields;
+    mission.clock.frame_start = 6;
+    exhaust.burn(world);
+    try std.testing.expect(exhaust.burning);
+    try std.testing.expectEqual(@as(i32, @intFromFloat(deep * flash_per_depth)), flash.left);
+    try std.testing.expectEqual(shields, all.slots[player].object.shields);
+    mission.clock.frame_start = 7;
+    exhaust.burn(world);
+    try std.testing.expect(all.slots[player].object.shields.fore < shields.fore);
+    try std.testing.expectEqual(shields.aft, all.slots[player].object.shields.aft);
+
+    // With its engines idle, it burns nothing.
+    ship.object.last_throttle = 0;
+    exhaust.burn(world);
+    try std.testing.expect(!exhaust.burning);
+
+    // Once listed, a ship made after joins; one that lists no components doesn't.
+    ship.object.last_throttle = 1;
+    const later = try mission.addOther(.{ 0, 0, 5000 });
+    exhaust.offer(all, later);
+    try std.testing.expectEqual(1, exhaust.count);
+    exhaust.offer(all, capital);
+    try std.testing.expectEqual(2, exhaust.count);
+    // A mission's start lists them afresh.
+    exhaust.reset();
+    try std.testing.expect(!exhaust.listed);
 }
