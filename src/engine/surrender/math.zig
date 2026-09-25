@@ -104,6 +104,11 @@ pub fn forward(m: Matrix) Vector {
     return .{ m[2], m[5], m[8] };
 }
 
+/// The first column of `m`, which for an orientation is the axis its X points along: to its right.
+pub fn xAxis(m: Matrix) Vector {
+    return .{ m[0], m[3], m[6] };
+}
+
 /// The second column of `m`, which for an orientation is the axis its Y points along: down, in the
 /// game's frame.
 pub fn yAxis(m: Matrix) Vector {

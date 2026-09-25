@@ -34,11 +34,13 @@ const explode = @import("explode.zig");
 const particles = @import("particles.zig");
 const shield = @import("shield.zig");
 const erayfx = @import("erayfx.zig");
+const tractor = @import("tractor.zig");
 pub const flash = @import("main/flash.zig");
 const shockwave = @import("shockwave.zig");
 const sparks = @import("sparks.zig");
 const bigfile = @import("bigfile.zig");
 const hog_snd = @import("hog_snd.zig");
+const betty = hog_snd.betty;
 const hud = @import("hud.zig");
 const hudoptions = @import("hudoptions.zig");
 const sound3d = @import("sound3d.zig");
@@ -79,6 +81,21 @@ pub const Ending = enum(u8) {
     _,
 };
 
+/// What the mission's scene shows (`0x00587CD4`), which a mission's start sets to `everything`.
+pub const Showing = enum(u8) {
+    everything = 0,
+    /// A launch's cutaway, which hides the ship the player launches from.
+    launch = 2,
+    /// **Unknown:** what it shows. The landing orders set it (`0x0040EF55`, `0x0040F9A7`), and
+    /// `mission_frame` passes over the mission's events and `0x0045A570` while it is so.
+    _unknown_3 = 3,
+    /// The end of the player's ejection (`aieject.pickUp`): only the pilot's pod and the ship in
+    /// the cutaway slot, which picks it up or shoots it down. The pod bursts at once when it is
+    /// destroyed, with neither the camera's watch nor the pilot counted killed on the way.
+    ejection = 4,
+    _,
+};
+
 /// A mission's clocks, and the pacing they drive: the timer ticks 100 times a second, the loop
 /// runs one game tick for each tick of the timer, and the simulation steps on every fourth.
 ///
@@ -114,6 +131,12 @@ pub const Clock = struct {
     /// The port's: how far the platform's time has run past the last tick, as a share of a tick,
     /// which `stepFraction` draws between the ticks by.
     past_tick: f32 = 0,
+
+    /// The mission's ticks as a count, none before it starts, which the camera times its views by
+    /// (`camera.Camera.switched`).
+    pub fn viewTime(clock: *const Clock) u32 {
+        return @intCast(@max(clock.mission_ticks, 0));
+    }
 
     /// Zeroes the clocks and takes the platform's count of hundredths of a second as their start,
     /// as `mission_run` zeroes them before it loops.
@@ -191,6 +214,8 @@ pub const Frame = struct {
     /// The object the camera sits in (`camera.Camera.inside`), which is not drawn but still casts
     /// its shadow.
     seat: ?u16 = null,
+    /// What the mission's scene shows.
+    showing: Showing = .everything,
     space: *backdrop.Backdrop,
     sky: *nebula.Sky,
     view: camera.View,
@@ -233,6 +258,8 @@ pub const Frame = struct {
     shields: ?*shield.Shields = null,
     /// The electric rays, which go into the world's layer after the explosions.
     rays: ?*erayfx.Rays = null,
+    /// The tractors, which go into the world's layer after the objects.
+    tractors: ?*tractor.Tractors = null,
     /// The screen's flash, which goes into the overlay's layer, and the ticks the frame spans
     /// (`frame_duration`), which it counts down.
     flash: ?*flash.Flash = null,
@@ -289,7 +316,7 @@ pub fn pause(pausing: Pausing, on: bool) !void {
         sound.resumeAll();
         menu.close();
         if (menu.view_setting != pausing.view_setting.*) {
-            _ = pausing.camera.setView(.cockpit, pausing.player.*, false, true, @intCast(@max(clock.mission_ticks, 0)));
+            _ = pausing.camera.setView(.cockpit, pausing.player.*, false, true, clock.viewTime());
         }
     }
 }
@@ -306,9 +333,12 @@ pub fn pause(pausing: Pausing, on: bool) !void {
 /// controller (`input.force.Forces.pushFrame`). A mission and the sandbox alike run this once a
 /// frame, before the camera's own frame and anything drawn.
 ///
+/// Whether the mission is over, as the camera has it (`missionOver`).
+///
 /// Not ported: the rest of the frame's work, which is the mission's events and its scripts
 /// ([#30](https://github.com/vdmkenny/openreliant/issues/30)).
-pub fn missionFrame(orders: aigeneric.Context, fraction: f32) void {
+pub fn missionFrame(orders: aigeneric.Context, fraction: f32) bool {
+    const over = missionOver(orders.world);
     if (orders.world.display) |display| display.uncloakSpent(orders.world);
     aigeneric.ordersUpdate(orders);
     frameObjects(orders.world.objects, fraction, orders.clock.frame_start);
@@ -328,6 +358,35 @@ pub fn missionFrame(orders: aigeneric.Context, fraction: f32) void {
         // Only from the cockpit's views and the chase view.
         if (@intFromEnum(orders.world.view) < @intFromEnum(camera.View.chase) + 1) display.lock.frame(orders.world, &display.missiles);
     }
+    return over;
+}
+
+/// How long the camera watches the player's ship's end, the pilot's pod picked up, and the pod
+/// shot down once it bursts, before the mission is over, in ticks (`0x0049267E`, `0x0049268D`,
+/// `0x004926AD`).
+const end_watched = 600;
+const pickup_watched = 1200;
+const shot_watched = 500;
+
+/// `mission_frame`'s end of the mission by what the camera watches (`0x00492651`): once the
+/// player's ship's end, the pod's pickup or the pod shot down has been watched its time, the
+/// mission is over. Watching the pod shot down, the time counts from when it bursts.
+///
+/// Not ported: a multiplayer game, where the camera goes on to watch another player.
+pub fn missionOver(world: gameobj.World) bool {
+    const watching = world.camera orelse return false;
+    const now = world.clock.viewTime();
+    const watched: u32 = switch (watching.view) {
+        .pull_back, .watch, .watch_marker => end_watched,
+        .pickup => pickup_watched,
+        .pod_shot => watched: {
+            if (world.objects.slots[world.objects.player].object.flags.exploding) break :watched shot_watched;
+            watching.switched = now;
+            return false;
+        },
+        else => return false,
+    };
+    return now > watching.switched + watched;
 }
 
 /// `mission_frame`'s pass that draws the objects, beyond drawing them: over each object drawn
@@ -421,7 +480,8 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     attachments.scale = context.projection.scale[0];
     attachments.hardware = context.hardware;
     attachments.paused = frame.paused;
-    try drawObjects(gpa, scene, frame.objects, attachments, frame.seat, if (frame.explosions) |explosions| &explosions.splits else null);
+    try drawObjects(gpa, scene, frame.objects, attachments, frame.seat, if (frame.explosions) |explosions| &explosions.splits else null, frame.showing);
+    if (frame.tractors) |tractors| try tractors.draw(gpa, scene, frame.objects);
     try missiles.draw(frame.objects, gpa, scene, attachments);
     if (frame.trails) |trails| try trails.draw(gpa, scene);
     if (frame.countermeasures) |dropped| try dropped.draw(gpa, scene, attachments);
@@ -526,7 +586,7 @@ pub const DrawBudget = enum {
 /// pulsing, the Boridin breakaway's core and the Dark Reign's hat
 /// ([#238](https://github.com/vdmkenny/openreliant/issues/238)); the cutaway scenes' own rules, and
 /// the gate's tunnel, in which no object is drawn. The pass's smoke is `smoke.frame`.
-pub fn drawObjects(gpa: Allocator, scene: *srcore.Scene, all: *create.Objects, attachments: objects.View, seat: ?u16, splits: ?*const explode.split.Splits) Allocator.Error!void {
+pub fn drawObjects(gpa: Allocator, scene: *srcore.Scene, all: *create.Objects, attachments: objects.View, seat: ?u16, splits: ?*const explode.split.Splits, showing: Showing) Allocator.Error!void {
     var walk = all.walk();
     while (walk.next()) |index| {
         const slot = &all.slots[index];
@@ -534,7 +594,9 @@ pub fn drawObjects(gpa: Allocator, scene: *srcore.Scene, all: *create.Objects, a
         if (object.flags.outOfFrame()) continue;
         cloak.frame(slot, attachments.frame_start);
         const model = if (slot.model) |*model| model else continue;
-        if (object.flags.hidden) {
+        // At the end of the player's ejection only the pod and the cutaway slot's ship are drawn.
+        const left_out = showing == .ejection and index != all.player and index != create.cutaway_slot;
+        if (object.flags.hidden or left_out) {
             if (index == seat) {
                 if (slot.cloak) |cloaking| cloak.shadeUnseen(model, cloaking.hull);
                 try model.castShadows(gpa, scene);
@@ -580,13 +642,23 @@ test "the objects are framed and drawn, save those left out" {
     try std.testing.expectEqual(0, all.slots[3].object.missile_homing);
     var scene: srcore.Scene = .{};
     defer scene.deinit(gpa);
-    try drawObjects(gpa, &scene, all, .{}, 0, null);
+    try drawObjects(gpa, &scene, all, .{}, 0, null, .everything);
     // Only the fourth is drawn: its one part. The first, which the camera sits in, casts its
     // shadow without being drawn.
     try std.testing.expectEqual(1, scene.layers.get(.world).items.len);
     try std.testing.expectEqual(math.Vector{ 300, 0, 0 }, scene.layers.get(.world).items[0].mesh.position);
     try std.testing.expectEqual(1, scene.casters.items.len);
     try std.testing.expectEqual(math.Vector{ 0, 0, 0 }, scene.casters.items[0].position);
+
+    // The ejection's cutaway shows the player's pod and the cutaway slot's ship alone.
+    all.slots[0].object.flags.hidden = false;
+    const seen = try create.createObject(all, &tables, model.types(), create.cutaway_slot, .predator, 0, .{ 0, 0, 500 }, &random);
+    frameObjects(all, 0, 0);
+    scene.clear();
+    try drawObjects(gpa, &scene, all, .{}, null, null, .ejection);
+    const drawn = scene.layers.get(.world).items;
+    try std.testing.expectEqual(2, drawn.len);
+    for (drawn) |item| try std.testing.expect(std.meta.eql(item.mesh.position, all.slots[0].drawn.position) or std.meta.eql(item.mesh.position, all.slots[seen].drawn.position));
 }
 
 test "the passes draw a cloaked object through its cloak" {
@@ -604,7 +676,7 @@ test "the passes draw a cloaked object through its cloak" {
     const halfway = cloak.change_ticks / 2;
     frameObjects(stage.mission.objects, 0, halfway);
     try std.testing.expect(!std.meta.eql(math.identity, stage.slot().drawn.orientation));
-    try drawObjects(gpa, &scene, stage.mission.objects, .{ .frame_start = halfway }, null, null);
+    try drawObjects(gpa, &scene, stage.mission.objects, .{ .frame_start = halfway }, null, null, .everything);
     const drawn = scene.layers.get(.world).items;
     try std.testing.expectEqual(2, drawn.len);
     try std.testing.expectEqual(&part.cloak.?.shimmer, drawn[0].mesh);
@@ -615,7 +687,7 @@ test "the passes draw a cloaked object through its cloak" {
     scene.clear();
     cloak.frame(stage.slot(), cloak.change_ticks);
     cloak.toggle(stage.mission.world(), stage.index);
-    try drawObjects(gpa, &scene, stage.mission.objects, .{ .frame_start = 2 * cloak.change_ticks }, null, null);
+    try drawObjects(gpa, &scene, stage.mission.objects, .{ .frame_start = 2 * cloak.change_ticks }, null, null, .everything);
     try std.testing.expectEqual(null, stage.slot().cloak);
     try std.testing.expectEqual(1, scene.layers.get(.world).items.len);
 }
@@ -670,6 +742,20 @@ pub fn cockpitInput(cockpit: *const objects.Model, model: *const shp.Model, rate
         .hands_pivot = .{ pivot.x, pivot.y, pivot.z },
     };
 }
+
+/// The cockpit lit for a pilot about to eject (`order_eject_player_init`): each of its parts coloured
+/// pure red (`0x00416383`) and reached by the lights `emergency_light_mask` lets through
+/// (`0x004163E1`), the fill lights as well as the ambient ones but the first key light no more, a
+/// red glow that lasts until the mission ends.
+pub fn lightEmergency(cockpit: *objects.Model) void {
+    for (cockpit.parts) |*part| {
+        part.object.colour[0..3].* = emergency_red;
+        part.object.light_mask = emergency_light_mask;
+    }
+}
+
+const emergency_red = [3]f32{ 1, 0, 0 };
+const emergency_light_mask: u32 = 1;
 
 /// Places the cockpit's parts in the world for the camera at `at`: its root hangs from the
 /// camera's frame where `placed` puts it, each part stands from the root as it does in the model,
@@ -817,6 +903,51 @@ test placeCockpit {
     for (hands_at, @as([3]f32, parts[cockpit_hands].object.position)) |e, a| try std.testing.expectApproxEqAbs(e, a, 1e-3);
 }
 
+test lightEmergency {
+    var parts = [_]objects.Model.Part{
+        .{ .hidden = false, .parent = null, .origin = @splat(0), .object = .{ .flags = .{}, .position = @splat(0), .radius = 1, .levels = &.{}, .light_mask = cockpit_light_mask } },
+        .{ .hidden = false, .parent = null, .origin = @splat(0), .object = .{ .flags = .{}, .position = @splat(0), .radius = 1, .levels = &.{}, .light_mask = cockpit_light_mask } },
+    };
+    var model: objects.Model = .{ .parts = &parts, .order = &.{ 0, 1 }, .lights = &.{}, .glows = &.{}, .mounts = &.{} };
+    // Every part glows red, and takes the lights but the first key light.
+    lightEmergency(&model);
+    for (parts) |part| {
+        try std.testing.expectEqual(emergency_red, part.object.colour[0..3].*);
+        try std.testing.expectEqual(emergency_light_mask, part.object.light_mask);
+    }
+}
+
+test missionOver {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const index = try mission.add(.predator, @splat(0));
+    var watching: camera.Camera = .{};
+    var world = mission.world();
+    // Without a camera, or in a view of the mission, the mission goes on.
+    try std.testing.expect(!missionOver(world));
+    world.camera = &watching;
+    mission.clock.mission_ticks = 100_000;
+    try std.testing.expect(!missionOver(world));
+    // The player's end is watched for six seconds, the pickup for twelve.
+    for ([_]struct { camera.View, u32 }{ .{ .pull_back, end_watched }, .{ .pickup, pickup_watched } }) |case| {
+        const view, const watched = case;
+        _ = watching.setView(view, index, true, true, 1000);
+        mission.clock.mission_ticks = @intCast(1000 + watched);
+        try std.testing.expect(!missionOver(world));
+        mission.clock.mission_ticks += 1;
+        try std.testing.expect(missionOver(world));
+    }
+    // The pod shot down is watched from when it bursts.
+    _ = watching.setView(.pod_shot, index, true, true, 0);
+    mission.clock.mission_ticks = 5000;
+    try std.testing.expect(!missionOver(world));
+    try std.testing.expectEqual(5000, watching.switched);
+    mission.slot(index).object.flags.exploding = true;
+    mission.clock.mission_ticks = 5001 + shot_watched;
+    try std.testing.expect(missionOver(world));
+}
+
 test "the radar's backing stands where the radar does" {
     // At 640 by 480 and the game's scale, the corners project back to 65 left of the middle to
     // 67 right, and 32 either side of the radar's height, 68 above the foot.
@@ -859,7 +990,7 @@ pub fn armorWarning(hearing: hog_snd.Hearing, object: *const gameobj.GameObject,
     const half = combat.startingArmor() * 0.5;
     for (object.shields.values(), object.armor.values()) |held, armor| {
         if (held > 0 or armor >= half) continue;
-        _ = sound.say(.armor_failing);
+        _ = betty.say(sound, .armor_failing);
         sound.armor_warned_at = frame_start;
         return;
     }
@@ -1034,7 +1165,7 @@ test missionFrame {
     const orders = mission.orders();
     try std.testing.expect(try aigeneric.push(orders, 1, .slow_rotate, .{ .kind = .ship, .index = -1, .component = -1 }));
 
-    missionFrame(orders, 0);
+    _ = missionFrame(orders, 0);
     // The frame ran the ship's order, and framed every object where it is drawn.
     try std.testing.expect(mission.objects.slots[1].object.yaw_input > 0);
     try std.testing.expect(!mission.objects.slots[1].object.root.flags.unframed);

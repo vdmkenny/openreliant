@@ -162,7 +162,7 @@ creation:
 
 | Flag | With the mask's bit set |
 |---|---|
-| `0x01` | Hidden. The fighters close their body and cockpit where the two parts meet with such faces |
+| `0x01` | Hidden. The fighters close their body and cockpit where the two parts meet with such faces, which show once a pilot ejects ([Ejection](ejection.md#the-pod)) |
 | `0x02` | Never culled |
 
 An object with flag `0x800` is not culled.

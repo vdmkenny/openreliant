@@ -851,7 +851,7 @@ const Flames = struct {
 };
 
 /// Sends `count` particles out of `emitter` at once, as the camera sees them.
-fn burstFrom(world: gameobj.World, emitter: *particles.Emitter, count: i32) void {
+pub fn burstFrom(world: gameobj.World, emitter: *particles.Emitter, count: i32) void {
     const pool = world.particles orelse return;
     pool.burst(emitter, null, count, world.sending() orelse return);
 }

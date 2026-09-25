@@ -368,10 +368,16 @@ pub const Slot = struct {
     pub fn release(slot: *Slot, gpa: Allocator) void {
         cloak.drop(slot);
         if (slot.model) |model| model.deinit(gpa);
-        gpa.free(slot.guns);
-        slot.guns = &.{};
+        slot.dropGuns(gpa);
         if (slot.shield) |bubble| bubble.destroy(gpa);
         slot.shield = null;
+    }
+
+    /// Lets its guns go: it has none from now on.
+    pub fn dropGuns(slot: *Slot, gpa: Allocator) void {
+        gpa.free(slot.guns);
+        slot.guns = &.{};
+        slot.object.gun_count = 0;
     }
 
     /// How many groups of guns its type has (`ShipCombat.gun_groups`); none for a stand-in.
@@ -552,9 +558,6 @@ const mine_radius: f32 = 2000;
 /// What a piece of debris's mass is scaled by (`ShipCombat.Class.debris`).
 const debris_mass: f32 = 0.1;
 
-/// The kind of attachment that gets an object `GameObject.Flags._unknown_25`.
-const flagged_kind: shp.Attachment.Kind = @enumFromInt(6);
-
 /// A wreck's part that burns (`create_object`, `0x00466C10`): its name, and whether it shows first,
 /// as a Badanov's half is hidden until then.
 const Wreck = struct {
@@ -689,7 +692,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
                 else => {},
             }
             for (part.attachments) |attachment| {
-                if (attachment.kind == flagged_kind) object.flags._unknown_25 = true;
+                if (attachment.kind == .eject_point) object.flags.eject_point = true;
             }
         }
         gameobj.linkParts(&model, loaded.model);

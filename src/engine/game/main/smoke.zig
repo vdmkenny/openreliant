@@ -157,13 +157,15 @@ pub const Stream = struct {
     part: usize,
 
     /// Where a model's smoke comes from: its first part, in the model's order, with an attachment
-    /// of kind `engine_glow`, and the first such attachment on it.
+    /// of kind `engine_glow`, and the first such attachment on it. A part taken out, as an ejection
+    /// takes the rest of the ship off a pilot's pod, is no longer in the model's tree to be found.
     const Point = struct {
         part: usize,
         attachment: *const shp.Attachment,
 
         fn of(model: *const objects.Model) ?Point {
             for (model.parts, 0..) |*part, index| {
+                if (part.removed) continue;
                 for (part.attachments) |*attachment| {
                     if (attachment.kind == .engine_glow) return .{ .part = index, .attachment = attachment };
                 }
@@ -380,5 +382,13 @@ test frame {
     slot.object.flags._unknown_24 = true;
     frame(world);
     try std.testing.expectEqual(Level.none, slot.object.smoke_level);
+    try std.testing.expectEqual(null, slot.smoke);
+
+    // With its engine glow's part taken out, as a pilot's pod has, it has nowhere to smoke from.
+    slot.object.flags._unknown_24 = false;
+    slot.object.armor = .all(0);
+    slot.model.?.parts[0].removed = true;
+    frame(world);
+    try std.testing.expectEqual(Level.burning, slot.object.smoke_level);
     try std.testing.expectEqual(null, slot.smoke);
 }

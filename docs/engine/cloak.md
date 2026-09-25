@@ -129,7 +129,8 @@ in a multiplayer game, nor where the display has no cloak. The ship also uncloak
 - With LAUNCH MISSILE, in place of the launch, once the armed missile's lock allows it, outside a
   multiplayer game; and as the Kamov lets go of the craft it carries.
 - As the display's cloak runs out of charge ([Devices](hud.md#the-devices)).
-- With EJECT, and as a player's ship jumps out (Jump Out, `0x00416D50`).
+- With EJECT ([Ejection](ejection.md#ejecting)), and as a player's ship jumps out (Jump Out,
+  `0x00416D50`).
 
 A ship flying the Fight order cloaks as its maneuver asks (`fight_update_cloak`, `0x00409EC0`): the
 maneuver's `Cloak` command asks for the cloak 500 ticks on ([Maneuvers](maneuvers.md)), and a new
@@ -155,6 +156,5 @@ cloak cloaks once that tick has come, and uncloaks while none is asked for. The 
 
 Not ported: the Cloaked and Decloaked events ([#37](https://github.com/vdmkenny/openreliant/issues/37));
 the mission's `Cloak_ship` ([#36](https://github.com/vdmkenny/openreliant/issues/36)); the Jump Out
-order's uncloak ([#30](https://github.com/vdmkenny/openreliant/issues/30)); EJECT
-([#266](https://github.com/vdmkenny/openreliant/issues/266)); the Kamov's craft; and the
+order's uncloak ([#30](https://github.com/vdmkenny/openreliant/issues/30)); the Kamov's craft; and the
 multiplayer game's cloak ([#55](https://github.com/vdmkenny/openreliant/issues/55)).

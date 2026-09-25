@@ -2472,17 +2472,23 @@ pub fn starMesh(gpa: Allocator, wanted: u8, radius: f32, along: [2]f32, span: ?[
     var corners: [max_corners]Vector = undefined;
     var uv: [max_corners][2]f32 = undefined;
     var faces: [max_blades][blade_corners]u16 = undefined;
-    for (0..blades) |blade| {
-        const angle = @as(f32, @floatFromInt(blade)) * std.math.pi / @as(f32, @floatFromInt(blades));
-        const across: Vector = .{ @sin(angle) * radius, @cos(angle) * radius, 0 };
-        const near: Vector = .{ 0, 0, along[0] };
-        const far: Vector = .{ 0, 0, along[1] };
-        corners[blade * blade_corners ..][0..blade_corners].* = .{ near - across, far - across, far + across, near + across };
-        if (span) |given| uv[blade * blade_corners ..][0..blade_corners].* = bladeCorners(given);
-        faces[blade] = quadFace(blade);
+    for (0..blades) |at| {
+        corners[at * blade_corners ..][0..blade_corners].* = blade(at, blades, radius, along);
+        if (span) |given| uv[at * blade_corners ..][0..blade_corners].* = bladeCorners(given);
+        faces[at] = quadFace(at);
     }
     const count = blades * blade_corners;
     return meshOf(blade_corners, gpa, corners[0..count], faces[0..blades], if (span != null) uv[0..count] else null, material, image);
+}
+
+/// The corners of blade `index` of a star of `blades` (`starMesh`): turned `index` shares of half a
+/// turn about the Z axis, `radius` wide either side of it, from `along[0]` to `along[1]`.
+pub fn blade(index: usize, blades: usize, radius: f32, along: [2]f32) [blade_corners]Vector {
+    const angle = @as(f32, @floatFromInt(index)) * std.math.pi / @as(f32, @floatFromInt(blades));
+    const across: Vector = .{ @sin(angle) * radius, @cos(angle) * radius, 0 };
+    const near: Vector = .{ 0, 0, along[0] };
+    const far: Vector = .{ 0, 0, along[1] };
+    return .{ near - across, far - across, far + across, near + across };
 }
 
 /// The texture coordinates of a star's blade's four corners (`starMesh`), for the texture's `span`
@@ -2521,7 +2527,7 @@ fn buildBolt(built: *Built, gpa: Allocator, image: *srtexture.Image, bolt: Bolt,
 }
 
 /// The corners of the `index`th quad of a mesh made of quads.
-fn quadFace(index: usize) [4]u16 {
+pub fn quadFace(index: usize) [4]u16 {
     const first: u16 = @intCast(index * 4);
     return .{ first, first + 1, first + 2, first + 3 };
 }
@@ -2545,7 +2551,7 @@ pub fn meshMaterial(lit: bool) srapiext.Material {
 ///
 /// `mesh_create` gives the mesh's one run of polygons as many as it has vertices, so the game walks
 /// empty polygons after the real ones, which draw nothing; the port's run holds the real ones.
-fn meshOf(
+pub fn meshOf(
     comptime n: u16,
     gpa: Allocator,
     corners: []const Vector,
@@ -2771,8 +2777,8 @@ fn animate(bullet: *Bullet, clock: *const Clock, record: Gun, random: *libcmt.Ra
         .proton_cannon => paint(&pieces[0], if (friendly) .{ left, left, 1 } else @splat(left)),
         .tachyon_cannon => {
             // Each blade bright down its middle and dark at its ends.
-            for (0..3) |blade| {
-                const corners = pieces[0].colours[blade * 4 ..][0..4];
+            for (0..3) |at| {
+                const corners = pieces[0].colours[at * blade_corners ..][0..blade_corners];
                 for (corners, [_]f32{ 0, left, left, 0 }) |*colour, shade| colour.* = .{ shade, shade, shade, colour[3] };
             }
             paint(&pieces[1], @splat(left));

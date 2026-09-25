@@ -32,12 +32,13 @@ Guides for installing, configuring and playing OpenReliant:
 | [`formats/dte.md`](formats/dte.md) | `.DTE` missions: directory, ships, triggers, and the script VM. |
 | [`formats/stats.md`](formats/stats.md) | Ship, gun, missile and pilot stat tables. |
 | [`engine/script-vm.md`](engine/script-vm.md) | The script VM at run time: threads, calls, commands, timers, events. |
-| [`engine/camera.md`](engine/camera.md) | The camera: the projection, views 1 to 8, and where each puts the camera. |
+| [`engine/camera.md`](engine/camera.md) | The camera: the projection, the views, and where each puts the camera. |
 | [`engine/backdrop.md`](engine/backdrop.md) | The backdrop: sky dome, nebula, stars, dust, sun, lens flares and the default lights. |
 | [`engine/rendering.md`](engine/rendering.md) | Rendering: layers, depth, shading modes as materials, lighting, blending, highlights. |
 | [`engine/objects.md`](engine/objects.md) | Live objects: the object array, model hierarchies, components, the flight model. |
 | [`engine/guns.md`](engine/guns.md) | Guns: the guns a model holds, their groups, the trigger and the step that fires them. |
 | [`engine/cloak.md`](engine/cloak.md) | The cloak: which objects cloak, how it comes on and goes, what it draws and what shows through it. |
+| [`engine/ejection.md`](engine/ejection.md) | The ejection: the pod, the ship left behind, the pickup by tractor, and the mission's end. |
 | [`engine/effects.md`](engine/effects.md) | Effects: the particles explosions send out. |
 | [`engine/sound.md`](engine/sound.md) | Sound: the banks' sounds on their voices, the 3D effects, the player's engine, and the music. |
 | [`engine/loop.md`](engine/loop.md) | The game loop: the 100 Hz tick, the 25 Hz simulation step, collisions. |

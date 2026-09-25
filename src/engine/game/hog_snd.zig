@@ -27,6 +27,19 @@ const sound3d = @import("sound3d.zig");
 
 const log = std.log.scoped(.sound);
 
+pub const betty = @import("hog_snd/betty.zig");
+
+/// What `sound_play` takes: a volume from nothing to `loudest`; a pan from the left, 0, to
+/// `rightmost`, `centre` between; a count of plays, `forever` for one that goes on until it is
+/// ended; and `own_pitch`, a sound's own pitch, which the quarter tones up or down are counted
+/// from.
+pub const loudest = 127;
+pub const rightmost = 127;
+pub const centre = 64;
+pub const once = 1;
+pub const forever = 0;
+pub const own_pitch = 0;
+
 /// The most voices `sound_init` sets up for the banks' sounds (`0x00501798`).
 pub const max_voices = 16;
 
@@ -141,7 +154,6 @@ pub const Volumes = struct {
         .music = "Musicvolume",
         .speech = "Speechvolume",
     });
-    pub const loudest = 127;
 
     /// The master volume's share, as the game multiplies by it (`0x004DC6B0`, `1 / 127`).
     pub fn masterShare(volumes: Volumes) f32 {
@@ -343,12 +355,6 @@ pub const Sound = struct {
         return @intCast(chosen);
     }
 
-    /// Betty's `line`, at full volume in the middle: the voice it plays on, or null.
-    pub fn say(sound: *Sound, line: Betty) ?u8 {
-        const bank = sound.betty orelse return null;
-        return sound.play(bank, @intFromEnum(line), 127, 1, 64, 0);
-    }
-
     /// `sound_play_on_voice` (`0x004820C0`): plays it on voice `v`, ending what it was playing.
     pub fn playOn(sound: *Sound, v: u8, bank: fat.Bank, index: usize, volume: i32, loops: u32, pan: i32, pitch: i32) void {
         const driver = sound.driver orelse return;
@@ -390,8 +396,8 @@ pub const Sound = struct {
 
     /// Whether `bank` is the cockpit's own, `betty.fat`.
     fn fromCockpit(sound: *const Sound, bank: fat.Bank) bool {
-        const betty = sound.betty orelse return false;
-        return betty.bytes.ptr == bank.bytes.ptr;
+        const own = sound.betty orelse return false;
+        return own.bytes.ptr == bank.bytes.ptr;
     }
 
     /// `sound_voice_end` (`0x004823D0`).
@@ -426,7 +432,7 @@ pub const Sound = struct {
         const driver = sound.driver orelse return;
         if (!sound.voicePlaying(v)) return;
         sound.voices[v].volume = volume;
-        const scaled = @divTrunc(sound.volumes.effects * volume, 127);
+        const scaled = @divTrunc(sound.volumes.effects * volume, loudest);
         driver.setSampleVolume(sound.voices[v].sample, @intFromFloat(@round(@as(f32, @floatFromInt(scaled)) * sound.volumes.masterShare())));
     }
 
@@ -484,7 +490,7 @@ pub const Sound = struct {
     pub fn applyVolumes(sound: *Sound) void {
         const driver = sound.driver orelse return;
         if (sound.music.stream) |stream| {
-            const scaled = @divTrunc(sound.volumes.music * sound.music.level, 127);
+            const scaled = @divTrunc(sound.volumes.music * sound.music.level, loudest);
             driver.setStreamVolume(stream, @intFromFloat(@round(@as(f32, @floatFromInt(scaled)) * sound.volumes.masterShare())));
         }
         for (0..sound.voice_count) |v| {
@@ -550,9 +556,9 @@ pub const Sound = struct {
             if (!(levels[0] > 0) and !(levels[1] > 0)) continue;
             const left = @min(levels[0], 1);
             const right = @min(levels[1], 1);
-            const pan: i32 = @intFromFloat(@round(right * 127 / (right + left)));
+            const pan: i32 = @intFromFloat(@round(right * rightmost / (right + left)));
             const volume: i32 = @intFromFloat(@round(effects * @max(left, right) * sound.volumes.masterShare()));
-            _ = sound.play(bank, index, volume, 1, pan, 0);
+            _ = sound.play(bank, index, volume, once, pan, own_pitch);
             levels.* = .{ 0, 0 };
         }
     }
@@ -864,35 +870,6 @@ pub fn tickTimer(clock: *Clock) void {
     }
 }
 
-/// Betty's lines in `bank_betty`, which `Sound.say` plays.
-pub const Betty = enum(u8) {
-    /// The armed missile run out.
-    missiles_gone = 0,
-    /// A quadrant has lost its shield and half its armour (`main.armorWarning`).
-    armor_failing = 1,
-    /// The armed missile's name, as the missile ring turns to it.
-    screamer = 2,
-    havoc = 3,
-    jack_hammer = 4,
-    vagabond = 5,
-    imp = 6,
-    bandit = 7,
-    raptor = 8,
-    hawk = 9,
-    solomon = 10,
-    /// Countermeasures running low, and gone.
-    countermeasures_low = 0xD,
-    countermeasures_gone = 0xF,
-    /// A device turning on, and off.
-    cloak_on = 0x10,
-    cloak_off = 0x11,
-    blind_fire_on = 0x12,
-    blind_fire_off = 0x13,
-    spectral_shields_on = 0x14,
-    spectral_shields_off = 0x15,
-    _,
-};
-
 pub const testing = struct {
     /// A bank of `count` sounds, each four frames of 16-bit PCM, the `n`th at priority `n * 10`.
     pub fn bank(comptime count: usize) [fat.header_size + count * @sizeOf(fat.Entry) + count * sound_file.len]u8 {
@@ -930,17 +907,17 @@ test "Sound.play takes a free voice, else the lowest priority below its own" {
     const bank = try fat.Bank.parse(&bytes);
 
     // Voice 0 is passed over while another has finished.
-    try std.testing.expectEqual(1, sound.play(bank, 1, 127, 1, 64, 0));
-    try std.testing.expectEqual(2, sound.play(bank, 2, 127, 1, 64, 0));
+    try std.testing.expectEqual(1, sound.play(bank, 1, loudest, once, centre, own_pitch));
+    try std.testing.expectEqual(2, sound.play(bank, 2, loudest, once, centre, own_pitch));
     try std.testing.expectEqual(10, sound.voices[1].priority);
     // Voice 0 has never played, so it takes the next; then all are busy.
-    try std.testing.expectEqual(0, sound.play(bank, 1, 127, 1, 64, 0));
+    try std.testing.expectEqual(0, sound.play(bank, 1, loudest, once, centre, own_pitch));
     // A sound of priority 30 takes over the lowest, 10, on voice 0; one of 0 takes nothing.
-    try std.testing.expectEqual(0, sound.play(bank, 3, 127, 1, 64, 0));
-    try std.testing.expectEqual(null, sound.play(bank, 0, 127, 1, 64, 0));
+    try std.testing.expectEqual(0, sound.play(bank, 3, loudest, once, centre, own_pitch));
+    try std.testing.expectEqual(null, sound.play(bank, 0, loudest, once, centre, own_pitch));
     // A held voice is never taken over.
     sound.voices[1].held = 1;
-    try std.testing.expectEqual(null, sound.play(bank, 1, 127, 1, 64, 0));
+    try std.testing.expectEqual(null, sound.play(bank, 1, loudest, once, centre, own_pitch));
 
     // The effects volume, 80, and the master's scale the volume asked for.
     try std.testing.expectEqual(@divTrunc(80 * 127, 128), driver.sampleVolume(sound.voices[0].sample));
@@ -953,7 +930,7 @@ test "Sound.timerTick steps the fades every five ticks" {
     sound.init(driver, 2, null);
     const bytes = comptime testing.bank(2);
     const bank = try fat.Bank.parse(&bytes);
-    const v = sound.play(bank, 1, 127, 0, 64, 0).?;
+    const v = sound.play(bank, 1, loudest, forever, centre, own_pitch).?;
     const start = driver.sampleVolume(sound.voices[v].sample);
     sound.fadeVoice(v, 30);
     sound.timerTick(6);
@@ -974,7 +951,7 @@ test "Sound pauses and resumes its voices" {
     sound.init(driver, 2, null);
     const bytes = comptime testing.bank(2);
     const bank = try fat.Bank.parse(&bytes);
-    const v = sound.play(bank, 1, 127, 0, 64, 0).?;
+    const v = sound.play(bank, 1, loudest, forever, centre, own_pitch).?;
     sound.pauseAll();
     try std.testing.expectEqual(mss.Status.stopped, driver.sampleStatus(sound.voices[v].sample));
     sound.resumeAll();

@@ -117,7 +117,7 @@ pub const Audio = struct {
     });
 
     fn slider(down: i32, label: menu.String) Slider {
-        return .{ .down = down, .label = label, .low = 0, .high = Volumes.loudest };
+        return .{ .down = down, .label = label, .low = 0, .high = hog_snd.loudest };
     }
 
     /// The order `sound_settings_save` writes the volumes in.

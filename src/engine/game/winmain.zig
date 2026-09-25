@@ -56,7 +56,7 @@ test followActivation {
     var sound: Sound = undefined;
     sound.init(driver, 2, null);
     const bytes = comptime hog_snd.testing.bank(2);
-    const v = sound.play(try fat.Bank.parse(&bytes), 1, 127, 0, 64, 0).?;
+    const v = sound.play(try fat.Bank.parse(&bytes), 1, hog_snd.loudest, hog_snd.forever, hog_snd.centre, hog_snd.own_pitch).?;
     var archive = try hudoptions.testing.fontArchive(gpa);
     defer archive.close(gpa);
     var app: App = .{};

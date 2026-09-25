@@ -9,7 +9,9 @@ const srapi = @import("../surrender/surrenderlib/srapi.zig");
 const input = @import("../input.zig");
 const controls = @import("../input/controls.zig");
 const libcmt = @import("../libcmt.zig");
+const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
+const shp = @import("../../formats/shp.zig");
 const missiles = @import("missiles.zig");
 const Vector = math.Vector;
 
@@ -70,6 +72,12 @@ pub const View = enum(u8) {
     pull_back = 8,
     /// Behind a missile.
     missile = 0x12,
+    /// Circling the pilot's pod as the pilot ejects: Eject Camera.
+    eject = 7,
+    /// Round the ship picking the pilot's pod up, a Nanny or the enemy's Antanov, closing in.
+    pickup = 0x1C,
+    /// From behind the pilot's pod, at the Sabre that shoots it down, pulling back as it bursts.
+    pod_shot = 0x1D,
     /// From where the camera was, watching its object.
     watch = 0x1A,
     /// From where the camera was, watching where the player's ship burst
@@ -195,6 +203,34 @@ pub const Subject = struct {
     /// `GameObject.radius`: its farthest vertex from its origin.
     radius: f32 = 0,
     motion: Chase.Motion = .{},
+    /// Whether it is exploding, which the pod-shot view waits for.
+    exploding: bool = false,
+
+    /// What the camera follows of the object in `slot`: where its root's frame has it drawn, its
+    /// model's eye point and its size, and for the chase view its type, its throttle and its rates
+    /// of turn.
+    pub fn of(slot: *const create.Slot) Subject {
+        const live = &slot.object;
+        const eye = if (slot.type) |loaded| loaded.model.header.eye else std.mem.zeroes(shp.Vec3);
+        return .{
+            .position = slot.drawn.position,
+            .orientation = slot.drawn.orientation,
+            .eye = .{ eye.x, eye.y, eye.z },
+            .radius = live.radius,
+            // The chase view sits farther back the more throttle the ship carries and swings
+            // against its rates of turn, so it lags a turn rather than riding rigidly behind the
+            // ship.
+            .motion = .{
+                .ship_type = live.type,
+                .throttle = live.throttle,
+                .afterburner = live.afterburner,
+                .pitch_rate = live.pitch_rate,
+                .yaw_rate = live.yaw_rate,
+                .roll_rate = live.roll_rate,
+            },
+            .exploding = live.flags.exploding,
+        };
+    }
 };
 
 /// What `Camera.frame` reads of the world.
@@ -210,6 +246,13 @@ pub const World = struct {
     /// The mission's ticks this frame (`frame_start`), which the views that move with time go by,
     /// from when the view was switched to.
     now: u32 = 0,
+    /// How far past `now` the frame is drawn, as a share of a tick (`objects.pastTick`), which
+    /// those views go on by as well.
+    ///
+    /// **Improvement:** with smooth motion the views that move with time move on every frame, as
+    /// the objects they watch do; the game moves them on a tick at a time, which a display's frames
+    /// fall between unevenly.
+    ahead: f32 = 0,
     /// Where the player's ship burst, for `watch_marker`; null before it has.
     marker: ?Vector = null,
     /// The cockpit's model and what moves it, for view 0 outside the chase mode; null for an
@@ -238,6 +281,10 @@ pub const Camera = struct {
     bar_speed: f32 = 0,
     /// `frame_start` when the view last changed (`0x00539AA4`).
     switched: u32 = 0,
+    /// Where the ejection's views stand off from what they watch, as they are switched to
+    /// (`0x00539A44`): the eject view's reach out to its object's right, the pickup's way to half
+    /// between the picking ship and the pod, and the pod shot's way from the pod to the Sabre.
+    cutaway: Vector = @splat(0),
     chase: Chase = .{},
     orbit: Orbit = .{},
     /// How hard the last hit shook the camera (`hit_shake`, `0x00588724`): at most 2, and less by
@@ -294,6 +341,20 @@ pub const Camera = struct {
             .target, .external => camera.orbit = .{},
             else => {},
         }
+        return true;
+    }
+
+    /// Switches to one of the ejection's views, `view`, of `object`, locked and forced
+    /// (`camera_set_view`), with what it stands off by taken from `seen`, the object, and `pod`, the
+    /// pilot's, as they stand now.
+    pub fn setCutaway(camera: *Camera, view: View, object: u16, now: u32, seen: Subject, pod: Subject) bool {
+        if (!camera.setView(view, object, true, true, now)) return false;
+        camera.cutaway = switch (view) {
+            .eject => math.xAxis(seen.orientation) * @as(Vector, @splat(eject_reach)),
+            .pickup => (pod.position - seen.position) * @as(Vector, @splat(pickup_share)),
+            .pod_shot => math.normalize(seen.position - pod.position),
+            else => camera.cutaway,
+        };
         return true;
     }
 
@@ -358,6 +419,12 @@ pub const Camera = struct {
         if (chosen) |view| _ = camera.setView(view, player, false, false, now);
     }
 
+    /// How long the view has been up at `world`'s frame, in ticks: since it was switched to, and on
+    /// by as much past the tick as the frame is drawn (`World.ahead`).
+    fn shown(camera: Camera, world: World) f32 {
+        return @as(f32, @floatFromInt(world.now -| camera.switched)) + world.ahead;
+    }
+
     /// Places the camera for a frame (`camera_frame`): while it shakes from hits by more than
     /// `shake_rumbles`, plays the shake on the controller too (`force_shake`, `0x004BE000`); moves
     /// the bars, then puts the camera where the view says. Returns a view to switch to when this
@@ -415,10 +482,18 @@ pub const Camera = struct {
             },
             .external => camera.place = camera.orbit.place(.external, world.player.position, world.player.radius),
             .flyby => camera.place = flyby(camera.place.position, world.player.position, world.player.orientation, world.player.radius),
-            .pull_back => camera.place = pullBack(world.object.position, world.object.orientation, world.now -| camera.switched),
-            .watch => camera.place.orientation = math.lookAt(world.object.position - camera.place.position),
+            .pull_back => camera.place = pullBack(world.object.position, world.object.orientation, camera.shown(world)),
+            .eject => camera.place = ejected(camera.cutaway, world.object.position, camera.shown(world)),
+            .pickup => camera.place = pickedUp(camera.cutaway, world.object.position, world.object.orientation, camera.shown(world)),
+            .pod_shot => {
+                // Until the pod bursts, the view holds its time at nothing.
+                if (!world.player.exploding) camera.switched = world.now;
+                const since = if (world.player.exploding) camera.shown(world) else 0;
+                camera.place = podShot(camera.cutaway, world.player.position, world.object.position, since);
+            },
+            .watch => camera.place = lookingAt(camera.place.position, world.object.position),
             .watch_marker => if (world.marker) |marker| {
-                camera.place.orientation = math.lookAt(marker - camera.place.position);
+                camera.place = lookingAt(camera.place.position, marker);
             },
             .missile => {
                 if (camera.missile_gone) return if (camera.switched < world.now) .cockpit else null;
@@ -826,19 +901,30 @@ pub const Orbit = struct {
 
 // --- Pull back ---------------------------------------------------------------------------------
 
-/// How `pull_back` starts behind the object, how fast it pulls away, and how fast it turns, a
-/// tick (`0x004DC508`, `0x004DC788`, `0x004DC4D0`).
+/// How `pull_back` starts behind the object and how fast it pulls away, a tick (`0x004DC508`,
+/// `0x004DC788`).
 const pull_back_distance: f32 = 3000;
 const pull_back_speed: f32 = 10;
-const pull_back_turn: f32 = 0.005;
+/// How fast `pull_back` and `eject` turn about their object, a tick (`0x004DC4D0`).
+const slow_turn: f32 = 0.005;
 
-/// View `pull_back` (`camera_frame`, view 8), `ticks` after it was switched to: looking along the
-/// object's heading turned about its own `Y`, from behind it along that heading.
-pub fn pullBack(position: Vector, orientation: Matrix, ticks: u32) Place {
-    const since: f32 = @floatFromInt(ticks);
-    const turned = math.turned(orientation, .y, since * pull_back_turn);
-    const behind = pull_back_distance + since * pull_back_speed;
-    return .{ .position = position - math.forward(turned) * @as(Vector, @splat(behind)), .orientation = turned };
+/// View `pull_back` (`camera_frame`, view 8), `since` ticks after it was switched to: looking along
+/// the object's heading turned about its own `Y`, from behind it along that heading.
+pub fn pullBack(position: Vector, orientation: Matrix, since: f32) Place {
+    return behind(position, orientation, since * slow_turn, pull_back_distance + since * pull_back_speed);
+}
+
+/// Turned as `orientation` turned by `angle` about its own `Y`, and standing `back` behind `point`
+/// along its axis ahead, so looking at it: views 8 and `0x1C`.
+fn behind(point: Vector, orientation: Matrix, angle: f32, back: f32) Place {
+    const turned = math.turned(orientation, .y, angle);
+    return .{ .position = point - math.forward(turned) * @as(Vector, @splat(back)), .orientation = turned };
+}
+
+/// Standing at `at` and looking at `target`, with no roll (`mat3_look_at`): the views that watch a
+/// point from where they stand.
+fn lookingAt(at: Vector, target: Vector) Place {
+    return .{ .position = at, .orientation = math.lookAt(target - at) };
 }
 
 test pullBack {
@@ -849,6 +935,118 @@ test pullBack {
     const away = later.position - Vector{ 0, 0, 100 };
     try std.testing.expectApproxEqAbs(pull_back_distance + 100 * pull_back_speed, @sqrt(math.dot(away, away)), 1e-2);
     try std.testing.expect(later.position[0] != 0);
+}
+
+// --- The ejection -------------------------------------------------------------------------------
+
+/// How far out to its object's right the eject view stands (`0x0045F479`).
+const eject_reach: f32 = 5000;
+
+/// View `eject` (`camera_frame`, view 7), `since` ticks after it was switched to: `cutaway` out from
+/// the pod at `position`, turned about the world's `Y` by `slow_turn` a tick, looking at the pod.
+pub fn ejected(cutaway: Vector, position: Vector, since: f32) Place {
+    return lookingAt(math.transform(math.rotation(.y, since * slow_turn), cutaway) + position, position);
+}
+
+/// The share of the way from the picking ship to the pod that the pickup view looks at
+/// (`0x0045FAAC`); how fast it turns about the picking ship, a tick, and from where it starts
+/// (`0x004DC74C`, `0x004DC51C`); and how far off it starts, how fast it closes in, a tick, and how
+/// near it comes (`0x004DC43C`, `0x004DC44C`).
+///
+/// **Improvement:** it starts a quarter turn round exactly, where the game has 0.785398.
+const pickup_share: f32 = 0.5;
+const pickup_turn: f32 = 0.002;
+const pickup_start: f32 = std.math.pi / 4.0;
+const pickup_reach: f32 = 10000;
+const pickup_closing: f32 = 2;
+const pickup_nearest: f32 = 1000;
+
+/// View `pickup` (view `0x1C`), `since` ticks after it was switched to: the picking ship's
+/// orientation turned about its own `Y`, `pickup_start` on and more by `pickup_turn` a tick, looking
+/// along it at `cutaway` from the ship at `position`, from `pickup_reach` off and closing.
+pub fn pickedUp(cutaway: Vector, position: Vector, orientation: Matrix, since: f32) Place {
+    const off = @max(pickup_reach - since * pickup_closing, pickup_nearest);
+    return behind(cutaway + position, orientation, since * pickup_turn + pickup_start, off);
+}
+
+/// How far behind the pod the pod-shot view stands, and how fast it pulls back once the pod bursts,
+/// a tick (`0x004DC44C`, `0x004DC72C`).
+const pod_shot_reach: f32 = 1000;
+const pod_shot_pull: f32 = 20;
+
+/// View `pod_shot` (view `0x1D`), `since` ticks after the pod at `pod` began to burst:
+/// `pod_shot_reach` and more from it, the other way from `cutaway`, the way to the Sabre, looking at
+/// the Sabre at `sabre`.
+pub fn podShot(cutaway: Vector, pod: Vector, sabre: Vector, since: f32) Place {
+    return lookingAt(pod - cutaway * @as(Vector, @splat(pod_shot_reach + since * pod_shot_pull)), sabre);
+}
+
+test ejected {
+    // Out to the right of the pod, looking at it, and a quarter turn round after a while.
+    const start = ejected(.{ eject_reach, 0, 0 }, .{ 0, 0, 100 }, 0);
+    try std.testing.expectEqual(Vector{ eject_reach, 0, 100 }, start.position);
+    const quarter = std.math.pi / 2.0 / slow_turn;
+    const later = ejected(.{ eject_reach, 0, 0 }, .{ 0, 0, 100 }, quarter);
+    try std.testing.expectApproxEqAbs(0, later.position[0], 5);
+    try std.testing.expectApproxEqAbs(eject_reach, @abs(later.position[2] - 100), 5);
+    const looking = math.forward(later.orientation);
+    try std.testing.expect(math.dot(looking, math.normalize(Vector{ 0, 0, 100 } - later.position)) > 0.999);
+}
+
+test pickedUp {
+    // It starts out at its reach, closes in two a tick, and comes no nearer than its nearest.
+    const cutaway: Vector = .{ 0, 0, 7500 };
+    const start = pickedUp(cutaway, @splat(0), math.identity, 0);
+    try std.testing.expectApproxEqAbs(pickup_reach, math.distance(start.position, cutaway), 1e-2);
+    const later = pickedUp(cutaway, @splat(0), math.identity, 1000);
+    try std.testing.expectApproxEqAbs(pickup_reach - 2000, math.distance(later.position, cutaway), 1e-2);
+    const last = pickedUp(cutaway, @splat(0), math.identity, 100000);
+    try std.testing.expectApproxEqAbs(pickup_nearest, math.distance(last.position, cutaway), 1e-2);
+}
+
+test "Camera.setCutaway" {
+    var camera: Camera = .{};
+    const turned: Subject = .{ .position = .{ 0, 0, 100 }, .orientation = math.rotation(.y, std.math.pi / 2.0) };
+    const pod: Subject = .{ .position = .{ 0, 0, 1000 }, .orientation = math.identity };
+    // The eject view stands off the object's right.
+    try std.testing.expect(camera.setCutaway(.eject, 0, 10, turned, turned));
+    try expectVector(math.xAxis(turned.orientation) * @as(Vector, @splat(eject_reach)), camera.cutaway);
+    try std.testing.expect(camera.locked);
+    try std.testing.expectEqual(10, camera.switched);
+    // The pickup view looks halfway from the picking ship to the pod.
+    try std.testing.expect(camera.setCutaway(.pickup, 1, 20, turned, pod));
+    try expectVector(.{ 0, 0, 450 }, camera.cutaway);
+    // The pod-shot view stands off the pod the other way from the Sabre.
+    try std.testing.expect(camera.setCutaway(.pod_shot, 1, 30, turned, pod));
+    try expectVector(.{ 0, 0, -1 }, camera.cutaway);
+    // Locked as they are, only another forced switch takes the camera from them.
+    try std.testing.expect(!camera.setView(.chase, 0, false, false, 40));
+}
+
+test "the views that move with time go on between ticks" {
+    var camera: Camera = .{};
+    const ship: Subject = .{ .position = .{ 0, 0, 100 }, .orientation = math.identity };
+    // Half a tick past its hundredth, view 8 stands where it would a hundred and a half ticks on.
+    _ = camera.setView(.pull_back, 0, true, true, 0);
+    _ = camera.frame(.{ .object = ship, .player = ship, .ticks = 1, .now = 100, .ahead = 0.5 });
+    try expectVector(pullBack(ship.position, ship.orientation, 100.5).position, camera.place.position);
+    // The pod-shot view holds at nothing until the pod bursts, the time past the tick with it.
+    const sabre: Subject = .{ .position = .{ 0, 0, 5000 }, .orientation = math.identity };
+    try std.testing.expect(camera.setCutaway(.pod_shot, 1, 0, sabre, ship));
+    _ = camera.frame(.{ .object = sabre, .player = ship, .ticks = 1, .now = 200, .ahead = 0.5 });
+    try expectVector(podShot(camera.cutaway, ship.position, sabre.position, 0).position, camera.place.position);
+    try std.testing.expectEqual(200, camera.switched);
+}
+
+test podShot {
+    // Behind the pod from the Sabre, looking at it, and pulling back once the pod bursts.
+    const way = math.normalize(Vector{ 2, 1, -2 });
+    const sabre = way * @as(Vector, @splat(30000));
+    const start = podShot(way, @splat(0), sabre, 0);
+    try std.testing.expectApproxEqAbs(pod_shot_reach, math.length(start.position), 1e-2);
+    try std.testing.expect(math.dot(math.forward(start.orientation), way) > 0.999);
+    const later = podShot(way, @splat(0), sabre, 100);
+    try std.testing.expectApproxEqAbs(pod_shot_reach + 100 * pod_shot_pull, math.length(later.position), 1e-2);
 }
 
 // --- Flyby --------------------------------------------------------------------------------------
@@ -867,7 +1065,7 @@ pub fn flyby(from: Vector, position: Vector, orientation: Matrix, radius: f32) P
     if (math.length(at - position) < radius) {
         at = position + math.normalize(at - position) * @as(Vector, @splat(radius));
     }
-    return .{ .position = at, .orientation = math.lookAt(math.normalize(position - at)) };
+    return lookingAt(at, position);
 }
 
 fn expectVector(expected: Vector, actual: Vector) !void {

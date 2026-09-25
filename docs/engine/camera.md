@@ -27,10 +27,13 @@ The port keeps the factor down and chooses the factor across that keeps pixels s
 | 4, 0x1E | | Chase | a space |
 | 6 | Target | Round the player's target | Target Camera |
 | 0xC | External | Round the player's ship | External Camera |
-| 8 | | Behind the object, turning with it about its own `Y` at 0.005 a tick and pulling away from 3000 at 10 a tick, as the player's ship is destroyed | a space |
+| 7 | | Round the pilot's pod as the pilot ejects ([The ejection's views](#the-ejections-views)) | Eject Camera |
+| 8 | | Behind the object, turning with it about its own `Y` at 0.005 a tick and pulling away from 3000 at 10 a tick, as the player's ship is destroyed | Death Cam |
 | 0x12 | Missile | Behind a missile the object launched ([Missiles](missiles.md#the-missile-camera)) | Missile Camera |
 | 0x1A | | From where the camera was, watching the object | a space |
 | 0x1B | | From where the camera was, watching where the player's ship burst (`explode_marker`), which drifts on at a quarter of its velocity a frame | a space |
+| 0x1C | | Round the ship picking up the player's pod, closing in | a space |
+| 0x1D | | From behind the player's pod, at the Sabre that shoots it down | a space |
 | 0x24 | Flyby | From a point the player flies past | a space |
 
 The view table (`camera_view_table`, `0x4F72A8`) holds four bytes a view, for views 0 to `0x2B`: the language string that names the view, whether cinematic bars slide in, and whether it is from the cockpit. [`camera/views.zig`](../../src/engine/game/camera/views.zig) transcribes it; `make view-tables` derives it again. The bars slide in for views 7 to `0x27` and `0x2B`, but not the external view; views 0 to 3 are from the cockpit. The names are strings 170 to 182 of `language.dll`; string 174, Chase Camera, is none of them, the chase views and most cutaways taking 181, a single space. From the cockpit the object's flag bit 0 is set, except in the chase mode, and cleared when the view moves off it. The bars grow by 0.001 of the screen a tick to 0.1, top and bottom; a view without them clears them at once.
@@ -90,4 +93,29 @@ The flyby view starts a radius below the player's ship and four ahead, in its fr
 
 An object's radius is its farthest vertex from its origin, over its parts' finest levels (`object_bounds`, `0x00476680`).
 
-This page leaves out the cockpit's model and its motion, the shake from hits (`hit_shake`, `0x588724`) and the cutaways.
+## The ejection's views
+
+The views of the player's [ejection](ejection.md) stand off from what they watch by an offset
+(`camera_cutaway`, `0x00539A44`) that `camera_set_view` works out as it switches to them, with `t`
+the ticks since:
+
+- View 7, Eject Camera, as the pilot ejects: the object's `X` axis times 5000 (`0x0045F479`), from
+  the object as it stands then. The camera stands that far out from the object, the offset turned
+  about the world's `Y` by 0.005 a tick times `t`, and looks at it.
+- View `0x1C`, as a nanny ship or the Antanov picks the pod up: half the way from the object, the
+  ship, to the player's pod. The camera is turned as the ship, turned further about its own `Y` by
+  0.002 a tick times `t` and a quarter turn (`0x004DC74C`, `0x004DC51C`), and stands back from the
+  point the offset marks along its own axis ahead by `10000 - 2t`, no nearer than 1000.
+- View `0x1D`, as a Sabre shoots the pod down: the way from the pod to the object, the Sabre. The
+  camera stands behind the pod the other way, 1000 off, and looks at the Sabre. While the pod has
+  not begun to explode the view's time holds at 0 (`camera_switched` moves on); then it pulls back
+  by 20 a tick.
+
+**Improvement:** with smooth motion, views 7, 8, `0x1C` and `0x1D` go on by the share of a tick
+the frame is drawn past its tick as well (`objects.pastTick`), so they move every frame, as the
+objects they watch do; the game moves them a tick at a time, which a display's frames fall between
+unevenly. `--no-smooth-motion` and `--original` move them on ticks.
+
+**Improvement:** view `0x1C`'s quarter turn is exact; the game's is 0.785398.
+
+This page leaves out the cockpit's model and its motion, the shake from hits (`hit_shake`, `0x588724`) and the other cutaways.

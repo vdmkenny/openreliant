@@ -87,9 +87,9 @@ pub const Beep = enum(u3) {
     on = 4,
     off = 5,
 
+    /// The first of them in `bank_stdsmp`, and how loud they play (`0x00501C78`).
     const first_sample = 15;
     const volume = 60;
-    const pan = 64;
 };
 
 /// `hud_beep` (`0x0048CE70`): the display's sound `which`, in the middle, in the four cockpit views
@@ -97,7 +97,7 @@ pub const Beep = enum(u3) {
 pub fn playBeep(sound: *hog_snd.Sound, view: camera.View, which: Beep) void {
     if (!view.fromCockpit()) return;
     const bank = sound.stdsmp orelse return;
-    _ = sound.play(bank, Beep.first_sample + @as(usize, @intFromEnum(which)), Beep.volume, 1, Beep.pan, 0);
+    _ = sound.play(bank, Beep.first_sample + @as(usize, @intFromEnum(which)), Beep.volume, hog_snd.once, hog_snd.centre, hog_snd.own_pitch);
 }
 
 /// `playBeep` in `world`, where there is one and anything is heard in it.
@@ -105,13 +105,6 @@ pub fn beep(world: ?gameobj.World, which: Beep) void {
     const heard = world orelse return;
     const hearing = heard.hearing orelse return;
     playBeep(hearing.sound, heard.view, which);
-}
-
-/// Betty says `line`, where anything is heard (`hog_snd.Sound.say`).
-pub fn say(world: ?gameobj.World, line: hog_snd.Betty) void {
-    const heard = world orelse return;
-    const hearing = heard.hearing orelse return;
-    _ = hearing.sound.say(line);
 }
 
 /// The display's sounds asked for where no world is at hand, which `draw` plays later in the same
@@ -1538,7 +1531,7 @@ pub const State = struct {
         if (showing) {
             if (!sound.voiceIdle(lock_warning_voice)) return;
             const bank = sound.stdsmp orelse return;
-            sound.playOn(lock_warning_voice, bank, lock_warning_sample, Beep.volume, 0, Beep.pan, 0);
+            sound.playOn(lock_warning_voice, bank, lock_warning_sample, Beep.volume, hog_snd.forever, hog_snd.centre, hog_snd.own_pitch);
             state.lock_warning = lock_warning_voice;
         } else if (state.lock_warning) |voice| {
             if (homing or sound.voiceIdle(lock_warning_voice)) return;
