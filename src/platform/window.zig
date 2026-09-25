@@ -26,8 +26,9 @@ pub const Event = union(enum) {
     controllers,
     /// The window became the active one, or stopped being it (`WM_ACTIVATEAPP`).
     active: bool,
-    /// The pointer moved over the window, to a place given as fractions of its size.
-    pointer: [2]f32,
+    /// The pointer moved over the window, to a place given as fractions of its size, by a movement
+    /// in the mouse's own counts, which `holdMouse` keeps coming at the window's edges.
+    pointer: struct { at: [2]f32, moved: [2]f32 },
     /// A mouse button went down or up: the left or the right one, which the game reads.
     button: struct { which: Button, down: bool },
 
@@ -96,8 +97,11 @@ pub const Window = struct {
                 c.SDL_EVENT_MOUSE_MOTION => {
                     const points = window.size();
                     return .{ .pointer = .{
-                        event.motion.x / @as(f32, @floatFromInt(points[0])),
-                        event.motion.y / @as(f32, @floatFromInt(points[1])),
+                        .at = .{
+                            event.motion.x / @as(f32, @floatFromInt(points[0])),
+                            event.motion.y / @as(f32, @floatFromInt(points[1])),
+                        },
+                        .moved = .{ event.motion.xrel, event.motion.yrel },
                     } };
                 },
                 c.SDL_EVENT_MOUSE_BUTTON_DOWN, c.SDL_EVENT_MOUSE_BUTTON_UP => {
@@ -118,6 +122,12 @@ pub const Window = struct {
     pub fn showPointer(window: Window, shown: bool) void {
         _ = window;
         _ = if (shown) c.SDL_ShowCursor() else c.SDL_HideCursor();
+    }
+
+    /// Holds the mouse to the window, its pointer hidden, as DirectInput's exclusive mouse is held
+    /// while the game is in the foreground, or lets it go.
+    pub fn holdMouse(window: Window, held: bool) Error!void {
+        if (!c.SDL_SetWindowRelativeMouseMode(window.handle, held)) return fail("SDL_SetWindowRelativeMouseMode");
     }
 
     /// Puts a frame drawn in memory, rows of red, green, blue and alpha from the top, on the screen,

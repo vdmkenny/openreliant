@@ -131,11 +131,20 @@ values are scaled by 0.001, so the stick's travel spans -1 to 1.
   held, that input is zero. The flight model clamps each input to between -1 and 1, so a held key
   reaches full deflection on the fourth run. The roll keys roll as with the joystick. While the
   word at `0x539A34` is 6 or 12, yaw and pitch stay zero.
-- **Mouse** (2). The mouse's movement gathers into a stick position, each axis held to within 800
-  counts of the centre. As a fraction `v` of 800, each axis gives 0 while `|v|` is under 0.3,
-  and `1.3 * v - 0.3` above it or `1.3 * v + 0.3` below it. X yaws and Y pitches, reversed; the
-  roll keys roll. The left button fires the lasers, and the right launches a missile once for
-  each press.
+- **Mouse** (2). The mouse's movement gathers into a stick position, which the order's own data
+  keeps as two 16-bit counts, each held to within `mouse_range` (`0x4E2378`), 800, of the centre.
+  As a fraction `v` of 800, each axis gives 0 while `|v|` is under `mouse_dead_band`
+  (`0x4E237C`), 0.3, and `1.3 * v - 0.3` above it or `1.3 * v + 0.3` below it. X yaws, and Y
+  pitches reversed, so that moving the mouse forward raises the nose; the roll keys roll and the
+  throttle keys set the throttle. The left button fires the lasers as FIRE LASERS does, and the
+  right launches a missile as LAUNCH MISSILE does, once for each press, which
+  `mouse_missile_latched` (`0x51CEFA`) records.
+
+  **Fix:** `player_controls` adds the movement of the last read each time it runs, once a frame as
+  well as once a step, so the faster the frames, the further a movement steers. The port adds each
+  read's movement once. The port holds the mouse to the window, its pointer hidden, while the
+  player flies in this mode, as the game holds DirectInput's mouse, and lets it go for the pause
+  menu.
 
 In each mode, half the yaw input is added to the roll input, so the ship banks into turns, and
 `joystick_invert` sets the sign of pitch. STRAFE LEFT and STRAFE RIGHT set the lateral input to -1
@@ -326,8 +335,7 @@ default bindings and has `TwistEnable` on by default. `DeadZone` in `JoyConfig` 
 which the original fixes at a tenth. A joystick that is disconnected is closed and reads as
 centered, where the original tries to acquire it again.
 
-Not yet ported: the mouse ([issue 115](https://github.com/vdmkenny/openreliant/issues/115)), force
-feedback ([issue 83](https://github.com/vdmkenny/openreliant/issues/83)), the weapons and other
+Not yet ported: force feedback ([issue 83](https://github.com/vdmkenny/openreliant/issues/83)), the weapons and other
 actions `player_controls` reads, and the special cases for the byte at `0x529FB8`, the player's
 deathmatch power-up and the flags at `0x51CEF8`, `0x51CEFC` and `0x51CF04`. `object_orders`
 clears the two burns before each order update and, after it, when the ship is out of fuel or its

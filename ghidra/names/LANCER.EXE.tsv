@@ -329,6 +329,9 @@ address	kind	name	type	comment
 00579984	data	matching_speed	ushort	Flipped by MATCH SPEED; while set, match_target_speed runs each update. ZERO THROTTLE and FULL THROTTLE clear it
 00566794	data	throttle_before_match	float	The throttle match_target_speed puts back when the target leaves range
 0051cefe	data	afterburner_toggled	ushort	Flipped by AFTERBURNER TOGGLE; the afterburner burns while it is set
+0051cefa	data	mouse_missile_latched	ushort	Set once the right button has launched a missile in the mouse's mode, until it is let go
+004e2378	data	mouse_range	int	How far from the centre the mouse's stick reaches, in counts: 800
+004e237c	data	mouse_dead_band	float	The share of the mouse's stick about the centre that steers nothing: 0.3
 005799c0	data	fuel_warning_tick	int	The game_ticks value before which the afterburner fuel warning does not sound again
 0042c800	function	load_key_config	void (void)	Reads the KeyConfig and JoyConfig sections of starlancer.ini: the input settings and each action's binding
 004bcd90	function	input_init	int (void)	Creates DirectInput and the keyboard, mouse and joystick devices, preferring a force-feedback joystick
