@@ -741,8 +741,9 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         .player = &sandbox.objects.player,
     };
     if (options.pause_menu and frames_left == null) try game.main.pause(pausing, true);
-    // Whether the system's pointer shows over the window.
+    // Whether the system's pointer shows over the window, and whether the window holds the mouse.
     var pointer_shown = true;
+    var mouse_held = false;
     while (true) {
         while (window.poll()) |event| switch (event) {
             .quit => return,
@@ -751,8 +752,11 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             },
             .controllers => if (options.screenshot == null) connectController(arena, &devices, &controller, settings_file.profile),
             .active => |active| app.active = active or frames_left != null,
-            .pointer => |at| if (options.screenshot == null) {
-                devices.mouse.at = at;
+            .pointer => |pointer| if (options.screenshot == null) {
+                devices.mouse.at = pointer.at;
+                // The movement counts only while the window holds the mouse, as DirectInput's
+                // exclusive mouse moves only for the game.
+                if (mouse_held) devices.mouse.motion = @as(@Vector(2, f32), devices.mouse.motion) + @as(@Vector(2, f32), pointer.moved);
             },
             .button => |button| if (options.screenshot == null) switch (button.which) {
                 .left => devices.mouse.buttons.left = button.down,
@@ -961,6 +965,15 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         if (pause_menu.isOpen() == pointer_shown) {
             pointer_shown = !pointer_shown;
             window.showPointer(pointer_shown);
+        }
+        // Steering by the mouse, the window holds it in flight, as the game holds DirectInput's
+        // mouse while it is in the foreground.
+        const hold = devices.settings.control_mode == .mouse and !pause_menu.isOpen() and app.active and options.screenshot == null;
+        if (hold != mouse_held) {
+            mouse_held = hold;
+            // Where the system won't hold it, the mouse steers by the pointer's movement over the
+            // window, and the failure is logged.
+            window.holdMouse(hold) catch {};
         }
         // What the menu's screens saved goes to the file.
         if (settings_file.changed) {

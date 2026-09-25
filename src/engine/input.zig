@@ -485,13 +485,37 @@ pub const gamepad_buttons = [_]struct { controls.Action, GamepadButton }{
     .{ .radar_ranges, .back },
 };
 
-/// The mouse as the platform last reported it, in place of DirectInput's mouse: where the pointer
-/// is over the window, as fractions of its size, and which buttons are down. The pause menu reads
-/// it (`menu_mouse_update`); steering by the mouse is not yet ported (#115).
+/// The mouse, in place of DirectInput's: where the pointer is over the window, as fractions of its
+/// size, and which buttons are down, as the platform last reported them, which the pause menu reads
+/// (`menu_mouse_update`); and what `read_mouse` read at the last simulation step, which steers in
+/// the mouse's mode (`player_controls`).
 pub const Mouse = struct {
     /// Null until the pointer has been over the window.
     at: ?[2]f32 = null,
     buttons: Buttons = .{},
+    /// The movement the platform has reported since the last read, in the mouse's counts.
+    motion: [2]f32 = .{ 0, 0 },
+    /// `mouse` (`0x00588398`): what the last read found.
+    state: State = .{},
+    /// Whether the stick has gathered the movement of the last read (`player_controls`).
+    gathered: bool = false,
+
+    /// What `read_mouse` reads, the parts of `MouseState` the game uses: the movement since the
+    /// read before, in whole counts, and the buttons down.
+    pub const State = struct {
+        moved: [2]i32 = .{ 0, 0 },
+        buttons: Buttons = .{},
+    };
+
+    /// `read_mouse` (`0x004BD3A0`): the movement since the last read, in whole counts, the rest
+    /// kept for the next, and the buttons down.
+    pub fn read(mouse: *Mouse) void {
+        const whole = @trunc(@as(@Vector(2, f32), mouse.motion));
+        const moved: @Vector(2, i32) = @intFromFloat(whole);
+        mouse.state = .{ .moved = moved, .buttons = mouse.buttons };
+        mouse.motion = @as(@Vector(2, f32), mouse.motion) - whole;
+        mouse.gathered = false;
+    }
 
     pub const Buttons = packed struct(u2) {
         left: bool = false,
@@ -512,10 +536,12 @@ pub const Devices = struct {
     bindings: Bindings = defaultBindings(.joystick),
     settings: Settings = .{},
 
-    /// Reads the keyboard, then the joystick, as `simulation_step` does at the start of each step.
+    /// Reads the keyboard, the joystick and the mouse, as `simulation_step` does at the start of
+    /// each step.
     pub fn read(devices: *Devices) void {
         devices.keyboard.read();
         devices.joystick.read();
+        devices.mouse.read();
     }
 
     /// `control_active` (`0x00412630`): whether `action` is active because its joystick button is
@@ -762,6 +788,9 @@ pub const Player = struct {
     throttle_before_match: f32 = 0,
     /// `afterburner_toggled` (`0x0051CEFE`), flipped by AFTERBURNER TOGGLE.
     afterburner_toggled: bool = false,
+    /// `mouse_missile_latched` (`0x0051CEFA`): set once the right button has launched a missile in
+    /// the mouse's mode, until it is let go.
+    mouse_launched: bool = false,
     /// `powerball_held` (`0x0051CEF8`): set while POWERBALL WINDOW is held, and for the frame its
     /// locked form opens the power window. The stick then moves the power instead of steering.
     power_held: bool = false,
@@ -808,6 +837,23 @@ const bank_share: f32 = 0.5;
 /// to 1.
 const axis_scale: f32 = 0.001;
 
+/// How far from the centre the mouse's stick reaches, in counts (`mouse_range`, `0x004E2378`), and
+/// the share of that about the centre that steers nothing (`mouse_dead_band`, `0x004E237C`).
+const mouse_range: i16 = 800;
+const mouse_dead_band: f32 = 0.3;
+
+/// What the mouse's movement is multiplied by, over `mouse_range`, to move the power or shift the
+/// shields (`0x004DC554`).
+const mouse_hold_scale: f32 = 64;
+
+/// The steering input from the mouse's stick along one axis (`player_controls`): nothing within the
+/// dead band of the centre, and from there out to the full deflection at the edge.
+fn mouseAxis(position: i16) f32 {
+    const v = @as(f32, @floatFromInt(position)) / @as(f32, @floatFromInt(mouse_range));
+    if (v < 0) return if (-mouse_dead_band < v) 0 else (mouse_dead_band + 1) * v + mouse_dead_band;
+    return if (v < mouse_dead_band) 0 else (mouse_dead_band + 1) * v - mouse_dead_band;
+}
+
 /// `player_throttle_keys` (`0x004132C0`): ACCELERATE and DECELERATE step the throttle setting and
 /// the ship's throttle, and ZERO THROTTLE and FULL THROTTLE set both and stop MATCH SPEED. The
 /// ship's throttle then follows the setting, unless its afterburner is burning.
@@ -840,29 +886,30 @@ pub fn playerThrottleKeys(player: *Player, devices: *Devices, object: *gameobj.G
 /// JOYSTICK ROLL makes X roll instead of yaw. With `TwistEnable` and a twist axis, the twist rolls.
 /// The throttle axis (Z, or else the first slider) sets the throttle directly; without one, the
 /// throttle keys change it. With the keyboard, the steering keys change the inputs step by step.
-/// In every mode, half the yaw is added to the roll so the ship banks into turns, and turning
-/// `JoystickInvert` off reverses pitch.
+/// With the mouse, its movement gathers into `stick`, the order's own data, which yaws and pitches
+/// (`mouseAxis`). In every mode, half the yaw is added to the roll so the ship banks into turns,
+/// and turning `JoystickInvert` off reverses pitch.
 ///
 /// While POWERBALL WINDOW or SHIELD BALANCING is held, the stick moves the power or shifts the
 /// shields instead (`holdStick`), and the throttle is left as it is. The guns and the missiles are
 /// `playerWeapons`'.
 ///
-/// Not yet ported: the mouse (mouse mode uses the keys for now); matching a target's speed; the
-/// missiles and the other actions it reads; the `half_throttle` and `reversed_controls` deathmatch
-/// power-ups (`gameobj.PowerUp`); and the objectives window's use of the stick while `0x0051CF04`
-/// is set (`0x00413200`).
+/// Not yet ported: the `half_throttle` and `reversed_controls` deathmatch power-ups
+/// (`gameobj.PowerUp`); and the objectives window's use of the stick while `0x0051CF04` is set
+/// (`0x00413200`).
 pub fn playerControls(
     player: *Player,
     devices: *Devices,
     object: *gameobj.GameObject,
     combat: *const create.ShipCombat,
+    stick: *[2]i16,
     view: camera.View,
     frame_duration: i32,
 ) void {
     if (player.balancing_shields or player.power_held) {
         holdStick(player, devices, object, combat, frame_duration);
     } else {
-        steer(player, devices, object, view);
+        steer(player, devices, object, stick, view);
     }
 
     // If both strafe keys are held, STRAFE RIGHT wins, since the game checks it last.
@@ -883,7 +930,7 @@ pub fn playerControls(
 }
 
 /// The steering and the throttle of `player_controls`, while the stick is free.
-fn steer(player: *Player, devices: *Devices, object: *gameobj.GameObject, view: camera.View) void {
+fn steer(player: *Player, devices: *Devices, object: *gameobj.GameObject, stick: *[2]i16, view: camera.View) void {
     const pitch_sign: f32 = if (devices.settings.joystick_invert) 1 else -1;
     switch (devices.settings.control_mode) {
         .joystick => {
@@ -914,7 +961,26 @@ fn steer(player: *Player, devices: *Devices, object: *gameobj.GameObject, view: 
                 playerThrottleKeys(player, devices, object);
             }
         },
-        .keyboard, .mouse, _ => {
+        .mouse => {
+            // Each axis of the stick gathers the mouse's movement, as a 16-bit count, and is held
+            // to `mouse_range` of the centre.
+            //
+            // **Fix:** the game adds the movement of the last read each time the order runs, once
+            // a frame as well as once a step, so the faster the frames the further the mouse
+            // steers. The port adds each read's once.
+            const mouse = &devices.mouse;
+            if (!mouse.gathered) {
+                for (stick, mouse.state.moved) |*position, moved| {
+                    position.* = std.math.clamp(position.* +% @as(i16, @truncate(moved)), -mouse_range, mouse_range);
+                }
+                mouse.gathered = true;
+            }
+            object.yaw_input = mouseAxis(stick[0]);
+            object.pitch_input = -mouseAxis(stick[1]) * pitch_sign;
+            object.roll_input = rollKeys(devices);
+            playerThrottleKeys(player, devices, object);
+        },
+        .keyboard, _ => {
             // The arrow keys orbit the target and external views, so they do not turn the ship in
             // those.
             if (view == .target or view == .external) {
@@ -944,9 +1010,10 @@ fn steer(player: *Player, devices: *Devices, object: *gameobj.GameObject, view: 
 }
 
 /// What the stick does while POWERBALL WINDOW or SHIELD BALANCING is held (`player_controls`): the
-/// steering inputs are zeroed, and the joystick's X and Y, or with the keyboard the yaw and pitch
-/// keys as a whole deflection each, move the power (`power.move`) or, while SHIELD BALANCING is
-/// held, shift the shields (`power.balanceShields`).
+/// steering inputs are zeroed, and the joystick's X and Y, with the keyboard the yaw and pitch keys
+/// as a whole deflection each, or the mouse's last movement times `mouse_hold_scale` over
+/// `mouse_range`, move the power (`power.move`) or, while SHIELD BALANCING is held, shift the
+/// shields (`power.balanceShields`).
 fn holdStick(player: *Player, devices: *Devices, object: *gameobj.GameObject, combat: *const create.ShipCombat, frame_duration: i32) void {
     object.yaw_input = 0;
     object.pitch_input = 0;
@@ -957,7 +1024,11 @@ fn holdStick(player: *Player, devices: *Devices, object: *gameobj.GameObject, co
             const state = devices.joystick.state;
             stick = .{ @as(f32, @floatFromInt(state.x)) * axis_scale, @as(f32, @floatFromInt(state.y)) * axis_scale };
         },
-        .keyboard, .mouse, _ => {
+        .mouse => {
+            const moved: @Vector(2, f32) = @floatFromInt(@as(@Vector(2, i32), devices.mouse.state.moved));
+            stick = moved * @as(@Vector(2, f32), @splat(mouse_hold_scale / @as(f32, @floatFromInt(mouse_range))));
+        },
+        .keyboard, _ => {
             if (devices.active(.rotate_clockwise, false)) {
                 stick[0] = -1;
             } else if (devices.active(.rotate_anti_clockwise, false)) {
@@ -1045,13 +1116,16 @@ pub fn setPlayerTarget(display: *hud.State, all: *create.Objects, index: i16, co
 /// 2 left, and with none. `aigeneric.playerControl` runs it after `matchSpeed`, since nothing
 /// between reads what it does.
 ///
-/// Not ported: in the mouse's mode, the left button, which fires too, and the right, which
-/// launches; and in a multiplayer game, FIRE LASERS firing from under the cloak, and typing a
+/// In the mouse's mode the left button fires as FIRE LASERS does, and the right launches as LAUNCH
+/// MISSILE does, once a press (`Player.mouse_launched`).
+///
+/// Not ported: in a multiplayer game, FIRE LASERS firing from under the cloak, and typing a
 /// message, which leaves them unread.
 pub fn playerWeapons(world: gameobj.World, devices: *Devices, index: u16) void {
     const slot = &world.objects.slots[index];
     const object = &slot.object;
-    if (devices.active(.fire_lasers, false)) {
+    const mouse = if (devices.settings.control_mode == .mouse) devices.mouse.state.buttons else Mouse.Buttons{};
+    if (devices.active(.fire_lasers, false) or mouse.left) {
         if (!object.flags.jumping) {
             if (world.display) |display| _ = display.windows.open(.gunnery, false);
             if (object.flags.cloaked) {
@@ -1066,6 +1140,14 @@ pub fn playerWeapons(world: gameobj.World, devices: *Devices, index: u16) void {
         guns.nova.release(world, index);
     }
     if (devices.active(.launch_missile, true)) launchMissile(world, index);
+    if (mouse.right) {
+        if (!world.player.mouse_launched) {
+            world.player.mouse_launched = true;
+            launchMissile(world, index);
+        }
+    } else {
+        world.player.mouse_launched = false;
+    }
     if (devices.active(.cloak_ship, true) and world.view != ._unknown_13 and cloak.canCloak(slot)) {
         const settled = if (slot.cloak) |cloaking| !cloaking.changing else true;
         const on = !object.flags.cloaked;
@@ -1775,6 +1857,7 @@ test "the window keys" {
 const testing_combat = std.mem.zeroInit(create.ShipCombat, .{ .shield_power = 8, .shield_recharge = 10 });
 
 test "held, the stick moves the power or shifts the shields" {
+    var stick: [2]i16 = .{ 0, 0 };
     var object: gameobj.GameObject = std.mem.zeroes(gameobj.GameObject);
     object.power_setting = .{ .x = 1, .y = 1, .z = 1 };
     object.throttle = 0.5;
@@ -1788,7 +1871,7 @@ test "held, the stick moves the power or shifts the shields" {
     devices.read();
     // With POWERBALL WINDOW held, the yaw keys move the power a whole deflection, by the frame's
     // ticks, instead of steering, and the throttle keys do nothing.
-    playerControls(&player, &devices, &object, &testing_combat, .cockpit, 16);
+    playerControls(&player, &devices, &object, &testing_combat, &stick, .cockpit, 16);
     try std.testing.expectEqual(17, object.power_setting.x);
     try std.testing.expectEqual(0, object.yaw_input);
     try std.testing.expectEqual(0.5, object.throttle);
@@ -1796,13 +1879,14 @@ test "held, the stick moves the power or shifts the shields" {
     player.balancing_shields = true;
     keyboard.down[controls.binding(.nose_down).key] = true;
     devices.read();
-    playerControls(&player, &devices, &object, &testing_combat, .cockpit, 16);
+    playerControls(&player, &devices, &object, &testing_combat, &stick, .cockpit, 16);
     try std.testing.expectEqual(17, object.power_setting.x);
     try std.testing.expectEqual(45, object.shields.fore);
     try std.testing.expectEqual(40, object.shields.aft);
 }
 
 test playerControls {
+    var stick: [2]i16 = .{ 0, 0 };
     const gameobj_test = gameobj;
     var object: gameobj_test.GameObject = std.mem.zeroes(gameobj_test.GameObject);
     var devices: Devices = .{ .settings = .{ .control_mode = .keyboard } };
@@ -1813,52 +1897,53 @@ test playerControls {
 
     // A held key steps its input, and the fourth run has it past full deflection.
     keyboard.down[nose_up] = true;
-    for (0..4) |_| playerControls(&player, &devices, &object, &testing_combat, .cockpit, 16);
+    for (0..4) |_| playerControls(&player, &devices, &object, &testing_combat, &stick, .cockpit, 16);
     try std.testing.expectApproxEqAbs(1.2, object.pitch_input, 1e-6);
     // Released, the input falls back to nothing on the next run.
     keyboard.down[nose_up] = false;
-    playerControls(&player, &devices, &object, &testing_combat, .cockpit, 16);
+    playerControls(&player, &devices, &object, &testing_combat, &stick, .cockpit, 16);
     try std.testing.expectEqual(0, object.pitch_input);
 
     // The orbiting views take the arrow keys for themselves.
     keyboard.down[nose_up] = true;
-    playerControls(&player, &devices, &object, &testing_combat, .external, 16);
+    playerControls(&player, &devices, &object, &testing_combat, &stick, .external, 16);
     try std.testing.expectEqual(0, object.pitch_input);
     keyboard.down[nose_up] = false;
 
     // Half the yaw banks the ship into its turn.
     keyboard.down[controls.binding(.rotate_anti_clockwise).key] = true;
-    playerControls(&player, &devices, &object, &testing_combat, .cockpit, 16);
+    playerControls(&player, &devices, &object, &testing_combat, &stick, .cockpit, 16);
     try std.testing.expectApproxEqAbs(0.3, object.yaw_input, 1e-6);
     try std.testing.expectApproxEqAbs(0.15, object.roll_input, 1e-6);
     keyboard.down[controls.binding(.rotate_anti_clockwise).key] = false;
 
     // ACCELERATE steps the throttle, fifty runs from none to full.
     keyboard.down[accelerate] = true;
-    for (0..50) |_| playerControls(&player, &devices, &object, &testing_combat, .cockpit, 16);
+    for (0..50) |_| playerControls(&player, &devices, &object, &testing_combat, &stick, .cockpit, 16);
     try std.testing.expectApproxEqAbs(1, object.throttle, 1e-5);
     keyboard.down[accelerate] = false;
     // FULL THROTTLE and ZERO THROTTLE set it outright, once for each press.
     keyboard.down[controls.binding(.zero_throttle).key] = true;
-    playerControls(&player, &devices, &object, &testing_combat, .cockpit, 16);
+    playerControls(&player, &devices, &object, &testing_combat, &stick, .cockpit, 16);
     try std.testing.expectEqual(0, object.throttle);
     keyboard.down[controls.binding(.zero_throttle).key] = false;
 
     // With JoystickInvert off, the nose keys pitch the other way.
     devices.settings.joystick_invert = false;
     keyboard.down[nose_up] = true;
-    playerControls(&player, &devices, &object, &testing_combat, .cockpit, 16);
+    playerControls(&player, &devices, &object, &testing_combat, &stick, .cockpit, 16);
     try std.testing.expectApproxEqAbs(-0.3, object.pitch_input, 1e-6);
     keyboard.down[nose_up] = false;
 
     // Both strafe keys held, STRAFE RIGHT wins.
     keyboard.down[controls.binding(.strafe_left).key] = true;
     keyboard.down[controls.binding(.strafe_right).key] = true;
-    playerControls(&player, &devices, &object, &testing_combat, .cockpit, 16);
+    playerControls(&player, &devices, &object, &testing_combat, &stick, .cockpit, 16);
     try std.testing.expectEqual(1, object.lateral_input);
 }
 
 test "steering with the joystick" {
+    var mouse_stick: [2]i16 = .{ 0, 0 };
     var object: gameobj.GameObject = std.mem.zeroes(gameobj.GameObject);
     var stick = testStick();
     var devices: Devices = .{};
@@ -1869,7 +1954,7 @@ test "steering with the joystick" {
     // directly: 1000 is none and 0 is full.
     stick.state = .{ .x = 500, .y = -250, .z = 0, .rx = 0, .ry = 0, .rz = 800, .sliders = .{ 250, 0 }, .pov = @splat(JoystickState.centred), .buttons = @splat(0) };
     devices.read();
-    playerControls(&player, &devices, &object, &testing_combat, .cockpit, 16);
+    playerControls(&player, &devices, &object, &testing_combat, &mouse_stick, .cockpit, 16);
     try std.testing.expectApproxEqAbs(0.5, object.yaw_input, 1e-6);
     try std.testing.expectApproxEqAbs(-0.25, object.pitch_input, 1e-6);
     try std.testing.expectApproxEqAbs(0.25, object.roll_input, 1e-6);
@@ -1877,26 +1962,100 @@ test "steering with the joystick" {
 
     // Holding JOYSTICK ROLL makes X roll instead.
     devices.keyboard.down[controls.binding(.joystick_roll).key] = true;
-    playerControls(&player, &devices, &object, &testing_combat, .cockpit, 16);
+    playerControls(&player, &devices, &object, &testing_combat, &mouse_stick, .cockpit, 16);
     try std.testing.expectEqual(0, object.yaw_input);
     try std.testing.expectApproxEqAbs(0.5, object.roll_input, 1e-6);
     devices.keyboard.down[controls.binding(.joystick_roll).key] = false;
 
     // With TwistEnable, the twist rolls, and X still yaws and banks.
     devices.settings.twist_enabled = true;
-    playerControls(&player, &devices, &object, &testing_combat, .cockpit, 16);
+    playerControls(&player, &devices, &object, &testing_combat, &mouse_stick, .cockpit, 16);
     try std.testing.expectApproxEqAbs(0.5, object.yaw_input, 1e-6);
     try std.testing.expectApproxEqAbs(0.8 + 0.25, object.roll_input, 1e-6);
     devices.settings.twist_enabled = false;
 
     // Turning JoystickInvert off reverses pitch; in the orbiting views the stick still steers.
     devices.settings.joystick_invert = false;
-    playerControls(&player, &devices, &object, &testing_combat, .external, 16);
+    playerControls(&player, &devices, &object, &testing_combat, &mouse_stick, .external, 16);
     try std.testing.expectApproxEqAbs(0.25, object.pitch_input, 1e-6);
     try std.testing.expectApproxEqAbs(0.5, object.yaw_input, 1e-6);
 }
 
+test "steering with the mouse" {
+    var stick: [2]i16 = .{ 0, 0 };
+    var object: gameobj.GameObject = std.mem.zeroes(gameobj.GameObject);
+    var devices: Devices = .{ .settings = .{ .control_mode = .mouse } };
+    var player: Player = .{};
+
+    // Half the range to the right yaws at 0.35, and three quarters of it up pitches at 0.675.
+    devices.mouse.motion = .{ 400, -600 };
+    devices.read();
+    playerControls(&player, &devices, &object, &testing_combat, &stick, .cockpit, 16);
+    try std.testing.expectEqual([2]i16{ 400, -600 }, stick);
+    try std.testing.expectApproxEqAbs(0.35, object.yaw_input, 1e-6);
+    try std.testing.expectApproxEqAbs(0.675, object.pitch_input, 1e-6);
+    try std.testing.expectApproxEqAbs(0.175, object.roll_input, 1e-6);
+    // Run again before the next read, the stick stays where it is.
+    playerControls(&player, &devices, &object, &testing_combat, &stick, .cockpit, 16);
+    try std.testing.expectEqual([2]i16{ 400, -600 }, stick);
+
+    // Held at the edge of the range, the deflection is whole.
+    devices.mouse.motion = .{ 1000, 0 };
+    devices.read();
+    playerControls(&player, &devices, &object, &testing_combat, &stick, .cockpit, 16);
+    try std.testing.expectEqual(mouse_range, stick[0]);
+    try std.testing.expectApproxEqAbs(1, object.yaw_input, 1e-6);
+
+    // Back within the dead band, it steers nothing.
+    devices.mouse.motion = .{ -700, 400 };
+    devices.read();
+    playerControls(&player, &devices, &object, &testing_combat, &stick, .cockpit, 16);
+    try std.testing.expectEqual([2]i16{ 100, -200 }, stick);
+    try std.testing.expectEqual(0, object.yaw_input);
+    try std.testing.expectEqual(0, object.pitch_input);
+
+    // What is less than a count waits for the next read.
+    devices.mouse.motion = .{ 0.6, 0 };
+    devices.read();
+    try std.testing.expectEqual([2]i32{ 0, 0 }, devices.mouse.state.moved);
+    devices.mouse.motion[0] += 0.6;
+    devices.read();
+    try std.testing.expectEqual([2]i32{ 1, 0 }, devices.mouse.state.moved);
+}
+
+test "the mouse's right button launches once a press, in its mode" {
+    var armed: missiles.testing.Armed = undefined;
+    try armed.init(std.testing.allocator);
+    defer armed.deinit();
+    const index = try armed.add(.friendly, @splat(0));
+    const enemy = try armed.add(.hostile, .{ 0, 0, 20000 });
+    _ = try aigeneric.push(armed.mission.orders(), index, .player_control, .{ .kind = .ship, .index = @intCast(enemy), .component = -1 });
+    var display: hud.State = .{};
+    display.missiles.build(&armed.mission.slot(index).object);
+    display.lock.phase = .locked;
+    var world = armed.mission.world();
+    world.display = &display;
+    var devices: Devices = .{ .settings = .{ .control_mode = .keyboard } };
+    devices.mouse.buttons.right = true;
+    devices.read();
+
+    // With the keyboard steering, the button does nothing.
+    playerWeapons(world, &devices, index);
+    try std.testing.expectEqual(0, armed.live());
+    try std.testing.expect(!world.player.mouse_launched);
+    // With the mouse, it launches, and again only once it has been let go.
+    devices.settings.control_mode = .mouse;
+    playerWeapons(world, &devices, index);
+    try std.testing.expectEqual(1, armed.live());
+    try std.testing.expect(world.player.mouse_launched);
+    devices.mouse.buttons.right = false;
+    devices.read();
+    playerWeapons(world, &devices, index);
+    try std.testing.expect(!world.player.mouse_launched);
+}
+
 test "a joystick without a throttle leaves the throttle to the keys" {
+    var mouse_stick: [2]i16 = .{ 0, 0 };
     var object: gameobj.GameObject = std.mem.zeroes(gameobj.GameObject);
     var stick: TestDevice = .{ .capabilities = .{ .name = "Two Axes", .axes = .initMany(&.{ .x, .y }), .buttons = 2, .hats = 0 } };
     var devices: Devices = .{};
@@ -1904,11 +2063,12 @@ test "a joystick without a throttle leaves the throttle to the keys" {
     var player: Player = .{};
     devices.read();
     devices.keyboard.down[controls.binding(.accelerate).key] = true;
-    for (0..5) |_| playerControls(&player, &devices, &object, &testing_combat, .cockpit, 16);
+    for (0..5) |_| playerControls(&player, &devices, &object, &testing_combat, &mouse_stick, .cockpit, 16);
     try std.testing.expectApproxEqAbs(0.1, object.throttle, 1e-6);
 }
 
 test "the burns last while their keys are held, and stop without fuel" {
+    var stick: [2]i16 = .{ 0, 0 };
     var object: gameobj.GameObject = std.mem.zeroes(gameobj.GameObject);
     var devices: Devices = .{ .settings = .{ .control_mode = .keyboard } };
     const keyboard = &devices.keyboard;
@@ -1916,23 +2076,23 @@ test "the burns last while their keys are held, and stop without fuel" {
     object.afterburner_fuel = 100;
 
     keyboard.down[controls.binding(.afterburners).key] = true;
-    playerControls(&player, &devices, &object, &testing_combat, .cockpit, 16);
+    playerControls(&player, &devices, &object, &testing_combat, &stick, .cockpit, 16);
     try std.testing.expect(object.afterburner);
     keyboard.down[controls.binding(.afterburners).key] = false;
-    playerControls(&player, &devices, &object, &testing_combat, .cockpit, 16);
+    playerControls(&player, &devices, &object, &testing_combat, &stick, .cockpit, 16);
     try std.testing.expect(!object.afterburner);
 
     // The toggle holds it on until it is pressed again.
     keyboard.down[controls.binding(.afterburner_toggle).key] = true;
-    playerControls(&player, &devices, &object, &testing_combat, .cockpit, 16);
+    playerControls(&player, &devices, &object, &testing_combat, &stick, .cockpit, 16);
     try std.testing.expect(object.afterburner);
     keyboard.read();
-    playerControls(&player, &devices, &object, &testing_combat, .cockpit, 16);
+    playerControls(&player, &devices, &object, &testing_combat, &stick, .cockpit, 16);
     try std.testing.expect(object.afterburner);
 
     // Out of fuel, neither burn runs.
     object.afterburner_fuel = 0;
-    playerControls(&player, &devices, &object, &testing_combat, .cockpit, 16);
+    playerControls(&player, &devices, &object, &testing_combat, &stick, .cockpit, 16);
     try std.testing.expect(!object.afterburner);
     try std.testing.expect(!object.reverse_thrust);
 }

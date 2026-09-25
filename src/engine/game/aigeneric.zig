@@ -458,7 +458,8 @@ pub fn playerControl(ctx: Context, index: u16) void {
     const devices = ctx.devices orelse return;
     const slot = &ctx.world.objects.slots[index];
     const combat = slot.combat orelse return;
-    input.playerControls(ctx.world.player, devices, &slot.object, combat, ctx.world.view, ctx.clock.frame_duration);
+    // The current order's data keeps the mouse's stick position.
+    input.playerControls(ctx.world.player, devices, &slot.object, combat, slot.orders[0].data.words[0..2], ctx.world.view, ctx.clock.frame_duration);
     input.matchSpeed(ctx.world, devices);
     input.playerWeapons(ctx.world, devices, index);
 }
