@@ -20,6 +20,8 @@ pub const Command = union(enum) {
     parts: struct { mission: []const u8 },
     /// Disassembles the script bytecode.
     script: struct { mission: []const u8 },
+    /// Writes the mission and its script again, and checks they come back the same.
+    check: struct { mission: []const u8 },
 
     pub const usage =
         \\  dte info <mission>              summarise a mission
@@ -29,6 +31,8 @@ pub const Command = union(enum) {
         \\  dte strings <mission>           dump the string pool
         \\  dte parts <mission>             list the script's named routines
         \\  dte script <mission>            disassemble the script bytecode
+        \\  dte check <mission>             write the mission and its script again, and check that
+        \\                                  they come back the same
         \\
     ;
 
@@ -43,6 +47,7 @@ pub const Command = union(enum) {
             .strings => .{ .strings = .{ .mission = args[1] } },
             .parts => .{ .parts = .{ .mission = args[1] } },
             .script => .{ .script = .{ .mission = args[1] } },
+            .check => .{ .check = .{ .mission = args[1] } },
         };
     }
 
@@ -65,6 +70,7 @@ pub const Command = union(enum) {
             .strings => try strings(ctx, mission),
             .parts => try parts(ctx, mission),
             .script => try script(ctx, mission, models),
+            .check => try check(ctx, mission),
         }
     }
 };
@@ -446,4 +452,70 @@ test Command {
     try std.testing.expectError(error.Usage, Command.parse(&.{"script"}));
     try std.testing.expectError(error.Usage, Command.parse(&.{ "script", "M01.DTE", "extra" }));
     try std.testing.expectError(error.Usage, Command.parse(&.{ "disassemble", "M01.DTE" }));
+}
+
+/// Writes `mission` again and checks what comes back: from its sections' whole rooms, the same
+/// bytes, where it is laid out as the template lays it out; from its records alone, the same
+/// records; and each routine of its script, assembled again from its disassembly, the same bytes
+/// but for the block's padding. Fails where anything differs.
+fn check(ctx: Context, mission: dte.Mission) !void {
+    const gpa = ctx.arena;
+    const out = ctx.stdout;
+    if (dte.write.rooms(mission)) |rooms| {
+        const bytes = try dte.write.write(gpa, &rooms, .{});
+        if (!std.mem.eql(u8, bytes, mission.image)) return fail(out, "written again from its rooms, the file differs");
+        try out.writeAll("rooms: the same bytes\n");
+    } else {
+        try out.writeAll("rooms: laid out otherwise than the template\n");
+    }
+
+    const read = try dte.write.records(mission);
+    const written = try dte.write.write(gpa, &read, .{});
+    if (!dte.write.sameRecords(read, try dte.write.records(try .parse(written)))) return fail(out, "written again from its records, the records differ");
+    try out.writeAll("records: the same\n");
+
+    const code = try mission.script();
+    var assembled: usize = 0;
+    var skipped: usize = 0;
+    for (try mission.routines(gpa)) |routine| {
+        const disassembly = (try dte.disassemble(gpa, code, routine.start)) orelse continue;
+        // Bytes nothing reaches can't be written again from a disassembly.
+        if (disassembly.incomplete or disassembly.unreached > 0) {
+            skipped += 1;
+            continue;
+        }
+        const original = code[routine.start..][0..routine.extent];
+        const again = try reassemble(gpa, disassembly.instructions, routine.constants(code));
+        const block = dte.BlockReader.at(original, 0).?;
+        const header = dte.BlockReader.header_len;
+        const last = disassembly.instructions[disassembly.instructions.len - 1];
+        const used = last.address + last.size() - routine.start;
+        const same = again.len == original.len and
+            std.mem.eql(u8, again[0..used], original[0..used]) and
+            std.mem.eql(u8, again[header + block.code.len ..], original[header + block.code.len ..]);
+        if (!same) {
+            try out.print("routine at {d}: assembled again, it differs\n", .{routine.start});
+            return error.Differs;
+        }
+        assembled += 1;
+    }
+    try out.print("script: {d} routines assembled again the same, {d} with bytes nothing reaches\n", .{ assembled, skipped });
+}
+
+/// A routine assembled again from its disassembly, with its constant table as it was.
+fn reassemble(gpa: std.mem.Allocator, instructions: []const dte.Instruction, constants: []align(1) const u32) ![]u8 {
+    var routine: dte.assemble.Routine = .init(gpa);
+    var at: std.AutoHashMapUnmanaged(usize, dte.assemble.Label) = .empty;
+    for (instructions) |instruction| try at.put(gpa, instruction.address, try routine.label());
+    for (instructions) |instruction| {
+        routine.place(at.get(instruction.address).?);
+        try dte.assemble.emit(&routine, instruction, &at);
+    }
+    for (constants) |constant| try routine.constants.append(gpa, constant);
+    return routine.finish();
+}
+
+fn fail(out: *Io.Writer, what: []const u8) error{Differs} {
+    out.print("{s}\n", .{what}) catch {};
+    return error.Differs;
 }
