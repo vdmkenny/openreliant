@@ -60,8 +60,8 @@ After moving objects, `objects_update` gathers colliding candidates: slot index,
 | Either lists components, but not both, and neither is the limpet pod (`0xBC`) | The ship is tested against the other's collision tree, up to nine times over (`0x00465C50`) |
 | Both list components | Nothing |
 | Two torpedoes, two pieces of debris, or two satellites (`0x71`) | Nothing |
-| Either is a mine, against a fighter | The mine goes off |
-| A torpedo against anything else | It goes off |
+| Either is a mine, against a fighter | The fighter's fore quadrant takes 500 as a collision, the fighter named as its own attacker, and the mine is destroyed |
+| A torpedo against anything else | What it met takes 5001 to its fore quadrant as a crash, named as its own attacker, and the torpedo is destroyed, ejecting no pilot |
 | Anything else | The impact's damage, then both move again and are set apart |
 
 Before separation, the two objects apply an impulse shove (`0x00464E80`). The contact point on each sphere moves with the object between steps, so a turning ship strikes with its wingtip speed. The impulse is calculated from closing velocity over both masses and `angular_response`, doubled so the bounce preserves relative impact speed, and applied equally and oppositely via `object_knock`. Attached objects and the Ripper with a captured victim receive no shove.
@@ -76,6 +76,6 @@ Impact damage is calculated from the collision impulse (`collision_damage`, `0x0
 
 Ported so far: the sweep, ignored pairs, shove impulse, object separation, hull collision tree tests, and damage ([`collision.zig`](../../src/engine/game/collision.zig)). Collisions do not damage components: only torpedo impacts and ships destroying themselves against a hull call `component_damage`.
 
-Not yet: the mine's explosion ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
+A destroyed torpedo or mine runs Explode ([Destruction](objects.md#destruction)), through `object_destroyed_net` (`0x00402100`), which first tells the other players where a network session runs a mission that is not multiplayer's. Not ported: that message, and a mine's 5000 in a multiplayer game, which credits the kill to its owner ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
 
 Difficulty scales collision damage ([Destruction](objects.md#destruction)).
