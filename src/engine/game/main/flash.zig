@@ -4,8 +4,9 @@
 //! hit (`hud.Interference`). **Unverified:** `0x00494940` lies after `main.cpp`'s known code,
 //! before `matmanager.cpp`'s; by what it does it is this file's.
 //!
-//! Not ported: the byte `0x0054EA7C`, which keeps the red away while it is set. **Unknown:** what
-//! sets it.
+//! Not ported: `exhaust_burning` (`0x0054EA7C`), which keeps the red away while the player's ship
+//! stands in a capital ship's engine exhaust, where the flash shows white instead (`exhaust_burn`,
+//! `0x00469850`, [#271](https://github.com/vdmkenny/openreliant/issues/271)).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;

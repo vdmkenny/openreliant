@@ -1464,3 +1464,11 @@ address	kind	name	type	comment
 0051d10c	data	tractors	void *[5]	The tractors in use: two beams, a bubble and a light each
 0051d120	data	tractor_texture	void *	laser2, which the tractors' beams are drawn over
 004e3e1c	data	scoop_up_stage_ticks	int[9]	How long each of Scoop Up's stages lasts, in ticks: 100 for the beams coming on, 50 for them going out, 250 for the wait; 0 for the rest
+00469810	function	exhaust_ships_list	void (void)	Lists, once, the ships whose engine exhaust burns (exhaust_ship_add) in exhaust_ships and exhaust_ship_count, and sets exhaust_ships_listed
+004699e0	function	exhaust_ship_add	void __fastcall (int slot)	Adds the ship in slot to exhaust_ships where it lists components and has an engine glow (0x00469BC0)
+00469850	function	exhaust_burn	void (void)	Once a frame under Player Control: where the player's ship stands inside the engine glows of a listed ship whose throttle is up (exhaust_depth), sets exhaust_burning, whites the view out for 100 ticks times the depth, and on a tick that divides by 7 damages it on its fore quadrant by 23 times the depth, at most 1, as a collision
+00469a10	function	exhaust_depth		How deep a point stands in a node's engine glows and its children's, summed: 1 at a glow's origin to 0 at its far corner, each glow's box stretched by the ship's throttle and engines
+0054ea7c	data	exhaust_burning	byte	Set while the player's ship stands in a capital ship's engine exhaust (exhaust_burn), which keeps screen_flash_draw's red away
+0054ea80	data	exhaust_ships	int[400]	The slots of the ships whose engine exhaust burns (exhaust_ships_list)
+0054f0c0	data	exhaust_ship_count	int	How many exhaust_ships holds
+0054f0c4	data	exhaust_ships_listed	byte	Set once exhaust_ships_list has listed the ships
