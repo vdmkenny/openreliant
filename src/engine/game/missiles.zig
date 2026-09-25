@@ -112,7 +112,8 @@ pub const Stats = extern struct {
     _unknown_00: f32,
     /// The 3D sound its launch plays, which follows the missile (`sound3d.sounds`); 0 for none.
     launch_sound: i32,
-    /// `Missile.flight_time`, in ticks: `100 * ` the file's seconds, truncated.
+    /// `Missile.flight_time`, in ticks: the file's seconds times `main.ticks_per_second`
+    /// (`0x004DC440`), truncated.
     flight_time: i32,
     /// What a hit does to a shield and to a hull, and to a component of a ship that lists them.
     damage: formats.Damage,
@@ -203,7 +204,7 @@ pub const Table = struct {
             flight.pitch_rate = missile.turn_rate;
             flight.yaw_rate = missile.turn_rate;
             flight.roll_rate = missile.turn_rate;
-            record.flight_time = std.math.lossyCast(i32, missile.flight_time * 100);
+            record.flight_time = std.math.lossyCast(i32, missile.flight_time * @as(f32, @import("main.zig").ticks_per_second));
             record.damage = missile.damage;
             record.component_damage = missile.component_damage;
             record.lock_time = std.math.lossyCast(i32, missile.lock_time);
@@ -218,15 +219,16 @@ pub const Table = struct {
     }
 };
 
-/// Within this of the launcher's nose a missile locks on (`0x004DC484`).
-const lock_cone: f32 = 0.7;
+/// The least cosine of the angle off a nose at which what lies there is ahead of it: where a
+/// launcher's missile can lock on, and what a Solomon counts as ahead (`0x004DC484`).
+const nose_cone: f32 = 0.7;
 
 /// Whether what lies `toward` a launcher whose nose points along `nose` is where a missile of
-/// `stats` can lock on: within its lock range, and within 0.7 of the nose. The player's lock and
-/// the Fight order's both ask it (`missile_lock_possible`, `fight_fire`).
+/// `stats` can lock on: within its lock range, and within `nose_cone` of the nose. The player's
+/// lock and the Fight order's both ask it (`missile_lock_possible`, `fight_fire`).
 pub fn inLockReach(stats: *const Stats, toward: Vector, nose: Vector) bool {
     if (math.lengthSquared(toward) > stats.lock_range * stats.lock_range) return false;
-    return math.dot(math.normalize(toward), nose) >= lock_cone;
+    return math.dot(math.normalize(toward), nose) >= nose_cone;
 }
 
 // --- In flight -------------------------------------------------------------------------------
@@ -440,8 +442,10 @@ fn setOrder(world: gameobj.World, at: u8, order: Order) void {
 const jettison_drop: f32 = 50;
 const jettison_ticks = 100;
 
-/// A pod's launch, at full thrust and twice that (`missile_order_pod_launch`), and a rail's drop,
-/// stop and burn (`missile_order_rail_launch`), in ticks.
+/// The throttle of a pod's launch, twice full thrust, and how long it lasts
+/// (`missile_order_pod_launch`, `0x00496B20`); and how long a rail's drop, stop and burn last
+/// (`missile_order_rail_launch`), in ticks.
+const pod_launch_throttle: f32 = 2;
 const pod_launch_ticks = 50;
 const rail_drop_ticks = 25;
 const rail_stop_ticks = 50;
@@ -465,7 +469,7 @@ fn run(world: gameobj.World, at: u8) void {
     switch (missile.order) {
         .pod_launch => {
             if (ticks >= pod_launch_ticks) return setOrder(world, at, missile.stats(&all.missile_stats).order);
-            steady(object, 2);
+            steady(object, pod_launch_throttle);
         },
         .rail_launch => {
             if (ticks >= rail_burn_ticks) return setOrder(world, at, missile.stats(&all.missile_stats).order);
@@ -578,9 +582,6 @@ fn solomon(world: gameobj.World, at: u8) void {
     home(world, at);
 }
 
-/// Within this of its nose, a Solomon counts a target as ahead (`0x004DC484`).
-const ahead_cone: f32 = 0.7;
-
 /// The target a Solomon picks among the objects of other sides to its own: of those that list no
 /// components, the nearest ahead, else the nearest at all; with none, likewise among the
 /// components of those that list them, or the object itself where none of its components is one to
@@ -620,7 +621,7 @@ const Choice = struct {
     fn consider(choice: *Choice, target: aigeneric.Target, at: Vector) void {
         const toward = at - choice.from;
         const candidate: Candidate = .{ .target = target, .distance = math.lengthSquared(toward) };
-        if (nearer(candidate, choice.ahead) and math.dot(math.normalize(toward), choice.nose) > ahead_cone) choice.ahead = candidate;
+        if (nearer(candidate, choice.ahead) and math.dot(math.normalize(toward), choice.nose) > nose_cone) choice.ahead = candidate;
         if (nearer(candidate, choice.any)) choice.any = candidate;
     }
 
@@ -766,7 +767,8 @@ fn collide(world: gameobj.World, at: u8) bool {
     const all = world.objects;
     const missile = all.missiles.get(at) orelse return false;
     const from = missile.slot.drawn.position;
-    const span = gameobj.vector(missile.object().root.next_position) - from;
+    const segment: objects.Segment = .between(from, gameobj.vector(missile.object().root.next_position));
+    const span = segment.span;
     const along = 1 / math.dot(span, span);
     var walk = all.walk();
     while (walk.next()) |index| {
@@ -781,8 +783,8 @@ fn collide(world: gameobj.World, at: u8) bool {
         const when = std.math.clamp(math.dot(span, to) * along, 0, 1);
         if (math.lengthSquared(span * @as(Vector, @splat(when)) - to) >= object.radius * object.radius) continue;
         if (missile.type.shockwave() != null) return stop(world, at);
-        const point = from + span * @as(Vector, @splat(sphereEntry(span, to, object.radius)));
-        const struck = collision.quadrant(object, math.transformTransposed(slot.drawn.orientation, point - slot.drawn.position));
+        const point = segment.point(segment.sphereEntry(slot.drawn.position, object.radius));
+        const struck = collision.quadrant(object, slot.drawn.inverse(point));
         if (object.shields.get(struck) < 0 or object.invulnerable == ._unknown_4) return hitHull(world, at, index, struck);
         const stats = missile.stats(&all.missile_stats);
         if (stats.damage.shield > 0) {
@@ -793,16 +795,6 @@ fn collide(world: gameobj.World, at: u8) bool {
         return stop(world, at);
     }
     return false;
-}
-
-/// How far along a segment of `span` it first meets the sphere of `radius` about `to`, from its
-/// start, as a share of its length.
-fn sphereEntry(span: Vector, to: Vector, radius: f32) f32 {
-    const a = math.dot(span, span);
-    const b = math.dot(span, to) * -2;
-    const c = math.dot(to, to) - radius * radius;
-    const root = @sqrt(@max(b * b - 4 * a * c, 0));
-    return (-b - root) / (a + a);
 }
 
 /// What a missile's hit counts as: a Screamer's apart from the rest.
@@ -915,17 +907,12 @@ pub const testing = struct {
                 point.orientation = math.identity;
             }
             armed.model.data[0].attachments = &armed.points;
-            armed.model.type.effects.mounts = .{ .context = &armed.model, .load = load };
+            armed.model.type.effects.mounts = objects.testing.mountsOf(&armed.model);
         }
 
         pub fn deinit(armed: *Armed) void {
             armed.mission.deinit();
             armed.model.deinit(std.testing.allocator);
-        }
-
-        fn load(context: *anyopaque, _: []const u8) ?objects.Mounts.Mounted {
-            const fixture: *create.testing.Model = @ptrCast(@alignCast(context));
-            return .{ .model = &fixture.source, .loaded = &fixture.loaded };
         }
 
         /// An armed ship of `side` at `at`, facing along Z, in the next slot.

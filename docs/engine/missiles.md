@@ -326,9 +326,6 @@ coordinates.
 **Fix:** the game works the mouth's corners' texture coordinates round the plume out as a nought
 over a nought, which is not a number; OpenReliant gives them 0.
 
-**Improvement:** the rings' widths are worked out from pi, where the game rounds half of it to
-1.5708.
-
 The glow (`missile_glow_create`, `0x00497450`) is two sprites over `gunflare\partic6`, lit and
 added: one in the look's colour, one white. Each frame while its missile lives, or the Russian
 torpedo it follows (`missile_glow_update`, `0x00497980`), it stands 50 behind the tail, the first
