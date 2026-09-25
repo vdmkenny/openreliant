@@ -10,6 +10,7 @@ const dte = @import("../dte.zig");
 const Opcode = dte.Opcode;
 const opcodes = @import("../../engine/vm/opcodes.zig");
 const commands = @import("../../engine/game/executor/commands.zig");
+const executor = @import("../../engine/game/executor.zig");
 
 /// A place in a routine that a branch goes to, placed once with `Routine.place`.
 pub const Label = enum(u32) { _ };
@@ -110,10 +111,7 @@ pub const Routine = struct {
     /// `command`, calling the Executor's command `name` by its place in the catalogue
     /// (`commands.table`), which a name not in it fails to build.
     pub fn command(routine: *Routine, comptime name: []const u8) Error!void {
-        const index = comptime for (commands.table, 0..) |entry, index| {
-            if (std.mem.eql(u8, entry.name, name)) break index;
-        } else @compileError("the Executor has no command " ++ name);
-        try routine.op(.command, &.{index});
+        try routine.op(.command, &.{executor.commandIndex(name)});
     }
 
     /// `push_string` of `text`, NUL-terminated.

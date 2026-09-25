@@ -18,7 +18,7 @@ Every block runs on a thread, a `0xB8`-byte context from the pool at `vm_thread_
 | `0x2C` | 128 | The stack |
 | `0xAC` | 1 | **Unknown.** `0xFF` when the thread starts |
 | `0xAD` | 1 | Call depth |
-| `0xAE` | 1 | **Unknown.** Zero when the thread starts; cleared when its trigger fires again |
+| `0xAE` | 1 | Set by `InterruptTriggerCode`: the thread waits for its trigger to fire again, which clears it |
 | `0xAF` | 1 | Index of the trigger that started the thread; `0xFF` for none |
 | `0xB0` | 4 | The last command's result, or the last part's return value, for `push_result` |
 | `0xB4` | 4 | **Unknown.** Zero when the thread starts |
@@ -27,6 +27,19 @@ Every block runs on a thread, a `0xB8`-byte context from the pool at `vm_thread_
 it loads the thread's stack pointer and block end into `vm_stack_top` and `vm_block_end`, makes it
 `vm_thread`, and calls the interpreter. The thread then has either finished, and its slot is freed,
 or yielded, and its stack pointer and block end are saved for the next run.
+
+Once a frame, `process_mission` (`0x0045A570`), which `mission_frame` calls after `events_flush`,
+runs the script: `vm_threads_run` (`0x0045B9B0`) runs on each thread that was running as the pass
+began, from the pool's first slot, but those `InterruptTriggerCode` holds. A thread the pass starts
+in a later slot runs in the same pass while the pass has threads still to count. `process_mission`
+then copies the live objects' places into the mission's ships (`mission_ships_sync`), and once the
+clock has ticked since, runs the timers and checks the proximity conditions (`0x0045AF60`).
+
+`mission_bind_tables` (`0x00453050`) fills the part tables as the mission is bound: section 8's
+parts, whose blocks lie in the script, then section 17's, whose blocks lie in `script_b`. A part
+whose offset is `0xFFFF` has no block. `mission_script_start` (`0x0045CBC0`) runs each part flagged
+to run at the start, at once, before any trigger is armed; then it arms every object's triggers, and
+marks each ship not destroyed and all its components intact.
 
 ## The interpreter
 
@@ -42,6 +55,22 @@ the last handler returned, 1 for the first. A handler returns `previous` to carr
 ends when one returns zero. The thread has then finished if a `return` ran at call depth zero,
 which sets `vm_finished`; otherwise it has yielded, and resumes at its instruction pointer on its
 next run.
+
+The opcodes take the stack's values as unsigned: the comparisons test with `CMP` and `SBB`, the
+divisions are `DIV`, and the sums and products wrap. The float opcodes load a value with `FILD`, as
+an exact whole number, so the float comparisons compare as the others do. The float arithmetic
+takes the value lower on the stack unsigned and the top value signed for a difference or a
+quotient, and the top value unsigned and the lower one signed for a sum or a product, then truncates
+with `__ftol`. The float stores apply a value, loaded unsigned, to the float the store target holds.
+While a mission runs, Direct3D leaves the FPU at single precision, so each of these results is the
+exact one rounded to a float. `push_percent n` pushes the top value times `n` times 0.01
+(`0x004DC730`), each product rounded.
+
+`select_array`, `select_global` and `select_argument` make a place the store target
+(`vm_store_target`) and push its value; `assign` and the compound stores write it and pop both. The
+array is a block of the game's variables from `jump_ready` (`0x0052A3F0`) on, which scripts use by
+number: 0 is `jump_ready`, 1 `warp_ready`, 4 `player_missiles_left` and 9 `mission_over`.
+**Unknown:** most of the others, and where the block ends; the shipped missions use the first 38.
 
 The loop also serves a script debugger. With one attached, it can stop a thread at a byte that
 section 10, one flag per script byte, marks, and report the position. **Unknown:** the debugger's
@@ -80,6 +109,10 @@ The arguments are popped, and the result is written where the first was and stor
 result. It is also the handler's return value, so a zero result ends the loop: `Wait` sets the
 thread's wake time to the clock plus its argument and returns zero, which suspends the thread until
 then.
+
+A command pops as many arguments as the catalogue gives it, whatever the script pushed. Mission
+801's script calls `StartDirectorCam` with four where it takes five, so the command takes the
+caller's block end for its first, and the part's `return` goes astray.
 
 ## The clock and timers
 
@@ -170,3 +203,30 @@ the same form: the [mission format](../formats/dte.md#operands) gives the encodi
 upper bound rather than for equality, but their distance value is not marked as checked, so the
 matcher never compares it. The catalogue is also generated into
 [`src/engine/vm/conditions.zig`](../../src/engine/vm/conditions.zig).
+
+## In OpenReliant
+
+[`vm/machine.zig`](../../src/engine/vm/machine.zig) runs the VM: the threads, the interpreter, the
+clock, the timers, and the commands that lie beside the interpreter (`CreateTimer`, `DestroyTimer`,
+`Wait`, `InterruptTriggerCode` and `KillAllScriptExecutionExecptMe`). A command not ported yet does
+nothing and gives 1, which lets the thread run on, and is logged the first time it runs
+([#36](https://github.com/vdmkenny/openreliant/issues/36),
+[#281](https://github.com/vdmkenny/openreliant/issues/281)).
+
+Where the game holds an address on a thread's stack, OpenReliant holds where the place lies in the
+mission image, which holds the script, its strings and every record a script names. The
+instruction pointer and a block's end are such places, and a frame is a place on the thread's own
+stack.
+
+**Improvement:** the clock ticks from the game's own clock, once every 100 ticks the pause does not
+hold, in the place of a timer of its own.
+
+**Fix:** where the game faults or reads past a table, OpenReliant ends the thread and logs why: an
+integer division by zero, a stack that runs past its 32 places or below its first, an opcode with no
+handler, an instruction or a record past the image, an argument read with no frame, a store with no
+target, a local past the fifth, and squads that hold one another round in a circle. The entries of a
+part table past the mission's parts have no block, where the game leaves them as `malloc` gave them.
+
+Not ported: the script debugger, the table of curve weights `mission_script_start` fills
+(`0x00456F00`), and the objects it creates for the ships the mission launches
+([#279](https://github.com/vdmkenny/openreliant/issues/279)).

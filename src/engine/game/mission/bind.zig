@@ -15,6 +15,7 @@ const Io = std.Io;
 
 const dte = @import("../../../formats/dte.zig");
 const files = @import("../../files.zig");
+const vm = @import("../../vm.zig");
 const bigfile = @import("../bigfile.zig");
 
 const log = std.log.scoped(.mission);
@@ -71,6 +72,10 @@ pub const Mission = struct {
     /// The record each entry of the object table stands for (`object_records`, `0x00538C90`),
     /// by object ID; null where none does.
     records: []?Record,
+    /// The part tables (`part_table`, `part_table_b`): section 8's parts, whose code is in the
+    /// script, and section 17's, whose code is in `script_b`.
+    parts: vm.Parts,
+    parts_b: vm.Parts,
 
     pub const Waypoint = struct {
         /// The waypoint's flight group, by its index.
@@ -93,10 +98,22 @@ pub const Mission = struct {
     pub fn bind(gpa: Allocator, image: []u8) !Mission {
         errdefer gpa.free(image);
         const file: dte.Mission = try .parse(image);
-        var mission: Mission = .{ .gpa = gpa, .image = image, .file = file, .formats = .{}, .group_ships = &.{}, .waypoints = &.{}, .records = &.{} };
+        var mission: Mission = .{
+            .gpa = gpa,
+            .image = image,
+            .file = file,
+            .formats = .{},
+            .group_ships = &.{},
+            .waypoints = &.{},
+            .records = &.{},
+            .parts = @splat(.{}),
+            .parts_b = @splat(.{}),
+        };
         for (file.directory) |entry| mission.formats = mission.formats.noting(entry.formats);
         resetShips(try mission.ships());
-        // What `0x00453050` makes of the sections once they are bound.
+        // What `mission_bind_tables` (`0x00453050`) makes of the sections once they are bound.
+        mission.parts = try partTable(file, .parts, .script);
+        mission.parts_b = try partTable(file, .parts_b, .script_b);
         mission.waypoints = try listWaypoints(gpa, try mission.ships());
         errdefer gpa.free(mission.waypoints);
         mission.group_ships = try listGroupShips(gpa, try mission.flightGroups(), try mission.ships());
@@ -128,6 +145,21 @@ pub const Mission = struct {
         return mission.group_ships[first..][0..@min(group.ship_count, mission.group_ships.len - first)];
     }
 };
+
+/// `mission_build_part_tables` (`0x00452F50`)'s filling of one part table from the part
+/// descriptors of section `descriptors`, each part's block in section `code` (`mission_fill_part`,
+/// `0x00452FD0`). **Fix:** the game fills the table from every descriptor, past its 256 entries.
+fn partTable(file: dte.Mission, descriptors: dte.Section, code: dte.Section) dte.Error!vm.Parts {
+    var table: vm.Parts = @splat(.{});
+    const found = try file.records(dte.Part, descriptors);
+    const script = file.entry(code);
+    const count = @min(found.len, table.len);
+    for (table[0..count], found[0..count]) |*entry, part| entry.* = .{
+        .block = if (part.isEmpty() or !script.isUsed()) null else @intCast(script.offset + part.start()),
+        .argument_count = part.arguments,
+    };
+    return table;
+}
 
 /// `mission_ships_reset` (`0x00452010`): each ship's run-time place and angles set to those it is
 /// placed at.

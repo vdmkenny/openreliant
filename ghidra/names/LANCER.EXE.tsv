@@ -1507,3 +1507,7 @@ address	kind	name	type	comment
 005099b0	data	settings_path_format	char[17]	The settings file's path after the game's directory: %sstarlancer.ini
 0050a800	data	texture_cache_name	char[13]	The hardware renderers' texture cache, which renderer_start opens: tcachehw.dat
 0050e1d8	data	forces_folder	char[8]	The folder load_force_effects reads the force-feedback effects from: forces\
+0045b9b0	function	vm_threads_run	void (void)	Once a frame (process_mission): runs on each thread that was running as the pass began, but those InterruptTriggerCode holds
+00537580	data	vm_clock_ticked	byte	Set as the clock ticks (vm_clock_tick); process_mission runs the timers once, then clears it
+00537400	data	vm_timers_running	byte	Whether process_mission runs the timers; set as the script starts
+00537410	data	vm_first_finished	uint	Set once the thread pool's first thread, the first start part's, finishes
