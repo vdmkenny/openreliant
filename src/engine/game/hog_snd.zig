@@ -75,7 +75,8 @@ const max_quarter_tones = 96;
 const quarter_tones_per_octave = 24;
 
 /// The bytes of 16-bit sound at the 3D sounds' rate that a tick plays, as `sound_3d_update` counts
-/// a sound's length in ticks. The game multiplies by their reciprocal (`0x004DC8B8`).
+/// a sound's length in ticks. **Improvement:** OpenReliant divides by them, where the game
+/// multiplies by their rounded reciprocal (`0x004DC8B8`).
 const bytes_per_tick = sound3d.sample_rate * @sizeOf(i16) / main.ticks_per_second;
 
 comptime {
@@ -211,7 +212,8 @@ pub const Volumes = struct {
         .speech = "Speechvolume",
     });
 
-    /// The master volume's share, as the game multiplies by it (`0x004DC6B0`, `1 / 127`).
+    /// The master volume's share. **Improvement:** an exact division by `loudest`, where the game
+    /// multiplies by its rounded reciprocal (`0x004DC6B0`).
     pub fn masterShare(volumes: Volumes) f32 {
         return @as(f32, @floatFromInt(volumes.master)) / loudest;
     }
@@ -598,16 +600,16 @@ pub const Sound = struct {
     }
 
     /// `sound_buffers_play` (`0x004822F0`): plays each positional sound gathered this frame, sound
-    /// `n` of `bank` for slot `n`, panned by its two levels and as loud as the louder, then
-    /// forgets them.
+    /// `n` of `bank` for slot `n`, panned by its two levels and as loud as the louder, each rounded
+    /// by `sr_round`, then forgets them.
     pub fn playBuffered(sound: *Sound, bank: fat.Bank) void {
         const effects: f32 = @floatFromInt(sound.volumes.effects);
         for (&sound.buffered, 0..) |*levels, index| {
             if (!(levels[0] > 0) and !(levels[1] > 0)) continue;
             const left = @min(levels[0], 1);
             const right = @min(levels[1], 1);
-            const pan: i32 = @intFromFloat(@round(right * rightmost / (right + left)));
-            const volume: i32 = @intFromFloat(@round(effects * @max(left, right) * sound.volumes.masterShare()));
+            const pan = math.round(right * rightmost / (right + left));
+            const volume = math.round(effects * @max(left, right) * sound.volumes.masterShare());
             _ = sound.play(bank, index, volume, once, pan, own_pitch);
             levels.* = .{ 0, 0 };
         }
@@ -1017,6 +1019,23 @@ test "Sound gathers positional sounds and plays them panned" {
     try std.testing.expectEqual([2]f32{ 0, 0 }, sound.buffered[20]);
     sound.playBuffered(bank);
     try std.testing.expectEqual([2]f32{ 0, 0 }, sound.buffered[2]);
+}
+
+test "Sound.playBuffered rounds as sr_round does" {
+    var mixer: mss.Mixer = .init(22050);
+    var sound: Sound = undefined;
+    sound.init(mixer.driver(), 4, null);
+    sound.volumes = .{ .master = loudest, .effects = 125 };
+    const bytes = comptime testing.bank(4);
+    const bank = try fat.Bank.parse(&bytes);
+    // Half as loud as 125 is 62.5, which rounds to the even 62.
+    sound.buffered[1] = .{ 0.5, 0.5 };
+    sound.playBuffered(bank);
+    var played: ?i32 = null;
+    for (sound.voices) |voice| {
+        if (voice.volume != 0) played = voice.volume;
+    }
+    try std.testing.expectEqual(62, played);
 }
 
 test "Sound.fadeAll fades every voice that has not finished" {

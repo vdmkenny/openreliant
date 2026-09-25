@@ -45,6 +45,11 @@ hands Miles the WAVE file at the entry's offset in the bank, at its own rate tim
 pitch of `n` quarter tones (`0x00481400`, clamped to 96 each way), and at the volume
 `round(((Fxvolume × volume) / 128) × Mastervolume / 127)`.
 
+**Improvement:** OpenReliant divides by 127 where the game multiplies by a rounded reciprocal, for
+the master volume's share (`0x004DC6B0`) and the engine's volume (`0x004DC9C8`), and divides a 3D
+sound's length by the bytes a tick plays where the game multiplies by their reciprocal
+(`0x004DC8B8`).
+
 Every five ticks `tick_timer` steps the fades: a fading voice loses its step of volume and ends at
 nothing. `sound_voice_fade` (`0x004824C0`) and `sound_fade_all` (`0x00482510`) start them;
 `sound_pause_all` (`0x004825D0`) and `sound_resume_all` (`0x00482630`) stop the playing voices and

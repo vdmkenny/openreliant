@@ -395,8 +395,9 @@ fn engineRow(ship_type: gameobj.Type) usize {
     return if (own == .kamov) kamov_row else @min(own.number(), sounds.engines.len - 1);
 }
 
-/// The engine's volume factor: the effects volume and the master volume, each over the loudest
-/// (`0x004DC9C8`).
+/// The engine's volume factor: the effects volume and the master volume, each over the loudest.
+/// **Improvement:** an exact division, where the game multiplies by a rounded reciprocal of the
+/// loudest squared (`0x004DC9C8`).
 fn engineScale(sound: *const Sound) f32 {
     return @as(f32, @floatFromInt(sound.volumes.master * sound.volumes.effects)) / (hog_snd.loudest * hog_snd.loudest);
 }

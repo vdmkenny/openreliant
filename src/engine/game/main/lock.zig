@@ -301,7 +301,9 @@ pub const Rings = struct {
 };
 
 /// How far out the rings stand once closed, for the view's scale across over the screen's width
-/// (`0x004DC948`); over how many ticks before the lock they draw together and whiten; how much
+/// (`0x004DC948`); over how many ticks before the lock they draw together and whiten, which
+/// OpenReliant divides by where the game multiplies by 0.02 (`0x004DC940`) and -0.02
+/// (`0x004DC944`), an **Improvement**; how much
 /// more than `ring_size_share` of their size they start at (`0x00491BDA`, `0x00491BCB`); and how
 /// bright they are.
 const close_reach: f32 = 2560;
