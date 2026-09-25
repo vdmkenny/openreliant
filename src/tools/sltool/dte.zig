@@ -6,7 +6,8 @@ const Io = std.Io;
 const openreliant = @import("openreliant");
 const dte = openreliant.dte;
 
-const Context = @import("main.zig").Context;
+const sltool = @import("main.zig");
+const Context = sltool.Context;
 const Library = @import("library.zig").Library;
 
 pub const Command = union(enum) {
@@ -37,17 +38,9 @@ pub const Command = union(enum) {
     ;
 
     pub fn parse(args: []const [:0]const u8) error{Usage}!Command {
-        if (args.len != 2) return error.Usage;
-        const verb = std.meta.stringToEnum(std.meta.Tag(Command), args[0]) orelse return error.Usage;
+        const verb, const operands = try sltool.verbOf(Command, args);
         return switch (verb) {
-            .info => .{ .info = .{ .mission = args[1] } },
-            .sections => .{ .sections = .{ .mission = args[1] } },
-            .ships => .{ .ships = .{ .mission = args[1] } },
-            .triggers => .{ .triggers = .{ .mission = args[1] } },
-            .strings => .{ .strings = .{ .mission = args[1] } },
-            .parts => .{ .parts = .{ .mission = args[1] } },
-            .script => .{ .script = .{ .mission = args[1] } },
-            .check => .{ .check = .{ .mission = args[1] } },
+            inline else => |tag| sltool.positional(Command, tag, operands),
         };
     }
 
@@ -55,7 +48,7 @@ pub const Command = union(enum) {
         const path = switch (command) {
             inline else => |operands| operands.mission,
         };
-        const image = try Io.Dir.cwd().readFileAlloc(ctx.io, path, ctx.arena, .limited(16 << 20));
+        const image = try ctx.readInput(path);
         const mission: dte.Mission = try .parse(image);
         // Models, for naming components, are looked for beside the mission.
         var library: ?Library = Library.beside(ctx, path) catch null;
@@ -115,7 +108,7 @@ fn sections(ctx: Context, mission: dte.Mission) !void {
                 i, entry.count, entry.formats.byte(), entry.offset,
             });
         }
-        try dte.formatTag(dte.Section, section, ctx.stdout);
+        try openreliant.layout.formatTag(dte.Section, section, ctx.stdout);
         try ctx.stdout.writeByte('\n');
     }
 }
@@ -326,7 +319,7 @@ fn printListing(
             at += (std.fmt.bufPrint(bytes[at..], " {x:0>2}", .{b}) catch break).len;
         }
         try ctx.stdout.print("  {d:>6}  {s:<11} ", .{ instruction.address, bytes[0..@min(at, bytes.len)] });
-        try dte.formatTag(dte.Opcode, instruction.opcode, ctx.stdout);
+        try openreliant.layout.formatTag(dte.Opcode, instruction.opcode, ctx.stdout);
 
         switch (instruction.flow) {
             .call => try printIndex(ctx, mission, models, instruction),

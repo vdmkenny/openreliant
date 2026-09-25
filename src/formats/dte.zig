@@ -13,6 +13,7 @@ const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
 const layout = @import("layout.zig");
+const refpack = @import("refpack.zig");
 const commands = @import("../engine/game/executor/commands.zig");
 const conditions = @import("../engine/vm/conditions.zig");
 const opcodes = @import("../engine/vm/opcodes.zig");
@@ -22,19 +23,6 @@ pub const section_count = 27;
 /// Writing mission files and their scripts.
 pub const write = @import("dte/write.zig");
 pub const assemble = @import("dte/assemble.zig");
-
-/// Writes an enum's tag name, or its number when the file carries a value this enum does not name.
-///
-/// The branch per named tag is generated at compile time and the open `_` case is handled
-/// explicitly, so there is no runtime lookup that can fail. Formatting with `{t}` would instead
-/// panic on any value the format uses but the enum omits, which is a category of data this project
-/// meets constantly.
-pub fn formatTag(comptime T: type, value: T, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-    return switch (value) {
-        _ => writer.print("{d}", .{@intFromEnum(value)}),
-        inline else => |tag| writer.writeAll(@tagName(tag)),
-    };
-}
 
 /// What each directory slot holds. Sections the loader reads but this module does not interpret
 /// keep their index as a name.
@@ -414,7 +402,7 @@ pub const Trigger = extern struct {
         _,
 
         pub fn format(repeat: Repeat, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            return formatTag(Repeat, repeat, writer);
+            return layout.formatTag(Repeat, repeat, writer);
         }
     };
 
@@ -519,7 +507,7 @@ pub const Object = extern struct {
         _,
 
         pub fn format(kind: Kind, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            return formatTag(Kind, kind, writer);
+            return layout.formatTag(Kind, kind, writer);
         }
     };
 
@@ -715,7 +703,7 @@ pub const Condition = enum(u8) {
     }
 
     pub fn format(condition: Condition, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        return formatTag(Condition, condition, writer);
+        return layout.formatTag(Condition, condition, writer);
     }
 };
 
@@ -872,7 +860,7 @@ pub const Opcode = enum(u8) {
     }
 
     pub fn format(opcode: Opcode, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        return formatTag(Opcode, opcode, writer);
+        return layout.formatTag(Opcode, opcode, writer);
     }
 };
 
@@ -1241,7 +1229,7 @@ pub const Mission = struct {
     directory: []align(1) const DirectoryEntry,
 
     pub fn parse(image: []const u8) Error!Mission {
-        if (image.len >= 2 and image[0] == 0x10 and image[1] == 0xFB) return error.Compressed;
+        if (refpack.gameExpands(image)) return error.Compressed;
         const directory = layout.array(DirectoryEntry, image, section_count) catch return error.NotAMission;
         return .{ .image = image, .directory = directory };
     }

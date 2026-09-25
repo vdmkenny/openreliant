@@ -44,7 +44,7 @@ pub const Hog = struct {
             return error.FileMissing;
         };
         const raw = try archive.archive.readRaw(gpa, entry);
-        if (!refPacked(raw)) return raw;
+        if (!refpack.gameExpands(raw)) return raw;
         defer gpa.free(raw);
         return refpack.decompressAlloc(gpa, raw);
     }
@@ -61,27 +61,6 @@ pub fn memberName(buffer: *[128]u8, name: []const u8) []const u8 {
     }
     if (std.mem.lastIndexOfScalar(u8, copy, '\\')) |slash| copy = copy[slash + 1 ..];
     return copy;
-}
-
-/// The start of a member the game expands, which `hog_read_file` compares its first word with,
-/// read big-endian, as `0x10FB`: RefPack's flags with only `magic` set, then its `signature`.
-const packed_start = [2]u8{
-    @bitCast(refpack.Header.Flags{ .compressed_size_present = false, ._unused = 0, .magic = 1, ._unused2 = 0, .wide_sizes = false }),
-    refpack.signature,
-};
-
-/// Whether a member starts as `packed_start`, the one form the game expands. A RefPack stream
-/// with other flags, which `refpack.looksCompressed` takes, the game reads as it is.
-fn refPacked(raw: []const u8) bool {
-    return std.mem.startsWith(u8, raw, &packed_start);
-}
-
-test refPacked {
-    try std.testing.expect(refPacked(&.{ 0x10, 0xFB, 0x00, 0x00, 0x05 }));
-    // Sizes of four bytes, or the packed size given, are not the game's form.
-    try std.testing.expect(!refPacked(&.{ 0x90, 0xFB, 0x00, 0x00, 0x00, 0x05 }));
-    try std.testing.expect(!refPacked(&.{ 0x11, 0xFB }));
-    try std.testing.expect(!refPacked(&.{0x10}));
 }
 
 test memberName {
@@ -107,37 +86,4 @@ test Hog {
     try std.testing.expectEqualStrings("hello", contents);
 }
 
-pub const testing = struct {
-    pub const Member = struct { name: []const u8, data: []const u8 };
-
-    /// Writes an archive of `members`, stored as they are, to `path` in `dir`: its header, then
-    /// a record and a NUL-terminated name for each member, then their data.
-    pub fn write(gpa: Allocator, io: Io, dir: Io.Dir, path: []const u8, members: []const Member) !void {
-        var data_at: usize = @sizeOf(hog.Header);
-        var data_size: usize = 0;
-        for (members) |member| {
-            data_at += @sizeOf(hog.Record) + member.name.len + 1;
-            data_size += member.data.len;
-        }
-        const bytes = try gpa.alloc(u8, data_at + data_size);
-        defer gpa.free(bytes);
-        (try layout.viewMut(hog.Header, bytes)).* = .{
-            .magic = hog.magic.*,
-            .archive_size = .of(@intCast(bytes.len)),
-            .entry_count = .of(@intCast(members.len)),
-            .data_offset = .of(@intCast(data_at)),
-        };
-        var entry_at: usize = @sizeOf(hog.Header);
-        var datum_at = data_at;
-        for (members) |member| {
-            (try layout.viewMut(hog.Record, bytes[entry_at..])).* = .{ .offset = .of(@intCast(datum_at)), .size = .of(@intCast(member.data.len)) };
-            const name_at = entry_at + @sizeOf(hog.Record);
-            @memcpy(bytes[name_at..][0..member.name.len], member.name);
-            bytes[name_at + member.name.len] = 0;
-            entry_at = name_at + member.name.len + 1;
-            @memcpy(bytes[datum_at..][0..member.data.len], member.data);
-            datum_at += member.data.len;
-        }
-        try dir.writeFile(io, .{ .sub_path = path, .data = bytes });
-    }
-};
+pub const testing = hog.testing;

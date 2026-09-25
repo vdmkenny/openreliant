@@ -317,10 +317,8 @@ pub fn build(
         positions[i] = gameobj.vector(vertex.position);
         normals[i] = gameobj.vector(vertex.normal);
         const next = coarser orelse continue;
-        const counterpart = if (vertex.next_lod_vertex >= 0 and vertex.next_lod_vertex < next.vertices.len)
-            next.vertices[@intCast(vertex.next_lod_vertex)]
-        else
-            vertex;
+        const at = vertex.nextLod() orelse next.vertices.len;
+        const counterpart = if (at < next.vertices.len) next.vertices[at] else vertex;
         if (morph_normals) |m| m[i] = gameobj.vector(counterpart.normal);
         if (morph_positions) |m| m[i] = gameobj.vector(counterpart.position);
     }
