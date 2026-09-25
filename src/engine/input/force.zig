@@ -21,6 +21,7 @@ const Io = std.Io;
 
 const frc = @import("../../formats/frc.zig");
 const files = @import("../files.zig");
+const collision = @import("../game/collision.zig");
 const main = @import("../game/main.zig");
 
 /// The effects, each read from its own file.
@@ -241,10 +242,10 @@ pub const Forces = struct {
 
     /// A hit's push on `side` of the player's ship (`damage_feedback`), `damage` strong, which the
     /// frame's pushes then count. The game keeps the latest `frame_hits`, from the first again.
-    pub fn hit(forces: *Forces, side: u2, damage: f32) void {
+    pub fn hit(forces: *Forces, side: collision.Quadrant, damage: f32) void {
         if (!forces.feedback) return;
         if (forces.next_hit >= frame_hits) forces.next_hit = 0;
-        forces.hits[forces.next_hit] = .{ .push = damage * push_per_damage, .side = side };
+        forces.hits[forces.next_hit] = .{ .push = damage * push_per_damage, .side = @intFromEnum(side) };
         forces.next_hit += 1;
         // The next hit ends the list, which the pushes read up to.
         if (forces.next_hit < frame_hits) forces.hits[forces.next_hit].push = 0;
@@ -603,9 +604,9 @@ test "the frame's hits push the ship" {
     var forces: Forces = .{ .library = &made.library, .feedback = true };
 
     // Two hits on the left, one on the right: across by the difference, along not at all.
-    forces.hit(0, 10);
-    forces.hit(0, 10);
-    forces.hit(1, 5);
+    forces.hit(.left, 10);
+    forces.hit(.left, 10);
+    forces.hit(.right, 5);
     forces.pushFrame(0);
     try std.testing.expectEqual(Push{ .started = 0, .strength = 0.45 }, forces.pushes[0].?);
     try std.testing.expectEqual(null, forces.pushes[1]);
@@ -614,10 +615,10 @@ test "the frame's hits push the ship" {
     try std.testing.expectEqual(Motors{}, forces.motors(100));
 
     // The pushes take their slots in turn, and one of 1 or less empties the slot it takes.
-    forces.hit(2, 100);
+    forces.hit(.fore, 100);
     forces.pushFrame(10);
     try std.testing.expectEqual(1, forces.pushes[1].?.strength);
-    forces.hit(3, 0.001);
+    forces.hit(.aft, 0.001);
     forces.pushFrame(20);
     try std.testing.expectEqual(null, forces.pushes[2]);
     try std.testing.expectEqual(3, forces.next_push);

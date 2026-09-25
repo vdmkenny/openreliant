@@ -194,6 +194,7 @@ pub const Quadrants = extern struct {
             assert(std.mem.eql(u8, @tagName(quadrant), field.name));
             assert(@offsetOf(Quadrants, field.name) == @as(usize, @intFromEnum(quadrant)) * @sizeOf(f32));
         }
+        assert(@sizeOf(Quadrants) == 0x10);
     }
 };
 
@@ -957,6 +958,14 @@ pub const GameObject = extern struct {
         object.holdTurns();
     }
 
+    /// Whether its sphere and `other`'s, their radii together `widen` wider, overlap where the
+    /// next step has them: the collision sweep's test (`objects_update`, `objects_collide`), and
+    /// `avoidance_scan`'s for an object that lists components.
+    pub fn overlaps(object: *const GameObject, other: *const GameObject, widen: f32) bool {
+        const reach = object.radius + other.radius + widen;
+        return math.lengthSquared(object.nextPosition() - other.nextPosition()) < reach * reach;
+    }
+
     /// Where its root stands at `step`: its committed place, or its next.
     pub fn placeAt(object: *const GameObject, step: objects.Model.Step) math.Place {
         return switch (step) {
@@ -1104,6 +1113,22 @@ test "GameObject.Flags" {
     try std.testing.expect(flags.any());
     try std.testing.expect(!flags.within(.{ .frozen = true }).any());
     try std.testing.expect(flags.outOfSearch());
+}
+
+test "GameObject.overlaps" {
+    var object = testing.object();
+    var other = testing.object();
+    object.radius = 100;
+    other.radius = 50;
+    other.root.next_position = .{ .x = 0, .y = 0, .z = 149 };
+    try std.testing.expect(object.overlaps(&other, 0));
+    // Touching is not overlapping; widened, they overlap again.
+    other.root.next_position.z = 150;
+    try std.testing.expect(!object.overlaps(&other, 0));
+    try std.testing.expect(object.overlaps(&other, 1));
+    // Only where the next step has them counts, not where they stand now.
+    other.root.position = .{ .x = 0, .y = 0, .z = 10 };
+    try std.testing.expect(!other.overlaps(&object, 0));
 }
 
 test "GameObject.letGo" {
@@ -1281,11 +1306,13 @@ pub fn rechargeShields(object: *GameObject, combat: *const create.ShipCombat, re
 const recharge_steps: f32 = 25;
 
 /// A new object's `blink_offset` (`object_alloc`, `0x00475DD0`): C's `rand()` over its largest
-/// value, times 100, truncated.
+/// value (`libcmt.Rand.fraction`), times `blink_range`, truncated.
 pub fn blinkOffset(random: *libcmt.Rand) i16 {
-    const share = @as(f32, @floatFromInt(random.rand())) * (1.0 / @as(f32, libcmt.Rand.max));
-    return @intFromFloat(share * 100);
+    return @intFromFloat(random.fraction() * blink_range);
 }
+
+/// The ticks a new object's lights may stand into their blinks, at most (`0x004DC440`).
+const blink_range: f32 = 100;
 
 /// `object_alloc` (`0x00475DD0`): a new object of `object_type`. `SR_MEM_allocate` clears what
 /// it hands out, so everything the allocation doesn't set starts at zero: the object is at rest,

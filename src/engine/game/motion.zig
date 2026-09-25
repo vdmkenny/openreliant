@@ -57,11 +57,23 @@ fn slow(object: *GameObject, share: f32) void {
     object.velocity = gameobj.vec3(gameobj.vector(object.velocity) * @as(math.Vector, @splat(share)));
 }
 
-/// The share of the cruise speed the lateral input pushes a ship sideways at (`object_fly`).
+/// The share of the cruise speed the lateral input pushes a ship sideways at (`object_fly`,
+/// `0x004DC3D4`).
 const lateral_share: f32 = 0.25;
 
-/// What each update of the afterburner or of reverse thrust burns of `afterburner_fuel`.
+/// What each update of the afterburner or of reverse thrust burns of `afterburner_fuel`
+/// (`object_fly`, `0x0047430B` and `0x00474330`).
 const burn_fuel: i32 = 4;
+
+/// The throttle the afterburner and reverse thrust hold a ship at (`object_fly`, `0x00474301` and
+/// `0x00474326`).
+const afterburner_throttle: f32 = 2;
+const reverse_throttle: f32 = -1;
+
+/// How many times more slowly a ship with no throttle turns than one at full throttle, where the
+/// steering slows it (`object_steer`, `0x004DC3D8`): the divisor falls from this to 1 as the
+/// throttle rises.
+const idle_turn_slowing: f32 = 3;
 
 /// The rule every quantity of the flight model moves by: it gives up `inertia` of the way it was
 /// going and takes the rest from where it is headed, once per update.
@@ -81,10 +93,11 @@ fn signedRoot(x: f32) f32 {
 
 /// `object_steer` (`0x00474150`): each input is clamped to between -1 and 1, and each angular rate
 /// settles toward the ship's rate for that axis times the input. Where `throttle_turns`, that
-/// target is divided by `3 - 2 * |throttle|` while that exceeds 1, so a ship turns more slowly the
-/// less throttle it carries. The three rates then make the rotation.
+/// target is divided by `3 - 2 * |throttle|` (`idle_turn_slowing`) while that exceeds 1, so a ship
+/// turns more slowly the less throttle it carries. The three rates then make the rotation.
 pub fn steer(object: *GameObject, flight: *const create.FlightModel, throttle_turns: bool) void {
-    const slowed = 3 - 2 * @abs(object.throttle);
+    // The game doubles the throttle by adding it to itself, which the factor of 2 matches exactly.
+    const slowed = idle_turn_slowing - (idle_turn_slowing - 1) * @abs(object.throttle);
     const divisor: f32 = if (throttle_turns and slowed >= 1) slowed else 1;
     const axes = [_]struct { rate: *f32, input: *f32, full: f32, inertia: f32 }{
         .{ .rate = &object.pitch_rate, .input = &object.pitch_input, .full = flight.pitch_rate, .inertia = flight.pitch_inertia },
@@ -108,10 +121,10 @@ pub fn steer(object: *GameObject, flight: *const create.FlightModel, throttle_tu
 /// axis it only decays.
 pub fn fly(object: *GameObject, flight: *const create.FlightModel, view: camera.View, thrust: f32) void {
     if (object.afterburner) {
-        object.throttle = 2;
+        object.throttle = afterburner_throttle;
         object.afterburner_fuel -= burn_fuel;
     } else if (object.reverse_thrust) {
-        object.throttle = -1;
+        object.throttle = reverse_throttle;
         object.afterburner_fuel -= burn_fuel;
     } else {
         object.throttle = std.math.clamp(object.throttle, 0, 1);
@@ -173,6 +186,16 @@ pub fn move(object: *GameObject, flight: *const create.FlightModel, view: camera
 
 /// The camera shake at twice the cruise speed (`0x004DC3F8`).
 const speed_shake: f32 = 0.2;
+
+/// `object_move` for the object in slot `index` of `world`, by its type's flight model, where it
+/// has one (`move`): the player's ship shakes the camera. `objects_update` moves each object so,
+/// and `objects_collide` moves a pair again once it has shoved them.
+pub fn moveSlot(world: gameobj.World, index: u16) void {
+    const all = world.objects;
+    const slot = &all.slots[index];
+    const flight = slot.flight orelse return;
+    move(&slot.object, flight, world.view, slot.motion, if (index == all.player) world.shake else null);
+}
 
 test steer {
     var object = gameobj.testing.object();
@@ -345,6 +368,32 @@ test "moving and turning set the network flags" {
     object.yaw_rate = 0.1;
     move(&object, &gameobj.testing.flight, .chase, null, null);
     try std.testing.expect(object.network.turned);
+}
+
+test moveSlot {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const player = try mission.add(.predator, @splat(0));
+    const other = try mission.add(.predator, .{ 0, 0, 1000 });
+    for ([_]u16{ player, other }) |index| {
+        const slot = mission.slot(index);
+        slot.motion = null;
+        slot.object.rotation = math.identity;
+        slot.object.velocity = .{ .x = 0, .y = 0, .z = 640 };
+    }
+    // Both move on, and only the player's ship, flying past its cruise speed, shakes the camera.
+    moveSlot(mission.world(), other);
+    try std.testing.expectEqual(1640, mission.slot(other).object.root.next_position.z);
+    try std.testing.expectEqual(0, mission.shake);
+    moveSlot(mission.world(), player);
+    try std.testing.expectEqual(640, mission.slot(player).object.root.next_position.z);
+    try std.testing.expect(mission.shake > 0);
+    // An object with no flight model is not moved.
+    mission.slot(other).flight = null;
+    mission.slot(other).object.velocity.z = 10;
+    moveSlot(mission.world(), other);
+    try std.testing.expectEqual(1640, mission.slot(other).object.root.next_position.z);
 }
 
 test "flying faster than the cruise speed shakes the player's camera" {

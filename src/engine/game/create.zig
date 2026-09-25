@@ -700,7 +700,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     const stats_type = std.math.cast(u8, ship_type.number()) orelse {
         object.type_data = .null;
         object.pilot_record = .null;
-        object._unknown_628 = .{ .x = 0, .y = 0, .z = 0 };
+        object._unknown_628 = .zero;
         object.shields = .all(0);
         object.armor = .all(0);
         object.flags = .standing_in;
@@ -775,7 +775,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     // fitted after them (`object_fit_guns`): a turret fires within its component's firing arc.
     if (object.flags.components) collectComponents(slot);
     if (slot.model) |*model| slot.guns = try guns.fit(all.gpa, model, .{
-        .components = slot.components[0..@intCast(object.component_count)],
+        .components = slot.listed(),
         .arcs = if (slot.type) |loaded| loaded.model.firing_arcs else &.{},
     });
     object.gun_count = @intCast(slot.guns.len);
@@ -912,11 +912,10 @@ fn hang(gpa: Allocator, effects: objects.Effects, hardpoint: Hardpoint, file: ?[
     const mounted = mounts.load(mounts.context, file orelse return null) orelse return null;
     var built: objects.Model = try .create(gpa, mounted.model, mounted.loaded, effects);
     gameobj.linkParts(&built, mounted.model);
-    const at = hardpoint.attachment.position;
     return .{
         .part = hardpoint.part,
         .attachment = hardpoint.index,
-        .origin = .{ at.x, at.y, at.z },
+        .origin = gameobj.vector(hardpoint.attachment.position),
         .orientation = hardpoint.attachment.orientation,
         .model = built,
     };
@@ -938,11 +937,7 @@ pub fn objectsUpdate(world: gameobj.World) void {
         const object = &slot.object;
         if (!object.type.hasStats() or object.flags.stand_in or object.flags.disabled) continue;
         // A frozen object stays where it is, and is still there to be run into.
-        if (!object.flags.frozen) {
-            if (slot.flight) |flight| {
-                motion.move(object, flight, world.view, slot.motion, if (index == all.player) world.shake else null);
-            }
-        }
+        if (!object.flags.frozen) motion.moveSlot(world, index);
         if (object.flags.no_collisions) continue;
         sweep.add(index, object);
     }
@@ -1024,9 +1019,7 @@ pub const Sweep = struct {
         const far = &all.slots[second].object;
         for (near.passes_through) |through| if (through.index() == second) return false;
         for (far.passes_through) |through| if (through.index() == first) return false;
-        const reach = near.radius + far.radius;
-        const between = near.nextPosition() - far.nextPosition();
-        return math.lengthSquared(between) < reach * reach;
+        return near.overlaps(far, 0);
     }
 };
 
