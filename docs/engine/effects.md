@@ -16,7 +16,9 @@ their life. A particle comes from one of the ten `particle_pools` (`0x0058A948`)
 of sprites that take their own texture coordinates, are coloured by their own colour and combine
 with what is behind them as the pool says. `particles_init` (`0x0049BF60`) makes the explosions'
 pool (`particle_pool`, `0x0058A94C`), 1000 particles over `gunflare\partic4` that add to what is
-behind them, and the mission's start makes three for the [smoke](#smoke). A particle is a record of
+behind them, the mission's start makes three for the [smoke](#smoke), and `guns_init` two for the
+guns ([Guns](guns.md#particles-and-bursts)). A pool's sprites can instead show their texture's own
+colours. A particle is a record of
 0x18 bytes, its birth and life in ticks, its velocity a tick and its template, and the sprite of the
 same index. It is free once its birth plus its life is before the frame.
 
@@ -60,8 +62,8 @@ velocity they inherit (`0xDC`); and the span of the texture they show (`0xE8`).
   [burning bit](#burning-bits) where the emitter stands.
 
 **Improvement:** a burst and a stream are not thinned by their distance, so an explosion far off
-is as full as one close by, and the pool has room for 4000 to hold them. The half behind the camera
-is still left out. `--original` restores the thinning and the pool of 1000.
+is as full as one close by, and each pool has room for four times the game's to hold them. The half
+behind the camera is still left out. `--original` restores the thinning and the game's pools.
 
 `particles_frame` (`0x0049C8E0`), once a frame after the shots, moves each particle alive in each
 pool on by its velocity times the frame's ticks, sets its sprite's half-size and colour from its

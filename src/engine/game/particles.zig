@@ -222,19 +222,22 @@ pub const Pool = struct {
 
     /// How a burst or a stream far from the camera is sent, and the room the pool has for it.
     ///
-    /// **Improvement:** `whole` sends all of it, into a pool of 4000, where the game thins bursts
-    /// and streams by their distance to spare the fill rate of its day, over a pool of 1000; the
-    /// half behind the camera is left out either way. `--original` restores the game's.
+    /// **Improvement:** `whole` sends all of it, into a pool four times the game's, where the game
+    /// thins bursts and streams by their distance to spare the fill rate of its day; the half
+    /// behind the camera is left out either way. `--original` restores the game's.
     pub const Distant = enum {
         thinned,
         whole,
 
-        pub fn size(distant: Distant) usize {
+        /// The room for a pool the game makes of `count` particles.
+        pub fn size(distant: Distant, count: usize) usize {
             return switch (distant) {
-                .thinned => 1000,
-                .whole => 4000,
+                .thinned => count,
+                .whole => count * whole_room,
             };
         }
+
+        const whole_room = 4;
     };
 
     /// How alike the particles of a template are at the same age.
@@ -255,10 +258,13 @@ pub const Pool = struct {
             return math.lerp(range[0], range[1], numbers.float(f32));
         }
     };
-    /// How a pool's sprites are drawn: the texture they show, and how they combine with what is
-    /// drawn (`particle_pool_create`'s texture and last argument).
+    /// How a pool's sprites are drawn, as `particle_pool_create` is given it: how many the game's
+    /// pool holds, the texture they show, whether they are coloured by their own colours or show
+    /// their texture's, and how they combine with what is drawn.
     pub const Look = struct {
+        count: usize = 1000,
         image: []const u8,
+        coloured: bool = true,
         blend: srapiext.Material.Blend,
 
         /// The game's own pool's: `gunflare\partic4`, added (`particles_init`, `0x0049BF60`).
@@ -267,8 +273,7 @@ pub const Pool = struct {
 
     /// `particle_pool_create` (`0x0049C050`): the pool of `count` particles over `image`, their
     /// sprites showing the whole texture, coloured by each sprite's colour and combined with what
-    /// is drawn by `blend`. The game can make a pool whose sprites are not coloured, which none of
-    /// the ported ones is.
+    /// is drawn by `blend`.
     pub fn init(gpa: Allocator, count: usize, image: *srtexture.Image, blend: srapiext.Material.Blend) Allocator.Error!Pool {
         const particles = try gpa.alloc(Particle, count);
         errdefer gpa.free(particles);
@@ -284,7 +289,8 @@ pub const Pool = struct {
     /// A pool that looks as `look` says, over the texture it requires, sized for how it sends what
     /// is far off.
     pub fn load(gpa: Allocator, textures: *srtexture.Table, look: Look, settings: Settings) (Allocator.Error || matmanager.Error)!Pool {
-        var pool: Pool = try .init(gpa, settings.distant.size(), try matmanager.textureRequire(textures, look.image), look.blend);
+        var pool: Pool = try .init(gpa, settings.distant.size(look.count), try matmanager.textureRequire(textures, look.image), look.blend);
+        pool.set.surface.material.lit[0] = look.coloured;
         pool.settings = settings;
         return pool;
     }

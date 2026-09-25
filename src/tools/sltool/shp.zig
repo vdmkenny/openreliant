@@ -195,6 +195,7 @@ fn info(ctx: Context, model: shp.Model) !void {
                     .gun_muzzle => "gun muzzle",
                     .light => "light",
                     .pod => "pod",
+                    .case_ejector => "case ejector",
                     _ => "kind",
                 },
                 @intFromEnum(attachment.kind),

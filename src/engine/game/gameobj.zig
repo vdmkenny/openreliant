@@ -1240,6 +1240,8 @@ pub const World = struct {
     display: ?*@import("hud.zig").State = null,
     /// The pools a damaged ship's smoke comes from; null where none is sent out.
     smoke: ?*@import("main/smoke.zig").Pools = null,
+    /// The guns' pools, a flak shell's burst's and the spent cases'; null where none are sent out.
+    gun_particles: ?*@import("guns.zig").effects.Pools = null,
     /// What objects are made from while the mission runs, as a capital ship's split makes its
     /// other half (`create_object`); null where none are made.
     spawn: ?Spawn = null,

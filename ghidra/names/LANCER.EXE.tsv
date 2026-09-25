@@ -805,6 +805,14 @@ address	kind	name	type	comment
 004c1dd0	function	mat3_copy_transposed	void __fastcall (float *to, float *from)	Copies the transpose of a 3x3 matrix
 0047c7b0	function	clip_event_muzzles	void __thiscall (ModelNode *node, int unused)	A track's event of kind 0: runs 0x0047C5F0 for each of the node's children of kind 4, the nodes attachments of kind 3 make at a gun's muzzle
 0047c800	function	clip_event_particles	void __fastcall (ModelNode *node)	A track's event of kind 2: for each attachment of kind 7 on the node's part, emits a particle from the template at 0x005636DC at the attachment's place, with a random frame and a quarter of the object's velocity
+005635d0	data	allied_huge_gun_trail	ParticleTemplate *	The particles an Allied Huge Gun's shot trails, of particle_pool: 120 to 129 ticks, 12 a tick, a half-size from 700 to 250, blue fading to nothing
+0056318c	data	coalition_huge_gun_trail	ParticleTemplate *	The particles a Coalition Huge Gun's shot trails, of particle_pool: 120 to 129 ticks, 12 a tick, a half-size from 500 to 1100, orange fading to nothing
+005636d0	data	flak_pool	void *	The pool a flak shell's burst sends its particles into: 1000 over gunflare partic7, blended by alpha
+00563104	data	flak_particles	ParticleTemplate *	A flak shell's burst's particles, of flak_pool: 150 to 159 ticks, a half-size from 42 to 119, dimming from half grey, a spark one time in 200
+00563100	data	case_texture	TextureImage *	gunflare case1, the spent cases' eight cells
+0056315c	data	case_pool	void *	The pool a spinning gun's spent cases fly from: 100 over case_texture, showing its own colours, blended by alpha
+005636d4	data	case_template	ParticleTemplate *	A spent case, of case_pool: 100 to 109 ticks at a half-size of 15
+005636dc	data	case_emitter	void *	The emitter clip_event_particles throws each spent case from: back along its attachment at 10 a tick, strayed up to an eighth across
 00466630	function	objects_reset	void __fastcall (void)	As a mission starts: every slot of game_objects gets a stand-in of type 1001, flagged stand_in and not created, every ship type loses its objects and model, and game_object_count goes to 0; loads the atmos texture and empties the planets' atmosphere table
 00466740	function	ship_type_load	void __fastcall (ShipTypeEntry *type)	Loads a ship type's model, unless it is loaded already, and its schematic as the type's data, soft\ first for the software renderer
 004667f0	function	gun_groups_build	void __fastcall (int type, GameObject *object)	Works out a ship type's gun groups from an object's guns, pairing each with the one nearest its mirror image across the ship, into the type's table at 0x545900 + type * 0x78 and the count at ship_combat_stats + 0x1C
