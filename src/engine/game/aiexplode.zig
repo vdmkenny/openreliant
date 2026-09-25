@@ -66,7 +66,7 @@ pub const Mode = enum(i16) {
                 .asteroid
             else if (!object.flags.components)
                 .ship
-            else if (target.component != -1)
+            else if (target.component != aigeneric.Target.whole)
                 .component
             else
                 .hull,
@@ -114,6 +114,11 @@ pub const Data = extern struct {
     /// Whether a ship may spin out: set by a blow to its armour, clear once its pilot has
     /// ejected.
     may_spin: bool,
+
+    comptime {
+        assert(@offsetOf(Data, "may_spin") == 0x0);
+        assert(@sizeOf(Data) == 1);
+    }
 };
 
 /// `order_explode_init` (`0x00408610`).
@@ -182,9 +187,7 @@ fn hullUpdate(ctx: Context, index: u16) void {
 fn componentInit(ctx: Context, index: u16) void {
     const slot = &ctx.world.objects.slots[index];
     const model = if (slot.model) |*live| live else return;
-    const component = std.math.cast(usize, slot.orders[0].target.component) orelse return;
-    if (component >= slot.components.len) return;
-    const part = slot.components[component] orelse return;
+    const part = slot.component(slot.orders[0].target.part() orelse return) orelse return;
     if (part.hidden) return;
     part.armor = spent_armor;
     if (model.holding(part)) |holder| holder.destroyed = true;
@@ -261,14 +264,12 @@ fn shownModel(slot: *create.Slot) ?*objects.Model {
     return model;
 }
 
-/// The bits the limpet car's trail has left, and how fast it may turn about its X and Y axes and
-/// about its Z axis, either way (`0x004DC474`, `0x004DC4C0`).
+/// The bits the limpet car's trail has left.
 const limpet_trail = 50;
-const limpet_spin: Vector = .{ 0.05, 0.05, 0.3 };
 
 /// `explode_limpet_car_init` (`0x004094D0`): the car stops dead, unpowered, with a random turn
-/// and a trail to leave, which its update never reaches, and goes up in a fireball as wide as its
-/// radius.
+/// (`randomSpin`) and a trail to leave, which its update never reaches, and goes up in a fireball
+/// as wide as its radius.
 ///
 /// Not ported: the Destroyed event it queues (`event_destroyed`,
 /// [#37](https://github.com/vdmkenny/openreliant/issues/37)).
@@ -279,11 +280,9 @@ fn limpetCarInit(ctx: Context, index: u16) void {
     const state = &slot.state.explode;
     state.trail = limpet_trail;
     state.end = 0;
-    object.velocity = gameobj.vec3(@splat(0));
-    object.speed = 0;
-    object.throttle = 0;
+    stop(object);
     object.flags.unpowered = true;
-    state.spin = gameobj.vec3(world.random.centredVector(limpet_spin));
+    state.spin = randomSpin(world.random);
     explode.fireballAt(world, slot.drawn.position, .{ .size = object.radius });
 }
 
@@ -332,7 +331,7 @@ fn shipInit(ctx: Context, index: u16) void {
     const cutaway = world.player.showing != .everything;
     state.style = switch (object.type) {
         .torpedo, .russian_torpedo => .halt,
-        else => if (players and cutaway) .halt else @enumFromInt(xtrabits.objectRandom15(object) % 3),
+        else => if (players and cutaway) .halt else @enumFromInt(xtrabits.objectRandom15(object) % std.enums.values(Style).len),
     };
     killCredit(world, index);
 
@@ -417,7 +416,7 @@ const spin_ticks = 200;
 const spin_fade: f32 = 0.005;
 
 /// How far a spinning ship's turn a step ranges about its first two axes and about its third, half
-/// of it either way (`0x004DC474`, `0x004DC4C0`).
+/// of it either way (`0x004DC474`, `0x004DC4C0`); the limpet car's too.
 const spin_range: Vector = .{ 0.05, 0.05, 0.3 };
 
 /// `0x00408BC0`: a spinning ship drifts on unpowered for two to four seconds; a torpedo, or a ship
@@ -542,7 +541,7 @@ test Mode {
     try std.testing.expectEqual(Mode.ship, Mode.of(&object, whole));
     object.flags.components = true;
     try std.testing.expectEqual(Mode.hull, Mode.of(&object, whole));
-    try std.testing.expectEqual(Mode.component, Mode.of(&object, .{ .kind = .ship, .index = 3, .component = 2 }));
+    try std.testing.expectEqual(Mode.component, Mode.of(&object, .at(3, 2)));
     object.type = .troop_car;
     try std.testing.expectEqual(Mode.ship, Mode.of(&object, whole));
     object.type = @enumFromInt(0x7B);
@@ -670,7 +669,7 @@ test "a ship listing components loses its hull, or a component" {
     // Aimed at a component, that one does, and again the order is done.
     model.destroyed = false;
     model.parts[0].armor = 100;
-    _ = try aigeneric.push(ctx, ship, .explode, .{ .kind = .ship, .index = @intCast(ship), .component = 0 });
+    _ = try aigeneric.push(ctx, ship, .explode, .at(ship, 0));
     aigeneric.objectOrders(ctx, ship);
     try std.testing.expectEqual(spent_armor, model.parts[0].armor);
     try std.testing.expect(model.destroyed);
