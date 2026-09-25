@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.4.0](https://github.com/vdmkenny/openreliant/compare/v0.3.0...v0.4.0) (2026-09-25)
+
+
+### Features
+
+* a capital ship's engine exhaust burns the player's ship ([#273](https://github.com/vdmkenny/openreliant/issues/273)) ([da7fdd4](https://github.com/vdmkenny/openreliant/commit/da7fdd43ff332f07347146e1e28cf6f40f856644))
+* a smooth, crisp sun and lens flares ([#275](https://github.com/vdmkenny/openreliant/issues/275)) ([124466f](https://github.com/vdmkenny/openreliant/commit/124466f226ee0c74a33a4e1fc1bb7d028a3dc376))
+* blind fire aims the player's shots at the lead cursor ([#251](https://github.com/vdmkenny/openreliant/issues/251)) ([cd47041](https://github.com/vdmkenny/openreliant/commit/cd47041c88e57a58a94574019516df71da30884b)), closes [#183](https://github.com/vdmkenny/openreliant/issues/183)
+* objects the orders place glide on between the ticks ([#274](https://github.com/vdmkenny/openreliant/issues/274)) ([98ee211](https://github.com/vdmkenny/openreliant/commit/98ee2112501e143af93052ada12f229653b7c73f))
+* steering by the mouse ([#276](https://github.com/vdmkenny/openreliant/issues/276)) ([7ab1e92](https://github.com/vdmkenny/openreliant/commit/7ab1e92bb3bdb3ec6e49397b1f34aa2d41687c8f))
+* the chase view's sight, blind fire mark and target pointer ([#260](https://github.com/vdmkenny/openreliant/issues/260)) ([f2765db](https://github.com/vdmkenny/openreliant/commit/f2765db35736ad8d1656dafb51bccef731f55406)), closes [#182](https://github.com/vdmkenny/openreliant/issues/182)
+* the cloak ([#267](https://github.com/vdmkenny/openreliant/issues/267)) ([636de88](https://github.com/vdmkenny/openreliant/commit/636de8882530e9af82572057881359aa0728d779))
+* the damage window shows the weapons, engines and shields ([#255](https://github.com/vdmkenny/openreliant/issues/255)) ([08d4912](https://github.com/vdmkenny/openreliant/commit/08d49124bc10925f999c6dec69c0b0aa535f53b1)), closes [#96](https://github.com/vdmkenny/openreliant/issues/96)
+* the display shakes and the view reddens as the player is hit ([#259](https://github.com/vdmkenny/openreliant/issues/259)) ([00fa29b](https://github.com/vdmkenny/openreliant/commit/00fa29b4604d5f87fad7d91f0ec0d6519f44beed)), closes [#236](https://github.com/vdmkenny/openreliant/issues/236)
+* the display's sounds for its windows, keys and warnings ([#258](https://github.com/vdmkenny/openreliant/issues/258)) ([b5ab30f](https://github.com/vdmkenny/openreliant/commit/b5ab30f185e5bb2ce7554779d520e4c0c02eb206))
+* the gunnery display and choosing the guns ([#247](https://github.com/vdmkenny/openreliant/issues/247)) ([2177fed](https://github.com/vdmkenny/openreliant/commit/2177fed6ec624850039a3febef0d502af3a88731)), closes [#92](https://github.com/vdmkenny/openreliant/issues/92)
+* the Nova Cannon charges and strikes ([#250](https://github.com/vdmkenny/openreliant/issues/250)) ([c719f50](https://github.com/vdmkenny/openreliant/commit/c719f50d1635e329504708d22b00fe176ce4ab77))
+* the pilot ejects, and is rescued, captured or shot down ([#270](https://github.com/vdmkenny/openreliant/issues/270)) ([522328a](https://github.com/vdmkenny/openreliant/commit/522328adb51effbab3e1b70678f134dd86794808))
+* the rest of the explosions ([#261](https://github.com/vdmkenny/openreliant/issues/261)) ([f368a31](https://github.com/vdmkenny/openreliant/commit/f368a31691fa77f7170736c0c1b47b5f367a169f))
+* the wing status window, and wingmen in the sandbox ([#257](https://github.com/vdmkenny/openreliant/issues/257)) ([48a1a7b](https://github.com/vdmkenny/openreliant/commit/48a1a7b185989d1f690374228a2d98764af4ae7b)), closes [#100](https://github.com/vdmkenny/openreliant/issues/100)
+
+
+### Fixes
+
+* a shot keeps its candidate parts by number ([#254](https://github.com/vdmkenny/openreliant/issues/254)) ([2568f14](https://github.com/vdmkenny/openreliant/commit/2568f14e5cf97c934aa2bd7a8d376afea9d08b0e)), closes [#253](https://github.com/vdmkenny/openreliant/issues/253)
+* the player's schematic keeps its place while shaken. ([00fa29b](https://github.com/vdmkenny/openreliant/commit/00fa29b4604d5f87fad7d91f0ec0d6519f44beed))
+
+
+### Documentation
+
+* a contributing guide for people and coding agents ([#252](https://github.com/vdmkenny/openreliant/issues/252)) ([0cbd044](https://github.com/vdmkenny/openreliant/commit/0cbd0443b25341e3e59754d9424593fe2f9593fc)), closes [#249](https://github.com/vdmkenny/openreliant/issues/249)
+* what keeps the hit's red away ([#272](https://github.com/vdmkenny/openreliant/issues/272)) ([f36690c](https://github.com/vdmkenny/openreliant/commit/f36690c3a52b8194e8bafd1f826b884de92edb59))
+
 ## [0.3.0](https://github.com/vdmkenny/openreliant/compare/v0.2.0...v0.3.0) (2026-09-24)
 
 
