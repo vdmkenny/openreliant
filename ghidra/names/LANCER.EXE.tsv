@@ -1503,3 +1503,7 @@ address	kind	name	type	comment
 00469840	function	exhaust_ships_reset	void (void)	As a mission ends (mission_free): clears exhaust_ships_listed, so the ships are listed afresh
 00469bc0	function	node_carries_glow	char __fastcall (void *node)	Whether a node, or one hanging from it however deep, is an engine glow (node kind 2 at +0xAC)
 004ad260	function	mission_free	void (void)	As a mission ends: frees its explosions, missiles, shots, particles, electric rays and tractors, and resets the exhaust's list, among the rest
+004f7288	data	chase_swings	float[7]	The chase view's swing against the ship's rates of pitch, yaw and roll, then its limits: pitch down and up, yaw either way, roll either way (camera_chase)
+005099b0	data	settings_path_format	char[17]	The settings file's path after the game's directory: %sstarlancer.ini
+0050a800	data	texture_cache_name	char[13]	The hardware renderers' texture cache, which renderer_start opens: tcachehw.dat
+0050e1d8	data	forces_folder	char[8]	The folder load_force_effects reads the force-feedback effects from: forces\

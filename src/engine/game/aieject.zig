@@ -9,6 +9,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
+const shp = @import("../../formats/shp.zig");
 const math = @import("../surrender/math.zig");
 const Vector = math.Vector;
 const ai = @import("ai.zig");
@@ -505,7 +506,7 @@ test player {
 /// cockpit facing along Z, for the tests of the ejection.
 const TestShip = struct {
     parts: guns.turrets.testing.Parts(2),
-    point: [1]@import("../../formats/shp.zig").Attachment,
+    point: [1]shp.Attachment,
     type: create.Type,
 
     const hull = 0;
@@ -513,7 +514,7 @@ const TestShip = struct {
 
     fn init(ship: *TestShip, with_cockpit: bool) void {
         ship.parts.init();
-        ship.point = .{std.mem.zeroes(@import("../../formats/shp.zig").Attachment)};
+        ship.point = .{std.mem.zeroes(shp.Attachment)};
         ship.point[0].kind = .eject_point;
         ship.point[0].orientation = math.identity;
         if (with_cockpit) ship.parts.data[cockpit].part.class = .cockpit;

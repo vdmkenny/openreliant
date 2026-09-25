@@ -598,7 +598,7 @@ fn approach(slot: *create.Slot, pod: Vector, state: *State) void {
 }
 
 /// The ship its order in `slot` aims at, where it names one.
-fn targetOf(slot: *create.Slot) ?u16 {
+fn targetOf(slot: *const create.Slot) ?u16 {
     return (slot.current() orelse return null).target.ship();
 }
 

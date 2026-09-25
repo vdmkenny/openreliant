@@ -384,8 +384,8 @@ pub const Slot = struct {
         slot.shield = null;
     }
 
-    /// Its current order, the first of its stack, where it has one.
-    pub fn current(slot: *Slot) ?*aigeneric.Entry {
+    /// Its current order, the first of its stack, where it has one: as mutable as `slot` is.
+    pub fn current(slot: anytype) ?@TypeOf(&slot.orders[0]) {
         if (slot.object.order_count == 0) return null;
         return &slot.orders[0];
     }

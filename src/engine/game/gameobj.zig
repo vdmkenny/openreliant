@@ -445,13 +445,15 @@ pub const Type = enum(u32) {
         return object_type.number() < create.ship_type_count;
     }
 
+    /// Where the second set of the player's ship types starts: types `0xF4` to `0xFF`, whose models
+    /// are the first twelve's `t_` twins, are the same twelve ships to the start.
+    pub const player_twins_first = 0xF4;
+
     /// The type it stands for among the player's ships: one of the second set, from
-    /// `main.player_twins_first`, stands for the first set's in the same place, and any other for
-    /// itself.
+    /// `player_twins_first`, stands for the first set's in the same place, and any other for itself.
     pub fn untwinned(object_type: Type) Type {
-        const first = @import("main.zig").player_twins_first;
         const at = object_type.number();
-        return @enumFromInt(if (at >= first) at - first else at);
+        return @enumFromInt(if (at >= player_twins_first) at - player_twins_first else at);
     }
 
     /// Whether it is a Phoenix, the ship that carries the Nova Cannon, or its twin.
