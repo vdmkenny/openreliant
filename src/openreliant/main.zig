@@ -957,7 +957,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .tractors = &tractors,
             .flash = &flash,
             .interference = &display.state.interference,
-            .ticks = clock.frameTicks(),
+            .ticks = @intCast(clock.frameTicks()),
             .paused = clock.paused,
             .attachments = .{
                 .camera = view.place.position,
