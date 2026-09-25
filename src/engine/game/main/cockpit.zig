@@ -34,7 +34,7 @@ pub const Cockpit = struct {
     /// Loads the cockpit of `ship_type`, a ship the player can fly (`main.playerShip`), in place
     /// of the one before, as each mission's start makes it afresh. A cockpit the game lacks or
     /// can't read is left out.
-    pub fn load(cockpit: *Cockpit, resources: *const bigfile.Hog, textures: *srtexture.Table, ship_type: u8) Allocator.Error!void {
+    pub fn load(cockpit: *Cockpit, resources: *const bigfile.Hog, textures: *srtexture.Table, ship_type: gameobj.Type) Allocator.Error!void {
         cockpit.shown = null;
         _ = cockpit.arena.reset(.free_all);
         const player_ship = main.playerShip(ship_type) orelse return;
@@ -60,7 +60,7 @@ pub const frame = 0;
 pub const hands = 1;
 
 /// How far the cockpit's every level of detail reaches: the mission's start pushes them all out
-/// to this, so the finest is always the one drawn.
+/// to this (`0x00493BFA`), so the finest is always the one drawn.
 pub const detail: f32 = 1048576;
 
 /// The lights' masks that reach the cockpit's parts, as a mask of those that do not (`+0xDC`).
@@ -92,14 +92,12 @@ fn fitPart(gpa: Allocator, part: *objects.Model.Part) Allocator.Error!void {
 /// each over its full rate, and flying at `speed`, over its cruise speed.
 pub fn input(cockpit: *const objects.Model, model: *const shp.Model, rates: [3]f32, speed: f32) ?camera.Cockpit.Input {
     if (cockpit.parts.len <= hands) return null;
-    const eye = model.header.eye;
-    const pivot = model.parts[hands].part.mount_point;
     return .{
         .rates = rates,
         .speed = speed,
-        .eye = .{ eye.x, eye.y, eye.z },
+        .eye = gameobj.vector(model.header.eye),
         .hands_origin = cockpit.parts[hands].origin,
-        .hands_pivot = .{ pivot.x, pivot.y, pivot.z },
+        .hands_pivot = gameobj.vector(model.parts[hands].part.mount_point),
     };
 }
 
@@ -149,6 +147,30 @@ test "each part is drawn always, from its finest level" {
     for (part.object.levels) |level| try std.testing.expectEqual(detail, level.until);
     // The model's own levels are left as they were.
     try std.testing.expectEqual(1000, levels[0].until);
+}
+
+test input {
+    var data: [2]shp.PartData = @splat(objects.testing.part());
+    data[hands].part.mount_point = .{ .x = 0, .y = 5, .z = 20 };
+    var header = std.mem.zeroes(shp.Header);
+    header.eye = .{ .x = 0, .y = -10, .z = 30 };
+    const source: shp.Model = .{ .header = header, .parts = &data, .trailing_bytes = 0 };
+    var parts = [_]objects.Model.Part{
+        .{ .hidden = false, .parent = null, .origin = .{ 0, 0, 100 }, .object = .{ .flags = .{}, .position = @splat(0), .radius = 1, .levels = &.{} } },
+        .{ .hidden = false, .parent = null, .origin = .{ 1, 2, 3 }, .object = .{ .flags = .{}, .position = @splat(0), .radius = 1, .levels = &.{} } },
+    };
+    var model: objects.Model = .{ .parts = &parts, .order = &.{ 0, 1 }, .lights = &.{}, .glows = &.{}, .mounts = &.{} };
+    // The frame model's eye, and the hands where their part stands and turning about its mount
+    // point, with the ship's rates and speed as they are.
+    const moved = input(&model, &source, .{ 0.5, -0.25, 1 }, 0.75).?;
+    try std.testing.expectEqual(math.Vector{ 0, -10, 30 }, moved.eye);
+    try std.testing.expectEqual(math.Vector{ 1, 2, 3 }, moved.hands_origin);
+    try std.testing.expectEqual(math.Vector{ 0, 5, 20 }, moved.hands_pivot);
+    try std.testing.expectEqual([3]f32{ 0.5, -0.25, 1 }, moved.rates);
+    try std.testing.expectEqual(0.75, moved.speed);
+    // A model without hands has nothing to move.
+    model.parts = parts[0..1];
+    try std.testing.expectEqual(null, input(&model, &source, @splat(0), 0));
 }
 
 test place {

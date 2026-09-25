@@ -510,6 +510,9 @@ and added over the overlay's layer. In every state but 0, outside view 13:
   ticks before the lock, and as one once locked.
 - Their colour is 0.65 of dark red `(0.5, 0, 0)`, whitening over the last 50 ticks before the lock.
 
+**Improvement:** the game turns the degrees into radians by 0.0174533 (`0x004DC71C`); OpenReliant
+converts them exactly.
+
 Once locked, in the view ahead from the cockpit, `hud_draw` plays the locked tone (`stdsmp`
 `0x15`, twice over) and holds its voice (`missile_lock_tone`, `0x00566644`); out of that view, or
 once the lock is lost, it ends the voice, whatever plays on it by then. The pause menu ends it too.

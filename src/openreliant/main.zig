@@ -1179,7 +1179,7 @@ const Sandbox = struct {
         sandbox.bringWingmen(orders, index, &sabres);
         sandbox.types.sweep(&sandbox.objects.types);
         // Each mission's start makes the cockpit afresh, as an ejection leaves it lit red.
-        try sandbox.cockpit.load(sandbox.types.resources, sandbox.types.textures, ship_type);
+        try sandbox.cockpit.load(sandbox.types.resources, sandbox.types.textures, @enumFromInt(ship_type));
         sandbox.player_type = ship_type;
     }
 
@@ -1295,7 +1295,7 @@ const sandbox_rescue_odds: game.aieject.RescueOdds = .{ .rescued = 1, .captured 
 fn readyDisplay(state: *game.hud.State, sandbox: *Sandbox) void {
     // `hud_init` has the eject marker out.
     state.ejected = false;
-    game.main.fitDevices(state, sandbox.player_type, sandbox.canCloak());
+    game.main.fitDevices(state, @enumFromInt(sandbox.player_type), sandbox.canCloak());
     state.missiles.build(&sandbox.player().object);
     state.lock.reset();
 }
