@@ -1,6 +1,6 @@
 # Effects
 
-What the game shows besides its objects and their shots: for now, the particles, fireballs, burning bits, break-up and shockwaves of an explosion, the smoke a damaged ship trails, a ship's shields flaring as they are struck, and the sparks a hit throws. [Destruction](objects.md#destruction) covers when a ship blows up.
+What the game shows besides its objects and their shots: for now, the particles, fireballs, burning bits, break-up and shockwaves of an explosion, the smoke a damaged ship trails, a ship's shields flaring as they are struck, the sparks a hit throws, and a capital ship's engine exhaust burning the player's ship. [Destruction](objects.md#destruction) covers when a ship blows up.
 
 ## Drawn between the ticks
 
@@ -691,3 +691,42 @@ A component's burst (kind 3, `shieldfx_create`, `0x004A0310`) is an emitter of t
 [`guns.zig`](../../src/engine/game/guns.zig) the hull's, and [`shield.zig`](../../src/engine/game/shield.zig)
 a shield's ([Shields](#shields)), and [`guns.zig`](../../src/engine/game/guns.zig) a component's. Not ported: the multiplayer
 arena's wall's ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
+
+## Engine exhaust
+
+A capital ship's engine glows burn the player's ship flying into them. The first time
+`exhaust_burn` runs in a mission, `exhaust_ships_list` (`0x00469810`) lists into `exhaust_ships`
+(`0x0054EA80`, room for 400) the slots handed out whose objects list components and carry an engine
+glow, on their model or on one it carries (`exhaust_ship_add`, `0x004699E0`, and `0x00469BC0`).
+Once they are listed (`exhaust_ships_listed`, `0x0054F0C4`), `create_object` offers each object it
+makes to the list. A slot stays listed whatever it comes to hold, and one made again is listed
+again. As a mission ends (`0x004AD260`), `exhaust_ships_reset` (`0x00469840`) has them listed afresh.
+
+`exhaust_burn` (`0x00469850`) runs once a frame in `mission_frame`, after the shields' bubbles and
+before the explosions. While the player's ship flies under Player Control, it clears
+`exhaust_burning` (`0x0054EA7C`), and takes each listed ship whose `last_throttle` isn't 0 and whose
+distance from the player's ship, squared, is no more than the square of 1.2 times its radius and the
+square of the player's ship's radius together:
+
+- `exhaust_depth` (`0x00469A10`) sums how deep the player's ship stands in the exhaust of each of the
+  ship's engine glows and those of the models it carries. It takes each glow's frame where the glow
+  next stands. The exhaust is the glow mesh's bounds, scaled by the attachment's sizes times
+  `last_throttle` times `engines_intact`, taken positive, times 1.7, with its ends along the plume
+  changing places where the size turns it back. Inside, the depth is 1 less the point's distance
+  from the glow's origin over the far corner's; outside, nothing.
+- A depth above nothing sets `exhaust_burning`, which keeps the display's red away
+  ([HUD](hud.md#the-interference)).
+- The screen's flash lasts 100 ticks for each of the depth (`flash_ticks`), white, which cuts
+  another flash short where the depth is nothing.
+- On a frame at a tick that divides by 7, a depth above nothing burns the player's ship:
+  `object_damage` on its fore quadrant, 23 times the depth, no more than 1, as a collision, what
+  passes the shields wearing the armour at half. The blow starts the display's interference, so the
+  display tears as the view whites out.
+
+The port keeps the list beside the objects (`create.Objects.exhaust`) and runs it where the game
+does (`environfx.Exhaust.burn`); `main.drawFrame` leaves the red out while it burns.
+
+- **Fix:** the list has room for 400, which the game writes past where slots made again grow it;
+  the port lists no more.
+- **Fix:** an exhaust of no size, of a ship whose engines are out, leaves a point at its origin
+  nothing deep, where the game divides nothing by nothing.

@@ -1472,3 +1472,6 @@ address	kind	name	type	comment
 0054ea80	data	exhaust_ships	int[400]	The slots of the ships whose engine exhaust burns (exhaust_ships_list)
 0054f0c0	data	exhaust_ship_count	int	How many exhaust_ships holds
 0054f0c4	data	exhaust_ships_listed	byte	Set once exhaust_ships_list has listed the ships
+00469840	function	exhaust_ships_reset	void (void)	As a mission ends (mission_free): clears exhaust_ships_listed, so the ships are listed afresh
+00469bc0	function	node_carries_glow	char __fastcall (void *node)	Whether a node, or one hanging from it however deep, is an engine glow (node kind 2 at +0xAC)
+004ad260	function	mission_free	void (void)	As a mission ends: frees its explosions, missiles, shots, particles, electric rays and tractors, and resets the exhaust's list, among the rest

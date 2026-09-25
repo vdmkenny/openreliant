@@ -351,6 +351,7 @@ pub fn missionFrame(orders: aigeneric.Context, fraction: f32) bool {
     smoke.frame(orders.world);
     objectsPass(orders);
     if (orders.world.forces) |forces| forces.pushFrame(orders.clock.frame_start);
+    orders.world.objects.exhaust.burn(orders.world);
     if (orders.world.explosions) |explosions| explosions.frame(orders.world);
     if (orders.world.countermeasures) |dropped| dropped.frame(orders.world);
     if (orders.world.shockwaves) |waves| waves.frame(orders.world);
@@ -510,7 +511,8 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     if (frame.rays) |rays| if (attachments.random) |random| try rays.draw(gpa, scene, frame.objects, attachments.frame_start, random);
     if (frame.flash) |lit| if (!frame.paused) {
         const shaken = frame.interference;
-        const red = if (shaken != null and frame.view == .cockpit) shaken.?.level else 0;
+        // In a capital ship's exhaust the flash is white alone (`exhaust_burning`).
+        const red = if (shaken != null and frame.view == .cockpit and !frame.objects.exhaust.burning) shaken.?.level else 0;
         try lit.draw(gpa, scene, .{ .position = context.camera.position, .orientation = context.camera.orientation }, context.projection, frame.ticks, red);
         if (shaken) |interference| interference.fade(attachments.frame_start);
     };
