@@ -26,6 +26,7 @@ const objects = @import("objects.zig");
 const shield = @import("shield.zig");
 const particles = @import("particles.zig");
 pub const breakup = @import("explode/breakup.zig");
+pub const rocks = @import("explode/chunks.zig");
 pub const split = @import("explode/split.zig");
 const shockwave = @import("shockwave.zig");
 const sound3d = @import("sound3d.zig");
@@ -54,6 +55,8 @@ pub const Explosions = struct {
     pieces: breakup.Pieces,
     /// The capital ships splitting in two (`0x0055335C`).
     splits: split.Splits,
+    /// The chunks of rock flying (`rock_chunks`).
+    chunks: *rocks.Chunks,
     /// The fireballs going off (`explosion_fireballs`, `0x00553398`), in as many slots as the
     /// settings give them.
     fireballs: [Fireballs.fuller.slots()]?Fireball = @splat(null),
@@ -80,6 +83,9 @@ pub const Explosions = struct {
         bang: [16]*srtexture.Image,
         /// Nine frames in a three by three sheet, `explosion\explosion sheet` (`0x00558730`).
         sheet: *srtexture.Image,
+        /// The flak's nine frames, three by three, which a special fireball plays (`flak04`,
+        /// `0x00562CCC`).
+        flak: *srtexture.Image,
 
         /// The names `explosions_init` makes of `explosion\bang_000%02d`.
         const bang_names = names: {
@@ -92,6 +98,7 @@ pub const Explosions = struct {
             var images: Images = undefined;
             for (&images.bang, bang_names) |*image, name| image.* = try matmanager.textureRequire(textures, name);
             images.sheet = try matmanager.textureRequire(textures, "explosion\\explosion sheet");
+            images.flak = try matmanager.textureRequire(textures, "flak04");
             return images;
         }
     };
@@ -100,11 +107,15 @@ pub const Explosions = struct {
         const bits = try gpa.create(Bits);
         errdefer gpa.destroy(bits);
         bits.* = .{};
-        return .{ .images = images, .bits = bits, .pieces = try .create(gpa), .splits = .init(gpa) };
+        const chunks = try gpa.create(rocks.Chunks);
+        errdefer gpa.destroy(chunks);
+        chunks.* = .{};
+        return .{ .images = images, .bits = bits, .chunks = chunks, .pieces = try .create(gpa), .splits = .init(gpa) };
     }
 
     pub fn deinit(explosions: *Explosions) void {
         explosions.pieces.gpa.destroy(explosions.bits);
+        explosions.pieces.gpa.destroy(explosions.chunks);
         explosions.pieces.deinit();
         explosions.splits.deinit();
     }
@@ -115,13 +126,14 @@ pub const Explosions = struct {
         explosions.pieces.reset();
         explosions.splits.reset();
         explosions.bits.* = .{};
-        explosions.* = .{ .images = explosions.images, .settings = explosions.settings, .bits = explosions.bits, .pieces = explosions.pieces, .splits = explosions.splits };
+        explosions.chunks.* = .{};
+        explosions.* = .{ .images = explosions.images, .settings = explosions.settings, .bits = explosions.bits, .chunks = explosions.chunks, .pieces = explosions.pieces, .splits = explosions.splits };
     }
 
     /// `explosions_update` (`0x0046E480`), once a frame, as far as the port goes: the marker drifts
     /// on, the bits fly on, the wrecks burn on (`burnFrame`), the pieces fly on
-    /// (`breakup.Pieces.frame`), the splits go on
-    /// (`split.Splits.frame`), and each fireball plays on (`Fireball.frame`), until it is done.
+    /// (`breakup.Pieces.frame`), the splits go on (`split.Splits.frame`), each fireball plays on
+    /// (`Fireball.frame`) until it is done, and the chunks of rock fly on (`rocks.Chunks.frame`).
     ///
     /// **Improvement:** the marker drifts by `drift` a tick, where the game adds it once a frame,
     /// which comes to the same at a frame a tick.
@@ -146,6 +158,7 @@ pub const Explosions = struct {
             const fireball = &(slot.* orelse continue);
             if (!fireball.frame(clock)) slot.* = null;
         }
+        explosions.chunks.frame(clock);
     }
 
     /// The rest of `explosions_update`: the bits and the pieces go into the world's layer, the
@@ -159,6 +172,7 @@ pub const Explosions = struct {
         }
         try explosions.pieces.draw(gpa, scene, ahead);
         try explosions.splits.draw(gpa, scene);
+        try explosions.chunks.draw(gpa, scene);
         for (&explosions.burn_lights) |*slot| {
             const burning = &(slot.* orelse continue);
             try xtrabits.sceneAdd(gpa, scene, .{ .light = &burning.light }, .world);
@@ -427,7 +441,7 @@ pub const Levels = struct {
         return made;
     }
 
-    fn slice(levels: *const Levels) []const srapiext.Level {
+    pub fn slice(levels: *const Levels) []const srapiext.Level {
         return levels.levels[0..levels.count];
     }
 };
@@ -438,11 +452,14 @@ pub const Levels = struct {
 pub const Debris = struct {
     pieces: [count]Levels = @splat(.{}),
     bodies: [body_count]Levels = @splat(.{}),
+    /// The chunks of rock's five models, as they are (`0x0055871C`).
+    rock_chunks: [rock_chunk_count]Levels = @splat(.{}),
 
     const count = 10;
     const stretch: f32 = 1.5;
     const body_count = 4;
     const body_stretch: f32 = 2.5;
+    const rock_chunk_count = 5;
 
     /// A body is drawn 2.5 times as large, or three quarters as large for a bit no larger than a
     /// tenth (`0x004DC420`).
@@ -455,6 +472,7 @@ pub const Debris = struct {
         var debris: Debris = .{};
         loadEach(&debris.pieces, all, types, gameobj.Type.debris, stretch);
         loadEach(&debris.bodies, all, types, gameobj.Type.crewman, body_stretch);
+        loadEach(&debris.rock_chunks, all, types, gameobj.Type.rock_chunk, 1);
         return debris;
     }
 
@@ -578,6 +596,8 @@ pub const Fireball = struct {
     look: Look,
     /// Whether it is coloured by how far it has played, from black to white (`+0x24`).
     lit: bool,
+    /// Whether it is the flak's (`+0x28`, `Spec.special`).
+    special: bool,
     /// Whether it showed at the last frame: past its wait, and not yet done.
     showing: bool = false,
     /// How it plays, and how its light burns and moves.
@@ -615,9 +635,23 @@ pub const Fireball = struct {
         delay: i32 = 0,
         lit: bool = false,
         velocity: Vector = @splat(0),
+        /// The flak's: the flak's frames, added to what is behind, a bang playing their nine
+        /// cells `flak_step` apart, unmirrored.
+        special: bool = false,
     };
 
     pub const Kind = enum { bang, sheet };
+
+    /// The flak's frames: each a third of the image across and down from the last, and as wide
+    /// (`0x004DC614`).
+    const flak_step: f32 = 0.33;
+
+    /// The flak's cell `at`, three across and three down, as a sprite's span of it.
+    fn flakCell(at: u32) [4]f32 {
+        const u = @as(f32, @floatFromInt(at % 3)) * flak_step;
+        const v = @as(f32, @floatFromInt(at / 3)) * flak_step;
+        return .{ u, u + flak_step, v, v + flak_step };
+    }
 
     /// The light's colour, and how far it reaches: its intensity times the square root of its size
     /// times `light_reach` (`0x004DC48C`). Its intensity fades from the style's peak to nothing as
@@ -633,8 +667,8 @@ pub const Fireball = struct {
     fn init(images: Explosions.Images, at: Vector, spec: Spec, style: Fireballs, clock: *const Clock, random: *libcmt.Rand) Fireball {
         var set: srapiext.SpriteSet = .{ .sprites = &.{} };
         set.surface.material.lit[0] = spec.lit;
-        set.surface.material.blend[0] = .premultiplied;
-        const image = switch (spec.kind) {
+        set.surface.material.blend[0] = if (spec.special) .add else .premultiplied;
+        const image = if (spec.special) images.flak else switch (spec.kind) {
             .bang => images.bang[0],
             .sheet => images.sheet,
         };
@@ -658,6 +692,7 @@ pub const Fireball = struct {
             .delay = spec.delay,
             .look = .{ .mirror_u = mirrors & 1 != 0, .mirror_v = mirrors & 2 != 0, .bang = spec.kind == .bang },
             .lit = spec.lit,
+            .special = spec.special,
             .style = style,
         };
     }
@@ -683,7 +718,8 @@ pub const Fireball = struct {
     /// fades out as its last frames play, where the game's vanishes after the last. It is drawn
     /// further along between the ticks as well (`particles.Pool.draw`).
     fn show(fireball: *Fireball, images: Explosions.Images, ahead: f32) void {
-        const frames: u32 = if (fireball.look.bang) 16 else 9;
+        const bang_images = fireball.look.bang and !fireball.special;
+        const frames: u32 = if (bang_images) 16 else 9;
         const life: f32 = @floatFromInt(fireball.life);
         const played = @min((@as(f32, @floatFromInt(fireball.age)) + ahead) / life, 1);
         const step = @min((@as(f32, @floatFromInt(fireball.age * @as(i32, @intCast(frames)))) + ahead * @as(f32, @floatFromInt(frames))) / life, @as(f32, @floatFromInt(frames - 1)));
@@ -696,9 +732,13 @@ pub const Fireball = struct {
             sprite.offset = offset;
             sprite.fade = share * kept;
             if (fireball.lit) sprite.colour = @splat(played);
-            if (!fireball.look.bang) sprite.uv = fireball.look.cell(cell);
+            if (!fireball.look.bang) {
+                sprite.uv = fireball.look.cell(cell);
+            } else if (fireball.special) {
+                sprite.uv = flakCell(cell);
+            }
         }
-        if (fireball.look.bang) {
+        if (bang_images) {
             fireball.set.surface.textures[0].image = images.bang[first];
             fireball.fading = fireball.set.surface;
             fireball.fading.textures[0].image = images.bang[next];
@@ -842,6 +882,13 @@ fn sparkles(world: gameobj.World, at: Vector, velocity: Vector, carried: f32, ho
 pub fn fireballAt(world: gameobj.World, at: Vector, spec: Fireball.Spec) void {
     const explosions = world.explosions orelse return;
     explosions.setOff(at, spec, world.clock, world.random);
+}
+
+/// Throws a chunk of rock from `at` along `direction` (`rocks.throw`), where the world has
+/// explosions.
+pub fn throwChunk(world: gameobj.World, at: Vector, direction: Vector, how: rocks.Throw) void {
+    const explosions = world.explosions orelse return;
+    rocks.throw(explosions, at, direction, how, world.clock, world.random);
 }
 
 /// A throw of bits every way: how many, and how.
@@ -1162,21 +1209,38 @@ pub fn burnPart(world: gameobj.World, index: u16, name: []const u8, how: Burn) v
     explosions.smoke(world, on, data, how.forever);
 }
 
+const Texture = srapiext.Texture;
+
+test "a special fireball plays the flak's cells" {
+    // Three across and three down, a third apart, unmirrored.
+    try std.testing.expectEqual([4]f32{ 0, Fireball.flak_step, 0, Fireball.flak_step }, Fireball.flakCell(0));
+    try std.testing.expectEqual([4]f32{ Fireball.flak_step, 2 * Fireball.flak_step, Fireball.flak_step, 2 * Fireball.flak_step }, Fireball.flakCell(4));
+    var random: libcmt.Rand = .{};
+    const fireball: Fireball = .init(testing.images(), @splat(0), .{ .size = 10, .special = true }, .fuller, &.{}, &random);
+    try std.testing.expectEqual(Texture{ .image = &testing.flak }, fireball.set.surface.textures[0]);
+    try std.testing.expectEqual(.add, fireball.set.surface.material.blend[0]);
+}
+
 pub const testing = struct {
     /// Textures that are never looked into, one for each frame, told apart by where they are.
     var bang: [16]srtexture.Image = undefined;
     var sheet: srtexture.Image = undefined;
+    var flak: srtexture.Image = undefined;
 
     fn images() Explosions.Images {
-        var found: Explosions.Images = .{ .bang = undefined, .sheet = &sheet };
+        var found: Explosions.Images = .{ .bang = undefined, .sheet = &sheet, .flak = &flak };
         for (&found.bang, &bang) |*image, *texture| image.* = texture;
         return found;
     }
 
-    /// Every piece of debris and every body the one mesh, at two levels.
-    fn debris(mesh: *const srapiext.Mesh) Debris {
+    /// Every piece of debris, every body and every chunk of rock the one mesh, at two levels.
+    pub fn debris(mesh: *const srapiext.Mesh) Debris {
         const levels = [_]srapiext.Level{ .{ .mesh = mesh, .until = 1000 }, .{ .mesh = mesh, .until = 5000 } };
-        return .{ .pieces = @splat(.of(&levels, Debris.stretch)), .bodies = @splat(.of(&levels, Debris.body_stretch)) };
+        return .{
+            .pieces = @splat(.of(&levels, Debris.stretch)),
+            .bodies = @splat(.of(&levels, Debris.body_stretch)),
+            .rock_chunks = @splat(.of(&levels, 1)),
+        };
     }
 
     /// How many of the pool's particles are in use.

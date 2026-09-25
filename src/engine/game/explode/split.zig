@@ -14,8 +14,7 @@
 //! Stalag's, and a split's burning bits may be bodies.
 //!
 //! Not ported: the Dark Reign's hat, the Krasnaya's arms and the Boridin breakaway's core, which
-//! the split takes apart first ([#238](https://github.com/vdmkenny/openreliant/issues/238)); and a
-//! Latov's rock chunks ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
+//! the split takes apart first ([#238](https://github.com/vdmkenny/openreliant/issues/238)).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -204,10 +203,8 @@ pub const Split = struct {
 
     /// One step's burst, at the point the cut reaches: a lit fireball, burning bits heading out
     /// from the ship or back along it, and one step in fourteen to sixteen an explosion's sound. A
-    /// Latov throws no bits but flashes the view at its 29th, 35th and 80th steps.
-    ///
-    /// Not ported: the rock chunks a Latov throws in place of its bits (`0x00472780`,
-    /// [#41](https://github.com/vdmkenny/openreliant/issues/41)).
+    /// Latov throws large chunks of rock straight out from the ship in place of its bits
+    /// (`explode.rocks.throw`), and flashes the view at its 29th, 35th and 80th steps.
     fn stepBurst(split: *Split, world: gameobj.World) void {
         const random = world.random;
         const sequence = split.sequence;
@@ -218,6 +215,8 @@ pub const Split = struct {
         const direction = if (random.rand() % 2 == 0) math.normalize(at - root.position) else -math.forward(object.root.orientation);
         if (object.type == .latov) {
             if (sequence.bits > 0 and std.mem.indexOfScalar(usize, &latov_flash_steps, split.step) != null) flash(world);
+            const out = math.normalize(at - root.position);
+            for (0..@intCast(@max(sequence.bits, 0))) |_| explode.throwChunk(world, at, out, .large);
         } else {
             for (0..@intCast(@max(sequence.bits, 0))) |_| explode.throwBit(world, at, direction, .{ .size = sequence.bit_size, .speed = 1, .bodies = sequence.bodies });
         }
