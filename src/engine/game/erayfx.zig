@@ -22,6 +22,7 @@ const Objects = @import("create.zig").Objects;
 const gameobj = @import("gameobj.zig");
 const matmanager = @import("matmanager.zig");
 const objects = @import("objects.zig");
+const table = @import("table.zig");
 const xtrabits = @import("xtrabits.zig");
 
 /// How many rays there is room for (`0x005531B0`).
@@ -311,7 +312,7 @@ pub const Ray = struct {
             strand.object.portal = standing.portal;
             strand.object.flags.portal_clipped = standing.portal != null;
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &strand.object }, .world);
-            if (index == 0) ray.light.kind.point.position = math.transform(place.orientation, at[light_segment]) + place.position;
+            if (index == 0) ray.light.kind.point.position = place.point(at[light_segment]);
         }
         ray.light.intensity = 1;
         try xtrabits.sceneAdd(gpa, scene, .{ .light = &ray.light }, .world);
@@ -331,7 +332,7 @@ fn shapeSegment(corners: *[segment_vertices]Vector, width: f32, frame: math.Plac
         .{ 0, -width, 0 },      .{ 0, -width, length }, .{ 0, width, length }, .{ 0, width, 0 },
         .{ -width, 0, 0 },      .{ -width, 0, length }, .{ width, 0, length }, .{ width, 0, 0 },
     };
-    for (corners, local) |*corner, point| corner.* = math.transform(frame.orientation, point) + frame.position;
+    for (corners, local) |*corner, point| corner.* = frame.point(point);
 }
 
 /// `0x0046AA70`: the point halfway between points `a` and `b` of `at`, strayed at random by up to
@@ -374,9 +375,7 @@ pub const Rays = struct {
     /// `eray_add` (`0x0046AC50`): a ray of `spec` in the first free slot, or in the first where
     /// all are taken, letting that ray go.
     pub fn add(rays: *Rays, spec: Spec, random: *libcmt.Rand) Allocator.Error!*Ray {
-        const slot = for (&rays.slots) |*slot| {
-            if (slot.* == null) break slot;
-        } else first: {
+        const slot = table.firstFree(*Ray, &rays.slots) orelse first: {
             rays.remove(rays.slots[0].?);
             break :first &rays.slots[0];
         };

@@ -551,6 +551,9 @@ dim blue of 0.3 at 0.4 to dark below 0.35, each stretch eased by a cosine (`cosi
 `0x004268C0`), and is grey without a hardware renderer. The other sides' swaps the green and the
 blue, at 0.8. Both are 0.07 as bright.
 
+**Improvement:** OpenReliant divides by each stretch's span of strength, where the game multiplies
+by its reciprocal, rounded.
+
 A shot spent on a shield, whatever becomes of it, and a knock that reaches a shield flare it
 (`shield_flare`, `0x0049F1E0`), while any of the ship's shields holds anything and the ship is not
 cloaked. Ten sparks of kind 3 fly off the point struck, unless the camera is in the ship's cockpit.

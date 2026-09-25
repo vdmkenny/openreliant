@@ -21,6 +21,7 @@ const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
 const orders = @import("ai/orders.zig");
 const matmanager = @import("matmanager.zig");
+const particles = @import("particles.zig");
 const table = @import("table.zig");
 const xtrabits = @import("xtrabits.zig");
 const Clock = @import("main.zig").Clock;
@@ -182,6 +183,16 @@ pub const Shockwave = struct {
         slot.orders[0].data = .{ .disrupted = .{ .ticks = @intFromFloat(strength * ticks), .push = push } };
     }
 
+    /// What each quadrant takes as the shockwave passes, with `left` of its life to go: a
+    /// torpedo's `torpedo_harm` of its size times `left`, a split's by its owner's type times the
+    /// cube of `left`.
+    fn harm(wave: *const Shockwave, all: *const create.Objects, left: f32) f32 {
+        if (wave.kind != .split) return left * wave.size * torpedo_harm;
+        const owner = all.slots[wave.owner].object.type;
+        const scale = if (std.mem.indexOfScalar(gameobj.Type, &lighter_splits, owner) != null) lighter_split_harm else split_harm;
+        return left * wave.size * left * left * scale;
+    }
+
     /// A torpedo's or a split's shockwave passing the player's ship shakes the view and damages
     /// each quadrant (`harm`), unless the ship lists components, is a stand-in, exploding or
     /// disabled, or another shockwave harmed it less than `harm_pause` ticks ago. A shield's
@@ -190,16 +201,6 @@ pub const Shockwave = struct {
     ///
     /// **Improvement:** the game damages the player as if the attacker were object 16, whatever a
     /// loop left in a register; OpenReliant names the shockwave's owner.
-    /// What each quadrant takes as the shockwave passes, with `left` of its life to go: a
-    /// torpedo's `torpedo_harm` of its size times `left`, a split's by its owner's type times the
-    /// cube of `left`.
-    fn harm(wave: *const Shockwave, all: *const create.Objects, left: f32) f32 {
-        if (wave.kind != .split) return left * wave.size * torpedo_harm;
-        const owner: u32 = @intFromEnum(all.slots[wave.owner].object.type);
-        const scale = if (std.mem.indexOfScalar(u32, &lighter_splits, owner) != null) lighter_split_harm else split_harm;
-        return left * wave.size * left * left * scale;
-    }
-
     fn harmPlayer(wave: *const Shockwave, world: gameobj.World, done: f32, reach: f32) void {
         const all = world.objects;
         const object = &all.slots[all.player].object;
@@ -270,7 +271,7 @@ const torpedo_harm: f32 = 0.05;
 /// heavier for any other (`0x004DC958`).
 const split_harm: f32 = 0.015;
 const lighter_split_harm: f32 = 0.0045;
-const lighter_splits = [_]u32{ 0x36, 0x44, 0x45, 0x9B, 0xA8 };
+const lighter_splits = [_]gameobj.Type{ @enumFromInt(0x36), .darkreign, .stalag, @enumFromInt(0x9B), .boridin_breakaway };
 
 /// A Havoc's shockwave's push: its strength is 1.5 times what is left of its life, up to 1, and
 /// the ticks it disrupts a player's ship and another for at full strength (`0x004DC4E0`,
@@ -349,7 +350,7 @@ pub const Shockwaves = struct {
         const clock = world.clock;
         for (&waves.waves) |*slot| {
             const wave = &(slot.* orelse continue);
-            const done = @as(f32, @floatFromInt(clock.frame_start - wave.born)) / @as(f32, @floatFromInt(wave.life));
+            const done = particles.through(clock.frame_start, wave.born, wave.life);
             if (!(done < 1)) {
                 slot.* = null;
                 continue;

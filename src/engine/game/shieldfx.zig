@@ -91,8 +91,6 @@ const burst_spread: Vector = .{ 0.25, 0.25, 0 };
 /// `shieldfx_create`'s kind 3: an emitter of `orange` hanging from the part at the point struck,
 /// facing out along the face's normal, bursts `burst_count` puffs.
 fn burst(world: gameobj.World, crossing: objects.Crossing) void {
-    const pool = world.particles orelse return;
-    const sending = world.sending() orelse return;
     var emitter: particles.Emitter = .{
         .life = burst_life,
         .born = world.clock.frame_start,
@@ -103,7 +101,7 @@ fn burst(world: gameobj.World, crossing: objects.Crossing) void {
         .speed_range = burst_speed_range,
         .template = &orange,
     };
-    pool.burst(&emitter, crossing.part.part().drawn(), burst_count, sending);
+    explode.burstWithin(world, &emitter, crossing.part.part().drawn(), burst_count);
 }
 
 /// How long the emitter lives, which a burst doesn't read.
@@ -206,25 +204,18 @@ test componentHit {
     const flags = &mission.slot(index).object.flags;
     flags.shield_generator = true;
     componentHit(world, index, crossing, .component);
-    try std.testing.expectEqual(0, sent(&pool));
+    try std.testing.expectEqual(0, particles.testing.sent(&pool));
     // Without one, the hit bursts into twenty orange puffs, heading out along the face's normal.
     flags.shield_generator = false;
     componentHit(world, index, crossing, .component);
-    try std.testing.expectEqual(burst_count, sent(&pool));
+    try std.testing.expectEqual(burst_count, particles.testing.sent(&pool));
     for (pool.particles[0..burst_count]) |particle| {
         try std.testing.expectEqual(&orange, particle.template.?);
         try std.testing.expect(particle.velocity[2] < 0);
     }
     // A rock's leaves no puffs.
     componentHit(world, index, crossing, .rock);
-    try std.testing.expectEqual(burst_count, sent(&pool));
-}
-
-/// How many of the pool's particles are in use.
-fn sent(pool: *const particles.Pool) usize {
-    var count: usize = 0;
-    for (pool.particles) |particle| count += @intFromBool(particle.template != null);
-    return count;
+    try std.testing.expectEqual(burst_count, particles.testing.sent(&pool));
 }
 
 test outFrom {

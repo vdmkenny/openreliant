@@ -42,6 +42,13 @@ pub const Curve = extern struct {
     pub fn at(curve: Curve, t: f32) f32 {
         return curve.b * t + curve.a * t * t + curve.c;
     }
+
+    comptime {
+        assert(@offsetOf(Curve, "a") == 0x00);
+        assert(@offsetOf(Curve, "b") == 0x04);
+        assert(@offsetOf(Curve, "c") == 0x08);
+        assert(@sizeOf(Curve) == 0x0C);
+    }
 };
 
 /// How a template's particles live (`particle_template_create`, `0x0049C5D0`).
@@ -62,7 +69,7 @@ pub const Template = extern struct {
 
     pub const Kind = enum(u32) {
         particles = 0,
-        /// Particles, and a spark one time in 200.
+        /// Particles, and a spark one time in `spark_odds`.
         sometimes_sparks = 1,
         sparks = 2,
 
@@ -71,9 +78,13 @@ pub const Template = extern struct {
             return switch (kind) {
                 .particles => .particle,
                 .sparks => .spark,
-                .sometimes_sparks => if (random.rand() % 200 != 0) .particle else .spark,
+                .sometimes_sparks => if (random.rand() % spark_odds != 0) .particle else .spark,
             };
         }
+
+        /// A template that sometimes sparks sends a spark one time in this many
+        /// (`particle_stream`).
+        const spark_odds = 200;
     };
 
     pub const Sent = enum { particle, spark };
@@ -428,6 +439,12 @@ pub const Pool = struct {
     }
 };
 
+test through {
+    // A quarter of a life of 100 ticks from tick 10, and past its end.
+    try std.testing.expectEqual(0.25, through(35, 10, 100));
+    try std.testing.expectEqual(1.5, through(160, 10, 100));
+}
+
 test Curve {
     const curve: Curve = .through(1, 0.25, 0);
     try std.testing.expectApproxEqAbs(1, curve.at(0), 1e-6);
@@ -446,7 +463,7 @@ test "Template.Kind.roll" {
     try std.testing.expectEqual(Template.Sent.particle, Template.Kind.particles.roll(&random));
 }
 
-const testing = struct {
+pub const testing = struct {
     const template: Template = .{
         .life = 100,
         .size = .through(10, 20, 30),
@@ -457,6 +474,13 @@ const testing = struct {
     fn pool() !Pool {
         var image: srtexture.Image = undefined;
         return .init(std.testing.allocator, 8, &image, .add);
+    }
+
+    /// How many of the pool's particles are in use.
+    pub fn sent(from: *const Pool) usize {
+        var count: usize = 0;
+        for (from.particles) |particle| count += @intFromBool(particle.template != null);
+        return count;
     }
 };
 
@@ -480,6 +504,7 @@ test "Pool.burst" {
     // speed plus what it inherits.
     pool.burst(&emitter, null, 3, sending);
     try std.testing.expectEqual(3, pool.used);
+    try std.testing.expectEqual(3, testing.sent(&pool));
     try std.testing.expectEqual(Vector{ 0, 0, 1000 }, pool.particles[0].at);
     const own = pool.particles[0].velocity - emitter.inherited;
     try std.testing.expectApproxEqAbs(5, math.length(own), 1e-4);

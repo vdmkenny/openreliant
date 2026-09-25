@@ -142,7 +142,7 @@ pub fn cut(gpa: Allocator, frame: math.Place, source: Source, cuts: Cuts, random
     // The source's frame, as the frame sees it.
     const into = math.transpose(frame.orientation);
     const turn = math.product(into, source.place.orientation);
-    const offset = math.transform(into, source.place.position - frame.position);
+    const offset = frame.inverse(source.place.position);
 
     const mesh = source.mesh;
     const sides = try gpa.alloc(Sides, mesh.polygons.len);
@@ -166,7 +166,7 @@ pub fn cut(gpa: Allocator, frame: math.Place, source: Source, cuts: Cuts, random
             .object = .{
                 .flags = source.flags,
                 .light_mask = source.light_mask,
-                .position = frame.position + math.transform(frame.orientation, made.centre),
+                .position = frame.point(made.centre),
                 .orientation = frame.orientation,
                 .radius = made.mesh.radius,
                 .levels = &.{},
@@ -360,7 +360,7 @@ pub const Pieces = struct {
                     continue;
                 },
             };
-            if (flight.trail) |*trail| stream(world, trail, flight.place);
+            if (flight.trail) |*trail| _ = explode.streamWithin(world, trail, flight.place);
             const place = &flight.place;
             place.position += flight.velocity * @as(Vector, @splat(@floatFromInt(clock.frame_duration)));
             const spin = math.fromAngleVector(flight.tumble);
@@ -383,25 +383,18 @@ pub const Pieces = struct {
     }
 };
 
-/// Streams `trail`'s smoke from `from`, as the camera sees it.
-fn stream(world: gameobj.World, trail: *particles.Emitter, from: math.Place) void {
-    const pool = world.particles orelse return;
-    _ = pool.stream(trail, from, world.sending() orelse return);
-}
-
 /// How the pieces of a first cut fly: every third, from the first, whole, away from the ship at
 /// `first_speed` a step and up to `first_speed_range` more (`0x004DC820`, `0x004DC520`), turning up
 /// to `first_tumble` either way about each axis a tick (`0x004DC610`), trailing smoke for its
 /// flight, two to five seconds; the rest cut again, in two for the second and four for the third,
 /// each flying away at `second_speed` a step times the cuts (`0x004DC72C`). Each carries on with
-/// the ship's velocity, and moves at a quarter of that a tick.
+/// the ship's velocity, and moves at a quarter of that a tick (`objects.tick_share`).
 const first_speed: f32 = 14;
 const first_speed_range: f32 = 10;
 const first_tumble: f32 = 0.04;
 const first_flight = 200;
 const flight_range = 300;
 const second_speed: f32 = 20;
-const step_share: f32 = 0.25;
 
 /// The smoke a whole piece trails: out behind it along its own Z axis, straying a little, for up
 /// to ten seconds.
@@ -484,7 +477,7 @@ fn breakUpPart(explosions: *explode.Explosions, world: gameobj.World, slot: *con
             const tumble = random.centredVector(@splat(first_tumble));
             explosions.pieces.add(.{
                 .until = @as(i32, random.rand() % flight_range) + first_flight + now,
-                .velocity = away(piece.object.position, centre, speed, carried, step_share),
+                .velocity = away(piece.object.position, centre, speed, carried, objects.tick_share),
                 .tumble = tumble,
                 .trail = trailFrom(kind, now),
                 .piece = piece,
@@ -499,7 +492,7 @@ fn breakUpPart(explosions: *explode.Explosions, world: gameobj.World, slot: *con
             const tumble = random.centredVector(@splat(count * kind.tumble()));
             explosions.pieces.add(.{
                 .until = @as(i32, random.rand() % flight_range) + kind.flight() + now,
-                .velocity = away(flying.object.position, centre, count * second_speed, carried, step_share),
+                .velocity = away(flying.object.position, centre, count * second_speed, carried, objects.tick_share),
                 .tumble = tumble,
                 .piece = flying,
             });
@@ -633,7 +626,7 @@ test cut {
             try std.testing.expectApproxEqAbs(plane.distance, math.dot(plane.normal, piece.mesh.positions[first]), 1e-2);
             // The corner's colour names the source corner it came from.
             const from: usize = @intFromFloat(piece.mesh.baked.?[first][0]);
-            const world = piece.object.position + math.transform(piece.object.orientation, piece.mesh.positions[first]);
+            const world = piece.place().point(piece.mesh.positions[first]);
             try std.testing.expect(math.distance(mesh.positions[from] + source.place.position, world) < 1e-2);
             try std.testing.expectEqual(mesh.polygons[from / 3].kind, polygon.kind);
             try std.testing.expectEqual(@as(f32, @floatFromInt(from)), piece.mesh.uv[0].?[first][0]);
@@ -691,7 +684,6 @@ test Pieces {
 
 test "a part's burst takes in the models it carries" {
     const gpa = std.testing.allocator;
-    const srofiles = @import("../srofiles.zig");
     var stage: explode.testing.Stage = undefined;
     try stage.init();
     defer stage.deinit();
@@ -702,22 +694,9 @@ test "a part's burst takes in the models it carries" {
     const index = try create.createObject(mission.objects, &mission.tables, gun.types(), null, .predator, 0, @splat(0), &mission.random);
 
     // A part with no mesh of its own, carrying the gun's model on an attachment.
-    var attachments = [1]shp.Attachment{std.mem.zeroes(shp.Attachment)};
-    attachments[0].kind = .gun;
-    attachments[0].orientation = math.identity;
-    var data = [1]shp.PartData{objects.testing.part()};
-    data[0].part.parent = -1;
-    data[0].attachments = &attachments;
-    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &data, .trailing_bytes = 0 };
-    var loaded_parts = [1]srofiles.LoadedPart{.{ .flags = .{}, .levels = &.{}, .meshes = &.{} }};
-    const loaded: srofiles.Loaded = .{ .parts = &loaded_parts };
-    const Answer = struct {
-        fn load(context: *anyopaque, _: []const u8) ?objects.Mounts.Mounted {
-            const fixture: *create.testing.Model = @ptrCast(@alignCast(context));
-            return .{ .model = &fixture.source, .loaded = &fixture.loaded };
-        }
-    };
-    var built: objects.Model = try .create(gpa, &source, &loaded, .{ .mounts = .{ .context = &gun, .load = Answer.load } });
+    var carrier: objects.testing.Carrier = undefined;
+    carrier.init(@splat(0));
+    var built = try carrier.build(gpa, &gun);
     defer built.deinit(gpa);
     built.place(@splat(0), math.identity);
 

@@ -68,9 +68,9 @@ pub const Grid = struct {
         const left: usize = @intFromFloat(@floor(slice));
         const down = band - @floor(band);
         const across = slice - @floor(slice);
-        const upper = mix(coarse.valueAt(values, top, left), coarse.valueAt(values, top, left + 1), across);
-        const lower = mix(coarse.valueAt(values, top + 1, left), coarse.valueAt(values, top + 1, left + 1), across);
-        return mix(upper, lower, down);
+        const upper = math.lerp(coarse.valueAt(values, top, left), coarse.valueAt(values, top, left + 1), across);
+        const lower = math.lerp(coarse.valueAt(values, top + 1, left), coarse.valueAt(values, top + 1, left + 1), across);
+        return math.lerp(upper, lower, down);
     }
 
     /// Where vertex `index` stands on `coarse`: its band from the pole on +Z and its slice, in
@@ -92,11 +92,6 @@ pub const Grid = struct {
         if (band == 0) return values[0];
         if (band >= grid.down) return values[grid.vertices() - 1];
         return values[grid.ring(band, slice)];
-    }
-
-    /// `share` of the way from `a` to `b`.
-    fn mix(a: @Vector(4, f32), b: @Vector(4, f32), share: f32) @Vector(4, f32) {
-        return (b - a) * @as(@Vector(4, f32), @splat(share)) + a;
     }
 
     /// The triangles of the grid's first `bands` bands, three corners each, band by band as
@@ -208,6 +203,24 @@ const Ramp = [ramp_steps]Colour;
 const ramp_brightness: f32 = 0.07;
 const other_share: f32 = 0.8;
 
+/// The strengths a ramp turns at (`0x0049EB00`): brightest at `ramp_peak` (`0x004DC4B4`), dimmed
+/// by `ramp_dim` (`0x004DC4DC`), and out at `ramp_out` (`0x004DC838`). At its peak a friendly
+/// ship's is `ramp_green` green and full blue, and dimmed `ramp_dim_blue` blue.
+const ramp_peak: f32 = 0.6;
+const ramp_dim: f32 = 0.4;
+const ramp_out: f32 = 0.35;
+const ramp_green: f32 = 0.7;
+const ramp_dim_blue: f32 = 0.3;
+
+/// The spans of strength a ramp eases over: from full strength down to the peak, from the peak
+/// down to the dimming, and from the peak down to nothing.
+///
+/// **Improvement:** OpenReliant divides by the spans, where the game multiplies by their
+/// reciprocals, rounded (`0x004DC9D8`, `0x004DC9D4`, `0x004DC9D0`).
+const ramp_rise: f32 = 0.4;
+const ramp_fall: f32 = 0.2;
+const ramp_fade: f32 = 0.6;
+
 /// `cosine_ease` (`0x004268C0`): from `a` to `b` as `share` goes from 0 to 1, slow at each end. It
 /// lies among the interface's code, between `wgate.cpp`'s and `interf.cpp`'s, and serves much of
 /// it; OpenReliant keeps it here, with the ramps, and the cloak's shimmer uses it too
@@ -230,14 +243,14 @@ test ease {
 /// green and blue, at 0.8 of the strength.
 fn rampColour(tint: Tint, strength: f32, hardware: bool) Colour {
     var colour: Colour = @splat(0);
-    if (strength > 0.6) {
-        const share = (1 - strength) / 0.4;
-        colour = .{ 0, ease(0, 0.7, share), ease(0, 1, share) };
-    } else if (strength > 0.4) {
-        const share = (0.6 - strength) / 0.2;
-        colour = .{ 0, ease(0.7, 0, share), ease(1, 0.3, share) };
-    } else if (strength > 0.35) {
-        colour = .{ 0, 0, ease(0.3, 0, (0.6 - strength) / 0.6) };
+    if (strength > ramp_peak) {
+        const share = (1 - strength) / ramp_rise;
+        colour = .{ 0, ease(0, ramp_green, share), ease(0, 1, share) };
+    } else if (strength > ramp_dim) {
+        const share = (ramp_peak - strength) / ramp_fall;
+        colour = .{ 0, ease(ramp_green, 0, share), ease(1, ramp_dim_blue, share) };
+    } else if (strength > ramp_out) {
+        colour = .{ 0, 0, ease(ramp_dim_blue, 0, (ramp_peak - strength) / ramp_fade) };
     }
     const tinted: Colour = switch (tint) {
         .friendly => if (hardware) colour else @splat(colour[2]),
@@ -362,7 +375,6 @@ pub const Shields = struct {
         };
     }
 
-    /// `0x0049EF60`: the meshes let go.
     /// The sphere a bubble is drawn on at its finest in the shields' style: the game's finest
     /// level, or in the smooth style the finer sphere.
     pub fn finest(shields: *const Shields) Sphere {
@@ -373,6 +385,7 @@ pub const Shields = struct {
         return .{ .mesh = &shields.meshes[level], .grid = all_grids[level] };
     }
 
+    /// `0x0049EF60`: the meshes let go.
     pub fn deinit(shields: *Shields, gpa: Allocator) void {
         for (shields.meshes) |mesh| mesh.deinit(gpa);
         shields.capital.deinit();
@@ -614,7 +627,7 @@ pub const Kept = struct {
     fn strike(kept: *Kept, mesh: *const srapiext.Mesh, place: math.Place, scale: f32, centre: Vector, at: Vector) void {
         const toward = at - centre;
         for (mesh.positions, kept.strengths[0..mesh.positions.len]) |position, *hits| {
-            const out = math.transform(place.orientation, position * @as(Vector, @splat(scale))) + place.position - centre;
+            const out = place.point(position * @as(Vector, @splat(scale))) - centre;
             hits[kept.next] = strengthAt(angleBetween(toward, out)) orelse continue;
         }
         kept.next +%= 1;
@@ -652,7 +665,7 @@ pub const Recent = struct {
     /// A hit at `at` on a bubble standing at `place`, at tick `now`.
     fn remember(recent: *Recent, place: math.Place, at: Vector, now: i32) void {
         recent.hits[recent.next] = .{
-            .direction = math.normalize(math.transformTransposed(place.orientation, at - place.position)),
+            .direction = math.normalize(place.inverse(at)),
             .at = @floatFromInt(now),
         };
         recent.next +%= 1;

@@ -29,6 +29,7 @@ const gameobj = @import("../gameobj.zig");
 const objects = @import("../objects.zig");
 const shockwave = @import("../shockwave.zig");
 const sound3d = @import("../sound3d.zig");
+const table = @import("../table.zig");
 const xtrabits = @import("../xtrabits.zig");
 pub const sequences = @import("sequences.zig");
 
@@ -99,9 +100,7 @@ pub const Splits = struct {
     /// **Fix:** the game leaves the split it takes the slot of running on its portals once they
     /// are freed; OpenReliant lets that split go first, its parts no longer cut.
     fn take(splits: *Splits, world: gameobj.World) *?Split {
-        for (&splits.slots) |*slot| {
-            if (slot.* == null) return slot;
-        }
+        if (table.firstFree(Split, &splits.slots)) |slot| return slot;
         const first = &splits.slots[0];
         if (first.*) |*split| split.release(world);
         splits.free(first);
@@ -156,8 +155,7 @@ pub const Split = struct {
 
     /// Point `n` of the split's, in the world, as the ship's root is drawn.
     fn worldPoint(split: *const Split, world: gameobj.World, n: usize) Vector {
-        const place = split.rootPlace(world);
-        return place.position + math.transform(place.orientation, split.points[n]);
+        return split.rootPlace(world).point(split.points[n]);
     }
 
     /// A sweep's frame. While it has time and points to go, the other half may move, and the
@@ -202,14 +200,15 @@ pub const Split = struct {
     }
 
     /// One step's burst, at the point the cut reaches: a lit fireball, burning bits heading out
-    /// from the ship or back along it, and one step in fourteen to sixteen an explosion's sound. A
-    /// Latov throws large chunks of rock straight out from the ship in place of its bits
-    /// (`explode.rocks.throw`), and flashes the view at its 29th, 35th and 80th steps.
+    /// from the ship or back along it, and one step in fourteen to sixteen an explosion's sound, at
+    /// half to all of its volume. A Latov throws large chunks of rock straight out from the ship in
+    /// place of its bits (`explode.rocks.throw`), and flashes the view at its 29th, 35th and 80th
+    /// steps.
     fn stepBurst(split: *Split, world: gameobj.World) void {
         const random = world.random;
         const sequence = split.sequence;
         const at = split.worldPoint(world, split.step);
-        explode.fireballAt(world, at, .{ .size = (random.fraction() * 0.5 + 0.75) * sequence.fireball, .light = true });
+        explode.fireballAt(world, at, .{ .size = (random.fraction() * step_fireball_range + step_fireball_least) * sequence.fireball, .light = true });
         const root = split.rootPlace(world);
         const object = &world.objects.slots[split.object].object;
         const direction = if (random.rand() % 2 == 0) math.normalize(at - root.position) else -math.forward(object.root.orientation);
@@ -218,13 +217,13 @@ pub const Split = struct {
             const out = math.normalize(at - root.position);
             for (0..@intCast(@max(sequence.bits, 0))) |_| explode.throwChunk(world, at, out, .large);
         } else {
-            for (0..@intCast(@max(sequence.bits, 0))) |_| explode.throwBit(world, at, direction, .{ .size = sequence.bit_size, .speed = 1, .bodies = sequence.bodies });
+            for (0..@intCast(@max(sequence.bits, 0))) |_| explode.throwBit(world, at, direction, .{ .size = sequence.bit_size, .speed = step_bit_speed, .bodies = sequence.bodies });
         }
         split.step += 1;
-        const skew: i32 = @intFromFloat(random.centred() * -3);
-        if (@mod(@as(i32, @intCast(split.step)), 15 - skew) != 0) return;
+        const skew: i32 = @intFromFloat(random.centred() * sound_skew);
+        if (@mod(@as(i32, @intCast(split.step)), sound_every - skew) != 0) return;
         const which: sound3d.sounds.Sound = if (random.rand() % 2 == 0) .explosion01 else .explosion02;
-        const volume = (random.fraction() + 1) * 0.5;
+        const volume = (random.fraction() + 1) * sound_volume;
         sound3d.playIn(world, at, null, -1, which, volume, .not_reserved);
     }
 
@@ -242,21 +241,38 @@ pub const Split = struct {
         const at = split.worldPoint(world, @intCast(@divTrunc(n, 2) + @as(isize, @intCast(split.step))));
         const object = &world.objects.slots[split.object].object;
         const size = if (sequence.big_fireball > 0) sequence.big_fireball else object.radius * big_share;
-        explode.fireballAt(world, at, .{ .size = size * 0.5, .light = true });
+        explode.fireballAt(world, at, .{ .size = size * big_fireball_share, .light = true });
         const stray = math.fromAngles(random.centred() * big_stray, random.centred() * big_stray, random.centred() * big_stray);
         const direction = math.normalize(math.transform(stray, at - split.rootPlace(world).position));
-        const bits: usize = @intFromFloat(@as(f32, @floatFromInt(sequence.bits)) * @as(f32, @floatFromInt(count)) * 0.05);
-        for (0..bits) |_| explode.throwBit(world, at, direction, .{ .size = sequence.bit_size, .speed = 2, .bodies = sequence.bodies });
+        const bits: usize = @intFromFloat(@as(f32, @floatFromInt(sequence.bits)) * @as(f32, @floatFromInt(count)) * big_bits_share);
+        for (0..bits) |_| explode.throwBit(world, at, direction, .{ .size = sequence.bit_size, .speed = big_bit_speed, .bodies = sequence.bodies });
     }
 
     /// The steps of a Latov's sweep that flash the view.
     const latov_flash_steps = [_]usize{ 29, 35, 80 };
 
+    /// A step's fireball is `step_fireball_least` of the sequence's fireball size and up to
+    /// `step_fireball_range` more (`0x004DC550`, `0x004DC408`), and its bits leave at
+    /// `step_bit_speed` (`split_update`). Its explosion is heard on the steps that are a multiple
+    /// of `sound_every`, skewed by up to half `sound_skew` either way (`0x004DC834`), at
+    /// `sound_volume` of its volume and up to as much again (`0x004DC408`).
+    const step_fireball_least: f32 = 0.75;
+    const step_fireball_range: f32 = 0.5;
+    const step_bit_speed: f32 = 1;
+    const sound_every = 15;
+    const sound_skew: f32 = -3;
+    const sound_volume: f32 = 0.5;
+
     /// One step in this many is a bigger burst (`split_update`); its fireball is this share of
-    /// the ship's radius where the sequence names no size (`0x004DC838`); its bits stray up to
-    /// half this either way about each axis (`0x004DC5F0`).
+    /// the ship's radius where the sequence names no size (`0x004DC838`), and half its size
+    /// across (`0x004DC408`); it throws `big_bits_share` of the sequence's bits for each point
+    /// (`0x004DC474`), which leave at `big_bit_speed` (`split_update`) and stray up to half
+    /// `big_stray` either way about each axis (`0x004DC5F0`).
     const big_burst_odds = 30;
     const big_share: f32 = 0.35;
+    const big_fireball_share: f32 = 0.5;
+    const big_bits_share: f32 = 0.05;
+    const big_bit_speed: f32 = 2;
     const big_stray: f32 = 4.5;
 
     /// A sweep's end, once (`GameObject.Ends.split_ended`): the portals go and nothing is cut;
@@ -287,15 +303,15 @@ pub const Split = struct {
                 object.velocity = gameobj.vec3(@splat(0));
             },
             .latov => {},
-            else => object.rotation = math.fromAngles(tumble[0], tumble[1], tumble[2]),
+            else => object.rotation = math.fromAngleVector(tumble),
         }
         flashNear(world, split.object);
         split.ending(world);
     }
 
     /// What every split's end does last: the ship's explosion heard from it, the ship recentred on
-    /// what is left of it, and three fireballs at the first of its hull part's `fireballs`
-    /// points, each 50 ticks after the last.
+    /// what is left of it, and `end_fireballs` fireballs at the first of its hull part's
+    /// `fireballs` points, each `end_fireball_gap` ticks after the last.
     ///
     /// **Fix:** the game reads three points whatever the list holds.
     fn ending(split: *Split, world: gameobj.World) void {
@@ -308,13 +324,16 @@ pub const Split = struct {
         const data = ref.data() orelse return;
         const list = data.pointList(.fireballs) orelse return;
         const place = ref.part().drawn();
-        for (list.points[0..@min(list.points.len, 3)], 0..) |point, n| {
-            const at = place.position + math.transform(place.orientation, gameobj.vector(point.position));
-            explode.fireballAt(world, at, .{ .size = slot.object.radius * end_fireball_share, .light = true, .delay = @intCast(n * 50) });
+        for (list.points[0..@min(list.points.len, end_fireballs)], 0..) |point, n| {
+            const at = place.point(gameobj.vector(point.position));
+            explode.fireballAt(world, at, .{ .size = slot.object.radius * end_fireball_share, .light = true, .delay = @intCast(n * end_fireball_gap) });
         }
     }
 
-    /// The fireballs at a split's end, this share of the ship's radius (`0x004DC450`).
+    /// The fireballs at a split's end: how many, how many ticks apart (`split_update`), and this
+    /// share of the ship's radius (`0x004DC450`).
+    const end_fireballs = 3;
+    const end_fireball_gap = 50;
     const end_fireball_share: f32 = 0.15;
 
     /// How a ship drifts once split, a step, in its own frame, and turns, a step
@@ -334,9 +353,9 @@ pub const Split = struct {
     }
 
     /// A bursts split's frame: a Stalag flashes the view one frame in `stalag_flash_odds`; after
-    /// its first second, one frame in ten, or five for a Stalag, a burst about the ship, which
-    /// shakes the player's view for a Latov or a Stalag; once the time is up, the end
-    /// (`burstsEnd`).
+    /// its first second, one frame in `burst_odds`, or `stalag_burst_odds` for a Stalag, a burst
+    /// about the ship, its bits leaving at `burst_bit_speed`, which shakes the player's view for a
+    /// Latov or a Stalag; once the time is up, the end (`burstsEnd`).
     fn burstFrame(split: *Split, world: gameobj.World) bool {
         const all = world.objects;
         const object = &all.slots[split.object].object;
@@ -344,10 +363,10 @@ pub const Split = struct {
         const random = world.random;
         if (object.type == .stalag and random.rand() % stalag_flash_odds == 0) flash(world);
         if (elapsed > bursts_after) {
-            const odds: u15 = if (object.type == .stalag) 5 else 10;
+            const odds: u15 = if (object.type == .stalag) stalag_burst_odds else burst_odds;
             if (random.rand() % odds == 0) {
                 if (object.type == .latov or object.type == .stalag) world.shake.* = bursts_shake;
-                split.burst(world, 0.8, true);
+                split.burst(world, burst_bit_speed, true);
             }
         }
         if (elapsed < split.sequence.duration) return false;
@@ -359,13 +378,18 @@ pub const Split = struct {
     const stalag_flash_odds = 40;
 
     /// Bursts start this many ticks into a bursts split, and shake the view this hard for a Latov
-    /// or a Stalag.
+    /// or a Stalag; a frame bursts one time in `burst_odds`, or a Stalag's in `stalag_burst_odds`,
+    /// its bits leaving at `burst_bit_speed` (`split_update`).
     const bursts_after = 100;
     const bursts_shake: f32 = 3;
+    const burst_odds = 10;
+    const stalag_burst_odds = 5;
+    const burst_bit_speed: f32 = 0.8;
 
-    /// A burst about the ship, at one of its points at random: two lit fireballs, the second up to
-    /// 150 ticks late, burning bits scattered about the point heading out from the ship at
-    /// `bit_speed`, and, where `heard`, an explosion's sound.
+    /// A burst about the ship, at one of its points at random: two lit fireballs, the first two to
+    /// three times the sequence's fireball size across and the second one to two times, up to
+    /// `burst_late` ticks late; `burst_bits` times the sequence's burning bits scattered about the
+    /// point heading out from the ship at `bit_speed`; and, where `heard`, an explosion's sound.
     ///
     /// **Fix:** the game takes the points, already in the ship's frame, through the frame of the
     /// part destroyed or of the hull; OpenReliant takes them as the ship stands. And it skips a
@@ -375,26 +399,30 @@ pub const Split = struct {
         const random = world.random;
         const sequence = split.sequence;
         const at = split.worldPoint(world, @as(usize, random.rand()) % split.points.len);
-        explode.fireballAt(world, at, .{ .size = (random.fraction() + 2) * sequence.fireball, .light = true });
+        explode.fireballAt(world, at, .{ .size = (random.fraction() + burst_big_least) * sequence.fireball, .light = true });
         const late: i32 = random.rand() % burst_late;
         explode.fireballAt(world, at, .{ .size = (random.fraction() + 1) * sequence.fireball, .light = true, .delay = late });
         const direction = math.normalize(at - split.rootPlace(world).position);
-        for (0..@intCast(@max(sequence.bits * 4, 0))) |_| {
+        for (0..@intCast(@max(sequence.bits * burst_bits, 0))) |_| {
             explode.throwBit(world, at + random.fractionVector(@splat(burst_scatter)), direction, .{ .size = sequence.bit_size, .speed = bit_speed, .bodies = sequence.bodies });
         }
         if (heard) explode.sound(world, at, .explosions);
     }
 
-    /// A burst's second fireball is up to this many ticks late; its bits start within this of the
-    /// point along each axis (`0x004DC48C`).
+    /// A burst's first fireball is at least this many times the sequence's size (`0x004DC404`,
+    /// which the game adds twice), and its second up to `burst_late` ticks late; it throws
+    /// `burst_bits` times the sequence's bits (`split_update`), which start within `burst_scatter`
+    /// of the point along each axis (`0x004DC48C`).
+    const burst_big_least: f32 = 2;
     const burst_late = 150;
+    const burst_bits = 4;
     const burst_scatter: f32 = 50;
 
     /// A bursts split's end: the view flashes where the camera is near (`flashNear`); its
-    /// explosion is heard; a fireball at each of its points, up to 75 ticks late, with burning
-    /// bits; then, once, the portals go, the other half drifts off, the ship's intact parts go and
-    /// its wreck shows, and it drifts and turns slowly, or stops dead for a Latov or a Stalag,
-    /// which flashes the view, and whose other half stops too.
+    /// explosion is heard; a fireball at each of its points, up to `end_late` ticks late, with
+    /// burning bits; then, once, the portals go, the other half drifts off, the ship's intact parts
+    /// go and its wreck shows, and it drifts and turns slowly, or stops dead for a Latov or a
+    /// Stalag, which flashes the view, and whose other half stops too.
     fn burstsEnd(split: *Split, world: gameobj.World) void {
         const all = world.objects;
         const slot = &all.slots[split.object];
@@ -405,11 +433,11 @@ pub const Split = struct {
         sound3d.playIn(world, null, null, split.object, .capexp, 1, .player_fx);
         for (0..split.points.len) |n| {
             const at = split.worldPoint(world, n);
-            const late: i32 = random.rand() % 75;
-            explode.fireballAt(world, at, .{ .size = (random.fraction() + 1) * 0.5 * sequence.fireball, .light = true, .delay = late });
+            const late: i32 = random.rand() % end_late;
+            explode.fireballAt(world, at, .{ .size = (random.fraction() + 1) * end_share * sequence.fireball, .light = true, .delay = late });
             const direction = math.normalize(at - split.rootPlace(world).position);
             for (0..@intCast(@max(sequence.bits, 0))) |_| {
-                explode.throwBit(world, at + random.fractionVector(@splat(burst_scatter)), direction, .{ .size = sequence.bit_size, .speed = sequence.bit_size * 0.5, .bodies = sequence.bodies });
+                explode.throwBit(world, at + random.fractionVector(@splat(burst_scatter)), direction, .{ .size = sequence.bit_size, .speed = sequence.bit_size * end_share, .bodies = sequence.bodies });
             }
         }
         if (object.ends.split_ended) return;
@@ -417,7 +445,7 @@ pub const Split = struct {
         split.release(world);
         if (split.other) |other| {
             const half = &all.slots[other].object;
-            half.rotation = math.product(half.rotation, math.fromAngles(other_tumble[0], other_tumble[1], other_tumble[2]));
+            half.rotation = math.product(half.rotation, math.fromAngleVector(other_tumble));
             half.velocity = gameobj.vec3(gameobj.vector(half.velocity) + math.transform(object.root.orientation, other_drift));
             half.flags.disabled = false;
         }
@@ -438,7 +466,7 @@ pub const Split = struct {
             object.velocity = gameobj.vec3(@splat(0));
             object.rotation = math.identity;
         } else {
-            object.rotation = math.fromAngles(tumble[0], tumble[1], tumble[2]);
+            object.rotation = math.fromAngleVector(tumble);
             object.velocity = gameobj.vec3(math.transform(object.root.orientation, drift));
         }
         explode.sound(world, slot.drawn.position, .explosions);
@@ -457,8 +485,15 @@ pub const Split = struct {
         }
     }
 
-    /// How the other half of a bursts split drifts off, a step, in the ship's frame, and turns,
-    /// a step; a Latov's other half drifts off instead as this.
+    /// A bursts split's end sets its fireballs off up to this many ticks late (`split_update`), at
+    /// this share of the sequence's size and up to as much again, and its bits leave at this share
+    /// of their size (`0x004DC408`).
+    const end_late = 75;
+    const end_share: f32 = 0.5;
+
+    /// How the other half of a split drifts off, a step, in the ship's frame, and turns, a step: a
+    /// bursts split's, and a sweep's where its type has no way of its own (`otherHalfEnd`). A
+    /// Latov's other half drifts off as `latov_drift` instead.
     const other_drift: Vector = .{ -1.5, -10, -2 };
     const other_tumble: Vector = .{ 0.0005, 0.002, 0.002 };
     const latov_drift: Vector = .{ -5, 0, 0 };
@@ -490,9 +525,9 @@ fn otherHalfEnd(half: *gameobj.GameObject, orientation: math.Matrix) void {
         0xAD, 0xB7 => .{ .{ -1.5, -40, -2 }, @splat(0) },
         0xBD => .{ .{ 0, -20, 0 }, .{ 0, 0.0005, 0 } },
         0xC5 => .{ .{ 30, 20, 4 }, .{ 0, 0, 0.001 } },
-        else => .{ .{ -1.5, -10, -2 }, .{ 0.0005, 0.002, 0.002 } },
+        else => .{ Split.other_drift, Split.other_tumble },
     };
-    half.rotation = math.fromAngles(tumble[0], tumble[1], tumble[2]);
+    half.rotation = math.fromAngleVector(tumble);
     half.velocity = gameobj.vec3(math.transform(orientation, drift));
 }
 
@@ -524,8 +559,9 @@ fn clipTree(model: *objects.Model, portal: ?*const srapiext.Portal) void {
 /// 3. Its intact parts, and all they carry, are cut by the first portal; the last of them of its
 ///    hull is kept. Of its damaged model's hull parts, a Latov shows them all, and the first is its
 ///    wreck, which a sweep shows at once, cut by the second portal.
-/// 4. A shockwave of kind `split`, twice its radius across, spreads for half as long again as the
-///    split runs, and a bursts split sets off five to seven bursts about the ship at once.
+/// 4. A shockwave of kind `split`, twice its radius across (`wave_size`), spreads for half as long
+///    again as the split runs (`waveLife`), and a bursts split sets off five to seven bursts about
+///    the ship at once, every third heard (`opening_least`).
 ///
 /// **Fix:** a ship whose type has no sequence doesn't split, where the game reads a sequence from
 /// the text before the table, which never ends. The points are sorted along the ship, where the
@@ -588,18 +624,36 @@ pub fn start(world: gameobj.World, index: u16) void {
     const velocity = gameobj.vector(object.velocity);
     shockwave.setOff(world, object.placeAt(.next), .{
         .kind = .split,
-        .size = object.radius * 2,
-        .life = @divTrunc(sequence.duration * 3, 2),
+        .size = object.radius * wave_size,
+        .life = waveLife(sequence.duration),
         .velocity = velocity,
         .owner = index,
     });
     if (sequence.mode == .bursts) {
         var n: usize = 0;
-        while (n < @as(usize, world.random.rand() % 3 + 5)) : (n += 1) {
-            split.burst(world, sequence.bit_size * 0.8, n % 3 == 0);
+        while (n < @as(usize, world.random.rand() % opening_range + opening_least)) : (n += 1) {
+            split.burst(world, sequence.bit_size * opening_bit_share, n % opening_heard == 0);
         }
     }
 }
+
+/// A split's shockwave is this many times the ship's radius across (`explode_capship_component`,
+/// which adds the radius to itself).
+const wave_size: f32 = 2;
+
+/// How long a split's shockwave spreads for a split that runs `duration` ticks: half as long again
+/// (`explode_capship_component`).
+fn waveLife(duration: i32) i32 {
+    return @divTrunc(duration * 3, 2);
+}
+
+/// A bursts split opens with at least `opening_least` bursts, and goes on while a fresh draw of up
+/// to `opening_range` more says so; every `opening_heard`th is heard, and their bits leave at
+/// `opening_bit_share` of their size (`explode_capship_component`, `0x004DC410`).
+const opening_least = 5;
+const opening_range = 3;
+const opening_heard = 3;
+const opening_bit_share: f32 = 0.8;
 
 /// The points of the parts' `cut` lists, in the ship's frame, each through its part's place in
 /// the ship; sorted along the ship, from the stern, where `sorted`, as the parts list them
@@ -612,7 +666,7 @@ fn cutPoints(gpa: Allocator, model: *const objects.Model, sorted: bool) Allocato
         const data = ref.data() orelse continue;
         const list = data.pointList(.cut) orelse continue;
         const place = model.partPlace(index, .now);
-        for (list.points) |point| try points.append(gpa, place.position + math.transform(place.orientation, gameobj.vector(point.position)));
+        for (list.points) |point| try points.append(gpa, place.point(gameobj.vector(point.position)));
     }
     if (sorted) std.mem.sort(Vector, points.items, {}, alongShip);
     return points.toOwnedSlice(gpa);
@@ -643,7 +697,7 @@ fn otherHalf(world: gameobj.World, spawn: gameobj.World.Spawn, index: u16, half_
     const root = main.drawn;
     const offset = gameobj.vector(half.object.centre) - gameobj.vector(main.object.centre);
     objects.setOrientation(&half.object, &half.drawn, root.orientation);
-    objects.setPosition(&half.object, &half.drawn, root.position + math.transform(root.orientation, offset));
+    objects.setPosition(&half.object, &half.drawn, root.point(offset));
     const object = &half.object;
     object.throttle = 0;
     object.speed = 0;
@@ -765,6 +819,12 @@ test "a capital ship bursts apart" {
 
 fn testingPoint(z: f32) @import("../../../formats/shp.zig").Point {
     return .{ ._unknown_00 = 0, .vertex = 0, .position = .{ .x = 0, .y = 0, .z = z } };
+}
+
+test waveLife {
+    // Half as long again, in whole ticks.
+    try std.testing.expectEqual(1350, waveLife(900));
+    try std.testing.expectEqual(1, waveLife(1));
 }
 
 test find {

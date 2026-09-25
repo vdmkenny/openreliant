@@ -33,6 +33,7 @@ const Slot = @import("../create.zig").Slot;
 const explode = @import("../explode.zig");
 const gameobj = @import("../gameobj.zig");
 const matmanager = @import("../matmanager.zig");
+const particles = @import("../particles.zig");
 const shield = @import("../shield.zig");
 const shockwave = @import("../shockwave.zig");
 const libcmt = @import("../../libcmt.zig");
@@ -483,7 +484,7 @@ pub const Uber = struct {
         const blast = &(uber.blast orelse return);
         const now = world.clock.frame_start;
         if (blast.started + blast.duration < now) return uber.end(world);
-        const done = @as(f32, @floatFromInt(now - blast.started)) / @as(f32, @floatFromInt(blast.duration));
+        const done = particles.through(now, blast.started, blast.duration);
         blast.done = done;
         const drawn = blast.rounds(now);
         const shape = blast.shape();
