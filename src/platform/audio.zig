@@ -11,15 +11,12 @@ const Allocator = std.mem.Allocator;
 const c = @import("sdl");
 const mss = @import("openreliant").engine.mss;
 const macos = @import("macos.zig");
+const sdl = @import("sdl.zig");
 
 pub const openal = @import("openal.zig");
 
-pub const Error = error{Sdl} || Allocator.Error;
-
-fn fail(what: []const u8) error{Sdl} {
-    log.err("{s}: {s}", .{ what, c.SDL_GetError() });
-    return error.Sdl;
-}
+pub const Error = sdl.Error || Allocator.Error;
+const fail = sdl.fail;
 
 const log = std.log.scoped(.sdl);
 
@@ -69,7 +66,7 @@ pub const Output = struct {
         errdefer gpa.destroy(output);
         output.* = .{ .gpa = gpa, .stream = undefined, .rate = rate, .channels = 2, .source = .{ .software = .init(rate) }, .master = null };
         switch (options.player) {
-            .openal => |settings| if (openal.Renderer.create(gpa, rate, @intCast(std.math.clamp(device.channels, 1, 8)), settings, headphones())) |renderer| {
+            .openal => |settings| if (openal.Renderer.create(gpa, rate, @intCast(std.math.clamp(device.channels, 1, mss.master.max_channels)), settings, headphones())) |renderer| {
                 output.source = .{ .openal = renderer };
                 output.channels = renderer.channels;
             } else |err| log.warn("OpenAL Soft cannot start ({s}); the software mixer plays instead", .{@errorName(err)}),

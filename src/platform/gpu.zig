@@ -24,15 +24,12 @@ const srshadow = openreliant.engine.surrender.surrenderlib.srshadow;
 const srtexture = openreliant.engine.surrender.surrenderlib.srtexture;
 const Geometry = @import("gpu/geometry.zig").Geometry;
 const shadow = @import("gpu/shadows.zig");
+const sdl = @import("sdl.zig");
 
 const log = std.log.scoped(.gpu);
 
-pub const Error = error{ Sdl, OutOfMemory };
-
-pub fn fail(what: []const u8) error{Sdl} {
-    log.err("{s}: {s}", .{ what, c.SDL_GetError() });
-    return error.Sdl;
-}
+pub const Error = sdl.Error || Allocator.Error;
+const fail = sdl.fail;
 
 /// How the frame is drawn beyond what the original did.
 pub const Settings = struct {
@@ -456,7 +453,7 @@ pub const Gpu = struct {
         gpu.finish_pipeline = try gpu.screenPipeline(gpu.finish_format);
     }
 
-    fn screenPipeline(gpu: *Gpu, format: c.SDL_GPUTextureFormat) error{Sdl}!*c.SDL_GPUGraphicsPipeline {
+    fn screenPipeline(gpu: *Gpu, format: c.SDL_GPUTextureFormat) sdl.Error!*c.SDL_GPUGraphicsPipeline {
         var colour = std.mem.zeroes(c.SDL_GPUColorTargetDescription);
         colour.format = format;
         var info = std.mem.zeroes(c.SDL_GPUGraphicsPipelineCreateInfo);
@@ -470,6 +467,17 @@ pub const Gpu = struct {
         return c.SDL_CreateGPUGraphicsPipeline(gpu.handle, &info) orelse fail("SDL_CreateGPUGraphicsPipeline");
     }
 
+    /// Which of the screen's passes the shader runs, as `frame.settings.x` picks it
+    /// (`shaders/bloom.glsl`).
+    const ScreenPass = enum(u2) {
+        /// Takes the frame's bright parts, past a threshold.
+        bright,
+        /// Blurs along one axis.
+        blur,
+        /// Adds the bloom back and finishes the frame.
+        finish,
+    };
+
     /// What the screen's passes read, in std140's layout (`shaders/bloom.glsl`).
     const ScreenUniforms = extern struct {
         /// Which pass, a texel along a blur's axis, and the threshold or the bloom's strength.
@@ -477,6 +485,17 @@ pub const Gpu = struct {
         /// 1 for a frame of floats, whose highlights are eased before they bloom and as the last
         /// pass finishes it; and 1 for the last pass to dither.
         finish: [4]f32 = @splat(0),
+
+        /// The uniforms of `pass`, stepping `texel` along a blur's axis, with the threshold or the
+        /// bloom's strength `level`, and `finishing` as `finish`.
+        fn of(pass: ScreenPass, texel: [2]f32, level: f32, finishing: [4]f32) ScreenUniforms {
+            return .{ .settings = .{ @floatFromInt(@intFromEnum(pass)), texel[0], texel[1], level }, .finish = finishing };
+        }
+
+        comptime {
+            std.debug.assert(@offsetOf(ScreenUniforms, "finish") == 16);
+            std.debug.assert(@sizeOf(ScreenUniforms) == 32);
+        }
     };
 
     /// One of the screen's passes: draws the screen-wide triangle into `target`, reading `source`
@@ -489,7 +508,7 @@ pub const Gpu = struct {
         source: *c.SDL_GPUTexture,
         frame_image: *c.SDL_GPUTexture,
         uniforms: ScreenUniforms,
-    ) error{Sdl}!void {
+    ) sdl.Error!void {
         var colour = std.mem.zeroes(c.SDL_GPUColorTargetInfo);
         colour.texture = into;
         colour.load_op = c.SDL_GPU_LOADOP_DONT_CARE;
@@ -652,7 +671,7 @@ pub const Gpu = struct {
         return slot;
     }
 
-    fn arrayTexture(gpu: *Gpu, shape: Shape, layers: u32) error{Sdl}!*c.SDL_GPUTexture {
+    fn arrayTexture(gpu: *Gpu, shape: Shape, layers: u32) sdl.Error!*c.SDL_GPUTexture {
         var info = std.mem.zeroes(c.SDL_GPUTextureCreateInfo);
         info.type = c.SDL_GPU_TEXTURETYPE_2D_ARRAY;
         info.format = gpu.texture_format;
@@ -714,20 +733,21 @@ pub const Gpu = struct {
     /// Finishes the frame into `composed`, where it has one: its bright parts taken into a
     /// half-size target, blurred along each axis in turn and added back, where it blooms; and, for
     /// a frame of floats, what stands past white eased into it, and dithered.
-    fn finish(gpu: *Gpu, commands: *c.SDL_GPUCommandBuffer, targets: Targets) error{Sdl}!void {
+    fn finish(gpu: *Gpu, commands: *c.SDL_GPUCommandBuffer, targets: Targets) sdl.Error!void {
         const composed = targets.composed orelse return;
         const last = gpu.finish_pipeline orelse return;
         const frame_image = targets.frame();
         const finishing = [4]f32{ @floatFromInt(@intFromBool(gpu.linear)), @floatFromInt(@intFromBool(gpu.linear and gpu.settings.dither)), 0, 0 };
         const bloom = targets.bloom orelse
-            return gpu.screenPass(commands, composed, last, frame_image, frame_image, .{ .settings = .{ 2, 0, 0, 0 }, .finish = finishing });
+            return gpu.screenPass(commands, composed, last, frame_image, frame_image, .of(.finish, .{ 0, 0 }, 0, finishing));
         const blur = gpu.bloom_pipeline.?;
         const across = 1 / @as(f32, @floatFromInt(targets.bloom_width));
         const down = 1 / @as(f32, @floatFromInt(targets.bloom_height));
-        try gpu.screenPass(commands, bloom[0], blur, frame_image, frame_image, .{ .settings = .{ 0, 0, 0, bloom_threshold }, .finish = finishing });
-        try gpu.screenPass(commands, bloom[1], blur, bloom[0], frame_image, .{ .settings = .{ 1, across, 0, 0 } });
-        try gpu.screenPass(commands, bloom[0], blur, bloom[1], frame_image, .{ .settings = .{ 1, 0, down, 0 } });
-        try gpu.screenPass(commands, composed, last, bloom[0], frame_image, .{ .settings = .{ 2, 0, 0, bloom_strength }, .finish = finishing });
+        const unfinished: [4]f32 = @splat(0);
+        try gpu.screenPass(commands, bloom[0], blur, frame_image, frame_image, .of(.bright, .{ 0, 0 }, bloom_threshold, finishing));
+        try gpu.screenPass(commands, bloom[1], blur, bloom[0], frame_image, .of(.blur, .{ across, 0 }, 0, unfinished));
+        try gpu.screenPass(commands, bloom[0], blur, bloom[1], frame_image, .of(.blur, .{ 0, down }, 0, unfinished));
+        try gpu.screenPass(commands, composed, last, bloom[0], frame_image, .of(.finish, .{ 0, 0 }, bloom_strength, finishing));
     }
 
     /// The frame's copy pass, the shadows' passes and the frame's render pass.
@@ -872,7 +892,7 @@ pub const Gpu = struct {
     }
 
     /// The frame's colour and depth targets for `size`, made again when it changes.
-    fn ensureTargets(gpu: *Gpu, size: [2]u32) error{Sdl}!void {
+    fn ensureTargets(gpu: *Gpu, size: [2]u32) sdl.Error!void {
         if (gpu.targets) |targets| {
             if (targets.width == size[0] and targets.height == size[1]) return;
             gpu.releaseTargets();
@@ -908,7 +928,7 @@ pub const Gpu = struct {
         };
     }
 
-    fn target(gpu: *Gpu, size: [2]u32, format: c.SDL_GPUTextureFormat, usage: c.SDL_GPUTextureUsageFlags, samples: c.SDL_GPUSampleCount) error{Sdl}!*c.SDL_GPUTexture {
+    fn target(gpu: *Gpu, size: [2]u32, format: c.SDL_GPUTextureFormat, usage: c.SDL_GPUTextureUsageFlags, samples: c.SDL_GPUSampleCount) sdl.Error!*c.SDL_GPUTexture {
         var info = std.mem.zeroes(c.SDL_GPUTextureCreateInfo);
         info.type = c.SDL_GPU_TEXTURETYPE_2D;
         info.format = format;
@@ -1090,7 +1110,7 @@ fn blendFactor(factor: srd3d.BlendFactor) c.SDL_GPUBlendFactor {
     };
 }
 
-pub fn shader(handle: *c.SDL_GPUDevice, spirv: bool, stage: c.SDL_GPUShaderStage, code: []const u8, samplers: u32, uniforms: u32) error{Sdl}!*c.SDL_GPUShader {
+pub fn shader(handle: *c.SDL_GPUDevice, spirv: bool, stage: c.SDL_GPUShaderStage, code: []const u8, samplers: u32, uniforms: u32) sdl.Error!*c.SDL_GPUShader {
     var info = std.mem.zeroes(c.SDL_GPUShaderCreateInfo);
     info.code_size = code.len;
     info.code = code.ptr;
@@ -1125,6 +1145,16 @@ test appendList {
     try appendList(gpa, &list, .triangles, 4, 3, &.{ 2, 0, 1 });
     try appendList(gpa, &list, .strip, 0, 2, null);
     try std.testing.expectEqualSlices(u32, &.{ 6, 4, 5 }, list.items);
+}
+
+test "Gpu.ScreenUniforms.of" {
+    // The pass as the shader's `int(frame.settings.x)` reads it, then the texel and the level.
+    const across = Gpu.ScreenUniforms.of(.blur, .{ 0.25, 0 }, 0, @splat(0));
+    try std.testing.expectEqual([4]f32{ 1, 0.25, 0, 0 }, across.settings);
+    const last = Gpu.ScreenUniforms.of(.finish, .{ 0, 0 }, 0.5, .{ 1, 1, 0, 0 });
+    try std.testing.expectEqual([4]f32{ 2, 0, 0, 0.5 }, last.settings);
+    try std.testing.expectEqual([4]f32{ 1, 1, 0, 0 }, last.finish);
+    try std.testing.expectEqual(0, Gpu.ScreenUniforms.of(.bright, .{ 0, 0 }, 1, @splat(0)).settings[0]);
 }
 
 test join {

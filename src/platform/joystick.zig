@@ -13,14 +13,10 @@ const input = openreliant.engine.input;
 const Axis = input.Axis;
 const JoystickState = input.JoystickState;
 const GamepadButton = input.GamepadButton;
+const sdl = @import("sdl.zig");
 
-pub const Error = error{Sdl};
-
-/// SDL's last error, logged, as an error.
-fn fail(what: []const u8) Error {
-    std.log.scoped(.sdl).err("{s}: {s}", .{ what, c.SDL_GetError() });
-    return error.Sdl;
-}
+pub const Error = sdl.Error;
+const fail = sdl.fail;
 
 /// How the program uses SDL's joystick support.
 pub const Mode = enum {

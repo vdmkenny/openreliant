@@ -7,14 +7,10 @@ const c = @import("sdl");
 
 const keyboard = @import("keyboard.zig");
 const macos = @import("macos.zig");
+const sdl = @import("sdl.zig");
 
-pub const Error = error{Sdl};
-
-/// SDL's last error, logged, as an error.
-fn fail(what: []const u8) Error {
-    std.log.scoped(.sdl).err("{s}: {s}", .{ what, c.SDL_GetError() });
-    return error.Sdl;
-}
+pub const Error = sdl.Error;
+const fail = sdl.fail;
 
 /// What happened since the last frame.
 pub const Event = union(enum) {
