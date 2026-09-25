@@ -959,7 +959,7 @@ const blast_shockwave_life_range = 50;
 /// emitter does, one of sparkle, a lit fireball of the ship's size drifting on with the sparkle,
 /// and the sound, heard on a sure voice close to the camera.
 ///
-/// Not ported: the cloak dropped.
+/// Not ported: the cloak dropped ([#89](https://github.com/vdmkenny/openreliant/issues/89)).
 pub fn blast(world: gameobj.World, index: u16) void {
     const slot = &world.objects.slots[index];
     const at = slot.drawn.position;
@@ -1016,7 +1016,7 @@ pub fn missileBlast(world: gameobj.World, at: Vector, velocity: Vector, radius: 
 /// It breaks the ship up and throws small bits every way first. Its 18 fireballs, lit and each up to a tenth of a second
 /// late, stand at random within 0.3 of its radius and drift on with the sparkle.
 ///
-/// Not ported: the cloak dropped.
+/// Not ported: the cloak dropped ([#89](https://github.com/vdmkenny/openreliant/issues/89)).
 pub fn burst(world: gameobj.World, index: u16) void {
     const slot = &world.objects.slots[index];
     const at = slot.drawn.position;

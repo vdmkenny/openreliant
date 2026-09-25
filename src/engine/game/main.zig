@@ -514,8 +514,10 @@ pub const DrawBudget = enum {
 /// `splits`, and nothing at all while it is `hidden`, as the ship the camera sits in is. That ship, `seat`, still casts its shadow
 /// (`objects.Model.castShadows`).
 ///
-/// Not ported yet: the cloak; what else the pass draws for a few types (#41); the cutaway scenes'
-/// own rules, and the gate's tunnel, in which no object is drawn. The pass's smoke is `smoke.frame`.
+/// Not ported yet: the cloak; what else the pass draws for a few types, the protogate's power core
+/// pulsing, the Boridin breakaway's core and the Dark Reign's hat
+/// ([#238](https://github.com/vdmkenny/openreliant/issues/238)); the cutaway scenes' own rules, and
+/// the gate's tunnel, in which no object is drawn. The pass's smoke is `smoke.frame`.
 pub fn drawObjects(gpa: Allocator, scene: *srcore.Scene, all: *create.Objects, attachments: objects.View, seat: ?u16, splits: ?*const explode.split.Splits) Allocator.Error!void {
     var walk = all.walk();
     while (walk.next()) |index| {

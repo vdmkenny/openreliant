@@ -610,8 +610,9 @@ watching where it burst (view `0x1B`), and a halt from behind. `mission_ending` 
 [`create.zig`](../../src/engine/game/create.zig) `object_retire` as `retire`.
 
 The blasts' break-up, particles, fireballs, burning bits and shockwaves are in
-[Effects](effects.md). Not ported: the other effects
-([#207](https://github.com/vdmkenny/openreliant/issues/207)); Eject Spin
+[Effects](effects.md). Not ported: what a few types set off first
+([#238](https://github.com/vdmkenny/openreliant/issues/238)); the Ulysses' own end
+([#232](https://github.com/vdmkenny/openreliant/issues/232)); Eject Spin
 and the other ejection orders ([#30](https://github.com/vdmkenny/openreliant/issues/30)); and what
 the end tells the mission, the kill and the radio's lines on it, and the Destroyed event
 ([#37](https://github.com/vdmkenny/openreliant/issues/37)).
