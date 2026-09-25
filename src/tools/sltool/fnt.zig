@@ -7,7 +7,8 @@ const openreliant = @import("openreliant");
 const fnt = openreliant.fnt;
 const png = openreliant.png;
 
-const Context = @import("main.zig").Context;
+const sltool = @import("main.zig");
+const Context = sltool.Context;
 
 pub const Command = union(enum) {
     info: struct { font: []const u8 },
@@ -21,15 +22,9 @@ pub const Command = union(enum) {
     ;
 
     pub fn parse(args: []const [:0]const u8) error{Usage}!Command {
-        if (args.len == 0) return error.Usage;
-        const verb = std.meta.stringToEnum(std.meta.Tag(Command), args[0]) orelse return error.Usage;
-        const operands = args[1..];
+        const verb, const operands = try sltool.verbOf(Command, args);
         return switch (verb) {
-            .info => if (operands.len == 1) .{ .info = .{ .font = operands[0] } } else error.Usage,
-            .render => if (operands.len == 2)
-                .{ .render = .{ .font = operands[0], .out = operands[1] } }
-            else
-                error.Usage,
+            inline else => |tag| sltool.positional(Command, tag, operands),
         };
     }
 
@@ -37,8 +32,7 @@ pub const Command = union(enum) {
         const path = switch (command) {
             inline else => |operands| operands.font,
         };
-        const bytes = try Io.Dir.cwd().readFileAlloc(ctx.io, path, ctx.arena, .limited(16 << 20));
-        const font: fnt.Font = try .parse(bytes);
+        const font: fnt.Font = try .parse(try ctx.readInput(path));
         switch (command) {
             .info => try info(ctx, font),
             .render => |operands| try render(ctx, font, operands.out),

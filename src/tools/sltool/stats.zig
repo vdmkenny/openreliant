@@ -6,7 +6,8 @@ const Io = std.Io;
 const openreliant = @import("openreliant");
 const stats = openreliant.stats;
 
-const Context = @import("main.zig").Context;
+const sltool = @import("main.zig");
+const Context = sltool.Context;
 
 pub const Command = union(enum) {
     /// Lists every record with its fields.
@@ -18,10 +19,9 @@ pub const Command = union(enum) {
     ;
 
     pub fn parse(args: []const [:0]const u8) error{Usage}!Command {
-        if (args.len != 2) return error.Usage;
-        const verb = std.meta.stringToEnum(std.meta.Tag(Command), args[0]) orelse return error.Usage;
+        const verb, const operands = try sltool.verbOf(Command, args);
         return switch (verb) {
-            .list => .{ .list = .{ .path = args[1] } },
+            inline else => |tag| sltool.positional(Command, tag, operands),
         };
     }
 
@@ -32,8 +32,7 @@ pub const Command = union(enum) {
                     std.debug.print("{s}: not one of the stats tables\n", .{operands.path});
                     return error.UnknownTable;
                 };
-                const bytes = try Io.Dir.cwd().readFileAlloc(ctx.io, operands.path, ctx.arena, .limited(1 << 20));
-                switch (try stats.File.parse(table, bytes)) {
+                switch (try stats.File.parse(table, try ctx.readInput(operands.path))) {
                     inline else => |rows, tag| try list(ctx, tag, rows),
                 }
             },

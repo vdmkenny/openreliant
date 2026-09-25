@@ -1,13 +1,13 @@
 //! `sltool spr ...`: read `.SPR` sprite sets and save their shapes as PNG.
 
 const std = @import("std");
-const Io = std.Io;
 
 const openreliant = @import("openreliant");
 const png = openreliant.png;
 const spr = openreliant.spr;
 
-const Context = @import("main.zig").Context;
+const sltool = @import("main.zig");
+const Context = sltool.Context;
 
 pub const Command = union(enum) {
     info: struct { sprite: []const u8 },
@@ -23,25 +23,17 @@ pub const Command = union(enum) {
     ;
 
     pub fn parse(args: []const [:0]const u8) error{Usage}!Command {
-        if (args.len == 0) return error.Usage;
-        const verb = std.meta.stringToEnum(std.meta.Tag(Command), args[0]) orelse return error.Usage;
-        const operands = args[1..];
-        switch (verb) {
-            .info => return if (operands.len == 1) .{ .info = .{ .sprite = operands[0] } } else error.Usage,
-            .ls => return if (operands.len == 1) .{ .ls = .{ .sprite = operands[0] } } else error.Usage,
-            .extract => return if (operands.len == 2)
-                .{ .extract = .{ .sprite = operands[0], .out_dir = operands[1] } }
-            else
-                error.Usage,
-        }
+        const verb, const operands = try sltool.verbOf(Command, args);
+        return switch (verb) {
+            inline else => |tag| sltool.positional(Command, tag, operands),
+        };
     }
 
     pub fn run(command: Command, ctx: Context) !void {
         const path = switch (command) {
             inline else => |operands| operands.sprite,
         };
-        const data = try Io.Dir.cwd().readFileAlloc(ctx.io, path, ctx.arena, .limited(64 << 20));
-        const sprite: spr.Sprite = try .parse(data);
+        const sprite: spr.Sprite = try .parse(try ctx.readInput(path));
 
         switch (command) {
             .info => try info(ctx, sprite),
@@ -118,8 +110,7 @@ fn list(ctx: Context, sprite: spr.Sprite) !void {
 
 fn extract(ctx: Context, sprite: spr.Sprite, source: []const u8, out_path: []const u8) !void {
     const io = ctx.io;
-    try Io.Dir.cwd().createDirPath(io, out_path);
-    var out_dir = try Io.Dir.cwd().openDir(io, out_path, .{});
+    var out_dir = try ctx.outputDir(out_path);
     defer out_dir.close(io);
 
     const stem = std.fs.path.stem(std.fs.path.basename(source));

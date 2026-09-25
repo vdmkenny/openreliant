@@ -1,13 +1,13 @@
 //! `sltool cd ...`: look inside a game disc image (`.bin` or `.iso`) without mounting it.
 
 const std = @import("std");
-const Io = std.Io;
 
 const openreliant = @import("openreliant");
 const cdimage = openreliant.cdimage;
 const iso9660 = openreliant.iso9660;
 
-const Context = @import("main.zig").Context;
+const sltool = @import("main.zig");
+const Context = sltool.Context;
 
 pub const Command = union(enum) {
     info: struct { image: []const u8 },
@@ -22,16 +22,9 @@ pub const Command = union(enum) {
     ;
 
     pub fn parse(args: []const [:0]const u8) error{Usage}!Command {
-        if (args.len == 0) return error.Usage;
-        const verb = std.meta.stringToEnum(std.meta.Tag(Command), args[0]) orelse return error.Usage;
-        const operands = args[1..];
+        const verb, const operands = try sltool.verbOf(Command, args);
         return switch (verb) {
-            .info => if (operands.len == 1) .{ .info = .{ .image = operands[0] } } else error.Usage,
-            .ls => if (operands.len == 1) .{ .ls = .{ .image = operands[0] } } else error.Usage,
-            .extract => if (operands.len == 2)
-                .{ .extract = .{ .image = operands[0], .out_dir = operands[1] } }
-            else
-                error.Usage,
+            inline else => |tag| sltool.positional(Command, tag, operands),
         };
     }
 
@@ -76,8 +69,7 @@ fn list(ctx: Context, volume: *const iso9660.Volume) !void {
 
 fn extract(ctx: Context, volume: *const iso9660.Volume, out_path: []const u8) !void {
     const io = ctx.io;
-    try Io.Dir.cwd().createDirPath(io, out_path);
-    var out_dir = try Io.Dir.cwd().openDir(io, out_path, .{});
+    var out_dir = try ctx.outputDir(out_path);
     defer out_dir.close(io);
 
     var files: usize = 0;

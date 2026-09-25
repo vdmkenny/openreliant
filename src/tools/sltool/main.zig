@@ -3,6 +3,8 @@
 const std = @import("std");
 const Io = std.Io;
 
+const files = @import("openreliant").engine.files;
+
 const cd = @import("cd.zig");
 const dte = @import("dte.zig");
 const fat = @import("fat.zig");
@@ -19,7 +21,37 @@ pub const Context = struct {
     io: Io,
     arena: std.mem.Allocator,
     stdout: *Io.Writer,
+
+    /// The bytes of the file at `path`, in the arena.
+    pub fn readInput(ctx: Context, path: []const u8) ![]u8 {
+        return Io.Dir.cwd().readFileAlloc(ctx.io, path, ctx.arena, .limited(files.max_file_size));
+    }
+
+    /// The directory at `path`, made where it is missing, open to write files into.
+    pub fn outputDir(ctx: Context, path: []const u8) !Io.Dir {
+        try Io.Dir.cwd().createDirPath(ctx.io, path);
+        return Io.Dir.cwd().openDir(ctx.io, path, .{});
+    }
 };
+
+/// The verb of a group's command, the first of `args`, and the operands after it. `Group` is a
+/// group's command type, a union with a field for each verb.
+pub fn verbOf(comptime Group: type, args: []const [:0]const u8) error{Usage}!struct { std.meta.Tag(Group), []const [:0]const u8 } {
+    if (args.len == 0) return error.Usage;
+    const verb = std.meta.stringToEnum(std.meta.Tag(Group), args[0]) orelse return error.Usage;
+    return .{ verb, args[1..] };
+}
+
+/// The command `verb` makes of `operands`: one for each of its fields, which are all strings, in
+/// their order.
+pub fn positional(comptime Group: type, comptime verb: std.meta.Tag(Group), operands: []const [:0]const u8) error{Usage}!Group {
+    const Operands = @FieldType(Group, @tagName(verb));
+    const fields = @typeInfo(Operands).@"struct".fields;
+    if (operands.len != fields.len) return error.Usage;
+    var command: Operands = undefined;
+    inline for (fields, 0..) |field, i| @field(command, field.name) = operands[i];
+    return @unionInit(Group, @tagName(verb), command);
+}
 
 const Command = union(enum) {
     cd: cd.Command,
@@ -45,36 +77,17 @@ const Command = union(enum) {
     ;
 
     fn parse(args: []const [:0]const u8) error{Usage}!Command {
-        if (args.len == 0) return error.Usage;
-        const group = std.meta.stringToEnum(std.meta.Tag(Command), args[0]) orelse return error.Usage;
+        const group, const rest = try verbOf(Command, args);
         return switch (group) {
-            .cd => .{ .cd = try .parse(args[1..]) },
-            .dte => .{ .dte = try .parse(args[1..]) },
-            .fat => .{ .fat = try .parse(args[1..]) },
-            .fnt => .{ .fnt = try .parse(args[1..]) },
-            .hog => .{ .hog = try .parse(args[1..]) },
-            .render => .{ .render = try .parse(args[1..]) },
-            .shp => .{ .shp = try .parse(args[1..]) },
-            .spr => .{ .spr = try .parse(args[1..]) },
-            .stats => .{ .stats = try .parse(args[1..]) },
-            .tcache => .{ .tcache = try .parse(args[1..]) },
             .help => .help,
+            inline else => |tag| @unionInit(Command, @tagName(tag), try .parse(rest)),
         };
     }
 
     fn run(command: Command, ctx: Context) !void {
         switch (command) {
-            .cd => |group| try group.run(ctx),
-            .dte => |group| try group.run(ctx),
-            .fat => |group| try group.run(ctx),
-            .fnt => |group| try group.run(ctx),
-            .hog => |group| try group.run(ctx),
-            .render => |group| try group.run(ctx),
-            .shp => |group| try group.run(ctx),
-            .spr => |group| try group.run(ctx),
-            .stats => |group| try group.run(ctx),
-            .tcache => |group| try group.run(ctx),
             .help => try ctx.stdout.writeAll(usage),
+            inline else => |group| try group.run(ctx),
         }
     }
 };
@@ -116,6 +129,36 @@ test Command {
     const extract = try Command.parse(&.{ "cd", "extract", "disc.bin", "out" });
     try std.testing.expectEqualStrings("disc.bin", extract.cd.extract.image);
     try std.testing.expectEqualStrings("out", extract.cd.extract.out_dir);
+}
+
+test positional {
+    const Sample = union(enum) {
+        one: struct { a: []const u8 },
+        two: struct { a: []const u8, b: []const u8 },
+    };
+    const verb, const operands = try verbOf(Sample, &.{ "two", "x", "y" });
+    try std.testing.expectEqual(.two, verb);
+    try std.testing.expectEqualStrings("y", (try positional(Sample, .two, operands)).two.b);
+    // One operand too many, and a verb the command lacks.
+    try std.testing.expectError(error.Usage, positional(Sample, .one, operands));
+    try std.testing.expectError(error.Usage, verbOf(Sample, &.{"three"}));
+    try std.testing.expectError(error.Usage, verbOf(Sample, &.{}));
+}
+
+test Context {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var out: Io.Writer.Allocating = .init(arena);
+    const ctx: Context = .{ .io = std.testing.io, .arena = arena, .stdout = &out.writer };
+    const base = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    var made = try ctx.outputDir(try std.fmt.allocPrint(arena, "{s}/a/b", .{base}));
+    defer made.close(ctx.io);
+    try made.writeFile(ctx.io, .{ .sub_path = "f.txt", .data = "hello" });
+    try std.testing.expectEqualStrings("hello", try ctx.readInput(try std.fmt.allocPrint(arena, "{s}/a/b/f.txt", .{base})));
 }
 
 test {

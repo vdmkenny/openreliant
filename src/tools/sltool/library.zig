@@ -5,6 +5,7 @@ const std = @import("std");
 const Io = std.Io;
 
 const openreliant = @import("openreliant");
+const files = openreliant.engine.files;
 const shp = openreliant.shp;
 
 const Context = @import("main.zig").Context;
@@ -44,7 +45,7 @@ pub const Library = struct {
     pub fn read(library: *Library, name: []const u8) !?[]u8 {
         const key = try std.ascii.allocLowerString(library.ctx.arena, name);
         const on_disk = library.names.get(key) orelse return null;
-        return try library.dir.readFileAlloc(library.ctx.io, on_disk, library.ctx.arena, .limited(64 << 20));
+        return try library.dir.readFileAlloc(library.ctx.io, on_disk, library.ctx.arena, .limited(files.max_file_size));
     }
 
     /// The model the file `name` holds, or null when the directory has no such file.

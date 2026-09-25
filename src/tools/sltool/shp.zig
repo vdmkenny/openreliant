@@ -6,7 +6,8 @@ const Io = std.Io;
 const openreliant = @import("openreliant");
 const shp = openreliant.shp;
 
-const Context = @import("main.zig").Context;
+const sltool = @import("main.zig");
+const Context = sltool.Context;
 const Library = @import("library.zig").Library;
 
 pub const Command = union(enum) {
@@ -32,14 +33,9 @@ pub const Command = union(enum) {
     ;
 
     pub fn parse(args: []const [:0]const u8) error{Usage}!Command {
-        if (args.len == 0) return error.Usage;
-        const verb = std.meta.stringToEnum(std.meta.Tag(Command), args[0]) orelse return error.Usage;
-        const operands = args[1..];
+        const verb, const operands = try sltool.verbOf(Command, args);
         switch (verb) {
-            .info => return if (operands.len == 1) .{ .info = .{ .model = operands[0] } } else error.Usage,
-            .check => return if (operands.len == 1) .{ .check = .{ .model = operands[0] } } else error.Usage,
-            .chunks => return if (operands.len == 1) .{ .chunks = .{ .model = operands[0] } } else error.Usage,
-            .components => return if (operands.len == 1) .{ .components = .{ .model = operands[0] } } else error.Usage,
+            inline .info, .check, .chunks, .components => |tag| return sltool.positional(Command, tag, operands),
             .obj => {
                 if (operands.len < 2) return error.Usage;
                 var command: Command = .{ .obj = .{ .model = operands[0], .out = operands[1] } };
@@ -62,7 +58,7 @@ pub const Command = union(enum) {
         const path = switch (command) {
             inline else => |operands| operands.model,
         };
-        const data = try Io.Dir.cwd().readFileAlloc(ctx.io, path, ctx.arena, .limited(64 << 20));
+        const data = try ctx.readInput(path);
 
         switch (command) {
             .chunks => try chunks(ctx, data),
