@@ -11,7 +11,7 @@ const Profile = profile.Profile;
 
 /// The `starlancer.ini` sections with the input settings and bindings.
 const key_section = "KeyConfig";
-const joy_section = "JoyConfig";
+pub const joy_section = "JoyConfig";
 
 /// The buffer `load_key_config` reads each binding into: 128 bytes, including the terminator.
 const Buffer = [0x80]u8;
@@ -121,8 +121,7 @@ fn copy(buffer: *Buffer, value: []const u8) void {
 
 /// `atol` on the buffer from `text` up to the terminator.
 fn read(text: []const u8) i32 {
-    const end = std.mem.indexOfScalar(u8, text, 0) orelse text.len;
-    return profile.atol(text[0..end]);
+    return profile.atol(std.mem.sliceTo(text, 0));
 }
 
 /// Converts a button number for the binding: -1, or any number that doesn't fit in a byte, means no
@@ -200,6 +199,12 @@ test "an empty settings file keeps the game's defaults" {
         try std.testing.expectEqual(default.modifier, devices.bindings.get(action).modifier);
         try std.testing.expectEqual(default.button, devices.bindings.get(action).button);
     }
+}
+
+test read {
+    // Up to the terminator, past which the buffer keeps what an earlier value left.
+    try std.testing.expectEqual(57, read("57\x0099"));
+    try std.testing.expectEqual(-12, read("-12"));
 }
 
 test deadZone {

@@ -300,8 +300,8 @@ controller rumbles.
 ## Porting
 
 The bindings and `starlancer.ini` hold DirectInput scan codes, which follow the IBM PC's set 1
-scan codes, with the extended keys at `0x80` and up. OpenReliant maps SDL's scan codes to them
-([`platform/keyboard.zig`](../../src/platform/keyboard.zig)).
+scan codes, with the extended keys at `0x80` and up. OpenReliant names them in `input.Key` and
+maps SDL's scan codes to them ([`platform/keyboard.zig`](../../src/platform/keyboard.zig)).
 
 [`input.zig`](../../src/engine/input.zig) ports the input code: `key_pressed` and
 `read_keyboard`'s latches (`Keyboard`), the joystick (`Joystick`: `joystick_found`,

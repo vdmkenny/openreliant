@@ -750,7 +750,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         while (window.poll()) |event| switch (event) {
             .quit => return,
             .key => |key| if (options.screenshot == null) {
-                devices.keyboard.down[key.scan] = key.down;
+                devices.keyboard.down[@intFromEnum(key.scan)] = key.down;
             },
             .controllers => if (options.screenshot == null) connectController(arena, &devices, &controller, settings_file.profile),
             .active => |active| app.active = active or frames_left != null,
@@ -810,8 +810,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             // The mission over, once the camera has watched the player's end or the pilot's pickup,
             // the sandbox starts again where a mission would go to its debriefing.
             if (over) try restartSandbox(&player, &sandbox, orders, &display, &view, at);
-            for ([_]struct { u8, isize }{ .{ f2, -1 }, .{ f3, 1 } }) |step| {
-                if (!devices.keyboard.pressed(step[0], .none, true)) continue;
+            for (ship_keys) |step| {
+                if (!devices.keyboard.pressed(@intFromEnum(step[0]), .none, true)) continue;
                 const was = sandbox.player_type;
                 var candidate: usize = was;
                 while (true) {
@@ -828,7 +828,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
                 }
                 settleStart(&display, &sandbox, &view, at);
             }
-            if (devices.keyboard.pressed(f4, .none, true)) _ = sandbox.bringWing(orders);
+            if (devices.keyboard.pressed(@intFromEnum(wing_key), .none, true)) _ = sandbox.bringWing(orders);
 
             // `frame_controls` and the camera run once a frame, over the ticks the frame spans.
             view.frameControls(&devices, sandbox.objects.player, ticks, at);
@@ -1023,10 +1023,10 @@ fn save(io: Io, gpa: Allocator, path: []const u8, rgba: []const u8, size: [2]u32
     try writer.interface.flush();
 }
 
-/// The DirectInput scan codes of F2, F3 and F4, which the original leaves unbound.
-const f2 = 0x3C;
-const f3 = 0x3D;
-const f4 = 0x3E;
+/// The keys OpenReliant adds, which the original leaves unbound: F2 and F3 start the sandbox again
+/// in the previous or next ship type, and F4 brings another wing.
+const ship_keys = [_]struct { engine.input.Key, isize }{ .{ .f2, -1 }, .{ .f3, 1 } };
+const wing_key: engine.input.Key = .f4;
 
 /// The sandbox's mission: the objects, the ship types' tables and the models they loaded, and the
 /// cockpit the mission's start loads for the player's ship. Its ships are the player's, at the

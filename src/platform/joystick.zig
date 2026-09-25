@@ -311,6 +311,11 @@ const sources = std.EnumArray(GamepadButton, Source).init(.{
     .right_stick_right = .{ .stick = .{ .axis = c.SDL_GAMEPAD_AXIS_RIGHTX, .positive = true } },
 });
 
+comptime {
+    // A gamepad's buttons fill the joystick's, one for one.
+    std.debug.assert(std.enums.values(GamepadButton).len == JoystickState.max_buttons);
+}
+
 /// The gamepad axes the game reads: the left stick as X and Y, and the right stick's horizontal
 /// axis as the twist.
 const gamepad_axes = [_]struct { Axis, c.SDL_GamepadAxis }{
@@ -403,7 +408,7 @@ pub const Controller = struct {
         var found: input.JoystickDevice.Capabilities = .{
             .name = if (name != null) std.mem.span(name) else "",
             .axes = .initEmpty(),
-            .buttons = 32,
+            .buttons = JoystickState.max_buttons,
             .hats = 1,
             .kind = .gamepad,
             .rumbles = c.SDL_GetBooleanProperty(c.SDL_GetJoystickProperties(plain), c.SDL_PROP_JOYSTICK_CAP_RUMBLE_BOOLEAN, false),
@@ -414,8 +419,8 @@ pub const Controller = struct {
                 for (controller.layout.sources()) |source| {
                     if (source[1] != null) found.axes.insert(source[0]);
                 }
-                found.buttons = @intCast(@min(buttonCount(plain), 32));
-                found.hats = @intCast(@min(hatCount(plain), 4));
+                found.buttons = @intCast(@min(buttonCount(plain), JoystickState.max_buttons));
+                found.hats = @intCast(@min(hatCount(plain), JoystickState.max_hats));
                 found.kind = .joystick;
             },
         }
@@ -460,11 +465,11 @@ pub const Controller = struct {
                     if (source[0] == .z and controller.layout.throttle_inverted) raw = ~raw;
                     controller.setAxis(state, source[0], raw);
                 }
-                const buttons = @min(buttonCount(plain), 32);
+                const buttons = @min(buttonCount(plain), JoystickState.max_buttons);
                 for (state.buttons[0..buttons], 0..) |*button, index| {
-                    button.* = if (c.SDL_GetJoystickButton(plain, @intCast(index))) 0x80 else 0;
+                    button.* = if (c.SDL_GetJoystickButton(plain, @intCast(index))) JoystickState.pressed else 0;
                 }
-                const hats = @min(hatCount(plain), 4);
+                const hats = @min(hatCount(plain), JoystickState.max_hats);
                 for (state.pov[0..hats], 0..) |*angle, index| {
                     angle.* = pov(@bitCast(c.SDL_GetJoystickHat(plain, @intCast(index))));
                 }
@@ -481,7 +486,7 @@ pub const Controller = struct {
                             break :pushed if (stick.positive) value >= stick_press else value <= -stick_press;
                         },
                     };
-                    button.* = if (down) 0x80 else 0;
+                    button.* = if (down) JoystickState.pressed else 0;
                 }
                 state.pov[0] = pov(.{
                     .up = c.SDL_GetGamepadButton(gamepad, c.SDL_GAMEPAD_BUTTON_DPAD_UP),
@@ -636,8 +641,8 @@ test "reading a flight stick" {
     // The twist is inside the dead zone; the throttle is pulled all the way back.
     try std.testing.expectEqual(0, state.rz);
     try std.testing.expectEqual(0, state.z);
-    try std.testing.expectEqual(0x80, state.buttons[0]);
-    try std.testing.expectEqual(0x80, state.buttons[11]);
+    try std.testing.expectEqual(JoystickState.pressed, state.buttons[0]);
+    try std.testing.expectEqual(JoystickState.pressed, state.buttons[11]);
     try std.testing.expectEqual(0, state.buttons[1]);
     try std.testing.expectEqual(27000, state.pov[0]);
     try std.testing.expectEqual(JoystickState.centred, state.pov[1]);

@@ -172,10 +172,10 @@ fn state(buffer: []u8, read: input.Joystick) []const u8 {
     if (read.axes.slider) line.print("  slider {d}", .{values.sliders[0]}) catch {};
     if (read.axes.rz) line.print("  twist {d}", .{values.rz}) catch {};
     if (read.hats > 0) {
-        if (values.pov[0] == input.JoystickState.centred) {
-            line.writeAll("  hat -") catch {};
+        if (values.hat(0)) |angle| {
+            line.print("  hat {d}", .{angle / 100}) catch {};
         } else {
-            line.print("  hat {d}", .{values.pov[0] / 100}) catch {};
+            line.writeAll("  hat -") catch {};
         }
     }
     line.writeAll("  buttons down:") catch {};
@@ -201,8 +201,10 @@ test state {
     read.state.z = 250;
     read.state.pov = @splat(input.JoystickState.centred);
     read.state.pov[0] = 9000;
-    read.state.buttons[0] = 0x80;
-    read.state.buttons[11] = 0x80;
+    read.state.buttons[0] = input.JoystickState.pressed;
+    read.state.buttons[11] = input.JoystickState.pressed;
     var buffer: [256]u8 = undefined;
     try std.testing.expectEqualStrings("X -1000  Y 0  throttle 250  hat 90  buttons down: 0 11", state(&buffer, read));
+    read.state.pov[0] = input.JoystickState.centred;
+    try std.testing.expectEqualStrings("X -1000  Y 0  throttle 250  hat -  buttons down: 0 11", state(&buffer, read));
 }

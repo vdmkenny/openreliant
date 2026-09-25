@@ -17,7 +17,7 @@ pub const Event = union(enum) {
     quit,
     /// A key went down or up, by its DirectInput scan code (`keyboard.directInput`): the key's
     /// place on the keyboard, whatever it types. Keys DirectInput has no code for are left out.
-    key: struct { scan: u8, down: bool },
+    key: struct { scan: keyboard.Key, down: bool },
     /// A joystick or gamepad was plugged in or out (`joystick`).
     controllers,
     /// The window became the active one, or stopped being it (`WM_ACTIVATEAPP`).
