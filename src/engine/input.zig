@@ -772,6 +772,10 @@ pub const Player = struct {
     shield_reserves: gameobj.ShieldReserves = .{},
     /// How the mission is ending, which the player's ship's end decides.
     ending: @import("game/main.zig").Ending = .playing,
+    /// What the mission's scene shows (`0x00587CD4`).
+    showing: @import("game/main.zig").Showing = .everything,
+    /// The mission's odds of how the pilot fares after ejecting.
+    rescue_odds: @import("game/aieject.zig").RescueOdds = .{},
     /// `mission_number` (`0x00562DC8`): the number of the mission being flown, from 1; 0 where
     /// none is, as in the sandbox. A few of the game's rules single a mission out by it.
     mission: u8 = 0,
@@ -1027,16 +1031,17 @@ pub fn setPlayerTarget(display: *hud.State, all: *create.Objects, index: i16, co
     display.targetChanged(all, multiplayer);
 }
 
-/// FIRE LASERS, LAUNCH MISSILE, CLOAK SHIP and COUNTERMEASURES, which `player_controls` reads
-/// after the steering and the throttle (`0x00413BB5`, `0x00413BE7`, `0x00413CB2`, `0x00413E80`).
+/// FIRE LASERS, LAUNCH MISSILE, CLOAK SHIP, EJECT and COUNTERMEASURES, which `player_controls`
+/// reads after the steering and the throttle (`0x00413BB5`, `0x00413BE7`, `0x00413CB2`,
+/// `0x00413D88`, `0x00413E80`).
 /// FIRE LASERS, held, while the ship isn't jumping, opens the gunnery display and holds the guns'
 /// trigger for the frame (`guns.fire`), which charges a Phoenix's Nova Cannon, unless the ship is
 /// cloaked, when it uncloaks instead (`setCloak`) and fires only once the cloak has gone; let go,
 /// the Phoenix, not jumping, lets its charge go (`guns.nova.release`). The others each act once a
 /// press: the one launches the armed missile (`launchMissile`); CLOAK SHIP, outside view 13, on a
 /// ship that can cloak, uncloaks it where it is cloaked and cloaks it where it isn't, with the
-/// display's sound and Betty's word unless the cloak is still coming on or going; the last,
-/// outside a mission's ending, drops a countermeasure, Betty warning as they run out: at 6, 4 and
+/// display's sound and Betty's word unless the cloak is still coming on or going; EJECT ejects the
+/// pilot (`eject`); the last, outside a mission's ending, drops a countermeasure, Betty warning as they run out: at 6, 4 and
 /// 2 left, and with none. `aigeneric.playerControl` runs it after `matchSpeed`, since nothing
 /// between reads what it does.
 ///
@@ -1070,6 +1075,7 @@ pub fn playerWeapons(world: gameobj.World, devices: *Devices, index: u16) void {
             betty.sayIn(world, cloak_said.of(on));
         }
     }
+    if (devices.active(.eject, true)) eject(world, index);
     if (devices.active(.countermeasures, true) and world.player.ending == .playing) {
         const left = world.objects.slots[index].object.countermeasures;
         switch (left) {
@@ -1079,6 +1085,36 @@ pub fn playerWeapons(world: gameobj.World, devices: *Devices, index: u16) void {
         }
         if (world.countermeasures) |dropped| dropped.spend(world, index);
     }
+}
+
+/// EJECT (`0x00413D88`), while the mission goes on, or the pilot's ship is breaking up and the
+/// pilot can still get out (`main.Ending.ejecting`), on any ship but the Kamov that may eject and
+/// whose current order is Player Control or Eject Player: the eject view circles the ship
+/// (`camera.Camera.setCutaway`), the ship uncloaks where it is cloaked, and Eject sends the pilot's
+/// pod out of it (`aieject.init`).
+///
+/// Not ported: a multiplayer game, in which EJECT does nothing, and what it tells one.
+pub fn eject(world: gameobj.World, index: u16) void {
+    const all = world.objects;
+    const slot = &all.slots[index];
+    const object = &slot.object;
+    switch (world.player.ending) {
+        .playing, .ejecting => {},
+        else => return,
+    }
+    if (object.type == .kamov or object.flags.eject_disabled) return;
+    const flying = aigeneric.current(all, index) orelse return;
+    switch (flying.order) {
+        .player_control, .eject_player => {},
+        else => return,
+    }
+    object.flags.ejected = false;
+    if (world.camera) |watching| {
+        const seen: camera.Subject = .of(slot);
+        _ = watching.setCutaway(.eject, index, world.clock.viewTime(), seen, seen);
+    }
+    if (object.flags.cloaked) cloak.uncloak(world, index);
+    _ = aigeneric.push(.{ .world = world, .clock = world.clock }, index, .eject, .none) catch false;
 }
 
 /// The display's sound for a launch refused (`bank_stdsmp`).
@@ -1957,6 +1993,40 @@ test "the player's cloak" {
     display.devices.getPtr(.cloak).setting = .absent;
     setCloak(world, true);
     try std.testing.expect(!slot.object.flags.cloaked);
+}
+
+test eject {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const index = try mission.add(.predator, @splat(0));
+    const slot = mission.slot(index);
+    var watching: camera.Camera = .{};
+    var world = mission.world();
+    world.camera = &watching;
+
+    // Only a ship under the player's controls, or waiting to blow up, ejects.
+    eject(world, index);
+    try std.testing.expectEqual(0, slot.object.order_count);
+    try std.testing.expect(try aigeneric.push(mission.orders(), index, .player_control, .none));
+    // Nor one whose ejection the mission has stopped.
+    slot.object.flags.eject_disabled = true;
+    eject(world, index);
+    try std.testing.expectEqual(.player_control, slot.orders[0].order);
+    // Otherwise the pilot ejects, and the camera circles the pod, locked on it.
+    slot.object.flags.eject_disabled = false;
+    slot.object.flags.ejected = true;
+    eject(world, index);
+    try std.testing.expectEqual(.eject, slot.orders[0].order);
+    try std.testing.expectEqual(.eject, watching.view);
+    try std.testing.expect(watching.locked);
+    try std.testing.expectEqual(index, watching.object.?);
+    // Once the mission is over, it can't.
+    mission.player.ending = .destroyed;
+    _ = aigeneric.pop(mission.orders(), index);
+    const before = slot.object.order_count;
+    eject(world, index);
+    try std.testing.expectEqual(before, slot.object.order_count);
 }
 
 test launchMissile {

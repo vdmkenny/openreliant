@@ -317,7 +317,9 @@ const slow: f32 = 100;
 
 /// `0x004086F0`: a ship's end begins. Close to the camera it is heard at once. It takes a style of
 /// going, the torpedoes always stopping dead, and the player's has the camera watch it, from a view
-/// by the style and how fast it was flying.
+/// by the style and how fast it was flying, and the mission end with it. At the end of the
+/// player's ejection (`main.Showing.ejection`) the player's pod stops dead instead, as the Sabre's
+/// view watches it, and its end ends nothing.
 fn shipInit(ctx: Context, index: u16) void {
     const world = ctx.world;
     const slot = &world.objects.slots[index];
@@ -326,19 +328,21 @@ fn shipInit(ctx: Context, index: u16) void {
     if (explode.soundClass(world, at) == .guaranteed) explode.sound(world, at, .guaranteed);
 
     const state = &slot.state.explode;
+    const players = index == world.objects.player;
+    const cutaway = world.player.showing != .everything;
     state.style = switch (object.type) {
         .torpedo, .russian_torpedo => .halt,
-        else => @enumFromInt(xtrabits.objectRandom15(object) % 3),
+        else => if (players and cutaway) .halt else @enumFromInt(xtrabits.objectRandom15(object) % 3),
     };
     killCredit(world, index);
 
-    if (index == world.objects.player) {
+    if (players and !cutaway) {
         const view: camera.View = switch (state.style) {
             .spin_out => if (movingSlowly(object, slot.flight, world.view)) .pull_back else .watch,
             .burst => .watch_marker,
             .halt => .pull_back,
         };
-        if (world.camera) |watching| _ = watching.setView(view, index, true, true, @intCast(@max(ctx.clock.mission_ticks, 0)));
+        if (world.camera) |watching| _ = watching.setView(view, index, true, true, ctx.clock.viewTime());
         world.player.ending = .destroyed;
     }
 
@@ -571,6 +575,27 @@ test "a ship's end" {
     ai.objectDestroyed(ctx, player, true, true);
     aigeneric.objectOrders(ctx, player);
     try std.testing.expect(watching.view == .pull_back or watching.view == .watch or watching.view == .watch_marker);
+    try std.testing.expectEqual(.destroyed, mission.player.ending);
+}
+
+test "the pod shot down in the ejection's cutaway bursts at once" {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    var watching: camera.Camera = .{};
+    var ctx = mission.orders();
+    ctx.world.camera = &watching;
+    const pod = try mission.add(.predator, @splat(0));
+    _ = watching.setView(.pod_shot, pod, true, true, 0);
+    mission.player.showing = .ejection;
+    mission.player.ending = .destroyed;
+    mission.slot(pod).object.flags.ejected = true;
+
+    // It halts, and the camera and the mission's ending stay as the cutaway set them.
+    ai.objectDestroyed(ctx, pod, true, true);
+    aigeneric.objectOrders(ctx, pod);
+    try std.testing.expectEqual(Style.halt, mission.slot(pod).state.explode.style);
+    try std.testing.expectEqual(.pod_shot, watching.view);
     try std.testing.expectEqual(.destroyed, mission.player.ending);
 }
 

@@ -195,6 +195,7 @@ fn info(ctx: Context, model: shp.Model) !void {
                     .gun_muzzle => "gun muzzle",
                     .light => "light",
                     .pod => "pod",
+                    .eject_point => "eject point",
                     .case_ejector => "case ejector",
                     _ => "kind",
                 },

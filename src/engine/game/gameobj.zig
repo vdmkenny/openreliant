@@ -794,7 +794,9 @@ pub const GameObject = extern struct {
         /// Set once its pilot ejects. It takes no more orders, and destroying it now makes it
         /// explode.
         ejected: bool = false,
-        _unknown_12: bool = false,
+        /// Held in a ship's tractor beams, which Scoop Up sets and lets go of (`tractor.scoopUp`):
+        /// no second ship takes it.
+        tractored: bool = false,
         /// `DisableLights`.
         lights_disabled: bool = false,
         /// It has a shield generator, a part of subsystem class 6, which destroying the part clears.
@@ -819,9 +821,9 @@ pub const GameObject = extern struct {
         /// **Unknown.** `mission_frame` lets the object's smoke go while it is set
         /// (`smoke.frame`).
         _unknown_24: bool = false,
-        /// **Unknown.** Set by `create_object` on an object whose model has an attachment of
-        /// kind 6.
-        _unknown_25: bool = false,
+        /// Set by `create_object` on an object whose model has an eject point
+        /// (`shp.Attachment.Kind.eject_point`). **Unknown:** what reads it.
+        eject_point: bool = false,
         /// Its ECM is on: `player_ecm_set` (`0x00415370`).
         ecm: bool = false,
         /// Its spectral shields are on: `player_spectral_shields_set` (`0x00415430`).
@@ -1229,6 +1231,8 @@ pub const World = struct {
     shields: ?*@import("shield.zig").Shields = null,
     /// The electric rays (`erayfx.cpp`); null where none are made.
     rays: ?*@import("erayfx.zig").Rays = null,
+    /// The tractors (`tractor.cpp`); null where no ship takes another aboard.
+    tractors: ?*@import("tractor.zig").Tractors = null,
     /// The screen's flash (`main.cpp`); null where nothing flashes.
     flash: ?*@import("main/flash.zig").Flash = null,
     /// The force feedback the player's controller plays; null where it plays none.
@@ -1238,6 +1242,8 @@ pub const World = struct {
     /// The head-up display's state (`hud.cpp`'s globals), which smart targeting and the target
     /// display answer the player's hits through; null where there is none.
     display: ?*@import("hud.zig").State = null,
+    /// The cockpit's model (`cockpit_object`, `0x005883F4`), where the player's ship has one.
+    cockpit: ?*objects.Model = null,
     /// The pools a damaged ship's smoke comes from; null where none is sent out.
     smoke: ?*@import("main/smoke.zig").Pools = null,
     /// The guns' pools, a flak shell's burst's and the spent cases'; null where none are sent out.
@@ -1394,7 +1400,8 @@ pub fn recentreObject(slot: *create.Slot) void {
 /// volume plus its own first moment; over the parts' masses, density times volume, that is the
 /// centre. `object_bounds` (`0x00476680`) takes it off each part's origin, then finds the
 /// object's radius and bounding box over the vertices of each part's current level, hidden ones
-/// too. `source` is the model the parts come from.
+/// too but not those taken out of the model (`objects.Model.Part.removed`), whose nodes the game
+/// has gone from the root. `source` is the model the parts come from.
 pub fn recentre(model: *objects.Model, source: *const shp.Model) void {
     // Each part's origin in the model, which is where it stands with the root at rest.
     model.place(@splat(0), math.identity);
@@ -1429,6 +1436,7 @@ pub fn recentre(model: *objects.Model, source: *const shp.Model) void {
     model.bounds = .{ @splat(std.math.floatMax(f32)), @splat(-std.math.floatMax(f32)) };
     var tensor: math.Matrix = @splat(0);
     for (model.parts, source.parts) |part, data| {
+        if (part.removed) continue;
         if (part.object.levels.len > 0) {
             for (part.object.levels[part.object.level].mesh.positions) |position| {
                 const at = position + part.object.position;
@@ -1907,6 +1915,27 @@ test "each object's turn comes round in rotation" {
     // With one object, every step is its turn.
     clock = .{};
     for (0..3) |_| try std.testing.expectEqual(0, nextTurn(&clock, 1));
+}
+
+test recentreObject {
+    const gpa = std.testing.allocator;
+    var mission: testing.Mission = undefined;
+    try mission.init(gpa);
+    defer mission.deinit();
+    var model: create.testing.Model = undefined;
+    try model.init(gpa);
+    defer model.deinit(gpa);
+    const index = try create.createObject(mission.objects, &mission.tables, model.types(), null, .predator, 0, .{ 0, 0, 100 }, &mission.random);
+    const slot = mission.slot(index);
+    try std.testing.expect(slot.object.radius > 0);
+    // A part taken out of the model, as an ejection takes the ship off the pod, counts toward
+    // neither the object's size nor its mass, and the object stays where it was.
+    slot.model.?.parts[0].removed = true;
+    slot.model.?.parts[0].hidden = true;
+    recentreObject(slot);
+    try std.testing.expectEqual(0, slot.object.radius);
+    try std.testing.expectEqual(0, slot.object.mass);
+    try std.testing.expectEqual(Vector{ 0, 0, 100 }, slot.drawn.position);
 }
 
 test orthonormalizeTurn {

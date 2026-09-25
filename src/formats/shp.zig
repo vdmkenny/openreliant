@@ -230,6 +230,9 @@ pub const Part = extern struct {
         /// Hull sections, going by their names. The target display's large form shows the armour
         /// of the first a ship has (`hud_window_draw`).
         hull = 1,
+        /// The cockpit, which leaves its ship as the pilot's pod when the pilot ejects
+        /// (`order_eject_init`).
+        cockpit = 2,
         /// A turret, with its own yaw and pitch limits: a Laser Turret.
         turret = 3,
         /// An engine. `create_object` counts them (`GameObject.engines`), and each one destroyed
@@ -318,6 +321,9 @@ pub const PointList = struct {
 
     /// What a list's points are for, by the code that reads them.
     pub const Kind = enum(u32) {
+        /// Where a ship takes in what it picks up: the list's first point, which Scoop Up draws a
+        /// pilot's pod toward (`order_scoop_up`).
+        door = 0,
         /// Pairs of points an electric ray runs between as a wreck burns (`explode_part_burn`).
         rays = 1,
         /// Where a capital ship is cut as it splits in two (`split_create`).
@@ -329,6 +335,9 @@ pub const PointList = struct {
         light = 4,
         /// Where fireballs go off as a split ship's halves part (`split_update`).
         fireballs = 5,
+        /// Where a ship's two tractor beams come from: the list's first two points
+        /// (`order_scoop_up`).
+        tractor = 6,
         _,
     };
 };
@@ -433,6 +442,10 @@ pub const Attachment = extern struct {
         light = 4,
         /// Mounted as an object of its own, like a gun.
         pod = 5,
+        /// Where on the cockpit the pilot's pod is thrown from as the pilot ejects, and which way,
+        /// along its Z axis. An object whose model has one is flagged so
+        /// (`GameObject.Flags.eject_point`).
+        eject_point = 6,
         /// Where a spinning gun's spent cases fly from, back along it (`clip_event_particles`).
         case_ejector = 7,
         _,

@@ -15,21 +15,47 @@ const objects = @import("objects.zig");
 const GameObject = gameobj.GameObject;
 
 /// The routine `GameObject.motion` points at, which moves it for one update. `create_object` gives
-/// every object `motion_forward`. The orders select eight more, which aren't ported yet (#30);
-/// docs/engine/objects.md lists them.
+/// every object `motion_forward`. The orders select eight more, of which the port has those of the
+/// pilot's ejection; the rest aren't ported yet (#30), and docs/engine/objects.md lists them.
 pub const Motion = enum {
-    /// `motion_forward` (`0x004744C0`): the flight model with a thrust of 1.
+    /// `motion_forward` (`0x004744C0`): the flight model thrusting ahead.
     forward,
-    /// `motion_backward` (`0x004744D0`): the flight model with a thrust of -1.
+    /// `motion_backward` (`0x004744D0`): the flight model thrusting astern.
     backward,
+    /// `motion_brake` (`0x00474610`), which Eject gives the pilot's pod once it is clear of the
+    /// ship: it slows to `brake_share` of its velocity each update, its throttle nothing.
+    brake,
+    /// `motion_drift` (`0x00474B00`), which the ejection gives the ship it leaves, and Jump In: it
+    /// slows to `drift_share` of its velocity each update.
+    drift,
 
-    pub fn thrust(motion: Motion) f32 {
-        return switch (motion) {
-            .forward => 1,
-            .backward => -1,
-        };
+    /// Moves `object` for one update, by `flight` in `view` where it flies.
+    pub fn run(motion: Motion, object: *GameObject, flight: *const create.FlightModel, view: camera.View) void {
+        switch (motion) {
+            .forward => fly(object, flight, view, ahead),
+            .backward => fly(object, flight, view, astern),
+            .brake => {
+                slow(object, brake_share);
+                object.last_throttle = 0;
+            },
+            .drift => slow(object, drift_share),
+        }
     }
 };
+
+/// The flight model's thrust flying ahead, and astern.
+const ahead: f32 = 1;
+const astern: f32 = -1;
+
+/// What a braking and a drifting object keep of their velocity each update (`0x00474618`,
+/// `0x00474B07`).
+const brake_share: f32 = 0.97;
+const drift_share: f32 = 0.99;
+
+/// The object's velocity scaled by `share`.
+fn slow(object: *GameObject, share: f32) void {
+    object.velocity = gameobj.vec3(gameobj.vector(object.velocity) * @as(math.Vector, @splat(share)));
+}
 
 /// The share of the cruise speed the lateral input pushes a ship sideways at (`object_fly`).
 const lateral_share: f32 = 0.25;
@@ -131,7 +157,7 @@ pub fn move(object: *GameObject, flight: *const create.FlightModel, view: camera
     const knocked = object.knocks > 0;
     if (object.flags.jumping and !knocked and !object.flags.unpowered) return;
     if (!knocked and !object.flags.unpowered) {
-        if (motion) |routine| fly(object, flight, view, routine.thrust());
+        if (motion) |routine| routine.run(object, flight, view);
     } else {
         gameobj.applyKnocks(object);
     }
@@ -244,6 +270,19 @@ test move {
     // Its next orientation is its orientation turned by the rotation the steering built.
     try std.testing.expectEqual(math.identity, object.root.next_orientation);
     try std.testing.expect(object.root.flags.next_pending);
+}
+
+test "a braking object slows faster than a drifting one, and lets go of its throttle" {
+    var braking = gameobj.testing.object();
+    braking.velocity = .{ .x = 0, .y = 0, .z = 100 };
+    braking.last_throttle = 1;
+    var drifting = braking;
+    Motion.brake.run(&braking, &gameobj.testing.flight, .chase);
+    Motion.drift.run(&drifting, &gameobj.testing.flight, .chase);
+    try std.testing.expectApproxEqAbs(100 * brake_share, braking.velocity.z, 1e-4);
+    try std.testing.expectEqual(0, braking.last_throttle);
+    try std.testing.expectApproxEqAbs(100 * drift_share, drifting.velocity.z, 1e-4);
+    try std.testing.expectEqual(1, drifting.last_throttle);
 }
 
 test "an object travels from step to step" {

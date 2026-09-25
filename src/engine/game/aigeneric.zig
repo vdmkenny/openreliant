@@ -21,6 +21,7 @@ const input = @import("../input.zig");
 const Clock = @import("main.zig").Clock;
 const orders = @import("ai/orders.zig");
 const Order = orders.Order;
+const tractor = @import("tractor.zig");
 
 /// Orders an object's stack holds; `order_push` refuses another.
 pub const max_stack = 20;
@@ -40,6 +41,11 @@ pub const Target = extern struct {
     /// An order aimed at nothing, which is how the mission's records leave a target it does not
     /// name.
     pub const none: Target = .{ .kind = .ship, .index = -1, .component = -1 };
+
+    /// The slot of the ship it names, where it names one.
+    pub fn ship(target: Target) ?u16 {
+        return if (target.kind == .ship and target.index >= 0) @intCast(target.index) else null;
+    }
 
     /// The kinds of the mission's object table, as a word.
     pub const Kind = enum(i16) {
@@ -109,6 +115,8 @@ pub const State = extern union {
     fly: aiorders.FlyState,
     explode: aiexplode.State,
     eject_player: aieject.PlayerState,
+    eject: aieject.State,
+    scoop_up: tractor.State,
     disrupted: aiorders.DisruptedState,
 
     comptime {
@@ -398,6 +406,10 @@ fn runInit(ctx: Context, index: u16, info: orders.Info) void {
         .random_spin_fast => aiorders.randomSpinInit(ctx, index, .fast),
         .explode => aiexplode.init(ctx, index),
         .eject_player => aieject.playerInit(ctx, index),
+        .eject => aieject.init(ctx, index),
+        .eject_spin => aieject.spinInit(ctx, index),
+        .eject_106 => aieject.abandonedInit(ctx, index),
+        .scoop_up => tractor.scoopUpInit(ctx, index),
         .fight => aifight.init(ctx, index),
         .disrupted => aiorders.disruptedInit(ctx, index),
         else => {},
@@ -418,6 +430,11 @@ fn runUpdate(ctx: Context, index: u16, info: orders.Info) void {
         .explode => aiexplode.update(ctx, index),
         .huuuuuuuge_explosion => aiexplode.huge(ctx, index),
         .eject_player => aieject.player(ctx, index),
+        .eject => aieject.update(ctx, index),
+        .eject_spin => aieject.spin(ctx, index),
+        .eject_106 => aieject.abandoned(ctx, index),
+        .scoop_up => tractor.scoopUp(ctx, index),
+        .eject_fighter_attack => aieject.fighterAttack(ctx, index),
         .fight => aifight.update(ctx, index),
         .disrupted => aiorders.disrupted(ctx, index),
         .launch_missile => aiorders.launchMissile(ctx, index),
@@ -429,6 +446,7 @@ fn runUpdate(ctx: Context, index: u16, info: orders.Info) void {
 /// The `exit` of the order, where the port runs it.
 fn runExit(ctx: Context, index: u16, info: orders.Info) void {
     switch (info.order) {
+        .scoop_up => tractor.scoopUpExit(ctx, index),
         .disrupted => aiorders.disruptedExit(ctx, index),
         else => {},
     }

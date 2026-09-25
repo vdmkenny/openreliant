@@ -1442,3 +1442,25 @@ address	kind	name	type	comment
 004c4ee0	function	sprite_set_free	void __fastcall (void *set)	Frees a sprite set
 0049c670	function	particle_emitter_free	void __fastcall (void *emitter)	Frees a particle emitter
 0046ba80	function	explosions_free	void __fastcall (void)	Frees the splits under way, each by its free routine, as the explosions are torn down
+00415610	function	eject_init	void (void)	Makes eject_flash_template as the renderer starts: puffs of 50 to 100 ticks, growing to 100 across, from yellow to orange to nothing
+004156b0	function	eject_free	void (void)	Frees eject_flash_template
+0051cf94	data	eject_flash_template	ParticleTemplate *	The flash of a pilot's ejection, which eject_separate bursts 100 of at the cockpit's eject point
+004156c0	function	eject_separate	void __fastcall (GameObject *object, int cockpit)	The root's child cockpit leaves the ship as the pilot's pod: the ship becomes a new object with Eject 106, tumbling, EJECT01 heard from it; the pod keeps the slot, unpowered, invulnerable, with no guns, shields or armour; a flash at the eject point, and the pod shoots out along it at 50
+00456250	function	radio_say_pilot		Has a pilot say a line on the radio, from the pilot's speech file (msspeech.hog), outside a multiplayer game; the ejection's lines go through it
+00456d80	function	radio_wingman_ejected		A wingman's call on the radio as its pilot ejects, and the rescue's word a thousand ticks later
+004598d0	function	cmd_SetRescueProbabilities		The mission's SetRescueProbabilities: sets rescue_odds_rescued, rescue_odds_captured and rescue_odds_killed
+0052a414	data	mission_over	int	Set to 1 as the camera has watched the mission's end long enough, which ends the mission
+00587cd4	data	mission_showing	int	What the mission's scene shows: 0 everything, 2 a launch's cutaway without the ship launched from, 3 set by the landing orders, 4 the ejection's cutaway with only the player's pod and the cutaway slot's ship
+00539a44	data	camera_cutaway	Vec3	Where the ejection's views stand off from what they watch, set by camera_set_view: view 7 the object's X axis times 5000, 0x1C half the way from the object to the player's ship, 0x1D the way from the player's ship to the object
+0041bb90	function	tractors_init	void (void)	As a mission loads: no tractors in use, and tractor_texture laser2
+0041bbc0	function	tractors_free	void (void)	As a mission ends: frees every tractor in use
+0041d090	function	tractor_create	int __fastcall (int slot)	Takes the first free of the five tractors for the ship in slot, with its green Tractor Light on the ship's target, reaching 10000; -1 where none is free
+0041d1a0	function	tractor_free	void __fastcall (int index)	Frees a tractor: its two beams, its bubble and its light
+0041cbc0	function	tractor_beam_mesh		A tractor's beam, TractorBeam_Mesh: a square 100 across and three ribbons 400 long crossing on its axis, over tractor_texture, added by the alpha of its own colours, never culled (flags 0x87800)
+0041ce00	function	tractor_beam_aim	void __fastcall (void *beam, int ship, int pod)	Turns a beam hanging from the ship's hull (Nanny or Antanov) to the pod, and stretches its ribbons' far corners to reach it
+0041ced0	function	tractor_beam_fade	void __thiscall (float alpha)	Sets the beam in ECX as solid as alpha, 0 to 1: each quad clear at its near corners and green at its far ones
+0041cf80	function	tractor_bubble_glow	void __thiscall (float brightness, float time)	Runs green waves round the bubble in ECX at time, their crests brightness times 0.05
+0041d050	function	tractor_nothing	void (void)	Works out a sine and a cosine for each of three turns, and keeps nothing; Scoop Up calls it with the bubble's eased size
+0051d10c	data	tractors	void *[5]	The tractors in use: two beams, a bubble and a light each
+0051d120	data	tractor_texture	void *	laser2, which the tractors' beams are drawn over
+004e3e1c	data	scoop_up_stage_ticks	int[9]	How long each of Scoop Up's stages lasts, in ticks: 100 for the beams coming on, 50 for them going out, 250 for the wait; 0 for the rest

@@ -159,6 +159,7 @@ commands and their like set; the names in quotes are the developers' labels for 
 | `0x200` | `targetable` | `SetTargetable` for the whole object, which sets it only when the word at `+0x24` of its combat stats is nonzero. |
 | `0x400` | `disabled` | Not processed: `DisableObject`, "Stops entities from being processed", and `DisableObjectAtNextJump` at the next jump. |
 | `0x800` | `ejected` | Set once its pilot ejects. It takes no more orders, and destroying it now makes it explode. |
+| `0x1000` | `tractored` | Set while a ship's Scoop Up claims it, so no other ship takes it in ([Ejection](ejection.md#scoop-up)). |
 | `0x2000` | `lights_disabled` | `DisableLights`. |
 | `0x4000` | `shield_generator` | It has a shield generator, which destroying the part clears. |
 | `0x8000` | `guns_disabled` | `DisableGuns`. `orders_update` skips `0x0047C950` for it. |
@@ -452,8 +453,9 @@ rounded to the nearest step.
 
 ### The orders' motion functions
 
-The orders select eight more motion functions, which read the order's state (`0x68C`). They aren't
-ported yet ([#30](https://github.com/vdmkenny/openreliant/issues/30)).
+The orders select eight more motion functions, which read the order's state (`0x68C`). The port has
+the two the [ejection](ejection.md) selects, `motion_brake` (`0x00474610`) and `motion_drift`
+(`0x00474B00`); the rest aren't ported yet ([#30](https://github.com/vdmkenny/openreliant/issues/30)).
 
 | Address | Selected by | What it does |
 |---|---|---|
@@ -464,7 +466,7 @@ ported yet ([#30](https://github.com/vdmkenny/openreliant/issues/30)).
 | `0x004746D0` | Jump In | Flies along the nose at 2400, or 600 for an object without components, less 0.003 of that per unit of time since the jump started, but never slower than the cruise speed. No rotation. |
 | `0x00474770` | Follow Curve, Dock | Steers toward the point the order's state gives and moves toward it, no faster than the order's speed limit. |
 | `0x00474930` | Follow Curve | The same, flying tail first. |
-| `0x00474B00` | Jump In | Slows the velocity to 0.99 of itself each update. |
+| `0x00474B00` | Jump In, and the ship a pilot has left (`eject_separate`) | Slows the velocity to 0.99 of itself each update. |
 
 ### Porting
 
@@ -606,15 +608,14 @@ watching where it burst (view `0x1B`), and a halt from behind. `mission_ending` 
 [`ai.zig`](../../src/engine/game/ai.zig) ports `object_destroyed` as `objectDestroyed`,
 [`collision.zig`](../../src/engine/game/collision.zig) the armour damage as `armorDamage`,
 [`aiexplode.zig`](../../src/engine/game/aiexplode.zig) Explode,
-[`aieject.zig`](../../src/engine/game/aieject.zig) Eject Player,
+[`aieject.zig`](../../src/engine/game/aieject.zig) the [ejection](ejection.md)'s orders,
 [`explode.zig`](../../src/engine/game/explode.zig) the blasts, and
 [`create.zig`](../../src/engine/game/create.zig) `object_retire` as `retire`.
 
 The blasts' break-up, particles, fireballs, burning bits and shockwaves are in
 [Effects](effects.md). Not ported: what a few types set off first
 ([#238](https://github.com/vdmkenny/openreliant/issues/238)); the Ulysses' own end
-([#232](https://github.com/vdmkenny/openreliant/issues/232)); Eject Spin
-and the other ejection orders ([#30](https://github.com/vdmkenny/openreliant/issues/30)); and what
+([#232](https://github.com/vdmkenny/openreliant/issues/232)); and what
 the end tells the mission, the kill and the radio's lines on it, and the Destroyed event
 ([#37](https://github.com/vdmkenny/openreliant/issues/37)).
 

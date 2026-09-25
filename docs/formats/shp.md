@@ -92,7 +92,7 @@ carries its own levels of detail.
 | Off | Type | Field |
 |---|---|---|
 | `0x00` | char[64] | Name, NUL-terminated: `Crusader Cockpit`, `Rus Big Tur Guns`, `Stalag Door 1 DEST` |
-| `0x40` | u32 | Subsystem class. 5 marks engines and 6 shield generators, which the engine counts; 3, 9, 10 and 18 are turrets; 1 marks hull sections, going by their names |
+| `0x40` | u32 | Subsystem class. 5 marks engines and 6 shield generators, which the engine counts; 3, 9, 10 and 18 are turrets; 1 marks hull sections, going by their names; 2 the cockpit, which leaves the ship as the pilot's pod ([Ejection](../engine/ejection.md#the-pod)) |
 | `0x44` | vec3 | Origin, in the model's frame whatever the parent |
 | `0x50` | vec3 | Bounding box minimum (see [Bounding boxes](#bounding-boxes)) |
 | `0x5C` | vec3 | Bounding box maximum |
@@ -144,8 +144,9 @@ kind and id; [`src/engine/game/create/models.zig`](../../src/engine/game/create/
 transcribes it (`make model-tables`). Kind 0 holds missiles and their pods, 1 guns and turrets, 4
 flare and light sprites, 5 cargo and fuel pods. Kind 3 is a gun's muzzle: an object takes one gun
 for each, of the type at `0x64`, and its muzzle flash is drawn there. Kind 7 is where a spinning
-gun's spent cases fly from ([Guns](../engine/guns.md#particles-and-bursts)). **Unknown:** kinds 2, 6,
-8 and 9.
+gun's spent cases fly from ([Guns](../engine/guns.md#particles-and-bursts)). Kind 6 is a cockpit's
+eject point: the flash of a pilot's ejection goes off at the last, and the pod shoots out along its
+Z axis ([Ejection](../engine/ejection.md#the-pod)). **Unknown:** kinds 2, 8 and 9.
 
 For kinds 1 and 5 the engine mounts the model as an object of its own, hanging from the part's
 node, whose components join the owner's.
@@ -192,11 +193,13 @@ The kinds the game reads:
 
 | Kind | Read by | What the points are |
 |---|---|---|
+| 0 | `order_scoop_up` (`0x0041BCC0`) | Where a ship takes in a pilot's pod: the first point, which the pod is drawn toward along the part's Z axis ([Ejection](../engine/ejection.md#scoop-up)) |
 | 1 | `explode_part_burn` (`0x00471290`) | Pairs of points an electric ray runs between as a wreck burns |
 | 2 | `split_create` (`0x0046F480`) | Where a capital ship is cut as it splits in two |
 | 3 | `part_streams` (`0x004715D0`) | Where smoke streams from a burning wreck, along each point's vertex's normal |
 | 4 | `part_burn_lights` (`0x00471470`) | Where a burning wreck's light stands: the first point |
 | 5 | `split_update` (`0x00470030`) | Where fireballs go off as a split ship's halves part |
+| 6 | `order_scoop_up` | Where a ship's two tractor beams come from: the first two points |
 
 `shp.PointList` holds a list, and `sltool shp info` counts each part's lists.
 

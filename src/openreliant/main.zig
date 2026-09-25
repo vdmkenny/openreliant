@@ -648,6 +648,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     defer trails.deinit();
     var rays: game.erayfx.Rays = try .init(gpa, &textures);
     defer rays.deinit();
+    var tractors: game.tractor.Tractors = try .init(gpa, &textures);
+    defer tractors.deinit();
     var flash: game.main.flash.Flash = .{};
     // The countermeasures' model, read once for the whole run, as `decoys_init` reads it.
     var effects_library: Library = .{ .gpa = arena, .resources = &resources, .textures = &textures };
@@ -667,7 +669,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     while (lacking.next()) |effect| std.log.warn("forces\\{s} is missing or isn't an effect file: it plays nothing", .{effect.fileName()});
     var force_feedback: engine.input.force.Forces = .{ .library = &found_forces.library, .settings = options.forces };
     // What the objects run in, the camera's view brought up to date each frame.
-    var world: game.gameobj.World = .{ .forces = &force_feedback, .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .difficulty = options.difficulty, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .smoke = &smoke, .gun_particles = &gun_particles, .shockwaves = &shockwaves, .trails = &trails, .countermeasures = &countermeasures, .sparks = &sparks, .shields = &shields, .rays = &rays, .flash = &flash, .spawn = .{ .tables = sandbox.tables, .types = sandbox.types.interface() } };
+    var world: game.gameobj.World = .{ .forces = &force_feedback, .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .difficulty = options.difficulty, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .smoke = &smoke, .gun_particles = &gun_particles, .shockwaves = &shockwaves, .trails = &trails, .countermeasures = &countermeasures, .sparks = &sparks, .shields = &shields, .rays = &rays, .tractors = &tractors, .flash = &flash, .spawn = .{ .tables = sandbox.tables, .types = sandbox.types.interface() } };
     try sandbox.start(.{ .world = world, .clock = &clock, .devices = &devices }, @intCast(options.ship));
     // The music, as a mission's script starts it (`cmd_PlayMusic`): from `music\`, for ever, at 80.
     if (options.music) |name| {
@@ -679,7 +681,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     // until the second frame, which draws the sun by how much of it the first found showing.
     var frames_left: ?usize = null;
     if (options.screenshot != null) {
-        const subject = playerSubject(sandbox.player());
+        const subject = camera.Subject.of(sandbox.player());
         for (0..settling_frames) |_| _ = view.frame(.{ .object = subject, .player = subject, .ticks = 1 });
         frames_left = options.screenshot_ticks;
     }
@@ -736,8 +738,6 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         .player = &sandbox.objects.player,
     };
     if (options.pause_menu and frames_left == null) try game.main.pause(pausing, true);
-    // When the sandbox starts again after the player's ship is destroyed.
-    var restart_at: ?u32 = null;
     // Whether the system's pointer shows over the window.
     var pointer_shown = true;
     while (true) {
@@ -769,11 +769,12 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         // While the communications window is open the keys 1 to 8 are its menu's.
         devices.keyboard.numbers_taken = display.state.windows.status.get(.comms).phase == .open;
         world.view = view.view;
+        world.cockpit = if (sandbox.cockpit) |*cockpit| &cockpit.model else null;
         const orders: game.aigeneric.Context = .{ .world = world, .clock = &clock, .devices = &devices };
         while (clock.nextTick(&devices, world)) |_| {}
         clock.frameBegin();
         const ticks: u32 = @intCast(@max(clock.frame_duration, 0));
-        const at: u32 = @intCast(@max(clock.mission_ticks, 0));
+        const at = clock.viewTime();
         const slot = sandbox.player();
         // `mission_frame` looks for Escape before its work, and pausing into the menu leaves the
         // work out.
@@ -796,17 +797,10 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             // the player's controls, and then, before anything is drawn, has every object's frames
             // drawn between its last two places, as far into the step as the clock is; the camera
             // follows the player's.
-            game.main.missionFrame(orders, game.objects.stepFraction(&clock, options.smooth_motion));
-            // The player's ship gone, the sandbox starts again once the camera has watched for a
-            // while, where a mission would end and go to its debriefing.
-            if (sandbox.player().object.type == .stand_in) {
-                const again = restart_at orelse at + restart_after;
-                restart_at = again;
-                if (at >= again) {
-                    restart_at = null;
-                    try restartSandbox(&player, &sandbox, orders, &display, &view, at);
-                }
-            }
+            const over = game.main.missionFrame(orders, game.objects.stepFraction(&clock, options.smooth_motion));
+            // The mission over, once the camera has watched the player's end or the pilot's pickup,
+            // the sandbox starts again where a mission would go to its debriefing.
+            if (over) try restartSandbox(&player, &sandbox, orders, &display, &view, at);
             for ([_]struct { u8, isize }{ .{ f2, -1 }, .{ f3, 1 } }) |step| {
                 if (!devices.keyboard.pressed(step[0], .none, true)) continue;
                 const was = sandbox.player_type;
@@ -863,9 +857,12 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
                 const speed = live.speed / game.ai.cruiseSpeed(live, flight, view.view);
                 break :input game.main.cockpitInput(&cockpit.model, cockpit.source, rates, speed);
             } else null;
-            const subject = playerSubject(slot);
+            const subject = camera.Subject.of(slot);
+            // The view's own object, which the ejection's views show, and the player's ship
+            // otherwise.
+            const shown = if (view.object) |seen| camera.Subject.of(&sandbox.objects.slots[seen]) else subject;
             const marker = if (explosions.marker) |left| left.position else null;
-            if (view.frame(.{ .object = subject, .player = subject, .ticks = ticks, .now = at, .marker = marker, .cockpit = cockpit_input, .random = &rand, .forces = &force_feedback })) |next| {
+            if (view.frame(.{ .object = shown, .player = subject, .ticks = ticks, .now = at, .marker = marker, .cockpit = cockpit_input, .random = &rand, .forces = &force_feedback })) |next| {
                 _ = view.setView(next, sandbox.objects.player, false, true, at);
             }
             // From its cockpit, the ship is not drawn, as `camera_set_view` sees to.
@@ -909,6 +906,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         try game.main.drawFrame(arena, frame_arena.allocator(), &scene, &context, .{
             .objects = sandbox.objects,
             .seat = if (slot.object.flags.hidden) sandbox.objects.player else null,
+            .showing = player.showing,
             .space = space,
             .sky = sky,
             .view = view.view,
@@ -934,6 +932,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .display = &display.state,
             .shields = &shields,
             .rays = &rays,
+            .tractors = &tractors,
             .flash = &flash,
             .interference = &display.state.interference,
             .ticks = @intCast(@max(clock.frame_duration, 0)),
@@ -979,29 +978,6 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         }
         if (options.frameRate(window)) |rate| pacer.wait(rate);
     }
-}
-
-/// What the camera follows of the player's ship: where its root's frame has it drawn, its model's
-/// eye point and its size, and for the chase view its type, its throttle and its rates of turn.
-fn playerSubject(slot: *const game.create.Slot) camera.Subject {
-    const live = &slot.object;
-    const eye = if (slot.type) |loaded| loaded.model.header.eye else std.mem.zeroes(shp.Vec3);
-    return .{
-        .position = slot.drawn.position,
-        .orientation = slot.drawn.orientation,
-        .eye = .{ eye.x, eye.y, eye.z },
-        .radius = live.radius,
-        // The chase view sits farther back the more throttle the ship carries and swings against
-        // its rates of turn, so it lags a turn rather than riding rigidly behind the ship.
-        .motion = .{
-            .ship_type = live.type,
-            .throttle = live.throttle,
-            .afterburner = live.afterburner,
-            .pitch_rate = live.pitch_rate,
-            .yaw_rate = live.yaw_rate,
-            .roll_rate = live.roll_rate,
-        },
-    };
 }
 
 /// The view a ship is shown in at first: view 0, as a mission's launch ends in, in `mode`. The
@@ -1174,6 +1150,8 @@ const Sandbox = struct {
     fn start(sandbox: *Sandbox, orders: game.aigeneric.Context, ship_type: u8) !void {
         if (orders.world.hearing) |hearing| game.sound3d.endAll(hearing.sound);
         orders.world.player.ending = .playing;
+        orders.world.player.showing = .everything;
+        orders.world.player.rescue_odds = sandbox_rescue_odds;
         // A mission's start puts back the pilot's kills as the last mission the pilot came through
         // kept them, undoing a failed attempt's.
         game.winmain.startMission(orders.world.player);
@@ -1186,6 +1164,7 @@ const Sandbox = struct {
         sandbox.objects.missiles.reset(sandbox.objects.gpa);
         if (orders.world.trails) |trails| trails.reset();
         if (orders.world.rays) |rays| rays.reset();
+        if (orders.world.tractors) |tractors| tractors.reset();
         if (orders.world.flash) |lit| lit.* = .{};
         if (orders.world.display) |display| display.interference = .{};
         if (orders.world.countermeasures) |dropped| dropped.reset();
@@ -1211,7 +1190,8 @@ const Sandbox = struct {
         const sabres = sandbox.bringWing(orders);
         sandbox.bringWingmen(orders, index, &sabres);
         sandbox.types.sweep(&sandbox.objects.types);
-        if (sandbox.player_type != ship_type or sandbox.cockpit == null) try sandbox.loadCockpit(ship_type);
+        // Each mission's start makes the cockpit afresh, as an ejection leaves it lit red.
+        try sandbox.loadCockpit(ship_type);
         sandbox.player_type = ship_type;
     }
 
@@ -1429,13 +1409,16 @@ const TypeCache = struct {
     }
 };
 
-/// How long the camera watches the player's ship's end before the sandbox starts again, in ticks.
-const restart_after = 500;
+/// The sandbox's odds of how the pilot fares after ejecting: picked up by a nanny ship, by the
+/// enemy, and killed, each as likely, where a mission's start has the pilot always picked up.
+const sandbox_rescue_odds: game.aieject.RescueOdds = .{ .rescued = 1, .captured = 1, .killed = 1 };
 
 /// What a mission's start readies the display with for the player's ship: its devices fitted
 /// (`fitDevices`), its missiles in the missile display once the ships are made (`mission_start`),
 /// and no missile lock (`mission_run`).
 fn readyDisplay(state: *game.hud.State, sandbox: *Sandbox) void {
+    // `hud_init` has the eject marker out.
+    state.ejected = false;
     game.main.fitDevices(state, sandbox.player_type, sandbox.canCloak());
     state.missiles.build(&sandbox.player().object);
     state.lock.reset();
@@ -1537,9 +1520,7 @@ const Display = struct {
 };
 
 /// Starts the sandbox again as a mission's attempt ends: keeping the kills where its ending keeps
-/// them. Nothing picks up or loses a pilot who ejected, as the pod's order is not ported yet
-/// (#30), so the ending stays `ejecting`, which keeps them as the pickup the default odds always
-/// give would.
+/// them, as when the ejected pilot is picked up by a nanny ship.
 fn restartSandbox(player: *engine.input.Player, sandbox: *Sandbox, orders: game.aigeneric.Context, display: *Display, view: *camera.Camera, at: u32) !void {
     game.gameflow.endMission(player);
     try sandbox.start(orders, sandbox.player_type);
@@ -1600,7 +1581,7 @@ test "the sandbox's Reliant flies at a crawl" {
     flight.max_speed = cruise;
     var object = game.gameobj.testing.object();
     object.throttle = @as(f32, @floatFromInt(Sandbox.crawl_speed)) / cruise;
-    for (0..200) |_| game.motion.fly(&object, &flight, .chase, game.motion.Motion.forward.thrust());
+    for (0..200) |_| game.motion.Motion.forward.run(&object, &flight, .chase);
     const crawl: f32 = @floatFromInt(Sandbox.crawl_speed);
     try std.testing.expectApproxEqAbs(crawl, math.length(game.gameobj.vector(object.velocity)), 0.01);
 }

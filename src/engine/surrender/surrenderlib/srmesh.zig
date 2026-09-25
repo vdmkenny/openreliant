@@ -33,6 +33,10 @@ pub fn facing(polygon_normal: Vector, corner: Vector, viewpoint: Vector) bool {
 /// The face mask a mesh object starts with (`mesh_object_create`).
 pub const default_face_mask: u8 = 0xFF;
 
+/// The face mask's bit that hides the cap faces (`shp.Face.Flags.cap`), which close a part where it
+/// meets another: an object that comes apart there clears it, and they show.
+pub const caps_hidden: u8 = @truncate(@as(u32, @bitCast(shp.Face.Flags{ .cap = true })));
+
 /// Whether a face is drawn: its flags against the object's face mask decide whether it is hidden or
 /// never culled; `culling` is off for objects flagged `not_culled`.
 pub fn shown(flags: shp.Face.Flags, face_mask: u8, faces_viewpoint: bool, culling: bool) bool {
@@ -454,6 +458,7 @@ test shown {
     try std.testing.expect(shown(plain, default_face_mask, true, true));
     try std.testing.expect(!shown(plain, default_face_mask, false, true));
     try std.testing.expect(!shown(cap, default_face_mask, true, true));
+    try std.testing.expect(shown(cap, default_face_mask & ~caps_hidden, true, true));
     try std.testing.expect(shown(cap, 0xFE, true, true));
     try std.testing.expect(shown(two_sided, default_face_mask, false, true));
     try std.testing.expect(!shown(two_sided, 0xFD, false, true));
