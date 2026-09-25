@@ -13,10 +13,10 @@ const Modifier = ControlBinding.Modifier;
 
 const image = @import("image.zig");
 const testing = @import("testing.zig");
+const zig_text = @import("zig_text.zig");
 
 /// `control_bindings`, which `control_active` (`0x00412630`) indexes by action.
 pub const table: u32 = 0x004E2380;
-const record_size = @sizeOf(ControlBinding);
 const name_size = @typeInfo(@FieldType(ControlBinding, "name")).array.len;
 
 /// Actions a table this size could hold, as a bound on the scan.
@@ -34,7 +34,7 @@ pub const Error = image.Error || error{ Empty, UnknownModifier };
 pub fn read(arena: std.mem.Allocator, reader: image.Reader) (Error || std.mem.Allocator.Error)![]const Binding {
     var bindings: std.ArrayList(Binding) = .empty;
     for (0..max_actions) |index| {
-        const record = try reader.view(ControlBinding, table + @as(u32, @intCast(index)) * record_size);
+        const record = try reader.viewAt(ControlBinding, table, index);
         const binding = try parse(record) orelse break;
         try bindings.append(arena, binding);
     }
@@ -67,15 +67,6 @@ fn isActionName(name: []const u8) bool {
     return true;
 }
 
-/// The action's name as a Zig identifier: `NOSE UP` is `nose_up`.
-fn identifier(buffer: *[name_size]u8, name: []const u8) []const u8 {
-    for (name, buffer[0..name.len]) |c, *out| out.* = switch (c) {
-        ' ', '-' => '_',
-        else => std.ascii.toLower(c),
-    };
-    return buffer[0..name.len];
-}
-
 /// Writes `controls.zig`.
 pub fn emit(w: *Io.Writer, bindings: []const Binding) Io.Writer.Error!void {
     try w.print(
@@ -96,7 +87,7 @@ pub fn emit(w: *Io.Writer, bindings: []const Binding) Io.Writer.Error!void {
     , .{ table, bindings.len });
     var buffer: [name_size]u8 = undefined;
     for (bindings, 0..) |binding, index| {
-        try w.print("    {s} = {d},\n", .{ identifier(&buffer, binding.name), index });
+        try w.print("    {s} = {d},\n", .{ zig_text.identifier(&buffer, binding.name), index });
     }
     try w.writeAll(
         \\};
@@ -119,7 +110,7 @@ pub fn emit(w: *Io.Writer, bindings: []const Binding) Io.Writer.Error!void {
         try w.print("    .{{ .name = \"{f}\", .key = 0x{X:0>2}, .modifier = ", .{
             std.zig.fmtString(binding.name), binding.key,
         });
-        try writeModifier(w, binding.modifier);
+        try zig_text.enumValue(w, binding.modifier);
         try w.writeAll(", .button = ");
         if (std.math.cast(u8, binding.button)) |button| {
             try w.print("{d} }},\n", .{button});
@@ -150,16 +141,6 @@ pub fn emit(w: *Io.Writer, bindings: []const Binding) Io.Writer.Error!void {
         \\}
         \\
     );
-}
-
-fn writeModifier(w: *Io.Writer, modifier: Modifier) Io.Writer.Error!void {
-    switch (modifier) {
-        .none => try w.writeAll(".none"),
-        .shift => try w.writeAll(".shift"),
-        .control => try w.writeAll(".control"),
-        .alt => try w.writeAll(".alt"),
-        _ => try w.print("@enumFromInt({d})", .{@intFromEnum(modifier)}),
-    }
 }
 
 fn testRecord(key: u16, modifier: u16, name: []const u8, button: i16) ControlBinding {
@@ -199,12 +180,6 @@ test isActionName {
     try std.testing.expect(!isActionName(""));
     try std.testing.expect(!isActionName("Fire"));
     try std.testing.expect(!isActionName("FIRE\x01"));
-}
-
-test identifier {
-    var buffer: [name_size]u8 = undefined;
-    try std.testing.expectEqualStrings("roll_ship_anti_clockwise", identifier(&buffer, "ROLL SHIP ANTI-CLOCKWISE"));
-    try std.testing.expectEqualStrings("nose_up", identifier(&buffer, "NOSE UP"));
 }
 
 test "emit writes Zig that parses" {

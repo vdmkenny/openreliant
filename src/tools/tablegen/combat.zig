@@ -16,6 +16,7 @@ const ShipCombat = create.ShipCombat;
 
 const image = @import("image.zig");
 const testing = @import("testing.zig");
+const zig_text = @import("zig_text.zig");
 
 /// `ship_combat_stats`.
 pub const table: u32 = 0x004FC670;
@@ -31,9 +32,9 @@ pub const Static = struct {
 pub const Error = image.Error || error{ NotZero, NotFlag };
 
 pub fn read(arena: std.mem.Allocator, reader: image.Reader) (Error || std.mem.Allocator.Error)![]const Static {
-    const bytes = try reader.slice(table, create.ship_type_count * @sizeOf(ShipCombat));
+    const records = try reader.records(ShipCombat, table, create.ship_type_count);
     const types = try arena.alloc(Static, create.ship_type_count);
-    for (types, std.mem.bytesAsSlice(ShipCombat, bytes)) |*ship_type, record| ship_type.* = try parse(record);
+    for (types, records) |*ship_type, record| ship_type.* = try parse(record);
     return types;
 }
 
@@ -42,7 +43,11 @@ pub fn read(arena: std.mem.Allocator, reader: image.Reader) (Error || std.mem.Al
 /// is not what this reader knows.
 fn parse(record: ShipCombat) Error!Static {
     if (record.gun_groups != 0 or record._unknown_1e != 0 or record.gun_group_table != .null) return error.NotZero;
-    if (record.targeting._unknown_1 != 0 or @intFromEnum(record.display) > 1) return error.NotFlag;
+    if (record.targeting._unknown_1 != 0) return error.NotFlag;
+    switch (record.display) {
+        .small, .large => {},
+        _ => return error.NotFlag,
+    }
     return .{
         .targetable = record.targeting.targetable,
         .name = record.name,
@@ -83,26 +88,17 @@ pub fn emit(w: *Io.Writer, types: []const Static) Io.Writer.Error!void {
     , .{ table, types.len });
     for (types, 0..) |ship_type, index| {
         try w.print("    // 0x{X:0>2}\n    .{{ .targetable = {}, .name = {d}, .class = ", .{ index, ship_type.targetable, ship_type.name });
-        try enumValue(w, ship_type.class);
+        try zig_text.enumValue(w, ship_type.class);
         try w.writeAll(", .side = ");
-        try enumValue(w, ship_type.side);
+        try zig_text.enumValue(w, ship_type.side);
         try w.writeAll(", .display = ");
-        try enumValue(w, ship_type.display);
+        try zig_text.enumValue(w, ship_type.display);
         try w.writeAll(" },\n");
     }
     try w.writeAll(
         \\};
         \\
     );
-}
-
-/// A value of a non-exhaustive enum as Zig: its name, or the number where it has none.
-fn enumValue(w: *Io.Writer, value: anytype) Io.Writer.Error!void {
-    if (std.enums.tagName(@TypeOf(value), value)) |name| {
-        try w.print(".{s}", .{name});
-    } else {
-        try w.print("@enumFromInt({d})", .{@intFromEnum(value)});
-    }
 }
 
 test parse {

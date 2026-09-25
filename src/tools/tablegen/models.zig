@@ -10,7 +10,8 @@ const Io = std.Io;
 
 const openreliant = @import("openreliant");
 const Kind = openreliant.shp.Attachment.Kind;
-const ShipTypeEntry = openreliant.engine.game.create.ShipType;
+const create = openreliant.engine.game.create;
+const ShipTypeEntry = create.ShipType;
 
 const image = @import("image.zig");
 const testing = @import("testing.zig");
@@ -19,24 +20,28 @@ const x86 = @import("x86.zig");
 /// The ship type table: a `create.ShipType` for each of the 256 types, which names the model file
 /// and the comms sprite.
 pub const ship_types: u32 = 0x004F7490;
-pub const ship_type_count = 256;
+pub const ship_type_count = create.ship_type_count;
 
 /// The function that fills `attachment_table`.
 pub const attachment_loader: u32 = 0x0045DE70;
 pub const attachment_table: u32 = 0x00538CA8;
-pub const attachment_size = 0x10;
+pub const attachment_size = @sizeOf(Stored);
 pub const ids_per_kind = 20;
 pub const attachment_kinds = 9;
 
 const load_model: u32 = 0x004A44D0;
 const load_sprite: u32 = 0x00494A30;
 
-/// Offsets within an attachment entry.
-const field = struct {
-    const model = 0x0;
-    const second_model = 0x4;
-    const count = 0x8;
-    const sprite = 0xC;
+/// An entry of `attachment_table`, as the loader fills it: what each of its stores writes.
+const Stored = extern struct {
+    model: u32,
+    second_model: u32,
+    count: u32,
+    sprite: u32,
+
+    comptime {
+        std.debug.assert(@sizeOf(Stored) == 0x10);
+    }
 };
 
 pub const ShipType = struct {
@@ -111,20 +116,20 @@ pub fn read(
                             loaded = null;
                             const name = try reader.string(file.name);
                             switch (offset % attachment_size) {
-                                field.model => if (!file.sprite) {
+                                @offsetOf(Stored, "model") => if (!file.sprite) {
                                     entry.model = name;
                                 } else return error.UnexpectedStore,
-                                field.second_model => if (!file.sprite) {
+                                @offsetOf(Stored, "second_model") => if (!file.sprite) {
                                     entry.second_model = name;
                                 } else return error.UnexpectedStore,
-                                field.sprite => if (file.sprite) {
+                                @offsetOf(Stored, "sprite") => if (file.sprite) {
                                     entry.sprite = name;
                                 } else return error.UnexpectedStore,
                                 else => return error.UnexpectedStore,
                             }
                         },
                         .immediate => |value| {
-                            if (offset % attachment_size != field.count) return error.UnexpectedStore;
+                            if (offset % attachment_size != @offsetOf(Stored, "count")) return error.UnexpectedStore;
                             entry.count = std.math.cast(u32, value) orelse return error.UnexpectedStore;
                         },
                         else => return error.UnexpectedStore,

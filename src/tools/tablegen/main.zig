@@ -54,7 +54,7 @@ const std = @import("std");
 const Io = std.Io;
 
 const openreliant = @import("openreliant");
-const pe = openreliant.pe;
+const max_file_size = openreliant.engine.files.max_file_size;
 
 const combat = @import("combat.zig");
 const commands = @import("commands.zig");
@@ -71,6 +71,7 @@ const sources = @import("sources.zig");
 const sequences = @import("sequences.zig");
 const views = @import("views.zig");
 const x86 = @import("x86.zig");
+const zig_text = @import("zig_text.zig");
 
 /// Virtual address of the dispatch table, found from the `CALL dword ptr [...]` that the
 /// interpreter's inner loop makes.
@@ -117,27 +118,46 @@ const Mode = union(enum) {
     sequences: struct { binary: []const u8, output: []const u8 },
     sources: struct { binary: []const u8, listing: []const u8, strings: []const u8, output: []const u8 },
 
+    /// The mode `args` names, then its paths in the order its fields list them.
     fn parse(args: []const [:0]const u8) ?Mode {
         if (args.len == 0) return null;
         const tag = std.meta.stringToEnum(std.meta.Tag(Mode), args[0]) orelse return null;
         const rest = args[1..];
-        return switch (tag) {
-            .opcodes => if (rest.len == 3) .{ .opcodes = .{ .binary = rest[0], .listing = rest[1], .output = rest[2] } } else null,
-            .commands => if (rest.len == 2) .{ .commands = .{ .binary = rest[0], .output = rest[1] } } else null,
-            .conditions => if (rest.len == 2) .{ .conditions = .{ .binary = rest[0], .output = rest[1] } } else null,
-            .models => if (rest.len == 3) .{ .models = .{ .binary = rest[0], .listing = rest[1], .output = rest[2] } } else null,
-            .combat => if (rest.len == 2) .{ .combat = .{ .binary = rest[0], .output = rest[1] } } else null,
-            .guns => if (rest.len == 2) .{ .guns = .{ .binary = rest[0], .output = rest[1] } } else null,
-            .sounds => if (rest.len == 2) .{ .sounds = .{ .binary = rest[0], .output = rest[1] } } else null,
-            .controls => if (rest.len == 2) .{ .controls = .{ .binary = rest[0], .output = rest[1] } } else null,
-            .orders => if (rest.len == 2) .{ .orders = .{ .binary = rest[0], .output = rest[1] } } else null,
-            .maneuvers => if (rest.len == 2) .{ .maneuvers = .{ .binary = rest[0], .output = rest[1] } } else null,
-            .views => if (rest.len == 2) .{ .views = .{ .binary = rest[0], .output = rest[1] } } else null,
-            .sequences => if (rest.len == 2) .{ .sequences = .{ .binary = rest[0], .output = rest[1] } } else null,
-            .sources => if (rest.len == 4) .{ .sources = .{ .binary = rest[0], .listing = rest[1], .strings = rest[2], .output = rest[3] } } else null,
-        };
+        switch (tag) {
+            inline else => |mode| {
+                const Paths = @FieldType(Mode, @tagName(mode));
+                const fields = @typeInfo(Paths).@"struct".fields;
+                if (rest.len != fields.len) return null;
+                var paths: Paths = undefined;
+                inline for (fields, 0..) |field, i| @field(paths, field.name) = rest[i];
+                return @unionInit(Mode, @tagName(mode), paths);
+            },
+        }
     }
 };
+
+/// The most of Ghidra's listing this reads: it is not one of the game's files, and runs longer.
+const max_listing_size = 256 << 20;
+
+/// The payload executable at `path`, read whole, as a reader of its memory.
+fn loadBinary(init: std.process.Init, arena: std.mem.Allocator, path: []const u8) !image.Reader {
+    const binary = try Io.Dir.cwd().readFileAlloc(init.io, path, arena, .limited(max_file_size));
+    return .init(try .parse(binary), binary);
+}
+
+/// The Ghidra export's file at `path`, read whole.
+fn loadExport(init: std.process.Init, arena: std.mem.Allocator, path: []const u8) ![]u8 {
+    return Io.Dir.cwd().readFileAlloc(init.io, path, arena, .limited(max_listing_size));
+}
+
+/// Writes the file at `path` with `emitFn`, which takes the writer and then `args`.
+fn writeOutput(init: std.process.Init, path: []const u8, comptime emitFn: anytype, args: anytype) !void {
+    var buffer: [16 << 10]u8 = undefined;
+    var out: Io.File.Writer = .init(try Io.Dir.cwd().createFile(init.io, path, .{}), init.io, &buffer);
+    defer out.file.close(init.io);
+    try @call(.auto, emitFn, .{&out.interface} ++ args);
+    try out.interface.flush();
+}
 
 pub fn main(init: std.process.Init) !u8 {
     const arena = init.arena.allocator();
@@ -147,226 +167,112 @@ pub fn main(init: std.process.Init) !u8 {
         return 2;
     };
     return switch (mode) {
-        .opcodes => |paths| opcodes(init, arena, paths.binary, paths.listing, paths.output),
-        .commands => |paths| catalogue(init, arena, paths.binary, paths.output),
-        .conditions => |paths| conditionCatalogue(init, arena, paths.binary, paths.output),
-        .models => |paths| modelTables(init, arena, paths.binary, paths.listing, paths.output),
-        .combat => |paths| combatTable(init, arena, paths.binary, paths.output),
-        .guns => |paths| gunTable(init, arena, paths.binary, paths.output),
-        .sounds => |paths| soundTables(init, arena, paths.binary, paths.output),
-        .controls => |paths| controlTable(init, arena, paths.binary, paths.output),
-        .orders => |paths| orderTable(init, arena, paths.binary, paths.output),
-        .maneuvers => |paths| maneuverTable(init, arena, paths.binary, paths.output),
-        .views => |paths| viewTable(init, arena, paths.binary, paths.output),
-        .sequences => |paths| sequenceTable(init, arena, paths.binary, paths.output),
+        .opcodes => |paths| opcodes(init, arena, paths),
+        .commands => |paths| catalogue(init, arena, paths),
+        .conditions => |paths| conditionCatalogue(init, arena, paths),
+        .models => |paths| modelTables(init, arena, paths),
+        .combat => |paths| combatTable(init, arena, paths),
+        .guns => |paths| gunTable(init, arena, paths),
+        .sounds => |paths| soundTables(init, arena, paths),
+        .controls => |paths| controlTable(init, arena, paths),
+        .orders => |paths| orderTable(init, arena, paths),
+        .maneuvers => |paths| maneuverTable(init, arena, paths),
+        .views => |paths| viewTable(init, arena, paths),
+        .sequences => |paths| sequenceTable(init, arena, paths),
         .sources => |paths| sourceMap(init, arena, paths),
     };
 }
 
-fn catalogue(init: std.process.Init, arena: std.mem.Allocator, binary_path: []const u8, output: []const u8) !u8 {
-    const cwd: Io.Dir = .cwd();
-    const binary = try cwd.readFileAlloc(init.io, binary_path, arena, .limited(64 << 20));
-    const pe_image: pe.Image = try .parse(binary);
-    const all = try commands.read(arena, .init(pe_image, binary));
-
-    var buffer: [16 << 10]u8 = undefined;
-    var out: Io.File.Writer = .init(try cwd.createFile(init.io, output, .{}), init.io, &buffer);
-    defer out.file.close(init.io);
-    try commands.emit(&out.interface, all);
-    try out.interface.flush();
-
-    std.debug.print("{d} commands -> {s}\n", .{ all.len, output });
+fn catalogue(init: std.process.Init, arena: std.mem.Allocator, paths: @FieldType(Mode, "commands")) !u8 {
+    const all = try commands.read(arena, try loadBinary(init, arena, paths.binary));
+    try writeOutput(init, paths.output, commands.emit, .{all});
+    std.debug.print("{d} commands -> {s}\n", .{ all.len, paths.output });
     return 0;
 }
 
-fn conditionCatalogue(init: std.process.Init, arena: std.mem.Allocator, binary_path: []const u8, output: []const u8) !u8 {
-    const cwd: Io.Dir = .cwd();
-    const binary = try cwd.readFileAlloc(init.io, binary_path, arena, .limited(64 << 20));
-    const pe_image: pe.Image = try .parse(binary);
-    const catalogue_read = try conditions.read(arena, .init(pe_image, binary));
-
-    var buffer: [16 << 10]u8 = undefined;
-    var out: Io.File.Writer = .init(try cwd.createFile(init.io, output, .{}), init.io, &buffer);
-    defer out.file.close(init.io);
-    try conditions.emit(&out.interface, catalogue_read);
-    try out.interface.flush();
-
-    std.debug.print("{d} conditions -> {s}\n", .{ catalogue_read.conditions.len, output });
+fn conditionCatalogue(init: std.process.Init, arena: std.mem.Allocator, paths: @FieldType(Mode, "conditions")) !u8 {
+    const catalogue_read = try conditions.read(arena, try loadBinary(init, arena, paths.binary));
+    try writeOutput(init, paths.output, conditions.emit, .{catalogue_read});
+    std.debug.print("{d} conditions -> {s}\n", .{ catalogue_read.conditions.len, paths.output });
     return 0;
 }
 
-fn modelTables(
-    init: std.process.Init,
-    arena: std.mem.Allocator,
-    binary_path: []const u8,
-    listing_path: []const u8,
-    output: []const u8,
-) !u8 {
-    const cwd: Io.Dir = .cwd();
-    const binary = try cwd.readFileAlloc(init.io, binary_path, arena, .limited(64 << 20));
-    const listing = try cwd.readFileAlloc(init.io, listing_path, arena, .limited(256 << 20));
-    const pe_image: pe.Image = try .parse(binary);
-    const tables = try models.read(arena, .init(pe_image, binary), try x86.parse(arena, listing));
-
-    var buffer: [16 << 10]u8 = undefined;
-    var out: Io.File.Writer = .init(try cwd.createFile(init.io, output, .{}), init.io, &buffer);
-    defer out.file.close(init.io);
-    try models.emit(&out.interface, tables);
-    try out.interface.flush();
-
-    std.debug.print("{d} ship types and the attachment models -> {s}\n", .{ tables.ship_types.len, output });
+fn modelTables(init: std.process.Init, arena: std.mem.Allocator, paths: @FieldType(Mode, "models")) !u8 {
+    const reader = try loadBinary(init, arena, paths.binary);
+    const tables = try models.read(arena, reader, try x86.parse(arena, try loadExport(init, arena, paths.listing)));
+    try writeOutput(init, paths.output, models.emit, .{tables});
+    std.debug.print("{d} ship types and the attachment models -> {s}\n", .{ tables.ship_types.len, paths.output });
     return 0;
 }
 
-fn combatTable(init: std.process.Init, arena: std.mem.Allocator, binary_path: []const u8, output: []const u8) !u8 {
-    const cwd: Io.Dir = .cwd();
-    const binary = try cwd.readFileAlloc(init.io, binary_path, arena, .limited(64 << 20));
-    const pe_image: pe.Image = try .parse(binary);
-    const types = try combat.read(arena, .init(pe_image, binary));
-
-    var buffer: [16 << 10]u8 = undefined;
-    var out: Io.File.Writer = .init(try cwd.createFile(init.io, output, .{}), init.io, &buffer);
-    defer out.file.close(init.io);
-    try combat.emit(&out.interface, types);
-    try out.interface.flush();
-
-    std.debug.print("{d} ship types' combat words -> {s}\n", .{ types.len, output });
+fn combatTable(init: std.process.Init, arena: std.mem.Allocator, paths: @FieldType(Mode, "combat")) !u8 {
+    const types = try combat.read(arena, try loadBinary(init, arena, paths.binary));
+    try writeOutput(init, paths.output, combat.emit, .{types});
+    std.debug.print("{d} ship types' combat words -> {s}\n", .{ types.len, paths.output });
     return 0;
 }
 
-fn gunTable(init: std.process.Init, arena: std.mem.Allocator, binary_path: []const u8, output: []const u8) !u8 {
-    const cwd: Io.Dir = .cwd();
-    const binary = try cwd.readFileAlloc(init.io, binary_path, arena, .limited(64 << 20));
-    const pe_image: pe.Image = try .parse(binary);
-    const types = try gun_stats.read(arena, .init(pe_image, binary));
-
-    var buffer: [16 << 10]u8 = undefined;
-    var out: Io.File.Writer = .init(try cwd.createFile(init.io, output, .{}), init.io, &buffer);
-    defer out.file.close(init.io);
-    try gun_stats.emit(&out.interface, types);
-    try out.interface.flush();
-
-    std.debug.print("{d} gun types' own words -> {s}\n", .{ types.len, output });
+fn gunTable(init: std.process.Init, arena: std.mem.Allocator, paths: @FieldType(Mode, "guns")) !u8 {
+    const types = try gun_stats.read(arena, try loadBinary(init, arena, paths.binary));
+    try writeOutput(init, paths.output, gun_stats.emit, .{types});
+    std.debug.print("{d} gun types' own words -> {s}\n", .{ types.len, paths.output });
     return 0;
 }
 
-fn soundTables(init: std.process.Init, arena: std.mem.Allocator, binary_path: []const u8, output: []const u8) !u8 {
-    const cwd: Io.Dir = .cwd();
-    const binary = try cwd.readFileAlloc(init.io, binary_path, arena, .limited(64 << 20));
-    const pe_image: pe.Image = try .parse(binary);
-    const tables = try sound_tables.read(arena, .init(pe_image, binary));
-
-    var buffer: [16 << 10]u8 = undefined;
-    var out: Io.File.Writer = .init(try cwd.createFile(init.io, output, .{}), init.io, &buffer);
-    defer out.file.close(init.io);
-    try sound_tables.emit(&out.interface, tables);
-    try out.interface.flush();
-
-    std.debug.print("{d} 3D sounds, their voice classes and the engines -> {s}\n", .{ tables.definitions.len, output });
+fn soundTables(init: std.process.Init, arena: std.mem.Allocator, paths: @FieldType(Mode, "sounds")) !u8 {
+    const tables = try sound_tables.read(arena, try loadBinary(init, arena, paths.binary));
+    try writeOutput(init, paths.output, sound_tables.emit, .{tables});
+    std.debug.print("{d} 3D sounds, their voice classes and the engines -> {s}\n", .{ tables.definitions.len, paths.output });
     return 0;
 }
 
-fn controlTable(init: std.process.Init, arena: std.mem.Allocator, binary_path: []const u8, output: []const u8) !u8 {
-    const cwd: Io.Dir = .cwd();
-    const binary = try cwd.readFileAlloc(init.io, binary_path, arena, .limited(64 << 20));
-    const pe_image: pe.Image = try .parse(binary);
-    const bindings = try controls.read(arena, .init(pe_image, binary));
-
-    var buffer: [16 << 10]u8 = undefined;
-    var out: Io.File.Writer = .init(try cwd.createFile(init.io, output, .{}), init.io, &buffer);
-    defer out.file.close(init.io);
-    try controls.emit(&out.interface, bindings);
-    try out.interface.flush();
-
-    std.debug.print("{d} actions -> {s}\n", .{ bindings.len, output });
+fn controlTable(init: std.process.Init, arena: std.mem.Allocator, paths: @FieldType(Mode, "controls")) !u8 {
+    const bindings = try controls.read(arena, try loadBinary(init, arena, paths.binary));
+    try writeOutput(init, paths.output, controls.emit, .{bindings});
+    std.debug.print("{d} actions -> {s}\n", .{ bindings.len, paths.output });
     return 0;
 }
 
-fn viewTable(init: std.process.Init, arena: std.mem.Allocator, binary_path: []const u8, output: []const u8) !u8 {
-    const cwd: Io.Dir = .cwd();
-    const binary = try cwd.readFileAlloc(init.io, binary_path, arena, .limited(64 << 20));
-    const pe_image: pe.Image = try .parse(binary);
-    const records = try views.read(arena, .init(pe_image, binary));
-
-    var buffer: [16 << 10]u8 = undefined;
-    var out: Io.File.Writer = .init(try cwd.createFile(init.io, output, .{}), init.io, &buffer);
-    defer out.file.close(init.io);
-    try views.emit(&out.interface, records);
-    try out.interface.flush();
-
-    std.debug.print("{d} views -> {s}\n", .{ records.len, output });
+fn viewTable(init: std.process.Init, arena: std.mem.Allocator, paths: @FieldType(Mode, "views")) !u8 {
+    const records = try views.read(arena, try loadBinary(init, arena, paths.binary));
+    try writeOutput(init, paths.output, views.emit, .{records});
+    std.debug.print("{d} views -> {s}\n", .{ records.len, paths.output });
     return 0;
 }
 
-fn sequenceTable(init: std.process.Init, arena: std.mem.Allocator, binary_path: []const u8, output: []const u8) !u8 {
-    const cwd: Io.Dir = .cwd();
-    const binary = try cwd.readFileAlloc(init.io, binary_path, arena, .limited(64 << 20));
-    const pe_image: pe.Image = try .parse(binary);
-    const records = try sequences.read(arena, .init(pe_image, binary));
-
-    var buffer: [16 << 10]u8 = undefined;
-    var out: Io.File.Writer = .init(try cwd.createFile(init.io, output, .{}), init.io, &buffer);
-    defer out.file.close(init.io);
-    try sequences.emit(&out.interface, records);
-    try out.interface.flush();
-
-    std.debug.print("{d} explosion sequences -> {s}\n", .{ records.len, output });
+fn sequenceTable(init: std.process.Init, arena: std.mem.Allocator, paths: @FieldType(Mode, "sequences")) !u8 {
+    const records = try sequences.read(arena, try loadBinary(init, arena, paths.binary));
+    try writeOutput(init, paths.output, sequences.emit, .{records});
+    std.debug.print("{d} explosion sequences -> {s}\n", .{ records.len, paths.output });
     return 0;
 }
 
-fn orderTable(init: std.process.Init, arena: std.mem.Allocator, binary_path: []const u8, output: []const u8) !u8 {
-    const cwd: Io.Dir = .cwd();
-    const binary = try cwd.readFileAlloc(init.io, binary_path, arena, .limited(64 << 20));
-    const pe_image: pe.Image = try .parse(binary);
-    const table = try orders.read(arena, .init(pe_image, binary));
-
-    var buffer: [16 << 10]u8 = undefined;
-    var out: Io.File.Writer = .init(try cwd.createFile(init.io, output, .{}), init.io, &buffer);
-    defer out.file.close(init.io);
-    try orders.emit(&out.interface, table, try orders.identifiers(arena, table.orders));
-    try out.interface.flush();
-
-    std.debug.print("{d} orders in {d} groups -> {s}\n", .{ table.orders.len, table.groups.len, output });
+fn orderTable(init: std.process.Init, arena: std.mem.Allocator, paths: @FieldType(Mode, "orders")) !u8 {
+    const table = try orders.read(arena, try loadBinary(init, arena, paths.binary));
+    try writeOutput(init, paths.output, orders.emit, .{ table, try orders.identifiers(arena, table.orders) });
+    std.debug.print("{d} orders in {d} groups -> {s}\n", .{ table.orders.len, table.groups.len, paths.output });
     return 0;
 }
 
-fn maneuverTable(init: std.process.Init, arena: std.mem.Allocator, binary_path: []const u8, output: []const u8) !u8 {
-    const cwd: Io.Dir = .cwd();
-    const binary = try cwd.readFileAlloc(init.io, binary_path, arena, .limited(64 << 20));
-    const pe_image: pe.Image = try .parse(binary);
-    const table = try maneuvers.read(arena, .init(pe_image, binary));
-
-    var buffer: [16 << 10]u8 = undefined;
-    var out: Io.File.Writer = .init(try cwd.createFile(init.io, output, .{}), init.io, &buffer);
-    defer out.file.close(init.io);
-    try maneuvers.emit(arena, &out.interface, table);
-    try out.interface.flush();
-
-    std.debug.print("{d} maneuvers -> {s}\n", .{ table.maneuvers.len, output });
+fn maneuverTable(init: std.process.Init, arena: std.mem.Allocator, paths: @FieldType(Mode, "maneuvers")) !u8 {
+    const table = try maneuvers.read(arena, try loadBinary(init, arena, paths.binary));
+    try writeOutput(init, paths.output, maneuvers.emit, .{ arena, table });
+    std.debug.print("{d} maneuvers -> {s}\n", .{ table.maneuvers.len, paths.output });
     return 0;
 }
 
-fn opcodes(
-    init: std.process.Init,
-    arena: std.mem.Allocator,
-    binary_path: []const u8,
-    listing_path: []const u8,
-    output: []const u8,
-) !u8 {
-    const cwd: Io.Dir = .cwd();
-    const binary = try cwd.readFileAlloc(init.io, binary_path, arena, .limited(64 << 20));
-    const listing = try cwd.readFileAlloc(init.io, listing_path, arena, .limited(256 << 20));
+fn opcodes(init: std.process.Init, arena: std.mem.Allocator, paths: @FieldType(Mode, "opcodes")) !u8 {
+    const reader = try loadBinary(init, arena, paths.binary);
+    const listing = try loadExport(init, arena, paths.listing);
 
-    const pe_image: pe.Image = try .parse(binary);
-    const base = pe_image.optional_header.image_base;
-    const text = pe_image.sectionByName(".text") orelse {
-        std.debug.print("{s}: no .text section\n", .{binary_path});
+    const base = reader.base;
+    const text = reader.image.sectionByName(".text") orelse {
+        std.debug.print("{s}: no .text section\n", .{paths.binary});
         return 1;
     };
     const text_start = base + text.virtual_address;
     const text_end = text_start + text.virtual_size;
 
-    const reader: image.Reader = .init(pe_image, binary);
     const entries = reader.records(u32, dispatch_table, max_opcodes) catch {
         std.debug.print("dispatch table at {x} is not in the image\n", .{dispatch_table});
         return 1;
@@ -397,14 +303,9 @@ fn opcodes(
         try handlers.append(arena, .{ .opcode = @intCast(opcode), .address = entry, .shape = shape });
     }
 
-    var buffer: [16 << 10]u8 = undefined;
-    var out: Io.File.Writer = .init(try cwd.createFile(init.io, output, .{}), init.io, &buffer);
-    defer out.file.close(init.io);
-    try emit(&out.interface, handlers.items, length);
-    try out.interface.flush();
-
+    try writeOutput(init, paths.output, emit, .{ handlers.items, length });
     std.debug.print("{d} opcodes over a table of {d} entries -> {s}\n", .{
-        handlers.items.len, length, output,
+        handlers.items.len, length, paths.output,
     });
     return 0;
 }
@@ -486,20 +387,12 @@ fn emit(w: *Io.Writer, handlers: []const Handler, length: usize) !void {
 }
 
 fn sourceMap(init: std.process.Init, arena: std.mem.Allocator, paths: @FieldType(Mode, "sources")) !u8 {
-    const cwd: Io.Dir = .cwd();
-    const binary = try cwd.readFileAlloc(init.io, paths.binary, arena, .limited(64 << 20));
-    const listing = try cwd.readFileAlloc(init.io, paths.listing, arena, .limited(256 << 20));
-    const strings = try cwd.readFileAlloc(init.io, paths.strings, arena, .limited(64 << 20));
-    const pe_image: pe.Image = try .parse(binary);
-    const code = try sources.functions(arena, listing);
+    const reader = try loadBinary(init, arena, paths.binary);
+    const code = try sources.functions(arena, try loadExport(init, arena, paths.listing));
     if (code.len == 0) return error.EmptyListing;
-    const files = try sources.read(arena, .init(pe_image, binary), code, try sources.stringAddresses(arena, strings));
-
-    var buffer: [16 << 10]u8 = undefined;
-    var out: Io.File.Writer = .init(try cwd.createFile(init.io, paths.output, .{}), init.io, &buffer);
-    defer out.file.close(init.io);
-    try sources.emit(&out.interface, code[0].address, files);
-    try out.interface.flush();
+    const strings = try sources.stringAddresses(arena, try loadExport(init, arena, paths.strings));
+    const files = try sources.read(arena, reader, code, strings);
+    try writeOutput(init, paths.output, sources.emit, .{ code[0].address, files });
 
     var placed: usize = 0;
     for (files) |file| placed += @intFromBool(file.code != null);
@@ -540,4 +433,5 @@ test {
     _ = sources;
     _ = views;
     _ = x86;
+    _ = zig_text;
 }

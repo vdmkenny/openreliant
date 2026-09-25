@@ -53,6 +53,16 @@ pub const Reader = struct {
         return layout.view(T, try reader.slice(va, @sizeOf(T))) catch error.OutOfImage;
     }
 
+    /// Record `index` of a table of `T` records at `base`.
+    pub fn recordAt(reader: Reader, comptime T: type, base: u32, index: usize) Error!T {
+        return (try reader.viewAt(T, base, index)).*;
+    }
+
+    /// `recordAt`, in place.
+    pub fn viewAt(reader: Reader, comptime T: type, base: u32, index: usize) Error!*align(1) const T {
+        return reader.view(T, base + @as(u32, @intCast(index)) * @sizeOf(T));
+    }
+
     /// `count` records of type `T` from `va`.
     pub fn records(reader: Reader, comptime T: type, va: u32, count: usize) Error![]align(1) const T {
         const size = std.math.mul(usize, count, @sizeOf(T)) catch return error.OutOfImage;
@@ -90,6 +100,8 @@ test Reader {
     const Pair = extern struct { low: u16, high: u16 };
     try std.testing.expectEqual(Pair{ .low = 0xBEEF, .high = 0xDEAD }, try reader.record(Pair, 0x401000));
     try std.testing.expectEqual(0x434E, (try reader.records(u16, 0x401010, 2))[1]);
+    try std.testing.expectEqual(0x434E, try reader.recordAt(u16, 0x401010, 1));
+    try std.testing.expectEqual(0x434E, (try reader.viewAt(u16, 0x401010, 1)).*);
 
     // Below the image, past the section, a control character, and a string that never ends.
     try std.testing.expectError(error.OutOfImage, reader.word(0x3FFFFC));

@@ -10,8 +10,12 @@ const sound3d = openreliant.engine.game.sound3d;
 
 const image = @import("image.zig");
 const testing = @import("testing.zig");
+const zig_text = @import("zig_text.zig");
 
 pub const table: u32 = 0x00507140;
+
+/// What the entry of the record that closes the table holds.
+const end_entry = std.math.maxInt(u32);
 
 /// The voice classes, right after the table's closing record.
 pub const class_table: u32 = 0x005085B4;
@@ -34,18 +38,18 @@ pub const Error = image.Error || error{ NoEnd, BadDefinition, BadClass };
 pub fn read(arena: std.mem.Allocator, reader: image.Reader) (Error || std.mem.Allocator.Error)!Tables {
     var definitions: std.ArrayList(sound3d.Definition) = .empty;
     for (0..max_sounds) |index| {
-        const record = try reader.record(sound3d.Definition, table + @as(u32, @intCast(index)) * @sizeOf(sound3d.Definition));
-        if (record.entry == std.math.maxInt(u32)) break;
+        const record = try reader.recordAt(sound3d.Definition, table, index);
+        if (record.entry == end_entry) break;
         try check(record);
         try definitions.append(arena, record);
     } else return error.NoEnd;
 
     var tables: Tables = .{ .definitions = definitions.items, .classes = undefined, .engines = undefined };
-    const rows = try reader.records([sound3d.classes_per_row]u8, class_table, sound3d.class_rows);
-    for (&tables.classes, rows) |*row, bytes| {
-        for (row, bytes) |*class, byte| {
-            if (byte > @intFromEnum(sound3d.Class.flyby)) return error.BadClass;
-            class.* = @enumFromInt(byte);
+    const rows = try reader.records([sound3d.classes_per_row]sound3d.Class, class_table, sound3d.class_rows);
+    for (&tables.classes, rows) |*row, classes| {
+        for (row, classes) |*class, read_class| {
+            if (std.enums.tagName(sound3d.Class, read_class) == null) return error.BadClass;
+            class.* = read_class;
         }
     }
     const columns = [4][]align(1) const i32{
@@ -101,7 +105,7 @@ pub fn emit(w: *Io.Writer, tables: Tables) Io.Writer.Error!void {
     );
     for (tables.definitions) |definition| {
         try w.print("    .{{ .entry = {d}, .volume = {d}, .loop_count = {d}, .follows = ", .{ definition.entry, definition.volume, definition.loop_count });
-        try enumValue(w, definition.follows);
+        try zig_text.enumValue(w, definition.follows);
         try w.print(", .min_distance = {d}, .max_distance = {d}, .cone_inner = {d}, .cone_outer = {d}, .cone_outer_volume = {d}, .name = name(\"{s}\") }},\n", .{
             definition.min_distance,
             definition.max_distance,
@@ -122,7 +126,7 @@ pub fn emit(w: *Io.Writer, tables: Tables) Io.Writer.Error!void {
         try w.writeAll("    .{ ");
         for (row, 0..) |class, index| {
             if (index != 0) try w.writeAll(", ");
-            try enumValue(w, class);
+            try zig_text.enumValue(w, class);
         }
         try w.writeAll(" },\n");
     }
@@ -153,14 +157,6 @@ pub fn emit(w: *Io.Writer, tables: Tables) Io.Writer.Error!void {
     );
 }
 
-fn enumValue(w: *Io.Writer, value: anytype) Io.Writer.Error!void {
-    if (std.enums.tagName(@TypeOf(value), value)) |tag| {
-        try w.print(".{s}", .{tag});
-    } else {
-        try w.print("@enumFromInt({d})", .{@intFromEnum(value)});
-    }
-}
-
 fn testDefinition(entry: u32, follows: sound3d.Follows, text: []const u8) sound3d.Definition {
     var definition = std.mem.zeroInit(sound3d.Definition, .{
         .entry = entry,
@@ -187,7 +183,7 @@ test read {
     var records = [_]sound3d.Definition{
         testDefinition(67, .shot, "GUN01"),
         testDefinition(62, .point, "EXPLOSION01"),
-        testDefinition(std.math.maxInt(u32), .point_facing, ""),
+        testDefinition(end_entry, .point_facing, ""),
     };
     var classes: [3][32]u8 = @splat(@splat(0));
     classes[2][0] = 1;
@@ -212,6 +208,16 @@ test read {
     try emit(&out, tables);
     try testing.expectZig(out.buffered());
     try std.testing.expect(std.mem.indexOf(u8, out.buffered(), "explosion01 = 1,") != null);
+
+    // A class past the last the engine names.
+    classes[1][3] = @intFromEnum(sound3d.Class.flyby) + 1;
+    const unknown_class = try testing.reader(allocator, &.{
+        .{ .va = table, .bytes = std.mem.sliceAsBytes(records[0..]) },
+        .{ .va = class_table, .bytes = std.mem.sliceAsBytes(classes[0..]) },
+        .{ .va = engine_tables[0], .bytes = std.mem.sliceAsBytes(columns[0..]) },
+    });
+    defer testing.freeReader(allocator, unknown_class);
+    try std.testing.expectError(error.BadClass, read(arena, unknown_class));
 }
 
 test check {

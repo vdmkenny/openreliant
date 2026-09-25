@@ -19,7 +19,7 @@ pub fn write(w: *Io.Writer) Io.Writer.Error!void {
     var at: u32 = sources.first_function;
     for (sources.files) |file| {
         const range = file.code orelse continue;
-        const name = baseName(file.path);
+        const name = std.fs.path.basenameWindows(file.path);
         if (range.start > at) try gap(w, at, range.start, previous, name);
         try w.print("{x:0>8}\t{x:0>8}\t", .{ range.start, range.end });
         try treePath(w, file.path);
@@ -38,11 +38,6 @@ fn gap(w: *Io.Writer, start: u32, end: u32, before: ?[]const u8, after: ?[]const
     } else {
         try w.print("before {s}\n", .{after.?});
     }
-}
-
-fn baseName(path: []const u8) []const u8 {
-    const slash = std.mem.lastIndexOfScalar(u8, path, '\\') orelse return path;
-    return path[slash + 1 ..];
 }
 
 /// The path below `root`, with `/` between its parts.

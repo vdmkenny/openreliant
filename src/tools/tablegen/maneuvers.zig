@@ -15,6 +15,7 @@ const Opcode = lancer_maneuvers.Opcode;
 
 const image = @import("image.zig");
 const testing = @import("testing.zig");
+const zig_text = @import("zig_text.zig");
 
 /// `maneuvers`, which `maneuver_run` (`0x004069B0`) indexes.
 pub const table_address: u32 = 0x004E1070;
@@ -52,7 +53,7 @@ pub const Error = image.Error || error{ Empty, ScriptTooLong, BadChoice };
 pub fn read(arena: std.mem.Allocator, reader: image.Reader) (Error || std.mem.Allocator.Error)!Table {
     var list: std.ArrayList(Maneuver) = .empty;
     for (0..max_maneuvers) |index| {
-        const record = try reader.record(Record, table_address + @as(u32, @intCast(index)) * record_size);
+        const record = try reader.recordAt(Record, table_address, index);
         const name = reader.string(@intFromEnum(record.name)) catch break;
         if (name.len == 0) break;
         const script_address = @intFromEnum(record.script);
@@ -89,21 +90,14 @@ pub fn read(arena: std.mem.Allocator, reader: image.Reader) (Error || std.mem.Al
 fn readScript(arena: std.mem.Allocator, reader: image.Reader, address: u32) (Error || std.mem.Allocator.Error)![]const []const u8 {
     var lines: std.ArrayList([]const u8) = .empty;
     for (0..max_lines) |index| {
-        const line = try reader.record(lancer_maneuvers.ScriptLine, address + @as(u32, @intCast(index)) * @sizeOf(lancer_maneuvers.ScriptLine));
+        const line = try reader.recordAt(lancer_maneuvers.ScriptLine, address, index);
         if (line.text == .null) return lines.toOwnedSlice(arena);
         try lines.append(arena, try reader.string(@intFromEnum(line.text)));
     } else return error.ScriptTooLong;
 }
 
-/// A maneuver's name as a Zig identifier: `loop the loop` is `loop_the_loop`.
-pub fn identifier(arena: std.mem.Allocator, name: []const u8) std.mem.Allocator.Error![]const u8 {
-    const out = try arena.alloc(u8, name.len);
-    for (name, out) |c, *o| o.* = if (c == ' ' or c == '-') '_' else std.ascii.toLower(c);
-    return out;
-}
-
 /// Writes `maneuvers.zig`.
-pub fn emit(arena: std.mem.Allocator, w: *Io.Writer, table: Table) !void {
+pub fn emit(w: *Io.Writer, arena: std.mem.Allocator, table: Table) !void {
     try w.print(
         \\//! The combat maneuvers the Fight order runs: each one's name, the inputs it may mirror, how long
         \\//! it runs and its script; the routines each opcode of the script language runs; and the lists
@@ -133,7 +127,7 @@ pub fn emit(arena: std.mem.Allocator, w: *Io.Writer, table: Table) !void {
     , .{ table_address, table.maneuvers.len, handlers_address, choices_address, table_address, handlers_address, choices_address });
     const names = try arena.alloc([]const u8, table.maneuvers.len);
     for (table.maneuvers, names, 0..) |maneuver, *name, index| {
-        name.* = try identifier(arena, maneuver.name);
+        name.* = zig_text.identifier(try arena.alloc(u8, maneuver.name.len), maneuver.name);
         try w.print("    {f} = {d},\n", .{ std.zig.fmtId(name.*), index });
     }
     try w.writeAll(
@@ -336,7 +330,7 @@ test "emit writes Zig that parses" {
 
     var out: Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
-    try emit(arena.allocator(), &out.writer, read_table);
+    try emit(&out.writer, arena.allocator(), read_table);
     try testing.expectZig(out.written());
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "    run_to_ship = 1,\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "            \"\\tGoto loop\",\n") != null);
