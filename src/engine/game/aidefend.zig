@@ -478,7 +478,7 @@ fn attackRun(fighter: Fighter, far: bool) bool {
     if (math.lengthSquared(staging - fighter.position()) < run_done * run_done) {
         // The game takes the target's index as a ship's slot, whatever its kind, as Fight's `init`
         // does.
-        ship.fighting = .from(std.math.cast(u16, fighter.target().index));
+        ship.fighting = .from(fighter.target().slot());
         return false;
     }
     fighter.steer(staging, .{ .avoid_near = true, .avoid_ahead = true });

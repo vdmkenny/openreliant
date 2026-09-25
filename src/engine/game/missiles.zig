@@ -483,8 +483,8 @@ fn run(world: gameobj.World, at: u8) void {
         // Where it has no target, the game measures from whatever lies before the first slot, and
         // homing ends it.
         .havoc, .imp => {
-            if (missile.target.index >= 0) {
-                const aimed = all.slots[@intCast(missile.target.index)].drawn.position;
+            if (missile.target.slot()) |target| {
+                const aimed = all.slots[target].drawn.position;
                 if (math.lengthSquared(aimed - missile.slot.drawn.position) < proximity * proximity) return end(world, at);
             }
             home(world, at);
@@ -692,9 +692,9 @@ pub fn frame(world: gameobj.World, fraction: f32) void {
         objects.frameTree(&live.object().root, if (live.slot.model) |*model| model else null, &live.slot.drawn, fraction, null);
         live.shown = true;
         const warns = live.type != .screamer or live.launcher >= all.players;
-        if (live.target.index >= 0 and live.decoy == null and warns) {
-            all.slots[@intCast(live.target.index)].object.missile_homing = 1;
-        }
+        if (live.decoy == null and warns) if (live.target.slot()) |target| {
+            all.slots[target].object.missile_homing = 1;
+        };
     }
     if (world.trails) |trails| trails.frame(world);
 }

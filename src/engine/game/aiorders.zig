@@ -100,7 +100,7 @@ pub fn fly(ctx: Context, index: u16) void {
 
     // The game reads the target's index as a ship's slot, whatever its kind.
     const flags: ai.Steering = .{ .avoid_near = true, .avoid_ahead = true, .roll_upright = true };
-    const avoided = if (std.math.cast(u16, slot.orders[0].target.index)) |target| steer: {
+    const avoided = if (slot.orders[0].target.slot()) |target| steer: {
         const to = all.slots[target].object.nextPosition();
         if (math.lengthSquared(to - object.nextPosition()) < fly_reach * fly_reach) {
             object.letGo();
@@ -124,7 +124,7 @@ pub fn runAway(ctx: Context, index: u16) void {
     const slot = &all.slots[index];
     // The game reads the target's index as a ship's slot, whatever its kind.
     const other = find: {
-        const target = std.math.cast(u16, slot.orders[0].target.index) orelse break :find null;
+        const target = slot.orders[0].target.slot() orelse break :find null;
         const object = &all.slots[target].object;
         break :find if (object.type == .stand_in) null else object;
     } orelse {

@@ -744,7 +744,7 @@ pub const target_barred: GameObject.Flags = .{
 /// **Unverified:** it lies before this file's known code.
 pub fn targetValid(all: *const create.Objects, target: aigeneric.Target, allowed: GameObject.Flags) bool {
     // The game reads the index as a ship's slot, whatever the target's kind.
-    const index = std.math.cast(u16, target.index) orelse return false;
+    const index = target.slot() orelse return false;
     if (index >= all.slots.len) return false;
     const slot = &all.slots[index];
     const object = &slot.object;

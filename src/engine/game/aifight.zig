@@ -276,7 +276,7 @@ pub fn init(ctx: aigeneric.Context, index: u16) void {
     const all = ctx.world.objects;
     // The game takes the target as it comes, its index as a ship's slot whatever its kind;
     // OpenReliant leaves one past the slots for the update to pop.
-    const target = std.math.cast(u16, fighter.target().index) orelse return;
+    const target = fighter.target().slot() orelse return;
     if (target >= all.count) return;
     choose(fighter);
     drawMissileWait(fighter);

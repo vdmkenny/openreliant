@@ -42,14 +42,20 @@ pub const Target = extern struct {
     /// name.
     pub const none: Target = .{ .kind = .ship, .index = -1, .component = whole };
 
-    /// The ship in `slot`, whole or, where `part` names one, one of its components.
-    pub fn at(slot: u16, part_index: ?u16) Target {
-        return .{ .kind = .ship, .index = @intCast(slot), .component = if (part_index) |p| @intCast(p) else whole };
+    /// The ship in `ship_slot`, whole or, where `part_index` names one, one of its components.
+    pub fn at(ship_slot: u16, part_index: ?u16) Target {
+        return .{ .kind = .ship, .index = @intCast(ship_slot), .component = if (part_index) |p| @intCast(p) else whole };
     }
 
     /// The slot of the ship it names, where it names one.
     pub fn ship(target: Target) ?u16 {
         return if (target.kind == .ship and target.index >= 0) @intCast(target.index) else null;
+    }
+
+    /// The slot its index names, whatever its kind, as the game reads a target's index where it
+    /// takes it for a ship's; null for none.
+    pub fn slot(target: Target) ?u16 {
+        return std.math.cast(u16, target.index);
     }
 
     /// The component it names, or null for the whole ship.
@@ -85,8 +91,11 @@ test Target {
     try std.testing.expectEqual(7, whole.ship());
     try std.testing.expectEqual(null, whole.part());
     try std.testing.expectEqual(2, Target.at(7, 2).part());
-    // A flight group names no ship.
-    try std.testing.expectEqual(null, (Target{ .kind = .flight_group, .index = 1, .component = Target.whole }).ship());
+    // A flight group names no ship, though its index reads as a slot.
+    const group: Target = .{ .kind = .flight_group, .index = 1, .component = Target.whole };
+    try std.testing.expectEqual(null, group.ship());
+    try std.testing.expectEqual(1, group.slot());
+    try std.testing.expectEqual(null, Target.none.slot());
 }
 
 /// An order on an object's stack.
