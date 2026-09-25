@@ -218,11 +218,10 @@ The Fight order and its maneuvers read the ship's pilot, a record of `pilot_stat
 
 ## In the port
 
-The Fight order and every command run as described, with these left out: the cloak
-([#89](https://github.com/vdmkenny/openreliant/issues/89)), the points a model gives its components
-([#239](https://github.com/vdmkenny/openreliant/issues/239)), multiplayer, where the host chooses the
-maneuvers ([#55](https://github.com/vdmkenny/openreliant/issues/55)), and the mission's
-`SetActionCentre` ([#36](https://github.com/vdmkenny/openreliant/issues/36)).
+The Fight order and every command run as described, with these left out: the points a model
+gives its components ([#239](https://github.com/vdmkenny/openreliant/issues/239)), multiplayer,
+where the host chooses the maneuvers ([#55](https://github.com/vdmkenny/openreliant/issues/55)),
+and the mission's `SetActionCentre` ([#36](https://github.com/vdmkenny/openreliant/issues/36)).
 
 Where the game would stop or hang, the port goes on: a script that runs off its end ends the
 maneuver, a loop that starts 256 lines in one update without one waiting is left for the next

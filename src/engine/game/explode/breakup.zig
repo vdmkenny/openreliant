@@ -454,10 +454,9 @@ fn cutTree(explosions: *explode.Explosions, world: gameobj.World, slot: *const c
 /// What a part's cut takes: its drawn level's mesh, where it stands, drawn as the part is and lit
 /// as the debris setting says; none for a part with no mesh.
 fn sourceOf(explosions: *const explode.Explosions, part: *const objects.Model.Part) ?Source {
-    const shown = part.object.levels;
-    if (shown.len == 0) return null;
+    if (part.object.levels.len == 0) return null;
     return .{
-        .mesh = shown[@min(part.object.level, shown.len - 1)].mesh,
+        .mesh = part.object.shown(),
         .place = part.drawn(),
         .flags = part.object.flags,
         .light_mask = explosions.settings.debris_lights.mask(part.object.light_mask),

@@ -15,6 +15,7 @@ const srtexture = @import("../../surrender/surrenderlib/srtexture.zig");
 const collision = @import("../collision.zig");
 const create = @import("../create.zig");
 const gameobj = @import("../gameobj.zig");
+const cloak = @import("../cloak.zig");
 const guns = @import("../guns.zig");
 const matmanager = @import("../matmanager.zig");
 const objects = @import("../objects.zig");
@@ -366,11 +367,10 @@ const max_leaves = 64;
 /// slot `index`, one listing components, and of the models it carries: each part whose mesh's box
 /// the beam meets takes `value` against its component for each leaf of its collision tree whose
 /// faces the beam crosses (`objects.leafCrossings`), leaving a hit's burst there
-/// (`shieldfx.componentHit`).
+/// (`shieldfx.componentHit`) and, on a cloaked object, showing its hull there (`cloak.reveal`).
 ///
-/// Not ported: the shimmer of a cloaked object struck (`0x00463AF0`,
-/// [#89](https://github.com/vdmkenny/openreliant/issues/89)); and the object's `visibility`,
-/// which the game scales the segment by and nothing moves off 1.
+/// Not ported: the object's `visibility`, which the game scales the segment by and nothing moves
+/// off 1.
 fn strikeParts(world: gameobj.World, index: u16, owner: u16, model: *objects.Model, from: Vector, to: Vector, value: f32) void {
     const kind: shieldfx.Kind = .onComponentOf(world.objects.slots[index].object.type);
     for (model.parts, 0..) |*part, at| {
@@ -382,6 +382,8 @@ fn strikeParts(world: gameobj.World, index: u16, owner: u16, model: *objects.Mod
         for (objects.leafCrossings(ref, place, from, to, &crossed)) |crossing| {
             shieldfx.componentHit(world, index, crossing, kind);
             collision.componentDamage(world, index, ref, value, owner, .bullet);
+            const slot = &world.objects.slots[index];
+            if (slot.object.flags.cloaked) cloak.reveal(slot, crossing.inWorld(), world.clock.frame_start);
         }
     }
     var carried = model.carried();

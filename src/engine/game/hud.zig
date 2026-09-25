@@ -1494,19 +1494,30 @@ pub const State = struct {
     lock: missile_lock.Lock = .{},
     /// The missile display's ring of the player's missiles.
     missiles: missile_display.Ring = .{},
+    /// Whether the cloak's charge has run dry since the player's ship last uncloaked for it
+    /// (`uncloakSpent`).
+    cloak_spent: bool = false,
 
     /// `hud_draw`'s work on the devices' charges for a frame, which it does in every view: a
-    /// device that runs dry is turned off.
+    /// device that runs dry is turned off. The cloak's charge runs only outside a multiplayer
+    /// game.
+    ///
+    /// The game uncloaks the ship here as the cloak's charge runs dry (`input.setCloak`). The
+    /// display has no world to reach the ship through, so the port marks the cloak spent and the
+    /// next frame's orders uncloak it (`uncloakSpent`), a frame later.
     pub fn runCharges(state: *State, object: *gameobj.GameObject, frame_duration: i32, multiplayer: bool) void {
         if (state.devices.getPtr(.ecm).run(.ecm, frame_duration)) input.setEcm(state, object, false);
-        // The cloak's charge runs only outside a multiplayer game. `player_cloak_set` uncloaks
-        // the ship; the cloak itself is not ported yet (`cloak.cpp`), so only its setting goes.
-        if (!multiplayer and state.devices.getPtr(.cloak).run(.cloak, frame_duration)) {
-            state.devices.getPtr(.cloak).setting = .off;
-        }
+        if (!multiplayer and state.devices.getPtr(.cloak).run(.cloak, frame_duration)) state.cloak_spent = true;
         if (state.devices.getPtr(.spectral_shields).run(.spectral_shields, frame_duration)) {
             input.setSpectralShields(state, object, false);
         }
+    }
+
+    /// Uncloaks the player's ship once the cloak's charge has run dry (`runCharges`).
+    pub fn uncloakSpent(state: *State, world: gameobj.World) void {
+        if (!state.cloak_spent) return;
+        state.cloak_spent = false;
+        input.setCloak(world, false);
     }
 
     /// `hud_draw`'s warning with the enemy lock's light, `showing` this frame: while it shows, the

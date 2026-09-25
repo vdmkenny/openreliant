@@ -357,12 +357,15 @@ pub const Slot = struct {
     /// Its shields' bubble (`GameObject.render`), which a ship that lists no components and is not
     /// debris has.
     shield: ?*shield.Bubble = null,
+    /// Its cloak, from the moment it starts to come on until it has gone (`GameObject.cloak`).
+    cloak: ?@import("cloak.zig").Cloak = null,
     /// Its smoke, while its damage shows (`GameObject.smoke`).
     smoke: ?smoke.Stream = null,
 
-    /// Lets go of what the slot holds for its object: its model, its guns and its shield bubble
-    /// (`object_free`).
+    /// Lets go of what the slot holds for its object: its cloak (`cloak.drop`), its model, its guns
+    /// and its shield bubble (`object_free`).
     pub fn release(slot: *Slot, gpa: Allocator) void {
+        if (slot.cloak != null) @import("cloak.zig").drop(slot);
         if (slot.model) |model| model.deinit(gpa);
         gpa.free(slot.guns);
         slot.guns = &.{};
@@ -1114,7 +1117,14 @@ pub const testing = struct {
             model.data[0].node_faces = &model.node_faces;
         }
 
+        /// Lets the model cloak, its part shimmering with `image` (`srofiles.Cloaking`).
+        pub fn withCloak(model: *Model, gpa: Allocator, image: *@import("../surrender/surrenderlib/srtexture.zig").Image) Allocator.Error!void {
+            model.source.header.flags.cloak = true;
+            model.loaded_parts[0].cloaking = try .build(gpa, &model.levels, image, true);
+        }
+
         pub fn deinit(model: *Model, gpa: Allocator) void {
+            if (model.loaded_parts[0].cloaking) |cloaking| cloaking.deinit(gpa);
             model.mesh.deinit(gpa);
         }
 

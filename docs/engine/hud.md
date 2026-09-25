@@ -543,12 +543,13 @@ same twelve. The same switch picks the cockpit's frame model ([`main.zig`](../..
   the guns of each hostile ship in range, weights each type's count by its shield damage, and
   takes the highest, leaving out types 13 and 14. Betty says which.
 - CLOAK SHIP is read by `player_controls`; `player_cloak_set` (`0x004153E0`) cloaks or uncloaks the
-  ship through `object_set_cloak`, which sets `cloak_state` for the player.
+  ship through `object_set_cloak`, which sets `cloak_state` for the player
+  ([The cloak](cloak.md#who-cloaks)). The cloak running dry uncloaks the ship the same way.
 
-Ported: the charges, the fitting, SMART TARGET, TOGGLE BLINDFIRE, ECM and SPECTRAL SHIELDS
-([`input.zig`](../../src/engine/input.zig)), with their sounds ([The display's sounds](#the-displays-sounds)).
-Not yet: the tuning of the spectral shields, and the cloak (`cloak.cpp`), so the cloak's light
-shows its charge full.
+Ported: the charges, the fitting, SMART TARGET, TOGGLE BLINDFIRE, ECM, SPECTRAL SHIELDS and CLOAK
+SHIP ([`input.zig`](../../src/engine/input.zig)), with their sounds
+([The display's sounds](#the-displays-sounds)). The port uncloaks the ship a frame after the
+cloak runs dry ([In the port](cloak.md#in-the-port)). Not yet: the tuning of the spectral shields.
 
 ## The display's sounds
 
@@ -583,9 +584,8 @@ the port plays it as the key is pressed.
 a warning playing as the view changes loops until the player looks ahead again. The port runs it
 in every view, the light counting as out in the others.
 
-Not yet ported: PRIMARY TARGET ([#98](https://github.com/vdmkenny/openreliant/issues/98)), the
-radio's menu ([#99](https://github.com/vdmkenny/openreliant/issues/99)) and CLOAK SHIP
-([#89](https://github.com/vdmkenny/openreliant/issues/89)), with their sounds.
+Not yet ported: PRIMARY TARGET ([#98](https://github.com/vdmkenny/openreliant/issues/98)) and the
+radio's menu ([#99](https://github.com/vdmkenny/openreliant/issues/99)), with their sounds.
 
 ## The jump prompt, the eject marker and the scanner
 

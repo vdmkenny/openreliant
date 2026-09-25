@@ -28,6 +28,7 @@ const explode = @import("explode.zig");
 const sound3d = @import("sound3d.zig");
 const shield = @import("shield.zig");
 const flash = @import("guns/flash.zig");
+const cloak_effects = @import("cloak.zig");
 const Vector = math.Vector;
 
 /// A node of an object's model hierarchy (`objects.cpp`), allocated at `0x004991D0`: the object's
@@ -412,6 +413,12 @@ pub const Crossing = struct {
     face: usize,
     point: Vector,
     normal: Vector,
+
+    /// Where it crosses in the world, as the part stands drawn.
+    pub fn inWorld(crossing: Crossing) Vector {
+        const drawn = crossing.part.part().drawn();
+        return math.transform(drawn.orientation, crossing.point) + drawn.position;
+    }
 };
 
 /// `missile_hull_test` (`0x004959A0`) with `tree_leaf_segment_test` (`0x0049BAE0`): what crosses
@@ -1148,6 +1155,8 @@ pub const Model = struct {
         turn: math.Matrix = math.identity,
         /// The node's frame: a scene object showing the part's meshes. `place` fills it in.
         object: srapiext.MeshObject,
+        /// What its cloak draws it with, where its model can cloak (`srofiles.Cloaking`).
+        cloak: ?cloak_effects.PartCloak = null,
         /// Its node's animation, and what `node_place` reads of its part.
         animation: Animation = .{},
 
@@ -1327,7 +1336,11 @@ pub const Model = struct {
     /// `create`, with how many mounts deep this model already stands.
     fn build(gpa: Allocator, model: *const shp.Model, loaded: *const srofiles.Loaded, effects: Effects, depth: usize) Allocator.Error!Model {
         const parts = try gpa.alloc(Part, model.parts.len);
-        errdefer gpa.free(parts);
+        var parts_made: usize = 0;
+        errdefer {
+            for (parts[0..parts_made]) |made| if (made.cloak) |effect| effect.deinit(gpa);
+            gpa.free(parts);
+        }
         for (parts, model.parts, loaded.parts, 0..) |*node, source, part, index| {
             var radius: f32 = 0;
             for (part.meshes) |mesh| radius = @max(radius, mesh.radius);
@@ -1364,6 +1377,13 @@ pub const Model = struct {
                     .slots = slotsOf(source.tracks),
                 },
             };
+            // A part that can cloak is coloured by its own colours, clear until a hit shows it
+            // through the cloak (`mesh_object_create`).
+            if (part.cloaking) |cloaking| {
+                node.cloak = try .create(gpa, cloaking, part.levels, radius);
+                node.object.baked = node.cloak.?.hull_colours;
+            }
+            parts_made += 1;
         }
         const order = try linkOrder(gpa, model);
         errdefer gpa.free(order);
@@ -1684,6 +1704,7 @@ pub const Model = struct {
         while (each.next()) |mount| mount.model.deinit(gpa);
         gpa.free(model.mounts);
         gpa.free(model.hung);
+        for (model.parts) |part| if (part.cloak) |effect| effect.deinit(gpa);
         gpa.free(model.parts);
         gpa.free(model.order);
         gpa.free(model.lights);
@@ -1938,16 +1959,21 @@ pub const Model = struct {
     };
 
     /// Adds each shown part's object to `layer`, the world's or, for a cockpit, the overlay
-    /// (`node_draw`, `0x0049A8C0`, for the model's part nodes), then the lights, unless the view
-    /// leaves them out, the engine glows its shown parts carry, and the muzzle flashes they carry
-    /// that a shot has lit (`flash.Flash.show`), with their lights where they cast them. A flash
-    /// goes into the world's layer whatever the part's. Nothing, for an object too far off to see.
+    /// (`node_draw`, `0x0049A8C0`, for the model's part nodes), a cloaked object's parts as its
+    /// cloak draws them (`cloak.Drawing`); then the lights, unless the view leaves them out, the
+    /// engine glows its shown parts carry, and the muzzle flashes they carry that a shot has lit
+    /// (`flash.Flash.show`), with their lights where they cast them. A flash goes into the world's
+    /// layer whatever the part's. Nothing, for an object too far off to see.
     ///
-    /// Not yet ported: the cloak, and the nodes of kind 6.
+    /// Not yet ported: the nodes of kind 6.
     pub fn draw(model: *Model, gpa: Allocator, scene: *srcore.Scene, layer: srcore.Layer, view: View) Allocator.Error!void {
         if (view.tooFarOff(model.position, model.radius * model.visibility)) return;
         for (model.parts) |*part| {
             if (part.hidden) continue;
+            if (view.cloak) |drawing| {
+                if (drawing.shimmer(part, view.frame_start)) |shimmer| try xtrabits.sceneAdd(gpa, scene, .{ .mesh = shimmer }, layer);
+                if (!drawing.hull(part, view.frame_start)) continue;
+            }
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &part.object }, layer);
         }
         for (model.lights) |*light| {
@@ -2070,6 +2096,13 @@ pub const View = struct {
     /// Pixels to a view unit across the screen (`srapi.Projection.scale`), which says how far off
     /// an object stops being worth drawing. Zero draws one however far off it stands.
     scale: f32 = 0,
+    /// How a cloaked object's cloak draws its parts (`node_draw`'s flag `0x80`); null for an
+    /// object not cloaked.
+    cloak: ?cloak_effects.Drawing = null,
+    /// Whether the game is paused, and whether a hardware renderer draws (`sr + 0x1AC`), which a
+    /// cloak draws by.
+    paused: bool = false,
+    hardware: bool = true,
 
     /// Whether an object of `radius` standing at `at` is too far off to be worth drawing
     /// (`node_draw`): its radius no longer covers a pixel, since the radius over the distance,

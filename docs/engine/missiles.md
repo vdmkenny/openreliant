@@ -459,9 +459,10 @@ COUNTERMEASURES (`0x00413E80`, once a press), outside a mission's ending: with n
 so (sound `0xF`), and with 6, 4 or 2 left she warns they run low (`0xD`); then
 `object_spend_countermeasure` ([Countermeasures](#countermeasures)).
 
-The port reads both in `input.playerWeapons`, after the throttle's keys. Not ported: the mouse,
-the cloak ([#89](https://github.com/vdmkenny/openreliant/issues/89)), the Kamov, and the
-multiplayer game's power-up.
+A cloaked ship uncloaks in place of the launch ([The cloak](cloak.md#who-cloaks)).
+
+The port reads both in `input.playerWeapons`, after the throttle's keys. Not ported: the mouse, the
+Kamov, and the multiplayer game's power-up.
 
 ### The lock
 

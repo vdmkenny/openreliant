@@ -285,7 +285,7 @@ const Casters = struct {
         const relative = context.view(object.position);
         const reached = casters.reachedBy(relative, object.radius * object.scale).intersectWith(allowed);
         if (reached.count() == 0) return;
-        const mesh = object.levels[@min(object.level, object.levels.len - 1)].mesh;
+        const mesh = object.shown();
         var matrix = math.product(math.transpose(context.camera.orientation), object.orientation);
         if (object.scale != 1) {
             for (&matrix) |*m| m.* *= object.scale;

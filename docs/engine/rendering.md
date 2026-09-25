@@ -87,7 +87,7 @@ The part's object gathers flags from the meshes of its levels:
 
 For those last models `model_load` also builds a second set of meshes, whose groups' first passes
 blend by alpha, and a third, one group textured by coordinates from the normals and added
-(`cloak_mesh_build`, `0x004A3CB0`), for the cloak effect. **Unverified:** that
+(`cloak_mesh_build`, `0x004A3CB0`), for the [cloak](cloak.md). **Unverified:** that
 `multiplayer_mission` marks the multiplayer maps; missions 81 to 85 and 87 set it.
 
 The material is 16 bytes (`Material` in

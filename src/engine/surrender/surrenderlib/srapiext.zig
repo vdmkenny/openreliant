@@ -397,7 +397,7 @@ pub const MeshObject = struct {
     face_mask: u8 = 0xFF,
     /// `+0xDC`: which lights reach it; all ones for none.
     light_mask: u32 = 0,
-    /// `+0xC0`: red, green, blue and alpha; zero when created.
+    /// Red, green, blue and alpha (`+0xC4`, `+0xC8`, `+0xCC`, `+0xC0`); zero when created.
     colour: [4]f32 = @splat(0),
     levels: []const Level,
     /// The level drawn (`+0xB8`): the pipeline picks it each frame.
@@ -410,6 +410,12 @@ pub const MeshObject = struct {
     /// `+0xAC`: the portal that clips it, where its flags ask (`portal_clipped`); none clips
     /// nothing.
     portal: ?*const Portal = null,
+
+    /// The mesh of the level drawn, or of the coarsest where the level is past them; it has one
+    /// at least.
+    pub fn shown(object: *const MeshObject) *const Mesh {
+        return object.levels[@min(object.level, object.levels.len - 1)].mesh;
+    }
 };
 
 /// `portal_create` (`0x004C50D0`) for a portal of no corners, a single plane (flag `0x100`): a

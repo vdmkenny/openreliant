@@ -745,6 +745,7 @@ const ai = @import("game/ai.zig");
 const aigeneric = @import("game/aigeneric.zig");
 const objects = @import("game/objects.zig");
 const missiles = @import("game/missiles.zig");
+const cloak = @import("game/cloak.zig");
 const math = @import("surrender/math.zig");
 
 /// What the player's controls keep between updates, which the game holds in globals.
@@ -1004,6 +1005,15 @@ pub fn setSpectralShields(display: *hud.State, object: *gameobj.GameObject, on: 
     shields.setting = if (on) .on else .off;
 }
 
+/// `player_cloak_set` (`0x004153E0`): cloaks the player's ship or uncloaks it, as `on` says, where
+/// it carries a cloak (`cloak.set`), which the display's cloak follows. Not yet ported: a
+/// multiplayer game, in which it does nothing, and what it tells one.
+pub fn setCloak(world: gameobj.World, on: bool) void {
+    const display = world.display orelse return;
+    if (display.devices.get(.cloak).setting == .absent) return;
+    cloak.set(world, world.objects.player, on);
+}
+
 // --- The player's target --------------------------------------------------------------------
 
 /// `0x00415270`: aims the player's Player Control order at `index` and its `component`, which
@@ -1016,18 +1026,21 @@ pub fn setPlayerTarget(display: *hud.State, all: *create.Objects, index: i16, co
     display.targetChanged(all, multiplayer);
 }
 
-/// FIRE LASERS, LAUNCH MISSILE and COUNTERMEASURES, which `player_controls` reads after the
-/// steering and the throttle (`0x00413BB5`, `0x00413BE7`, `0x00413E80`). FIRE LASERS, held, while
-/// the ship isn't jumping, opens the gunnery display and holds the guns' trigger for the frame
-/// (`guns.fire`), which charges a Phoenix's Nova Cannon; let go, the Phoenix, not jumping, lets
-/// its charge go (`guns.nova.release`). The others each act once a press: the one launches the armed missile
-/// (`launchMissile`); the other, outside a mission's ending, drops a countermeasure, Betty
-/// warning as they run out: at 6, 4 and 2 left, and with none. `aigeneric.playerControl` runs it
-/// after `matchSpeed`, since nothing between reads what it does.
+/// FIRE LASERS, LAUNCH MISSILE, CLOAK SHIP and COUNTERMEASURES, which `player_controls` reads
+/// after the steering and the throttle (`0x00413BB5`, `0x00413BE7`, `0x00413CB2`, `0x00413E80`).
+/// FIRE LASERS, held, while the ship isn't jumping, opens the gunnery display and holds the guns'
+/// trigger for the frame (`guns.fire`), which charges a Phoenix's Nova Cannon, unless the ship is
+/// cloaked, when it uncloaks instead (`setCloak`) and fires only once the cloak has gone; let go,
+/// the Phoenix, not jumping, lets its charge go (`guns.nova.release`). The others each act once a
+/// press: the one launches the armed missile (`launchMissile`); CLOAK SHIP, outside view 13, on a
+/// ship that can cloak, uncloaks it where it is cloaked and cloaks it where it isn't, with the
+/// display's sound and Betty's word unless the cloak is still coming on or going; the last,
+/// outside a mission's ending, drops a countermeasure, Betty warning as they run out: at 6, 4 and
+/// 2 left, and with none. `aigeneric.playerControl` runs it after `matchSpeed`, since nothing
+/// between reads what it does.
 ///
-/// Not ported: FIRE LASERS dropping the cloak of a cloaked ship rather than firing
-/// ([#89](https://github.com/vdmkenny/openreliant/issues/89)); in the mouse's mode, the left
-/// button, which fires too, and the right, which launches; and in a multiplayer game, typing a
+/// Not ported: in the mouse's mode, the left button, which fires too, and the right, which
+/// launches; and in a multiplayer game, FIRE LASERS firing from under the cloak, and typing a
 /// message, which leaves them unread.
 pub fn playerWeapons(world: gameobj.World, devices: *Devices, index: u16) void {
     const slot = &world.objects.slots[index];
@@ -1035,14 +1048,27 @@ pub fn playerWeapons(world: gameobj.World, devices: *Devices, index: u16) void {
     if (devices.active(.fire_lasers, false)) {
         if (!object.flags.jumping) {
             if (world.display) |display| _ = display.windows.open(.gunnery, false);
-            var trigger = slot.trigger(world.clock.frame_start);
-            trigger.shake = world.shake;
-            guns.fire(object, trigger, guns.held_ticks);
+            if (object.flags.cloaked) {
+                setCloak(world, false);
+            } else {
+                var trigger = slot.trigger(world.clock.frame_start);
+                trigger.shake = world.shake;
+                guns.fire(object, trigger, guns.held_ticks);
+            }
         }
     } else if (!object.flags.jumping and object.nova_charge > 0 and object.type.carriesNova()) {
         guns.nova.release(world, index);
     }
     if (devices.active(.launch_missile, true)) launchMissile(world, index);
+    if (devices.active(.cloak_ship, true) and world.view != scripted_view and cloak.canCloak(slot)) {
+        const settled = if (slot.cloak) |on| !on.changing else true;
+        const on = !object.flags.cloaked;
+        setCloak(world, on);
+        if (settled) {
+            hud.beep(world, if (on) .on else .off);
+            if (world.hearing) |hearing| _ = hearing.sound.say(cloak_said.of(on));
+        }
+    }
     if (devices.active(.countermeasures, true) and world.player.ending == .playing) {
         const left = world.objects.slots[index].object.countermeasures;
         if (world.hearing) |hearing| switch (left) {
@@ -1053,6 +1079,9 @@ pub fn playerWeapons(world: gameobj.World, devices: *Devices, index: u16) void {
         if (world.countermeasures) |dropped| dropped.spend(world, index);
     }
 }
+
+/// The view in which CLOAK SHIP does nothing. **Unknown:** what view 13 is.
+const scripted_view: camera.View = @enumFromInt(13);
 
 /// The display's sound for a launch refused (`bank_stdsmp`).
 const refused_sample = 1;
@@ -1066,12 +1095,11 @@ const gone_pause = 500;
 /// ship's target while the lock holds, else at nothing. Nothing is launched while the ship's
 /// missiles are disabled or it jumps; nor, for a type that needs a lock, without one, which the
 /// display refuses, Betty saying so too where none is left, but no more than once in 500 ticks.
-/// A launch opens the missile display and holds it open, Betty says so where the armed type has
-/// run out, and the display counts one off.
+/// A cloaked ship uncloaks instead (`setCloak`). A launch opens the missile display and holds it
+/// open, Betty says so where the armed type has run out, and the display counts one off.
 ///
-/// Not ported: a cloaked ship dropping its cloak instead
-/// ([#89](https://github.com/vdmkenny/openreliant/issues/89)); the Kamov of mission 25 letting the
-/// craft it carries go instead; and in a multiplayer game, the missile being a power-up.
+/// Not ported: the Kamov of mission 25 letting the craft it carries go instead, and uncloaking;
+/// and in a multiplayer game, the missile being a power-up, and launching from under the cloak.
 pub fn launchMissile(world: gameobj.World, index: u16) void {
     const all = world.objects;
     const ship = &all.slots[index].object;
@@ -1090,7 +1118,7 @@ pub fn launchMissile(world: gameobj.World, index: u16) void {
         ring.empty_warned_until = world.clock.game_ticks + gone_pause;
         return;
     }
-    if (ship.flags.cloaked) return;
+    if (ship.flags.cloaked) return setCloak(world, false);
     if (display.windows.open(.missiles, false)) display.windows.status.getPtr(.missiles).held = true;
     if (armed.count == 0) if (sound) |player| {
         _ = player.say(.missiles_gone);
@@ -1402,6 +1430,7 @@ const Said = struct {
 };
 const blind_fire_said: Said = .{ .on = .blind_fire_on, .off = .blind_fire_off };
 const spectral_shields_said: Said = .{ .on = .spectral_shields_on, .off = .spectral_shields_off };
+const cloak_said: Said = .{ .on = .cloak_on, .off = .cloak_off };
 
 /// The keys `frame_controls` reads after the targeting's, in its order, each with the display's
 /// sound (`hud.Beep`): most with `done`, a device turning on or off with `on` or `off`.
@@ -1877,6 +1906,64 @@ test "the burns last while their keys are held, and stop without fuel" {
     playerControls(&player, &devices, &object, &testing_combat, .cockpit, 16);
     try std.testing.expect(!object.afterburner);
     try std.testing.expect(!object.reverse_thrust);
+}
+
+test "the player's cloak" {
+    const gpa = std.testing.allocator;
+    var stage: cloak.testing.Cloaked = undefined;
+    try stage.init(gpa);
+    defer stage.deinit(gpa);
+    const slot = stage.slot();
+    var display: hud.State = .{};
+    display.devices.getPtr(.cloak).setting = .off;
+    var world = stage.mission.world();
+    world.display = &display;
+    var devices: Devices = .{};
+    const keyboard = &devices.keyboard;
+    const cloak_key = controls.binding(.cloak_ship).key;
+
+    // CLOAK SHIP cloaks a ship that carries a cloak, and the display's cloak comes on.
+    keyboard.down[cloak_key] = true;
+    playerWeapons(world, &devices, stage.index);
+    try std.testing.expect(slot.object.flags.cloaked);
+    try std.testing.expectEqual(.on, display.devices.get(.cloak).setting);
+    keyboard.down[cloak_key] = false;
+    keyboard.read();
+    // Once it has come on, FIRE LASERS uncloaks the ship rather than firing.
+    cloak.frame(slot, cloak.change_ticks);
+    const fire_key = controls.binding(.fire_lasers).key;
+    keyboard.down[fire_key] = true;
+    playerWeapons(world, &devices, stage.index);
+    try std.testing.expect(slot.cloak.?.going);
+    try std.testing.expectEqual(.off, display.devices.get(.cloak).setting);
+    keyboard.down[fire_key] = false;
+    keyboard.read();
+
+    // Cloaked again, a launch uncloaks it instead.
+    cloak.frame(slot, 2 * cloak.change_ticks);
+    stage.mission.clock.frame_start = 1000;
+    setCloak(world, true);
+    cloak.frame(slot, 1000 + cloak.change_ticks);
+    launchMissile(world, stage.index);
+    try std.testing.expect(slot.cloak.?.going);
+
+    // Cloaked again, the display's cloak running dry uncloaks it the next frame.
+    cloak.frame(slot, 1000 + 2 * cloak.change_ticks);
+    stage.mission.clock.frame_start = 2000;
+    setCloak(world, true);
+    cloak.frame(slot, 2000 + cloak.change_ticks);
+    display.devices.getPtr(.cloak).ticks = 1;
+    display.runCharges(&slot.object, 10, false);
+    try std.testing.expect(!slot.cloak.?.going);
+    display.uncloakSpent(world);
+    try std.testing.expect(slot.cloak.?.going);
+    try std.testing.expect(!display.cloak_spent);
+
+    // A ship that carries no cloak can't.
+    cloak.frame(slot, 2000 + 2 * cloak.change_ticks);
+    display.devices.getPtr(.cloak).setting = .absent;
+    setCloak(world, true);
+    try std.testing.expect(!slot.object.flags.cloaked);
 }
 
 test launchMissile {

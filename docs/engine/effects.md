@@ -593,8 +593,8 @@ triangles.
 
 [`shield.zig`](../../src/engine/game/shield.zig) ports the bubbles, and
 [`guns.zig`](../../src/engine/game/guns.zig) and
-[`collision.zig`](../../src/engine/game/collision.zig) the shots and knocks that flare them. Not
-ported: a cloaked ship's shimmer where it is struck ([#89](https://github.com/vdmkenny/openreliant/issues/89)).
+[`collision.zig`](../../src/engine/game/collision.zig) the shots and knocks that flare them. A
+cloaked ship's shields don't flare: the hit shows its hull instead ([The cloak](cloak.md#hits)).
 
 ### Capital shields
 

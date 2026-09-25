@@ -15,6 +15,7 @@ const maneuvers = aidefend.maneuvers;
 const Maneuver = maneuvers.Maneuver;
 const Bearing = maneuvers.Bearing;
 const aigeneric = @import("aigeneric.zig");
+const cloak = @import("cloak.zig");
 const Order = @import("ai/orders.zig").Order;
 const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
@@ -255,12 +256,11 @@ pub fn init(ctx: aigeneric.Context, index: u16) void {
 
 /// The order's update (`order_fight`, `0x0040A5E0`): pops the order once its target can no longer
 /// be fought. Otherwise it chooses the next maneuver once this one's time is up, starts a newly
-/// chosen one, aims and fires, calls for help and runs the maneuver.
+/// chosen one, aims and fires, calls for help, cloaks or uncloaks as the maneuver asks
+/// (`updateCloak`) and runs the maneuver.
 ///
-/// Not ported: the cloak a maneuver asks for (`fight_update_cloak`, `0x00409EC0`), which cloaks a
-/// ship whose model can cloak from `cloak_at` and uncloaks it when the maneuver asks for none
-/// ([#89](https://github.com/vdmkenny/openreliant/issues/89)); a multiplayer game's, where the host
-/// chooses the maneuvers ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
+/// Not ported: a multiplayer game's, where the host chooses the maneuvers
+/// ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
 pub fn update(ctx: aigeneric.Context, index: u16) void {
     const fighter: Fighter = .of(ctx, index);
     if (!ai.targetValid(ctx.world.objects, fighter.target(), .{})) {
@@ -272,7 +272,41 @@ pub fn update(ctx: aigeneric.Context, index: u16) void {
     if (data.fresh) begin(fighter, data);
     aim(fighter);
     callForHelp(fighter);
+    updateCloak(fighter);
     aidefend.run(fighter);
+}
+
+/// `fight_update_cloak` (`0x00409EC0`): a ship whose model can cloak cloaks once the maneuver's
+/// `Cloak` has asked for the cloak and `cloak_at` has come, and uncloaks while the maneuver asks
+/// for none, as a new maneuver does until it asks (`cloak.set`).
+fn updateCloak(fighter: Fighter) void {
+    if (!cloak.canCloak(fighter.slot)) return;
+    if (!fighter.state.cloak) return cloak.set(fighter.ctx.world, fighter.index, false);
+    if (fighter.now() >= fighter.state.cloak_at) cloak.set(fighter.ctx.world, fighter.index, true);
+}
+
+test updateCloak {
+    const gpa = std.testing.allocator;
+    var stage: cloak.testing.Cloaked = undefined;
+    try stage.init(gpa);
+    defer stage.deinit(gpa);
+    const slot = stage.slot();
+    const fighter: Fighter = .of(stage.mission.orders(), stage.index);
+
+    // The maneuver's cloak comes on from `cloak_at`, not before.
+    fighter.state.cloak = true;
+    fighter.state.cloak_at = 100;
+    stage.mission.clock.frame_start = 99;
+    updateCloak(fighter);
+    try std.testing.expect(!slot.object.flags.cloaked);
+    stage.mission.clock.frame_start = 100;
+    updateCloak(fighter);
+    try std.testing.expect(slot.object.flags.cloaked);
+    // A maneuver that asks for none uncloaks the ship, once the cloak has come on.
+    cloak.frame(slot, 100 + cloak.change_ticks);
+    fighter.state.cloak = false;
+    updateCloak(fighter);
+    try std.testing.expect(slot.cloak.?.going);
 }
 
 /// Starts the maneuver `choose` left in the order's data: the state cleared, its first line still

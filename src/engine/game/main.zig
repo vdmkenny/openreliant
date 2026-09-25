@@ -294,10 +294,12 @@ pub fn pause(pausing: Pausing, on: bool) !void {
     }
 }
 
-/// `mission_frame` (`0x004924B0`), as far as the objects go: every object's orders, which fly the
-/// ships and read the player's controls, then the frames they are drawn at, then the missiles
-/// (`missiles.frame`) and the shots in flight (`guns.bulletsFrame`), then the sparks (`sparks.Sparks.frame`) and the particles
-/// (`particles.Pool.frame`, `smoke.Pools.frame`, `guns.effects.Pools.frame`), which `particles_frame` runs together, the
+/// `mission_frame` (`0x004924B0`), as far as the objects go: the player's ship uncloaked where
+/// the display ran the cloak's charge dry last frame (`hud.State.uncloakSpent`), then every
+/// object's orders, which fly the ships and read the player's controls, then the frames they are
+/// drawn at, then the missiles (`missiles.frame`) and the shots in flight (`guns.bulletsFrame`),
+/// then the sparks (`sparks.Sparks.frame`) and the particles (`particles.Pool.frame`,
+/// `smoke.Pools.frame`, `guns.effects.Pools.frame`), which `particles_frame` runs together, the
 /// damaged ships' smoke (`smoke.frame`), the explosions (`explode.Explosions.frame`), the
 /// countermeasures (`cloak.Countermeasures.frame`) and the shockwaves
 /// (`shockwave.Shockwaves.frame`). Between them the frame's hits on the player's ship push its
@@ -307,8 +309,9 @@ pub fn pause(pausing: Pausing, on: bool) !void {
 /// Not ported: the rest of the frame's work, which is the mission's events and its scripts
 /// ([#30](https://github.com/vdmkenny/openreliant/issues/30)).
 pub fn missionFrame(orders: aigeneric.Context, fraction: f32) void {
+    if (orders.world.display) |display| display.uncloakSpent(orders.world);
     aigeneric.ordersUpdate(orders);
-    frameObjects(orders.world.objects, fraction);
+    frameObjects(orders.world.objects, fraction, orders.clock.frame_start);
     missiles.frame(orders.world, fraction);
     guns.bulletsFrame(orders.world, orders.clock, fraction);
     if (orders.world.sparks) |thrown| thrown.frame(orders.clock);
@@ -393,10 +396,9 @@ fn avoidanceScan(world: gameobj.World, index: u16) void {
 
 /// `mission_frame`'s pass over the objects before the camera's frame: each live object, save
 /// stand-ins and disabled and jumping ones, has `missile_homing` cleared and is framed `fraction`
-/// of the way through the simulation's step (`objects.frameTree`).
-///
-/// Not ported yet: the cloak's frame (`0x004639B0`).
-pub fn frameObjects(all: *create.Objects, fraction: f32) void {
+/// of the way through the simulation's step (`objects.frameTree`); a cloaked one's frame then
+/// wobbles as its cloak changes, by the frame's tick `now` (`cloak.wobble`).
+pub fn frameObjects(all: *create.Objects, fraction: f32, now: i32) void {
     var walk = all.walk();
     while (walk.next()) |index| {
         const slot = &all.slots[index];
@@ -404,6 +406,7 @@ pub fn frameObjects(all: *create.Objects, fraction: f32) void {
         if (object.flags.outOfFrame()) continue;
         object.missile_homing = 0;
         objects.frameTree(&object.root, if (slot.model) |*model| model else null, &slot.drawn, fraction);
+        if (object.flags.cloaked) cloak.wobble(slot, now);
     }
 }
 
@@ -416,6 +419,8 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     // caller does not have to hand it over with the rest.
     var attachments = frame.attachments;
     attachments.scale = context.projection.scale[0];
+    attachments.hardware = context.hardware;
+    attachments.paused = frame.paused;
     try drawObjects(gpa, scene, frame.objects, attachments, frame.seat, if (frame.explosions) |explosions| &explosions.splits else null);
     try missiles.draw(frame.objects, gpa, scene, attachments);
     if (frame.trails) |trails| try trails.draw(gpa, scene);
@@ -508,13 +513,15 @@ pub const DrawBudget = enum {
 };
 
 /// `mission_frame`'s pass that draws the objects: each live object, save stand-ins and disabled
-/// and jumping ones, is drawn with `object_draw` (`objects.Model.draw`), with its own offset into
-/// its lights' blinks, its lights unless `lights_disabled`, its engine glows burning by the
-/// throttle of its last update times the share of its engines left, but none while it is among
-/// `splits`, and nothing at all while it is `hidden`, as the ship the camera sits in is. That ship, `seat`, still casts its shadow
-/// (`objects.Model.castShadows`).
+/// and jumping ones, has its cloak's frame run where it has one (`cloak.frame`), and is drawn with
+/// `object_draw` (`objects.Model.draw`), with its own offset into its lights' blinks, its lights
+/// unless `lights_disabled`, its engine glows burning by the throttle of its last update times the
+/// share of its engines left, but none while it is among `splits`, and nothing at all while it is
+/// `hidden`, as the ship the camera sits in is. That ship, `seat`, still casts its shadow
+/// (`objects.Model.castShadows`). A cloaked object is drawn with neither lights nor glows, its
+/// parts as its cloak draws them (`cloak.Drawing`).
 ///
-/// Not ported yet: the cloak; what else the pass draws for a few types, the protogate's power core
+/// Not ported yet: what else the pass draws for a few types, the protogate's power core
 /// pulsing, the Boridin breakaway's core and the Dark Reign's hat
 /// ([#238](https://github.com/vdmkenny/openreliant/issues/238)); the cutaway scenes' own rules, and
 /// the gate's tunnel, in which no object is drawn. The pass's smoke is `smoke.frame`.
@@ -524,6 +531,7 @@ pub fn drawObjects(gpa: Allocator, scene: *srcore.Scene, all: *create.Objects, a
         const slot = &all.slots[index];
         const object = &slot.object;
         if (object.flags.outOfFrame()) continue;
+        cloak.frame(slot, attachments.frame_start);
         const model = if (slot.model) |*model| model else continue;
         if (object.flags.hidden) {
             if (index == seat) try model.castShadows(gpa, scene);
@@ -534,6 +542,12 @@ pub fn drawObjects(gpa: Allocator, scene: *srcore.Scene, all: *create.Objects, a
         view.lights = !object.flags.lights_disabled;
         view.throttle = object.last_throttle * object.engines_intact;
         if (splits) |under_way| view.glows = !under_way.splitting(index);
+        // A cloaked object's lights and engine glows are out, and its cloak draws its parts.
+        if (object.flags.cloaked) if (slot.cloak) |*on| {
+            view.lights = false;
+            view.glows = false;
+            view.cloak = .{ .cloak = on, .kafelnikof = object.type == .kafelnikof, .paused = view.paused, .hardware = view.hardware };
+        };
         try model.draw(gpa, scene, .world, view);
     }
 }
@@ -556,7 +570,7 @@ test "the objects are framed and drawn, save those left out" {
     all.slots[1].object.flags.disabled = true;
     all.slots[2].object.flags.jumping = true;
     all.slots[3].object.missile_homing = 1;
-    frameObjects(all, 0);
+    frameObjects(all, 0, 0);
     // Each framed one stands where it was made, and the pass clears the missile warning.
     try std.testing.expectEqual(math.Vector{ 300, 0, 0 }, all.slots[3].drawn.position);
     try std.testing.expectEqual(0, all.slots[3].object.missile_homing);
@@ -569,6 +583,37 @@ test "the objects are framed and drawn, save those left out" {
     try std.testing.expectEqual(math.Vector{ 300, 0, 0 }, scene.layers.get(.world).items[0].mesh.position);
     try std.testing.expectEqual(1, scene.casters.items.len);
     try std.testing.expectEqual(math.Vector{ 0, 0, 0 }, scene.casters.items[0].position);
+}
+
+test "the passes draw a cloaked object through its cloak" {
+    const gpa = std.testing.allocator;
+    var stage: cloak.testing.Cloaked = undefined;
+    try stage.init(gpa);
+    defer stage.deinit(gpa);
+    const part = stage.part();
+    cloak.set(stage.mission.world(), stage.index, true);
+    var scene: srcore.Scene = .{};
+    defer scene.deinit(gpa);
+
+    // Halfway on, the frame wobbles, and the part is drawn see-through, half solid, under its
+    // shimmer.
+    const halfway = cloak.change_ticks / 2;
+    frameObjects(stage.mission.objects, 0, halfway);
+    try std.testing.expect(!std.meta.eql(math.identity, stage.slot().drawn.orientation));
+    try drawObjects(gpa, &scene, stage.mission.objects, .{ .frame_start = halfway }, null, null);
+    const drawn = scene.layers.get(.world).items;
+    try std.testing.expectEqual(2, drawn.len);
+    try std.testing.expectEqual(&part.cloak.?.shimmer, drawn[0].mesh);
+    try std.testing.expectEqual(&part.object, drawn[1].mesh);
+    try std.testing.expectApproxEqAbs(0.5, part.object.colour[3], 1e-6);
+
+    // Once it has come on and gone again, the part alone, as it was.
+    scene.clear();
+    cloak.frame(stage.slot(), cloak.change_ticks);
+    cloak.toggle(stage.mission.world(), stage.index);
+    try drawObjects(gpa, &scene, stage.mission.objects, .{ .frame_start = 2 * cloak.change_ticks }, null, null);
+    try std.testing.expectEqual(null, stage.slot().cloak);
+    try std.testing.expectEqual(1, scene.layers.get(.world).items.len);
 }
 
 // --- The cockpit ----------------------------------------------------------------------------

@@ -39,6 +39,7 @@ const shp = @import("../../formats/shp.zig");
 const Clock = @import("main.zig").Clock;
 const ai = @import("ai.zig");
 const aigeneric = @import("aigeneric.zig");
+const cloak = @import("cloak.zig");
 const deathmatch = @import("deathmatch.zig");
 
 /// What the explosions leave for the frames after them.
@@ -970,14 +971,14 @@ const blast_shockwave_size: f32 = 10;
 const blast_shockwave_life = 100;
 const blast_shockwave_life_range = 50;
 
-/// `0x0046C980`: a ship's blast at the end of its Explode order: the ship broken up
-/// (`breakup.breakUp`), burning bits thrown every way, a burst of flame, fast and wide, now and then a shockwave standing and drifting as the flame's
+/// `0x0046C980`: a ship's blast at the end of its Explode order: its cloak dropped where it is
+/// cloaked (`cloak.drop`), the ship broken up (`breakup.breakUp`), burning bits thrown every way, a
+/// burst of flame, fast and wide, now and then a shockwave standing and drifting as the flame's
 /// emitter does, one of sparkle, a lit fireball of the ship's size drifting on with the sparkle,
 /// and the sound, heard on a sure voice close to the camera.
-///
-/// Not ported: the cloak dropped ([#89](https://github.com/vdmkenny/openreliant/issues/89)).
 pub fn blast(world: gameobj.World, index: u16) void {
     const slot = &world.objects.slots[index];
+    if (slot.object.flags.cloaked) cloak.drop(slot);
     const at = slot.drawn.position;
     const velocity = gameobj.vector(slot.object.velocity);
     const small = slot.object.flags.ejected or switch (slot.object.type) {
@@ -1029,12 +1030,12 @@ pub fn missileBlast(world: gameobj.World, at: Vector, velocity: Vector, radius: 
 /// among the explosions. The player's leaves the marker the camera watches, drifting on at the
 /// ship's speed. **Unverified:** it lies after this file's known code.
 ///
-/// It breaks the ship up and throws small bits every way first. Its 18 fireballs, lit and each up to a tenth of a second
-/// late, stand at random within 0.3 of its radius and drift on with the sparkle.
-///
-/// Not ported: the cloak dropped ([#89](https://github.com/vdmkenny/openreliant/issues/89)).
+/// It drops the ship's cloak where it is cloaked (`cloak.drop`), then breaks the ship up and
+/// throws small bits every way. Its 18 fireballs, lit and each up to a tenth of a second late,
+/// stand at random within 0.3 of its radius and drift on with the sparkle.
 pub fn burst(world: gameobj.World, index: u16) void {
     const slot = &world.objects.slots[index];
+    if (slot.object.flags.cloaked) cloak.drop(slot);
     const at = slot.drawn.position;
     const velocity = gameobj.vector(slot.object.velocity);
     const radius = slot.object.radius;
@@ -1614,10 +1615,14 @@ test blast {
     _ = try mission.add(.predator, @splat(0));
     const ship = try mission.add(.sabre, @splat(0));
     mission.objects.slots[ship].drawn.position = .{ 0, 0, 5000 };
+    mission.objects.slots[ship].object.flags.cloaked = true;
+    mission.objects.slots[ship].cloak = .{ .came_at = 0 };
 
-    // In view 5000 off, all 400 of the flame and all 150 of the sparkle.
+    // In view 5000 off, all 400 of the flame and all 150 of the sparkle, and the cloak dropped.
     blast(world, ship);
     try std.testing.expectEqual(400 + 150, testing.sent(&pool));
+    try std.testing.expect(!mission.objects.slots[ship].object.flags.cloaked);
+    try std.testing.expectEqual(null, mission.objects.slots[ship].cloak);
     // And one lit fireball of the ship's size.
     try std.testing.expect(explosions.fireballs[0].?.light != null);
     try std.testing.expectEqual(null, explosions.fireballs[1]);
