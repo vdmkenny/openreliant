@@ -325,6 +325,12 @@ for kind 4, which are nodes of the part's own, and for a gun
 or a pod an object of its own, whose model `attachment_models` names by the attachment's kind and
 id, twenty ids to a kind.
 
+Each node has a kind, which `node_draw` (`0x0049A8C0`) draws it by: 1 a model part
+(`node_add_part`), 2 an engine glow (`node_mount_glow`, `0x00499540`), 3 a light's two sprites and
+5 the point light a blinking light casts (`node_mount_light`), 4 a muzzle's flash
+(`node_mount_muzzle`, `0x00499680`), and 6 what a hit leaves where it struck (`node_add_effect`,
+`0x004992D0`; [Effects](effects.md)).
+
 A mounted object is built the way any other is: a node for each part of its model, then
 `object_link_parts`, which also moves its origin to its own centre of mass. Its root then hangs
 from the node of the part that carries the attachment, and stands where the attachment does: the

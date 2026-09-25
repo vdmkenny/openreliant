@@ -34,10 +34,8 @@ const Vector = math.Vector;
 /// A node of an object's model hierarchy (`objects.cpp`), allocated at `0x004991D0`: the object's
 /// root, then a node for each part of its model.
 pub const Node = extern struct {
-    /// What the node draws (`node_draw`, `0x0049A8C0`, switches on it): 1 a model part, 2 an
-    /// engine glow, which brightens with the throttle, 3 a light's two sprites, 5 the point light a
-    /// blinking light casts (`Model.Light`). **Unknown:** 4 and 6.
-    kind: u32,
+    /// What the node draws.
+    kind: Kind,
     flags: Flags,
     /// The node's transform for the renderer, which holds the same place as `position` and
     /// `orientation`.
@@ -94,6 +92,32 @@ pub const Node = extern struct {
     /// components; -1 when allocated.
     number: i32,
     children: Pointer(Pointer(Node)),
+
+    /// What a node draws, which `node_draw` (`0x0049A8C0`) switches on, as the routine that makes
+    /// it gives it (`node_alloc`, `0x004991D0`).
+    pub const Kind = enum(u32) {
+        /// A model part (`node_add_part`).
+        part = 1,
+        /// An engine glow, which brightens with the throttle (`node_mount_glow`, `0x00499540`).
+        glow = 2,
+        /// A light's two sprites (`node_mount_light`, `Model.Light`).
+        light_sprites = 3,
+        /// A gun muzzle's flash (`node_mount_muzzle`, `0x00499680`; `muzzle_flash_draw`,
+        /// `0x0047BA80`).
+        muzzle = 4,
+        /// The point light a blinking light casts (`node_mount_light`, `Model.Light`).
+        point_light = 5,
+        /// What a hit leaves where it struck (`node_add_effect`, `0x004992D0`; `shieldfx.zig`).
+        hit = 6,
+        _,
+
+        pub fn format(kind: Kind, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            return switch (kind) {
+                _ => writer.print("node kind {d}", .{@intFromEnum(kind)}),
+                inline else => |named| writer.writeAll(@tagName(named)),
+            };
+        }
+    };
 
     pub const Flags = packed struct(u32) {
         /// Set while the node's next place is waiting to be committed. `object_move` sets it on an
@@ -157,6 +181,12 @@ pub const Node = extern struct {
     pub const Pose = extern struct {
         angles: shp.Vec3,
         offset: shp.Vec3,
+
+        comptime {
+            assert(@offsetOf(Pose, "angles") == 0x00);
+            assert(@offsetOf(Pose, "offset") == 0x0C);
+            assert(@sizeOf(Pose) == 0x18);
+        }
     };
 
     /// `node_frame_update` (`0x0049A460`) for an object's root, once a frame before it is drawn,
@@ -172,9 +202,9 @@ pub const Node = extern struct {
     pub fn framePlace(node: *Node, fraction: f32) ?Model.Local {
         if (!node.flags.committed and !node.flags.unframed) return null;
         node.flags.unframed = false;
-        const now: Model.Local = .{ .position = .{ node.position.x, node.position.y, node.position.z }, .orientation = node.orientation };
+        const now: Model.Local = .{ .position = gameobj.vector(node.position), .orientation = node.orientation };
         if (fraction == 0) return now;
-        const next: Model.Local = .{ .position = .{ node.next_position.x, node.next_position.y, node.next_position.z }, .orientation = node.next_orientation };
+        const next: Model.Local = .{ .position = gameobj.vector(node.next_position), .orientation = node.next_orientation };
         return between(now, next, fraction);
     }
 
@@ -187,6 +217,7 @@ pub const Node = extern struct {
         assert(@bitOffsetOf(Flags, "posed") == 3);
         assert(@bitOffsetOf(Flags, "animating") == 11);
         assert(@bitOffsetOf(Flags, "turret") == 10);
+        assert(@offsetOf(Node, "kind") == 0x00);
         assert(@offsetOf(Node, "position") == 0x14);
         assert(@offsetOf(Node, "pose") == 0x44);
         assert(@offsetOf(Node, "next_pose") == 0x8C);
@@ -245,7 +276,7 @@ pub const Box = struct {
     pub fn ofBounds(model: *const Model, root: math.Place) Box {
         const half = (model.bounds[1] - model.bounds[0]) * @as(Vector, @splat(0.5));
         const middle = (model.bounds[1] + model.bounds[0]) * @as(Vector, @splat(0.5));
-        return .{ .centre = math.transform(root.orientation, middle) + root.position, .orientation = root.orientation, .half = half };
+        return .{ .centre = root.point(middle), .orientation = root.orientation, .half = half };
     }
 
     /// `point` in the box's own frame, from its centre.
@@ -416,8 +447,7 @@ pub const Crossing = struct {
 
     /// Where it crosses in the world, as the part stands drawn.
     pub fn inWorld(crossing: Crossing) Vector {
-        const drawn = crossing.part.part().drawn();
-        return math.transform(drawn.orientation, crossing.point) + drawn.position;
+        return crossing.part.part().drawn().point(crossing.point);
     }
 };
 
@@ -627,8 +657,9 @@ pub fn partEntry(model: *const Model, from: Vector, to: Vector, walk: PartWalk) 
         if (part.object.levels.len == 0) continue;
         const mesh = part.object.levels[0].mesh;
         // The segment in the part's own frame, where its mesh's box stands.
-        const start = math.transformTransposed(part.object.orientation, from - part.object.position);
-        const end = math.transformTransposed(part.object.orientation, to - part.object.position);
+        const drawn = part.drawn();
+        const start = drawn.inverse(from);
+        const end = drawn.inverse(to);
         if (boxEntry(start, end, mesh.bounds)) |along| {
             entry = along;
             if (walk == .first) break;
@@ -795,6 +826,32 @@ test hitSegment {
     try std.testing.expect(!tree.meetsSegment(root.inverse(.{ 900, 0, -60 }), root.inverse(.{ 900, 0, 60 })));
 }
 
+test leafCrossings {
+    const gpa = std.testing.allocator;
+    var model: create.testing.Model = undefined;
+    try model.init(gpa);
+    defer model.deinit(gpa);
+    model.withHull();
+
+    var live = try Model.create(gpa, &model.source, &model.loaded, .{});
+    defer live.deinit(gpa);
+    gameobj.linkParts(&live, &model.source);
+    const ref: PartRef = .{ .model = &live, .index = 0 };
+
+    // The part's tree is one leaf over the square; a segment through it crosses it where it
+    // passes, in the part's frame, wherever the part stands.
+    var out: [4]Crossing = undefined;
+    const through = leafCrossings(ref, .{}, .{ 20, 5, -60 }, .{ 20, 5, 60 }, &out);
+    try std.testing.expectEqual(1, through.len);
+    try std.testing.expectEqual(math.Vector{ 20, 5, 0 }, through[0].point);
+    try std.testing.expectEqual(math.Vector{ 0, 0, -1 }, through[0].normal);
+    const moved = leafCrossings(ref, .{ .position = .{ 1000, 0, 0 } }, .{ 1020, 5, -60 }, .{ 1020, 5, 60 }, &out);
+    try std.testing.expectEqual(math.Vector{ 20, 5, 0 }, moved[0].point);
+    // Beside it, or with no room, it crosses nothing.
+    try std.testing.expectEqual(0, leafCrossings(ref, .{}, .{ 900, 0, -60 }, .{ 900, 0, 60 }, &out).len);
+    try std.testing.expectEqual(0, leafCrossings(ref, .{}, .{ 20, 5, -60 }, .{ 20, 5, 60 }, out[0..0]).len);
+}
+
 /// `node_tree_frames` (`0x0049A880`) for an object, once a frame before it is drawn and before the
 /// camera's frame: its root's frame (`Node.framePlace`), which `drawn` keeps, then each of its
 /// part nodes' (`Model.frame`), and the model placed where the root's frame has it.
@@ -808,7 +865,7 @@ pub fn frameTree(root: *Node, model: ?*Model, drawn: *Model.Local, fraction: f32
         drawn.* = place;
         if (glide) |on| drawn.position += on;
     } else if (glide) |on| {
-        drawn.position = Vector{ root.position.x, root.position.y, root.position.z } + on;
+        drawn.position = gameobj.vector(root.position) + on;
     }
     const parts = model orelse return;
     parts.frame(fraction);
@@ -913,8 +970,13 @@ pub fn destroyPart(slot: *create.Slot, ref: PartRef) void {
 /// The light mask `node_add_part` gives a part's Surrender object: a light reaches the object
 /// unless their masks share a bit (`docs/engine/rendering.md`).
 pub fn lightMask(model_lists_components: bool) u32 {
-    return if (model_lists_components) 0x18 else 0x03;
+    return if (model_lists_components) components_light_mask else whole_light_mask;
 }
+
+/// The light masks of `node_add_part` (`0x00499430`): a model that lists components keeps out the
+/// backdrop's lights `0x08` and `0x10`, and any other `0x01` and `0x02`.
+const components_light_mask: u32 = 0x18;
+const whole_light_mask: u32 = 0x03;
 
 /// A live object's model as OpenReliant holds it: its root's place in the world, and a node for
 /// each part of its model, each with its part's scene object. A part hangs from the part it names
@@ -1043,7 +1105,7 @@ pub const Model = struct {
         pub fn brightness(blink: Blink, tick: i32) f32 {
             const period = blink.times[0] +% blink.times[1];
             if (period == 0) return 1;
-            const clock: u32 = @bitCast(tick *% 10 -% blink.phase);
+            const clock: u32 = @bitCast(tick *% blink_clock_per_tick -% blink.phase);
             const at: i32 = @bitCast(clock % @as(u32, @bitCast(period)));
             var shown: f32 = 1;
             if (blink.times[0] < at) shown = @as(f32, @floatFromInt(blink.times[0] -% at +% blink_fade)) * (1.0 / @as(f32, blink_fade));
@@ -1109,7 +1171,7 @@ pub const Model = struct {
         /// attachment, gone back by the model's centre of mass, which it stands on.
         pub fn rootAt(mount: Mount, carrier: math.Place) math.Place {
             const on = mount.within(carrier);
-            return .{ .position = math.transform(on.orientation, mount.model.centre) + on.position, .orientation = on.orientation };
+            return .{ .position = on.point(mount.model.centre), .orientation = on.orientation };
         }
     };
 
@@ -1371,19 +1433,19 @@ pub const Model = struct {
                 .origin = @splat(0),
                 .object = .{
                     .flags = part.flags,
-                    .position = .{ at.x, at.y, at.z },
+                    .position = gameobj.vector(at),
                     .radius = radius,
                     .light_mask = lightMask(model.header.flags.components),
                     .levels = part.levels,
                 },
                 .animation = .{
-                    .position = .{ at.x, at.y, at.z },
-                    .mount = .{ source.part.mount_point.x, source.part.mount_point.y, source.part.mount_point.z },
+                    .position = gameobj.vector(at),
+                    .mount = gameobj.vector(source.part.mount_point),
                     .orientation = source.part.orientation,
                     // Three whole numbers, which the game tests as floats against zero.
                     .still = source.part.still != @as(@Vector(3, u32), @splat(0)),
-                    .angles_min = .{ source.part.angles_min.x, source.part.angles_min.y, source.part.angles_min.z },
-                    .angles_max = .{ source.part.angles_max.x, source.part.angles_max.y, source.part.angles_max.z },
+                    .angles_min = gameobj.vector(source.part.angles_min),
+                    .angles_max = gameobj.vector(source.part.angles_max),
                     .tracks = source.tracks,
                     .slots = slotsOf(source.tracks),
                 },
@@ -1442,8 +1504,8 @@ pub const Model = struct {
         var key: Pose = .{};
         for (a.tracks[a.track].keyframes) |keyframe| {
             key = .{
-                .angles = .{ keyframe.angles.x, keyframe.angles.y, keyframe.angles.z },
-                .offset = .{ keyframe.offset.x, keyframe.offset.y, keyframe.offset.z },
+                .angles = gameobj.vector(keyframe.angles),
+                .offset = gameobj.vector(keyframe.offset),
             };
             const time: f32 = @floatFromInt(keyframe.time);
             if (at <= time) {
@@ -1580,14 +1642,10 @@ pub const Model = struct {
         if (!a.committed and !a.unframed) return;
         a.unframed = false;
         const local: Local = if (fraction == 0) a.now.place else if (!a.posed) between(a.now.place, a.next.place, fraction) else posed: {
-            const f: Vector = @splat(fraction);
-            const offset = (a.next.pose.offset - a.now.pose.offset) * f + a.now.pose.offset;
+            const offset = math.lerp(a.now.pose.offset, a.next.pose.offset, fraction);
             var turned = a.next.pose.angles - a.now.pose.angles;
-            inline for (0..3) |axis| {
-                if (std.math.pi < turned[axis]) turned[axis] -= std.math.tau;
-                if (turned[axis] < -std.math.pi) turned[axis] += std.math.tau;
-            }
-            const angles = turned * f + a.now.pose.angles;
+            inline for (0..3) |axis| turned[axis] = math.halfTurn(turned[axis]);
+            const angles = turned * @as(Vector, @splat(fraction)) + a.now.pose.angles;
             break :posed model.placeFor(index, .{ .angles = angles, .offset = offset });
         };
         part.origin = local.position;
@@ -1597,52 +1655,43 @@ pub const Model = struct {
     /// One light for each attachment of kind `light` a part carries, at its place in the model
     /// (`node_mount_light`), with its sprites or the light it casts, or both.
     fn createLights(gpa: Allocator, model: *const shp.Model, images: LightSprites) Allocator.Error![]Light {
-        var count: usize = 0;
-        for (model.parts) |part| {
-            for (part.attachments) |attachment| {
-                if (attachment.kind == .light) count += 1;
-            }
-        }
-        const lights = try gpa.alloc(Light, count);
-        var made: usize = 0;
-        for (model.parts, 0..) |part, index| {
-            for (part.attachments) |attachment| {
-                if (attachment.kind != .light) continue;
-                const light = &lights[made];
-                made += 1;
-                light.* = .{
-                    .part = index,
-                    .origin = .{ attachment.position.x, attachment.position.y, attachment.position.z },
-                    .blink = .{ .times = attachment.blink, .phase = attachment.blink_phase },
-                    .sprites = null,
-                    .cast = null,
+        var each: Attached = .of(model, .light);
+        const lights = try gpa.alloc(Light, each.count());
+        for (lights) |*light| {
+            const found = each.next().?;
+            const attachment = found.attachment;
+            light.* = .{
+                .part = found.part,
+                .origin = gameobj.vector(attachment.position),
+                .blink = .{ .times = attachment.blink, .phase = attachment.blink_phase },
+                .sprites = null,
+                .cast = null,
+            };
+            if (attachment.size[0] > 0) {
+                light.sprites = .{
+                    .colour = lightColour(attachment.light()),
+                    .lamp_colour = lampColour(attachment.light()),
+                    .size = attachment.size[1],
+                    .set = .{ .flags = .{ ._unknown_6 = 1 }, .surface = srapiext.Surface.glow(images.flare), .sprites = &.{} },
+                    .sprite = @splat(.{ .bias = attachment.size[0] * bias_width * sprite_bias }),
+                    .lamp = srapiext.Surface.glow(images.lamp),
                 };
-                if (attachment.size[0] > 0) {
-                    light.sprites = .{
-                        .colour = lightColour(attachment.light()),
-                        .lamp_colour = lampColour(attachment.light()),
-                        .size = attachment.size[1],
-                        .set = .{ .flags = .{ ._unknown_6 = 1 }, .surface = srapiext.Surface.glow(images.flare), .sprites = &.{} },
-                        .sprite = @splat(.{ .bias = attachment.size[0] * 9 * sprite_bias }),
-                        .lamp = srapiext.Surface.glow(images.lamp),
-                    };
-                    // The set and its lamp point into the light itself, which does not move again.
-                    const sprites = &light.sprites.?;
-                    sprites.sprite[Light.Sprites.lamp_sprite].surface = &sprites.lamp;
-                    sprites.set.sprites = &sprites.sprite;
-                    // A sprite whose image the game lacks is left out.
-                    sprites.sprite[Light.Sprites.flare].hidden = images.flare == null;
-                    sprites.sprite[Light.Sprites.lamp_sprite].hidden = images.lamp == null;
-                }
-                const blinks = attachment.blink[0] +% attachment.blink[1] != 0;
-                if (attachment.light_brightness > 0 and blinks) {
-                    light.cast = .{
-                        .mask = 0,
-                        .intensity = attachment.light_brightness,
-                        .colour = lightColour(attachment.light()),
-                        .kind = .{ .point = .{ .position = @splat(0), .range = attachment.light_range } },
-                    };
-                }
+                // The set and its lamp point into the light itself, which does not move again.
+                const sprites = &light.sprites.?;
+                sprites.sprite[Light.Sprites.lamp_sprite].surface = &sprites.lamp;
+                sprites.set.sprites = &sprites.sprite;
+                // A sprite whose image the game lacks is left out.
+                sprites.sprite[Light.Sprites.flare].hidden = images.flare == null;
+                sprites.sprite[Light.Sprites.lamp_sprite].hidden = images.lamp == null;
+            }
+            const blinks = attachment.blink[0] +% attachment.blink[1] != 0;
+            if (attachment.light_brightness > 0 and blinks) {
+                light.cast = .{
+                    .mask = 0,
+                    .intensity = attachment.light_brightness,
+                    .colour = lightColour(attachment.light()),
+                    .kind = .{ .point = .{ .position = @splat(0), .range = attachment.light_range } },
+                };
             }
         }
         return lights;
@@ -1652,41 +1701,32 @@ pub const Model = struct {
     /// (`node_mount_glow`). A model carries none while the glows' meshes are not built.
     fn createGlows(gpa: Allocator, model: *const shp.Model, glows: ?*const environfx.Glows) Allocator.Error![]Glow {
         const built = glows orelse return gpa.alloc(Glow, 0);
-        var count: usize = 0;
-        for (model.parts) |part| {
-            for (part.attachments) |attachment| {
-                if (attachment.kind == .engine_glow) count += 1;
-            }
-        }
-        const made = try gpa.alloc(Glow, count);
-        var at: usize = 0;
-        for (model.parts, 0..) |part, index| {
-            for (part.attachments) |attachment| {
-                if (attachment.kind != .engine_glow) continue;
-                const glow = &made[at];
-                at += 1;
-                const size: Vector = attachment.size;
-                glow.* = .{
-                    .part = index,
-                    .origin = .{ attachment.position.x, attachment.position.y, attachment.position.z },
-                    .orientation = attachment.orientation,
-                    .size = size,
-                    // Its plume burns the way the attachment's Z axis points, so a plume that
-                    // reaches forward pushes the ship back.
-                    .retro = size[2] * attachment.orientation[8] > 0,
-                    .steady = attachment.id == steady_glow,
-                    .level = .{.{ .mesh = built.mesh(attachment.id), .until = std.math.inf(f32) }},
-                    .object = .{
-                        // Neither culled nor given a level of detail by how far off it is.
-                        .flags = .{ .not_culled = true, .always_drawn = true },
-                        .position = @splat(0),
-                        .radius = @reduce(.Max, @abs(size)),
-                        .levels = &.{},
-                    },
-                };
-                // The object shows the one mesh its kind shares, which does not change again.
-                glow.object.levels = glow.level[0..1];
-            }
+        var each: Attached = .of(model, .engine_glow);
+        const made = try gpa.alloc(Glow, each.count());
+        for (made) |*glow| {
+            const found = each.next().?;
+            const attachment = found.attachment;
+            const size: Vector = attachment.size;
+            glow.* = .{
+                .part = found.part,
+                .origin = gameobj.vector(attachment.position),
+                .orientation = attachment.orientation,
+                .size = size,
+                // Its plume burns the way the attachment's Z axis points, so a plume that
+                // reaches forward pushes the ship back.
+                .retro = size[2] * attachment.orientation[8] > 0,
+                .steady = attachment.id == steady_glow,
+                .level = .{.{ .mesh = built.mesh(attachment.id), .until = std.math.inf(f32) }},
+                .object = .{
+                    // Neither culled nor given a level of detail by how far off it is.
+                    .flags = .{ .not_culled = true, .always_drawn = true },
+                    .position = @splat(0),
+                    .radius = @reduce(.Max, @abs(size)),
+                    .levels = &.{},
+                },
+            };
+            // The object shows the one mesh its kind shares, which does not change again.
+            glow.object.levels = glow.level[0..1];
         }
         return made;
     }
@@ -1695,23 +1735,56 @@ pub const Model = struct {
     /// (`node_mount_muzzle`). A model carries none while the flashes' meshes are not built.
     fn createFlashes(gpa: Allocator, model: *const shp.Model, looks: ?*const flash.Looks) Allocator.Error![]flash.Flash {
         const built = looks orelse return gpa.alloc(flash.Flash, 0);
-        var count: usize = 0;
-        for (model.parts) |part| {
-            for (part.attachments) |attachment| {
-                if (attachment.kind == .gun_muzzle) count += 1;
-            }
-        }
-        const made = try gpa.alloc(flash.Flash, count);
-        var at: usize = 0;
-        for (model.parts, 0..) |part, index| {
-            for (part.attachments) |*attachment| {
-                if (attachment.kind != .gun_muzzle) continue;
-                made[at].init(built, index, attachment);
-                at += 1;
-            }
+        var each: Attached = .of(model, .gun_muzzle);
+        const made = try gpa.alloc(flash.Flash, each.count());
+        for (made) |*lit| {
+            const found = each.next().?;
+            lit.init(built, found.part, found.attachment);
         }
         return made;
     }
+
+    /// The attachments of one kind a model's parts carry, part by part and each part's in order,
+    /// with the part that carries each, as `node_add_part` mounts them.
+    const Attached = struct {
+        parts: []const shp.PartData,
+        kind: shp.Attachment.Kind,
+        /// The part, and the attachment of it, the walk has reached.
+        part: usize = 0,
+        at: usize = 0,
+
+        const Found = struct {
+            part: usize,
+            attachment: *const shp.Attachment,
+        };
+
+        fn of(model: *const shp.Model, kind: shp.Attachment.Kind) Attached {
+            return .{ .parts = model.parts, .kind = kind };
+        }
+
+        fn next(each: *Attached) ?Found {
+            while (each.part < each.parts.len) : ({
+                each.part += 1;
+                each.at = 0;
+            }) {
+                const attachments = each.parts[each.part].attachments;
+                while (each.at < attachments.len) {
+                    const attachment = &attachments[each.at];
+                    each.at += 1;
+                    if (attachment.kind == each.kind) return .{ .part = each.part, .attachment = attachment };
+                }
+            }
+            return null;
+        }
+
+        /// How many the rest of the walk hands out.
+        fn count(each: Attached) usize {
+            var rest = each;
+            var found: usize = 0;
+            while (rest.next()) |_| found += 1;
+            return found;
+        }
+    };
 
     pub fn deinit(model: Model, gpa: Allocator) void {
         var each = model.carried();
@@ -1743,7 +1816,7 @@ pub const Model = struct {
                 try made.append(gpa, .{
                     .part = index,
                     .attachment = at,
-                    .origin = .{ attachment.position.x, attachment.position.y, attachment.position.z },
+                    .origin = gameobj.vector(attachment.position),
                     .orientation = attachment.orientation,
                     .model = try build(gpa, mounted.model, mounted.loaded, effects, depth + 1),
                 });
@@ -1764,13 +1837,11 @@ pub const Model = struct {
         model.orientation = orientation;
         for (model.order) |index| {
             const part = &model.parts[index];
-            const from = if (part.parent) |parent| model.parts[parent].object else null;
-            const at = if (from) |carrier| carrier.position else position;
-            const turn = if (from) |carrier| carrier.orientation else orientation;
-            part.object.position = math.transform(turn, part.origin) + at;
+            const carrier: math.Place = if (part.parent) |parent| model.parts[parent].drawn() else .{ .position = position, .orientation = orientation };
+            part.object.position = carrier.point(part.origin);
             // A frame whose turn has ones down its diagonal takes its parent's as it is.
             const unturned = part.turn[0] == 1 and part.turn[4] == 1 and part.turn[8] == 1;
-            part.object.orientation = if (unturned) turn else math.product(turn, part.turn);
+            part.object.orientation = if (unturned) carrier.orientation else math.product(carrier.orientation, part.turn);
         }
         var each = model.carried();
         while (each.next()) |mount| {
@@ -1998,8 +2069,7 @@ pub const Model = struct {
             if (model.parts[light.part].hidden) continue;
             const blink = light.blink.brightness(view.blink_offset +% view.frame_start);
             if (!(blink > 0)) continue;
-            const carrier = model.parts[light.part].object;
-            const world = math.transform(carrier.orientation, light.origin) + carrier.position;
+            const world = model.parts[light.part].drawn().point(light.origin);
             if (light.sprites) |*sprites| {
                 sprites.set.position = world;
                 sprites.show(blink, math.distance(world, view.camera));
@@ -2015,8 +2085,8 @@ pub const Model = struct {
             // A glow goes out with the part that carries it, as a light does.
             if (model.parts[glow.part].hidden) continue;
             const burning = glow.plume(view.throttle, view.random) orelse continue;
-            const carrier = model.parts[glow.part].object;
-            glow.object.position = math.transform(carrier.orientation, glow.origin) + carrier.position;
+            const carrier = model.parts[glow.part].drawn();
+            glow.object.position = carrier.point(glow.origin);
             // The plume stands as its attachment does, drawn to the size it gives it.
             const scale = math.scaling(glow.size * Vector{ 1, 1, burning });
             glow.object.orientation = math.product(math.product(carrier.orientation, glow.orientation), scale);
@@ -2127,8 +2197,9 @@ pub const View = struct {
     }
 };
 
-/// The share of a simulation step each game tick takes, which `node_frame_update` counts in.
-const tick_share: f32 = 1.0 / @as(f32, @import("gameobj.zig").ticks_per_step);
+/// The share of a simulation step each game tick takes, which `node_frame_update` counts in, and
+/// what turns a velocity a step into one a tick.
+pub const tick_share: f32 = 1.0 / @as(f32, @import("gameobj.zig").ticks_per_step);
 
 /// How far into its step the simulation is, which `node_frame_update` draws each object between
 /// its last two places by: a quarter for each tick since the step (`simulation_counter`).
@@ -2164,9 +2235,8 @@ pub const Timing = struct {
 /// `now` to `next`: along the straight line between, and turned from `now` by that share of the
 /// angles that turn it to `next`.
 fn between(now: Model.Local, next: Model.Local, fraction: f32) Model.Local {
-    const f: Vector = @splat(fraction);
-    const position = (next.position - now.position) * f + now.position;
-    const angles = math.angles(math.product(math.transpose(now.orientation), next.orientation)) * f;
+    const position = math.lerp(now.position, next.position, fraction);
+    const angles = math.angles(math.product(math.transpose(now.orientation), next.orientation)) * @as(Vector, @splat(fraction));
     return .{ .position = position, .orientation = math.product(now.orientation, math.fromAngleVector(angles)) };
 }
 
@@ -2186,8 +2256,7 @@ comptime {
 /// length, so that a burning engine is never quite still (`node_draw`).
 fn flicker(random: ?*libcmt.Rand) f32 {
     const source = random orelse return 1;
-    const share = @as(f32, @floatFromInt(source.rand())) * (1.0 / @as(f32, libcmt.Rand.max));
-    return share * flicker_range + flicker_least;
+    return source.fraction() * flicker_range + flicker_least;
 }
 
 /// The sprites every light draws, whatever its colour (`node_mount_light`): the flare, which
@@ -2241,11 +2310,14 @@ const lamp_scale: f32 = 0.3;
 /// The share of its colour a light's flare takes.
 const flare_share: f32 = 0.5;
 
-/// What a light's two sprites add to their depth for sorting, over the attachment's width times 9
-/// (`node_mount_light`): both sort a little nearer than they stand.
+/// What a light's two sprites add to their depth for sorting, over the attachment's width times
+/// `bias_width` (`node_mount_light`): both sort a little nearer than they stand.
 const sprite_bias: f32 = -0.25;
+const bias_width: f32 = 9;
 
-/// A light fades out over this much of its blink's clock.
+/// A light's blink runs on a clock of ten to the tick (`node_draw`), and fades out over this much
+/// of it.
+const blink_clock_per_tick = 10;
 const blink_fade = 200;
 
 /// The least brightness in its blink at which a light still shows its lamp.
@@ -2278,6 +2350,45 @@ pub const testing = struct {
     pub const part = testingPart;
     /// A track's clip of `length`, played in `mode`, named `name`.
     pub const clip = testingClip;
+
+    /// Mounts that answer every attachment with `fixture`'s model.
+    pub fn mountsOf(fixture: *create.testing.Model) Mounts {
+        return .{ .context = fixture, .load = loadFixture };
+    }
+
+    fn loadFixture(context: *anyopaque, _: []const u8) ?Mounts.Mounted {
+        const fixture: *create.testing.Model = @ptrCast(@alignCast(context));
+        return .{ .model = &fixture.source, .loaded = &fixture.loaded };
+    }
+
+    /// A model of one part with no mesh, hanging from the root, whose one attachment, a gun's at
+    /// `at`, unturned, mounts the model it is built with. It is set up where it stays, since its
+    /// records point into it.
+    pub const Carrier = struct {
+        attachments: [1]shp.Attachment,
+        data: [1]shp.PartData,
+        source: shp.Model,
+        loaded_parts: [1]srofiles.LoadedPart,
+        loaded: srofiles.Loaded,
+
+        pub fn init(carrier: *Carrier, at: Vector) void {
+            carrier.attachments = .{std.mem.zeroes(shp.Attachment)};
+            carrier.attachments[0].kind = .gun;
+            carrier.attachments[0].position = gameobj.vec3(at);
+            carrier.attachments[0].orientation = math.identity;
+            carrier.data = .{testingPart()};
+            carrier.data[0].part.parent = -1;
+            carrier.data[0].attachments = &carrier.attachments;
+            carrier.source = .{ .header = std.mem.zeroes(shp.Header), .parts = &carrier.data, .trailing_bytes = 0 };
+            carrier.loaded_parts = .{.{ .flags = .{}, .levels = &.{}, .meshes = &.{} }};
+            carrier.loaded = .{ .parts = &carrier.loaded_parts };
+        }
+
+        /// Its model, its attachment mounting `gun`'s.
+        pub fn build(carrier: *const Carrier, gpa: Allocator, gun: *create.testing.Model) Allocator.Error!Model {
+            return .create(gpa, &carrier.source, &carrier.loaded, .{ .mounts = mountsOf(gun) });
+        }
+    };
 };
 
 test "Node.commitNext" {
@@ -2305,6 +2416,33 @@ test "Node.commitNext" {
 test lightMask {
     try std.testing.expectEqual(0x18, lightMask(true));
     try std.testing.expectEqual(0x03, lightMask(false));
+}
+
+test "Node.Kind" {
+    var buffer: [32]u8 = undefined;
+    try std.testing.expectEqualStrings("muzzle", try std.fmt.bufPrint(&buffer, "{f}", .{Node.Kind.muzzle}));
+    try std.testing.expectEqualStrings("node kind 9", try std.fmt.bufPrint(&buffer, "{f}", .{@as(Node.Kind, @enumFromInt(9))}));
+}
+
+test "Model.Attached" {
+    var attachments = [3]shp.Attachment{ std.mem.zeroes(shp.Attachment), std.mem.zeroes(shp.Attachment), std.mem.zeroes(shp.Attachment) };
+    attachments[0].kind = .light;
+    attachments[1].kind = .gun_muzzle;
+    attachments[2].kind = .light;
+    var data = [2]shp.PartData{ testingPart(), testingPart() };
+    data[0].attachments = attachments[0..2];
+    data[1].attachments = attachments[2..3];
+    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &data, .trailing_bytes = 0 };
+    // The lights, part by part, each with its part; a kind none carries, none.
+    var each: Model.Attached = .of(&source, .light);
+    try std.testing.expectEqual(2, each.count());
+    const first = each.next().?;
+    try std.testing.expectEqual(0, first.part);
+    try std.testing.expectEqual(&attachments[0], first.attachment);
+    try std.testing.expectEqual(1, each.count());
+    try std.testing.expectEqual(1, each.next().?.part);
+    try std.testing.expectEqual(null, each.next());
+    try std.testing.expectEqual(0, Model.Attached.of(&source, .pod).count());
 }
 
 test {
@@ -2918,12 +3056,8 @@ const Animated = struct {
     }
 };
 
-fn testingKey(time: i32, angles: [3]f32, offset: [3]f32) shp.Keyframe {
-    return .{
-        .time = time,
-        .angles = .{ .x = angles[0], .y = angles[1], .z = angles[2] },
-        .offset = .{ .x = offset[0], .y = offset[1], .z = offset[2] },
-    };
+fn testingKey(time: i32, angles: Vector, offset: Vector) shp.Keyframe {
+    return .{ .time = time, .angles = gameobj.vec3(angles), .offset = gameobj.vec3(offset) };
 }
 
 fn testingClip(length: i32, mode: Model.Mode, name: []const u8) shp.Clip {
@@ -2994,7 +3128,7 @@ test "Model.placeFor" {
     const expected = math.product(math.product(math.transpose(o), math.fromAngles(0, 0.5, 0)), o);
     try std.testing.expectEqual(expected, turned.orientation);
     const mount: Vector = .{ 10, 0, 0 };
-    const pivot = math.transform(turned.orientation, mount) + turned.position;
+    const pivot = turned.point(mount);
     try std.testing.expect(math.length(pivot - (mount + @as(Vector, .{ 0, 0, 100 }))) < 1e-3);
 }
 
@@ -3201,25 +3335,11 @@ test "a segment strikes a part of a model mounted on another" {
     defer gun.deinit(gpa);
     gun.withHull();
     // The model carrying it: a part with a gun attachment 1000 along Z.
-    var attachments = [1]shp.Attachment{std.mem.zeroes(shp.Attachment)};
-    attachments[0].kind = .gun;
-    attachments[0].position = .{ .x = 0, .y = 0, .z = 1000 };
-    attachments[0].orientation = math.identity;
-    var data = [1]shp.PartData{testingPart()};
-    data[0].part.parent = -1;
-    data[0].attachments = &attachments;
-    const source: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &data, .trailing_bytes = 0 };
-    var loaded_parts = [1]srofiles.LoadedPart{.{ .flags = .{}, .levels = &.{}, .meshes = &.{} }};
-    const loaded: srofiles.Loaded = .{ .parts = &loaded_parts };
-    const Answer = struct {
-        fn load(context: *anyopaque, _: []const u8) ?Mounts.Mounted {
-            const fixture: *create.testing.Model = @ptrCast(@alignCast(context));
-            return .{ .model = &fixture.source, .loaded = &fixture.loaded };
-        }
-    };
-    var built: Model = try .create(gpa, &source, &loaded, .{ .mounts = .{ .context = &gun, .load = Answer.load } });
+    var carrier: testing.Carrier = undefined;
+    carrier.init(.{ 0, 0, 1000 });
+    var built = try carrier.build(gpa, &gun);
     defer built.deinit(gpa);
-    gameobj.linkParts(&built, &source);
+    gameobj.linkParts(&built, &carrier.source);
     // The carrier's box reaches the mount, as its object's does once its parts are summed.
     built.bounds = .{ .{ -200, -200, -200 }, .{ 200, 200, 1200 } };
 

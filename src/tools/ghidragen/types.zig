@@ -189,6 +189,7 @@ pub const exported = [_]Export{
     .{ "GunGroupSide", engine.game.guns.GroupSide },
     .{ "ObjectRoutine", engine.game.gameobj.Routine },
     .{ "ModelNode", engine.game.objects.Node },
+    .{ "NodeKind", engine.game.objects.Node.Kind },
     .{ "NodeFlags", engine.game.objects.Node.Flags },
     .{ "NodePose", engine.game.objects.Node.Pose },
     .{ "SurrenderFrame", engine.surrender.surrenderlib.srapiext.Frame },
