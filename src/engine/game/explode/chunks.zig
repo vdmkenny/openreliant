@@ -16,12 +16,24 @@ const xtrabits = @import("../xtrabits.zig");
 const Clock = @import("../main.zig").Clock;
 
 /// A chunk flying (0x20 bytes): its object, the tick it goes at (`+0x00`), how far it moves a tick
-/// (`+0x04`), and how far it turns a tick, as angles (`+0x10`).
+/// (`+0x04`), and how far it turns a tick, as angles (`+0x10`). The object is drawn from where the
+/// chunk stands at the frame's tick, `place`, which the game keeps in the object itself.
 pub const Chunk = struct {
     object: srapiext.MeshObject,
+    place: math.Place,
     until: i32,
     velocity: Vector,
     spin: Vector,
+
+    /// Where it stands `ticks` past the frame's tick: moved on by its velocity, and turned by its
+    /// spin, for each.
+    fn moved(chunk: *const Chunk, ticks: f32) math.Place {
+        const by: Vector = @splat(ticks);
+        return .{
+            .position = chunk.place.position + chunk.velocity * by,
+            .orientation = math.product(chunk.place.orientation, math.fromAngleVector(chunk.spin * by)),
+        };
+    }
 };
 
 /// How a chunk is thrown: from a point on a part standing at a place, as a rock struck throws
@@ -49,16 +61,21 @@ pub const Chunks = struct {
                 slot.* = null;
                 continue;
             }
-            chunk.object.position += chunk.velocity * @as(Vector, @splat(ticks));
-            chunk.object.orientation = math.product(chunk.object.orientation, math.fromAngleVector(chunk.spin * @as(Vector, @splat(ticks))));
+            chunk.place = chunk.moved(ticks);
         }
         chunks.moved_at = clock.frame_start;
     }
 
-    /// Each chunk flying goes into the world's layer.
-    pub fn draw(chunks: *Chunks, gpa: Allocator, scene: *srcore.Scene) Allocator.Error!void {
+    /// Each chunk flying goes into the world's layer, `ahead` of a tick past the frame's tick.
+    ///
+    /// **Improvement:** the game draws a chunk where the frame's tick leaves it; the port draws it
+    /// that much further along and turned (`objects.pastTick`).
+    pub fn draw(chunks: *Chunks, gpa: Allocator, scene: *srcore.Scene, ahead: f32) Allocator.Error!void {
         for (&chunks.ring.slots) |*slot| {
             const chunk = &(slot.* orelse continue);
+            const shown = chunk.moved(ahead);
+            chunk.object.position = shown.position;
+            chunk.object.orientation = shown.orientation;
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &chunk.object }, .world);
         }
     }
@@ -112,6 +129,7 @@ pub fn throw(explosions: *explode.Explosions, at: Vector, direction: Vector, how
     }
     explosions.chunks.ring.take(Chunks.capacity).* = .{
         .object = object,
+        .place = .{ .position = object.position, .orientation = object.orientation },
         .until = clock.frame_start + least_life + life,
         .velocity = velocity,
         .spin = spin,
@@ -150,13 +168,20 @@ test throw {
     try std.testing.expect(large.object.scale >= large_scale and large.object.scale <= large_scale + large_scale_range);
     try std.testing.expect(math.length(large.velocity) >= large_speed * speed);
 
-    // It flies on by its velocity for each tick since the chunks last moved on, and goes once its
-    // time is past.
+    // It flies on by its velocity for each tick since the chunks last moved on, and is drawn as
+    // far past the tick as the frame is.
     stage.mission.clock.frame_start = 110;
     explosions.chunks.moved_at = 100;
     explosions.chunks.frame(world.clock);
-    const moved = explosions.chunks.ring.slots[0].?.object.position;
-    inline for (0..3) |axis| try std.testing.expectApproxEqAbs(chunk.object.position[axis] + chunk.velocity[axis] * 10, moved[axis], 1e-3);
+    const moved = explosions.chunks.ring.slots[0].?.place.position;
+    inline for (0..3) |axis| try std.testing.expectApproxEqAbs(chunk.place.position[axis] + chunk.velocity[axis] * 10, moved[axis], 1e-3);
+    var scene: srcore.Scene = .{};
+    defer scene.deinit(gpa);
+    try explosions.chunks.draw(gpa, &scene, 0.5);
+    const drawn = explosions.chunks.ring.slots[0].?.object.position;
+    inline for (0..3) |axis| try std.testing.expectApproxEqAbs(moved[axis] + chunk.velocity[axis] * 0.5, drawn[axis], 1e-3);
+
+    // It goes once its time is past.
     stage.mission.clock.frame_start = chunk.until + 1;
     explosions.chunks.frame(world.clock);
     try std.testing.expectEqual(null, explosions.chunks.ring.slots[0]);

@@ -7,7 +7,8 @@
 //!
 //! The game also makes two squares, `UberWave1` over `bigshock1` and `UberWave2` over `bigshock2`,
 //! and a light, `UberExplosion_Light`, and grows the first square as the blast goes on, but never
-//! puts any of them in the scene; the port leaves them out.
+//! puts any of them in the scene; the port leaves the squares out, and shows the light only in the
+//! fuller style (`Style`).
 //!
 //! **Improvement:** the game opens the halves and spreads the ball by rounded factors (3.33333 and
 //! 1.42857 a share, 0.19635 and 0.349066 radians); the port divides.
@@ -34,21 +35,80 @@ const gameobj = @import("../gameobj.zig");
 const matmanager = @import("../matmanager.zig");
 const shield = @import("../shield.zig");
 const shockwave = @import("../shockwave.zig");
+const libcmt = @import("../../libcmt.zig");
+const srlight = @import("../../surrender/surrenderlib/srlight.zig");
 const sound3d = @import("../sound3d.zig");
 const xtrabits = @import("../xtrabits.zig");
 
-/// The hemisphere both halves show (`uber_hemisphere_create`, `0x00473BF0`): the first `rings`
-/// bands of a sphere on this grid, a ring each round a pole, and a last pole that no triangle uses.
-const hemisphere: shield.Grid = .{ .around = 18, .down = 16 };
-const rings = 7;
-const hemisphere_vertices = rings * hemisphere.around + 2;
+/// How a blast is shown.
+///
+/// **Improvement:** `fuller` draws the halves and the ball on grids `fineness` times as fine as the
+/// game's, so neither shows its facets: the halves fade to their rim over as many rings as the
+/// game's last band holds, and the ball flickers as the game's does, between its vertices. It
+/// flickers and throws its burning bits at the pace of the simulation's steps, 25 times a second,
+/// where the game does both each frame, so a faster frame rate neither quickens the flicker nor
+/// throws more bits. And the light the game makes but never shows lights what is round the blast,
+/// as bright as the halves, while they show. `--original` restores the game's.
+pub const Style = enum {
+    original,
+    fuller,
 
-/// What the halves never colour: the last ring and the last pole.
-const rim = hemisphere.around + 1;
+    /// How many times as fine as the game's its grids are.
+    fn fineness(style: Style) u16 {
+        return switch (style) {
+            .original => 1,
+            .fuller => 3,
+        };
+    }
+};
 
-/// The ball's sphere (`sphere_mesh_create`'s grid).
-const ball_grid: shield.Grid = .{ .around = 18, .down = 8 };
-const ball_vertices = ball_grid.vertices();
+/// The game's grids: the hemisphere both halves show (`uber_hemisphere_create`, `0x00473BF0`),
+/// whose first `game_rings` bands the halves show, a ring each round a pole, and a last pole no
+/// triangle uses; and the ball's sphere (`sphere_mesh_create`'s grid).
+const game_hemisphere: shield.Grid = .{ .around = 18, .down = 16 };
+const game_rings = 7;
+const game_ball: shield.Grid = .{ .around = 18, .down = 8 };
+const game_ball_vertices = game_ball.vertices();
+
+/// A blast's grids in a style: the game's, `fine` times as fine.
+const Shape = struct {
+    fine: u16,
+    hemisphere: shield.Grid,
+    rings: usize,
+    ball: shield.Grid,
+
+    fn of(style: Style) Shape {
+        const fine = style.fineness();
+        return .{
+            .fine = fine,
+            .hemisphere = .{ .around = game_hemisphere.around * fine, .down = game_hemisphere.down * fine },
+            .rings = game_rings * fine,
+            .ball = .{ .around = game_ball.around * fine, .down = game_ball.down * fine },
+        };
+    }
+
+    fn hemisphereVertices(shape: Shape) usize {
+        return shape.rings * shape.hemisphere.around + 2;
+    }
+
+    /// How much of the halves' colour vertex `index` takes: all of it, but for the game's last band,
+    /// across which it fades to nothing at the last ring, and the last pole, which takes none.
+    fn fade(shape: Shape, index: usize) f32 {
+        if (index == 0) return 1;
+        if (index == shape.hemisphereVertices() - 1) return 0;
+        const ring = 1 + (index - 1) / shape.hemisphere.around;
+        return @min(1, @as(f32, @floatFromInt(shape.rings - ring)) / @as(f32, @floatFromInt(shape.fine)));
+    }
+};
+
+/// The finest grids a blast is drawn on.
+const finest: Shape = .of(.fuller);
+const max_hemisphere_vertices = finest.hemisphereVertices();
+const max_ball_vertices = finest.ball.vertices();
+
+comptime {
+    for (std.enums.values(Style)) |style| std.debug.assert(style.fineness() <= finest.fine);
+}
 
 /// How far through a blast, as shares of its duration: the halves flare up until `flared`, open
 /// out until `opened`, when the ball starts to spread, and fade out by `faded`, when the bits
@@ -89,6 +149,12 @@ const ball_green: f32 = 0.3;
 /// The ball's glow: red, twice as wide as the ball, sorted as if at its edge.
 const glow_colour: [3]f32 = .{ 0.75, 0, 0 };
 const glow_scale: f32 = 2;
+
+/// The light the game makes (`UberExplosion_Light`): lilac, at `light_intensity`, reaching that
+/// times `light_reach` of the blast's size (`0x004DC72C`).
+const light_colour: [3]f32 = .{ 0.7, 0.5, 1 };
+const light_intensity: f32 = 2;
+const light_reach: f32 = 20;
 
 /// How hard the ball knocks a ship, by its mass (`0x004DC438`); how far from its middle, by its
 /// radius (`0x004DC4B4`); and how fast it sets it spinning, a tick about each axis, half of it
@@ -154,41 +220,76 @@ pub const Blast = struct {
     done: f32 = 0,
     caught: [max_caught]Caught = undefined,
     caught_count: usize = 0,
+    style: Style,
+    /// The tick it last drew its numbers afresh at (`rounds`), and whether its ball has flickered.
+    paced_at: i32,
+    flickered: bool = false,
     /// The halves (`UberHemi1`, `UberHemi2`), which share their own colours and texture
-    /// coordinates.
+    /// coordinates, the first as many as the style's hemisphere has vertices.
     halves: [2]srapiext.MeshObject,
-    half_colours: [hemisphere_vertices][4]f32,
-    half_uv: [hemisphere_vertices][2]f32,
-    /// The ball, which the game names as it names the second half, and its glow (`Uber BMO`).
+    half_colours: [max_hemisphere_vertices][4]f32 = undefined,
+    half_uv: [max_hemisphere_vertices][2]f32 = undefined,
+    /// The ball, which the game names as it names the second half, and its glow (`Uber BMO`). Its
+    /// flicker is a colour for each vertex of the game's ball, which its own vertices take between
+    /// them.
     ball: srapiext.MeshObject,
-    ball_colours: [ball_vertices][4]f32 = undefined,
-    ball_uv: [ball_vertices][2]f32 = @splat(ball_texel),
+    ball_flicker: [game_ball_vertices][4]f32 = undefined,
+    ball_colours: [max_ball_vertices][4]f32 = undefined,
+    ball_uv: [max_ball_vertices][2]f32 = @splat(ball_texel),
     glow: srapiext.SpriteSet,
     glow_sprite: [1]srapiext.Sprite = .{.{ .colour = glow_colour }},
+    /// Its light, in the fuller style.
+    light: srlight.Light,
 
     fn listed(blast: *Blast) []Caught {
         return blast.caught[0..blast.caught_count];
     }
 
-    /// The ball's part of the frame, `out` of the way to its widest: it takes the one point of its
-    /// texture, grows, flickers red and orange vertex by vertex, and shakes the view, and it
-    /// reaches each ship it listed that stands within it.
-    fn spread(blast: *Blast, world: gameobj.World, out: f32) void {
-        const random = world.random;
-        // Two numbers the game draws and drops.
-        _ = random.rand();
-        _ = random.rand();
-        blast.ball_uv = @splat(ball_texel);
-        blast.ball.scale = math.lerp(least_scale, blast.size * reach, out);
-        for (&blast.ball_colours) |*colour| {
-            const f = random.fraction();
-            const red = f * f * f * f * f;
-            colour.* = .{ red, red * ball_green, 0, 1 };
+    fn shape(blast: *const Blast) Shape {
+        return .of(blast.style);
+    }
+
+    /// How many times the blast draws its numbers afresh this frame, at tick `now`: once a frame,
+    /// as the game does; or in the fuller style, once for each simulation step since it last did.
+    fn rounds(blast: *Blast, now: i32) u32 {
+        switch (blast.style) {
+            .original => return 1,
+            .fuller => {
+                const due: u32 = @intCast(@divFloor(@max(now - blast.paced_at, 0), gameobj.ticks_per_step));
+                blast.paced_at += @intCast(due * gameobj.ticks_per_step);
+                return due;
+            },
         }
+    }
+
+    /// The ball's part of the frame, `out` of the way to its widest, drawing its numbers afresh
+    /// `drawn` times: it flickers red and orange vertex by vertex, grows, and shakes the view, and
+    /// it reaches each ship it listed that stands within it.
+    fn spread(blast: *Blast, world: gameobj.World, out: f32, drawn: u32) void {
+        if (drawn > 0 or !blast.flickered) blast.flicker(world.random);
+        blast.ball.scale = math.lerp(least_scale, blast.size * reach, out);
         world.shake.* = most_shake * out;
         blast.glow_sprite[0].half_size = @splat(blast.ball.scale * glow_scale);
         blast.glow_sprite[0].bias = -blast.ball.scale;
         for (blast.listed()) |*caught| if (!caught.reached) blast.strike(world, caught);
+    }
+
+    /// The ball's flicker drawn afresh: each vertex of the game's ball red at a random number to
+    /// the fifth, its green `ball_green` of its red; each of its own vertices taking the colours of
+    /// those round it (`flickerAt`).
+    fn flicker(blast: *Blast, random: *libcmt.Rand) void {
+        // Two numbers the game draws and drops.
+        _ = random.rand();
+        _ = random.rand();
+        for (&blast.ball_flicker) |*colour| {
+            const f = random.fraction();
+            const red = f * f * f * f * f;
+            colour.* = .{ red, red * ball_green, 0, 1 };
+        }
+        const grid = blast.shape().ball;
+        const fine = blast.shape().fine;
+        for (blast.ball_colours[0..grid.vertices()], 0..) |*colour, index| colour.* = flickerAt(&blast.ball_flicker, grid, fine, index);
+        blast.flickered = true;
     }
 
     /// The ball reaching a ship it listed, unless the ship is exploding already or gone: a knock
@@ -233,35 +334,52 @@ pub const Blast = struct {
     }
 };
 
-/// What the Uber Explode keeps: the hemisphere the halves share (`0x00562CD0`), which a blast opens
-/// out, the ball's sphere, and the blast going off, where one is.
+/// What the Uber Explode keeps: for each style the hemisphere the halves share (`0x00562CD0`),
+/// which a blast opens out, and the ball's sphere; and the blast going off, where one is.
 pub const Uber = struct {
-    hemisphere: srapiext.Mesh,
-    ball: srapiext.Mesh,
-    levels: [2][1]srapiext.Level = undefined,
+    meshes: std.EnumArray(Style, Meshes),
     glow: *srtexture.Image,
     blast: ?Blast = null,
 
+    /// A style's hemisphere and ball, and a level of detail for each.
+    const Meshes = struct {
+        hemisphere: srapiext.Mesh,
+        ball: srapiext.Mesh,
+        levels: [2][1]srapiext.Level = undefined,
+
+        fn deinit(meshes: *Meshes, gpa: Allocator) void {
+            meshes.hemisphere.deinit(gpa);
+            meshes.ball.deinit(gpa);
+        }
+    };
+
     /// As the explosions are set up (`explosions_init`, `0x0046B240`): the hemisphere, fully open,
-    /// and the ball's sphere.
+    /// and the ball's sphere, for each style.
     pub fn create(gpa: Allocator, images: Images) Allocator.Error!*Uber {
         const uber = try gpa.create(Uber);
         errdefer gpa.destroy(uber);
-        var half = try hemisphereMesh(gpa, images.ring);
-        errdefer half.deinit(gpa);
-        uber.* = .{ .hemisphere = half, .ball = try shield.sphereMesh(gpa, ball_grid, images.ball), .glow = images.glow };
-        uber.levels = .{ .{.{ .mesh = &uber.hemisphere, .until = std.math.inf(f32) }}, .{.{ .mesh = &uber.ball, .until = std.math.inf(f32) }} };
+        uber.* = .{ .meshes = undefined, .glow = images.glow };
+        var made: usize = 0;
+        errdefer for (std.enums.values(Style)[0..made]) |style| uber.meshes.getPtr(style).deinit(gpa);
+        for (std.enums.values(Style)) |style| {
+            const shape: Shape = .of(style);
+            var half = try hemisphereMesh(gpa, shape, images.ring);
+            errdefer half.deinit(gpa);
+            const meshes = uber.meshes.getPtr(style);
+            meshes.* = .{ .hemisphere = half, .ball = try shield.sphereMesh(gpa, shape.ball, images.ball) };
+            meshes.levels = .{ .{.{ .mesh = &meshes.hemisphere, .until = std.math.inf(f32) }}, .{.{ .mesh = &meshes.ball, .until = std.math.inf(f32) }} };
+            made += 1;
+        }
         return uber;
     }
 
     pub fn destroy(uber: *Uber, gpa: Allocator) void {
-        uber.hemisphere.deinit(gpa);
-        uber.ball.deinit(gpa);
+        for (&uber.meshes.values) |*meshes| meshes.deinit(gpa);
         gpa.destroy(uber);
     }
 
     /// `uber_explode_start` (`0x00472AB0`): sets a blast of `size` off at `place` for `owner`, over
-    /// `duration` ticks, in place of any going off. It lists the ships it may reach: each object
+    /// `duration` ticks, shown in `style`, in place of any going off. It lists the ships it may reach: each object
     /// but the player's ship that is created and not disabled, of a side but the neutral one, with
     /// combat stats and an order, but for the gates, the Boridin and its breakaway, and within
     /// `reach` of its size. Its halves start at the point, dark and faint, but for their rims, which
@@ -274,36 +392,49 @@ pub const Uber = struct {
     ///
     /// **Fix:** the game lists every ship in reach, running past the end of its list with more than
     /// `max_caught`; the port lists the first `max_caught`.
-    pub fn start(uber: *Uber, world: gameobj.World, owner: u16, place: math.Place, size: f32, duration: i32) void {
+    pub fn start(uber: *Uber, world: gameobj.World, owner: u16, place: math.Place, size: f32, duration: i32, style: Style) void {
+        const meshes = uber.meshes.getPtr(style);
+        const shape: Shape = .of(style);
         const half: srapiext.MeshObject = .{
             .flags = .{ .not_culled = true, .always_drawn = true, .unbounded = true, .baked_object = true, .own_first = true },
             .position = place.position,
             .orientation = place.orientation,
-            .radius = uber.hemisphere.radius,
-            .levels = &uber.levels[0],
+            .radius = meshes.hemisphere.radius,
+            .levels = &meshes.levels[0],
         };
+        const now = world.clock.frame_start;
         uber.blast = .{
             .owner = owner,
             .place = place,
             .size = size,
-            .started = world.clock.frame_start,
+            .started = now,
             .duration = duration,
+            .style = style,
+            .paced_at = now,
             .halves = .{ half, half },
-            .half_colours = @splat(.{ 0, 0, 0, half_alpha }),
-            .half_uv = undefined,
-            .ball = .{ .flags = half.flags, .position = place.position, .orientation = place.orientation, .radius = 1, .levels = &uber.levels[1] },
+            .ball = .{ .flags = half.flags, .position = place.position, .orientation = place.orientation, .radius = 1, .levels = &meshes.levels[1] },
             .glow = .{ .position = place.position, .sprites = &.{} },
+            .light = .{
+                .mask = 0,
+                .intensity = 0,
+                .colour = light_colour,
+                .kind = .{ .point = .{ .position = place.position, .range = size * light_reach } },
+            },
         };
         const blast = &uber.blast.?;
         blast.halves[1].orientation = math.product(math.fromAngles(0, std.math.pi, 0), place.orientation);
-        blast.half_colours[hemisphere_vertices - rim ..].* = @splat(@splat(0));
-        for (&blast.half_uv, uber.hemisphere.positions) |*uv, at| uv.* = .{ at[0] * half_mapping + half_mapping, at[1] * half_mapping + half_mapping };
-        for (&blast.halves) |*shown| {
-            shown.baked = &blast.half_colours;
-            shown.own_uv = .{ &blast.half_uv, null };
+        const vertices = shape.hemisphereVertices();
+        for (blast.half_colours[0..vertices], blast.half_uv[0..vertices], meshes.hemisphere.positions, 0..) |*colour, *uv, at, index| {
+            colour.* = .{ 0, 0, 0, half_alpha * shape.fade(index) };
+            uv.* = .{ at[0] * half_mapping + half_mapping, at[1] * half_mapping + half_mapping };
         }
-        blast.ball.baked = &blast.ball_colours;
-        blast.ball.own_uv = .{ &blast.ball_uv, null };
+        for (&blast.halves) |*shown| {
+            shown.baked = blast.half_colours[0..vertices];
+            shown.own_uv = .{ blast.half_uv[0..vertices], null };
+        }
+        const ball_vertices = shape.ball.vertices();
+        blast.ball.baked = blast.ball_colours[0..ball_vertices];
+        blast.ball.own_uv = .{ blast.ball_uv[0..ball_vertices], null };
         blast.glow.surface = .{
             .material = .onePass(.{ .coordinates = .mesh, .lit = true, .blend = .add }),
             .textures = .{ .{ .image = uber.glow }, .none },
@@ -343,9 +474,11 @@ pub const Uber = struct {
 
     /// `uber_explode_update` (`0x00473210`), first in `explosions_update`: once its duration is
     /// past the blast ends (`end`). Until `faded` the halves grow to `half_scale` of its size,
-    /// open out until `opened`, and brighten and fade by `brightness`; from `opened` the ball
-    /// spreads (`Blast.spread`); from `flash_from` the view flashes longer and longer; and from
-    /// `faded` burning bits fly at the camera (`Blast.throwBits`).
+    /// open out until `opened`, and brighten and fade by `brightness`, their light with them in the
+    /// fuller style; from `opened` the ball spreads (`Blast.spread`); from `flash_from` the view
+    /// flashes longer and longer; and from `faded` burning bits fly at the camera
+    /// (`Blast.throwBits`), a round of them each time the blast draws its numbers afresh
+    /// (`Blast.rounds`).
     ///
     /// **Fix:** the game colours one vertex of the halves' rims with the rest, which shows a sliver
     /// of the rim; the port keeps the whole rim clear, as the blast starts it.
@@ -355,17 +488,23 @@ pub const Uber = struct {
         if (blast.started + blast.duration < now) return uber.end(world);
         const done = @as(f32, @floatFromInt(now - blast.started)) / @as(f32, @floatFromInt(blast.duration));
         blast.done = done;
+        const drawn = blast.rounds(now);
+        const shape = blast.shape();
         if (done < faded) {
             for (&blast.halves) |*half| half.scale = blast.size * half_scale;
-            if (done < opened) open(uber.hemisphere.positions, done / opened);
+            if (done < opened) open(uber.meshes.getPtr(blast.style).hemisphere.positions, shape, done / opened);
             const bright = brightness(done);
-            for (blast.half_colours[0 .. hemisphere_vertices - rim]) |*colour| colour.* = .{ bright, bright, bright, bright * half_alpha };
+            for (blast.half_colours[0..shape.hemisphereVertices()], 0..) |*colour, index| {
+                const lit = bright * shape.fade(index);
+                colour.* = .{ lit, lit, lit, lit * half_alpha };
+            }
+            blast.light.intensity = light_intensity * bright;
         }
-        if (done > opened) blast.spread(world, (done - opened) / (1 - opened));
+        if (done > opened) blast.spread(world, (done - opened) / (1 - opened), drawn);
         if (done > flash_from) if (world.flash) |flash| {
             flash.left = @intFromFloat((done - flash_from) * flash_rate);
         };
-        if (done > faded) blast.throwBits(world);
+        if (done > faded) for (0..drawn) |_| blast.throwBits(world);
     }
 
     /// The blast's end: it goes (`uber_explode_free`, `0x004731A0`), its owner's ship sounds
@@ -388,11 +527,14 @@ pub const Uber = struct {
         }
     }
 
-    /// The blast's objects, in the world's layer: the halves until `faded`, and the ball and its
-    /// glow from `opened`.
+    /// The blast's objects, in the world's layer: the halves until `faded`, with its light in the
+    /// fuller style, and the ball and its glow from `opened`.
     pub fn draw(uber: *Uber, gpa: Allocator, scene: *srcore.Scene) Allocator.Error!void {
         const blast = &(uber.blast orelse return);
-        if (blast.done < faded) for (&blast.halves) |*half| try xtrabits.sceneAdd(gpa, scene, .{ .mesh = half }, .world);
+        if (blast.done < faded) {
+            for (&blast.halves) |*half| try xtrabits.sceneAdd(gpa, scene, .{ .mesh = half }, .world);
+            if (blast.style == .fuller) try xtrabits.sceneAdd(gpa, scene, .{ .light = &blast.light }, .world);
+        }
         if (blast.done > opened) {
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &blast.ball }, .world);
             try xtrabits.sceneAdd(gpa, scene, .{ .sprites = &blast.glow }, .world);
@@ -408,36 +550,70 @@ fn brightness(done: f32) f32 {
     return 1 - (done - opened) / (faded - opened);
 }
 
-/// `uber_hemisphere_open` (`0x00473EA0`): lays the hemisphere out `share` of the way open, of a
-/// unit radius, its pole at the origin and its bowl toward -Z: each ring `share` of a band of
-/// `hemisphere` further round from the pole than the last. Shut, it is a point.
-fn open(positions: []Vector, share: f32) void {
-    const step = share * std.math.pi / @as(f32, hemisphere.down);
-    for (0..rings + 2) |ring| {
+/// The colour of vertex `index` of the ball on `grid`, `fine` times as fine as the game's: the
+/// flicker of the game's vertices round it, each by how near it stands, as it lies between their
+/// bands and slices. On the game's own grid, a vertex takes its own.
+fn flickerAt(flicker: *const [game_ball_vertices][4]f32, grid: shield.Grid, fine: u16, index: usize) [4]f32 {
+    const f: f32 = @floatFromInt(fine);
+    const last = grid.vertices() - 1;
+    const band: f32 = if (index == 0) 0 else if (index == last) game_ball.down else @as(f32, @floatFromInt(1 + (index - 1) / grid.around)) / f;
+    const slice: f32 = if (index == 0 or index == last) 0 else @as(f32, @floatFromInt((index - 1) % grid.around)) / f;
+    const top: usize = @intFromFloat(@floor(band));
+    const left: usize = @intFromFloat(@floor(slice));
+    const down = band - @floor(band);
+    const across = slice - @floor(slice);
+    const upper = mix(flickerOf(flicker, top, left), flickerOf(flicker, top, left + 1), across);
+    const lower = mix(flickerOf(flicker, top + 1, left), flickerOf(flicker, top + 1, left + 1), across);
+    return mix(upper, lower, down);
+}
+
+/// The flicker of the game's ball at band `band` from its first pole and slice `slice`, the poles
+/// taking one for every slice.
+fn flickerOf(flicker: *const [game_ball_vertices][4]f32, band: usize, slice: usize) Colour {
+    if (band == 0) return flicker[0];
+    if (band >= game_ball.down) return flicker[game_ball_vertices - 1];
+    return flicker[game_ball.ring(band, slice)];
+}
+
+const Colour = @Vector(4, f32);
+
+/// `share` of the way from `a` to `b`.
+fn mix(a: Colour, b: Colour, share: f32) Colour {
+    return (b - a) * @as(Colour, @splat(share)) + a;
+}
+
+/// `uber_hemisphere_open` (`0x00473EA0`): lays the hemisphere of `shape` out `share` of the way
+/// open, of a unit radius, its pole at the origin and its bowl toward -Z: each ring `share` of a
+/// band of its grid further round from the pole than the last. Shut, it is a point.
+fn open(positions: []Vector, shape: Shape, share: f32) void {
+    const hemisphere = shape.hemisphere;
+    const step = share * std.math.pi / @as(f32, @floatFromInt(hemisphere.down));
+    for (0..shape.rings + 2) |ring| {
         const angle = @as(f32, @floatFromInt(ring)) * step;
         const across = @sin(angle);
         const depth = @cos(angle) - 1;
-        if (ring == 0 or ring == rings + 1) {
-            positions[if (ring == 0) 0 else hemisphere_vertices - 1] = .{ 0, 0, depth };
+        if (ring == 0 or ring == shape.rings + 1) {
+            positions[if (ring == 0) 0 else shape.hemisphereVertices() - 1] = .{ 0, 0, depth };
             continue;
         }
         for (0..hemisphere.around) |slice| {
-            const round = @as(f32, @floatFromInt(slice)) * std.math.tau / @as(f32, hemisphere.around);
+            const round = @as(f32, @floatFromInt(slice)) * std.math.tau / @as(f32, @floatFromInt(hemisphere.around));
             positions[hemisphere.ring(ring, slice)] = .{ @sin(round) * across, @cos(round) * across, depth };
         }
     }
 }
 
-/// `uber_hemisphere_create` (`0x00473BF0`): the hemisphere, fully open, over `image`: lit, blended
-/// over what is behind it, and coloured and mapped by its objects' own colours and coordinates.
+/// `uber_hemisphere_create` (`0x00473BF0`): the hemisphere of `shape`, fully open, over `image`:
+/// lit, blended over what is behind it, and coloured and mapped by its objects' own colours and
+/// coordinates.
 ///
 /// Not ported: its vertices' normals, which nothing lights.
-fn hemisphereMesh(gpa: Allocator, image: *srtexture.Image) Allocator.Error!srapiext.Mesh {
-    const triangles = hemisphere.triangles(rings);
-    var mesh: srapiext.Mesh = try .create(gpa, .{ .polygons = triangles, .vertices = hemisphere_vertices, .indices = triangles * 3 });
+fn hemisphereMesh(gpa: Allocator, shape: Shape, image: *srtexture.Image) Allocator.Error!srapiext.Mesh {
+    const triangles = shape.hemisphere.triangles(shape.rings);
+    var mesh: srapiext.Mesh = try .create(gpa, .{ .polygons = triangles, .vertices = shape.hemisphereVertices(), .indices = triangles * 3 });
     errdefer mesh.deinit(gpa);
-    open(mesh.positions, 1);
-    hemisphere.corners(rings, mesh.indices);
+    open(mesh.positions, shape, 1);
+    shape.hemisphere.corners(shape.rings, mesh.indices);
     mesh.numberPolygons(3);
     mesh.surfaces[0] = .{
         .polygons = @intCast(triangles),
@@ -461,23 +637,66 @@ pub const testing = struct {
 
 test hemisphereMesh {
     const gpa = std.testing.allocator;
-    var mesh = try hemisphereMesh(gpa, testing.images().ring);
+    const game: Shape = .of(.original);
+    var mesh = try hemisphereMesh(gpa, game, testing.images().ring);
     defer mesh.deinit(gpa);
     // A fan round the pole and six bands, 234 triangles over 128 vertices, every corner one of them.
     try std.testing.expectEqual(234, mesh.polygons.len);
     try std.testing.expectEqual(128, mesh.positions.len);
-    for (mesh.indices) |corner| try std.testing.expect(corner < hemisphere_vertices - 1);
+    for (mesh.indices) |corner| try std.testing.expect(corner < game.hemisphereVertices() - 1);
     // Fully open, the pole at the origin and the last ring near the rim, a unit round, a unit down.
     try std.testing.expectEqual(@as(Vector, @splat(0)), mesh.positions[0]);
-    const last = mesh.positions[hemisphere.ring(rings, 0)];
+    const last = mesh.positions[game.hemisphere.ring(game.rings, 0)];
     try std.testing.expectApproxEqAbs(@sin(7 * std.math.pi / 16.0), last[1], 1e-5);
     try std.testing.expectApproxEqAbs(@cos(7 * std.math.pi / 16.0) - 1, last[2], 1e-5);
 
     // Shut, it is a point; half open, its last ring is half as far round.
-    open(mesh.positions, 0);
+    open(mesh.positions, game, 0);
     for (mesh.positions) |at| try std.testing.expectEqual(@as(Vector, @splat(0)), at);
-    open(mesh.positions, 0.5);
-    try std.testing.expectApproxEqAbs(@cos(3.5 * std.math.pi / 16.0) - 1, mesh.positions[hemisphere.ring(rings, 3)][2], 1e-5);
+    open(mesh.positions, game, 0.5);
+    try std.testing.expectApproxEqAbs(@cos(3.5 * std.math.pi / 16.0) - 1, mesh.positions[game.hemisphere.ring(game.rings, 3)][2], 1e-5);
+
+    // The fuller style's reaches as far round, its last ring where the game's is.
+    const fuller: Shape = .of(.fuller);
+    var fine = try hemisphereMesh(gpa, fuller, testing.images().ring);
+    defer fine.deinit(gpa);
+    try std.testing.expectEqual(fuller.hemisphereVertices(), fine.positions.len);
+    const fine_last = fine.positions[fuller.hemisphere.ring(fuller.rings, 0)];
+    try std.testing.expectApproxEqAbs(last[1], fine_last[1], 1e-5);
+    try std.testing.expectApproxEqAbs(last[2], fine_last[2], 1e-5);
+}
+
+test "Shape.fade" {
+    // The game's halves are coloured whole but for the last ring and the last pole.
+    const game: Shape = .of(.original);
+    try std.testing.expectEqual(1, game.fade(0));
+    try std.testing.expectEqual(1, game.fade(game.hemisphere.ring(game.rings - 1, 5)));
+    try std.testing.expectEqual(0, game.fade(game.hemisphere.ring(game.rings, 5)));
+    try std.testing.expectEqual(0, game.fade(game.hemisphereVertices() - 1));
+    // The fuller style's fade across the game's last band, ring by ring.
+    const fuller: Shape = .of(.fuller);
+    try std.testing.expectEqual(1, fuller.fade(fuller.hemisphere.ring(fuller.rings - 3, 0)));
+    try std.testing.expectApproxEqAbs(2.0 / 3.0, fuller.fade(fuller.hemisphere.ring(fuller.rings - 2, 0)), 1e-6);
+    try std.testing.expectApproxEqAbs(1.0 / 3.0, fuller.fade(fuller.hemisphere.ring(fuller.rings - 1, 0)), 1e-6);
+    try std.testing.expectEqual(0, fuller.fade(fuller.hemisphere.ring(fuller.rings, 0)));
+}
+
+test flickerAt {
+    var flicker: [game_ball_vertices][4]f32 = undefined;
+    for (&flicker, 0..) |*colour, n| colour.* = @splat(@floatFromInt(n));
+    // On the game's own grid, each vertex takes its own.
+    for (0..game_ball_vertices) |n| try std.testing.expectEqual(flicker[n], flickerAt(&flicker, game_ball, 1, n));
+    // On the finer grid, a vertex on one of the game's takes its; one between takes a share of each.
+    const fine = Shape.of(.fuller);
+    const on = fine.ball.ring(fine.fine, 0);
+    try std.testing.expectEqual(flicker[game_ball.ring(1, 0)], flickerAt(&flicker, fine.ball, fine.fine, on));
+    const between = flickerAt(&flicker, fine.ball, fine.fine, fine.ball.ring(fine.fine, 1));
+    const first = flicker[game_ball.ring(1, 0)][0];
+    const second = flicker[game_ball.ring(1, 1)][0];
+    try std.testing.expectApproxEqAbs(first + (second - first) / 3, between[0], 1e-5);
+    // The poles are the game's.
+    try std.testing.expectEqual(flicker[0], flickerAt(&flicker, fine.ball, fine.fine, 0));
+    try std.testing.expectEqual(flicker[game_ball_vertices - 1], flickerAt(&flicker, fine.ball, fine.fine, fine.ball.vertices() - 1));
 }
 
 test brightness {
@@ -520,13 +739,14 @@ test Uber {
     all.slots[near].drawn.position = .{ 0, 0, 3000 };
     all.slots[near].object.root.position = gameobj.vec3(.{ 0, 0, 3000 });
     stage.mission.clock.frame_start = 1000;
-    uber.start(world, 0, .{ .position = @splat(0) }, size, 1000);
+    uber.start(world, 0, .{ .position = @splat(0) }, size, 1000, .original);
     const blast = &uber.blast.?;
     try std.testing.expectEqual(1, blast.caught_count);
     try std.testing.expectEqual(near, blast.caught[0].index);
     // Its halves start dark and faint, their rims clear; the rings spread.
+    const rim = Shape.of(.original).hemisphere.ring(game_rings, 0);
     try std.testing.expectEqual([4]f32{ 0, 0, 0, half_alpha }, blast.half_colours[0]);
-    try std.testing.expectEqual([4]f32{ 0, 0, 0, 0 }, blast.half_colours[hemisphere_vertices - rim]);
+    try std.testing.expectEqual([4]f32{ 0, 0, 0, 0 }, blast.half_colours[rim]);
     try std.testing.expectEqual(.uber, built.waves.waves[0].?.kind);
     try std.testing.expectEqual(size * waves[1].size, built.waves.waves[1].?.size);
 
@@ -535,12 +755,13 @@ test Uber {
     stage.mission.clock.frame_start = 1200;
     uber.frame(world);
     try std.testing.expectEqual(size * half_scale, blast.halves[1].scale);
-    try std.testing.expectEqual([4]f32{ 1, 1, 1, half_alpha }, blast.half_colours[hemisphere_vertices - rim - 1]);
-    try std.testing.expectEqual([4]f32{ 0, 0, 0, 0 }, blast.half_colours[hemisphere_vertices - rim]);
+    try std.testing.expectEqual([4]f32{ 1, 1, 1, half_alpha }, blast.half_colours[rim - 1]);
+    try std.testing.expectEqual([4]f32{ 0, 0, 0, 0 }, blast.half_colours[rim]);
     var scene: srcore.Scene = .{};
     defer scene.deinit(gpa);
     try uber.draw(gpa, &scene);
     try std.testing.expectEqual(2, scene.layers.get(.world).items.len);
+    try std.testing.expectEqual(0, scene.lights.items.len);
 
     // Near the end, the ball has spread past the near ship: knocked, spinning, alight and doing
     // nothing; and burning bits fly at the camera.
@@ -560,4 +781,39 @@ test Uber {
     try std.testing.expectEqual(null, uber.blast);
     try std.testing.expectEqual(.explode, aigeneric.current(all, near).?.order);
     try std.testing.expectEqual(.do_nothing, aigeneric.current(all, far).?.order);
+}
+
+test "the fuller style" {
+    const gpa = std.testing.allocator;
+    var stage: explode.testing.Stage = undefined;
+    try stage.init();
+    defer stage.deinit();
+    var watching: @import("../camera.zig").Camera = .{};
+    watching.place.position = .{ 0, 0, -50000 };
+    var world = stage.world();
+    world.camera = &watching;
+    const uber = stage.explosions.uber;
+    stage.mission.clock.frame_start = 1000;
+    uber.start(world, 0, .{ .position = @splat(0) }, 1000, 1000, .fuller);
+    const blast = &uber.blast.?;
+
+    // It draws its numbers afresh once for each simulation step: none within a step, two for two.
+    try std.testing.expectEqual(0, blast.rounds(1003));
+    try std.testing.expectEqual(1, blast.rounds(1004));
+    try std.testing.expectEqual(2, blast.rounds(1013));
+    try std.testing.expectEqual(0, blast.rounds(1015));
+
+    // Its light shines as bright as the halves while they show.
+    stage.mission.clock.frame_start = 1200;
+    uber.frame(world);
+    try std.testing.expectEqual(light_intensity, blast.light.intensity);
+    var scene: srcore.Scene = .{};
+    defer scene.deinit(gpa);
+    try uber.draw(gpa, &scene);
+    try std.testing.expectEqual(1, scene.lights.items.len);
+
+    // The ball flickers the first frame it shows, even between steps.
+    stage.mission.clock.frame_start = 1401;
+    uber.frame(world);
+    try std.testing.expect(blast.flickered);
 }

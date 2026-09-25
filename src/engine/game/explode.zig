@@ -185,7 +185,7 @@ pub const Explosions = struct {
         }
         try explosions.pieces.draw(gpa, scene, ahead);
         try explosions.splits.draw(gpa, scene);
-        try explosions.chunks.draw(gpa, scene);
+        try explosions.chunks.draw(gpa, scene, ahead);
         for (&explosions.burn_lights) |*slot| {
             const burning = &(slot.* orelse continue);
             try xtrabits.sceneAdd(gpa, scene, .{ .light = &burning.light }, .world);
@@ -344,6 +344,7 @@ pub const Settings = struct {
     debris_lights: DebrisLights = .like_ships,
     fireballs: Fireballs = .fuller,
     bit_pool: BitPool = .lasting,
+    uber: uber.Style = .fuller,
 };
 
 /// How many burning bits the explosions keep flying, and for how long.
@@ -910,10 +911,11 @@ pub fn fireballAt(world: gameobj.World, at: Vector, spec: Fireball.Spec) void {
     explosions.setOff(at, spec, world.clock, world.random);
 }
 
-/// Sets the Uber Explode off for `owner` (`uber.Uber.start`), where the world has explosions.
+/// Sets the Uber Explode off for `owner` (`uber.Uber.start`), in the style the settings give,
+/// where the world has explosions.
 pub fn uberExplode(world: gameobj.World, owner: u16, place: math.Place, size: f32, duration: i32) void {
     const explosions = world.explosions orelse return;
-    explosions.uber.start(world, owner, place, size, duration);
+    explosions.uber.start(world, owner, place, size, duration, explosions.settings.uber);
 }
 
 /// Throws a chunk of rock from `at` along `direction` (`rocks.throw`), where the world has

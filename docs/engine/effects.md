@@ -6,7 +6,7 @@ What the game shows besides its objects and their shots: for now, the particles,
 
 The game moves its effects on by the ticks, a hundred a second, and draws each where the last tick left it, so at a display rate the ticks don't divide evenly, they move on unevenly.
 
-**Improvement:** each is drawn as far past its tick as the frame is, the share of a tick the clock keeps (`objects.pastTick`): a particle, a spark, a bit, a fireball and its light, a piece of the break-up and a shockwave all that much further along by their velocities, a piece turned that much further by its spin, and a shockwave's ring spread that much further. What they do stays on the ticks. `--no-smooth-motion` and `--original` draw them where the ticks leave them.
+**Improvement:** each is drawn as far past its tick as the frame is, the share of a tick the clock keeps (`objects.pastTick`): a particle, a spark, a bit, a chunk of rock, a fireball and its light, a piece of the break-up and a shockwave all that much further along by their velocities, a piece and a chunk turned that much further by their spin, and a shockwave's ring spread that much further. What they do stays on the ticks. `--no-smooth-motion` and `--original` draw them where the ticks leave them.
 
 ## Particles
 
@@ -351,7 +351,8 @@ side but the neutral one and an order stack, and within 5 times its size, but fo
 - A ball, a sphere of 18 by 8 (`sphere_mesh_create`) over `shield128`, and its glow (`Uber BMO`), a
   sprite over `gunflare\partic6`, lit and added, red at 0.75, hanging from the ball.
 - Two squares (`UberWave1`, `UberWave2`) over `bigshock1` and `bigshock2`, and a light
-  (`UberExplosion_Light`), which it never adds to the scene.
+  (`UberExplosion_Light`), lilac (0.7, 0.5, 1) at intensity 2, reaching 20 times its size, none of
+  which it ever adds to the scene.
 
 It sounds `UBEREXP` from the owner, flashes the view for 100 ticks, and sets off two shockwaves of
 kind 3: 16 times its size across over a quarter of its duration, and 6 times over half
@@ -380,6 +381,14 @@ shows a sliver of the rim; the port keeps the whole rim clear.
 
 **Improvement:** the game opens the halves and spreads the ball by rounded factors; the port
 divides.
+
+**Improvement:** the halves and the ball are drawn on grids three times as fine, so neither shows
+its facets. The halves fade to their rim across the three rings that stand in the game's last band,
+and the ball's vertices take the flicker of the game's vertices round them, so its blotches keep
+their size. The ball flickers and the bits are thrown once each simulation step, 25 times a second,
+where the game does both each frame, so a higher frame rate neither quickens the flicker nor throws
+more bits. And the light lights what is round the blast while the halves show, as bright as they
+are. `--original` restores the game's.
 
 [`explode/uber.zig`](../../src/engine/game/explode/uber.zig) ports the Uber Explode, and
 [`aiexplode.zig`](../../src/engine/game/aiexplode.zig) the order. Not ported: the multiplayer part
