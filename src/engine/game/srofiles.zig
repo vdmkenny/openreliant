@@ -13,6 +13,7 @@ const math = @import("../surrender/math.zig");
 const srapi = @import("../surrender/surrenderlib/srapi.zig");
 const srapiext = @import("../surrender/surrenderlib/srapiext.zig");
 const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
+const bigfile = @import("bigfile.zig");
 const matmanager = @import("matmanager.zig");
 const Material = srapiext.Material;
 const Vector = math.Vector;
@@ -502,6 +503,23 @@ pub const Loaded = struct {
     }
 };
 
+/// A model file as the game reads and loads it: the `.SHP` model and what `modelLoad` builds of it.
+pub const ModelFile = struct {
+    model: *const shp.Model,
+    loaded: *const Loaded,
+};
+
+/// Reads the model `file` from `resources` and loads it (`modelLoad`), as the loaders of a ship
+/// type's model, of a mounted model and of the cockpit each do. Everything is made in `gpa`, an
+/// arena, since none of it is let go but all at once.
+pub fn readModel(gpa: Allocator, resources: *const bigfile.Hog, textures: *srtexture.Table, file: []const u8) !ModelFile {
+    const model = try gpa.create(shp.Model);
+    model.* = try .parse(gpa, try resources.readFile(gpa, file));
+    const loaded = try gpa.create(Loaded);
+    loaded.* = try modelLoad(gpa, textures, model, .{}, false);
+    return .{ .model = model, .loaded = loaded };
+}
+
 /// Builds every level of every part of `model` (`model_load`), and bakes the static lights it
 /// carries into their vertex colours. `multiplayer_ship` is a ship type's model in a multiplayer
 /// mission, which with the model's header flag `cloak` gives its objects colours of their own and
@@ -837,25 +855,35 @@ fn testMaterial(name: []const u8) shp.Material {
     return m;
 }
 
-/// A texture table holding `hull` and its light map.
+pub const testing = struct {
+    /// A texture table of small textures, for the tests.
+    pub const Textures = TestTextures;
+};
+
+/// A texture table holding `hull` and its light map, or the textures `names` names.
 const TestTextures = struct {
     bytes: []u8,
     cache: tcache.Cache,
     table: srtexture.Table,
 
     fn init(gpa: Allocator) !*TestTextures {
+        return initNamed(gpa, &.{ "hull", "lhull" });
+    }
+
+    /// A table of a two-by-two texture for each of `names`, at most eight.
+    pub fn initNamed(gpa: Allocator, names: []const []const u8) !*TestTextures {
+        var specs: [8]tcache.testing.Spec = undefined;
+        for (specs[0..names.len], names) |*spec, name| spec.* = .{ .name = name, .encoding = .index8, .width = 2, .height = 2 };
         const t = try gpa.create(TestTextures);
         errdefer gpa.destroy(t);
-        t.bytes = try tcache.testing.build(gpa, &.{
-            .{ .name = "hull", .encoding = .index8, .width = 2, .height = 2 },
-            .{ .name = "lhull", .encoding = .index8, .width = 2, .height = 2 },
-        });
+        t.bytes = try tcache.testing.build(gpa, specs[0..names.len]);
+        errdefer gpa.free(t.bytes);
         t.cache = try .parse(gpa, t.bytes);
         t.table = .init(gpa, t.cache, std.mem.zeroes(@import("../../formats/tga.zig").Palette));
         return t;
     }
 
-    fn deinit(t: *TestTextures, gpa: Allocator) void {
+    pub fn deinit(t: *TestTextures, gpa: Allocator) void {
         t.table.deinit();
         t.cache.deinit(gpa);
         gpa.free(t.bytes);
@@ -1095,4 +1123,23 @@ test staticLightBake {
     normals[0] = .{ 1, 0, 0 };
     for (0..8) |_| staticLightBake(light, shp.Vec3.zero, &mesh);
     try std.testing.expectEqual(1, baked[0][0]);
+}
+
+test readModel {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buffer: [4096]u8 = undefined;
+    try bigfile.testing.write(gpa, io, tmp.dir, bigfile.resource_name, &.{.{ .name = "Ship.SHP", .data = shp.testing.buildModel(&buffer) }});
+    var resources: bigfile.Hog = try .open(gpa, io, tmp.dir, bigfile.resource_name);
+    defer resources.close(gpa);
+    const textures = try TestTextures.initNamed(gpa, &.{ "yank_1", "lyank_1", "cloak64" });
+    defer textures.deinit(gpa);
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+
+    const file = try readModel(arena.allocator(), &resources, &textures.table, "ship.shp");
+    try std.testing.expectEqual(1, file.model.parts.len);
+    try std.testing.expectEqual(1, file.loaded.parts.len);
 }

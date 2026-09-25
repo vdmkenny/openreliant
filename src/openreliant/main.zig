@@ -16,7 +16,6 @@ const Allocator = std.mem.Allocator;
 
 const openreliant = @import("openreliant");
 const platform = @import("platform");
-const shp = openreliant.shp;
 const stats = openreliant.stats;
 const tcache = openreliant.tcache;
 const tga = openreliant.tga;
@@ -571,9 +570,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         .gpa = gpa,
         .resources = &resources,
         .textures = &textures,
-        .glows = &glows,
-        .flashes = &flashes,
-        .light_sprites = try .load(&textures),
+        .looks = .{ .light_sprites = try .load(&textures), .glows = &glows, .flashes = &flashes },
         .global_palette = global_palette,
     });
     defer sandbox.deinit();
@@ -655,8 +652,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     defer tractors.deinit();
     var flash: game.main.flash.Flash = .{};
     // The countermeasures' model, read once for the whole run, as `decoys_init` reads it.
-    var effects_library: Library = .{ .gpa = arena, .resources = &resources, .textures = &textures };
-    var countermeasures: game.cloak.Countermeasures = .init(gpa, effects_library.mounts());
+    var effects_models: game.create.library.MountCache = .{ .gpa = arena, .resources = &resources, .textures = &textures };
+    var countermeasures: game.cloak.Countermeasures = .init(gpa, effects_models.mounts());
     defer countermeasures.reset();
     const lock_rings: *game.main.lock.Rings = try .create(gpa, &textures);
     defer lock_rings.destroy(gpa);
@@ -672,7 +669,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     while (lacking.next()) |effect| std.log.warn("forces\\{s} is missing or isn't an effect file: it plays nothing", .{effect.fileName()});
     var force_feedback: engine.input.force.Forces = .{ .library = &found_forces.library, .settings = options.forces };
     // What the objects run in, the camera's view brought up to date each frame.
-    var world: game.gameobj.World = .{ .forces = &force_feedback, .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .difficulty = options.difficulty, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .smoke = &smoke, .gun_particles = &gun_particles, .shockwaves = &shockwaves, .trails = &trails, .countermeasures = &countermeasures, .sparks = &sparks, .shields = &shields, .rays = &rays, .tractors = &tractors, .flash = &flash, .spawn = .{ .tables = sandbox.tables, .types = sandbox.types.interface() } };
+    var world: game.gameobj.World = .{ .forces = &force_feedback, .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .difficulty = options.difficulty, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .smoke = &smoke, .gun_particles = &gun_particles, .shockwaves = &shockwaves, .trails = &trails, .countermeasures = &countermeasures, .sparks = &sparks, .shields = &shields, .rays = &rays, .tractors = &tractors, .flash = &flash, .spawn = .{ .tables = sandbox.tables, .types = sandbox.types.types() } };
     try sandbox.start(.{ .world = world, .clock = &clock, .devices = &devices }, @intCast(options.ship));
     // The music, as a mission's script starts it (`cmd_PlayMusic`): from `music\`, for ever, at 80.
     if (options.music) |name| {
@@ -776,7 +773,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         // While the communications window is open the keys 1 to 8 are its menu's.
         devices.keyboard.numbers_taken = display.state.windows.status.get(.comms).phase == .open;
         world.view = view.view;
-        world.cockpit = if (sandbox.cockpit) |*cockpit| &cockpit.model else null;
+        world.cockpit = if (sandbox.cockpit.shown) |*cockpit| &cockpit.model else null;
         const orders: game.aigeneric.Context = .{ .world = world, .clock = &clock, .devices = &devices };
         while (clock.nextTick(&devices, world)) |_| {}
         clock.frameBegin();
@@ -853,7 +850,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             });
             // What moves the cockpit's model: the ship's rates of turn over its full ones, and its
             // speed over its cruise speed.
-            const cockpit_input: ?camera.Cockpit.Input = if (sandbox.cockpit) |*cockpit| input: {
+            const cockpit_input: ?camera.Cockpit.Input = if (sandbox.cockpit.shown) |*cockpit| input: {
                 const live = &slot.object;
                 const flight = slot.flight.?;
                 const rates: [3]f32 = .{
@@ -862,7 +859,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
                     live.roll_rate / flight.roll_rate,
                 };
                 const speed = live.speed / game.ai.cruiseSpeed(live, flight, view.view);
-                break :input game.main.cockpitInput(&cockpit.model, cockpit.source, rates, speed);
+                break :input game.main.cockpit.input(&cockpit.model, cockpit.source, rates, speed);
             } else null;
             const subject = camera.Subject.of(slot);
             // The view's own object, which the ejection's views show, and the player's ship
@@ -902,7 +899,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         context.camera = .{ .position = view.place.position, .orientation = view.place.orientation };
         context.projection = view.projection(size[0], size[1]);
         // The cockpit's model hangs from the camera, and the radar's backing stands on the radar.
-        if (sandbox.cockpit) |*cockpit| if (view.cockpit_place) |placed| game.main.placeCockpit(&cockpit.model, view.place, placed);
+        if (sandbox.cockpit.shown) |*cockpit| if (view.cockpit_place) |placed| game.main.cockpit.place(&cockpit.model, view.place, placed);
         backing.place(context.projection, view.place, game.hud.scaleFor(size));
         _ = frame_arena.reset(.retain_capacity);
         display.target = screen.interface();
@@ -920,7 +917,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .cockpit_mode = view.cockpit_mode,
             .last_view = last_view,
             .overlay = display.overlay(),
-            .cockpit = if (sandbox.cockpit) |*cockpit| &cockpit.model else null,
+            .cockpit = if (sandbox.cockpit.shown) |*cockpit| &cockpit.model else null,
             // The paused frame hides the radar's backing, whose radar the menu stands in place of.
             .backing = if (clock.paused) null else backing,
             .kills_shown = devices.active(.display_kills, false),
@@ -1026,41 +1023,6 @@ const f2 = 0x3C;
 const f3 = 0x3D;
 const f4 = 0x3E;
 
-/// The models an attachment point holds, read from the game's files as they are asked for and kept
-/// for the ship that mounts them: a ship of three of the same turret reads that turret once. It
-/// lives in the ship's own arena, so unloading the ship lets the lot go.
-const Library = struct {
-    gpa: Allocator,
-    resources: *game.bigfile.Hog,
-    textures: *srtexture.Table,
-    read: std.StringHashMapUnmanaged(?game.objects.Mounts.Mounted) = .empty,
-
-    fn mounts(library: *Library) game.objects.Mounts {
-        return .{ .context = library, .load = load };
-    }
-
-    fn load(context: *anyopaque, file: []const u8) ?game.objects.Mounts.Mounted {
-        const library: *Library = @ptrCast(@alignCast(context));
-        // A model the game lacks is remembered as missing, so it is looked for only once.
-        if (library.read.get(file)) |found| return found;
-        const mounted = library.build(file) catch |err| missing: {
-            std.log.warn("the model {s} is not mounted: {s}", .{ file, @errorName(err) });
-            break :missing null;
-        };
-        library.read.put(library.gpa, file, mounted) catch return mounted;
-        return mounted;
-    }
-
-    fn build(library: *Library, file: []const u8) !game.objects.Mounts.Mounted {
-        const gpa = library.gpa;
-        const model = try gpa.create(shp.Model);
-        model.* = try .parse(gpa, try library.resources.readFile(gpa, file));
-        const loaded = try gpa.create(game.srofiles.Loaded);
-        loaded.* = try game.srofiles.modelLoad(gpa, library.textures, model, .{}, false);
-        return .{ .model = model, .loaded = loaded };
-    }
-};
-
 /// The sandbox's mission: the objects, the ship types' tables and the models they loaded, and the
 /// cockpit the mission's start loads for the player's ship. Its ships are the player's, at the
 /// origin facing along Z, with its wingmen, the Reliant standing still ahead of it, and a wing of
@@ -1069,19 +1031,12 @@ const Sandbox = struct {
     gpa: Allocator,
     objects: *game.create.Objects,
     tables: *game.create.Stats,
-    types: *TypeCache,
+    types: *game.create.library.TypeCache,
     random: *engine.libcmt.Rand,
     player_type: u8 = 0,
     /// The cockpit's frame model, for a ship the player can fly, which the view ahead from the
-    /// cockpit draws over the world; null for the rest. It lives in an arena of its own, so that
-    /// another ship's can take its place.
-    cockpit: ?Cockpit = null,
-    cockpit_arena: std.heap.ArenaAllocator,
-
-    const Cockpit = struct {
-        source: *shp.Model,
-        model: game.objects.Model,
-    };
+    /// cockpit draws over the world.
+    cockpit: game.main.cockpit.Cockpit = .{},
 
     /// The Reliant, which the sandbox starts ahead of the player and turned across its way. It flies
     /// its heading at `crawl_speed`, a tenth of the 100 its type cruises at, which carries it slowly
@@ -1123,8 +1078,8 @@ const Sandbox = struct {
     /// mostly reach it.
     const wing_pilot = 42;
 
-    fn init(gpa: Allocator, tables: *game.create.Stats, gun_stats: []align(1) const stats.Gun, missile_stats: []align(1) const stats.Missile, pilot_stats: []align(1) const stats.Pilot, random: *engine.libcmt.Rand, types: TypeCache) !Sandbox {
-        const cache = try gpa.create(TypeCache);
+    fn init(gpa: Allocator, tables: *game.create.Stats, gun_stats: []align(1) const stats.Gun, missile_stats: []align(1) const stats.Missile, pilot_stats: []align(1) const stats.Pilot, random: *engine.libcmt.Rand, types: game.create.library.TypeCache) !Sandbox {
+        const cache = try gpa.create(game.create.library.TypeCache);
         errdefer gpa.destroy(cache);
         cache.* = types;
         const objects = try game.create.Objects.create(gpa, random);
@@ -1137,7 +1092,6 @@ const Sandbox = struct {
             .tables = tables,
             .types = cache,
             .random = random,
-            .cockpit_arena = .init(std.heap.page_allocator),
         };
     }
 
@@ -1145,7 +1099,7 @@ const Sandbox = struct {
         sandbox.objects.destroy();
         sandbox.types.deinit();
         sandbox.gpa.destroy(sandbox.types);
-        sandbox.cockpit_arena.deinit();
+        sandbox.cockpit.deinit();
     }
 
     fn player(sandbox: *Sandbox) *game.create.Slot {
@@ -1187,8 +1141,8 @@ const Sandbox = struct {
         sandbox.objects.reset(sandbox.random);
         // The Turret Flak's shell and the debris models, counted as used so the sweep below keeps
         // them (`guns_load_shell`, `explosions_init`).
-        if (sandbox.objects.bullets.looks) |looks| looks.loadShell(sandbox.objects, sandbox.types.interface());
-        if (orders.world.explosions) |explosions| explosions.debris = .load(sandbox.objects, sandbox.types.interface());
+        if (sandbox.objects.bullets.looks) |looks| looks.loadShell(sandbox.objects, sandbox.types.types());
+        if (orders.world.explosions) |explosions| explosions.debris = .load(sandbox.objects, sandbox.types.types());
         const index = try sandbox.create(@enumFromInt(ship_type), @splat(0));
         if (sandbox.objects.slots[index].model == null) return error.NoModel;
         // The engine's sound, which a mission starts as the player's ship launches (`launch_run`).
@@ -1207,7 +1161,7 @@ const Sandbox = struct {
         sandbox.bringWingmen(orders, index, &sabres);
         sandbox.types.sweep(&sandbox.objects.types);
         // Each mission's start makes the cockpit afresh, as an ejection leaves it lit red.
-        try sandbox.loadCockpit(ship_type);
+        try sandbox.cockpit.load(sandbox.types.resources, sandbox.types.textures, ship_type);
         sandbox.player_type = ship_type;
     }
 
@@ -1252,7 +1206,7 @@ const Sandbox = struct {
     }
 
     fn create(sandbox: *Sandbox, ship_type: game.gameobj.Type, at: math.Vector) game.create.Error!u16 {
-        return game.create.createObject(sandbox.objects, sandbox.tables, sandbox.types.interface(), null, ship_type, 0, at, sandbox.random);
+        return game.create.createObject(sandbox.objects, sandbox.tables, sandbox.types.types(), null, ship_type, 0, at, sandbox.random);
     }
 
     /// A wing of fighters `wing_ahead` in front of the player, side by side and facing it, each
@@ -1310,118 +1264,6 @@ const Sandbox = struct {
         }
         game.mission.listPlayerWing(sandbox.objects, wing[0..count]);
         game.main.startWing(sandbox.objects);
-    }
-
-    /// The cockpit the mission's start loads for a ship the player can fly.
-    fn loadCockpit(sandbox: *Sandbox, ship_type: u8) !void {
-        sandbox.cockpit = null;
-        _ = sandbox.cockpit_arena.reset(.free_all);
-        const player_ship = game.main.playerShip(ship_type) orelse return;
-        const gpa = sandbox.cockpit_arena.allocator();
-        const source = try gpa.create(shp.Model);
-        const bytes = sandbox.types.resources.readFile(gpa, player_ship.cockpit) catch |err| {
-            std.log.warn("the cockpit {s} is left out: {s}", .{ player_ship.cockpit, @errorName(err) });
-            return;
-        };
-        source.* = shp.Model.parse(gpa, bytes) catch |err| {
-            std.log.warn("the cockpit {s} is left out: {s}", .{ player_ship.cockpit, @errorName(err) });
-            return;
-        };
-        const built = try gpa.create(game.srofiles.Loaded);
-        built.* = try game.srofiles.modelLoad(gpa, sandbox.types.textures, source, .{}, false);
-        sandbox.cockpit = .{ .source = source, .model = try game.main.createCockpit(gpa, source, built) };
-    }
-};
-
-/// The ship types' models, read from the game's files as `create_object` asks for them, each with
-/// what it mounts and its schematic, in an arena of its own that is let go once no object is of
-/// the type.
-const TypeCache = struct {
-    gpa: Allocator,
-    resources: *game.bigfile.Hog,
-    textures: *srtexture.Table,
-    glows: *const game.environfx.Glows,
-    flashes: *const game.guns.flash.Looks,
-    light_sprites: game.objects.LightSprites,
-    global_palette: ?*const [spr.palette_size]u8,
-    loaded: [game.create.ship_type_count]?*Cached = @splat(null),
-    /// Types whose files the game lacks, looked for once.
-    missing: std.StaticBitSet(game.create.ship_type_count) = .initEmpty(),
-
-    const Cached = struct {
-        arena: std.heap.ArenaAllocator,
-        type: game.create.Type,
-        library: Library,
-        /// The schematic the display's ship status indicator draws, where the game has one.
-        schematic: ?game.hud.Art,
-    };
-
-    fn interface(cache: *TypeCache) game.create.Types {
-        return .{ .context = cache, .load = load };
-    }
-
-    fn load(context: *anyopaque, ship_type: u8) ?*const game.create.Type {
-        const cache: *TypeCache = @ptrCast(@alignCast(context));
-        if (cache.loaded[ship_type]) |cached| return &cached.type;
-        if (cache.missing.isSet(ship_type)) return null;
-        const cached = cache.build(ship_type) catch |err| {
-            std.log.warn("ship type {d} has no model: {s}", .{ ship_type, @errorName(err) });
-            cache.missing.set(ship_type);
-            return null;
-        };
-        cache.loaded[ship_type] = cached;
-        return &cached.type;
-    }
-
-    fn build(cache: *TypeCache, ship_type: u8) !*Cached {
-        const name = game.create.models.ship_types[ship_type].model orelse return error.NoModel;
-        const cached = try cache.gpa.create(Cached);
-        errdefer cache.gpa.destroy(cached);
-        cached.arena = .init(std.heap.page_allocator);
-        errdefer cached.arena.deinit();
-        const gpa = cached.arena.allocator();
-        const model = try gpa.create(shp.Model);
-        model.* = try .parse(gpa, try cache.resources.readFile(gpa, name));
-        const loaded = try gpa.create(game.srofiles.Loaded);
-        loaded.* = try game.srofiles.modelLoad(gpa, cache.textures, model, .{}, false);
-        cached.library = .{ .gpa = gpa, .resources = cache.resources, .textures = cache.textures };
-        cached.schematic = if (game.create.models.ship_types[ship_type].schematic) |file| found: {
-            const bytes = cache.resources.readFile(gpa, file) catch |err| {
-                std.log.warn("the schematic {s} is left out: {s}", .{ file, @errorName(err) });
-                break :found null;
-            };
-            break :found try .init(gpa, try spr.Sprite.parse(bytes), cache.global_palette);
-        } else null;
-        cached.type = .{
-            .model = model,
-            .loaded = loaded,
-            .effects = .{
-                .light_sprites = cache.light_sprites,
-                .glows = cache.glows,
-                .flashes = cache.flashes,
-                .mounts = cached.library.mounts(),
-            },
-            .schematic = if (cached.schematic) |*art| .{ .art = art, .gpa = gpa } else null,
-        };
-        return cached;
-    }
-
-    /// Lets go of each type no object is of any more.
-    fn sweep(cache: *TypeCache, uses: *const [game.create.ship_type_count]game.create.TypeUse) void {
-        for (&cache.loaded, uses) |*held, use| {
-            const cached = held.* orelse continue;
-            if (use.objects > 0) continue;
-            cached.arena.deinit();
-            cache.gpa.destroy(cached);
-            held.* = null;
-        }
-    }
-
-    fn deinit(cache: *TypeCache) void {
-        for (cache.loaded) |held| if (held) |cached| {
-            cached.arena.deinit();
-            cache.gpa.destroy(cached);
-        };
     }
 };
 

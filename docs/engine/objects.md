@@ -94,7 +94,9 @@ once it is made.
 
 The object points at its type's stats and takes the type's side from them. The type's model is
 loaded with its first object (`ship_type_load`, `0x00466740`), with the type's schematic as its
-data. Each part of the model gets a node that plays its `startup` track from the start at 4 a step;
+data. The port's [`create/library.zig`](../../src/engine/game/create/library.zig) reads each type's
+model and the models its attachment points mount once, and lets a type's go once no object is of
+it. Each part of the model gets a node that plays its `startup` track from the start at 4 a step;
 a part of class 6 gives the object `shield_generator`, one of class 5 counts as an engine, and an
 attachment of kind 6 sets flag `0x2000000`. The parts are then linked, each posed as its track has
 it at the start, and the object's origin moves to their centre of mass (`object_link_parts`). A
