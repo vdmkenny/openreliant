@@ -19,6 +19,10 @@ const opcodes = @import("../engine/vm/opcodes.zig");
 
 pub const section_count = 27;
 
+/// Writing mission files and their scripts.
+pub const write = @import("dte/write.zig");
+pub const assemble = @import("dte/assemble.zig");
+
 /// Writes an enum's tag name, or its number when the file carries a value this enum does not name.
 ///
 /// The branch per named tag is generated at compile time and the open `_` case is handled
@@ -62,8 +66,11 @@ pub const Section = enum(u8) {
     /// Squad membership records, stride `0x0C`: the member's object ID at `+0` and the owning
     /// squad's index at `+4`. A squad's records are consecutive.
     squad_members = 13,
-    unknown_14 = 14,
-    nav_geometry = 15,
+    /// Ship formations, stride 8: each names its first point in `formation_points` at `+4`, which
+    /// the formation orders read (`0x00404230`).
+    formations = 14,
+    /// The points of the formations, stride `0x10` (`order_formation_regroup_init`).
+    formation_points = 15,
     sub_objects = 16,
     /// Part descriptors for `script_b`, in the same form as `parts`.
     parts_b = 17,
@@ -83,8 +90,32 @@ pub const Section = enum(u8) {
     command_flags = 24,
     /// The same for the second, empty command catalogue.
     command_flags_b = 25,
-    unknown_26 = 26,
+    /// A third table of operands, which `0x004529D0` picks among `operands_a` and `operands_b` by a
+    /// bank number.
+    operands_c = 26,
     _,
+
+    /// The bytes each of the section's records takes, which its directory count counts: bytes for
+    /// the string pool, the script flags and OpenReliant's name, halfwords for the scripts. Null
+    /// where the record's size is not known, as for section 20, which every shipped mission leaves
+    /// empty.
+    pub fn stride(section: Section) ?u8 {
+        return switch (section) {
+            .strings, .script_flags, .openreliant_name => 1,
+            .operands_a, .script, .script_b, .operands_b, .operands_c, .unknown_23, .command_flags, .command_flags_b => 2,
+            .unknown_9, .targets => 4,
+            .formations => 8,
+            .objects => @sizeOf(Object),
+            .globals, .squads, .squad_members, .unused_19 => 0x0C,
+            .formation_points => 0x10,
+            .flight_groups => @sizeOf(FlightGroup),
+            .parts, .parts_b => @sizeOf(Part),
+            .triggers => @sizeOf(Trigger),
+            .sub_objects => 0x44,
+            .ships => @sizeOf(Ship),
+            .unused_20, _ => null,
+        };
+    }
 };
 
 pub const DirectoryEntry = extern struct {
@@ -755,8 +786,8 @@ pub const Opcode = enum(u8) {
     in_squad = 0x45,
     not_in_squad = 0x46,
 
-    /// Jumps by a **big-endian** 16-bit displacement, the one place the format is not
-    /// little-endian.
+    /// Jumps forward by a **big-endian** 16-bit displacement, as all the script's two-byte operands
+    /// are big-endian.
     jump = 0x42,
     /// `call_part` through the second part table, which serves `script_b`.
     call_part_b = 0x4A,
@@ -876,7 +907,7 @@ pub fn decodeAt(code: []const u8, pos: usize) ?Instruction {
     const flow: Flow = switch (info.form) {
         .sequential => .next,
         .inline_data => .{ .inline_data = operands[1..] },
-        // The displacement is big-endian, the one place the format is not little-endian, and
+        // The displacement is big-endian, as the script's two-byte operands all are, unsigned, and
         // counts from its own position rather than from the end of the instruction.
         .branch => .{ .branch = .{
             .target = pos + 1 + (layout.view(layout.Big(u16), operands) catch return null).get(),
@@ -1624,4 +1655,6 @@ test "maps the script into trigger blocks and parts, with their constants" {
 test {
     _ = commands;
     _ = opcodes;
+    _ = write;
+    _ = assemble;
 }
