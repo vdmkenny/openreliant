@@ -612,7 +612,7 @@ pub const attachments = [9][ids_per_kind]Attachment{
         .{},
         .{},
     },
-    // Kind 3: unknown
+    // Kind 3: gun_muzzle
     .{
         .{},
         .{},
@@ -681,7 +681,7 @@ pub const attachments = [9][ids_per_kind]Attachment{
         .{},
         .{},
     },
-    // Kind 6: unknown
+    // Kind 6: eject_point
     .{
         .{},
         .{},
@@ -704,7 +704,7 @@ pub const attachments = [9][ids_per_kind]Attachment{
         .{},
         .{},
     },
-    // Kind 7: unknown
+    // Kind 7: case_ejector
     .{
         .{},
         .{},
