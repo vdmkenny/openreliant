@@ -24,8 +24,9 @@ pub const Object = union(enum) {
 };
 
 /// Puts `object` in the scene for the frame (`scene_add`): at the head of `layer`'s list, or of the
-/// lights' for a light and the portals' for a portal, whatever the layer. A hidden object is left out, as is a mesh object whose
-/// level has no polygons. `mission_frame` empties the lists each frame.
+/// lights' for a light and the portals' for a portal, whatever the layer. A hidden object is left
+/// out, as is a mesh object whose level has no polygons. `mission_frame` empties the lists each
+/// frame.
 pub fn sceneAdd(gpa: Allocator, scene: *srcore.Scene, object: Object, layer: srcore.Layer) Allocator.Error!void {
     const list = scene.layers.getPtr(layer);
     switch (object) {
@@ -46,19 +47,7 @@ test sceneAdd {
     var scene: srcore.Scene = .{};
     defer scene.deinit(gpa);
 
-    const empty: srapiext.Mesh = .{
-        .positions = &.{},
-        .normals = &.{},
-        .polygons = &.{},
-        .indices = &.{},
-        .uv = .{ null, null },
-        .planes = &.{},
-        .biases = &.{},
-        .surfaces = &.{},
-        .bounds = .{ @splat(0), @splat(0) },
-        .radius = 0,
-    };
-    const levels = [_]srapiext.Level{.{ .mesh = &empty, .until = std.math.inf(f32) }};
+    const levels = [_]srapiext.Level{.{ .mesh = &@import("srofiles.zig").empty, .until = std.math.inf(f32) }};
     var nothing: srapiext.MeshObject = .{ .flags = .{}, .position = @splat(0), .radius = 0, .levels = &levels };
     try sceneAdd(gpa, &scene, .{ .mesh = &nothing }, .world);
     try std.testing.expectEqual(0, scene.layers.get(.world).items.len);
@@ -92,10 +81,10 @@ pub fn objectRandom15(object: *GameObject) u15 {
 }
 
 /// `object_random` (`0x004ADD10`): the object's own random number from 0 to 1, which is
-/// `objectRandom15` over 32767. **Unverified:** it lies after this file's known code, before
-/// `deathmatch.cpp`'s.
+/// `objectRandom15` over the runtime's largest. **Unverified:** it lies after this file's known
+/// code, before `deathmatch.cpp`'s.
 pub fn objectRandom(object: *GameObject) f32 {
-    return @as(f32, @floatFromInt(objectRandom15(object))) / 32767;
+    return @as(f32, @floatFromInt(objectRandom15(object))) / libcmt.Rand.max;
 }
 
 /// `ship_type_first_levels` (`0x004AE190`): a ship type's model, loaded where none of its objects
