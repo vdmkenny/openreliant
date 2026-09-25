@@ -93,6 +93,11 @@ address	kind	name	type	comment
 00525fb4	data	mission_script_b	byte *	Section 18
 00529510	data	mission_script_b_halfwords	ushort	
 00525f9c	data	mission_command_flags	ushort *	Section 24, one per command
+004529d0	function	mission_operand	void * __fastcall (ushort index, char bank)	Operand index of the table bank names: 0 section 1, 1 section 22, 2 section 26
+00525278	data	mission_operands_b		Section 22, the second operand table
+0052570c	data	mission_operands_c		Section 26, the third operand table
+00525f18	data	mission_formations		Section 14, 8 bytes each: +4 is the first of the formation's points in section 15
+005256b8	data	mission_formation_points		Section 15, 0x10 bytes each
 00525f90	data	mission_command_flags_b	ushort *	Section 25, one per command_b entry
 0045cbc0	function	mission_script_start	void __fastcall (void)	Installs conditions and commands, runs the start part, arms every trigger an object's slice holds
 0045cea0	function	trigger_match	void __fastcall (ushort object, byte qualifier, Condition condition, uint *values, ushort count)	Fires the object's armed triggers whose condition, qualifier and operands match an event

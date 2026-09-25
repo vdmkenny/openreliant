@@ -50,7 +50,8 @@ the count says how much of the reserved room is filled, so most missions are exa
 | 10 | script_flags | 1 | One flag per script byte, which the interpreter consults for the script debugger |
 | 12 | squads | `0x0C` | Squads |
 | 13 | squad_members | `0x0C` | Squad membership records |
-| 15 | nav_geometry | `0x10` | |
+| 14 | formations | 8 | Ship formations: the first of each one's points in section 15 at `+4` |
+| 15 | formation_points | `0x10` | The formations' points |
 | 16 | sub_objects | `0x44` | |
 | 17 | parts_b | `0x1C` | Part descriptors for section 18 |
 | 18 | script_b | | A second bytecode section |
@@ -58,6 +59,7 @@ the count says how much of the reserved room is filled, so most missions are exa
 | 22 | operands_b | 2 | |
 | 24 | command_flags | 2 | One `u16` per Executor command |
 | 25 | command_flags_b | 2 | The same for the second command catalogue |
+| 26 | operands_c | 2 | A third operand table, beside sections 1 and 22: `0x004529D0` picks one of the three by a bank number |
 
 Sections 17 to 21 and 25 are empty in all 44 missions. The engine reads nothing of sections 9, 20,
 21 and 23: the binder binds 21 into a local variable of its own, and the rest into globals nothing
@@ -352,8 +354,11 @@ arguments up there (`vm_argument_component`, `0x0045D950`) to learn which compon
   new thread on the part, and carries on. At most 32 threads run at once.
 - **`call_part_b`** and **`spawn_part_b`** do the same through the second part table, which serves
   section 18; **`command_b`** uses a second command table, which is empty.
-- **`branch_if_zero`** and **`jump`** take a **big-endian** displacement, the only big-endian field
-  in the format, counted from its own position.
+- **`branch_if_zero`** and **`jump`** take a **big-endian** displacement, counted from its own
+  position. The handler loads it as an unsigned 16-bit number and adds it to the instruction
+  pointer (`vm_jump`, `0x0045C2B0`), so a branch only goes forward. The script's other two-byte
+  operands, the wide indices of `push_constant_wide` and `push_ship_wide`, are big-endian too;
+  the rest of the format is little-endian.
 
 A thread keeps its block's end in `[0x5373F0]`, which is where `push_constant` reads from.
 
@@ -482,6 +487,38 @@ block.
   the bytes after the gap: `51 02 00 43` in three cases, `51 02 00 45` in the fourth.
 - What the qualifier byte selects.
 
+## Writing
+
+[`dte/write.zig`](../../src/formats/dte/write.zig) writes a mission file laid out as 36 of the
+shipped missions are, `mission1` among them: a directory of 128 slots, `0x400` bytes, each section
+at the same offset with the same room up to the next, and 850,919 bytes in all. The directory's 28th
+slot holds the file's size, and the rest are unused, as in those missions; every entry carries the
+flags 15. Section 21 has no room there, starting where section 22 does, so OpenReliant's name goes
+after the template's end, which a loose file's buffer of `0xFA000` bytes still holds.
+
+A section's records are its count times its stride: bytes for the string pool, the script flags and
+OpenReliant's name, halfwords for the scripts, and the records' sizes for the rest. The strides of
+sections 9, 11 and 23, 4, 4 and 2 bytes, are **Unverified**: the engine reads nothing of 9 and 23,
+and 11 holds one record in every mission. Section 20's is not known, and no mission uses it.
+
+`sltool dte check <mission>` writes a mission again and checks what comes back. The 36 missions of
+the template, written again from their sections' whole rooms, stale bytes and all, come back byte for
+byte. Every mission, written again from its records alone, reads back the same records.
+
+### Writing the script
+
+[`dte/assemble.zig`](../../src/formats/dte/assemble.zig) builds a routine as the shipped scripts
+are built: the block's length word, which counts itself, the instructions, and zeros to a four-byte
+boundary; then the constant table, each constant once in the order first pushed, and zeros to an
+eight-byte boundary. Labels stand for the branches' targets: a branch's displacement counts from its
+own position and a `random_branch`'s targets from its opcode, both big-endian, and a branch
+backwards is refused, since the engine would take it 64 KiB forward. `push_string`'s length byte
+counts itself and the NUL after the text.
+
+Assembled again from its disassembly, every routine of the 44 missions comes back the same, but for
+the padding after its last instruction, which in the shipped missions holds stale bytes, and the
+three routines with bytes nothing reaches (see [Open](#open)).
+
 ## Prior art
 
 The container, directory, record strides and condition list are from
@@ -492,4 +529,6 @@ this document follows the code: the trigger's condition is at `0x00` and its sub
 sections 4, 12 and 13 hold flight groups, squads and squad members, a ship's `0x00` is its object
 ID, `0x02` tests equality and `0x03` inequality, `0x28` pushes a constant, and `0x32` pushes a byte.
 The byte-offset string pool, the object table and everything about the script beyond the dispatch
-loop are additions.
+loop are additions. [StarLancerEditor](https://src.ug.gg/mini/starlancereditor), which reads and
+writes missions through YAML, names sections 14 and 15 the ships' formations and their points, which
+the engine's formation code bears out, and its writer lays missions out on the same template.
