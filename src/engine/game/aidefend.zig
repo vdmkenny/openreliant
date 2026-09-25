@@ -14,6 +14,8 @@ const ai = @import("ai.zig");
 const aifight = @import("aifight.zig");
 const Fighter = aifight.Fighter;
 const gameobj = @import("gameobj.zig");
+const objects = @import("objects.zig");
+const pilots = @import("pilots.zig");
 
 pub const maneuvers = @import("aidefend/maneuvers.zig");
 pub const script = @import("aidefend/script.zig");
@@ -91,6 +93,11 @@ pub const ScriptLine = extern struct {
     text: Pointer(u8),
     /// Its compiled form in `maneuver_code`, which the line gets the first time it runs.
     instruction: Pointer(Instruction),
+
+    comptime {
+        assert(@offsetOf(ScriptLine, "instruction") == 0x4);
+        assert(@sizeOf(ScriptLine) == 0x8);
+    }
 };
 
 /// What an opcode's `start` and `run` are: code for the ship in a slot running an instruction.
@@ -102,6 +109,11 @@ pub const Handler = engine.Code("bool __fastcall (int slot, FightState *state, M
 pub const Handlers = extern struct {
     start: Pointer(Handler),
     run: Pointer(Handler),
+
+    comptime {
+        assert(@offsetOf(Handlers, "run") == 0x4);
+        assert(@sizeOf(Handlers) == 0x8);
+    }
 };
 
 /// A compiled instruction: byte records packed one after another, as long as their opcode needs.
@@ -154,8 +166,18 @@ pub const Instruction = extern union {
 
     comptime {
         assert(@alignOf(Instruction) == 1);
+        assert(@offsetOf(Range, "min") == 4);
+        assert(@offsetOf(Range, "max") == 8);
         assert(@sizeOf(Range) == 12);
+        assert(@offsetOf(Ticks, "min") == 2);
+        assert(@offsetOf(Ticks, "max") == 4);
         assert(@sizeOf(Ticks) == 6);
+        assert(@offsetOf(Flag, "on") == 1);
+        assert(@sizeOf(Flag) == 2);
+        assert(@offsetOf(Jump, "line") == 1);
+        assert(@sizeOf(Jump) == 2);
+        assert(@offsetOf(Branch, "condition") == 1);
+        assert(@offsetOf(Branch, "otherwise") == 2);
         assert(@sizeOf(Branch) == 3);
     }
 };
@@ -195,7 +217,7 @@ fn start(fighter: Fighter, instruction: script.Instruction) bool {
         .set_yaw => |range| setInput(fighter, .yaw, range),
         .set_pitch => |range| setInput(fighter, .pitch, range),
         .set_roll => |range| setInput(fighter, .roll, range),
-        .set_speed => |range| fighter.ship().throttle = std.math.lerp(range.min, range.max, fighter.random()),
+        .set_speed => |range| fighter.ship().throttle = math.lerp(range.min, range.max, fighter.random()),
         .wait, .attack, .avoid, .attack_medium_fighter => |ticks| {
             startTimer(fighter, ticks);
             return true;
@@ -300,8 +322,11 @@ const Axis = enum {
 
 /// `maneuver_set_yaw_start` (`0x00405960`) and the pitch's and roll's: the input a random share of
 /// the range, times the pilot's turn limit, the other way about where the maneuver mirrors it.
+///
+/// The share is taken as `lerp` (`0x004C1050`) takes it, which the game writes out here and in
+/// `maneuver_set_speed_start`: the range's span times the share, plus its least.
 fn setInput(fighter: Fighter, axis: Axis, range: script.Range) void {
-    const value = std.math.lerp(range.min, range.max, fighter.random()) * fighter.pilot.turn_limit;
+    const value = math.lerp(range.min, range.max, fighter.random()) * fighter.pilot.turn_limit;
     axis.input(fighter.ship()).* = if (axis.mirrored(fighter.state.mirror)) -value else value;
 }
 
@@ -327,20 +352,18 @@ fn steerToPoint(fighter: Fighter) void {
     const ship = fighter.ship();
     const point = gameobj.vector(state.point);
     if (ship.avoid_ahead.count >= 1 or ship.avoid_near.count != 0) {
-        _ = ai.steer(fighter.ctx.world, fighter.index, point, 1, 0, .{ .avoid_near = true, .avoid_ahead = true });
+        _ = ai.steer(fighter.ctx.world, fighter.index, point, ai.full_limit, ai.no_ease, .{ .avoid_near = true, .avoid_ahead = true });
         return;
     }
-    const toward = point - fighter.position();
-    const off = math.dot(toward, fighter.heading()) / math.length(toward);
-    ship.throttle = 1;
+    const off = ai.cosineOff(point - fighter.position(), fighter.heading());
+    ship.throttle = ai.full_throttle;
     if (state.weaving) {
         if (off < weave_end) state.weaving = false;
+        ship.holdTurns();
         ship.pitch_input = fighter.pilot.turn_limit;
-        ship.yaw_input = 0;
-        ship.roll_input = 0;
         return;
     }
-    _ = ai.steer(fighter.ctx.world, fighter.index, point, fighter.pilot.turn_limit, 0, .{ .avoid_near = true, .avoid_ahead = true, .pitch_up = true });
+    _ = ai.steer(fighter.ctx.world, fighter.index, point, fighter.pilot.turn_limit, ai.no_ease, .{ .avoid_near = true, .avoid_ahead = true, .pitch_up = true });
     if (off > weave_start) state.weaving = true;
 }
 
@@ -357,13 +380,13 @@ fn attack(fighter: Fighter) bool {
     const nose = math.forward(ship.root.orientation);
     if (math.dot(nose, fighter.enemyPosition() - ahead) >= 0) {
         ship.throttle = if (apart >= fighter.enemy().object.radius + ship.radius + close_in)
-            1
+            ai.full_throttle
         else
             math.dot(nose, gameobj.vector(fighter.state.aim_velocity)) / fighter.cruise();
     } else if (fighter.pilot.skill() == .high) {
         ship.afterburner = true;
     } else {
-        ship.throttle = 1;
+        ship.throttle = ai.full_throttle;
     }
     ship.throttle = @max(ship.throttle, least_throttle);
     return true;
@@ -381,7 +404,7 @@ fn closeToPart(fighter: Fighter) bool {
 /// close to the part it aims at.
 fn attackMassive(fighter: Fighter) bool {
     if (closeToPart(fighter)) return false;
-    fighter.ship().throttle = 1;
+    fighter.ship().throttle = ai.full_throttle;
     fighter.steer(gameobj.vector(fighter.state.aim), .{ .avoid_near = true, .avoid_ahead = true });
     return true;
 }
@@ -391,16 +414,14 @@ fn attackMassive(fighter: Fighter) bool {
 fn avoid(fighter: Fighter) bool {
     if (timeUp(fighter)) return false;
     const ship = fighter.ship();
-    const local = math.transformTransposed(ship.root.next_orientation, fighter.enemyPosition() - fighter.position());
-    ship.yaw_input = 0;
-    ship.pitch_input = 0;
-    ship.roll_input = 0;
+    const local = ship.placeAt(.next).inverse(fighter.enemyPosition());
+    ship.holdTurns();
     if (local[2] < 0) {
-        ship.throttle = 1;
+        ship.throttle = ai.full_throttle;
         return true;
     }
     ship.pitch_input = if (local[1] >= 0) 1 else -1;
-    ship.throttle = 0.5;
+    ship.throttle = half_throttle;
     return true;
 }
 
@@ -411,10 +432,10 @@ fn avoid(fighter: Fighter) bool {
 fn attackMediumFighter(fighter: Fighter) bool {
     if (timeUp(fighter)) return false;
     const ship = fighter.ship();
-    ship.throttle = 1;
+    ship.throttle = ai.full_throttle;
     const toward = fighter.enemyPosition() - fighter.position();
     const apart = math.length(toward);
-    const direction = if (apart < close_quarters and math.dot(fighter.heading(), toward) < apart * medium_cone)
+    const direction = if (apart < aifight.close_quarters and math.dot(fighter.heading(), toward) < apart * medium_cone)
         fighter.heading()
     else lead: {
         const closing = gameobj.vector(fighter.enemy().object.velocity) - gameobj.vector(ship.velocity) * @as(Vector, @splat(own_share));
@@ -447,15 +468,17 @@ fn attackRun(fighter: Fighter, far: bool) bool {
     const aimed = fighter.aimed();
     const out = math.transform(aimed.orientation, gameobj.vector(fighter.state.point));
     if (math.dot(out, gameobj.vector(ship.velocity)) >= 0) {
-        ship.throttle = 1;
+        ship.throttle = ai.full_throttle;
         ship.afterburner = true;
     } else {
-        ship.throttle = 0.5;
+        ship.throttle = half_throttle;
     }
     const reach = if (far and enemy.radius > run_out) enemy.radius * 2 else run_out;
     const staging = out * @as(Vector, @splat(reach)) + aimed.position;
     if (math.lengthSquared(staging - fighter.position()) < run_done * run_done) {
-        ship.fighting = .from(fighter.target().ship());
+        // The game takes the target's index as a ship's slot, whatever its kind, as Fight's `init`
+        // does.
+        ship.fighting = .from(std.math.cast(u16, fighter.target().index));
         return false;
     }
     fighter.steer(staging, .{ .avoid_near = true, .avoid_ahead = true });
@@ -483,17 +506,23 @@ fn friend(fighter: Fighter) *gameobj.GameObject {
 }
 
 /// `If Goingtocrash` (`maneuver_if_start`, `0x00406170`): against a target without components, on
-/// course to hit it within `crash_steps` with the berth the pilot's skill gives
-/// (`ai.collisionCourse`); against one with components, close to the part it aims at.
+/// course to hit it within `crash_steps` with the berth the pilot's skill gives (`crashBerth`,
+/// `ai.collisionCourse`); against one with components, close to the part it aims at.
 fn goingToCrash(fighter: Fighter) bool {
     if (fighter.enemy().object.flags.components) return closeToPart(fighter);
-    const berth: f32 = switch (fighter.pilot.skill()) {
+    const berth = crashBerth(fighter.pilot.skill()) orelse return false;
+    return ai.collisionCourse(fighter.ctx.world, fighter.index, fighter.enemyIndex(), crash_steps, berth);
+}
+
+/// The berth `If Goingtocrash` keeps from a target by the pilot's skill, which `maneuver_if_start`
+/// holds in its code; none for a pilot of any other skill, which never crashes.
+fn crashBerth(skill: pilots.Pilot.Skill) ?f32 {
+    return switch (skill) {
         .low => 5000,
         .medium => 3500,
         .high => 2000,
-        .other => return false,
+        .other => null,
     };
-    return ai.collisionCourse(fighter.ctx.world, fighter.index, @intCast(fighter.target().index), crash_steps, berth);
 }
 
 /// `SetAfterburner(on)` lights the afterburner only for a pilot whose turn limit is this
@@ -501,26 +530,29 @@ fn goingToCrash(fighter: Fighter) bool {
 /// square). No pilot preset's limit is above 1, so as the game ships it never lights.
 const afterburner_limit: f32 = 2;
 const afterburner_reach: f32 = 50000;
-/// How far away `Runaway` flies.
+/// How far away `Runaway` flies, and how long after `Cloak` it cloaks (`maneuver_runaway_start`,
+/// `maneuver_cloak_start`, which hold them in their code).
 const runaway_reach: f32 = 1000000;
-/// How long after `Cloak` it cloaks.
 const cloak_delay = 500;
 /// The cosines of the angles off the nose at which a ship flying to a point starts weaving
 /// (`0x004DC470`) and steers at the point again (`0x004DC484`).
 const weave_start: f32 = 0.9;
 const weave_end: f32 = 0.7;
-/// `Attack`'s look ahead, in updates of the ship's velocity; how close in, both sizes aside, it
-/// matches the aim point's speed (`0x004DC488`); and the least throttle it or `RunToShip` holds
-/// (`0x004DC408`).
+/// The throttle `Avoid` pitches away at, and `NewAttackRun` flies at with the way out against its
+/// course (`maneuver_avoid_run`, `maneuver_new_attack_run_run`, which hold it in their code).
+const half_throttle: f32 = 0.5;
+/// `Attack`'s look ahead, in updates of the ship's velocity (`maneuver_attack_run`, which holds it
+/// in its code); how close in, both sizes aside, it matches the aim point's speed (`0x004DC488`);
+/// and the least throttle it or `RunToShip` holds (`0x004DC408`).
 const lookahead: f32 = 20;
 const close_in: f32 = 12000;
 const least_throttle: f32 = 0.5;
 /// How many updates of cruise speed count as close to a part (`0x004DC48C`).
 const reach_steps: f32 = 50;
-/// `AttackMediumFighter`: how close counts as close quarters (`0x004DC43C`), the cosine of the cone
-/// off the nose the target must be within there (`0x004DC414`), the share of the ship's own
-/// velocity the lead takes off, and how far out it steers at.
-const close_quarters: f32 = 10000;
+/// `AttackMediumFighter`: the cosine of the cone off the nose the target must be within at close
+/// quarters (`aifight.close_quarters`, `0x004DC414`), and the share of the ship's own velocity the
+/// lead takes off and how far out it steers at (`maneuver_attack_medium_fighter_run`, which holds
+/// both in its code).
 const medium_cone: f32 = 0.95;
 const own_share: f32 = 0.1;
 const medium_reach: f32 = 20000;
@@ -532,7 +564,8 @@ const run_done: f32 = 2000;
 /// unit past that adds (`0x004DC498`).
 const run_to_reach: f32 = 5000;
 const run_to_closing: f32 = 0.0002;
-/// `If Goingtocrash`: how many updates ahead a crash is looked for.
+/// `If Goingtocrash`: how many updates ahead a crash is looked for (`maneuver_if_start`, which holds
+/// it in its code).
 const crash_steps: f32 = 100;
 
 test {
@@ -631,14 +664,143 @@ test avoid {
 
     // The player is behind the Sabre, which faces away from it: it flies straight on.
     try std.testing.expect(avoid(fighter));
-    try std.testing.expectEqual(1, ship.throttle);
+    try std.testing.expectEqual(ai.full_throttle, ship.throttle);
     try std.testing.expectEqual(0, ship.pitch_input);
     // Turned about to face the player, it pitches hard away at half throttle.
     ship.root.next_orientation = math.rotation(.y, std.math.pi);
     try std.testing.expect(avoid(fighter));
-    try std.testing.expectEqual(0.5, ship.throttle);
+    try std.testing.expectEqual(half_throttle, ship.throttle);
     try std.testing.expectEqual(1, ship.pitch_input);
     // Its time up, it is done.
     mission.clock.frame_start = 11;
     try std.testing.expect(!avoid(fighter));
+}
+
+test attack {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const fighter = try aifight.testing.fighter(&mission, 50000);
+    const ship = fighter.ship();
+    fighter.state.timer = 10;
+
+    // Turned about to face the player, far off: full throttle at the aim point.
+    objects.setOrientation(ship, &fighter.slot.drawn, math.rotation(.y, std.math.pi));
+    try std.testing.expect(attack(fighter));
+    try std.testing.expectEqual(ai.full_throttle, ship.throttle);
+    // Close in, it matches the aim point's speed along its nose, here none, and holds the least
+    // throttle.
+    objects.setPosition(ship, &fighter.slot.drawn, .{ 0, 0, 5000 });
+    try std.testing.expect(attack(fighter));
+    try std.testing.expectEqual(least_throttle, ship.throttle);
+    // Its time up, it is done.
+    mission.clock.frame_start = 11;
+    try std.testing.expect(!attack(fighter));
+}
+
+test attackMassive {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const fighter = try aifight.testing.fighter(&mission, 50000);
+
+    // Far from the part it aims at, it closes at full throttle; within fifty updates of its cruise
+    // speed of it, it is done.
+    try std.testing.expect(attackMassive(fighter));
+    try std.testing.expectEqual(ai.full_throttle, fighter.ship().throttle);
+    objects.setPosition(fighter.ship(), &fighter.slot.drawn, .{ 0, 0, 10000 });
+    try std.testing.expect(!attackMassive(fighter));
+}
+
+test attackMediumFighter {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const fighter = try aifight.testing.fighter(&mission, 5000);
+    const ship = fighter.ship();
+    fighter.state.timer = 10;
+
+    // At close quarters, with the player off its nose, it flies straight on at full throttle.
+    try std.testing.expect(attackMediumFighter(fighter));
+    try std.testing.expectEqual(ai.full_throttle, ship.throttle);
+    try std.testing.expectEqual(0, ship.yaw_input);
+    // Farther off, it turns to lead the player, behind it.
+    objects.setPosition(ship, &fighter.slot.drawn, .{ 0, 0, 50000 });
+    try std.testing.expect(attackMediumFighter(fighter));
+    try std.testing.expect(ship.yaw_input != 0);
+    // Its time up, it is done.
+    mission.clock.frame_start = 11;
+    try std.testing.expect(!attackMediumFighter(fighter));
+}
+
+test attackRun {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const fighter = try aifight.testing.fighter(&mission, 5000);
+    const ship = fighter.ship();
+    // The way out is along the player's nose, the player standing at the origin facing along Z.
+    fighter.state.point = .{ .x = 0, .y = 0, .z = 1 };
+
+    // Still, it burns at full throttle for the point `run_out` out along it.
+    try std.testing.expect(attackRun(fighter, false));
+    try std.testing.expectEqual(ai.full_throttle, ship.throttle);
+    try std.testing.expect(ship.afterburner);
+    // Flying against the way out, at half throttle.
+    ship.velocity = .{ .x = 0, .y = 0, .z = -10 };
+    ship.afterburner = false;
+    try std.testing.expect(attackRun(fighter, false));
+    try std.testing.expectEqual(half_throttle, ship.throttle);
+    try std.testing.expect(!ship.afterburner);
+    // At the point the run is over, and the ship fights the player again.
+    objects.setPosition(ship, &fighter.slot.drawn, .{ 0, 0, run_out });
+    try std.testing.expect(!attackRun(fighter, false));
+    try std.testing.expectEqual(0, ship.fighting.index());
+}
+
+test runToShip {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const fighter = try aifight.testing.fighter(&mission, 5000);
+    const ship = fighter.ship();
+    const other = try mission.add(.sabre, .{ 0, 0, 25000 });
+    const to = mission.slot(other);
+    fighter.state.ship = other;
+
+    // Far from a ship without components, it closes by how far it is past `run_to_reach`, the
+    // ship standing still.
+    try std.testing.expect(runToShip(fighter));
+    try std.testing.expectApproxEqAbs((20000 - run_to_reach) * run_to_closing, ship.throttle, 1e-5);
+    // Near it, at the least throttle.
+    objects.setPosition(&to.object, &to.drawn, .{ 0, 0, 6000 });
+    try std.testing.expect(runToShip(fighter));
+    try std.testing.expectEqual(least_throttle, ship.throttle);
+    // By a ship with components, it is done within `run_to_reach` of its edge.
+    to.object.flags.components = true;
+    try std.testing.expect(!runToShip(fighter));
+}
+
+test goingToCrash {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const fighter = try aifight.testing.fighter(&mission, 5000);
+    const ship = fighter.ship();
+
+    // Facing away from the player, it is on course to hit nothing; turned about and flying at the
+    // player, it is, within its pilot's berth.
+    try std.testing.expect(!goingToCrash(fighter));
+    objects.setOrientation(ship, &fighter.slot.drawn, math.rotation(.y, std.math.pi));
+    ship.velocity = .{ .x = 0, .y = 0, .z = -50 };
+    try std.testing.expect(goingToCrash(fighter));
+    // Against a target with components, it is once close to the part it aims at, whatever its
+    // course.
+    objects.setOrientation(ship, &fighter.slot.drawn, math.identity);
+    ship.velocity = .{ .x = 0, .y = 0, .z = 0 };
+    fighter.enemy().object.flags.components = true;
+    try std.testing.expect(goingToCrash(fighter));
+    // A pilot of a skill the game has no berth for never crashes.
+    try std.testing.expectEqual(null, crashBerth(.other));
+    try std.testing.expectEqual(2000, crashBerth(.high));
 }

@@ -40,7 +40,7 @@ pub const Target = extern struct {
 
     /// An order aimed at nothing, which is how the mission's records leave a target it does not
     /// name.
-    pub const none: Target = .{ .kind = .ship, .index = -1, .component = -1 };
+    pub const none: Target = .{ .kind = .ship, .index = -1, .component = whole };
 
     /// The ship in `slot`, whole or, where `part` names one, one of its components.
     pub fn at(slot: u16, part_index: ?u16) Target {
@@ -72,6 +72,9 @@ pub const Target = extern struct {
         for (std.enums.values(dte.Object.Kind)) |kind| {
             assert(@intFromEnum(@field(Kind, @tagName(kind))) == @intFromEnum(kind));
         }
+        assert(@offsetOf(Target, "index") == 0x2);
+        assert(@offsetOf(Target, "component") == 0x4);
+        assert(@sizeOf(Target) == 0x6);
     }
 };
 
@@ -180,12 +183,20 @@ pub const ActionSphere = struct {
 /// How often `ordersUpdate` clears what each object has lately taken (`recent_damage`), in ticks.
 pub const damage_window: u32 = 500;
 
+/// The first of the orders numbered 100 and up, the table's second group, every one of which a
+/// player's ship takes (`order_refused`).
+const players_orders: i16 = orders.groups[1].first;
+
+comptime {
+    assert(players_orders == 100);
+}
+
 /// `order_refused` (`0x0040CA00`): whether the ship refuses the order outright. A player's ship,
 /// which is one of the slots from the first that belong to players, takes only the orders numbered
 /// 100 and up and those the table marks as a player's. An order the table does not hold is refused
 /// with them.
 pub fn refused(all: *const create.Objects, index: u16, order: Order) bool {
-    if (index >= all.players or @intFromEnum(order) > 99) return false;
+    if (index >= all.players or @intFromEnum(order) >= players_orders) return false;
     const info = orders.info(order) orelse return true;
     return !info.flags.players;
 }
@@ -258,9 +269,7 @@ pub fn push(ctx: Context, index: u16, order: Order, target: Target) Error!bool {
 /// The order an object is running, which is the entry on top of its stack; null where it has none.
 /// Whoever pushes an order fills in its data through this, as the mission's commands do.
 pub fn current(all: *create.Objects, index: u16) ?*Entry {
-    const slot = &all.slots[index];
-    if (slot.object.order_count == 0) return null;
-    return &slot.orders[0];
+    return all.slots[index].current();
 }
 
 /// `order_push_ship` (`0x0040CBF0`): `push`, aimed at the ship in a slot.
@@ -324,13 +333,13 @@ fn equalTargets(a: Target, b: Target) bool {
 pub fn objectOrders(ctx: Context, index: u16) void {
     const slot = &ctx.world.objects.slots[index];
     const object = &slot.object;
-    if (object.order_count > 0) {
-        if (orders.info(slot.orders[0].order)) |info| if (info.flags.retaliate) retaliate(ctx, index);
+    if (slot.current()) |entry| {
+        if (orders.info(entry.order)) |info| if (info.flags.retaliate) retaliate(ctx, index);
     }
     object.afterburner = false;
     object.reverse_thrust = false;
-    if (object.order_count > 0) run: {
-        const running = orders.info(slot.orders[0].order) orelse break :run;
+    if (slot.current()) |entry| run: {
+        const running = orders.info(entry.order) orelse break :run;
         if (!running.flags.one_shot) {
             if (object.order_starting) {
                 runInit(ctx, index, running);
@@ -393,14 +402,15 @@ pub fn retaliate(ctx: Context, index: u16) void {
     if (@as(f32, @floatFromInt(combat.armor_class)) * retaliation_damage > object.recent_damage) return;
     if (object.flags.do_not_disturb) return;
 
-    const attacker: Target = .at(object.last_attacker.index() orelse return, null);
+    const attacking = object.last_attacker.index() orelse return;
+    const attacker: Target = .at(attacking, null);
     if (!ai.targetValid(all, attacker, .{})) return;
     if (attacker.index == slot.orders[0].target.index) return;
-    const other = &all.slots[@intCast(attacker.index)];
+    const other = &all.slots[attacking];
     if (other.object.side == object.side) return;
     const other_combat = other.combat orelse return;
     if (other_combat.class != .fighter) return;
-    _ = pushShip(ctx, index, .fight, @intCast(attacker.index), -1) catch return;
+    _ = pushShip(ctx, index, .fight, attacking, Target.whole) catch return;
 }
 
 /// `order_immediately_set_ship_to_zero_velocity_and_rotation` (`0x0040C4D0`): the update of order
@@ -414,9 +424,7 @@ pub fn zeroVelocity(ctx: Context, index: u16) void {
 /// without turning. **Unverified:** it lies before this file's known code.
 pub fn flyBackwards(ctx: Context, index: u16) void {
     const object = &ctx.world.objects.slots[index].object;
-    object.yaw_input = 0;
-    object.pitch_input = 0;
-    object.roll_input = 0;
+    object.holdTurns();
     object.throttle = aiorders.backwards_throttle;
 }
 
@@ -501,30 +509,30 @@ test push {
     const index = try mission.addOther(@splat(0));
     const slot = &all.slots[index];
 
-    try std.testing.expect(try push(ctx, index, .slow_rotate, .{ .kind = .ship, .index = -1, .component = -1 }));
+    try std.testing.expect(try push(ctx, index, .slow_rotate, .none));
     try std.testing.expectEqual(1, slot.object.order_count);
     try std.testing.expectEqual(Order.slow_rotate, slot.orders[0].order);
     try std.testing.expect(slot.object.order_starting);
 
     // The same order aimed the same way is already what it is doing.
-    try std.testing.expect(try push(ctx, index, .slow_rotate, .{ .kind = .ship, .index = -1, .component = -1 }));
+    try std.testing.expect(try push(ctx, index, .slow_rotate, .none));
     try std.testing.expectEqual(1, slot.object.order_count);
 
     // Another order goes on top, and the one below waits.
-    try std.testing.expect(try push(ctx, index, .do_nothing, .{ .kind = .ship, .index = -1, .component = -1 }));
+    try std.testing.expect(try push(ctx, index, .do_nothing, .none));
     try std.testing.expectEqual(2, slot.object.order_count);
     try std.testing.expectEqual(Order.do_nothing, slot.orders[0].order);
     try std.testing.expectEqual(Order.slow_rotate, slot.orders[1].order);
 
     // Pushing the deeper order again moves it up rather than leaving it twice on the stack.
-    try std.testing.expect(try push(ctx, index, .slow_rotate, .{ .kind = .ship, .index = -1, .component = -1 }));
+    try std.testing.expect(try push(ctx, index, .slow_rotate, .none));
     try std.testing.expectEqual(2, slot.object.order_count);
     try std.testing.expectEqual(Order.slow_rotate, slot.orders[0].order);
     try std.testing.expectEqual(Order.do_nothing, slot.orders[1].order);
 
     // A full stack takes no more.
     slot.object.order_count = max_stack;
-    try std.testing.expect(!try push(ctx, index, .fly, .{ .kind = .ship, .index = -1, .component = -1 }));
+    try std.testing.expect(!try push(ctx, index, .fly, .none));
 }
 
 test "a player's ship refuses the orders that are not its own" {
@@ -634,6 +642,42 @@ test objectOrders {
     slot.object.flags.engines_disabled = true;
     objectOrders(ctx, index);
     try std.testing.expectEqual(0, slot.object.throttle);
+}
+
+test retaliate {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const ctx = mission.orders();
+    _ = try mission.add(.predator, @splat(0));
+    const ship = try mission.add(.sabre, .{ 0, 0, 1000 });
+    const attacker = try mission.add(.sabre, .{ 0, 0, 2000 });
+    const slot = mission.slot(ship);
+    slot.object.side = .hostile;
+    mission.slot(attacker).object.side = .friendly;
+    mission.slot(attacker).object.flags.targetable = true;
+    try std.testing.expect(try push(ctx, ship, .do_nothing, .none));
+    slot.object.last_attacker = .of(attacker);
+    const enough = @as(f32, @floatFromInt(slot.combat.?.armor_class)) * retaliation_damage;
+
+    // Short of enough damage, or told not to be disturbed, it stays on its order.
+    slot.object.recent_damage = enough - 1;
+    retaliate(ctx, ship);
+    try std.testing.expectEqual(Order.do_nothing, slot.orders[0].order);
+    slot.object.recent_damage = enough;
+    slot.object.flags.do_not_disturb = true;
+    retaliate(ctx, ship);
+    try std.testing.expectEqual(Order.do_nothing, slot.orders[0].order);
+    // Hurt enough, it turns on whoever hit it last.
+    slot.object.flags.do_not_disturb = false;
+    retaliate(ctx, ship);
+    try std.testing.expectEqual(Order.fight, slot.orders[0].order);
+    try std.testing.expectEqual(attacker, slot.orders[0].target.ship());
+    // Not on its own side.
+    try std.testing.expect(try push(ctx, ship, .do_nothing, .none));
+    mission.slot(attacker).object.side = .hostile;
+    retaliate(ctx, ship);
+    try std.testing.expectEqual(Order.do_nothing, slot.orders[0].order);
 }
 
 test ordersUpdate {

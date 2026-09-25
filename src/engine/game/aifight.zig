@@ -93,16 +93,42 @@ pub const FightData = extern struct {
     ticks: i16,
     /// The ship to run to, for `run_to_ship`.
     ship: u16,
-    /// The maneuver's number, or 0xFF while none is chosen.
+    /// The maneuver's number (`next`), or `none` while none is chosen, as `fight_choose_maneuver`
+    /// leaves it as it starts to choose.
     maneuver: u8,
     /// Set when a new maneuver has been chosen and has yet to start.
     fresh: bool,
     _unknown_06: [10]u8,
 
+    /// `maneuver` while none is chosen.
+    pub const none: u8 = 0xFF;
+
+    /// The maneuver chosen to start next, where one is.
+    pub fn next(data: FightData) ?Maneuver {
+        return if (data.maneuver == none) null else @enumFromInt(data.maneuver);
+    }
+
+    /// Chooses `maneuver` to start next, by its number's low byte, which is all the game keeps.
+    pub fn setNext(data: *FightData, maneuver: Maneuver) void {
+        data.maneuver = @truncate(@intFromEnum(maneuver));
+    }
+
     comptime {
+        assert(@offsetOf(FightData, "ship") == 0x2);
+        assert(@offsetOf(FightData, "maneuver") == 0x4);
+        assert(@offsetOf(FightData, "fresh") == 0x5);
         assert(@sizeOf(FightData) == 16);
     }
 };
+
+test FightData {
+    var data = std.mem.zeroes(FightData);
+    data.maneuver = FightData.none;
+    try std.testing.expectEqual(null, data.next());
+    data.setNext(.run_to_ship);
+    try std.testing.expectEqual(Maneuver.run_to_ship, data.next());
+    try std.testing.expectEqual(9, data.maneuver);
+}
 
 /// A ship under the Fight order: what the order's routines and its maneuvers work on.
 pub const Fighter = struct {
@@ -153,9 +179,16 @@ pub const Fighter = struct {
         return fighter.slot.orders[0].target;
     }
 
-    /// The target's slot. Every routine but `init` runs only once `ai.targetValid` has passed it.
+    /// The target's slot number: the game reads its index as a ship's, whatever its kind. Every
+    /// routine but `init` runs only once `ai.targetValid` has passed the target, which it does only
+    /// for an index that names a slot.
+    pub fn enemyIndex(fighter: Fighter) u16 {
+        return @intCast(fighter.target().index);
+    }
+
+    /// The target's slot (`enemyIndex`).
     pub fn enemy(fighter: Fighter) *create.Slot {
-        return &fighter.objects().slots[@intCast(fighter.target().index)];
+        return &fighter.objects().slots[fighter.enemyIndex()];
     }
 
     pub fn enemyPosition(fighter: Fighter) Vector {
@@ -175,8 +208,7 @@ pub const Fighter = struct {
 
     /// `object_cruise_speed` of the ship; nothing for one with no flight stats.
     pub fn cruise(fighter: Fighter) f32 {
-        const flight = fighter.slot.flight orelse return 0;
-        return ai.cruiseSpeed(fighter.ship(), flight, fighter.ctx.world.view);
+        return ai.slotCruise(fighter.slot, fighter.ctx.world.view) orelse 0;
     }
 
     /// Steers at `at` the pilot's way, with its limit and its ease.
@@ -242,14 +274,14 @@ pub const Players = struct {
 pub fn init(ctx: aigeneric.Context, index: u16) void {
     const fighter: Fighter = .of(ctx, index);
     const all = ctx.world.objects;
-    // The game takes the target as it comes; OpenReliant leaves one past the slots for the update
-    // to pop.
-    const target = fighter.target().index;
-    if (target < 0 or target >= all.count) return;
+    // The game takes the target as it comes, its index as a ship's slot whatever its kind;
+    // OpenReliant leaves one past the slots for the update to pop.
+    const target = std.math.cast(u16, fighter.target().index) orelse return;
+    if (target >= all.count) return;
     choose(fighter);
     drawMissileWait(fighter);
     const ship = fighter.ship();
-    ship.fighting = .of(@intCast(target));
+    ship.fighting = .of(target);
     fighter.enemy().object.fought_by += 1;
     ship.recent_damage = 0;
 }
@@ -310,11 +342,13 @@ test updateCloak {
 }
 
 /// Starts the maneuver `choose` left in the order's data: the state cleared, its first line still
-/// to come, a random choice of the inputs it may mirror, and its time counted from now.
+/// to come, a random choice of the inputs it may mirror, and its time counted from now. With none
+/// chosen, the state takes the data's byte as the game copies it, a number no maneuver has, which
+/// runs nothing.
 fn begin(fighter: Fighter, data: *FightData) void {
     const state = fighter.state;
     state.* = std.mem.zeroes(FightState);
-    state.maneuver = @enumFromInt(data.maneuver);
+    state.maneuver = data.next() orelse @enumFromInt(FightData.none);
     state.line = FightState.before_first;
     const allowed: Mirror = if (maneuvers.info(state.maneuver)) |info| info.mirror else .{};
     state.mirror = allowed.pick(fighter.random15());
@@ -354,7 +388,7 @@ fn choose(fighter: Fighter) void {
         as_massive
     else
         outOfSphere(fighter) orelse byPosition(fighter);
-    data.maneuver = @intCast(@intFromEnum(choice.maneuver));
+    data.setNext(choice.maneuver);
     if (choice.ship) |friend| data.ship = friend;
     data.ticks = choice.ticks orelse drawn: {
         const info = maneuvers.table[@intFromEnum(choice.maneuver)];
@@ -405,8 +439,9 @@ const ahead_cosine: f32 = 0.5;
 const behind_cosine: f32 = -0.5;
 const seen_behind_cosine: f32 = -0.1;
 
-/// How close the ships are when the ship runs for it (`0x004DC43C`).
-const close_quarters: f32 = 10000;
+/// How close the ships are when the ship runs for it (`0x004DC43C`), and when
+/// `AttackMediumFighter` flies straight on (`aidefend`).
+pub const close_quarters: f32 = 10000;
 
 /// One in this many times a ship with its target behind looks for a friendly ship to run to.
 const run_odds = 10;
@@ -425,8 +460,8 @@ fn byPosition(fighter: Fighter) Choice {
     const top = if (enemy.flight) |flight| flight.max_speed else 0;
     const pace = @max(enemy.object.speed / top, least_pace);
     if (apart > pace * pursuit(fighter.pilot.skill())) return .{ .maneuver = .attack_pursue };
-    const where = bearing(math.dot(toward, fighter.heading()) / apart, behind_cosine);
-    const seen = bearing(-math.dot(toward, enemy.object.nextHeading()) / apart, seen_behind_cosine);
+    const where = bearing(ai.cosineOff(toward, fighter.heading()), behind_cosine);
+    const seen = bearing(-ai.cosineOff(toward, enemy.object.nextHeading()), seen_behind_cosine);
     if (where == .behind and fighter.random15() % run_odds == 0) {
         if (shipToRunTo(fighter)) |friend| return .{ .maneuver = .run_to_ship, .ship = friend };
     }
@@ -460,11 +495,6 @@ const Nearest = struct {
     }
 };
 
-/// Whether an object is somewhere a search looks: not a stand-in, exploding or disabled.
-fn searchable(flags: gameobj.GameObject.Flags) bool {
-    return !(flags.stand_in or flags.exploding or flags.disabled);
-}
-
 /// How near the edge of a friendly capital ship counts as having run to it already
 /// (`0x004DC494`).
 const run_to_berth: f32 = 50000;
@@ -475,7 +505,7 @@ fn shipToRunTo(fighter: Fighter) ?u16 {
     const all = fighter.objects();
     var nearest: Nearest = .{};
     for (all.slots[0..all.count], 0..) |*slot, index| {
-        if (!searchable(slot.object.flags) or !slot.object.flags.components) continue;
+        if (slot.object.flags.outOfSearch() or !slot.object.flags.components) continue;
         if (slot.object.side != fighter.ship().side) continue;
         const combat = slot.combat orelse continue;
         if (combat.class != .capital and combat.class != .support) continue;
@@ -504,7 +534,7 @@ fn aim(fighter: Fighter) void {
             state.led = true;
         } else {
             state.led = false;
-            state.aim = if (fighter.target().component < 0) enemy.root.next_position else gameobj.vec3(fighter.aimed().position);
+            state.aim = if (fighter.target().part() == null) enemy.root.next_position else gameobj.vec3(fighter.aimed().position);
         }
         var drift = gameobj.vector(enemy.velocity) * @as(Vector, @splat(aim_drift));
         var turns = @divTrunc(fighter.pilot.aim_interval, 2);
@@ -540,7 +570,7 @@ fn fire(fighter: Fighter) void {
     const all = fighter.objects();
     const timings = fighter.pilot.timings;
     const aimed = fighter.aimed();
-    const radius = if (fighter.target().component < 0) fighter.enemy().object.radius else aimed.radius;
+    const radius = if (fighter.target().part() == null) fighter.enemy().object.radius else aimed.radius;
     if (fighter.now() > ship.fire_at) {
         const laser = guns.GunType.laser_cannon.stats(&all.gun_stats);
         const range = @as(f32, @floatFromInt(laser.lifetime)) * laser.speed * fire_range;
@@ -644,7 +674,7 @@ fn callForHelp(fighter: Fighter) void {
     } else return;
     ship.recent_damage = 0;
     const helper = wingman(fighter) orelse return;
-    _ = aigeneric.pushShip(fighter.ctx, helper, .fight, all.player, -1) catch return;
+    _ = aigeneric.pushShip(fighter.ctx, helper, .fight, all.player, aigeneric.Target.whole) catch return;
 }
 
 /// The wingman `callForHelp` calls: the nearest fighter on the ship's side, not the ship itself nor
@@ -656,11 +686,11 @@ fn wingman(fighter: Fighter) ?u16 {
     var milling = false;
     for (all.slots[0..all.count], 0..) |*slot, index| {
         if (index == fighter.index) continue;
-        if (!searchable(slot.object.flags) or slot.object.flags.do_not_disturb) continue;
+        if (slot.object.flags.outOfSearch() or slot.object.flags.do_not_disturb) continue;
         if (slot.object.side != fighter.ship().side) continue;
         const combat = slot.combat orelse continue;
-        if (combat.class != .fighter or slot.object.order_count == 0) continue;
-        const order = slot.orders[0].order;
+        if (combat.class != .fighter) continue;
+        const order = (slot.current() orelse continue).order;
         if (order != .fight and order != .mill) continue;
         const apart = fighter.apartSquared(&slot.object);
         if (order == .mill and !milling) {
@@ -683,7 +713,7 @@ pub const testing = struct {
         const ctx = mission.orders();
         const player = try mission.add(.predator, @splat(0));
         const index = try mission.add(.sabre, .{ 0, 0, apart });
-        try std.testing.expect(try aigeneric.pushShip(ctx, index, .fight, player, -1));
+        try std.testing.expect(try aigeneric.pushShip(ctx, index, .fight, player, aigeneric.Target.whole));
         return .of(ctx, index);
     }
 };
@@ -727,11 +757,11 @@ test choose {
     fighter.ship().root.next_position = .{ .x = 0, .y = 0, .z = 5000 };
     choose(fighter);
     try std.testing.expect(data.fresh);
-    try std.testing.expectEqual(@intFromEnum(Maneuver.defend_runaway), data.maneuver);
+    try std.testing.expectEqual(Maneuver.defend_runaway, data.next());
     // A target with components is attacked as a massive object, for its fixed time.
     fighter.enemy().object.flags.components = true;
     choose(fighter);
-    try std.testing.expectEqual(@intFromEnum(Maneuver.attack_massive_object), data.maneuver);
+    try std.testing.expectEqual(Maneuver.attack_massive_object, data.next());
     try std.testing.expectEqual(against_massive.ticks.?, data.ticks);
 
     // The next update starts it.
