@@ -81,10 +81,13 @@ pub fn objectRandom15(object: *GameObject) u15 {
 }
 
 /// `object_random` (`0x004ADD10`): the object's own random number from 0 to 1, which is
-/// `objectRandom15` over the runtime's largest. **Unverified:** it lies after this file's known
-/// code, before `deathmatch.cpp`'s.
+/// `objectRandom15` times the reciprocal of the runtime's largest (`0x004DC710`), as
+/// `Rand.fraction` takes it. **Unverified:** it lies after this file's known code, before
+/// `deathmatch.cpp`'s.
 pub fn objectRandom(object: *GameObject) f32 {
-    return @as(f32, @floatFromInt(objectRandom15(object))) / libcmt.Rand.max;
+    var random: libcmt.Rand = .{ .seed = object.random_seed };
+    defer object.random_seed = random.seed;
+    return random.fraction();
 }
 
 /// `ship_type_first_levels` (`0x004AE190`): a ship type's model, loaded where none of its objects

@@ -99,6 +99,9 @@ Expired shots are freed on the next frame. A shot striking a shield triggers a s
 
 The Nova Cannon bolt rotates 1/8 turn during construction and takes the muzzle orientation, rendering unrotated.
 
+**Improvement:** the Gattling Lasers' three bolts stand an exact third of a turn apart, where the game
+multiplies by its rounded third of a turn (`0x004DC8A4`).
+
 On hardware renderers (`sr + 0x1AC`), shots cast dynamic point lights: blue `(0, 0.5, 1)` or orange `(1, 0.5, 0)` for hostile ships unless fired by the player, reaching 1000 units radius. In the original game, only the latest two shots from the player (`0x0056317C`) and latest two from other ships (`0x00563168`) cast lights, with new shots extinguishing older ones.
 
 **Improvement:** OpenReliant allows all shots to cast light (`ShotLights.every_shot`) so sustained fire illuminates passing hulls; `--original` and `--few-shot-lights` restore the original two-shot limit ([Renderer](../port/renderer.md#improvements)).

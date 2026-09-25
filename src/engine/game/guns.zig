@@ -2791,7 +2791,9 @@ fn dress(bullet: *Bullet, looks: *const Looks, random: *libcmt.Rand, turn: math.
         },
         .proton_cannon => one(&pieces, meshPiece(looks, .proton, faded_flags)),
         .gattling_lasers => gattling: {
-            // Three Laser Cannon bolts off the axis, a third of a turn apart (`0x004DC8A4`).
+            // Three Laser Cannon bolts off the axis, a third of a turn apart. **Improvement:** a
+            // third of `std.math.tau`, where the game multiplies by its rounded third of a turn
+            // (`0x004DC8A4`).
             for (1..4) |at| {
                 const angle = @as(f32, @floatFromInt(at - 1)) * std.math.tau / 3;
                 pieces[at] = .{
