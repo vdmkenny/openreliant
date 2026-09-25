@@ -215,19 +215,22 @@ pub const Stream = struct {
         stream.emitter.inherited = carried;
         _ = pool.stream(&stream.emitter, .{ .position = carrier.position, .orientation = carrier.orientation }, sending);
         if (slot.object.smoke_level != .burning or sending.random.rand() % fireball_odds != 0) return;
-        const at = math.transform(slot.drawn.orientation, stream.emitter.place.position) + slot.drawn.position;
+        const at = slot.drawn.point(stream.emitter.place.position);
         const size = (sending.random.fraction() * fireball_size_range + fireball_size) * slot.object.radius;
         explode.fireballAt(world, at, .{ .size = size, .life = fireball_life, .velocity = carried });
     }
 
-    /// How long a stream lives, in ticks.
+    /// How long a stream lives, in ticks, and how fast its particles leave, a tick, and up to how
+    /// much faster (`smoke_start`: `0x00494699`, `0x00494679` and `0x00494689`).
     const endless = 999999;
-    /// The share of the ship's velocity, a step's, that its smoke carries on with, a tick's.
-    const carried_share: f32 = 0.25;
     const speed: f32 = 30;
     const speed_range: f32 = 6;
-    /// A fireball one frame in this many, this share of the ship's radius and up to
-    /// `fireball_size_range` more across (`0x004DC420`, `0x004DC3F8`), for this many ticks.
+    /// The share of the ship's velocity, a step's, that its smoke carries on with, a tick's
+    /// (`mission_frame`, `0x00492E97`).
+    const carried_share: f32 = 0.25;
+    /// A fireball one frame in this many (`0x00492ED0`), this share of the ship's radius and up to
+    /// `fireball_size_range` more across (`0x004DC420`, `0x004DC3F8`), for this many ticks
+    /// (`0x00492F27`).
     const fireball_odds = 10;
     const fireball_size: f32 = 0.1;
     const fireball_size_range: f32 = 0.2;

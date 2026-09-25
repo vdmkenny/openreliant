@@ -51,7 +51,8 @@ pub fn fieldAxis(row: usize, column: usize) [3]f32 {
     return .{ @cos(azimuth) * @sin(polar), @cos(polar), @sin(azimuth) * @sin(polar) };
 }
 
-/// The dust: motes in a cube around the camera, grey at half brightness, placed at random.
+/// The dust: motes in a cube around the camera, grey at half brightness, placed at random
+/// (`backdrop_create`: `0x004A51BC`, `0x004A51DF` and `0x004A51E9`).
 pub const dust_count = 200;
 pub const dust_cube_mask = 0x1FFF;
 pub const dust_grey: f32 = 0.5;
@@ -62,7 +63,7 @@ pub const sun_direction: Vector = math.normalize(.{ 1, -0.5, 0.2 });
 /// The fill lights' direction, where no marker says otherwise.
 pub const fill_direction: Vector = math.normalize(.{ -1, 0.5, 0 });
 
-/// How far toward the sun its sprites lie.
+/// How far toward the sun its sprites lie (`backdrop_create`, `0x004A5554`).
 pub const sun_distance: f32 = 1000;
 
 /// The six lights (`light_key_01` and the rest), each named after its mask. Models whose objects
@@ -88,9 +89,9 @@ pub fn initialLights() Lights {
 }
 
 /// A sprite's half width and half height, in the camera's units, against its texture's width and
-/// height in pixels times its depth (`backdrop_frame`); the sprite pipeline draws it that far to
-/// each side of its centre. On screen it reaches its texture's size times the view's scale over
-/// 768, in pixels, each way, whatever the distance.
+/// height in pixels times its depth (`backdrop_frame`, `0x004DCA0C`); the sprite pipeline draws it
+/// that far to each side of its centre. On screen it reaches its texture's size times the view's
+/// scale over 768, in pixels, each way, whatever the distance.
 pub const sprite_scale: f32 = 1.0 / 768.0;
 
 /// The sun's sprites, each textured, coloured grey and added on the background layer toward the
@@ -130,15 +131,28 @@ pub const SunLayer = enum {
         };
     }
 
-    /// Its grey, for the flares' brightness. `sunlayer2` and `sunlayer3` take theirs while the
-    /// brightness is above 0 and keep it otherwise.
+    /// Its grey, for the flares' brightness (`backdrop_frame`). `sunlayer2` and `sunlayer3` take
+    /// theirs while the brightness is above 0 and keep it otherwise. `sunlayer2` is white from
+    /// `layer2_white` on, and in proportion below it. `sunlayer3` takes `layer3_bright_share` of
+    /// the brightness from `layer3_bright` on, and below it `layer3_dim_share` of it over
+    /// `layer3_dim_least`.
     pub fn grey(layer: SunLayer, brightness: f32) f32 {
         return switch (layer) {
             .sunlayer1 => 1,
-            .sunlayer2 => if (brightness >= 0.5) 1 else 2 * brightness,
-            .sunlayer3 => if (brightness >= 0.8) brightness * 0.3 else brightness * 0.15 + 0.1,
+            .sunlayer2 => if (brightness >= layer2_white) 1 else brightness / layer2_white,
+            .sunlayer3 => if (brightness >= layer3_bright) brightness * layer3_bright_share else brightness * layer3_dim_share + layer3_dim_least,
         };
     }
+
+    /// The brightness from which `sunlayer2` is white (`0x004DC408`). Below it the game doubles
+    /// the brightness, which dividing by it matches exactly.
+    const layer2_white: f32 = 0.5;
+    /// The brightness from which `sunlayer3` takes its bright share of it (`0x004DC410`,
+    /// `0x004DC4C0`), and below which its dim share over its least (`0x004DC450`, `0x004DC420`).
+    const layer3_bright: f32 = 0.8;
+    const layer3_bright_share: f32 = 0.3;
+    const layer3_dim_share: f32 = 0.15;
+    const layer3_dim_least: f32 = 0.1;
 };
 
 /// The most of the sun that shows: its distance in pixels from the nearest edge of the screen is
@@ -158,11 +172,17 @@ pub fn sunVisibility(point: [2]f32, width: f32, height: f32, most: f32) f32 {
     return if (visibility < 0) 0 else visibility;
 }
 
-/// The flares' brightness, for the sun's visibility and `offset`, its distance from the middle of
-/// the view in view units: position over depth.
+/// The flares' brightness (`backdrop_frame`), for the sun's visibility and `offset`, its distance
+/// from the middle of the view in view units: position over depth. It is `flare_least` with none
+/// of the sun showing and `flare_per_visibility` more for each pixel of it that shows, and falls
+/// away as the sun leaves the middle.
 pub fn flareBrightness(visibility: f32, offset: f32) f32 {
-    return (visibility * 0.05 + 0.5) * (1 - @min(offset, 1));
+    return (visibility * flare_per_visibility + flare_least) * (1 - @min(offset, 1));
 }
+
+/// `0x004DC474` and `0x004DC408`.
+const flare_per_visibility: f32 = 0.05;
+const flare_least: f32 = 0.5;
 
 /// The lens flares, textured, coloured by the flares' brightness and added on the overlay layer:
 /// each at `along` times the sun's offset from the middle of the view, so on the line through the
@@ -288,9 +308,7 @@ pub const Backdrop = struct {
 
         for (&backdrop.motes) |*mote| {
             var position: [3]f32 = undefined;
-            for (&position) |*axis| {
-                axis.* = @as(f32, @floatFromInt(rand.rand())) * (1.0 / @as(f32, libcmt.Rand.max)) * @as(f32, dust_cube_mask);
-            }
+            for (&position) |*axis| axis.* = rand.fraction() * @as(f32, dust_cube_mask);
             mote.* = .{ .position = position, .colour = @splat(dust_grey) };
         }
         backdrop.dust = .{ .kind = .dust, .stars = &backdrop.motes, .cube_mask = dust_cube_mask };
