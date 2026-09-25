@@ -15,6 +15,13 @@ pub const Status = enum(u32) {
     /// Stopped part of the way, to be resumed.
     stopped = 8,
     _,
+
+    pub fn format(status: Status, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        return switch (status) {
+            _ => writer.print("status {d}", .{@intFromEnum(status)}),
+            inline else => |named| writer.writeAll(@tagName(named)),
+        };
+    }
 };
 
 pub const Voice = struct {
@@ -57,6 +64,17 @@ pub const Voice = struct {
         voice.current = voice.fetch();
         voice.following = voice.fetch();
         voice.status = .playing;
+    }
+
+    /// Stops it where it is, to be resumed, if it is playing (`AIL_stop_sample`,
+    /// `AIL_pause_stream`).
+    pub fn stop(voice: *Voice) void {
+        if (voice.status == .playing) voice.status = .stopped;
+    }
+
+    /// Plays it on from where it stopped, if it did (`AIL_resume_sample`, `AIL_pause_stream`).
+    pub fn resumePlaying(voice: *Voice) void {
+        if (voice.status == .stopped) voice.status = .playing;
     }
 
     /// Adds `out.len` frames of it at the output's `rate`, each channel times its gain, stepping
@@ -143,4 +161,22 @@ test Voice {
     voice.mix(&ever, 22050, .{ 1, 1 }, 1);
     try std.testing.expectEqual(Status.playing, voice.status);
     try std.testing.expectEqual(@as(f32, 0.5), ever[60][0]);
+
+    // Stopped, it stays so until it is resumed; one done is neither stopped nor resumed.
+    voice.stop();
+    try std.testing.expectEqual(Status.stopped, voice.status);
+    voice.stop();
+    try std.testing.expectEqual(Status.stopped, voice.status);
+    voice.resumePlaying();
+    try std.testing.expectEqual(Status.playing, voice.status);
+    voice.status = .done;
+    voice.stop();
+    voice.resumePlaying();
+    try std.testing.expectEqual(Status.done, voice.status);
+}
+
+test "Status.format" {
+    var buffer: [16]u8 = undefined;
+    try std.testing.expectEqualStrings("stopped", try std.fmt.bufPrint(&buffer, "{f}", .{Status.stopped}));
+    try std.testing.expectEqualStrings("status 16", try std.fmt.bufPrint(&buffer, "{f}", .{@as(Status, @enumFromInt(16))}));
 }

@@ -19,6 +19,7 @@ const Allocator = std.mem.Allocator;
 const c = @import("al");
 const openreliant = @import("openreliant");
 const mss = openreliant.engine.mss;
+const math = openreliant.engine.surrender.math;
 const wave = openreliant.wave;
 
 const log = std.log.scoped(.openal);
@@ -50,8 +51,9 @@ pub const max_3d_samples = 64;
 const resampler_name = "23rd order Sinc";
 
 /// Miles's units are metres; its velocities are a millisecond's, OpenAL's a second's.
-const velocity_scale: f32 = 1000;
-const speed_of_sound: f32 = 343.3;
+const velocity_scale = std.time.ms_per_s;
+/// The software mixer's speed of sound, a second's.
+const speed_of_sound: f32 = mss.positional.speed_of_sound * velocity_scale;
 /// **Improvement:** the Doppler shift ten times as strong as the game's velocities make it. Turned
 /// into Miles's metres, a missile flies at a few metres a second, which shifts a sound by a
 /// hundredth or two, where at the models' scale, about a centimetre a unit, it flies at over a
@@ -72,8 +74,8 @@ const Voice = struct {
     allocated: bool = false,
     source: c.ALuint = 0,
     buffer: ?Buffer = null,
-    volume: i32 = 127,
-    pan: i32 = 64,
+    volume: i32 = mss.max_level,
+    pan: i32 = mss.centre_pan,
     loops: u32 = 1,
     rate: u32 = 0,
     /// A sample's room.
@@ -450,8 +452,8 @@ pub const Renderer = struct {
 
     pub fn setSampleVolume(renderer: *Renderer, handle: mss.Sample, volume: i32) void {
         const voice = renderer.sample(handle);
-        voice.volume = std.math.clamp(volume, 0, 127);
-        c.alSourcef(voice.source, c.AL_GAIN, gain(voice.volume));
+        voice.volume = mss.clampLevel(volume);
+        c.alSourcef(voice.source, c.AL_GAIN, mss.gain(voice.volume));
     }
 
     pub fn sampleVolume(renderer: *Renderer, handle: mss.Sample) i32 {
@@ -460,7 +462,7 @@ pub const Renderer = struct {
 
     pub fn setSamplePan(renderer: *Renderer, handle: mss.Sample, pan: i32) void {
         const voice = renderer.sample(handle);
-        voice.pan = std.math.clamp(pan, 0, 127);
+        voice.pan = mss.clampLevel(pan);
         renderer.placeFlat(voice);
     }
 
@@ -504,14 +506,14 @@ pub const Renderer = struct {
         const stereo = if (voice.buffer) |buffer| buffer.channels == 2 else false;
         c.alSourcei(source, c.AL_DIRECT_CHANNELS_SOFT, if (stereo) c.AL_REMIX_UNMATCHED_SOFT else c.AL_FALSE);
         renderer.useResampler(source);
-        c.alSourcef(source, c.AL_GAIN, gain(voice.volume));
+        c.alSourcef(source, c.AL_GAIN, mss.gain(voice.volume));
         setPitch(voice);
         renderer.placeFlat(voice);
     }
 
     fn placeFlat(renderer: *Renderer, voice: *Voice) void {
         _ = renderer;
-        const side = std.math.clamp(@as(f32, @floatFromInt(voice.pan - 64)) / 64, -1, 1);
+        const side = std.math.clamp(@as(f32, @floatFromInt(voice.pan - mss.centre_pan)) / mss.centre_pan, -1, 1);
         const angle = side * std.math.pi / 2;
         c.alSource3f(voice.source, c.AL_POSITION, @sin(angle), 0, -@cos(angle));
     }
@@ -549,8 +551,8 @@ pub const Renderer = struct {
 
     pub fn set3DSampleVolume(renderer: *Renderer, handle: mss.Sample3D, volume: i32) void {
         const voice = renderer.sample3D(handle);
-        voice.volume = std.math.clamp(volume, 0, 127);
-        c.alSourcef(voice.source, c.AL_GAIN, gain(voice.volume));
+        voice.volume = mss.clampLevel(volume);
+        c.alSourcef(voice.source, c.AL_GAIN, mss.gain(voice.volume));
     }
 
     pub fn set3DSamplePlaybackRate(renderer: *Renderer, handle: mss.Sample3D, rate: u32) void {
@@ -593,7 +595,7 @@ pub const Renderer = struct {
         const source = renderer.sample3D(handle).source;
         c.alSourcef(source, c.AL_CONE_INNER_ANGLE, inner);
         c.alSourcef(source, c.AL_CONE_OUTER_ANGLE, outer);
-        c.alSourcef(source, c.AL_CONE_OUTER_GAIN, gain(std.math.clamp(outer_volume, 0, 127)));
+        c.alSourcef(source, c.AL_CONE_OUTER_GAIN, mss.gain(mss.clampLevel(outer_volume)));
     }
 
     /// **Improvement:** a large ship's sound spreads around the listener as it comes close, rather
@@ -607,7 +609,7 @@ pub const Renderer = struct {
     /// the line to it.
     pub fn set3DListenerVelocity(renderer: *Renderer, velocity: mss.Vector) void {
         _ = renderer;
-        const speed = @sqrt(@reduce(.Add, velocity * velocity));
+        const speed = @sqrt(math.dot(velocity, velocity));
         const most = speed_of_sound / velocity_scale / 2 / doppler_factor;
         const held = if (speed > most) velocity * @as(mss.Vector, @splat(most / speed)) else velocity;
         const moving = openAl(held) * @as(mss.Vector, @splat(velocity_scale));
@@ -636,7 +638,7 @@ pub const Renderer = struct {
 
     pub fn sample3DLength(renderer: *Renderer, handle: mss.Sample3D) u32 {
         const buffer = renderer.sample3D(handle).buffer orelse return 0;
-        return buffer.frames * buffer.channels * 2;
+        return mss.pcmLength(buffer.frames, buffer.channels);
     }
 
     /// A 3D sample is placed from the listener, falls off with distance, and sends to the
@@ -656,7 +658,7 @@ pub const Renderer = struct {
             c.alSource3i(source, c.AL_AUXILIARY_SEND_FILTER, @intCast(effect.slot), 1, @intCast(renderer.low_frequency_filter));
         }
         renderer.useResampler(source);
-        c.alSourcef(source, c.AL_GAIN, gain(voice.volume));
+        c.alSourcef(source, c.AL_GAIN, mss.gain(voice.volume));
     }
 
     // --- Streams ---------------------------------------------------------------------------------
@@ -715,7 +717,7 @@ pub const Renderer = struct {
     }
 
     pub fn setStreamVolume(renderer: *Renderer, handle: mss.Stream, volume: i32) void {
-        c.alSourcef(renderer.stream(handle).source, c.AL_GAIN, gain(std.math.clamp(volume, 0, 127)));
+        c.alSourcef(renderer.stream(handle).source, c.AL_GAIN, mss.gain(mss.clampLevel(volume)));
     }
 
     pub fn setStreamLoopCount(renderer: *Renderer, handle: mss.Stream, count: u32) void {
@@ -794,10 +796,6 @@ fn decode(gpa: Allocator, file: []const u8) ?Buffer {
         return null;
     }
     return .{ .name = name, .rate = header.rate, .frames = decoder.frames, .channels = @intCast(channels) };
-}
-
-fn gain(volume: i32) f32 {
-    return @as(f32, @floatFromInt(volume)) / 127;
 }
 
 /// A vector in Miles's frame, `+z` ahead, in OpenAL's, `-z` ahead.
