@@ -76,6 +76,10 @@ const waves = [_]Wave{ .{ .size = 16, .life = 0.25 }, .{ .size = 6, .life = 0.5 
 /// The halves' alpha at full brightness, as they start (`0x004DC4C0`).
 const half_alpha: f32 = 0.3;
 
+/// How a half takes its texture from where each vertex lies across, halved and moved in by a half
+/// (`0x004DC408`).
+const half_mapping: f32 = 0.5;
+
 /// The one point of the shield's texture the ball shows, from `opened` (a texel of the 128 square
 /// `shield128`); and its green, a share of its red (`0x004DC4C0`).
 const ball_texel: [2]f32 = .{ 45.0 / 128.0, 18.0 / 128.0 };
@@ -292,7 +296,7 @@ pub const Uber = struct {
         const blast = &uber.blast.?;
         blast.halves[1].orientation = math.product(math.fromAngles(0, std.math.pi, 0), place.orientation);
         blast.half_colours[hemisphere_vertices - rim ..].* = @splat(@splat(0));
-        for (&blast.half_uv, uber.hemisphere.positions) |*uv, at| uv.* = .{ at[0] * 0.5 + 0.5, at[1] * 0.5 + 0.5 };
+        for (&blast.half_uv, uber.hemisphere.positions) |*uv, at| uv.* = .{ at[0] * half_mapping + half_mapping, at[1] * half_mapping + half_mapping };
         for (&blast.halves) |*shown| {
             shown.baked = &blast.half_colours;
             shown.own_uv = .{ &blast.half_uv, null };
