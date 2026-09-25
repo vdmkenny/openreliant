@@ -39,6 +39,25 @@ pub fn firstFreeIndex(comptime T: type, slots: []const ?T) ?usize {
     return null;
 }
 
+/// Where the first slot of `slots` that `free` finds free is, or null where every one is taken: the
+/// tables whose records mark their slot taken themselves, with a flag of their own.
+pub fn firstFreeBy(comptime T: type, slots: []const T, comptime free: fn (*const T) bool) ?usize {
+    for (slots, 0..) |*slot, index| if (free(slot)) return index;
+    return null;
+}
+
+test firstFreeBy {
+    const Record = struct {
+        live: bool,
+        fn dead(record: *const @This()) bool {
+            return !record.live;
+        }
+    };
+    const records = [_]Record{ .{ .live = true }, .{ .live = false }, .{ .live = false } };
+    try std.testing.expectEqual(1, firstFreeBy(Record, &records, Record.dead));
+    try std.testing.expectEqual(null, firstFreeBy(Record, records[0..1], Record.dead));
+}
+
 /// A table of `capacity` records, each new one in the first free slot, whose live records are also
 /// linked newest first, through their own `newer` and `older`, in the order the game walks them:
 /// the missiles and their trails. A record lets go of what it holds with its `release`.
