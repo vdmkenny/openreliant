@@ -60,7 +60,7 @@ The device's shader, [`device.glsl`](../../src/platform/shaders/device.glsl), ta
 Deliberate differences from the original, each marked **Improvement** where it is made:
 
 - The view is unstretched on any screen: the factor across keeps pixels square, and a wider screen shows more at the sides ([Camera](../engine/camera.md#projection)).
-- The driver tests a blended polygon's triangles against the sun with the polygon's own corners, where the original uses indices left over from the last list it drew.
+- The driver tests a sorted polygon's triangles against the sun with the polygon's own corners, where the original uses indices left over from the last list it drew. Only a solid polygon hides the sun: what is blended, such as a canopy's glass, lets it through.
 - A vertex with no counterpart in the next level of detail morphs toward itself, where the original reads whatever lies before that level's vertices.
 - The finer levels of detail reach eight times as far as the original's (`srapi.Context.finer`), so that a ship keeps its finest mesh until it is far off. Its last level still ends where the original's does at the high detail setting, depths divided by 3 (`game.main.high_detail`), and the ship leaves sight there.
 - A frame may draw 200000 vertices and as many polygons, ten times the original's 19999 (`srapi.Context.budget`). The layers are drawn from what went into them last, so once the budget is spent the objects that went in first are left out, and those are the ships' parts. The port keeps up to 4000 burning bits where the original keeps 500, and a view full of them and of a split's bodies takes the original's budget, so a wreck's parts would vanish while they are in view.

@@ -26,6 +26,8 @@ const matmanager = @import("matmanager.zig");
 const xtrabits = @import("xtrabits.zig");
 const Vector = math.Vector;
 
+pub const rings = @import("backdrop/rings.zig");
+
 /// The star map, in `resource.hog`: grey pixels on black, one star each.
 pub const star_map_name = "space.tga";
 
@@ -117,6 +119,15 @@ pub const SunLayer = enum {
         };
     }
 
+    /// Whether what isn't round in its texture is kept where the port draws it again finer
+    /// (`Sun.smooth`): `sunlayer1`'s ragged rim and `sunlayer2`'s rays.
+    pub fn detail(layer: SunLayer) rings.Detail {
+        return switch (layer) {
+            .sunlayer1, .sunlayer2 => .kept,
+            .sunlayer3 => .round,
+        };
+    }
+
     /// Its grey, for the flares' brightness. `sunlayer2` and `sunlayer3` take theirs while the
     /// brightness is above 0 and keep it otherwise.
     pub fn grey(layer: SunLayer, brightness: f32) f32 {
@@ -133,11 +144,11 @@ pub const SunLayer = enum {
 pub const max_visibility: f32 = 10;
 
 /// How much of the sun shows (`backdrop_frame`): its distance in pixels from the nearest edge of
-/// the screen, at most `max_visibility`, and 0 when it is off the screen. The driver then lessens
-/// it for each triangle of an object flagged `sun_occluder` that covers the sun's point. It is
-/// worked out after the sprites are placed, so each frame uses the last frame's.
-pub fn sunVisibility(point: [2]f32, width: f32, height: f32) f32 {
-    var visibility = max_visibility;
+/// the screen, at most `most`, and 0 when it is off the screen. The driver then lessens it for each
+/// triangle of an object flagged `sun_occluder` that covers the sun's point. It is worked out after
+/// the sprites are placed, so each frame uses the last frame's.
+pub fn sunVisibility(point: [2]f32, width: f32, height: f32, most: f32) f32 {
+    var visibility = most;
     if (point[0] < visibility) visibility = point[0];
     if (point[1] < visibility) visibility = point[1];
     if (width - point[0] < visibility) visibility = width - point[0];
@@ -175,6 +186,40 @@ pub fn flaresShown(view: camera.View, cockpit_mode: camera.CockpitMode, visibili
 pub const sun_sprite_count = 9;
 const first_flare = 2;
 
+/// How the sun and the lens flares are drawn.
+pub const Sun = enum {
+    /// **Improvement:** their textures each drawn again, eight times finer, from the rings it is
+    /// made of (`rings.redraw`), so that they stay round and crisp however large they are drawn;
+    /// and the sun's glow and the flares dimming as the sun's disc goes behind what hides it, over
+    /// as far as `sunlayer1` reaches on the screen (`Backdrop.reach`, `glow`).
+    smooth,
+    /// From their small 16-bit textures, as the game draws them, dimming over `max_visibility`
+    /// pixels of the screen and the glow going out at once.
+    original,
+
+    /// How much of `sunlayer3`'s grey shows at `visibility`, in the game's measure: all of it
+    /// above `least_glow` and none below, as the game has it, or dimming with the visibility to
+    /// none.
+    pub fn glow(sun: Sun, visibility: f32) f32 {
+        return switch (sun) {
+            .smooth => visibility / max_visibility,
+            .original => if (visibility > least_glow) 1 else 0,
+        };
+    }
+};
+
+/// The least visibility `sunlayer3` shows at in the game (`0x004DC408`).
+const least_glow: f32 = 0.5;
+
+/// The textures the sun and the lens flares draw: the three layers and the four flares.
+const sun_textures = 7;
+
+/// A texture drawn again finer, and the name of the one it was drawn from.
+const Redrawn = struct {
+    name: []const u8,
+    image: srtexture.Image,
+};
+
 /// The backdrop as `backdrop_create` builds it: the star fields (`star_fields`, `0x00595A30`), the
 /// dust (`space_dust`, `0x00595A28`), the lights, the sun's direction and its sprites.
 pub const Backdrop = struct {
@@ -186,16 +231,27 @@ pub const Backdrop = struct {
     sun: [sun_sprite_count]srapiext.SpriteSet,
     /// Each sun set's one sprite.
     sprites: [sun_sprite_count][1]srapiext.Sprite,
+    /// Each sun set's texture's width and height in texels, which size its sprite: the game's
+    /// texture's, whatever the set draws.
+    texels: [sun_sprite_count][2]f32,
+    /// How the sun and the flares are drawn.
+    style: Sun,
+    /// The sun's textures drawn again (`Sun.smooth`), made in `gpa`.
+    redrawn: [sun_textures]Redrawn,
+    redrawn_count: usize,
     /// Every field's stars, field after field.
     stars: []srstars.Star,
     motes: [dust_count]srstars.Star,
 
     /// Builds the backdrop (`backdrop_create`) from the star map, the sun's textures and `rand`,
-    /// the flares sorting as if at `near`, the near plane.
-    pub fn create(gpa: Allocator, textures: *srtexture.Table, map: tga.Image, rand: *libcmt.Rand, near: f32) (matmanager.Error || error{WrongSize})!*Backdrop {
+    /// the flares sorting as if at `near`, the near plane, and the sun drawn as `sun` says.
+    pub fn create(gpa: Allocator, textures: *srtexture.Table, map: tga.Image, rand: *libcmt.Rand, near: f32, sun: Sun) (matmanager.Error || error{WrongSize})!*Backdrop {
         if (map.width != star_map_size or map.height != star_map_size) return error.WrongSize;
         const backdrop = try gpa.create(Backdrop);
         errdefer gpa.destroy(backdrop);
+        backdrop.style = sun;
+        backdrop.redrawn_count = 0;
+        errdefer for (backdrop.redrawn[0..backdrop.redrawn_count]) |made| rings.free(gpa, made.image);
 
         var count: usize = 0;
         for (0..star_map_size) |y| {
@@ -245,19 +301,47 @@ pub const Backdrop = struct {
         }
         for ([_]SunLayer{ .sunlayer1, .sunlayer2, .sunlayer3 }) |layer| {
             const set = &backdrop.sun[layer.sprite()];
-            set.surface = sunSurface(try matmanager.textureRequire(textures, layer.texture()));
+            const image = try matmanager.textureRequire(textures, layer.texture());
+            backdrop.texels[layer.sprite()] = texelsOf(image);
+            set.surface = sunSurface(try backdrop.drawn(gpa, image, layer.texture(), layer.detail(), sun));
             set.sprites[0].offset = backdrop.sun_direction;
         }
-        for (flares, backdrop.sun[first_flare..][0..flares.len]) |flare, *set| {
-            set.surface = sunSurface(try matmanager.textureRequire(textures, flare.texture));
+        for (flares, backdrop.sun[first_flare..][0..flares.len], backdrop.texels[first_flare..][0..flares.len]) |flare, *set, *texels| {
+            const image = try matmanager.textureRequire(textures, flare.texture);
+            texels.* = texelsOf(image);
+            set.surface = sunSurface(try backdrop.drawn(gpa, image, flare.texture, .round, sun));
             set.sprites[0].bias = near;
         }
         return backdrop;
     }
 
     pub fn destroy(backdrop: *Backdrop, gpa: Allocator) void {
+        for (backdrop.redrawn[0..backdrop.redrawn_count]) |made| rings.free(gpa, made.image);
         gpa.free(backdrop.stars);
         gpa.destroy(backdrop);
+    }
+
+    /// The image a sun set draws of the texture `name`, `image`: drawn again finer, once for every
+    /// set that draws it, or the texture itself as the game draws it.
+    fn drawn(backdrop: *Backdrop, gpa: Allocator, image: *srtexture.Image, name: []const u8, detail: rings.Detail, sun: Sun) Allocator.Error!*srtexture.Image {
+        if (sun == .original) return image;
+        for (backdrop.redrawn[0..backdrop.redrawn_count]) |*made| {
+            if (std.mem.eql(u8, made.name, name)) return &made.image;
+        }
+        const made = &backdrop.redrawn[backdrop.redrawn_count];
+        made.* = .{ .name = name, .image = try rings.redraw(gpa, image, detail) };
+        backdrop.redrawn_count += 1;
+        return &made.image;
+    }
+
+    /// The most of the sun's visibility, in the screen's pixels: `max_visibility`, as the game
+    /// measures it, or for `Sun.smooth` as far as `sunlayer1` reaches on the screen, so that the
+    /// sun dims as its disc goes behind what hides it, at any size of screen.
+    fn reach(backdrop: *const Backdrop, projection: srapi.Projection) f32 {
+        return switch (backdrop.style) {
+            .smooth => backdrop.texels[SunLayer.sunlayer1.sprite()][0] * SunLayer.sunlayer1.size() * sprite_scale * projection.scale[0],
+            .original => max_visibility,
+        };
     }
 
     /// Makes every star field take this frame as its last, so a cut draws no streaks
@@ -278,6 +362,9 @@ pub const Backdrop = struct {
         try xtrabits.sceneAdd(gpa, scene, .{ .stars = &backdrop.dust }, .background);
 
         const projection = context.projection;
+        const most = backdrop.reach(projection);
+        // How much of the sun showed last frame, in the game's measure.
+        const visibility = context.sun_visibility / most * max_visibility;
         const sun1 = &backdrop.sun[SunLayer.sunlayer1.sprite()];
         const sun2 = &backdrop.sun[SunLayer.sunlayer2.sprite()];
         const sun3 = &backdrop.sun[SunLayer.sunlayer3.sprite()];
@@ -288,20 +375,21 @@ pub const Backdrop = struct {
             const down = toward[1] / toward[2];
             context.sun = .{ across * projection.scale[0] + projection.centre[0], down * projection.scale[1] + projection.centre[1] };
             const offset = @sqrt(across * across + down * down);
-            if (context.sun_visibility > 0.5) try xtrabits.sceneAdd(gpa, scene, .{ .sprites = sun3 }, .background);
-            const brightness = flareBrightness(context.sun_visibility, offset);
+            const glow = backdrop.style.glow(visibility);
+            if (glow > 0) try xtrabits.sceneAdd(gpa, scene, .{ .sprites = sun3 }, .background);
+            const brightness = flareBrightness(visibility, offset);
             sun1.sprites[0].colour = @splat(SunLayer.sunlayer1.grey(brightness));
             if (brightness > 0) {
                 if (context.hardware) {
                     sun2.sprites[0].colour = @splat(SunLayer.sunlayer2.grey(brightness));
-                    sun3.sprites[0].colour = @splat(SunLayer.sunlayer3.grey(brightness));
+                    sun3.sprites[0].colour = @splat(SunLayer.sunlayer3.grey(brightness) * glow);
                     try xtrabits.sceneAdd(gpa, scene, .{ .sprites = sun2 }, .background);
                 }
                 const sets = backdrop.sun[first_flare..][0..flares.len];
                 for (flares, sets) |flare, *set| {
                     set.sprites[0].offset = .{ toward[0] * flare.along, toward[1] * flare.along, toward[2] };
                 }
-                if (flaresShown(view, cockpit_mode, context.sun_visibility)) {
+                if (flaresShown(view, cockpit_mode, visibility)) {
                     for (sets) |*set| {
                         const sprite = &set.sprites[0];
                         sprite.offset = math.transform(context.camera.orientation, sprite.offset);
@@ -310,26 +398,17 @@ pub const Backdrop = struct {
                     }
                 }
             }
-            context.sun_visibility = sunVisibility(context.sun, @floatFromInt(projection.screen[0]), @floatFromInt(projection.screen[1]));
+            context.sun_visibility = sunVisibility(context.sun, @floatFromInt(projection.screen[0]), @floatFromInt(projection.screen[1]), most);
         }
         try xtrabits.sceneAdd(gpa, scene, .{ .sprites = sun1 }, .background);
 
         // Each sprite as far to each side as its texture is wide and high, times its depth.
         const sized: usize = if (context.hardware) sun_sprite_count else sun_sprite_count - 1;
-        for (backdrop.sun[0..sized]) |*set| {
+        for (backdrop.sun[0..sized], backdrop.texels[0..sized]) |*set, texels| {
             set.position = context.camera.position;
             const sprite = &set.sprites[0];
             const depth = context.turn(sprite.offset)[2];
-            if (depth > 0) {
-                const image = switch (set.surface.textures[0]) {
-                    .image => |image| image,
-                    .none, .highlight => continue,
-                };
-                sprite.half_size = .{
-                    @as(f32, @floatFromInt(image.width())) * depth * sprite_scale,
-                    @as(f32, @floatFromInt(image.height())) * depth * sprite_scale,
-                };
-            }
+            if (depth > 0) sprite.half_size = .{ texels[0] * depth * sprite_scale, texels[1] * depth * sprite_scale };
         }
         for ([_]SunLayer{ .sunlayer2, .sunlayer1, .sunlayer3 }) |layer| {
             const sprite = &backdrop.sun[layer.sprite()].sprites[0];
@@ -345,6 +424,11 @@ fn offsetSine(pixel: usize) f32 {
 
 fn channel(byte: u8) f32 {
     return @as(f32, @floatFromInt(byte)) * (1.0 / 255.0);
+}
+
+/// A texture's width and height in texels.
+fn texelsOf(image: *const srtexture.Image) [2]f32 {
+    return .{ @floatFromInt(image.width()), @floatFromInt(image.height()) };
 }
 
 /// A sun sprite's surface: textured, lit and added, so it takes its sprite's colour.
@@ -374,9 +458,19 @@ test SunLayer {
 }
 
 test sunVisibility {
-    try std.testing.expectEqual(max_visibility, sunVisibility(.{ 320, 240 }, 640, 480));
-    try std.testing.expectEqual(4, sunVisibility(.{ 636, 240 }, 640, 480));
-    try std.testing.expectEqual(0, sunVisibility(.{ -20, 240 }, 640, 480));
+    try std.testing.expectEqual(max_visibility, sunVisibility(.{ 320, 240 }, 640, 480, max_visibility));
+    try std.testing.expectEqual(4, sunVisibility(.{ 636, 240 }, 640, 480, max_visibility));
+    try std.testing.expectEqual(0, sunVisibility(.{ -20, 240 }, 640, 480, max_visibility));
+    try std.testing.expectEqual(40, sunVisibility(.{ 320, 240 }, 640, 480, 40));
+}
+
+test Sun {
+    // The game's glow goes out at once; the port's dims to none.
+    try std.testing.expectEqual(1, Sun.original.glow(0.6));
+    try std.testing.expectEqual(0, Sun.original.glow(0.4));
+    try std.testing.expectEqual(1, Sun.smooth.glow(max_visibility));
+    try std.testing.expectApproxEqAbs(0.05, Sun.smooth.glow(0.5), 1e-6);
+    try std.testing.expectEqual(0, Sun.smooth.glow(0));
 }
 
 test flareBrightness {
@@ -460,7 +554,7 @@ test Backdrop {
     const map: tga.Image = .{ .width = star_map_size, .height = star_map_size, .rgb = rgb };
 
     var rand: libcmt.Rand = .{};
-    const backdrop = try Backdrop.create(gpa, &textures.table, map, &rand, 100);
+    const backdrop = try Backdrop.create(gpa, &textures.table, map, &rand, 100, .original);
     defer backdrop.destroy(gpa);
     try std.testing.expectEqual(1, backdrop.fields[0].stars.len);
     try std.testing.expectEqual(@as(Vector, .{ 0, 0, 1 }), backdrop.fields[0].stars[0].position);
@@ -476,7 +570,7 @@ test Backdrop {
     try std.testing.expectEqual(100, backdrop.sun[first_flare].sprites[0].bias);
 
     const wrong: tga.Image = .{ .width = 1, .height = 1, .rgb = rgb[0..3] };
-    try std.testing.expectError(error.WrongSize, Backdrop.create(gpa, &textures.table, wrong, &rand, 100));
+    try std.testing.expectError(error.WrongSize, Backdrop.create(gpa, &textures.table, wrong, &rand, 100, .original));
 }
 
 test "Backdrop.frame" {
@@ -487,7 +581,7 @@ test "Backdrop.frame" {
     defer gpa.free(rgb);
     @memset(rgb, 0);
     var rand: libcmt.Rand = .{};
-    const backdrop = try Backdrop.create(gpa, &textures.table, .{ .width = star_map_size, .height = star_map_size, .rgb = rgb }, &rand, 100);
+    const backdrop = try Backdrop.create(gpa, &textures.table, .{ .width = star_map_size, .height = star_map_size, .rgb = rgb }, &rand, 100, .original);
     defer backdrop.destroy(gpa);
 
     var scene: srcore.Scene = .{};

@@ -34,7 +34,7 @@ zig build -Dtarget=aarch64-macos               # Apple silicon, from any Zig
 
 | Option | Does |
 |---|---|
-| `--original` | The original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks, lights from the latest shots only, muzzle flashes that light nothing and none from the turrets, the force feedback's own effects only, a blow shaking the camera only while the controller rumbles, an explosion's debris lit by every light, its fireballs, rings and particles as few and plain as the original's, the Uber Explode as coarse, unlit and tied to the frame rate as the original's, the shields' bubbles as coarse as the original's, the marker for a target out of sight placed as the original misplaces it, and sound mixed plainly in stereo with no master bus |
+| `--original` | The original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, motion that moves on with the game's ticks, lights from the latest shots only, muzzle flashes that light nothing and none from the turrets, the force feedback's own effects only, a blow shaking the camera only while the controller rumbles, an explosion's debris lit by every light, its fireballs, rings and particles as few and plain as the original's, the Uber Explode as coarse, unlit and tied to the frame rate as the original's, the shields' bubbles as coarse as the original's, the sun and its lens flares from their small textures and the sun's glow going out at once behind what hides it, the marker for a target out of sight placed as the original misplaces it, and sound mixed plainly in stereo with no master bus |
 
 **The sandbox.**
 

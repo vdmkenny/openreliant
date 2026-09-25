@@ -121,7 +121,7 @@ fn draw(ctx: Context, command: Command) !void {
 
     var rand: openreliant.engine.libcmt.Rand = .{};
     const star_map = try tga.decode(gpa, try need(&resources, backdrop.star_map_name));
-    const space = try backdrop.Backdrop.create(gpa, &textures, star_map, &rand, context.projection.near);
+    const space = try backdrop.Backdrop.create(gpa, &textures, star_map, &rand, context.projection.near, .original);
     defer space.destroy(gpa);
     const sky = try nebula.Sky.create(gpa, &textures, try tga.decode(gpa, try need(&resources, nebula.dome_image_name)));
     defer sky.destroy(gpa);
