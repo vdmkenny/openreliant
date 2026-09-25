@@ -153,7 +153,7 @@ pub const full_screen = [4]f32{ 0, 0, 1, 1 };
 /// (`0x005E82F4`, `0x005E82F8` against 19999).
 pub const original_budget = 19999;
 
-/// Surrender's state, `sr` (`0x005E6B50`), as the port keeps it: the camera and its projection,
+/// Surrender's state, `sr` (`0x005E6B50`), as OpenReliant keeps it: the camera and its projection,
 /// the level-of-detail divisor, and the sun's point the driver checks triangles against.
 pub const Context = struct {
     /// The camera's frame (`sr + 0x30`): its orientation's columns are its right, down and
@@ -161,8 +161,8 @@ pub const Context = struct {
     camera: struct { position: Vector, orientation: math.Matrix } = .{ .position = @splat(0), .orientation = math.identity },
     projection: Projection,
     /// Depths are divided by this before choosing a level of detail (`detail_divisor`,
-    /// `0x005E829A`). `mission_frame` moves it with the frame time, within bounds the detail setting
-    /// sets (`game.main.high_detail`).
+    /// `0x005E829A`). `mission_frame` moves it with the frame time, within bounds the detail
+    /// setting sets (`game.main.high_detail`).
     detail: f32 = 1,
     /// **Improvement:** how many times further than `detail` has them the finer levels of detail
     /// reach, so that an object keeps a finer mesh from further off; its last level still ends
@@ -177,11 +177,11 @@ pub const Context = struct {
     /// the driver lessens it for each triangle of an object flagged `sun_occluder` near the point.
     sun: [2]f32 = .{ 0, 0 },
     sun_visibility: f32 = 0,
-    /// The port's: set for a frame whose device lights each pixel with the directional and point
+    /// OpenReliant's: set for a frame whose device lights each pixel with the directional and point
     /// lights (`device.Device.lights`). The pipeline then leaves them out of the vertices' colours
     /// and hands the device the vertices' normals instead.
     pixel_lighting: bool = false,
-    /// The port's: how the device draws the frame's shadows, or null for none (`srshadow`). The
+    /// OpenReliant's: how the device draws the frame's shadows, or null for none (`srshadow`). The
     /// driver sets it with the lights.
     shadows: ?srshadow.Settings = null,
 

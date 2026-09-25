@@ -1,5 +1,5 @@
 //! RIFF/WAVE sounds: the `.fat` banks' entries and the music in `music\`. The game hands them to
-//! Miles whole, which plays them as they are; `Decoder` reads their frames for the port's mixer.
+//! Miles whole, which plays them as they are; `Decoder` reads their frames for OpenReliant's mixer.
 //!
 //! The game's sounds are IMA ADPCM (format `0x11`) or PCM. An IMA ADPCM block starts with a
 //! header for each channel, the block's first sample and the step index, then holds four bits a

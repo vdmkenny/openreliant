@@ -72,9 +72,9 @@ pub const Section = enum(u8) {
     script_b = 18,
     unused_19 = 19,
     unused_20 = 20,
-    /// **OpenReliant's own:** the mission's name, as `OpenReliantName` keeps it. The game binds this
-    /// section into a local variable of its binder and reads nothing of it, and no shipped mission
-    /// has one.
+    /// **OpenReliant's own:** the mission's name, as `OpenReliantName` keeps it. The game binds
+    /// this section into a local variable of its binder and reads nothing of it, and no shipped
+    /// mission has one.
     openreliant_name = 21,
     operands_b = 22,
     unknown_23 = 23,
@@ -472,8 +472,8 @@ pub const Object = extern struct {
     }
 };
 
-/// **OpenReliant's own:** a mission's name, which the port keeps in section `openreliant_name`, a
-/// section the game binds but never reads. The section's count is its size in bytes: this header,
+/// **OpenReliant's own:** a mission's name, which OpenReliant keeps in section `openreliant_name`,
+/// a section the game binds but never reads. The section's count is its size in bytes: this header,
 /// then `length` bytes of the name in UTF-8, then a NUL. A mission is complete without it, and the
 /// game plays one with it as it plays any other.
 pub const OpenReliantName = extern struct {
@@ -486,7 +486,7 @@ pub const OpenReliantName = extern struct {
     pub const current_version: u16 = 1;
 
     /// The name `section` holds, where it starts with a header of this kind and the name fits;
-    /// null for anything else, which the port leaves alone.
+    /// null for anything else, which OpenReliant leaves alone.
     pub fn read(section: []const u8) ?[]const u8 {
         if (section.len < @sizeOf(OpenReliantName)) return null;
         const header: *align(1) const OpenReliantName = @ptrCast(section[0..@sizeOf(OpenReliantName)]);
@@ -667,8 +667,9 @@ pub const Opcode = enum(u8) {
     logical_and = 0x1F,
     logical_or = 0x20,
 
-    /// Calls Executor command `n`, [`engine/game/executor/commands.zig`](../engine/game/executor/commands.zig),
-    /// with its arguments popped off the stack. Its result is kept for `push_result`.
+    /// Calls Executor command `n`,
+    /// [`engine/game/executor/commands.zig`](../engine/game/executor/commands.zig), with its
+    /// arguments popped off the stack. Its result is kept for `push_result`.
     command = 0x21,
     /// Calls part `n` through the part table.
     call_part = 0x22,
@@ -1368,7 +1369,7 @@ test "directory and records line up" {
 
     // The player's own record is the one of the player's side.
     try std.testing.expectEqual(@as(u32, 3), (try mission.player()).?.object_id);
-    // Without OpenReliant's section, the mission has no name of the port's.
+    // Without OpenReliant's section, the mission has no name of OpenReliant's.
     try std.testing.expectEqual(null, mission.openReliantName());
     const name_at = 0x300;
     directory[@intFromEnum(Section.openreliant_name)] = .{ .count = 8 + 12, ._unused = 0, .formats = 0xF, .offset = name_at };
@@ -1409,8 +1410,9 @@ test "condition names cover the scriptable range" {
 }
 
 test "decodes a block down to its alignment padding" {
-    // The opening block of mission1: call, command, read a global, push a constant, compare, branch, call,
-    // jump, call, command, push a byte, return, then two bytes that pad the block to a multiple of four.
+    // The opening block of mission1: call, command, read a global, push a constant, compare,
+    // branch, call, jump, call, command, push a byte, return, then two bytes that pad the block to
+    // a multiple of four.
     const section = [_]u8{
         0x1C, 0x00, 0x22, 0x01, 0x21, 0x17, 0x27, 0x00, 0x28, 0x00, 0x02, 0x24, 0x00, 0x07,
         0x22, 0x15, 0x42, 0x00, 0x04, 0x22, 0x18, 0x21, 0x17, 0x32, 0x01, 0x43, 0x32, 0x01,

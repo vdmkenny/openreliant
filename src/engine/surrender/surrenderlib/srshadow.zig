@@ -1,10 +1,10 @@
-//! The port's: shadows from the key lights, which Surrender has none of. Each frame the view is
+//! OpenReliant's: shadows from the key lights, which Surrender has none of. Each frame the view is
 //! split by depth into cascades, each an orthographic box along the sun around its slice of the
 //! view (`fit`), and the cockpit, where the scene holds one, gets a box of its own around it. The
 //! scene's solid meshes are gathered as casters, whatever the camera sees of them, into the maps
-//! they can reach (`gather`), and a cloaking part's see-through hull as strongly as it is solid,
-//! so that a ship's shadow fades out as it cloaks. A device that lights each pixel draws the casters into a map for each
-//! box and scales a shadowed light's share of each pixel by what it finds there
+//! they can reach (`gather`), and a cloaking part's see-through hull as strongly as it is solid, so
+//! that a ship's shadow fades out as it cloaks. A device that lights each pixel draws the casters
+//! into a map for each box and scales a shadowed light's share of each pixel by what it finds there
 //! (`device.Device.shadows`): the world's pixels in the cascades, the cockpit's in its own map.
 
 const std = @import("std");

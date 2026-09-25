@@ -156,7 +156,7 @@ test Table {
 
 /// `object_set_pilot` (`0x0049CCE0`): gives the object pilot `pilot`, a record of `pilot_stats`.
 /// The game points the object at the record and at the pilot's entry of a table at `0x005048D8`
-/// as well (`GameObject.pilot_stats`, `pilot_record`); the port looks the pilot up by number.
+/// as well (`GameObject.pilot_stats`, `pilot_record`); OpenReliant looks the pilot up by number.
 pub fn setPilot(object: *GameObject, pilot: i32) void {
     object.pilot = pilot;
 }

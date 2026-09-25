@@ -19,8 +19,8 @@ pub const System = enum { shields, guns, engines };
 /// The direction of each system's anchor from the middle of the ball (`0x00412560`): the three a
 /// third of a turn apart.
 ///
-/// **Improvement:** the game writes the guns' and engines' `x`, √3/2, as 0.866. The port uses √3/2
-/// itself, which sets those anchors 0.00002 further from the middle.
+/// **Improvement:** the game writes the guns' and engines' `x`, √3/2, as 0.866. OpenReliant uses
+/// √3/2 itself, which sets those anchors 0.00002 further from the middle.
 pub const anchors = std.EnumArray(System, [2]f32).init(.{
     .shields = .{ 0, 1 },
     .guns = .{ half_root_three, -0.5 },

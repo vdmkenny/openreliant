@@ -1,6 +1,6 @@
 # Missiles
 
-`missiles.cpp` keeps the missiles in flight, their trails and their stats; the launchers, the lock and the loadout live in the files that call it. The port is [`game/missiles.zig`](../../src/engine/game/missiles.zig).
+`missiles.cpp` keeps the missiles in flight, their trails and their stats; the launchers, the lock and the loadout live in the files that call it. OpenReliant is [`game/missiles.zig`](../../src/engine/game/missiles.zig).
 
 **Unverified:** the file's extent. The assertions name its path from `0x00494CB0` to `0x00496B0E`; the strings and the data its code uses (`missilestats.bin`, `MissileTrail BMO`, `Missilebursttrail mesh`) place `stats_load_missiles` (`0x00494BC0`) and everything to `0x00498443`, `order_torpedo` among it, in it too.
 
@@ -82,7 +82,7 @@ bytes at `GameObject + 0x158`, `rack_count` of them (`+0x150`).
 A re-arm (`order_dock`, `cmd_ReplenishWeapons`) lets go of what hangs and fits the racks again, by
 the tier at `GameObject + 0x648`, which nothing writes.
 
-The port fits a player's ship by the tier, as the game does when the briefing is skipped; the
+OpenReliant fits a player's ship by the tier, as the game does when the briefing is skipped; the
 loadout screen is not ported (#44). The root lists each part at its number (`object_link_part`), so
 the hardpoints of a part linked to another, as in `Jap_Sai.SHP` and `Chin_Han.SHP`, are fitted too.
 
@@ -118,7 +118,7 @@ force-feedback effect ([Controls](controls.md#force-feedback)).
   It takes the launcher's velocity and side.
 - Its launch sound (`stats + 0x04`) plays at its next place, facing the way it moves, on a sure
   voice for the player's missile. The voice follows it no further, and ends with its length.
-  **Improvement:** the port's follows the missile and ends with it
+  **Improvement:** OpenReliant's follows the missile and ends with it
   ([Sound](sound.md#playing)).
 - One fewer is left in the rack. A pod's missile flies the pod launch and a rail's the rail launch,
   each with its trail; a fuel pod and an empty pod are jettisoned. Then it takes its target.
@@ -156,7 +156,7 @@ The launches' `init` (`0x00496B10`) and the jettison's keep the tick they began 
 5. With the target lost, a missile whose trail has the Solomon's look flies straight; any other
    ends.
 
-**Improvement:** the port works the gain out as 18 over pi.
+**Improvement:** OpenReliant works the gain out as 18 over pi.
 
 The Solomon's choice (`0x00497F80`) is among the objects of other sides to the missile's that are
 ones to aim at: of those that list no components, the nearest whose direction lies within 0.7 of
@@ -199,12 +199,12 @@ against every object of type below 256 that collides, but its launcher, of any s
   - Otherwise, with a shield damage above 0: the shield takes it, with the hull damage over the
     shield damage as the share that passes through (`object_damage`), five times over in a
     multiplayer mission. The player's ship takes it only on the fore quadrant, and only as the hit
-    empties a [shield reserve](controls.md#the-shield-balance): the fore's while it holds anything, else
-    the aft's. With neither holding anything, or on any other quadrant, the player's shields take
-    nothing.
+    empties a [shield reserve](controls.md#the-shield-balance): the fore's while it holds anything,
+    else the aft's. With neither holding anything, or on any other quadrant, the player's shields
+    take nothing.
 
     **Fix:** every other hit on the player's shields, a shot's, a knock's and a shockwave's, draws
-    the reserve of the side struck and then reaches the shield, so the port takes a missile's the
+    the reserve of the side struck and then reaches the shield, so OpenReliant takes a missile's the
     same way: off the fore or aft reserve while it holds, then on the shield.
   - The shield flares at the point unless the object is cloaked.
 
@@ -215,7 +215,8 @@ kind 1.
 that part, but in the part's own frame, so no part after it is truly tested.
 
 **Fix:** where the segment meets no part's box, `missile_hit_hull` still reports contact without
-ending the missile, so it is not drawn that frame and flies on. The port reports none, and draws it.
+ending the missile, so it is not drawn that frame and flies on. OpenReliant reports none, and draws
+it.
 
 ### The end
 
@@ -229,7 +230,7 @@ record are freed.
 
 `missiles_reset` (`0x00494D80`) frees every missile as a mission ends.
 
-The port keeps the missiles with the objects (`create.Objects.missiles`).
+OpenReliant keeps the missiles with the objects (`create.Objects.missiles`).
 
 ## Trails
 
@@ -323,7 +324,7 @@ each ring's last corner takes the next ring's colour. The first triangle keeps n
 coordinates.
 
 **Fix:** the game works the mouth's corners' texture coordinates round the plume out as a nought
-over a nought, which is not a number; the port gives them 0.
+over a nought, which is not a number; OpenReliant gives them 0.
 
 **Improvement:** the rings' widths are worked out from pi, where the game rounds half of it to
 1.5708.
@@ -334,7 +335,7 @@ torpedo it follows (`missile_glow_update`, `0x00497980`), it stands 50 behind th
 as wide as the tail and up to a sixth more at random, the second half as wide.
 
 **Fix:** with every trail taken, `missile_trail_create` takes the record past the last and writes
-past its pool. The port leaves the missile without a trail.
+past its pool. OpenReliant leaves the missile without a trail.
 
 ## Countermeasures
 
@@ -343,7 +344,7 @@ A ship drops countermeasures to draw away the missiles homing on it. `countermea
 that dropped it, its velocity, its scene object over `ships\decoy.shp` (`decoy_model`,
 `0x00541420`), and its two streams of smoke. **Unverified:** that the code is `cloak.cpp`'s: it lies
 after `cbox.cpp`'s and before `cloak.cpp`'s asserting code, and its model's name lies just before
-`cloak.cpp`'s path among the strings. The port's is
+`cloak.cpp`'s path among the strings. OpenReliant's is
 [`cloak.zig`](../../src/engine/game/cloak.zig).
 
 `decoys_init` (`0x00462390`), as a mission runs, clears them, loads the model and makes their smoke
@@ -376,13 +377,13 @@ drift by their velocity times the frame's ticks, and trail their smoke.
 `countermeasure_end` (`0x00462460`) turns every missile it drew away back to its target, and ends
 it in a fireball from the sheet, 200 across over 50 ticks, drifting as it did.
 
-The port reads the model once for the whole run.
+OpenReliant reads the model once for the whole run.
 
 ## Who launches
 
 Only these launch the missiles of `missiles.cpp`: the player (`player_launch_missile`), the Fight
-order (`fight_fire`), orders 2 and 3, and a missile turret ([A missile turret's](#a-missile-turrets)).
-A turret named a missile turret in the models' tables is a gun.
+order (`fight_fire`), orders 2 and 3, and a missile turret ([A missile
+turret's](#a-missile-turrets)). A turret named a missile turret in the models' tables is a gun.
 
 ### The ring
 
@@ -398,11 +399,11 @@ The missile display (window 2) shows the player's missiles in a ring (`hud_missi
 | 3 | Its name's text |
 | 4 | Its type |
 
-`hud_missile_ring_build` (`0x00484060`) builds it as a mission starts and after each re-arm: an entry
-for each type the player's racks hold, but the fuel pod, in the order the racks first come, with the
-missiles of all its racks. The middle entry is armed; each entry's place is the armed entry's index
-less its own, and ten more below 0. `player_missiles_left` (`0x0052A400`) sums the counts, and
-nothing reads it.
+`hud_missile_ring_build` (`0x00484060`) builds it as a mission starts and after each re-arm: an
+entry for each type the player's racks hold, but the fuel pod, in the order the racks first come,
+with the missiles of all its racks. The middle entry is armed; each entry's place is the armed
+entry's index less its own, and ten more below 0. `player_missiles_left` (`0x0052A400`) sums the
+counts, and nothing reads it.
 
 | Type | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
 |---|---|---|---|---|---|---|---|---|---|
@@ -440,8 +441,8 @@ place, both centred in the display's font; and each one's shape, its first shape
 ### The player's
 
 LAUNCH MISSILE (`player_controls`, `0x00413BE7`, once a press) runs `player_launch_missile`
-(`0x00412820`). Nothing happens while the ship's missiles are disabled or it jumps. Then, by the armed
-type:
+(`0x00412820`). Nothing happens while the ship's missiles are disabled or it jumps. Then, by the
+armed type:
 
 1. A Raptor, Havoc, Jack Hammer, Bandit, Vagabond, Imp or Hawk needs the lock to hold. Without it
    the display refuses (`stdsmp` 1), and where the armed entry has none left, Betty says so (sound 0
@@ -461,8 +462,8 @@ so (sound `0xF`), and with 6, 4 or 2 left she warns they run low (`0xD`); then
 
 A cloaked ship uncloaks in place of the launch ([The cloak](cloak.md#who-cloaks)).
 
-The port reads both in `input.playerWeapons`, after the throttle's keys, and the right mouse button
-after LAUNCH MISSILE. Not ported: the Kamov, and the multiplayer game's power-up.
+OpenReliant reads both in `input.playerWeapons`, after the throttle's keys, and the right mouse
+button after LAUNCH MISSILE. Not ported: the Kamov, and the multiplayer game's power-up.
 
 ### The lock
 
@@ -518,8 +519,8 @@ once the lock is lost, it ends the voice, whatever plays on it by then. The paus
 
 **Fix:** `hud_missile_lock` means to play `stdsmp` 2 while the rings close and end it after, keeping
 the voice at `0x0057DFC0`; but nothing sets that to none first, so the sound never plays, and the
-game ends the first voice every frame instead, cutting what plays there. The port leaves that voice
-alone, and the sound unplayed.
+game ends the first voice every frame instead, cutting what plays there. OpenReliant leaves that
+voice alone, and the sound unplayed.
 
 The target's brackets are drawn at the count's hundredths of their brightness
 ([The target](hud.md#the-target)).
@@ -553,12 +554,12 @@ the first rack with missiles left: of any type but the Jack Hammer, and a Jack H
 ### A missile turret's
 
 A missile [turret](guns.md#each-frame) (`turret_missile_step`) tracks what it finds ahead and
-launches one time in five each time its wait is over, six before it reloads.
-`missile_launch_turret` (`0x004967F0`) launches a Screamer from its launcher, where the turret's object may launch missiles and a record
-is free. The Screamer is built as a Screamer pod's missile (attachment kind 0, id 0's second
-model), of the object's side, and starts where the launcher stands: at its committed place, its
-next, and its frame, at the object's velocity. It lays its trail, flies the pod launch and then its
-guidance, at the turret's target. No sound is played.
+launches one time in five each time its wait is over, six before it reloads. `missile_launch_turret`
+(`0x004967F0`) launches a Screamer from its launcher, where the turret's object may launch missiles
+and a record is free. The Screamer is built as a Screamer pod's missile (attachment kind 0, id 0's
+second model), of the object's side, and starts where the launcher stands: at its committed place,
+its next, and its frame, at the object's velocity. It lays its trail, flies the pod launch and then
+its guidance, at the turret's target. No sound is played.
 
 ### The missile camera
 

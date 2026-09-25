@@ -1,13 +1,13 @@
 //! The space backdrop: the star fields, the dust, the sun and its flares, and the lights every
 //! mission starts with. `backdrop_create` (`0x004A4E70`) builds them once, `backdrop_place`
-//! (`0x004A5A00`) aims them from a mission's markers and `backdrop_frame` (`0x004A5CD0`) adds them to
-//! the scene each frame. The binary does not name the file; its code lies between `srofiles.cpp`'s
-//! and `timer.cpp`'s. [`nebula.zig`](nebula.zig) has the sky dome and the nebula.
+//! (`0x004A5A00`) aims them from a mission's markers and `backdrop_frame` (`0x004A5CD0`) adds them
+//! to the scene each frame. The binary does not name the file; its code lies between
+//! `srofiles.cpp`'s and `timer.cpp`'s. [`nebula.zig`](nebula.zig) has the sky dome and the nebula.
 //!
-//! The port builds the hardware renderers' backdrop. **Unknown:** what sets bit 2 of `sr + 0x38`,
-//! with which `backdrop_create` has the star fields blend by `add_alpha` instead of adding; the port
-//! leaves it clear. Not yet ported: `backdrop_place`, which needs the mission's markers, and the
-//! objects `backdrop_frame` turns and makes glow at the end.
+//! OpenReliant builds the hardware renderers' backdrop. **Unknown:** what sets bit 2 of
+//! `sr + 0x38`, with which `backdrop_create` has the star fields blend by `add_alpha` instead of
+//! adding; OpenReliant leaves it clear. Not yet ported: `backdrop_place`, which needs the mission's
+//! markers, and the objects `backdrop_frame` turns and makes glow at the end.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -42,8 +42,9 @@ pub const field_size = 36;
 pub const fields_per_side = star_map_size / field_size;
 pub const field_count = fields_per_side * fields_per_side;
 
-/// Field `row`, `column`'s axis: the polar angle, from `+Y`, follows the map's rows and the azimuth,
-/// from `+X` toward `+Z`, its columns, so the fields cover the half of the sky where `z` is positive.
+/// Field `row`, `column`'s axis: the polar angle, from `+Y`, follows the map's rows and the
+/// azimuth, from `+X` toward `+Z`, its columns, so the fields cover the half of the sky where `z`
+/// is positive.
 pub fn fieldAxis(row: usize, column: usize) [3]f32 {
     const polar = @as(f32, @floatFromInt(row * field_size + field_size / 2)) * half_degree;
     const azimuth = @as(f32, @floatFromInt(column * field_size + field_size / 2)) * half_degree;
@@ -92,7 +93,8 @@ pub fn initialLights() Lights {
 /// 768, in pixels, each way, whatever the distance.
 pub const sprite_scale: f32 = 1.0 / 768.0;
 
-/// The sun's sprites, each textured, coloured grey and added on the background layer toward the sun.
+/// The sun's sprites, each textured, coloured grey and added on the background layer toward the
+/// sun.
 pub const SunLayer = enum {
     sunlayer1,
     sunlayer2,
@@ -119,7 +121,7 @@ pub const SunLayer = enum {
         };
     }
 
-    /// Whether what isn't round in its texture is kept where the port draws it again finer
+    /// Whether what isn't round in its texture is kept where OpenReliant draws it again finer
     /// (`Sun.smooth`): `sunlayer1`'s ragged rim and `sunlayer2`'s rays.
     pub fn detail(layer: SunLayer) rings.Detail {
         return switch (layer) {
@@ -465,7 +467,7 @@ test sunVisibility {
 }
 
 test Sun {
-    // The game's glow goes out at once; the port's dims to none.
+    // The game's glow goes out at once; OpenReliant's dims to none.
     try std.testing.expectEqual(1, Sun.original.glow(0.6));
     try std.testing.expectEqual(0, Sun.original.glow(0.4));
     try std.testing.expectEqual(1, Sun.smooth.glow(max_visibility));

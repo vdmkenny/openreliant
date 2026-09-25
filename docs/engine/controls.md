@@ -73,8 +73,8 @@ both sections:
 - The `JoyConfig` default is the binding as it was before the `KeyConfig` entry was read, so a
   `JOY BUTTON` in `KeyConfig` is overwritten by the old button when `JoyConfig` has no entry.
 
-**Improvement:** the port fixes both: it checks the `JoyConfig` value from its start, and uses the
-button from `KeyConfig` as the `JoyConfig` default.
+**Improvement:** OpenReliant fixes both: it checks the `JoyConfig` value from its start, and uses
+the button from `KeyConfig` as the `JoyConfig` default.
 
 ## Whether an action is active
 
@@ -140,11 +140,10 @@ values are scaled by 0.001, so the stick's travel spans -1 to 1.
   right launches a missile as LAUNCH MISSILE does, once for each press, which
   `mouse_missile_latched` (`0x51CEFA`) records.
 
-  **Fix:** `player_controls` adds the movement of the last read each time it runs, once a frame as
-  well as once a step, so the faster the frames, the further a movement steers. The port adds each
-  read's movement once. The port holds the mouse to the window, its pointer hidden, while the
-  player flies in this mode, as the game holds DirectInput's mouse, and lets it go for the pause
-  menu.
+**Fix:** `player_controls` adds the movement of the last read each time it runs, once a frame as
+well as once a step, so the faster the frames, the further a movement steers. OpenReliant adds each
+read's movement once. OpenReliant holds the mouse to the window, its pointer hidden, while the
+player flies in this mode, as the game holds DirectInput's mouse, and lets it go for the pause menu.
 
 In each mode, half the yaw input is added to the roll input, so the ship banks into turns, and
 `joystick_invert` sets the sign of pitch. STRAFE LEFT and STRAFE RIGHT set the lateral input to -1
@@ -179,7 +178,7 @@ target's speed over the player's cruise speed, at most 1, while the target is wi
 and not exploding, keeping the throttle it found in `throttle_before_match`; a cloaked target
 leaves the throttle as it is. Past that range it puts back `throttle_before_match` and stops
 matching, as it does with no target at all, then without putting anything back. Since it keeps
-the throttle each time, what it puts back is the throttle of its last match. The port runs this
+the throttle each time, what it puts back is the throttle of its last match. OpenReliant runs this
 part of `player_controls` after the rest (`input.matchSpeed`), where the game runs it among the
 keys after the throttle's and the strafe keys; nothing between reads the throttle.
 
@@ -192,9 +191,9 @@ order next runs unless set again. After the update it clears both when the ship 
 fuel, both and the throttle while its engines are disabled (`DisableEngines`), and `reverse_thrust`
 unless the ship has the `can_reverse` flag.
 
-While the player asks for either, a warning sounds when fewer than 20 seconds of fuel are left and another when
-it is out, each at most once every 1000 ticks, ten seconds; `fuel_warning_tick` (`0x5799C0`) holds
-the tick before which neither sounds again.
+While the player asks for either, a warning sounds when fewer than 20 seconds of fuel are left and
+another when it is out, each at most once every 1000 ticks, ten seconds; `fuel_warning_tick`
+(`0x5799C0`) holds the tick before which neither sounds again.
 
 `player_controls` also reads FIRE LASERS, LAUNCH MISSILE, CLOAK SHIP, JUMP DRIVE, EJECT and
 COUNTERMEASURES, all but FIRE LASERS once for each press. LAUNCH MISSILE and COUNTERMEASURES are in
@@ -204,15 +203,15 @@ the ship. **Unknown:** what sets that byte.
 
 ## The power distribution
 
-The player shares the ship's power between its shields, guns and engines by moving a point on a
-disc of radius 64, the power ball (`GameObject.power_setting`, `+0x728`). Each system has an
-anchor on the ball, a third of a turn from the next: the shields at (0, 1), the guns at
-(0.866, -0.5) and the engines at (-0.866, -0.5), the game's 0.866 standing for √3/2, which the port
-uses itself. `power_distribute` (`0x00412560`) works out each
-system's share: `power_reach` (`0x004124E0`) measures the distance from the point to the edge of
-the disc going away from the system's anchor, which is 128 at the anchor, 64 in the middle and 0
-opposite, and a share is that distance over the three together. A share `s` gives a factor of
-`(1.75 - 0.75 * s) * s + 0.5`: 1 for an even third, 1.5 for all of the power and 0.5 for none.
+The player shares the ship's power between its shields, guns and engines by moving a point on a disc
+of radius 64, the power ball (`GameObject.power_setting`, `+0x728`). Each system has an anchor on
+the ball, a third of a turn from the next: the shields at (0, 1), the guns at (0.866, -0.5) and the
+engines at (-0.866, -0.5), the game's 0.866 standing for √3/2, which OpenReliant uses itself.
+`power_distribute` (`0x00412560`) works out each system's share: `power_reach` (`0x004124E0`)
+measures the distance from the point to the edge of the disc going away from the system's anchor,
+which is 128 at the anchor, 64 in the middle and 0 opposite, and a share is that distance over the
+three together. A share `s` gives a factor of `(1.75 - 0.75 * s) * s + 0.5`: 1 for an even third,
+1.5 for all of the power and 0.5 for none.
 
 | Offset | Factor | What it scales |
 |---|---|---|
@@ -236,14 +235,14 @@ The display shows the point and the shares in its [power window](hud.md#the-powe
 ## The shield balance
 
 While SHIELD BALANCING is held (`0x51CEFC`), `shield_balance` (`0x00412D40`) shifts shields fore or
-aft by the stick's Y. Each time `player_controls` runs with Y past half-way, a quarter of the
-ship's shield power moves: from the fore shield to the aft one while Y is above 0.5, and back
-while it is below -0.5, as long as the shield it comes from has any left. The quarter comes out
-of that side's reserve first (`0x51CF78` for the fore shield, `0x51CF34` for the aft one), then
-out of the shield. The shield it goes to holds at most five times the shield power, and what goes
-beyond that is added to its reserve, which holds as much again. A reserve keeps the other side's
-shield from [recharging](objects.md#shields) to full. The ship status display shows each reserve as a
-second arc outside the fore or aft shield's ([Head-up display](hud.md#the-elements)).
+aft by the stick's Y. Each time `player_controls` runs with Y past half-way, a quarter of the ship's
+shield power moves: from the fore shield to the aft one while Y is above 0.5, and back while it is
+below -0.5, as long as the shield it comes from has any left. The quarter comes out of that side's
+reserve first (`0x51CF78` for the fore shield, `0x51CF34` for the aft one), then out of the shield.
+The shield it goes to holds at most five times the shield power, and what goes beyond that is added
+to its reserve, which holds as much again. A reserve keeps the other side's shield from
+[recharging](objects.md#shields) to full. The ship status display shows each reserve as a second arc
+outside the fore or aft shield's ([Head-up display](hud.md#the-elements)).
 
 ## Force feedback
 
@@ -276,7 +275,7 @@ typo for 9000 hundredths of a degree, which DirectInput turns down.
 The game never reads the folder's other files: `Accl`, `AcDc`, `Afterburn`, `Decl`, `Guns` (the
 same as `lc`), `Hullshock` to `Hullshock3`, `landhard`, `Shield`, `Shock` and `shiver`.
 
-### In the port
+### In OpenReliant
 
 [`input/force.zig`](../../src/engine/input/force.zig) plays the effects as rumble. Each frame it
 works out how hard every effect playing pushes at that moment: a waveform slower than 10 Hz swings
@@ -301,7 +300,7 @@ controller rumbles.
 ## Porting
 
 The bindings and `starlancer.ini` hold DirectInput scan codes, which follow the IBM PC's set 1
-scan codes, with the extended keys at `0x80` and up. The port maps SDL's scan codes to them
+scan codes, with the extended keys at `0x80` and up. OpenReliant maps SDL's scan codes to them
 ([`platform/keyboard.zig`](../../src/platform/keyboard.zig)).
 
 [`input.zig`](../../src/engine/input.zig) ports the input code: `key_pressed` and
@@ -329,15 +328,15 @@ balance: `reach`, `shares`, `distribute`, `choose` for the power keys, `move` an
 [`profile.zig`](../../src/engine/profile.zig) reads the file as `GetPrivateProfileIntA` and
 `GetPrivateProfileStringA` do.
 
-**Improvement:** the port reads `starlancer.ini` again whenever a controller is connected or
+**Improvement:** OpenReliant reads `starlancer.ini` again whenever a controller is connected or
 disconnected, since the settings and bindings depend on the controller. A gamepad gets its own
 default bindings and has `TwistEnable` on by default. `DeadZone` in `JoyConfig` sets the dead zone,
 which the original fixes at a tenth. A joystick that is disconnected is closed and reads as
 centered, where the original tries to acquire it again.
 
-Not yet ported: force feedback ([issue 83](https://github.com/vdmkenny/openreliant/issues/83)), the weapons and other
-actions `player_controls` reads, and the special cases for the byte at `0x529FB8`, the player's
-deathmatch power-up and the flags at `0x51CEF8`, `0x51CEFC` and `0x51CF04`. `object_orders`
-clears the two burns before each order update and, after it, when the ship is out of fuel or its
-engines are disabled; only the fuel check is ported, in `playerControls` itself, since nothing
-runs orders yet.
+Not yet ported: force feedback ([issue 83](https://github.com/vdmkenny/openreliant/issues/83)), the
+weapons and other actions `player_controls` reads, and the special cases for the byte at `0x529FB8`,
+the player's deathmatch power-up and the flags at `0x51CEF8`, `0x51CEFC` and `0x51CF04`.
+`object_orders` clears the two burns before each order update and, after it, when the ship is out of
+fuel or its engines are disabled; only the fuel check is ported, in `playerControls` itself, since
+nothing runs orders yet.

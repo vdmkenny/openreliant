@@ -60,8 +60,8 @@ pub const Grid = struct {
 
     /// `values`, one for each vertex of `coarse`, a grid over the same sphere, at vertex `index` of
     /// this grid: the four of `coarse`'s round it, each by how near it stands, as it lies between
-    /// their bands and slices, a pole's the same for every slice. On `coarse` itself, a vertex takes
-    /// its own.
+    /// their bands and slices, a pole's the same for every slice. On `coarse` itself, a vertex
+    /// takes its own.
     pub fn sample(grid: Grid, coarse: Grid, values: []const [4]f32, index: usize) [4]f32 {
         const band, const slice = grid.placeOn(coarse, index);
         const top: usize = @intFromFloat(@floor(band));
@@ -210,7 +210,7 @@ const other_share: f32 = 0.8;
 
 /// `cosine_ease` (`0x004268C0`): from `a` to `b` as `share` goes from 0 to 1, slow at each end. It
 /// lies among the interface's code, between `wgate.cpp`'s and `interf.cpp`'s, and serves much of
-/// it; the port keeps it here, with the ramps, and the cloak's shimmer uses it too
+/// it; OpenReliant keeps it here, with the ramps, and the cloak's shimmer uses it too
 /// (`cloak.shimmerColour`).
 ///
 /// **Improvement:** the cosine comes from `std.math` rather than the engine's table (`sr_cos`).
@@ -286,7 +286,7 @@ fn strengthAt(angle: f32) ?f32 {
 }
 
 /// The angle between two directions. The game's is not a number where rounding puts the cosine
-/// past one; the port holds it to one.
+/// past one; OpenReliant holds it to one.
 fn angleBetween(a: Vector, b: Vector) f32 {
     return std.math.acos(std.math.clamp(math.dot(a, b) / (math.length(a) * math.length(b)), -1, 1));
 }
@@ -407,17 +407,17 @@ pub const Shields = struct {
 
     /// `0x0049F0A0`, once a frame (`mission_frame`): the bubble of each ship struck in the last
     /// `shown_for` ticks, into the world's layer, at the level of detail its distance from the
-    /// camera gives, save the player's while the camera is in its cockpit. Each bubble's colours and
-    /// texture move on by the ticks since they last did (`0x0049F450`, `shield_bubble_update`).
+    /// camera gives, save the player's while the camera is in its cockpit. Each bubble's colours
+    /// and texture move on by the ticks since they last did (`0x0049F450`, `shield_bubble_update`).
     ///
     /// Then the capital shields (`Capital.draw`).
     ///
     /// **Improvement:** a bubble past the last level's reach is left out; the game stops the pass
     /// there, leaving out every bubble in the slots after it and the capital shields.
     ///
-    /// The game moves a bubble's colours on as the renderer draws it; the port as it goes into the
-    /// scene, so one out of view still fades. In the smooth style each bubble's colours and texture
-    /// coordinates for the frame go in `arena`.
+    /// The game moves a bubble's colours on as the renderer draws it; OpenReliant as it goes into
+    /// the scene, so one out of view still fades. In the smooth style each bubble's colours and
+    /// texture coordinates for the frame go in `arena`.
     pub fn draw(shields: *Shields, gpa: Allocator, arena: Allocator, scene: *srcore.Scene, all: *Objects, look: Look) Allocator.Error!void {
         for (&shields.levels, &shields.meshes) |*level, *mesh| level.* = .{.{ .mesh = mesh, .until = std.math.inf(f32) }};
         for (&all.slots, 0..) |*slot, index| {
@@ -717,7 +717,7 @@ const sparks_carry: f32 = 0.25;
 /// is in the ship's cockpit, and its bubble ripples out from there.
 ///
 /// **Improvement:** the game sends the sparks toward the world's origin, from the point struck
-/// taken as a direction; the port sends them out from the ship, as the game works out first and
+/// taken as a direction; OpenReliant sends them out from the ship, as the game works out first and
 /// then writes over.
 pub fn flare(world: gameobj.World, index: u16, at: Vector) void {
     const slot = &world.objects.slots[index];
@@ -732,7 +732,7 @@ pub fn flare(world: gameobj.World, index: u16, at: Vector) void {
         sparks.spray(world, .shield, at, at - slot.drawn.position, carried, shield_sparks);
     }
     const shared = world.shields orelse return;
-    // The game makes a bubble's hits with the bubble; where the port can't, it shows nothing.
+    // The game makes a bubble's hits with the bubble; where OpenReliant can't, it shows nothing.
     bubble.strike(world.objects.gpa, shared, slot.drawn, gameobj.vector(object.root.position), at, world.clock.frame_start) catch {};
 }
 
@@ -800,7 +800,7 @@ pub const Capital = struct {
 
     /// The one showing on part `ref`, where its node names one.
     ///
-    /// The game looks through every slot for the node; the port reads the slot the node names.
+    /// The game looks through every slot for the node; OpenReliant reads the slot the node names.
     fn find(capital: *const Capital, ref: objects.PartRef) ?CapitalSlot {
         const at = ref.part().capshield orelse return null;
         const shown = capital.slots[at] orelse return null;
@@ -821,9 +821,9 @@ pub const Capital = struct {
     /// capital shield shows `capital_shown_for` more ticks; where it has none, one is made in the
     /// next slot (`CapitalShield.create`), letting go of what shows there. Then it takes the hit.
     ///
-    /// **Fix:** the game takes the slot it finds for the next one, so the next part struck
-    /// replaces the shield struck last while slots stand free; the port leaves the next slot where
-    /// it was.
+    /// **Fix:** the game takes the slot it finds for the next one, so the next part struck replaces
+    /// the shield struck last while slots stand free; OpenReliant leaves the next slot where it
+    /// was.
     fn flare(capital: *Capital, shields: *const Shields, all: *Objects, index: u16, ref: objects.PartRef, polygon: ?usize, now: i32) Allocator.Error!void {
         const at = if (capital.find(ref)) |found| found: {
             capital.slots[found].?.until = now + capital_shown_for;
@@ -975,7 +975,7 @@ pub const CapitalShield = struct {
     /// marked `cap`.
     ///
     /// **Fix:** the game marks those the latest hit leaves dark and never draws them again, so a
-    /// part struck once more elsewhere loses the glow of its earlier hits; the port marks those
+    /// part struck once more elsewhere loses the glow of its earlier hits; OpenReliant marks those
     /// every hit leaves dark, each time it is struck.
     fn cull(shown: *CapitalShield) void {
         const mesh = &shown.mesh;
@@ -1028,7 +1028,7 @@ pub fn flareCapital(world: gameobj.World, index: u16, ref: objects.PartRef, poly
     if (part.force_field and object.flags.exploding) return;
     if (part.object.levels.len == 0) return;
     const shields = world.shields orelse return;
-    // The game makes what a capital shield needs in its slot; where the port can't, it shows
+    // The game makes what a capital shield needs in its slot; where OpenReliant can't, it shows
     // nothing.
     shields.capital.flare(shields, world.objects, index, ref, polygon, world.clock.frame_start) catch {};
 }
@@ -1298,7 +1298,8 @@ test "the smooth style" {
     recent.colour(ramp, mesh, 10 + ticks + 0.5, colours);
     try std.testing.expect(colours[near][2] != out);
 
-    // The texture swirls about its centre, each vertex's coordinates keeping their distance from it.
+    // The texture swirls about its centre, each vertex's coordinates keeping their distance from
+    // it.
     const age = ticks + 0.5;
     recent.swirl(mesh, 10 + age, uv);
     const centre = turned(start_centre, age * centre_turn_per_tick);

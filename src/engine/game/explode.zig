@@ -4,8 +4,9 @@
 //!
 //! The final blasts' sound, their bursts of flame and sparkle ([`particles.zig`](particles.zig)),
 //! their fireballs, burning bits and shockwaves ([`shockwave.zig`](shockwave.zig)), the break-up
-//! that cuts a ship's parts into pieces that fly apart ([`explode/breakup.zig`](explode/breakup.zig)),
-//! the capital ships' splits ([`explode/split.zig`](explode/split.zig)), the chunks of rock
+//! that cuts a ship's parts into pieces that fly apart
+//! ([`explode/breakup.zig`](explode/breakup.zig)), the capital ships' splits
+//! ([`explode/split.zig`](explode/split.zig)), the chunks of rock
 //! ([`explode/chunks.zig`](explode/chunks.zig)), the Uber Explode
 //! ([`explode/uber.zig`](explode/uber.zig)), the burning wrecks, and the point the camera watches a
 //! break-up from.
@@ -65,8 +66,8 @@ pub const Explosions = struct {
     /// The fireballs going off (`explosion_fireballs`, `0x00553398`), in as many slots as the
     /// settings give them.
     fireballs: [Fireballs.fuller.slots()]?Fireball = @splat(null),
-    /// The point view `0x1B` watches (`0x0055AD0C`), which the player's ship's break-up leaves where
-    /// the ship blew up; null until it has.
+    /// The point view `0x1B` watches (`0x0055AD0C`), which the player's ship's break-up leaves
+    /// where the ship blew up; null until it has.
     marker: ?Marker = null,
     /// The burning wrecks' red lights (`0x0055AD24`) and their smoke (`0x0055AD60`).
     burn_lights: [max_burn_lights]?BurnLight = @splat(null),
@@ -235,9 +236,10 @@ pub const Explosions = struct {
         }
     }
 
-    /// `part_streams` (`0x004715D0`) with the wreck's smoke: a stream from each point of each of the
-    /// part's lists of them, hanging from the part and leaving along the normal of the vertex the
-    /// point stands on, for good or for `burn_life` ticks, in the first free slots while there are.
+    /// `part_streams` (`0x004715D0`) with the wreck's smoke: a stream from each point of each of
+    /// the part's lists of them, hanging from the part and leaving along the normal of the vertex
+    /// the point stands on, for good or for `burn_life` ticks, in the first free slots while there
+    /// are.
     fn smoke(explosions: *Explosions, world: gameobj.World, on: objects.PartOf, data: shp.PartData, forever: bool) void {
         const levels = on.part.part().object.levels;
         const mesh = if (levels.len > 0) levels[0].mesh else null;
@@ -263,11 +265,11 @@ pub const Explosions = struct {
     }
 
     /// The burning wrecks' part of `explosions_update`, `ticks` since the bits last moved on: each
-    /// stream sends its smoke out (`particles.Pool.stream`) and goes once its life is over, and each
-    /// light fades and goes once it is spent, flickering meanwhile.
+    /// stream sends its smoke out (`particles.Pool.stream`) and goes once its life is over, and
+    /// each light fades and goes once it is spent, flickering meanwhile.
     ///
     /// **Fix:** the game keeps a light or a stream hanging from its part's frame after the wreck is
-    /// gone; the port lets it go with the wreck.
+    /// gone; OpenReliant lets it go with the wreck.
     fn burnFrame(explosions: *Explosions, world: gameobj.World, ticks: f32) void {
         const all = world.objects;
         for (&explosions.streams) |*slot| {
@@ -298,10 +300,10 @@ pub const Explosions = struct {
     }
 
     /// `0x00471B20`, a stream's spark (`particles.Emitter.spark`): a small piece of debris thrown
-    /// out of `at` at `velocity` a second, in the place of the oldest bit, turning a random way each
-    /// frame, for -1 to 3 seconds. One whose flight is over before it starts is let go before it is
-    /// drawn, having still taken the oldest bit's place. A piece the game has no model for is not
-    /// thrown.
+    /// out of `at` at `velocity` a second, in the place of the oldest bit, turning a random way
+    /// each frame, for -1 to 3 seconds. One whose flight is over before it starts is let go before
+    /// it is drawn, having still taken the oldest bit's place. A piece the game has no model for is
+    /// not thrown.
     pub fn throwSpark(explosions: *Explosions, at: Vector, velocity: Vector, clock: *const Clock, random: *libcmt.Rand) void {
         const piece = explosions.debris.pick(Bit.spark_size, random) orelse return;
         explosions.addBit(piece, at, velocity, Bit.spark_flight.draw(random), clock, random);
@@ -340,7 +342,7 @@ pub const Explosions = struct {
 
 /// How the explosions are shown, which a mission's restart keeps.
 pub const Settings = struct {
-    /// The options' detail (`0x005D54E0`), which the port starts at high.
+    /// The options' detail (`0x005D54E0`), which OpenReliant starts at high.
     detail: Detail = .high,
     debris_lights: DebrisLights = .like_ships,
     fireballs: Fireballs = .fuller,
@@ -793,8 +795,8 @@ pub const Fireball = struct {
 /// Within this far of the camera an explosion is sure of a voice (`0x004DC4BC`, its square).
 const close: f32 = 20000;
 
-/// The voice class an explosion at `at` is heard on: sure of a voice close to the camera, one of the
-/// explosions' own further off.
+/// The voice class an explosion at `at` is heard on: sure of a voice close to the camera, one of
+/// the explosions' own further off.
 pub fn soundClass(world: gameobj.World, at: Vector) ?sound3d.Class {
     const hearing = world.hearing orelse return null;
     const offset = at - hearing.camera.position;
@@ -1214,9 +1216,9 @@ pub const Stream = struct {
 /// (`part_streams`, `0x004715D0`). Each light and stream takes the first free slot; none is made
 /// once they are all taken.
 ///
-/// **Fix:** the game leaves out the last pair of points, and a part with a single pair has no
-/// ray; the port runs a ray between every pair. The game stops with an assertion where the object
-/// has no part of the name; the port burns nothing.
+/// **Fix:** the game leaves out the last pair of points, and a part with a single pair has no ray;
+/// OpenReliant runs a ray between every pair. The game stops with an assertion where the object has
+/// no part of the name; OpenReliant burns nothing.
 pub fn burnPart(world: gameobj.World, index: u16, name: []const u8, how: Burn) void {
     const model = if (world.objects.slots[index].model) |*live| live else return;
     const ref = model.partNamed(name) orelse return;
@@ -1718,7 +1720,7 @@ test Bit {
     try std.testing.expectEqual(Detail.low.bits(), testing.flying(explosions));
     try std.testing.expectEqual(1, explosions.bits.next);
 
-    // The port's keeps room for 4000, whatever the detail.
+    // OpenReliant's keeps room for 4000, whatever the detail.
     explosions.settings.bit_pool = .lasting;
     explosions.reset();
     explosions.debris = testing.debris(&mesh);

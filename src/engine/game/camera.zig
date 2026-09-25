@@ -37,10 +37,10 @@ pub const wide_factors = [2]f32{ 0.35, 0.467 };
 /// bottom once they have slid in.
 pub const letterbox: f32 = 0.1;
 
-/// The port's factors for a screen of any shape: the game's down, and across whatever keeps pixels
-/// square. **Improvement:** the game uses its factors on every screen, which stretches the picture
-/// on any but a 4:3 one; the port shows more at the sides instead. On a 4:3 screen the factors are
-/// the game's to within a thousandth of a percent.
+/// OpenReliant's factors for a screen of any shape: the game's down, and across whatever keeps
+/// pixels square. **Improvement:** the game uses its factors on every screen, which stretches the
+/// picture on any but a 4:3 one; OpenReliant shows more at the sides instead. On a 4:3 screen the
+/// factors are the game's to within a thousandth of a percent.
 pub fn unstretched(width: u32, height: u32, base: [2]f32) [2]f32 {
     const w: f32 = @floatFromInt(width);
     const h: f32 = @floatFromInt(height);
@@ -345,8 +345,8 @@ pub const Camera = struct {
     }
 
     /// Switches to one of the ejection's views, `view`, of `object`, locked and forced
-    /// (`camera_set_view`), with what it stands off by taken from `seen`, the object, and `pod`, the
-    /// pilot's, as they stand now.
+    /// (`camera_set_view`), with what it stands off by taken from `seen`, the object, and `pod`,
+    /// the pilot's, as they stand now.
     pub fn setCutaway(camera: *Camera, view: View, object: u16, now: u32, seen: Subject, pod: Subject) bool {
         if (!camera.setView(view, object, true, true, now)) return false;
         camera.cutaway = switch (view) {
@@ -942,8 +942,9 @@ test pullBack {
 /// How far out to its object's right the eject view stands (`0x0045F479`).
 const eject_reach: f32 = 5000;
 
-/// View `eject` (`camera_frame`, view 7), `since` ticks after it was switched to: `cutaway` out from
-/// the pod at `position`, turned about the world's `Y` by `slow_turn` a tick, looking at the pod.
+/// View `eject` (`camera_frame`, view 7), `since` ticks after it was switched to: `cutaway` out
+/// from the pod at `position`, turned about the world's `Y` by `slow_turn` a tick, looking at the
+/// pod.
 pub fn ejected(cutaway: Vector, position: Vector, since: f32) Place {
     return lookingAt(math.transform(math.rotation(.y, since * slow_turn), cutaway) + position, position);
 }
@@ -962,8 +963,8 @@ const pickup_closing: f32 = 2;
 const pickup_nearest: f32 = 1000;
 
 /// View `pickup` (view `0x1C`), `since` ticks after it was switched to: the picking ship's
-/// orientation turned about its own `Y`, `pickup_start` on and more by `pickup_turn` a tick, looking
-/// along it at `cutaway` from the ship at `position`, from `pickup_reach` off and closing.
+/// orientation turned about its own `Y`, `pickup_start` on and more by `pickup_turn` a tick,
+/// looking along it at `cutaway` from the ship at `position`, from `pickup_reach` off and closing.
 pub fn pickedUp(cutaway: Vector, position: Vector, orientation: Matrix, since: f32) Place {
     const off = @max(pickup_reach - since * pickup_closing, pickup_nearest);
     return behind(cutaway + position, orientation, since * pickup_turn + pickup_start, off);
@@ -975,8 +976,8 @@ const pod_shot_reach: f32 = 1000;
 const pod_shot_pull: f32 = 20;
 
 /// View `pod_shot` (view `0x1D`), `since` ticks after the pod at `pod` began to burst:
-/// `pod_shot_reach` and more from it, the other way from `cutaway`, the way to the Sabre, looking at
-/// the Sabre at `sabre`.
+/// `pod_shot_reach` and more from it, the other way from `cutaway`, the way to the Sabre, looking
+/// at the Sabre at `sabre`.
 pub fn podShot(cutaway: Vector, pod: Vector, sabre: Vector, since: f32) Place {
     return lookingAt(pod - cutaway * @as(Vector, @splat(pod_shot_reach + since * pod_shot_pull)), sabre);
 }

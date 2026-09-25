@@ -12,10 +12,11 @@
 //! `0x00458AB0`, which is the one routine the build keeps of every routine that only returns 1, so
 //! a hull's emitter shows nothing.
 //!
-//! The port keeps no nodes, as none shows anything once made: it sounds a hull's hit, bursts a
-//! component's, and sounds a rock's. The game hangs a part no more than a hundred nodes, so a hull's
-//! part struck a hundred times no longer sounds; the port's sounds every time. A component's are
-//! never that many: kind 3 first clears the nodes of earlier hits nearby, and the oldest past ten.
+//! OpenReliant keeps no nodes, as none shows anything once made: it sounds a hull's hit, bursts a
+//! component's, and sounds a rock's. The game hangs a part no more than a hundred nodes, so a
+//! hull's part struck a hundred times no longer sounds; OpenReliant's sounds every time. A
+//! component's are never that many: kind 3 first clears the nodes of earlier hits nearby, and the
+//! oldest past ten.
 //!
 //! A rock's also throws a chunk of rock from the point struck (`explode.rocks.throw`).
 
@@ -51,8 +52,8 @@ pub const Kind = enum(i32) {
 /// there, along the face's normal.
 ///
 /// **Fix:** the game throws the chunk along the normal in the part's own frame, taken for a
-/// direction in the world's, so a chunk from a tumbling rock flies off any way. The port turns the
-/// normal into the world's.
+/// direction in the world's, so a chunk from a tumbling rock flies off any way. OpenReliant turns
+/// the normal into the world's.
 pub fn componentHit(world: gameobj.World, index: u16, crossing: objects.Crossing, kind: Kind) void {
     switch (kind) {
         .component => {
@@ -111,7 +112,7 @@ const burst_life = 1000;
 /// A frame whose forward axis is `normal` (`shieldfx_create`): across it, `X` crossed with the
 /// normal, and up, that crossed with the normal again.
 ///
-/// **Fix:** the game's frame is not a number for a normal along `X`; the port takes the frame
+/// **Fix:** the game's frame is not a number for a normal along `X`; OpenReliant takes the frame
 /// `math.lookAt` gives that normal.
 fn outFrom(normal: Vector) math.Matrix {
     const forward = math.normalize(normal);
@@ -134,8 +135,8 @@ const player_hit_pause = 30;
 /// no more than once in `player_hit_pause` ticks.
 ///
 /// **Improvement:** the game plays `ARMOUR01` at the point struck in the part's own frame, taken
-/// for one in the world, so it is heard from near the world's origin; the port plays it where the
-/// shot struck.
+/// for one in the world, so it is heard from near the world's origin; OpenReliant plays it where
+/// the shot struck.
 pub fn hullHit(world: gameobj.World, index: u16, at: Vector) void {
     const hearing = world.hearing orelse return;
     const all = world.objects;

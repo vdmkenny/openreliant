@@ -245,7 +245,7 @@ pub const Windows = struct {
     }
 
     /// `hud_draw`'s loop over the windows, which it runs in every view: each moves on, and in the
-    /// view ahead from the cockpit is drawn over the display, with what it shows where the port
+    /// view ahead from the cockpit is drawn over the display, with what it shows where OpenReliant
     /// draws that.
     pub fn frame(
         windows: *Windows,
@@ -294,7 +294,7 @@ pub fn bufferClip(window: Window, at: [2]i32, size: f32) hud.Clip {
     return .{ .left = from[0], .top = from[1], .right = to[0], .bottom = to[1] };
 }
 
-/// What the windows show, for those the port draws the contents of.
+/// What the windows show, for those OpenReliant draws the contents of.
 pub const Contents = struct {
     /// Window 1's.
     gunnery: ?hud.gunnery.Shown = null,

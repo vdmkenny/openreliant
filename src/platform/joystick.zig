@@ -133,9 +133,9 @@ pub fn choose(found: []const Found, preference: ?[]const u8) ?Found {
     return if (found.len > 0) found[0] else null;
 }
 
-/// The value of `ThrottleAxis` or `TwistAxis` in `JoyConfig` (settings added by the port): an SDL
-/// axis number, starting at 0 as `openreliant joysticks` shows it; -1 for none; or no entry, which
-/// keeps the automatic choice.
+/// The value of `ThrottleAxis` or `TwistAxis` in `JoyConfig` (settings added by OpenReliant): an
+/// SDL axis number, starting at 0 as `openreliant joysticks` shows it; -1 for none; or no entry,
+/// which keeps the automatic choice.
 pub const Choice = union(enum) {
     guess,
     none,
@@ -156,7 +156,7 @@ pub const Layout = struct {
     y: ?u8 = null,
     throttle: ?u8 = null,
     twist: ?u8 = null,
-    /// Reverses the throttle axis (`ThrottleInvert` in `JoyConfig`, added by the port). The game
+    /// Reverses the throttle axis (`ThrottleInvert` in `JoyConfig`, added by OpenReliant). The game
     /// expects a throttle's lowest value to mean full throttle, which is what most levers report
     /// when pushed forward.
     throttle_inverted: bool = false,

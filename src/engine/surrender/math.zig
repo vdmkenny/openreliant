@@ -196,7 +196,8 @@ pub fn orthonormalize(m: Matrix) Matrix {
 /// the Y angle is close to a right angle, the X angle takes all of the turn and Z is 0.
 ///
 /// **Improvement:** the engine looks the angles up in a table of arctangents in steps of 1/4096
-/// (`sr_atan2`, `0x004C3200`). The port computes them, which is more precise by up to half a step.
+/// (`sr_atan2`, `0x004C3200`). OpenReliant computes them, which is more precise by up to half a
+/// step.
 pub fn angles(m: Matrix) Vector {
     const across = @sqrt(m[1] * m[1] + m[0] * m[0]);
     const y = std.math.atan2(m[2], across);
@@ -244,8 +245,8 @@ pub fn turned(m: Matrix, axis: Axis, angle: f32) Matrix {
     return product(m, rotation(axis, angle));
 }
 
-/// The rotation `mat3_from_angles` (`0x004C2410`) builds from a pitch, a yaw and a roll: turns about
-/// `X`, then `Y`, then `Z`.
+/// The rotation `mat3_from_angles` (`0x004C2410`) builds from a pitch, a yaw and a roll: turns
+/// about `X`, then `Y`, then `Z`.
 pub fn fromAngles(pitch: f32, yaw: f32, roll: f32) Matrix {
     const sp = @sin(pitch);
     const cp = @cos(pitch);
@@ -268,8 +269,8 @@ pub fn fromAngleVector(v: Vector) Matrix {
 /// An orientation whose forward axis, its third column, points along `direction`: turned about `Y`,
 /// then about `X`, with no roll (`mat3_look_at`, `0x004C1940`).
 ///
-/// **Improvement:** the engine takes the angles from `sr_atan2`'s table, as `angles` does. The port
-/// computes them.
+/// **Improvement:** the engine takes the angles from `sr_atan2`'s table, as `angles` does.
+/// OpenReliant computes them.
 pub fn lookAt(direction: Vector) Matrix {
     const yaw = std.math.atan2(direction[0], direction[2]);
     const cy = @cos(yaw);
@@ -325,7 +326,8 @@ test distance {
 test lerp {
     try std.testing.expectEqual(1, lerp(1, 0.1, 0));
     try std.testing.expectEqual(3, lerp(2, 6, 0.25));
-    // In single precision the far end can miss `b` by the rounding of `b - a`, as the engine's does.
+    // In single precision the far end can miss `b` by the rounding of `b - a`, as the engine's
+    // does.
     try std.testing.expectEqual(0.100000024, lerp(1, 0.1, 1));
 }
 

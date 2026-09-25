@@ -27,7 +27,7 @@ cutaway slot (`0x57E04E`), which the mission's start sets to 399, the last, read
 at every slot. The loops pass over objects by their flags: the simulation's updates and
 `objects_update` skip `stand_in` and `disabled` ones, and `mission_frame`'s framing and drawing
 `jumping` ones as well. **Improvement:** with every slot handed out, the cutaway slot comes round
-again and again, and the game's loops never end; the port walks it once.
+again and again, and the game's loops never end; OpenReliant walks it once.
 
 | Offset | Size | Field |
 |---|---|---|
@@ -94,9 +94,9 @@ once it is made.
 
 The object points at its type's stats and takes the type's side from them. The type's model is
 loaded with its first object (`ship_type_load`, `0x00466740`), with the type's schematic as its
-data. The port's [`create/library.zig`](../../src/engine/game/create/library.zig) reads each type's
-model and the models its attachment points mount once, and lets a type's go once no object is of
-it. Each part of the model gets a node that plays its `startup` track from the start at 4 a step;
+data. OpenReliant's [`create/library.zig`](../../src/engine/game/create/library.zig) reads each
+type's model and the models its attachment points mount once, and lets a type's go once no object is
+of it. Each part of the model gets a node that plays its `startup` track from the start at 4 a step;
 a part of class 6 gives the object `shield_generator`, one of class 5 counts as an engine, and an
 attachment of kind 6 sets flag `0x2000000`. The parts are then linked, each posed as its track has
 it at the start, and the object's origin moves to their centre of mass (`object_link_parts`). A
@@ -134,9 +134,9 @@ A type's side is 0 for the Alliance's, which start friendly, 1 for the Coalition
 hostile, and 2 for the rest, which are neutral. Two objects on different sides are enemies.
 
 [`create.zig`](../../src/engine/game/create.zig) ports `create_object` as `createObject`, and
-`Objects` is the port's GO array: each slot the object's record, and what the port keeps beside it
-where the record holds the original's pointers. Not ported yet: the tier, which chooses the guns;
-the guns and their groups, the loadout and its pods
+`Objects` is OpenReliant's GO array: each slot the object's record, and what OpenReliant keeps
+beside it where the record holds the original's pointers. Not ported yet: the tier, which chooses
+the guns; the guns and their groups, the loadout and its pods
 ([#131](https://github.com/vdmkenny/openreliant/issues/131),
 [#38](https://github.com/vdmkenny/openreliant/issues/38),
 [#39](https://github.com/vdmkenny/openreliant/issues/39)); the shield's effect
@@ -250,24 +250,25 @@ the root frame of an object mounted on an attachment point from the part's.
 
 ## Animation
 
-A part can carry animation tracks, which move it about its place ([`.SHP` clips](../formats/shp.md#animation-clip-tag-0x0a)):
-each has a length, a mode it plays in unless told otherwise, a name, keyframes and events. The
-loader (`model_load`, `0x004A44D0`) files the last track named `startup`, `fire` and `deploy`,
-whatever the case, in three slots on the loaded part (`+0x234` to `+0x23C`), and a node starts one
-by its slot (`node_play`, `0x0049A2D0`) or by its name (`node_play_named`, `0x0049A340`): from a
-time, unless that is below zero, in a mode, the track's own for -1, at a speed. Any mode but 0
-marks the node and every node it hangs from as animating (flag `0x800`, `0x0049A2A0`).
-`create_object` plays each part's `startup` track from its start in its own mode at a speed of 4,
-which is how the radar dishes of some capital ships and stations turn from the start.
+A part can carry animation tracks, which move it about its place ([`.SHP`
+clips](../formats/shp.md#animation-clip-tag-0x0a)): each has a length, a mode it plays in unless
+told otherwise, a name, keyframes and events. The loader (`model_load`, `0x004A44D0`) files the last
+track named `startup`, `fire` and `deploy`, whatever the case, in three slots on the loaded part
+(`+0x234` to `+0x23C`), and a node starts one by its slot (`node_play`, `0x0049A2D0`) or by its name
+(`node_play_named`, `0x0049A340`): from a time, unless that is below zero, in a mode, the track's
+own for -1, at a speed. Any mode but 0 marks the node and every node it hangs from as animating
+(flag `0x800`, `0x0049A2A0`). `create_object` plays each part's `startup` track from its start in
+its own mode at a speed of 4, which is how the radar dishes of some capital ships and stations turn
+from the start.
 
 `node_tree_update`, once a simulation step, walks from the object's root into the children that are
 animating, not hidden and not flagged `0x80`, as the nodes of lights, engine glows and muzzle
-flashes are. It keeps them on a stack of 500: a node pushes those of its children, in order, and
-the last pushed is visited next. The root's children are every part of the model, whatever part
-each is linked to, so a part is visited while its parent part is hidden; a part's own children are
-the roots of the models it carries. A node it visits commits its pending place. One that plays no
-track, or plays at no speed, loses its mark, which it keeps while it pushes a child that has one. One that plays moves its time
-on by its speed and, for a track of some length:
+flashes are. It keeps them on a stack of 500: a node pushes those of its children, in order, and the
+last pushed is visited next. The root's children are every part of the model, whatever part each is
+linked to, so a part is visited while its parent part is hidden; a part's own children are the roots
+of the models it carries. A node it visits commits its pending place. One that plays no track, or
+plays at no speed, loses its mark, which it keeps while it pushes a child that has one. One that
+plays moves its time on by its speed and, for a track of some length:
 
 - **Once** (1): stopping at the end, time and speed then set to the length and zero, or at the
   start, going backwards.
@@ -296,7 +297,7 @@ it adds them to `+0xDC` and marks the node animating. About each axis whose limi
 (`+0xD8` to `+0xEC`, in degrees) the angle then stays within them; about one whose two limits are
 equal it comes round to within a half turn either way. `node_place` places the node by them.
 **Improvement:** the game turns the degrees to radians by a rounded 0.0174533 and a half turn by
-3.14159; the port by the exact values.
+3.14159; OpenReliant by the exact values.
 
 ## Drawing between steps
 
@@ -451,13 +452,14 @@ running the motion function:
 arctangents of 0 to 1 in steps of 1/4096 (`0x005DE344`), by the smaller of `y / x` and `x / y`
 rounded to the nearest step.
 
-**Improvement:** the port computes the angles instead, which is more precise by up to half a step.
+**Improvement:** OpenReliant computes the angles instead, which is more precise by up to half a step.
 
 ### The orders' motion functions
 
-The orders select eight more motion functions, which read the order's state (`0x68C`). The port has
-the two the [ejection](ejection.md) selects, `motion_brake` (`0x00474610`) and `motion_drift`
-(`0x00474B00`); the rest aren't ported yet ([#30](https://github.com/vdmkenny/openreliant/issues/30)).
+The orders select eight more motion functions, which read the order's state (`0x68C`). OpenReliant
+has the two the [ejection](ejection.md) selects, `motion_brake` (`0x00474610`) and `motion_drift`
+(`0x00474B00`); the rest aren't ported yet
+([#30](https://github.com/vdmkenny/openreliant/issues/30)).
 
 | Address | Selected by | What it does |
 |---|---|---|
@@ -476,7 +478,7 @@ the two the [ejection](ejection.md) selects, `motion_brake` (`0x00474610`) and `
 file the binary doesn't name: it lies after `explode.cpp`'s code and before `gameflow.cpp`'s.
 `cruiseSpeed` is in [`ai.zig`](../../src/engine/game/ai.zig), since `object_cruise_speed` lies after
 `Ai.cpp`'s code, and [`gameobj.zig`](../../src/engine/game/gameobj.zig) has `knock`, `knockLocal`
-and `applyKnocks`. The port passes the flight stats and the camera
+and `applyKnocks`. OpenReliant passes the flight stats and the camera
 view in, where the game reaches them through the object's own pointer and a global, because
 `GameObject` keeps the binary's 32-bit pointers for its layout. For the same reason `move` takes
 the camera's shake as a pointer, set only for the player's ship, where the game compares the slot
@@ -491,7 +493,7 @@ object at the start of each step, after `gameobj.orthonormalizeTurn` on the obje
 Not yet ported: the orders' motion functions
 ([#30](https://github.com/vdmkenny/openreliant/issues/30)), and the inertia tensor that
 `object_recentre` inverts into `0x548` ([#87](https://github.com/vdmkenny/openreliant/issues/87)),
-so knocks don't turn objects in the port yet.
+so knocks don't turn objects in OpenReliant yet.
 
 ## Shields
 
@@ -524,8 +526,8 @@ its shield and half its armor.
 What gets through a shield wears the quadrant's armour (`object_armor_damage`, `0x004641F0`). An
 invulnerable object takes it only while it leaves armour to spare: one fully invulnerable from
 anything, one that only a player can hit from anyone else. One in the last state, 4, takes none.
-Armour below zero destroys the object (`object_destroyed`, `0x00401F30`), telling it that it may spin
-out, and that a player's pilot has no time to eject where the blow was over 1000.
+Armour below zero destroys the object (`object_destroyed`, `0x00401F30`), telling it that it may
+spin out, and that a player's pilot has no time to eject where the blow was over 1000.
 
 Outside multiplayer the game's difficulty (`0x00562F14`: 0 easy, 1 medium, 2 hard, which SET GAME
 DIFFICULTY starts at medium) scales damage (`damage_by_difficulty`, `0x00463D70`):
@@ -541,16 +543,16 @@ the damage before the scaling. `object_armor_damage` scales its damage twice, on
 `recent_damage` and that again for the armour, and `component_damage` (`0x004645C0`) once. So at
 medium a hit on the player's ship takes half off its shield and a quarter of what gets through off
 its armour. The game tells a shot by comparing the damage's kind with the player's slot, which is
-0, a shot's kind, in a single-player game. The port takes the difficulty from `--difficulty`,
+0, a shot's kind, in a single-player game. OpenReliant takes the difficulty from `--difficulty`,
 medium by default.
 
-- An AI ship's pilot ejects where the ship is in the player's wing, `0x74C` 0, and its roll at `0x70C` is
-  below 40, or where the ship was told to eject before exploding. The ship spins on under Eject
-  Spin (108).
-- The player's pilot ejects, unless it has already, the blow was too heavy, or the ship is the Kamov:
-  Eject Player (118) marks the ship ejected and unpowered and `mission_ending` (`0x00588394`) 8. The
-  ship drifts, the player's controls still running, for 400 to 599 ticks, and is then destroyed
-  again, now without spinning out.
+- An AI ship's pilot ejects where the ship is in the player's wing, `0x74C` 0, and its roll at
+  `0x70C` is below 40, or where the ship was told to eject before exploding. The ship spins on under
+  Eject Spin (108).
+- The player's pilot ejects, unless it has already, the blow was too heavy, or the ship is the
+  Kamov: Eject Player (118) marks the ship ejected and unpowered and `mission_ending` (`0x00588394`)
+  8. The ship drifts, the player's controls still running, for 400 to 599 ticks, and is then
+  destroyed again, now without spinning out.
 - Otherwise the object explodes: its stack becomes the one order Explode (11), whatever it was
   doing, and it is flagged `exploding`.
 
@@ -579,10 +581,10 @@ one and exploding, not targetable and with no orders, which nothing moves, draws
 
 The other modes:
 
-- A ship that lists components, going as a whole (`explode_hull_init`, `0x00409170`): each part
-  of its hull hanging from the model's root, but a part of a damaged model, is left with -1
-  armour, and the root is flagged for the component losses to take it away ([Components](#components)).
-  Its update (`0x004091E0`) ends a disabled ship as its hull holding it together does
+- A ship that lists components, going as a whole (`explode_hull_init`, `0x00409170`): each part of
+  its hull hanging from the model's root, but a part of a damaged model, is left with -1 armour, and
+  the root is flagged for the component losses to take it away ([Components](#components)). Its
+  update (`0x004091E0`) ends a disabled ship as its hull holding it together does
   (`object_hull_lost`) and pops the order of any other.
 - One of its components, the one the order is aimed at (`explode_component_init`, `0x00409200`):
   where it is shown, it is left with -1 armour, and the root of the model holding it is flagged.
@@ -595,13 +597,13 @@ The other modes:
   three times 1.88496 about the X axis, the next twice and the last once, and each stands 3 of its
   own radii along its nose from where the rock was, still and colliding with nothing. A whole rock
   so leaves three of 0.4, and each of those three of 0.16. **Improvement:** 1.88496 is three fifths
-  of a half turn, rounded; the port computes it.
+  of a half turn, rounded; OpenReliant computes it.
 - The limpet car, type `0x1D` (`explode_limpet_car_init`, `0x004094D0`): it stops dead, unpowered,
   with a random turn up to ±0.025 about its first two axes and ±0.15 about its third, and goes up in
   a fireball as wide as its radius. Its update (`explode_limpet_car`, `0x004095F0`), the same step,
-  hides its first part, blows it up (`explode_blast`), and replaces it in its slot with a limpet pod,
-  type `0xBC`, where that part was going; a car whose first part is already hidden blows up and is
-  retired.
+  hides its first part, blows it up (`explode_blast`), and replaces it in its slot with a limpet
+  pod, type `0xBC`, where that part was going; a car whose first part is already hidden blows up and
+  is retired.
 
 The player's ship has the camera watch its end, locked: a spin-out slower than 100 from behind,
 pulling away (view 8), a faster one from where the camera was (view `0x1A`), a burst from there
@@ -687,7 +689,7 @@ The second answers false for every part.
 ([#238](https://github.com/vdmkenny/openreliant/issues/238)) and the Ulysses' routine
 ([#232](https://github.com/vdmkenny/openreliant/issues/232)).
 
-The port lists them in [`create.zig`](../../src/engine/game/create.zig) as the parts themselves,
+OpenReliant lists them in [`create.zig`](../../src/engine/game/create.zig) as the parts themselves,
 since a mounted turret's parts are not the hull's, and marks each one as a component and, where the
 model asks, as targetable. A model with more components than the object holds leaves the
 rest unlisted, where the game stops with a fatal error.
@@ -708,10 +710,10 @@ Commands act on a component through its assembly: the nodes beside it whose part
 link id, such as a turret and its barrels. The assembly can hold a damaged model too, parts whose
 part flag `0x04` is set, which stay hidden (node flag `0x20`) while the component is intact.
 `DisableObject` hides the intact parts and shows the damaged ones, and enabling does the reverse; on
-a whole ship it sets the object's `disabled` flag instead. `DestroySubObject` destroys the assembly, keeping
-and showing its damaged parts when its second argument asks for them. Destroying an engine lowers
-the owner's share of engines left, and destroying a shield generator clears its `shield_generator`
-flag.
+a whole ship it sets the object's `disabled` flag instead. `DestroySubObject` destroys the assembly,
+keeping and showing its damaged parts when its second argument asks for them. Destroying an engine
+lowers the owner's share of engines left, and destroying a shield generator clears its
+`shield_generator` flag.
 
 `ship_damage_value` (`0x00452CB0`), the value ShotAt events carry, is the lowest of the object's
 four armor values, or a component's own.
@@ -732,5 +734,5 @@ and the collisions go through it.
 For an object that lists components, `create_object` numbers its part nodes, its model's and those
 of the models mounted on it, from the root down, depth first (`object_number_parts`, `0x00466BA0`):
 each node's number goes at `+0xFC`, the count at `+0x154`, and a table of the nodes by number at
-`+0x518`. A shot's candidates name its parts by these numbers; the port names a part by its model
+`+0x518`. A shot's candidates name its parts by these numbers; OpenReliant names a part by its model
 and its index there (`objects.PartRef`), and walks the models mounted on a part after it.

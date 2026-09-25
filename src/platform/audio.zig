@@ -1,7 +1,7 @@
 //! The game's sound output, with SDL3: in place of the wave-out device Miles opened
 //! (`AIL_waveOutOpen`). A stream on the default playback device pulls the mix on SDL's audio
 //! thread, at the device's own rate, from one of two players of Miles's calls: OpenAL Soft
-//! ([`openal.zig`](openal.zig)), in as many channels as the device has, or the port's software
+//! ([`openal.zig`](openal.zig)), in as many channels as the device has, or OpenReliant's software
 //! Miles (`engine.mss.Mixer`), in stereo. The master bus (`engine.mss.master`) comes last.
 
 const std = @import("std");
@@ -30,7 +30,7 @@ const chunk = 512;
 pub const Player = union(enum) {
     /// OpenAL Soft, with these settings.
     openal: openal.Settings,
-    /// The port's software Miles, as `--original` has it.
+    /// OpenReliant's software Miles, as `--original` has it.
     software,
 };
 

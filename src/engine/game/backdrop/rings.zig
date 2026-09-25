@@ -1,6 +1,7 @@
-//! The port's: the sun's and the lens flares' round textures drawn again, `scale` times finer, from
-//! the rings they are made of (`redraw`), so that they stay round and crisp however large they are
-//! drawn. [`backdrop.md`](../../../../docs/engine/backdrop.md#sun-and-lens-flares) describes them.
+//! OpenReliant's: the sun's and the lens flares' round textures drawn again, `scale` times finer,
+//! from the rings they are made of (`redraw`), so that they stay round and crisp however large they
+//! are drawn. [`backdrop.md`](../../../../docs/engine/backdrop.md#sun-and-lens-flares) describes
+//! them.
 //!
 //! **Improvement:** the game draws them from their small 16-bit textures, which a large display
 //! magnifies into stair-stepped edges and banded glows. `--original` keeps them.
@@ -31,8 +32,8 @@ const search_steps = 8;
 const search_step: f32 = 0.25;
 
 /// The narrowest run of one colour that is a ring, in bins; the widest blend between two rings that
-/// is one edge, and the furthest a smoothed step reaches into a ring, in texels; and the fewest steps
-/// of one level the same way in a row that are a gradient's rounding.
+/// is one edge, and the furthest a smoothed step reaches into a ring, in texels; and the fewest
+/// steps of one level the same way in a row that are a gradient's rounding.
 const narrowest_ring = bins / 2;
 const widest_blend: f32 = 1.5;
 const furthest_reach: f32 = 4;
@@ -48,16 +49,17 @@ const rounding: f32 = 0.5;
 /// as green.
 const levels = Colour{ 31, 63, 31, 63 };
 
-/// Draws `image`'s first level again, `scale` times finer each way, with its levels down to a texel.
+/// Draws `image`'s first level again, `scale` times finer each way, with its levels down to a
+/// texel.
 ///
 /// It finds the middle the texture is roundest about, and measures each ring of it: the mean colour
-/// of the texels whose centres lie that far out. Where every texel in a ring shares one colour, over
-/// half a texel or more, the ring is flat; elsewhere a ring takes the mean of the texels within half
-/// a texel of it. Between two flat rings less than `widest_blend` apart lies an edge, placed where
-/// the rings keep their light. A run of `staircase` or more edges of one
-/// level each the same way is a gradient that 16-bit rounding cut into steps, and each of its edges
-/// is smoothed out to the nearer ring's middle, no further than `furthest_reach`; any other edge
-/// stays crisp, a texel of the finer texture wide. Elsewhere the rings are drawn as measured. With
+/// of the texels whose centres lie that far out. Where every texel in a ring shares one colour,
+/// over half a texel or more, the ring is flat; elsewhere a ring takes the mean of the texels
+/// within half a texel of it. Between two flat rings less than `widest_blend` apart lies an edge,
+/// placed where the rings keep their light. A run of `staircase` or more edges of one level each
+/// the same way is a gradient that 16-bit rounding cut into steps, and each of its edges is
+/// smoothed out to the nearer ring's middle, no further than `furthest_reach`; any other edge stays
+/// crisp, a texel of the finer texture wide. Elsewhere the rings are drawn as measured. With
 /// `detail` kept, what the rings leave out of each texel is added back, smoothly enlarged. The
 /// result is dithered to 8 bits.
 pub fn redraw(gpa: Allocator, image: *const srtexture.Image, detail: Detail) Allocator.Error!srtexture.Image {
@@ -200,8 +202,8 @@ const Profile = struct {
             if (mix) colour.* = null;
         }
         // Each bin's mean: its own texels' where they share a colour, and over the window about it
-        // where they don't; where no texel's centre falls in the window, the nearest bin's where one
-        // does.
+        // where they don't; where no texel's centre falls in the window, the nearest bin's where
+        // one does.
         var measured: ?usize = null;
         for (0..count) |bin| {
             const reach: usize = if (shared[bin] == null) window else 0;

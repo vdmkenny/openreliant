@@ -57,7 +57,7 @@ pub const Settings = struct {
     view: *camera.CockpitSetting,
     camera: *camera.Camera,
     /// The brightness (`sr + 0x15FA`), 0.5 to 2, and whether the device sets it
-    /// (`sr + 0x38` bit 0), which shows its slider. The port's devices don't set it yet (#209):
+    /// (`sr + 0x38` bit 0), which shows its slider. OpenReliant's devices don't set it yet (#209):
     /// the slider stays hidden, as it does on hardware without gamma, and the brightness goes
     /// back to the file as it came, or as RESET DEFAULTS sets it, as the game does there.
     brightness: *f32,
@@ -161,9 +161,9 @@ pub const PauseMenu = struct {
     }
 
     /// `pause_menu_draw` (`0x004906F0`), the overlay while paused, with the pointer brought up to
-    /// date first as `mission_paused_frame` does (`menu_mouse_update`). A screen shown for the first
-    /// time runs its enter routine; if its choice goes elsewhere, it runs its leave routine. The
-    /// pointer is drawn last.
+    /// date first as `mission_paused_frame` does (`menu_mouse_update`). A screen shown for the
+    /// first time runs its enter routine; if its choice goes elsewhere, it runs its leave routine.
+    /// The pointer is drawn last.
     pub fn draw(pause_menu: *PauseMenu, frame: Frame) menu.Error!void {
         const fonts = if (pause_menu.fonts) |*open_fonts| open_fonts else return;
         pause_menu.pointer.update(frame.devices.mouse, frame.screen);

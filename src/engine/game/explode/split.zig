@@ -97,7 +97,7 @@ pub const Splits = struct {
     /// `split_slot_free` (`0x0046BC00`): the first slot free, or the first where all are taken.
     ///
     /// **Fix:** the game leaves the split it takes the slot of running on its portals once they
-    /// are freed; the port lets that split go first, its parts no longer cut.
+    /// are freed; OpenReliant lets that split go first, its parts no longer cut.
     fn take(splits: *Splits, world: gameobj.World) *?Split {
         for (&splits.slots) |*slot| {
             if (slot.* == null) return slot;
@@ -233,7 +233,7 @@ pub const Split = struct {
     /// heading out from the ship, strayed at random.
     ///
     /// **Fix:** the game gives the first such fireball of a frame whatever velocity its stack
-    /// held; the port gives it none.
+    /// held; OpenReliant gives it none.
     fn bigBurst(split: *Split, world: gameobj.World) void {
         const random = world.random;
         const sequence = split.sequence;
@@ -368,8 +368,8 @@ pub const Split = struct {
     /// `bit_speed`, and, where `heard`, an explosion's sound.
     ///
     /// **Fix:** the game takes the points, already in the ship's frame, through the frame of the
-    /// part destroyed or of the hull; the port takes them as the ship stands. And it skips a ship
-    /// with no points, where the game divides by none.
+    /// part destroyed or of the hull; OpenReliant takes them as the ship stands. And it skips a
+    /// ship with no points, where the game divides by none.
     fn burst(split: *const Split, world: gameobj.World, bit_speed: f32, heard: bool) void {
         if (split.points.len == 0) return;
         const random = world.random;

@@ -201,8 +201,8 @@ pub fn giveWay(ctx: Context, index: u16, order: ?Order) Error!bool {
 /// the stack must have room. A pushed order starts with its data zeroed, and unless it is one-shot
 /// it is marked as starting and the order state is zeroed with it.
 ///
-/// The game allocates the stack and the state with the object's first order; the port keeps both in
-/// the slot, so an object always has them.
+/// The game allocates the stack and the state with the object's first order; OpenReliant keeps both
+/// in the slot, so an object always has them.
 pub fn push(ctx: Context, index: u16, order: Order, target: Target) Error!bool {
     const all = ctx.world.objects;
     const slot = &all.slots[index];
@@ -396,7 +396,7 @@ pub fn flyBackwards(ctx: Context, index: u16) void {
     object.throttle = aiorders.backwards_throttle;
 }
 
-/// The `init` of the order, where the port runs it. The orders that aren't ported yet do nothing
+/// The `init` of the order, where OpenReliant runs it. The orders that aren't ported yet do nothing
 /// ([#30](https://github.com/vdmkenny/openreliant/issues/30)).
 fn runInit(ctx: Context, index: u16, info: orders.Info) void {
     switch (info.order) {
@@ -416,7 +416,7 @@ fn runInit(ctx: Context, index: u16, info: orders.Info) void {
     }
 }
 
-/// The `update` of the order, where the port runs it.
+/// The `update` of the order, where OpenReliant runs it.
 fn runUpdate(ctx: Context, index: u16, info: orders.Info) void {
     switch (info.order) {
         .do_nothing => aiorders.doNothing(ctx, index),
@@ -443,7 +443,7 @@ fn runUpdate(ctx: Context, index: u16, info: orders.Info) void {
     }
 }
 
-/// The `exit` of the order, where the port runs it.
+/// The `exit` of the order, where OpenReliant runs it.
 fn runExit(ctx: Context, index: u16, info: orders.Info) void {
     switch (info.order) {
         .scoop_up => tractor.scoopUpExit(ctx, index),

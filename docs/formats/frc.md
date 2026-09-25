@@ -84,7 +84,7 @@ A pause has nothing after its envelope.
 
 Every file holds one effect, or a group with its members. The shipped files use 101 to 110.
 
-## The port
+## OpenReliant
 
 [`src/formats/frc.zig`](../../src/formats/frc.zig) reads a file into its effects.
 [`input/force.zig`](../../src/engine/input/force.zig) plays them as rumble.

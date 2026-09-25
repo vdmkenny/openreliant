@@ -43,7 +43,7 @@ pub const Aimed = struct {
     /// The yaw and pitch it has still to turn toward its aim (`+0x50`, `+0x54`).
     to_turn: Angles = .{},
     /// Its muzzle faces away from its aim of no yaw and no pitch (`facesBack`), as every fighter's
-    /// rear turret's does. **Fix:** the port turns such a turret in its parts' frames turned a
+    /// rear turret's does. **Fix:** OpenReliant turns such a turret in its parts' frames turned a
     /// half turn about their X axis, so it aims along its muzzle; the game's never fires
     /// ([#219](https://github.com/vdmkenny/openreliant/issues/219)).
     reversed: bool = false,
@@ -178,7 +178,7 @@ const slot_count = 5;
 
 /// The slot a part of a turret's assembly stands in, or null for none. The game writes a slot
 /// past the record's five, or a spinning or missile turret's slot of -1, into the words beside
-/// them; the port passes it over.
+/// them; OpenReliant passes it over.
 fn slotOf(part: *const objects.Model.Part) ?usize {
     const slot = std.math.cast(usize, part.turret_slot) orelse return null;
     return if (slot < slot_count) slot else null;
@@ -315,11 +315,11 @@ const huge_overshoot: f32 = 20;
 /// a half turn about X (`Aimed.reversed`).
 ///
 /// **Improvement:** the game turns radians to degrees and back by a rounded 57.2958 and 0.0174533,
-/// and a turn by 6.28319; the port by the exact values.
+/// and a turn by 6.28319; OpenReliant by the exact values.
 ///
 /// **Fix:** the game finds the angle from Y of the direction in the arc by dividing across by the
-/// sine of its angle about Y, which is nothing for a direction straight ahead or behind; the port
-/// takes the length across itself.
+/// sine of its angle about Y, which is nothing for a direction straight ahead or behind;
+/// OpenReliant takes the length across itself.
 ///
 /// Not ported: the Stalag's turrets fire anywhere while the byte at `0x005883F8` is set, which the
 /// hull's triggers set, perhaps with the player inside it
@@ -377,7 +377,7 @@ fn aimAngles(aimed: *const Aimed, aim: Vector) ?Angles {
 ///
 /// **Fix:** the game doesn't ask whether the object is valid to aim at, so an exploding, cloaked or
 /// untargetable one early in the slots is picked, dropped by the next track and picked again,
-/// keeping the turret from any other; the port passes over what the track would drop
+/// keeping the turret from any other; OpenReliant passes over what the track would drop
 /// (`ai.targetValid`).
 ///
 /// Not ported: in a multiplayer game, the player who last hurt the turret's object is passed over

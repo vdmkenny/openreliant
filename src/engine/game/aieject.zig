@@ -77,9 +77,10 @@ pub const Stage = enum(i32) {
 /// the first part at its root of that class, which leaves the ship as the pilot's pod
 /// (`separate`).
 ///
-/// Not ported: the mission's Destroyed event ([#37](https://github.com/vdmkenny/openreliant/issues/37));
-/// a wingman's call on the radio as the pilot ejects, and the rescue's word a thousand ticks
-/// later (`radio_wingman_ejected`, `0x00456D80`), which wait for the radio
+/// Not ported: the mission's Destroyed event
+/// ([#37](https://github.com/vdmkenny/openreliant/issues/37)); a wingman's call on the radio as the
+/// pilot ejects, and the rescue's word a thousand ticks later (`radio_wingman_ejected`,
+/// `0x00456D80`), which wait for the radio
 /// ([#48](https://github.com/vdmkenny/openreliant/issues/48)); and a multiplayer game, in which
 /// nobody ejects so.
 pub fn init(ctx: Context, index: u16) void {
@@ -132,9 +133,10 @@ const flash_speed_range: f32 = 5;
 /// (`srmesh.caps_hidden`), so the cockpit closes beneath into a pod, and the ship where it left. A
 /// flash goes off at the cockpit's eject point, and the pod shoots out along it.
 ///
-/// The game moves the parts' nodes from the one object to the other. The port gives the new object
-/// the ship's model, as it stands, and the pod a new one of the same type, and takes out of each the
-/// parts the other has (`objects.destroyPart`), which each then recentres on (`gameobj.recentreObject`).
+/// The game moves the parts' nodes from the one object to the other. OpenReliant gives the new
+/// object the ship's model, as it stands, and the pod a new one of the same type, and takes out of
+/// each the parts the other has (`objects.destroyPart`), which each then recentres on
+/// (`gameobj.recentreObject`).
 ///
 /// Not ported: the smoke trail from the eject point, a hit's effect of kind 4, which the game never
 /// draws either (`shieldfx.componentHit`).
@@ -272,11 +274,11 @@ pub const RescueOdds = struct {
     killed: u16 = 0,
 
     /// How a roll of the runtime's numbers falls (`order_eject`): taken over the three together,
-    /// below `rescued` the pilot is picked up by a nanny ship, below that and `captured` more by the
-    /// enemy, and past both killed.
+    /// below `rescued` the pilot is picked up by a nanny ship, below that and `captured` more by
+    /// the enemy, and past both killed.
     ///
     /// **Fix:** the game divides by the three together whatever they are, and stops on odds of
-    /// nothing at all; the port has the pilot picked up.
+    /// nothing at all; OpenReliant has the pilot picked up.
     pub fn fate(odds: RescueOdds, roll: u15) Ending {
         const all = @as(u32, odds.rescued) + odds.captured + odds.killed;
         if (all == 0) return .rescued;
@@ -368,7 +370,8 @@ const spin_most: f32 = 0.2;
 /// `order_eject_spin_init` (`0x004160D0`): an AI ship whose pilot is about to eject spins,
 /// unpowered, for `spin_ticks`, its pilot marked ejected.
 ///
-/// Not ported: the mission's Destroyed event ([#37](https://github.com/vdmkenny/openreliant/issues/37)).
+/// Not ported: the mission's Destroyed event
+/// ([#37](https://github.com/vdmkenny/openreliant/issues/37)).
 pub fn spinInit(ctx: Context, index: u16) void {
     const slot = &ctx.world.objects.slots[index];
     const object = &slot.object;
@@ -415,8 +418,8 @@ const attack_aimed: f32 = 0.95;
 const attack_trigger_ticks = 100;
 
 /// `order_eject_fighter_attack` (`0x004161F0`): the Sabre that ends a pilot who was not picked up
-/// flies at the pod, its target, at full throttle, and within `attack_reach` fires, rolling where it
-/// points at the pod; once the pod is exploding it flies on.
+/// flies at the pod, its target, at full throttle, and within `attack_reach` fires, rolling where
+/// it points at the pod; once the pod is exploding it flies on.
 pub fn fighterAttack(ctx: Context, index: u16) void {
     const all = ctx.world.objects;
     const slot = &all.slots[index];
@@ -446,9 +449,9 @@ const no_ease: f32 = 0;
 const blow_up_after = 400;
 const blow_up_spread = 200;
 
-/// `order_eject_player_init` (`0x00416310`), as the player's ship's armour runs out: the ship drifts
-/// on unpowered for four to six seconds before it blows up, and the pilot has that long to eject
-/// (EJECT, `input.eject`). The display's eject marker flashes (`hud.State.ejected`), and the
+/// `order_eject_player_init` (`0x00416310`), as the player's ship's armour runs out: the ship
+/// drifts on unpowered for four to six seconds before it blows up, and the pilot has that long to
+/// eject (EJECT, `input.eject`). The display's eject marker flashes (`hud.State.ejected`), and the
 /// cockpit glows red (`main.cockpit.lightEmergency`).
 ///
 /// Not ported: Moose's call to eject on the radio (`ejt_001` to `ejt_008`), which waits for the

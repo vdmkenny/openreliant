@@ -76,11 +76,11 @@ pub const Axis = enum(u3) {
 };
 
 /// The dead zone `joystick_object_found` sets for the whole device, in hundredths of a percent of
-/// each axis's travel from the center: 10%. The port reads `DeadZone` from `starlancer.ini` to
+/// each axis's travel from the center: 10%. OpenReliant reads `DeadZone` from `starlancer.ini` to
 /// change it.
 pub const default_dead_zone: u16 = 1000;
 
-/// A joystick device: the port's replacement for `joystick_device` (`0x005DDD24`), the game's
+/// A joystick device: OpenReliant's replacement for `joystick_device` (`0x005DDD24`), the game's
 /// `IDirectInputDevice7`, with the calls the game makes on it. The platform implements it for each
 /// connected controller, including gamepads.
 pub const JoystickDevice = struct {
@@ -92,7 +92,7 @@ pub const JoystickDevice = struct {
         setRange: *const fn (context: *anyopaque, axis: Axis, min: i32, max: i32) void,
         setDeadZone: *const fn (context: *anyopaque, zone: u16) void,
         poll: *const fn (context: *anyopaque, state: *JoystickState) error{Unplugged}!void,
-        /// The port's: turns the motors of a controller that rumbles.
+        /// OpenReliant's: turns the motors of a controller that rumbles.
         rumble: *const fn (context: *anyopaque, motors: force.Motors) void,
     };
 
@@ -105,11 +105,11 @@ pub const JoystickDevice = struct {
         buttons: u8,
         /// `DIDEVCAPS.dwPOVs`, at most 4.
         hats: u8,
-        /// Added by the port: whether the controller is a gamepad. A gamepad's buttons are
+        /// Added by OpenReliant: whether the controller is a gamepad. A gamepad's buttons are
         /// numbered as in `GamepadButton`, and it has its own default bindings.
         kind: Kind = .joystick,
-        /// Added by the port: whether it rumbles, which is how the port plays the force feedback
-        /// (`force`), in place of DirectInput's force feedback (`DIDC_FORCEFEEDBACK`).
+        /// Added by OpenReliant: whether it rumbles, which is how OpenReliant plays the force
+        /// feedback (`force`), in place of DirectInput's force feedback (`DIDC_FORCEFEEDBACK`).
         rumbles: bool = false,
     };
 
@@ -153,7 +153,7 @@ pub const Joystick = struct {
     hats: u8 = 0,
     name: []const u8 = "",
     kind: JoystickDevice.Kind = .joystick,
-    /// Whether the device rumbles (`force_feedback`, `0x0050E1A4`, for the port's rumble).
+    /// Whether the device rumbles (`force_feedback`, `0x0050E1A4`, for OpenReliant's rumble).
     rumbles: bool = false,
     latched: [32]bool = @splat(false),
 
@@ -258,8 +258,9 @@ pub const MouseState = extern struct {
     }
 };
 
-/// One action's bindings, an entry of `control_bindings`; [`input/controls.zig`](input/controls.zig) lists the
-/// actions and the bindings the game starts with.
+/// One action's bindings, an entry of `control_bindings`;
+/// [`input/controls.zig`](input/controls.zig) lists the actions and the bindings the game starts
+/// with.
 pub const ControlBinding = extern struct {
     /// A DirectInput scan code (`DIK_*`), an index into `keyboard`.
     key: u16,
@@ -323,7 +324,7 @@ pub const Keyboard = struct {
     alt_latched: bool = false,
     /// Whether the keys 1 to 8 are the radio menu's, so that no action bound to them counts: while
     /// the display's communications window is open, which `control_active` tests at `0x00501EE8`,
-    /// that window's phase. The port sets it as each frame starts.
+    /// that window's phase. OpenReliant sets it as each frame starts.
     numbers_taken: bool = false,
 
     /// What `read_keyboard` (`0x004BD490`) does once it has the keys: frees the latch of each key
@@ -406,7 +407,7 @@ pub const Settings = struct {
     twist_enabled: bool = false,
     /// `Controller` (`control_mode`, `0x0057E064`).
     control_mode: ControlMode = .joystick,
-    /// Added by the port: `DeadZone` in the `JoyConfig` section, the joystick's dead zone in
+    /// Added by OpenReliant: `DeadZone` in the `JoyConfig` section, the joystick's dead zone in
     /// hundredths of a percent.
     dead_zone: u16 = default_dead_zone,
 };
@@ -416,7 +417,7 @@ pub const Settings = struct {
 pub const Bindings = std.EnumArray(controls.Action, controls.Binding);
 
 /// The default bindings for a controller of `kind`: the game's own for a joystick, and for a
-/// gamepad (added by the port) the same keys with `gamepad_buttons` as the buttons.
+/// gamepad (added by OpenReliant) the same keys with `gamepad_buttons` as the buttons.
 pub fn defaultBindings(kind: JoystickDevice.Kind) Bindings {
     var bindings: Bindings = undefined;
     for (std.enums.values(controls.Action)) |action| bindings.set(action, controls.binding(action));
@@ -427,11 +428,11 @@ pub fn defaultBindings(kind: JoystickDevice.Kind) Bindings {
     return bindings;
 }
 
-/// How the port numbers a gamepad's buttons when it presents the gamepad to the game as a joystick.
-/// These are the numbers `JOY BUTTON` uses in `JoyConfig`. Face buttons are named by position, not
-/// by label. The triggers and the four directions of the right stick are buttons too. The left
-/// stick is the X and Y axes, the right stick's horizontal axis is the twist, and the D-pad is the
-/// hat.
+/// How OpenReliant numbers a gamepad's buttons when it presents the gamepad to the game as a
+/// joystick. These are the numbers `JOY BUTTON` uses in `JoyConfig`. Face buttons are named by
+/// position, not by label. The triggers and the four directions of the right stick are buttons too.
+/// The left stick is the X and Y axes, the right stick's horizontal axis is the twist, and the
+/// D-pad is the hat.
 pub const GamepadButton = enum(u5) {
     south,
     east,
@@ -467,7 +468,7 @@ pub const GamepadButton = enum(u5) {
     right_stick_right,
 };
 
-/// The default gamepad bindings, added by the port. Gamepads have no throttle axis, so the right
+/// The default gamepad bindings, added by OpenReliant. Gamepads have no throttle axis, so the right
 /// stick's up and down directions change the throttle, like the throttle keys.
 pub const gamepad_buttons = [_]struct { controls.Action, GamepadButton }{
     .{ .fire_lasers, .right_trigger },
@@ -967,7 +968,7 @@ fn steer(player: *Player, devices: *Devices, object: *gameobj.GameObject, stick:
             //
             // **Fix:** the game adds the movement of the last read each time the order runs, once
             // a frame as well as once a step, so the faster the frames the further the mouse
-            // steers. The port adds each read's once.
+            // steers. OpenReliant adds each read's once.
             const mouse = &devices.mouse;
             if (!mouse.gathered) {
                 for (stick, mouse.state.moved) |*position, moved| {
@@ -1104,17 +1105,16 @@ pub fn setPlayerTarget(display: *hud.State, all: *create.Objects, index: i16, co
 
 /// FIRE LASERS, LAUNCH MISSILE, CLOAK SHIP, EJECT and COUNTERMEASURES, which `player_controls`
 /// reads after the steering and the throttle (`0x00413BB5`, `0x00413BE7`, `0x00413CB2`,
-/// `0x00413D88`, `0x00413E80`).
-/// FIRE LASERS, held, while the ship isn't jumping, opens the gunnery display and holds the guns'
-/// trigger for the frame (`guns.fire`), which charges a Phoenix's Nova Cannon, unless the ship is
-/// cloaked, when it uncloaks instead (`setCloak`) and fires only once the cloak has gone; let go,
-/// the Phoenix, not jumping, lets its charge go (`guns.nova.release`). The others each act once a
-/// press: the one launches the armed missile (`launchMissile`); CLOAK SHIP, outside view 13, on a
-/// ship that can cloak, uncloaks it where it is cloaked and cloaks it where it isn't, with the
-/// display's sound and Betty's word unless the cloak is still coming on or going; EJECT ejects the
-/// pilot (`eject`); the last, outside a mission's ending, drops a countermeasure, Betty warning as they run out: at 6, 4 and
-/// 2 left, and with none. `aigeneric.playerControl` runs it after `matchSpeed`, since nothing
-/// between reads what it does.
+/// `0x00413D88`, `0x00413E80`). FIRE LASERS, held, while the ship isn't jumping, opens the gunnery
+/// display and holds the guns' trigger for the frame (`guns.fire`), which charges a Phoenix's Nova
+/// Cannon, unless the ship is cloaked, when it uncloaks instead (`setCloak`) and fires only once
+/// the cloak has gone; let go, the Phoenix, not jumping, lets its charge go (`guns.nova.release`).
+/// The others each act once a press: the one launches the armed missile (`launchMissile`); CLOAK
+/// SHIP, outside view 13, on a ship that can cloak, uncloaks it where it is cloaked and cloaks it
+/// where it isn't, with the display's sound and Betty's word unless the cloak is still coming on or
+/// going; EJECT ejects the pilot (`eject`); the last, outside a mission's ending, drops a
+/// countermeasure, Betty warning as they run out: at 6, 4 and 2 left, and with none.
+/// `aigeneric.playerControl` runs it after `matchSpeed`, since nothing between reads what it does.
 ///
 /// In the mouse's mode the left button fires as FIRE LASERS does, and the right launches as LAUNCH
 /// MISSILE does, once a press (`Player.mouse_launched`).
@@ -1360,9 +1360,9 @@ pub fn seekTarget(all: *const create.Objects, target: *aigeneric.Target, step: S
     return false;
 }
 
-/// `0x00414F90`: steps the player's target's component round its components to the next the
-/// player can aim at, targetable and neither hidden nor spent, or to none when it finds none. It first gives
-/// both forms of the target display their full time again, and does nothing more for a target
+/// `0x00414F90`: steps the player's target's component round its components to the next the player
+/// can aim at, targetable and neither hidden nor spent, or to none when it finds none. It first
+/// gives both forms of the target display their full time again, and does nothing more for a target
 /// that lists no components, or a friendly one; otherwise it opens the target's form of the
 /// display, if that is shut. The display follows the new component on its next frame. Not yet
 /// ported: what it tells a multiplayer game.
@@ -1575,7 +1575,7 @@ const cloak_said: Said = .{ .on = .cloak_on, .off = .cloak_off };
 /// while the player's order is Player Control, as it always is in the sandbox.
 ///
 /// **Fix:** the game sounds a power key every frame it is held, a new sound each frame, which the
-/// port's frame rates make a din; the port sounds it as it is pressed.
+/// port's frame rates make a din; OpenReliant sounds it as it is pressed.
 ///
 /// Not yet ported: the radio's menu COMMS WINDOW starts; OBJECTIVES WINDOW paging through the
 /// objectives once they are open; PRIMARY TARGET and the orders to the wingmen.

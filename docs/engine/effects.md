@@ -70,8 +70,8 @@ pool on by its velocity times the frame's ticks, sets its sprite's half-size and
 template's curves, and hides the rest; each pool's set is drawn up to its last particle alive, in
 the world's layer.
 
-An explosion's blast (`explode_blast`, `0x0046C980`) bursts into two templates that `explosions_init`
-(`0x0046B240`) makes:
+An explosion's blast (`explode_blast`, `0x0046C980`) bursts into two templates that
+`explosions_init` (`0x0046B240`) makes:
 
 | Template | Life | Half-size | Colour | Burst |
 |---|---|---|---|---|
@@ -133,7 +133,7 @@ and the torpedo's.
 
 `explosion_bit` (`0x004717D0`) throws a small lit mesh out of an explosion into the next of
 `explosion_bits` (`0x005538C8`), in place of whatever flew there. The options' detail sets how many
-fly at once: 100, 300 or 500 at low, medium and high. The port starts at high.
+fly at once: 100, 300 or 500 at low, medium and high. OpenReliant starts at high.
 
 A bit is a piece of debris, one of the ten models of types `0x4E` to `0x57`, which
 `explosions_init` loads through `ship_type_first_levels` (`0x004AE190`) and draws 1.5 times as far
@@ -168,11 +168,11 @@ both key lights and both fill lights, where a ship's part takes one of each pair
 **Improvement:** a bit takes the lights a ship's part takes (`objects.lightMask`), so it is not
 washed out. `--original` restores every light, for the bits and the break-up's pieces alike.
 
-**Improvement:** the port keeps room for 4000 bits whatever the detail, and a thrown bit flies on until its place is needed instead of going after about 20 seconds. A capital ship's split throws hundreds, which the original's pool lets go of within seconds. A stream's spark still goes after its few seconds. `--original` restores the original's pool and times (`explode.BitPool`).
+**Improvement:** OpenReliant keeps room for 4000 bits whatever the detail, and a thrown bit flies on until its place is needed instead of going after about 20 seconds. A capital ship's split throws hundreds, which the original's pool lets go of within seconds. A stream's spark still goes after its few seconds. `--original` restores the original's pool and times (`explode.BitPool`).
 
 [`explode.zig`](../../src/engine/game/explode.zig) ports the bits as `Explosions.throwBit`,
 `Explosions.throwSpark` and `Bit`, and [`aiexplode.zig`](../../src/engine/game/aiexplode.zig) the
-spin-out's trail. The port leaves a piece out where the game has no model for it.
+spin-out's trail. OpenReliant leaves a piece out where the game has no model for it.
 
 ## Rock chunks
 
@@ -236,7 +236,7 @@ copies each polygon's plane normal unturned and leaves its distance at 0, so the
 hide by the wrong planes. It leaves the part's baked colours and second texture coordinates
 behind, and it creates the piece's object with a light mask of 0, so every light reaches it.
 
-**Improvement:** the port keeps each polygon's kind, works each piece's planes out from its own
+**Improvement:** OpenReliant keeps each polygon's kind, works each piece's planes out from its own
 corners, and carries the baked colours and both sets of texture coordinates, so a piece looks as
 its part did. A piece takes the part's light mask; `--original` restores every light.
 
@@ -289,10 +289,10 @@ When the time is up, the split ends once (`GameObject` `0x610` bit 1) and the po
 
 `object_draw` leaves out the engine glows of a ship that is splitting.
 
-**Fix:** the port corrects these bugs of the original:
+**Fix:** OpenReliant corrects these bugs of the original:
 
 - A type with no sequence doesn't split. The game reads a record from the text before the table, and the split never ends.
-- With no other half, the game frees the player's ship to move each frame and sends it off at the end. The port leaves it alone.
+- With no other half, the game frees the player's ship to move each frame and sends it off at the end. OpenReliant leaves it alone.
 - The points are sorted properly; the game puts the one that belongs right after the first before it. Each part's points go through the part's place in the ship, and a burst's points through the ship's place, not through the part a list belongs to.
 - The Victorious' front half drifts as its own case says, instead of falling through into the next case.
 - A burst with no points is skipped, where the game divides by zero, and the end reads only as many fireball points as the hull has.
@@ -326,9 +326,9 @@ Each frame, `explosions_update` streams the smoke and fades the lights. A light 
 
 **Fixes:**
 
-- The game leaves out the last pair of ray points, so every wreck has one ray fewer than its points make, and a part with a single pair has none. The port runs a ray between every pair.
-- The game keeps a burn light or a stream hanging from its part's frame after the wreck is gone. The port lets it go with the wreck.
-- The game stops with an assertion where the object has no part of the name. The port burns nothing.
+- The game leaves out the last pair of ray points, so every wreck has one ray fewer than its points make, and a part with a single pair has none. OpenReliant runs a ray between every pair.
+- The game keeps a burn light or a stream hanging from its part's frame after the wreck is gone. OpenReliant lets it go with the wreck.
+- The game stops with an assertion where the object has no part of the name. OpenReliant burns nothing.
 
 [`explode.zig`](../../src/engine/game/explode.zig) ports the burning as `burnPart`, and [`create.zig`](../../src/engine/game/create.zig) the wrecks' part of `create_object` as `wreckMade`. Not ported: the Protogate's power core, which burns with rays alone ([#233](https://github.com/vdmkenny/openreliant/issues/233)).
 
@@ -376,10 +376,10 @@ neither spinning nor ejecting). The owner's mission ship then raises its explosi
 and tells the players the kills.
 
 **Fix:** the game lists every object in reach, running past the end of its list with more than 80;
-the port lists the first 80. It colours one vertex of the halves' last ring with the rest, which
-shows a sliver of the rim; the port keeps the whole rim clear.
+OpenReliant lists the first 80. It colours one vertex of the halves' last ring with the rest, which
+shows a sliver of the rim; OpenReliant keeps the whole rim clear.
 
-**Improvement:** the game opens the halves and spreads the ball by rounded factors; the port
+**Improvement:** the game opens the halves and spreads the ball by rounded factors; OpenReliant
 divides.
 
 **Improvement:** the halves and the ball are drawn on grids three times as fine, so neither shows
@@ -412,7 +412,7 @@ Once a frame, `erays_update` (`0x0046AC30`) runs `eray_update` (`0x0046AF40`) fo
 - A flickering ray stays lit for up to 100 ticks at random, then goes dark for up to 1500. One that fades dims by 0.03 a tick while dark; any other goes out at once.
 - While it is brighter than nothing, each strand runs from the ray's start to its end through 15 points between, which stray at random each frame (`eray_jitter`, `0x0046AA70`). The middle of each stretch moves by up to the ray's jitter times the stretch's length, in a random direction, halving the stretch four times over. The strand's alpha is 0.5 times the ray's brightness, and the light shines at full strength.
 
-The game leaves unset when a ray last changed and how long it stays lit. The port starts both at nothing, so a flickering ray goes dark on its first frame, fading if it fades. The game also makes a 17th segment for each strand that it never places or lights. The port leaves it out, and draws each strand as a single mesh.
+The game leaves unset when a ray last changed and how long it stays lit. OpenReliant starts both at nothing, so a flickering ray goes dark on its first frame, fading if it fades. The game also makes a 17th segment for each strand that it never places or lights. OpenReliant leaves it out, and draws each strand as a single mesh.
 
 **Fix:** a ray hanging from a part that a split's portal cuts is cut by it too, so it shows only on what the sweep has laid bare. The game cuts the part alone, and its rays crackle over the stretch of the ship still whole.
 
@@ -455,8 +455,8 @@ ship's velocity, which is a step's. At level 3, one frame in ten (`rand() % 10`)
 bang, goes off where the glow stands, reckoned from the ship's root rather than the glow's part: 0.1
 to 0.3 of the ship's radius across, for 90 ticks, drifting with the smoke.
 
-The port reckons which particles are behind the camera by the camera's last frame, as it frames the
-camera after the objects; the game frames the camera first.
+OpenReliant reckons which particles are behind the camera by the camera's last frame, as it frames
+the camera after the objects; the game frames the camera first.
 
 **Improvement:** each particle of the smoke has a size of its own, from three quarters to one and a
 quarter of its template's, and a shade of its own, from 0.85 to 1.15 of its colour
@@ -518,13 +518,13 @@ armour, and names the ship itself as the attacker.
 The game names object 16 as kind 8's attacker, whatever its loop over the ring's colours left in
 a register.
 
-**Improvement:** the port names the shockwave's owner, the torpedo, instead.
+**Improvement:** OpenReliant names the shockwave's owner, the torpedo, instead.
 
 [`shockwave.zig`](../../src/engine/game/shockwave.zig) ports the rings and what kinds 0 to 2 and 5
 to 8 do, and [`explode.zig`](../../src/engine/game/explode.zig),
 [`aiexplode.zig`](../../src/engine/game/aiexplode.zig) and
-[`missiles.zig`](../../src/engine/game/missiles.zig) the blast's, the torpedo's and the missiles', and
-[`explode/uber.zig`](../../src/engine/game/explode/uber.zig) the Uber Explode's.
+[`missiles.zig`](../../src/engine/game/missiles.zig) the blast's, the torpedo's and the missiles',
+and [`explode/uber.zig`](../../src/engine/game/explode/uber.zig) the Uber Explode's.
 
 ## Shields
 
@@ -573,11 +573,11 @@ A shockwave of kind 6 makes a bubble flicker as a force field for 100 ticks: dra
 set on the level's mesh that every bubble at that level shares, it is lit a random grey one frame
 in four and dark on the rest, and its hits wait.
 
-**Improvements:** the sparks fly out from the ship's centre through the point struck, where the
-game takes the point itself as their direction, so they fly toward the world's origin; and a
-bubble past the last level's reach is left out, where the game stops the pass there, leaving out
-the bubbles in the slots after it and the capital shields. The port moves a bubble's colours on as it goes into the scene
-rather than as the renderer draws it, so one out of view still fades.
+**Improvements:** the sparks fly out from the ship's centre through the point struck, where the game
+takes the point itself as their direction, so they fly toward the world's origin; and a bubble past
+the last level's reach is left out, where the game stops the pass there, leaving out the bubbles in
+the slots after it and the capital shields. OpenReliant moves a bubble's colours on as it goes into
+the scene rather than as the renderer draws it, so one out of view still fades.
 
 **Improvement:** by default a bubble is drawn smooth; `--original` draws it as the game does. A
 smooth bubble keeps its last 16 hits as where each struck and when, and works each vertex's
@@ -622,12 +622,12 @@ The game hands `capshield_create` the object's side but never stores it, so ever
 
 **Fixes:**
 
-- When the game finds a part already glowing, it makes that slot the next one in turn, so the next part struck replaces the glow struck last while other slots are free. The port leaves the next slot where it was.
-- The game marks the polygons the latest hit leaves dark and never draws them again, so a part struck again elsewhere loses the glow of its earlier hits. The port marks the polygons every hit leaves dark, each time the part is struck.
+- When the game finds a part already glowing, it makes that slot the next one in turn, so the next part struck replaces the glow struck last while other slots are free. OpenReliant leaves the next slot where it was.
+- The game marks the polygons the latest hit leaves dark and never draws them again, so a part struck again elsewhere loses the glow of its earlier hits. OpenReliant marks the polygons every hit leaves dark, each time the part is struck.
 
 **Improvement:** the swirl's sine and cosine come from `std.math` rather than the engine's tables.
 
-The game finds a part's glow by looking through every slot, and lets it go with the part's node (`0x00499CF0`). The port reads the slot the part's node names, and lets a glow go once the draw finds its part gone. The port's collision trees keep the file's face numbers, so a hit finds the polygon it struck through the faces' fans (`srofiles.polygonOf`); the game renumbers the trees to the polygons as it builds the mesh.
+The game finds a part's glow by looking through every slot, and lets it go with the part's node (`0x00499CF0`). OpenReliant reads the slot the part's node names, and lets a glow go once the draw finds its part gone. OpenReliant's collision trees keep the file's face numbers, so a hit finds the polygon it struck through the faces' fans (`srofiles.polygonOf`); the game renumbers the trees to the polygons as it builds the mesh.
 
 [`shield.zig`](../../src/engine/game/shield.zig) ports the capital shields, and [`shieldfx.zig`](../../src/engine/game/shieldfx.zig) the hits that make them glow.
 
@@ -668,39 +668,41 @@ carrying a quarter of the object's velocity, unless the camera is in the object'
 game takes that point in the part's own frame, where `segment_meets_box` (`0x0049B6A0`) gives it,
 for one in the world, so the sparks fly from near the world's origin.
 
-**Improvement:** the port throws them from where the shot struck.
+**Improvement:** OpenReliant throws them from where the shot struck.
 
 What a hit leaves where it struck (`shieldfx_create`, `0x004A0310`), which `node_add_effect`
 (`0x004992D0`) hangs from the part struck as a node of kind 6, is its sound
 ([Sound](sound.md#where-the-sounds-come-from)) and, for a shot through to a hull, an emitter of an
 orange template (`shieldfx_init`, `0x0049FD20`) on the part's surface nearest the point
-(`mesh_nearest_surface`, `0x0049FEF0`), facing out from it. A shot or a missile on a component leaves a burst of
-20 of the same template's particles, or, on a ship with a shield generator, its capital shield's glow ([Capital shields](#capital-shields)). Nothing sends the hull's emitter's particles out: `node_draw`
-updates a node of kind 6 through `0x00458AB0`, the one routine the build keeps of every routine that
-only returns 1, so it shows nothing.
+(`mesh_nearest_surface`, `0x0049FEF0`), facing out from it. A shot or a missile on a component
+leaves a burst of 20 of the same template's particles, or, on a ship with a shield generator, its
+capital shield's glow ([Capital shields](#capital-shields)). Nothing sends the hull's emitter's
+particles out: `node_draw` updates a node of kind 6 through `0x00458AB0`, the one routine the build
+keeps of every routine that only returns 1, so it shows nothing.
 
 A component's burst (kind 3, `shieldfx_create`, `0x004A0310`) is an emitter of the orange template (`shieldfx_orange`, `0x0049FD20`) at the point struck, facing out along the face's normal, which bursts 20 puffs at once. They leave at 10 to 12 a tick, straying up to an eighth either way across, and grow from 50 to 100 across as they fade from orange over about a second. Before it adds a component's node, `node_add_effect` clears the nodes of earlier hits within reach of the new one, and the oldest past ten. A rock's hit (kind 5) plays `COLL02` where it struck, and throws a chunk of rock from there along the face's normal ([Rock chunks](#rock-chunks)).
 
-**Fix:** the game throws the chunk along the normal in the part's own frame, taken for a direction in the world's, so a chunk from a tumbling rock flies off any way. The port turns the normal into the world's.
+**Fix:** the game throws the chunk along the normal in the part's own frame, taken for a direction in the world's, so a chunk from a tumbling rock flies off any way. OpenReliant turns the normal into the world's.
 
-**Fix:** a normal along `X` leaves the game's emitter with no frame; the port faces it along the normal all the same.
+**Fix:** a normal along `X` leaves the game's emitter with no frame; OpenReliant faces it along the normal all the same.
 
 [`shieldfx.zig`](../../src/engine/game/shieldfx.zig) ports the sound, the burst and the rock's sound, keeping no nodes, as none shows anything once made. So a hull's part struck a hundred times, which the game's hundred nodes a part would leave silent, still sounds.
 
 [`sparks.zig`](../../src/engine/game/sparks.zig) ports the sparks,
-[`guns.zig`](../../src/engine/game/guns.zig) the hull's, and [`shield.zig`](../../src/engine/game/shield.zig)
-a shield's ([Shields](#shields)), and [`guns.zig`](../../src/engine/game/guns.zig) a component's. Not ported: the multiplayer
-arena's wall's ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
+[`guns.zig`](../../src/engine/game/guns.zig) the hull's, and
+[`shield.zig`](../../src/engine/game/shield.zig) a shield's ([Shields](#shields)), and
+[`guns.zig`](../../src/engine/game/guns.zig) a component's. Not ported: the multiplayer arena's
+wall's ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
 
 ## Engine exhaust
 
-A capital ship's engine glows burn the player's ship flying into them. The first time
-`exhaust_burn` runs in a mission, `exhaust_ships_list` (`0x00469810`) lists into `exhaust_ships`
-(`0x0054EA80`, room for 400) the slots handed out whose objects list components and carry an engine
-glow, on their model or on one it carries (`exhaust_ship_add`, `0x004699E0`, and `0x00469BC0`).
-Once they are listed (`exhaust_ships_listed`, `0x0054F0C4`), `create_object` offers each object it
-makes to the list. A slot stays listed whatever it comes to hold, and one made again is listed
-again. As a mission ends (`0x004AD260`), `exhaust_ships_reset` (`0x00469840`) has them listed afresh.
+A capital ship's engine glows burn the player's ship flying into them. The first time `exhaust_burn`
+runs in a mission, `exhaust_ships_list` (`0x00469810`) lists into `exhaust_ships` (`0x0054EA80`,
+room for 400) the slots handed out whose objects list components and carry an engine glow, on their
+model or on one it carries (`exhaust_ship_add`, `0x004699E0`, and `0x00469BC0`). Once they are
+listed (`exhaust_ships_listed`, `0x0054F0C4`), `create_object` offers each object it makes to the
+list. A slot stays listed whatever it comes to hold, and one made again is listed again. As a
+mission ends (`0x004AD260`), `exhaust_ships_reset` (`0x00469840`) has them listed afresh.
 
 `exhaust_burn` (`0x00469850`) runs once a frame in `mission_frame`, after the shields' bubbles and
 before the explosions. While the player's ship flies under Player Control, it clears
@@ -708,9 +710,9 @@ before the explosions. While the player's ship flies under Player Control, it cl
 distance from the player's ship, squared, is no more than the square of 1.2 times its radius and the
 square of the player's ship's radius together:
 
-- `exhaust_depth` (`0x00469A10`) sums how deep the player's ship stands in the exhaust of each of the
-  ship's engine glows and those of the models it carries. It takes each glow's frame where the glow
-  next stands. The exhaust is the glow mesh's bounds, scaled by the attachment's sizes times
+- `exhaust_depth` (`0x00469A10`) sums how deep the player's ship stands in the exhaust of each of
+  the ship's engine glows and those of the models it carries. It takes each glow's frame where the
+  glow next stands. The exhaust is the glow mesh's bounds, scaled by the attachment's sizes times
   `last_throttle` times `engines_intact`, taken positive, times 1.7, with its ends along the plume
   changing places where the size turns it back. Inside, the depth is 1 less the point's distance
   from the glow's origin over the far corner's; outside, nothing.
@@ -723,10 +725,10 @@ square of the player's ship's radius together:
   passes the shields wearing the armour at half. The blow starts the display's interference, so the
   display tears as the view whites out.
 
-The port keeps the list beside the objects (`create.Objects.exhaust`) and runs it where the game
+OpenReliant keeps the list beside the objects (`create.Objects.exhaust`) and runs it where the game
 does (`environfx.Exhaust.burn`); `main.drawFrame` leaves the red out while it burns.
 
 - **Fix:** the list has room for 400, which the game writes past where slots made again grow it;
-  the port lists no more.
+  OpenReliant lists no more.
 - **Fix:** an exhaust of no size, of a ship whose engines are out, leaves a point at its origin
   nothing deep, where the game divides nothing by nothing.

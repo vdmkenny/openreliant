@@ -31,11 +31,11 @@ pub const App = struct {
 /// the music, the 3D voices and the voices pause, and the pump waits on the window's messages
 /// until it is active again; then the sound goes on. Only in a multiplayer session does it pause
 /// the mission as well (`game_pause`), which it then leaves in its pause menu. The textures, which
-/// DirectDraw loses with the window, need nothing in the port.
+/// DirectDraw loses with the window, need nothing in OpenReliant.
 ///
-/// **Improvement.** The port pauses the mission into its menu in single player too, where the game
-/// pauses only the sound and the timer's ticks pile up while the window is away. Active again, the
-/// music goes on; the rest waits for the menu's CONTINUE.
+/// **Improvement.** OpenReliant pauses the mission into its menu in single player too, where the
+/// game pauses only the sound and the timer's ticks pile up while the window is away. Active again,
+/// the music goes on; the rest waits for the menu's CONTINUE.
 pub fn followActivation(app: *App, pausing: main.Pausing) !void {
     if (app.active and app.paused) {
         pausing.sound.pauseMusic(false);
@@ -121,7 +121,7 @@ const multiplayer_path = path_start ++ "311.dte";
 /// What `WinMain` does before each single-player mission (`0x004A99CC`): puts back the pilot's
 /// kills as the last mission the pilot came through kept them (`gameflow.endMission`). **Not
 /// ported:** the rank, the medals and the other tallies it puts back with them, which no screen
-/// of the port shows.
+/// of OpenReliant shows.
 pub fn startMission(player: *input.Player) void {
     player.kills.count = player.kills.kept;
 }

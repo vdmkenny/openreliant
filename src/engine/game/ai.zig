@@ -124,7 +124,7 @@ const lead_range: f32 = 0.25;
 /// fires together to hit it, from its root (`leadAimWithGun`).
 ///
 /// **Fix:** the game reads each gun's turret kind as its type, which leads every ship's shots as
-/// a Laser Cannon's; the port leads by the fastest gun's own type.
+/// a Laser Cannon's; OpenReliant leads by the fastest gun's own type.
 pub fn leadAim(all: *const create.Objects, index: u16, target: aigeneric.Target, lead: f32) ?Vector {
     const slot = &all.slots[index];
     var fastest: guns.GunType = .laser_cannon;
@@ -149,7 +149,7 @@ pub fn leadAim(all: *const create.Objects, index: u16, target: aigeneric.Target,
 /// A Turret Flak's shot is led within three times its gun's lifetime.
 ///
 /// **Fix:** the game takes the Laser Cannon's lifetime there, the table's first gun's, which leads
-/// flak past the life of its own shells; the port the flak's own.
+/// flak past the life of its own shells; OpenReliant the flak's own.
 pub fn leadAimWithGun(all: *const create.Objects, from: Vector, target: aigeneric.Target, gun: guns.GunType, lead: f32) ?Vector {
     const record = gun.stats(&all.gun_stats);
     const lifetime = @as(f32, @floatFromInt(record.lifetime)) * @as(f32, if (gun == .turret_flak) flak_lead else 1);
@@ -244,9 +244,9 @@ pub fn hullLost(ctx: aigeneric.Context, index: u16) void {
 }
 
 /// `object_destroyed` (`0x00401F30`): a ship's end. An AI ship's pilot ejects where the ship is in
-/// the player's wing and its roll says so, or where the ship is told to eject before exploding, and the ship
-/// spins on under Eject Spin. The player's ejects, unless it already has or the blow was too
-/// heavy, or it is flying the Kamov, and its ship blows up later (`aieject.playerInit`).
+/// the player's wing and its roll says so, or where the ship is told to eject before exploding, and
+/// the ship spins on under Eject Spin. The player's ejects, unless it already has or the blow was
+/// too heavy, or it is flying the Kamov, and its ship blows up later (`aieject.playerInit`).
 /// Otherwise the ship explodes (`aiexplode`), in place of whatever it was doing: the stack is
 /// overwritten whether or not its order gives way, and the order's state is left for Explode's
 /// `init` to fill in. `may_spin` goes into the order's data.
@@ -368,8 +368,8 @@ test setTargetable {
 /// engines left, and, unless the camera is in view 13 or the object is invulnerable, by
 /// `armor_speed_factor` as well. So losing engines or armor slows a ship.
 ///
-/// The port takes the flight stats and the view rather than reaching them through the object and a
-/// global, since `GameObject` holds the binary's own 32-bit pointers.
+/// OpenReliant takes the flight stats and the view rather than reaching them through the object and
+/// a global, since `GameObject` holds the binary's own 32-bit pointers.
 pub fn cruiseSpeed(object: *const gameobj.GameObject, flight: *const create.FlightModel, view: camera.View) f32 {
     var speed = flight.max_speed * object.speed_factor * object.engines_intact;
     if (view != ._unknown_13 and object.invulnerable == .none) speed *= object.armor_speed_factor;
@@ -408,7 +408,7 @@ pub const Steering = packed struct(u32) {
 /// degrees over five (`0x004DC3FC`).
 ///
 /// **Improvement:** the game holds this rounded to 11.459155, one place in the last digit below
-/// the figure the port computes.
+/// the figure OpenReliant computes.
 const input_per_radian: f32 = std.math.deg_per_rad / 5.0;
 
 /// How much of the turn rate the steering takes off its input at no ease, which damps the turn as
@@ -454,7 +454,7 @@ pub fn steer(world: gameobj.World, index: u16, at: Vector, limit: f32, ease: f32
 /// the last step, since the orders run once a frame.
 ///
 /// **Improvement:** the angles come from `std.math.atan2` rather than the engine's table
-/// (`sr_atan2`), as they do elsewhere in the port.
+/// (`sr_atan2`), as they do elsewhere in OpenReliant.
 pub fn turn(slot: *create.Slot, at: Vector, limit_given: f32, ease_given: f32, flags_given: Steering, frame_duration: i32, avoided: bool) void {
     const object = &slot.object;
     // A ship with no flight stats would follow a null pointer here, so it steers nowhere instead.

@@ -14,13 +14,13 @@
 //!
 //! **Improvement.** The game draws the display with the processor, whichever renderer is running:
 //! `hud_text` hands its line to `VFX_string_draw`, out of `vfx.dll`, which blits each glyph into a
-//! pane a pixel at a time. The port draws a glyph as a textured rectangle through the device
-//! instead, so on the GPU the display costs the processor nothing and scales without blurring.
-//! What it draws is the same: a glyph's bytes index the font's own palette, as they do for
+//! pane a pixel at a time. OpenReliant draws a glyph as a textured rectangle through the device
+//! instead, so on the GPU the display costs the processor nothing and scales without blurring. What
+//! it draws is the same: a glyph's bytes index the font's own palette, as they do for
 //! `VFX_character_draw`, and index 0 is left clear. The state is the engine's own, an overlay-layer
 //! depth and its alpha blend. The software device draws the rectangles too, and `--original` draws
-//! the same way, since the port draws the display larger on a larger window (`scaleFor`), where the
-//! game blitted it at its own size.
+//! the same way, since OpenReliant draws the display larger on a larger window (`scaleFor`), where
+//! the game blitted it at its own size.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -142,17 +142,18 @@ const lock_warning_sample = 0;
 const inset: i32 = 0x21;
 const margin: i32 = 0x10;
 
-/// The screen the port draws the display for: 1024 by 768, a mode the hardware renderers run in
-/// and the size of the retail game's own screenshots. At that size `scaleFor` is 1 and the port
+/// The screen OpenReliant draws the display for: 1024 by 768, a mode the hardware renderers run in
+/// and the size of the retail game's own screenshots. At that size `scaleFor` is 1 and OpenReliant
 /// draws the display as the game does. The game's window starts at 640 by 480 (`0x004A85BC`),
 /// where the same offsets in pixels stand further in from the edges.
 pub const base_screen: [2]u32 = .{ 1024, 768 };
 
 /// **Improvement.** How much larger than its own art the display is drawn in a window of `screen`.
 /// The game drew its shapes and its glyphs at their own size whatever the window's, so on a screen
-/// several times the one it was drawn for they come out a fraction of the size they had. The port
-/// draws them as large against the window as they stood against `base_screen`, by whichever side
-/// has room for less so that the display keeps its shape. Drawing at 1 is what the game does.
+/// several times the one it was drawn for they come out a fraction of the size they had.
+/// OpenReliant draws them as large against the window as they stood against `base_screen`, by
+/// whichever side has room for less so that the display keeps its shape. Drawing at 1 is what the
+/// game does.
 pub fn scaleFor(screen: [2]u32) f32 {
     var least: f32 = std.math.floatMax(f32);
     for (screen, base_screen) |size, base| {
@@ -234,7 +235,7 @@ pub const Opened = struct {
         /// drawn in grey at level / 15 and tinted with the colour, which comes to the same.
         ///
         /// **Fix.** Level 16, which a few pixels of the menu's fonts use, reads past the game's
-        /// table into another variable's byte (`audio_saved_effects`); the port draws it as 15.
+        /// table into another variable's byte (`audio_saved_effects`); OpenReliant draws it as 15.
         ramp,
     };
 
@@ -581,7 +582,8 @@ fn drawPart(target: device.Device, image: *srtexture.Image, edges: [4]f32, u_in:
 }
 
 /// A glyph as the GPU draws it: the font's palette, or the global one, looked up for each of its
-/// bytes, with index 0 left clear. Made the first time the glyph is drawn and kept for the rest of the run.
+/// bytes, with index 0 left clear. Made the first time the glyph is drawn and kept for the rest of
+/// the run.
 fn glyphImage(opened: *Opened, gpa: Allocator, code: u8) Allocator.Error!?*srtexture.Image {
     if (opened.images[code]) |*made| return made;
     const glyph = opened.font.glyph(code) orelse return null;
@@ -847,10 +849,10 @@ test drawText {
 /// What `hud_init` loads for the display to draw with.
 pub const Resources = struct {
     art: Art,
-    /// `blufont.fnt` (`0x00595490`), which every line of the display's own text is written in:
-    /// the readouts, the clock, the cluster's figures, the view's name and the windows. `0x004A2AF0`
+    /// `blufont.fnt` (`0x00595490`), which every line of the display's own text is written in: the
+    /// readouts, the clock, the cluster's figures, the view's name and the windows. `0x004A2AF0`
     /// opens it for the hardware renderers, and `soft_blufont.fnt`, the same letters, for the
-    /// software one; the port draws the hardware display.
+    /// software one; OpenReliant draws the hardware display.
     font: Opened,
     /// The fonts the target's ranges are written in.
     target_fonts: TargetFonts,
@@ -1293,8 +1295,8 @@ pub const Icons = struct {
 
     /// Sets an icon as `ShowHudIcon` does, its flash starting from the beginning.
     ///
-    /// **Improvement.** The game writes past the table for an icon of 20 or more; the port leaves
-    /// such an icon alone.
+    /// **Improvement.** The game writes past the table for an icon of 20 or more; OpenReliant
+    /// leaves such an icon alone.
     pub fn show(icons: *Icons, icon: Icon, state: IconState) void {
         const at = @intFromEnum(icon);
         if (at >= count) return;
@@ -1459,7 +1461,7 @@ pub const State = struct {
     scanner_frame: u8 = 0,
     scanner_next: u32 = 0,
     /// Where blind fire's sight stands (`0x00566628`, `0x0056662C`), which `hud_init` puts at
-    /// the middle of the screen; null until the port first draws it there.
+    /// the middle of the screen; null until OpenReliant first draws it there.
     sight: ?[2]i32 = null,
     /// Where the lead cursor last stood in the scene (`hud_lead_point`, `0x0057C260`), which blind
     /// fire aims the player's shots at (`guns.shoot`).
@@ -1503,7 +1505,7 @@ pub const State = struct {
     /// game.
     ///
     /// The game uncloaks the ship here as the cloak's charge runs dry (`input.setCloak`). The
-    /// display has no world to reach the ship through, so the port marks the cloak spent and the
+    /// display has no world to reach the ship through, so OpenReliant marks the cloak spent and the
     /// next frame's orders uncloak it (`uncloakSpent`), a frame later.
     pub fn runCharges(state: *State, object: *gameobj.GameObject, frame_duration: i32, multiplayer: bool) void {
         if (state.devices.getPtr(.ecm).run(.ecm, frame_duration)) input.setEcm(state, object, false);
@@ -1525,7 +1527,7 @@ pub const State = struct {
     /// Once it is out and no missile homes on the ship (`homing`), a warning still playing ends.
     ///
     /// **Fix:** the game does this only in the view ahead, as it draws the lights, so a warning
-    /// playing as the view changes loops until the player looks ahead again. The port runs it in
+    /// playing as the view changes loops until the player looks ahead again. OpenReliant runs it in
     /// every view, the light counting as out in the others.
     pub fn warnOfLock(state: *State, sound: *hog_snd.Sound, showing: bool, homing: bool) void {
         if (showing) {
@@ -2430,8 +2432,8 @@ pub const ShipStatus = struct {
     pub const Arc = struct { offset: [2]i32, base: u16 };
 
     /// Where a mode draws each part from the indicator's point: the schematic, the hits on it, and
-    /// the shields' and the armour's arcs, each in the order of the quadrants (`collision.Quadrant`):
-    /// left, right, fore and aft.
+    /// the shields' and the armour's arcs, each in the order of the quadrants
+    /// (`collision.Quadrant`): left, right, fore and aft.
     pub const Layout = struct {
         schematic: [2]i32,
         hits: [2]i32,
@@ -2513,9 +2515,9 @@ pub const ShipStatus = struct {
         return @as(i32, @intFromFloat(std.math.clamp(@trunc(share), -1e9, 1e9))) - 1;
     }
 
-    /// The rings of the ship of `slot`, or null for a comms relay or a deathmatch beacon, which have
-    /// none. The armour of an invulnerable ship shows at least two arcs of its five, each level
-    /// `(2 * level + 6) / 3`.
+    /// The rings of the ship of `slot`, or null for a comms relay or a deathmatch beacon, which
+    /// have none. The armour of an invulnerable ship shows at least two arcs of its five, each
+    /// level `(2 * level + 6) / 3`.
     pub fn rings(slot: *const create.Slot) ?Rings {
         const object = &slot.object;
         if (object.type == .comms_relay or object.type == .dm_beacon) return null;
@@ -2568,7 +2570,7 @@ pub const ShipStatus = struct {
     /// cut to `clip`; the schematic and its hits shaken as `shake` says, the arcs still.
     ///
     /// **Fix:** while shaken, the game draws the player's own schematic two pixels left and two
-    /// down of where it draws it still, apart from its hits. The port keeps it in place.
+    /// down of where it draws it still, apart from its hits. OpenReliant keeps it in place.
     pub fn draw(
         shown: Shown,
         mode: Mode,
@@ -2956,11 +2958,11 @@ pub const TargetScene = struct {
     mode: camera.CockpitMode,
 };
 
-/// **Improvement.** Where the line starts that places the marker for a target out of sight on
-/// the screen's edge (`drawTarget`). The game clips a line out to the edge from the arrow's tip
-/// across, but from the tip of one of the arrow's wings across again for down: a slip that starts
-/// the line as far down the screen as the middle is across, so the marker stands lower on the side
-/// edges than the target lies, and the more the wider the window. The port starts the line at the
+/// **Improvement.** Where the line starts that places the marker for a target out of sight on the
+/// screen's edge (`drawTarget`). The game clips a line out to the edge from the arrow's tip across,
+/// but from the tip of one of the arrow's wings across again for down: a slip that starts the line
+/// as far down the screen as the middle is across, so the marker stands lower on the side edges
+/// than the target lies, and the more the wider the window. OpenReliant starts the line at the
 /// arrow's tip; `--original` starts it where the game does.
 pub const EdgeLine = enum { from_tip, original };
 
@@ -3286,7 +3288,7 @@ pub const Radar = struct {
         look: Look,
 
         /// Which side of the rings' plane `hud_radar` draws it on: level with the plane or below
-        /// it, before the rings; above it, after them. The port draws the nav point after them;
+        /// it, before the rings; above it, after them. OpenReliant draws the nav point after them;
         /// the game, before or after them by whatever an earlier frame left in its entry of the
         /// list.
         pub fn plane(contact: Contact) Plane {

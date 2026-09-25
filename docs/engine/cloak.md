@@ -1,11 +1,11 @@
 # The cloak
 
 `cloak.cpp` hides a ship behind a shimmer while its hull fades from sight. Its asserting code runs
-from `0x00462B80` to `0x00463773`. The port is [`game/cloak.zig`](../../src/engine/game/cloak.zig),
-which also holds the [countermeasures](missiles.md#countermeasures). **Unverified:** that
-`object_uncloak` (`0x00463780`) to `cloak_node_cloaks` (`0x00463C30`), which lie after that code,
-and `cloak_node_reveal` (`0x004629D0`), which lies before it among the countermeasures', are this
-file's.
+from `0x00462B80` to `0x00463773`. OpenReliant is
+[`game/cloak.zig`](../../src/engine/game/cloak.zig), which also holds the
+[countermeasures](missiles.md#countermeasures). **Unverified:** that `object_uncloak` (`0x00463780`)
+to `cloak_node_cloaks` (`0x00463C30`), which lie after that code, and `cloak_node_reveal`
+(`0x004629D0`), which lies before it among the countermeasures', are this file's.
 
 ## Which objects cloak
 
@@ -21,7 +21,7 @@ more sets of meshes and gives each part colours of its own
 
 The part's own colours (`+0x110`, flag `0x80000`) start cleared and stay so until a hit shows the
 hull through the cloak. The renderer takes them in place of the mesh's baked colours, so the static
-lights such a model carries never show, which the port fixes
+lights such a model carries never show, which OpenReliant fixes
 ([Static lights](rendering.md#static-lights)).
 
 Beside the ships that cloak, the models of the guns and the missile pods have the flag, and cloak
@@ -138,23 +138,24 @@ maneuver asks for none until it does. Each update after calling for help, a ship
 cloak cloaks once that tick has come, and uncloaks while none is asked for. The mission's
 `Cloak_ship` command (`cmd_Cloak_ship`, `0x00459F60`) cloaks or uncloaks a ship too.
 
-## In the port
+## In OpenReliant
 
 [`cloak.zig`](../../src/engine/game/cloak.zig) ports the cloak, with these differences:
 
-- The port updates a part's shimmer and hull as it adds them to the scene, not after culling, so
+- OpenReliant updates a part's shimmer and hull as it adds them to the scene, not after culling, so
   a part out of sight changes too.
-- The display has no world to reach the ship through, so as the cloak's charge runs out the port
+- The display has no world to reach the ship through, so as the cloak's charge runs out OpenReliant
   marks it spent (`hud.State.uncloakSpent`), and the next frame's orders uncloak the ship, a frame
   late.
 - **Improvement:** the shimmer's colour is worked out for its strength, not read from the table
   of 1024.
-- **Improvement:** the port's shadows ([Shadows](../port/renderer.md#shadows)) fade with the hull:
-  a cloaking part's see-through hull casts as strongly as it is solid, and none once it is clear.
-  The ship the camera sits in isn't drawn, so its parts take the hull's solidity for their shadow
-  alone (`cloak.shadeUnseen`).
+- **Improvement:** OpenReliant's shadows ([Shadows](../port/renderer.md#shadows)) fade with the
+  hull: a cloaking part's see-through hull casts as strongly as it is solid, and none once it is
+  clear. The ship the camera sits in isn't drawn, so its parts take the hull's solidity for their
+  shadow alone (`cloak.shadeUnseen`).
 
-Not ported: the Cloaked and Decloaked events ([#37](https://github.com/vdmkenny/openreliant/issues/37));
-the mission's `Cloak_ship` ([#36](https://github.com/vdmkenny/openreliant/issues/36)); the Jump Out
-order's uncloak ([#30](https://github.com/vdmkenny/openreliant/issues/30)); the Kamov's craft; and the
-multiplayer game's cloak ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
+Not ported: the Cloaked and Decloaked events
+([#37](https://github.com/vdmkenny/openreliant/issues/37)); the mission's `Cloak_ship`
+([#36](https://github.com/vdmkenny/openreliant/issues/36)); the Jump Out order's uncloak
+([#30](https://github.com/vdmkenny/openreliant/issues/30)); the Kamov's craft; and the multiplayer
+game's cloak ([#55](https://github.com/vdmkenny/openreliant/issues/55)).

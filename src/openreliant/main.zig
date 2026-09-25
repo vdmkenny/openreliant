@@ -4,11 +4,12 @@
 //! the game's files from its discs; see `install.zig`.
 //!
 //! So far it runs a sandbox of its own: the player's ship in space with three wingmen, the Reliant
-//! standing still ahead of it, and a wing of Coalition fighters flying at it, drawn through Surrender's pipeline
-//! and its Direct3D driver with the GPU, or onto the software device, from the camera's views,
-//! which the game's camera keys pick and steer. Added for the port: F2 and F3 start the sandbox
-//! again in the previous or next ship type, F4 brings another wing, Alt and Enter switch to the
-//! full screen and back. Escape opens the game's pause menu, whose LEAVE MISSION quits.
+//! standing still ahead of it, and a wing of Coalition fighters flying at it, drawn through
+//! Surrender's pipeline and its Direct3D driver with the GPU, or onto the software device, from the
+//! camera's views, which the game's camera keys pick and steer. Added for OpenReliant: F2 and F3
+//! start the sandbox again in the previous or next ship type, F4 brings another wing, Alt and Enter
+//! switch to the full screen and back. Escape opens the game's pause menu, whose LEAVE MISSION
+//! quits.
 
 const std = @import("std");
 const Io = std.Io;
@@ -117,7 +118,7 @@ const docs: std.enums.EnumArray(Arg, Doc) = .init(.{
     .@"--size" = .{ .section = .display, .value = "<width>x<height>", .text = "draw frames of this size in pixels whatever the window's, which shows them scaled; for a screenshot larger than the display" },
     .@"--fps" = .{ .section = .display, .value = "<rate>", .text = "frames a second at most; without vsync, the display's rate by default; 0 for no limit" },
     .@"--no-vsync" = .{ .section = .display, .text = "draw without waiting for the display" },
-    .@"--software" = .{ .section = .graphics, .text = "draw on the software device, the port's reference, rather than the GPU" },
+    .@"--software" = .{ .section = .graphics, .text = "draw on the software device, OpenReliant's reference, rather than the GPU" },
     .@"--16-bit" = .{ .section = .graphics, .text = "16-bit colour, dithered" },
     .@"--msaa" = .{ .section = .graphics, .value = "<1|2|4|8>", .text = "samples a pixel, for smooth edges; 4 by default" },
     .@"--filter" = .{ .section = .graphics, .value = "<original|trilinear|crisp>", .text = "how textures are filtered; crisp by default" },
@@ -407,8 +408,8 @@ const Options = struct {
     }
 };
 
-/// What the driver draws with: the GPU, or the software device, the port's reference, whose frames
-/// the window shows.
+/// What the driver draws with: the GPU, or the software device, OpenReliant's reference, whose
+/// frames the window shows.
 const Screen = union(enum) {
     gpu: platform.gpu.Gpu,
     software: srd3d.software.Software,
@@ -454,13 +455,13 @@ pub fn main(init: std.process.Init) !u8 {
 /// The game's settings file, in its directory, which it names in lower case.
 const settings_name = "starlancer.ini";
 
-/// Added by the port: an optional file in the game folder with extra gamepad mappings in SDL's
+/// Added by OpenReliant: an optional file in the game folder with extra gamepad mappings in SDL's
 /// format, for gamepads missing from SDL's database.
 pub const mappings_name = "gamecontrollerdb.txt";
 
 /// Opens the controller the game should use, unless it is already open, and loads the input
-/// settings and bindings, which depend on the controller. The original does this once at startup
-/// in `input_init` and `load_key_config`; the port also does it whenever a controller is connected
+/// settings and bindings, which depend on the controller. The original does this once at startup in
+/// `input_init` and `load_key_config`; OpenReliant also does it whenever a controller is connected
 /// or disconnected. `platform.joystick.choose` selects the controller; `ThrottleAxis`, `TwistAxis`
 /// and `ThrottleInvert` in `JoyConfig` configure a joystick's throttle and twist axes.
 fn connectController(arena: Allocator, devices: *engine.input.Devices, controller: *?platform.joystick.Controller, settings_file: engine.profile.Profile) void {
@@ -600,7 +601,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     // A screenshot reads no controls, so that it comes out the same whatever is plugged in.
     if (options.screenshot == null) connectController(arena, &devices, &controller, settings_file.profile);
 
-    // Sound: Miles's calls, played by OpenAL Soft or the port's own mixer through SDL3's audio,
+    // Sound: Miles's calls, played by OpenAL Soft or OpenReliant's own mixer through SDL3's audio,
     // with the ten voices `WinMain` asks `sound_init` for, the volumes of `[Sound]`, and the 3D
     // provider it opens; silent where there is no device, or with `--no-sound`.
     const output: ?*platform.audio.Output = if (options.sound) |chosen| platform.audio.Output.create(gpa, chosen) catch |err| none: {
@@ -882,7 +883,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             sound.updateMusic();
             sound.playBuffered(stdsmp);
             sound.update3D(hearing.scene(world));
-            // The port's: the effects playing turn the controller's motors (`input.force`).
+            // OpenReliant's: the effects playing turn the controller's motors (`input.force`).
             devices.joystick.rumble(force_feedback.motors(clock.frame_start));
         }
 
@@ -1042,18 +1043,18 @@ const Sandbox = struct {
     /// cockpit draws over the world.
     cockpit: game.main.cockpit.Cockpit = .{},
 
-    /// The Reliant, which the sandbox starts ahead of the player and turned across its way. It flies
-    /// its heading at `crawl_speed`, a tenth of the 100 its type cruises at, which carries it slowly
-    /// across the player's way.
+    /// The Reliant, which the sandbox starts ahead of the player and turned across its way. It
+    /// flies its heading at `crawl_speed`, a tenth of the 100 its type cruises at, which carries it
+    /// slowly across the player's way.
     const reliant_at: math.Vector = .{ 6000, -9000, 48000 };
     const crawl_turn: f32 = 1.1;
     const crawl_speed: i32 = 10;
     /// The Badanov, the smallest of the Coalition's capital ships, which the sandbox starts beyond
     /// the wing, crawling alongside the Reliant: turned as it is, flying as fast.
     const badanov_at: math.Vector = .{ 6000, -9000, 190000 };
-    /// A little field of rocks beyond the Badanov, outside the action's sphere: `field_rows` rows of
-    /// `field_columns`, `field_spacing` apart about `field_centre`, each strayed up to `field_stray`
-    /// along and across and `field_height` up or down.
+    /// A little field of rocks beyond the Badanov, outside the action's sphere: `field_rows` rows
+    /// of `field_columns`, `field_spacing` apart about `field_centre`, each strayed up to
+    /// `field_stray` along and across and `field_height` up or down.
     const field_centre: math.Vector = .{ 6000, -9000, 250000 };
     const field_rows = 3;
     const field_columns = 4;
@@ -1242,8 +1243,8 @@ const Sandbox = struct {
     /// The player's `wingmen`, around the player's ship in slot `player` and turned as it is, each
     /// under a Fight order against the next of the `sabres` there are, and listed after the player
     /// in the player's wing, as a mission lists its flight group (`mission.listPlayerWing`), which
-    /// the mission's start then finishes (`main.startWing`). The wingmen past the last slot are left
-    /// out.
+    /// the mission's start then finishes (`main.startWing`). The wingmen past the last slot are
+    /// left out.
     fn bringWingmen(sandbox: *Sandbox, orders: game.aigeneric.Context, player_index: u16, sabres: []const ?u16) void {
         var wing: [1 + wingmen.len]u16 = undefined;
         wing[0] = player_index;

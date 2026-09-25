@@ -1,7 +1,7 @@
 //! The master bus: what the whole mix passes through on its way to the device. **Improvement:** the
-//! game's mix is only clipped at full scale; the port evens it out with a gentle compressor, then
-//! holds its peaks under the ceiling with a limiter that looks a few milliseconds ahead, so that a
-//! dozen guns firing close by stay clean. `--original` leaves it out.
+//! game's mix is only clipped at full scale; OpenReliant evens it out with a gentle compressor,
+//! then holds its peaks under the ceiling with a limiter that looks a few milliseconds ahead, so
+//! that a dozen guns firing close by stay clean. `--original` leaves it out.
 
 const std = @import("std");
 

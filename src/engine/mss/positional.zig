@@ -1,5 +1,5 @@
 //! How loud a 3D sample is in each ear and how far its pitch moves, from where it is and how it
-//! moves: the port's own provider, in place of the ones the game chooses from (`Miles Fast 2D
+//! moves: OpenReliant's own provider, in place of the ones the game chooses from (`Miles Fast 2D
 //! Positional Audio`, A3D, EAX and RSX), none of which it can load. It follows DirectSound3D's
 //! model, which those follow too: the gain falls off as the minimum distance over the distance,
 //! and no further past the maximum; the cone quietens a sample facing away; the Doppler shift uses

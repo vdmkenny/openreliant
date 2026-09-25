@@ -37,12 +37,12 @@ const modifier_names = [_]struct { name: []const u8, modifier: Modifier }{
 /// Two bugs in the original are fixed; files the game writes itself load the same either way. When
 /// the `KeyConfig` entry has a modifier, the original checks the `JoyConfig` value for
 /// `JOY BUTTON ` at an offset of the modifier's length, so such an action can never get a button;
-/// the port checks from the start of the value. And when `JoyConfig` has no entry, the original
-/// falls back to the action's previous button instead of the one `KeyConfig` just set; the port
+/// OpenReliant checks from the start of the value. And when `JoyConfig` has no entry, the original
+/// falls back to the action's previous button instead of the one `KeyConfig` just set; OpenReliant
 /// keeps the one from `KeyConfig`.
 ///
-/// Each call starts from `input.defaultBindings`, so the port can load the file again when a
-/// controller is connected or disconnected. Added by the port: gamepads get their own default
+/// Each call starts from `input.defaultBindings`, so OpenReliant can load the file again when a
+/// controller is connected or disconnected. Added by OpenReliant: gamepads get their own default
 /// bindings and `TwistEnable` defaults to 1 for them, so the right stick rolls; and `DeadZone` in
 /// `JoyConfig` sets the joystick's dead zone (`deadZone`).
 pub fn loadKeyConfig(devices: *input.Devices, settings_file: Profile) void {
@@ -87,7 +87,7 @@ pub fn loadKeyConfig(devices: *input.Devices, settings_file: Profile) void {
     }
 }
 
-/// The joystick dead zone from `DeadZone` in `JoyConfig` (added by the port), given as a
+/// The joystick dead zone from `DeadZone` in `JoyConfig` (added by OpenReliant), given as a
 /// percentage of each axis's travel from the center, 10 by default as in the original. Returned in
 /// hundredths of a percent, the unit DirectInput uses.
 pub fn deadZone(settings_file: Profile) u16 {
@@ -112,8 +112,8 @@ fn defaultValue(buffer: *[32]u8, binding: controls.Binding) []const u8 {
     return writer.buffered();
 }
 
-/// Copies a value into the buffer with a terminator, as `GetPrivateProfileStringA` does. Bytes after
-/// the terminator keep what the previous value left there.
+/// Copies a value into the buffer with a terminator, as `GetPrivateProfileStringA` does. Bytes
+/// after the terminator keep what the previous value left there.
 fn copy(buffer: *Buffer, value: []const u8) void {
     @memcpy(buffer[0..value.len], value);
     buffer[value.len] = 0;

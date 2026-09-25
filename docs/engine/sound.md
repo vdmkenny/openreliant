@@ -1,6 +1,6 @@
 # Sound
 
-How the game plays its sounds through the Miles Sound System (`MSS32.DLL`): the banks' sounds on voices of their own, the effects placed in 3D around the camera, and the music. The port's code is [`game/hog_snd.zig`](../../src/engine/game/hog_snd.zig) and [`game/sound3d.zig`](../../src/engine/game/sound3d.zig); what stands in for Miles is in [Sound in the port](../port/sound.md). The banks are [`.fat` files](../formats/fat.md).
+How the game plays its sounds through the Miles Sound System (`MSS32.DLL`): the banks' sounds on voices of their own, the effects placed in 3D around the camera, and the music. OpenReliant's code is [`game/hog_snd.zig`](../../src/engine/game/hog_snd.zig) and [`game/sound3d.zig`](../../src/engine/game/sound3d.zig); what stands in for Miles is in [Sound in OpenReliant](../port/sound.md). The banks are [`.fat` files](../formats/fat.md).
 
 ## Start-up
 
@@ -54,8 +54,8 @@ start them again.
 
 `sound_buffer_at` (`0x00482160`) gathers a sound of the first 18 slots at a place in the world: its
 level in each ear from its distance and which side of the camera it lies. Once a frame
-`sound_buffers_play` (`0x004822F0`) plays each slot gathered as sound `n` of `bank_stdsmp`, panned by
-its two levels and as loud as the louder, then clears them.
+`sound_buffers_play` (`0x004822F0`) plays each slot gathered as sound `n` of `bank_stdsmp`, panned
+by its two levels and as loud as the louder, then clears them.
 
 ## 3D sounds
 
@@ -178,7 +178,7 @@ the start. The stream's volume is `round(((Musicvolume × level) / 127) × Maste
 - A shot through to a hull plays `ARMOUR01` where it struck, facing the camera, or `PLAYERHIT` on
   the player's ship, following it, at most every 30 ticks (`shieldfx_create`, `0x004A0310`). The
   game plays `ARMOUR01` at the point in the part's own frame, taken for one in the world.
-  **Improvement:** the port plays it where the shot struck.
+  **Improvement:** OpenReliant plays it where the shot struck.
 - A shield generator whose part `node_draw` finds destroyed plays `SHLDDOWN` at the part, facing
   its way, and its object loses flag `0x4000`.
 - Turning the missile ring plays `MISSILESELECT` at the player's ship (`hud_target_keys`).

@@ -19,8 +19,8 @@
 //! A ship's end credits the player with the kill where the player's ship struck it last
 //! (`killCredit`).
 //!
-//! Order 43, Huuuuuuuge Explosion, lies with Explode (`huge`): it sets the Uber Explode off where the
-//! object stands ([`explode/uber.zig`](explode/uber.zig)).
+//! Order 43, Huuuuuuuge Explosion, lies with Explode (`huge`): it sets the Uber Explode off where
+//! the object stands ([`explode/uber.zig`](explode/uber.zig)).
 //!
 //! **Not ported:** what a ship's end tells the mission, the pilots' records and the Destroyed event
 //! ([#37](https://github.com/vdmkenny/openreliant/issues/37)).
@@ -208,8 +208,8 @@ fn asteroidInit(ctx: Context, index: u16) void {
 /// last (`0x004DC4DC`), standing its radius times `fragment_reach` from where it was, a turn of
 /// `fragment_turn` apart about the X axis (`0x004DC3D8`, `0x004DC4D4`).
 ///
-/// **Improvement:** the game turns them by 1.88496, three fifths of a half turn rounded; the port
-/// computes it.
+/// **Improvement:** the game turns them by 1.88496, three fifths of a half turn rounded;
+/// OpenReliant computes it.
 const rock_fireball: f32 = 1.5;
 const least_breaking: f32 = 0.16;
 const fragment_share: f32 = 0.4;

@@ -1,6 +1,7 @@
-//! `C:\lancer\game\hog_SND.CPP`: sound, through Miles ([`engine/mss.zig`](../mss.zig) in the port).
-//! The voices a bank's sounds play on (`sound_voices`), the positional sounds gathered over a
-//! frame, the music, and the 3D voices the effects of [`sound3d.zig`](sound3d.zig) play on.
+//! `C:\lancer\game\hog_SND.CPP`: sound, through Miles ([`engine/mss.zig`](../mss.zig) in
+//! OpenReliant). The voices a bank's sounds play on (`sound_voices`), the positional sounds
+//! gathered over a frame, the music, and the 3D voices the effects of [`sound3d.zig`](sound3d.zig)
+//! play on.
 //!
 //! **Unverified:** most of it lies outside this file's known code (`0x00482160` to `0x004822E9`),
 //! from `0x00481400` to `0x00482DE0`, between `hog_gen.cpp`'s and `hud.cpp`'s.
@@ -106,8 +107,8 @@ pub const Voice3D = extern struct {
     sound: i32,
     /// When it started (`Clock.frame_start`).
     started: i32,
-    /// The sound as 16-bit PCM, which the game decompresses into memory of Miles's own; the port's
-    /// Miles plays the bank's sound as it is.
+    /// The sound as 16-bit PCM, which the game decompresses into memory of Miles's own;
+    /// OpenReliant's Miles plays the bank's sound as it is.
     decompressed: u32,
 
     comptime {
@@ -304,9 +305,9 @@ pub const Sound = struct {
     /// Where a missile's sound is heard from.
     missile_sound: sound3d.MissileSound = .follows,
 
-    /// `sound_init` (`0x00481440`), as far as the port goes: up to 16 voices for the banks, each a
-    /// sample of `driver`, and the timer that steps the fades. `driver` is null where the platform
-    /// has no sound, which leaves the game silent.
+    /// `sound_init` (`0x00481440`), as far as OpenReliant goes: up to 16 voices for the banks, each
+    /// a sample of `driver`, and the timer that steps the fades. `driver` is null where the
+    /// platform has no sound, which leaves the game silent.
     pub fn init(sound: *Sound, driver: ?mss.Driver, voice_count: u8, files: ?Files) void {
         sound.* = .{ .files = files };
         const opened = driver orelse return;
@@ -500,8 +501,8 @@ pub const Sound = struct {
     }
 
     /// `tick_timer`'s (`0x004827C0`) sound: every five ticks and more, the music's fade and each
-    /// fading voice's step. The port runs it once a frame rather than on a timer of its own, which
-    /// steps it the same while frames come faster than every five ticks.
+    /// fading voice's step. OpenReliant runs it once a frame rather than on a timer of its own,
+    /// which steps it the same while frames come faster than every five ticks.
     pub fn timerTick(sound: *Sound, game_ticks: u32) void {
         const driver = sound.driver orelse return;
         if (@as(i64, sound.faded_at) >= @as(i64, game_ticks) - fade_ticks) return;
@@ -566,8 +567,8 @@ pub const Sound = struct {
 
     // --- The 3D voices ---------------------------------------------------------------------------
 
-    /// `sound_3d_open` (`0x00481900`) on the port's one provider: as many 3D voices as it has, up
-    /// to 64, each free, then the effects set up on them (`sound3d.init`).
+    /// `sound_3d_open` (`0x00481900`) on OpenReliant's one provider: as many 3D voices as it has,
+    /// up to 64, each free, then the effects set up on them (`sound3d.init`).
     pub fn open3D(sound: *Sound, smp3d: fat.Bank) void {
         const driver = sound.driver orelse return;
         sound.close3D();
@@ -716,9 +717,10 @@ pub const Sound = struct {
 
     // --- Music -----------------------------------------------------------------------------------
 
-    /// `music_play` (`0x00482A80`): plays the file at `path`, `loops` times (0 for ever) at `level`,
-    /// now, closing what was playing; or, with `now` false, once the music playing has faded out.
-    /// A piece the loop table names loops back to its own point rather than to the start.
+    /// `music_play` (`0x00482A80`): plays the file at `path`, `loops` times (0 for ever) at
+    /// `level`, now, closing what was playing; or, with `now` false, once the music playing has
+    /// faded out. A piece the loop table names loops back to its own point rather than to the
+    /// start.
     pub fn playMusic(sound: *Sound, path: []const u8, loops: u32, level: i32, now: bool) void {
         const driver = sound.driver orelse return;
         if (!now) {
@@ -795,7 +797,7 @@ pub const Sound = struct {
 
 /// `sound_pitch_factor` (`0x00481400`): what `n` quarter tones multiply a rate by, from a sixteenth
 /// at 96 down to sixteen at 96 up. **Improvement:** the game looks it up in a table of rounded
-/// powers of two; the port works it out.
+/// powers of two; OpenReliant works it out.
 pub fn pitchFactor(n: i32) f32 {
     const clamped = std.math.clamp(n, -96, 96);
     return std.math.pow(f32, 2, @as(f32, @floatFromInt(clamped)) / 24);
@@ -811,8 +813,8 @@ pub fn musicLoopStart(path: []const u8) i32 {
     return 0;
 }
 
-/// Reads the music file at `path`, a path of the game's with backslashes, from the game's directory,
-/// found whatever the case of its names, as Windows finds it (`files.find`).
+/// Reads the music file at `path`, a path of the game's with backslashes, from the game's
+/// directory, found whatever the case of its names, as Windows finds it (`files.find`).
 fn readMusic(files: Files, path: []const u8) ![]u8 {
     return try paths.readFile(files.io, files.gpa, files.dir, path, .limited(64 << 20)) orelse error.FileNotFound;
 }

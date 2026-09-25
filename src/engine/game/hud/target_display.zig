@@ -14,7 +14,7 @@
 //!
 //! **Improvement.** The game keeps one picture for both forms, and draws it again as a form
 //! starts closing: for the target it last showed, but with whatever target the display now has
-//! for the range, the name and the rest. The port keeps what each form last showed and closes it
+//! for the range, the name and the rest. OpenReliant keeps what each form last showed and closes it
 //! with that.
 //!
 //! Not ported: the pilot's name under the type's, for a named pilot (`GameObject.pilot_record`),

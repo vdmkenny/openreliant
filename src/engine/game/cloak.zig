@@ -149,7 +149,7 @@ fn soundClass(all: *const create.Objects, index: u16) sound3d.Class {
 
 /// `cloak_drop` (`0x00463420`): the object in `slot` has no cloak from now on, if it had one,
 /// whatever its parts were showing, their callbacks let go (`cloak_node_free`, `0x00463470`),
-/// which the port's parts have none of. An explosion's blast drops it so.
+/// which OpenReliant's parts have none of. An explosion's blast drops it so.
 pub fn drop(slot: *create.Slot) void {
     slot.object.flags.cloaked = false;
     slot.cloak = null;
@@ -197,9 +197,9 @@ const shear_rates = [3]f32{ 20, 26, 14 };
 const shear_starts = [3]f32{ 0, 2.8, 0.9 };
 
 /// `cloak_wobble` (`0x004639B0`), in `mission_frame`'s pass before the camera's frame, for the
-/// object in `slot`, where it is cloaked and not the Kafelnikof, at tick `now`: while its cloak changes, its frame,
-/// as drawn, shears a little and back, three ways at their own rates, swelling and dying away over
-/// the change.
+/// object in `slot`, where it is cloaked and not the Kafelnikof, at tick `now`: while its cloak
+/// changes, its frame, as drawn, shears a little and back, three ways at their own rates, swelling
+/// and dying away over the change.
 pub fn wobble(slot: *create.Slot, now: i32) void {
     if (slot.object.type == .kafelnikof) return;
     const cloak = slot.cloak orelse return;
@@ -308,9 +308,9 @@ fn restore(model: *objects.Model) void {
     }.visit);
 }
 
-/// The port's: each part that cloaks of `model`, which is not drawn, as the ship the camera sits in
-/// is not, as solid as its cloak's hull `hull`, which the part's shadow goes by (`srshadow`), as a
-/// drawn one's does (`Drawing.hull`).
+/// OpenReliant's: each part that cloaks of `model`, which is not drawn, as the ship the camera sits
+/// in is not, as solid as its cloak's hull `hull`, which the part's shadow goes by (`srshadow`), as
+/// a drawn one's does (`Drawing.hull`).
 pub fn shadeUnseen(model: *objects.Model, hull: f32) void {
     eachCloaking(model, hull, struct {
         fn visit(solid: f32, part: *objects.Model.Part, effect: *PartCloak) void {
@@ -449,7 +449,7 @@ pub fn shimmerColour(strength: f32) [3]f32 {
 /// see-through and faded (`cloak_hull_callback`, `0x00463B90`), only on a hardware renderer.
 /// Nothing changes while the game is paused.
 ///
-/// The game updates each as the pipeline draws it, once it is in sight; the port updates it as
+/// The game updates each as the pipeline draws it, once it is in sight; OpenReliant updates it as
 /// it is added to the scene, in sight or not.
 pub const Drawing = struct {
     cloak: *Cloak,

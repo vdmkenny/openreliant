@@ -158,7 +158,7 @@ pub const Audio = struct {
         if (!context.pointer.down) {
             audio.held = null;
             // **Fix.** The game tries it at what the pointer's place works out to, which is past
-            // the range with the pointer past the track's end; the port at the volume set.
+            // the range with the pointer past the track's end; OpenReliant at the volume set.
             if (audio.held_effects) _ = sound.play(context.settings.stdsmp, test_sound, volumes.effects, once, middle, 0);
         } else if (audio.held) |volume| {
             level(volumes, volume).* = menu.round(sliders.get(volume).valueAt(context.ui, context.pointer.at[0]));
@@ -288,7 +288,7 @@ pub const Video = struct {
             if (Leave.of(choice)) |way| return way.next();
             switch (choice) {
                 // **Fix.** The game sets the cockpit mode to 0, no cockpit, with the setting
-                // 0, the cockpit's; the port sets the mode the setting stands for.
+                // 0, the cockpit's; OpenReliant sets the mode the setting stands for.
                 .reset_defaults => set(settings, .cockpit, 1),
                 .cancel_changes => set(settings, video.kept_view, video.kept_brightness),
                 .brightness_knob => video.held = true,

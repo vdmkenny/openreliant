@@ -1,6 +1,6 @@
 //! `C:\lancer\game\collision.cpp`: what becomes of two objects that meet. `objects_update` finds
-//! the pairs whose spheres overlap ([`create.zig`](create.zig)) and hands each to `objects_collide`,
-//! which pushes them apart. `docs/engine/loop.md` describes the sweep.
+//! the pairs whose spheres overlap ([`create.zig`](create.zig)) and hands each to
+//! `objects_collide`, which pushes them apart. `docs/engine/loop.md` describes the sweep.
 //!
 //! **Unverified:** this file's known code lies before `objects_collide`; what is ported here lies
 //! between it and `Create.cpp`'s, which no string places.
@@ -339,7 +339,7 @@ const player_share: f32 = 0.5;
 /// at half, then harder or softer by the difficulty: at medium, half as hard.
 ///
 /// The game compares the damage's kind with the player's slot, which in a single-player game is 0,
-/// a shot's kind; the port asks for a shot.
+/// a shot's kind; OpenReliant asks for a shot.
 ///
 /// Not ported: multiplayer, where nothing is scaled.
 pub fn byDifficulty(world: gameobj.World, index: u16, kind: Kind, value: f32) f32 {
@@ -353,10 +353,10 @@ pub fn byDifficulty(world: gameobj.World, index: u16, kind: Kind, value: f32) f3
 /// `object_damage` (`0x00463EE0`): damage to an object, which its shields take first, as the
 /// difficulty scales it. What passes through wears the armour instead, times `factor`, which every
 /// caller here gives as 1; it is reckoned from the damage before the scaling, which the armour's
-/// damage then does. A shield that is already down adds its own deficit to what passes through,
-/// and an object in its last state (`Invulnerability._unknown_4`) keeps its shields. Damage of
-/// kinds 0, 1 and 5 counts toward what the object has taken lately, which is what sends a ship after
-/// its attacker.
+/// damage then does. A shield that is already down adds its own deficit to what passes through, and
+/// an object in its last state (`Invulnerability._unknown_4`) keeps its shields. Damage of kinds 0,
+/// 1 and 5 counts toward what the object has taken lately, which is what sends a ship after its
+/// attacker.
 ///
 /// With smart targeting on, a blow the player's ship deals, but by colliding, makes what it
 /// struck the player's target (`input.setPlayerTarget`). A blow the player's ship takes shakes it
@@ -608,11 +608,10 @@ const hull_passes = 9;
 /// (`knockDamage`); its shield reserve is drawn by twice that, as the game halves the damage only
 /// once it has drawn the reserve. A force field the ship hits glows whole (`shield.flareCapital`).
 ///
-/// Not ported: what the hit destroys ([#42](https://github.com/vdmkenny/openreliant/issues/42)), and
-/// a torpedo's hit, which damages the hull's own parts
-/// ([#239](https://github.com/vdmkenny/openreliant/issues/239)).
-/// The game also tests the player's ship against each part's trigger polygons first, which one
-/// shipped model carries.
+/// Not ported: what the hit destroys ([#42](https://github.com/vdmkenny/openreliant/issues/42)),
+/// and a torpedo's hit, which damages the hull's own parts
+/// ([#239](https://github.com/vdmkenny/openreliant/issues/239)). The game also tests the player's
+/// ship against each part's trigger polygons first, which one shipped model carries.
 fn hullHit(world: gameobj.World, ship: u16, hull: u16, pass: u8) bool {
     const all = world.objects;
     const model = if (all.slots[hull].model) |*live| live else return false;
@@ -625,7 +624,7 @@ fn hullHit(world: gameobj.World, ship: u16, hull: u16, pass: u8) bool {
     const contact = math.transform(found.place.orientation, found.point) + found.place.position;
     const normal = math.transform(found.place.orientation, found.normal);
     // The ship takes the shove at its own centre, the hull at the face it was hit on. The game
-    // works the hull's lever out in the part's frame; the port uses the object's, which differs
+    // works the hull's lever out in the part's frame; OpenReliant uses the object's, which differs
     // only for a part its model animates.
     const lever = math.transformTransposed(object.root.orientation, contact - gameobj.vector(object.root.position));
     const impulse = shoveAt(world, ship, hull, -normal, .{ @splat(0), lever }, pass) orelse return true;

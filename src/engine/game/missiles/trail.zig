@@ -1,7 +1,7 @@
-//! The trails in `C:\lancer\game\missiles.cpp`: what a missile, or a torpedo, leaves behind it as it
-//! flies, by its type's look (`missile_looks`): a ribbon, a helix of thinner ribbons round it, an
-//! exhaust plume and a glow. A trail outlives its missile, fading out once the missile has ended.
-//! [`missiles.md`](../../../../docs/engine/missiles.md#trails) describes them.
+//! The trails in `C:\lancer\game\missiles.cpp`: what a missile, or a torpedo, leaves behind it as
+//! it flies, by its type's look (`missile_looks`): a ribbon, a helix of thinner ribbons round it,
+//! an exhaust plume and a glow. A trail outlives its missile, fading out once the missile has
+//! ended. [`missiles.md`](../../../../docs/engine/missiles.md#trails) describes them.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -241,7 +241,7 @@ pub const Trails = struct {
     /// ribbons start at full strength, black, and its ribbon at nothing.
     ///
     /// **Fix:** with every trail taken, the game takes the record past the last, and writes past
-    /// its pool; the port leaves the missile without a trail.
+    /// its pool; OpenReliant leaves the missile without a trail.
     pub fn start(trails: *Trails, world: gameobj.World, follows: Follows, missile_type: missiles.Type) Allocator.Error!?u8 {
         const style = &looks[missile_type.index() orelse return null];
         const at = trails.list.add(.{ .type = missile_type, .follows = follows, .scrolled = world.clock.frame_start }) orelse return null;
@@ -571,7 +571,7 @@ const Plume = struct {
     /// to 1.5708.
     ///
     /// **Fix:** the mouth's corners all stand at its centre, and the game works their texture
-    /// coordinates round it out as a nought over a nought, which is not a number; the port gives
+    /// coordinates round it out as a nought over a nought, which is not a number; OpenReliant gives
     /// them 0.
     fn create(gpa: Allocator, image: *srtexture.Image) Allocator.Error!*Plume {
         const plume = try gpa.create(Plume);

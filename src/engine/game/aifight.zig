@@ -195,8 +195,8 @@ pub const Fighter = struct {
     }
 
     /// A number from `least` up to `most` as the game draws one: `least` plus the ship's random
-    /// number modulo the span. Where the span is nothing the game divides by zero; the port takes
-    /// `least`.
+    /// number modulo the span. Where the span is nothing the game divides by zero; OpenReliant
+    /// takes `least`.
     pub fn randomBetween(fighter: Fighter, least: i32, most: i32) i32 {
         const drawn: i32 = fighter.random15();
         const span = most - least;
@@ -242,8 +242,8 @@ pub const Players = struct {
 pub fn init(ctx: aigeneric.Context, index: u16) void {
     const fighter: Fighter = .of(ctx, index);
     const all = ctx.world.objects;
-    // The game takes the target as it comes; the port leaves one past the slots for the update to
-    // pop.
+    // The game takes the target as it comes; OpenReliant leaves one past the slots for the update
+    // to pop.
     const target = fighter.target().index;
     if (target < 0 or target >= all.count) return;
     choose(fighter);
@@ -490,10 +490,10 @@ fn shipToRunTo(fighter: Fighter) ?u16 {
 /// The share of the target's velocity the aim drifts by (`fight_aim`).
 const aim_drift: f32 = 0.25;
 
-/// `fight_aim` (`0x00409BE0`): every `aim_interval` ticks the pilot aims afresh, ahead of the target
-/// where it can lead it (`ai.leadAim`) and otherwise at it, and reckons the aim's drift as a quarter
-/// of the target's velocity, turned on by half as many of the target's turns. Between times the
-/// aim drifts on. Then it fires.
+/// `fight_aim` (`0x00409BE0`): every `aim_interval` ticks the pilot aims afresh, ahead of the
+/// target where it can lead it (`ai.leadAim`) and otherwise at it, and reckons the aim's drift as a
+/// quarter of the target's velocity, turned on by half as many of the target's turns. Between times
+/// the aim drifts on. Then it fires.
 fn aim(fighter: Fighter) void {
     const state = fighter.state;
     const enemy = &fighter.enemy().object;

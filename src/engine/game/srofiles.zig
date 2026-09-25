@@ -188,11 +188,11 @@ const Found = struct {
 ///
 /// A fan's records become one polygon where `fanMerges` says so; a wire face becomes a polygon of
 /// two corners for each edge it draws. `mesh_texel_areas` (`0x004C4090`) then finds each textured
-/// polygon's area in texels, which only the software driver reads; the port leaves it out.
+/// polygon's area in texels, which only the software driver reads; OpenReliant leaves it out.
 ///
 /// **Improvement:** a vertex without a counterpart in the next level (`-1`, in a few coarser
 /// levels of capital ships and a station) makes the game read whatever lies before that level's
-/// vertices; the port morphs it toward itself.
+/// vertices; OpenReliant morphs it toward itself.
 pub fn build(
     gpa: Allocator,
     textures: *srtexture.Table,

@@ -7,11 +7,11 @@
 //!
 //! The game also makes two squares, `UberWave1` over `bigshock1` and `UberWave2` over `bigshock2`,
 //! and a light, `UberExplosion_Light`, and grows the first square as the blast goes on, but never
-//! puts any of them in the scene; the port leaves the squares out, and shows the light only in the
-//! fuller style (`Style`).
+//! puts any of them in the scene; OpenReliant leaves the squares out, and shows the light only in
+//! the fuller style (`Style`).
 //!
 //! **Improvement:** the game opens the halves and spreads the ball by rounded factors (3.33333 and
-//! 1.42857 a share, 0.19635 and 0.349066 radians); the port divides.
+//! 1.42857 a share, 0.19635 and 0.349066 radians); OpenReliant divides.
 //!
 //! Not ported: what a blast in a multiplayer game spares, counts and tells the players, which is
 //! multiplayer's ([#55](https://github.com/vdmkenny/openreliant/issues/55)), and the event the
@@ -91,8 +91,9 @@ const Shape = struct {
         return shape.rings * shape.hemisphere.around + 2;
     }
 
-    /// How much of the halves' colour vertex `index` takes: all of it, but for the game's last band,
-    /// across which it fades to nothing at the last ring, and the last pole, which takes none.
+    /// How much of the halves' colour vertex `index` takes: all of it, but for the game's last
+    /// band, across which it fades to nothing at the last ring, and the last pole, which takes
+    /// none.
     fn fade(shape: Shape, index: usize) f32 {
         if (index == 0) return 1;
         if (index == shape.hemisphereVertices() - 1) return 0;
@@ -119,8 +120,8 @@ const opened: f32 = 0.3;
 const faded: f32 = 0.5;
 const flash_from: f32 = 0.95;
 
-/// How far a blast reaches, by its size: the ships it lists stand within `reach`, as far as the ball
-/// spreads to from `least_scale` (`0x004DC56C`); and the halves are drawn at `half_scale`
+/// How far a blast reaches, by its size: the ships it lists stand within `reach`, as far as the
+/// ball spreads to from `least_scale` (`0x004DC56C`); and the halves are drawn at `half_scale`
 /// (`0x004DC854`).
 const reach: f32 = 5;
 const least_scale: f32 = 0.001;
@@ -378,19 +379,19 @@ pub const Uber = struct {
     }
 
     /// `uber_explode_start` (`0x00472AB0`): sets a blast of `size` off at `place` for `owner`, over
-    /// `duration` ticks, shown in `style`, in place of any going off. It lists the ships it may reach: each object
-    /// but the player's ship that is created and not disabled, of a side but the neutral one, with
-    /// combat stats and an order, but for the gates, the Boridin and its breakaway, and within
-    /// `reach` of its size. Its halves start at the point, dark and faint, but for their rims, which
-    /// never show, each taking its texture from where its vertices lie; the second is turned half
-    /// round. The view flashes, the two rings of `waves` spread, and the owner's ship sounds
-    /// `uberexp`.
+    /// `duration` ticks, shown in `style`, in place of any going off. It lists the ships it may
+    /// reach: each object but the player's ship that is created and not disabled, of a side but the
+    /// neutral one, with combat stats and an order, but for the gates, the Boridin and its
+    /// breakaway, and within `reach` of its size. Its halves start at the point, dark and faint,
+    /// but for their rims, which never show, each taking its texture from where its vertices lie;
+    /// the second is turned half round. The view flashes, the two rings of `waves` spread, and the
+    /// owner's ship sounds `uberexp`.
     ///
-    /// The game asks for an order stack, which it makes with an object's first order; the port asks
-    /// for an order.
+    /// The game asks for an order stack, which it makes with an object's first order; OpenReliant
+    /// asks for an order.
     ///
     /// **Fix:** the game lists every ship in reach, running past the end of its list with more than
-    /// `max_caught`; the port lists the first `max_caught`.
+    /// `max_caught`; OpenReliant lists the first `max_caught`.
     pub fn start(uber: *Uber, world: gameobj.World, owner: u16, place: math.Place, size: f32, duration: i32, style: Style) void {
         const meshes = uber.meshes.getPtr(style);
         const shape: Shape = .of(style);
@@ -480,7 +481,7 @@ pub const Uber = struct {
     /// (`Blast.rounds`).
     ///
     /// **Fix:** the game colours one vertex of the halves' rims with the rest, which shows a sliver
-    /// of the rim; the port keeps the whole rim clear, as the blast starts it.
+    /// of the rim; OpenReliant keeps the whole rim clear, as the blast starts it.
     pub fn frame(uber: *Uber, world: gameobj.World) void {
         const blast = &(uber.blast orelse return);
         const now = world.clock.frame_start;
@@ -607,7 +608,8 @@ test hemisphereMesh {
     const game: Shape = .of(.original);
     var mesh = try hemisphereMesh(gpa, game, testing.images().ring);
     defer mesh.deinit(gpa);
-    // A fan round the pole and six bands, 234 triangles over 128 vertices, every corner one of them.
+    // A fan round the pole and six bands, 234 triangles over 128 vertices, every corner one of
+    // them.
     try std.testing.expectEqual(234, mesh.polygons.len);
     try std.testing.expectEqual(128, mesh.positions.len);
     for (mesh.indices) |corner| try std.testing.expect(corner < game.hemisphereVertices() - 1);

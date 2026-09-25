@@ -161,14 +161,14 @@ pub const Instruction = extern union {
 };
 
 /// The most lines a maneuver starts in one update. A script loop with no command that waits would
-/// run on for ever; none of the game's has one, and the port stops at this rather than hang.
+/// run on for ever; none of the game's has one, and OpenReliant stops at this rather than hang.
 const most_lines = 256;
 
 /// `maneuver_run` (`0x004069B0`): runs the Fight order's maneuver for an update. While no line
 /// waits it starts the next, each command running at once until one waits; then it runs the
 /// waiting one.
 ///
-/// A script that runs off its end would stop the game with a syntax error; the port ends the
+/// A script that runs off its end would stop the game with a syntax error; OpenReliant ends the
 /// maneuver there instead, so Fight chooses another.
 pub fn run(fighter: Fighter) void {
     const number = @intFromEnum(fighter.state.maneuver);
@@ -428,8 +428,8 @@ fn attackMediumFighter(fighter: Fighter) bool {
 /// at that is clear of the target's hull (`ai.escapeDirection`), in the target's frame.
 ///
 /// Not ported: for a component of the target, the point the model gives the component
-/// ([#239](https://github.com/vdmkenny/openreliant/issues/239)); the port finds the way out for it
-/// as for any other part.
+/// ([#239](https://github.com/vdmkenny/openreliant/issues/239)); OpenReliant finds the way out for
+/// it as for any other part.
 fn startAttackRun(fighter: Fighter) void {
     const enemy = fighter.enemy();
     const out = ai.escapeDirection(enemy, fighter.aimed().position);

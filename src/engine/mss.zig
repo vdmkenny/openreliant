@@ -1,5 +1,5 @@
 //! The Miles Sound System (`MSS32.DLL`), as far as the game calls it: a digital driver that mixes
-//! samples, 3D samples and streams of WAVE sounds. The port's own stand-in, in software: the
+//! samples, 3D samples and streams of WAVE sounds. OpenReliant's own stand-in, in software: the
 //! library is not the game's, and nothing of it is carried over but the calls' meanings. Each
 //! function stands for the `AIL_` call it names; the game's code in
 //! [`game/hog_snd.zig`](game/hog_snd.zig) makes them as it made Miles's.
@@ -13,8 +13,8 @@
 //! them out.
 //!
 //! Volumes and pans run from 0 to 127, a pan of 64 in the middle, as Miles's do. How Miles turned
-//! them into gains is not known here: the port takes a volume's share of 127 as its gain, and a pan
-//! as a balance that keeps the middle at full volume in both ears.
+//! them into gains is not known here: OpenReliant takes a volume's share of 127 as its gain, and a
+//! pan as a balance that keeps the middle at full volume in both ears.
 
 const std = @import("std");
 
@@ -35,7 +35,7 @@ pub const Sample3D = enum(u32) { _ };
 /// does, from a file of its own.
 pub const Stream = enum(u32) { _ };
 
-/// Not Miles's: where a sample is heard, for the reverbs the port adds.
+/// Not Miles's: where a sample is heard, for the reverbs OpenReliant adds.
 pub const Room = enum {
     /// Nowhere in particular, with no reverb.
     none,
@@ -63,7 +63,7 @@ pub const Lock = struct {
     }
 };
 
-/// The one 3D provider the port offers.
+/// The one 3D provider OpenReliant offers.
 pub const provider_name = "Miles Fast 2D Positional Audio";
 
 /// `AIL_3D_provider_attribute`'s "Maximum supported samples" for it.
@@ -136,7 +136,8 @@ pub const Driver = struct {
         return .{ .context = implementation, .vtable = &holder.vtable };
     }
 
-    /// `T`'s method `name`, called through a pointer of type `F` that takes the `T` as `*anyopaque`.
+    /// `T`'s method `name`, called through a pointer of type `F` that takes the `T` as
+    /// `*anyopaque`.
     fn thunk(comptime T: type, comptime name: []const u8, comptime F: type) F {
         const params = @typeInfo(@typeInfo(F).pointer.child).@"fn".params;
         const R = @typeInfo(@typeInfo(F).pointer.child).@"fn".return_type.?;
@@ -304,7 +305,7 @@ pub const Driver = struct {
     }
 };
 
-/// The port's own digital driver, in software: the handles and their mix, as plain as Miles's
+/// OpenReliant's own digital driver, in software: the handles and their mix, as plain as Miles's
 /// own mixer is taken to have been. The reference the OpenAL renderer is measured against, and what
 /// `--original` plays through.
 pub const Mixer = struct {

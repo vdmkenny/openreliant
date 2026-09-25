@@ -1,7 +1,7 @@
 //! `C:\lancer\game\nebula.cpp`: the sky dome and the nebula. `nebula_create` (`0x00498B30`) builds
 //! both at start-up, `nebula_select` (`0x00498D00`) applies the script's choice of nebula and
 //! `nebula_frame` (`0x00498E10`) centres both on the camera and adds them to the background layer.
-//! The port builds the hardware renderers' dome (`nebula_dome`, `0x00498810`); the software
+//! OpenReliant builds the hardware renderers' dome (`nebula_dome`, `0x00498810`); the software
 //! renderer's (`nebula_dome_software`, `0x00498450`) is not ported.
 
 const std = @import("std");

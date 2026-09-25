@@ -109,8 +109,8 @@ pub const Node = extern struct {
         /// Set by `node_place`, and cleared each time `node_tree_update` visits the node: the next
         /// place comes from a pose, which `node_frame_update` draws the node between the poses by.
         posed: bool,
-        /// **Unknown.** Set by `node_draw` (`0x0049A8C0`). Cycling subtargets passes over a component
-        /// with it.
+        /// **Unknown.** Set by `node_draw` (`0x0049A8C0`). Cycling subtargets passes over a
+        /// component with it.
         _unknown_4: bool,
         /// Hidden, as a component's damaged parts are while it is intact.
         hidden: bool,
@@ -207,7 +207,7 @@ pub const Node = extern struct {
 /// `object_set_position` (`0x0049B600`): places the object's root at `at`: its frame, which the
 /// port keeps as `frame` (`frameTree`), where it is and where it goes next, so that it doesn't
 /// move from where it was. The game also sets the two places a multiplayer game draws another
-/// player's ship between (`+0x768`, `+0x798`), which the port doesn't keep (#55).
+/// player's ship between (`+0x768`, `+0x798`), which OpenReliant doesn't keep (#55).
 /// **Unverified:** it and the functions after it lie after this file's known code, before
 /// `particles.cpp`'s.
 pub fn setPosition(object: *GameObject, frame: *Model.Local, at: Vector) void {
@@ -463,8 +463,8 @@ const Crosser = struct {
     }
 };
 
-/// `node_hit_test` with `missile_hull_test` for one part, `ref`, standing at `place`: the face of it
-/// the segment crosses (`Crosser`), or null where it crosses none.
+/// `node_hit_test` with `missile_hull_test` for one part, `ref`, standing at `place`: the face of
+/// it the segment crosses (`Crosser`), or null where it crosses none.
 pub fn crossPart(ref: PartRef, place: math.Place, from: Vector, to: Vector) ?Crossing {
     var segment: Crosser = .init(from, to);
     segment.part(ref, place, false);
@@ -815,10 +815,10 @@ pub fn frameTree(root: *Node, model: ?*Model, drawn: *Model.Local, fraction: f32
     parts.place(drawn.position, drawn.orientation);
 }
 
-/// `node_draw` (`0x0049A8C0`) for the roots flagged `destroyed`, as `mission_frame`'s pass that draws
-/// the objects reaches the object in slot `index`, in sight or not: its model's root, then, depth
-/// first, those of the models mounted on its shown parts. For each part of such a root that has
-/// run out of armour and is not yet spent, in part order:
+/// `node_draw` (`0x0049A8C0`) for the roots flagged `destroyed`, as `mission_frame`'s pass that
+/// draws the objects reaches the object in slot `index`, in sight or not: its model's root, then,
+/// depth first, those of the models mounted on its shown parts. For each part of such a root that
+/// has run out of armour and is not yet spent, in part order:
 ///
 /// - It is spent.
 /// - An engine takes its share off the object's `engines_intact`.
@@ -910,14 +910,14 @@ pub fn destroyPart(slot: *create.Slot, ref: PartRef) void {
     }
 }
 
-/// The light mask `node_add_part` gives a part's Surrender object: a light reaches the object unless
-/// their masks share a bit (`docs/engine/rendering.md`).
+/// The light mask `node_add_part` gives a part's Surrender object: a light reaches the object
+/// unless their masks share a bit (`docs/engine/rendering.md`).
 pub fn lightMask(model_lists_components: bool) u32 {
     return if (model_lists_components) 0x18 else 0x03;
 }
 
-/// A live object's model as the port holds it: its root's place in the world, and a node for each
-/// part of its model, each with its part's scene object. A part hangs from the part it names
+/// A live object's model as OpenReliant holds it: its root's place in the world, and a node for
+/// each part of its model, each with its part's scene object. A part hangs from the part it names
 /// (`object_link_parts`, `0x00476130`), so a part carries what stands on it; a part naming none
 /// hangs from the root.
 ///
@@ -969,7 +969,7 @@ pub const Model = struct {
     /// point light on what stands near it as well. All three blink by the attachment's timing.
     ///
     /// Not ported: in the software renderer, `node_mount_light` makes no point light for an
-    /// object of type 13, the Yamato. The port draws as the hardware renderer does.
+    /// object of type 13, the Yamato. OpenReliant draws as the hardware renderer does.
     pub const Light = struct {
         /// The part that carries it, whose node `node_draw` walks to reach it.
         part: usize,
@@ -1012,7 +1012,8 @@ pub const Model = struct {
                 } else {
                     shown = blink * faded;
                 }
-                // The flare grows up to `grown_at` off: `lerp(0, 1, ...)`, which is the share alone.
+                // The flare grows up to `grown_at` off: `lerp(0, 1, ...)`, which is the share
+                // alone.
                 const grown = if (grown_at <= away) sprites.size else away * (1.0 / grown_at) * sprites.size;
                 sprites.sprite[flare].half_size = @splat(grown * flare_scale);
                 sprites.sprite[lamp_sprite].half_size = @splat(sprites.size * lamp_scale);
@@ -1335,10 +1336,10 @@ pub const Model = struct {
     }
 
     /// A node for each part of `model` (`node_add_part`, `0x00499430`), its object flagged as
-    /// `model_load` left the part (`loaded`), reached by the lights `lightMask` lets through, and as
-    /// far across as its largest level. A part of a component's damaged model is hidden. The parts
-    /// hang from nothing yet: `gameobj.linkParts` hangs them, once whatever the model plays from
-    /// the start is playing (`create_object`).
+    /// `model_load` left the part (`loaded`), reached by the lights `lightMask` lets through, and
+    /// as far across as its largest level. A part of a component's damaged model is hidden. The
+    /// parts hang from nothing yet: `gameobj.linkParts` hangs them, once whatever the model plays
+    /// from the start is playing (`create_object`).
     pub fn create(gpa: Allocator, model: *const shp.Model, loaded: *const srofiles.Loaded, effects: Effects) Allocator.Error!Model {
         return build(gpa, model, loaded, effects, 0);
     }
@@ -1502,7 +1503,8 @@ pub const Model = struct {
     /// them. `pose` places it so.
     ///
     /// **Improvement:** the game turns the limits' degrees to radians by a rounded 0.0174533, and
-    /// brings an angle round by 3.14159 and 6.28319; the port by `std.math.rad_per_deg`, π and 2π.
+    /// brings an angle round by 3.14159 and 6.28319; OpenReliant by `std.math.rad_per_deg`, π and
+    /// 2π.
     pub fn swivel(model: *Model, index: usize, delta: Vector) void {
         const a = &model.parts[index].animation;
         a.turret += delta;
@@ -1910,7 +1912,8 @@ pub const Model = struct {
         return null;
     }
 
-    /// The number of part `ref` (`numbered`); null for a part neither the model's nor carried by it.
+    /// The number of part `ref` (`numbered`); null for a part neither the model's nor carried by
+    /// it.
     pub fn numberOf(model: *Model, ref: PartRef) ?usize {
         var count: Counting = .{ .until = .{ .part = ref } };
         return if (model.countParts(&count)) count.counted else null;
@@ -2035,7 +2038,7 @@ pub const Model = struct {
         }
     }
 
-    /// The port's: adds each shown part's object, and those of the models it mounts, to the
+    /// OpenReliant's: adds each shown part's object, and those of the models it mounts, to the
     /// scene's casters, which throw their shadows without being drawn (`srshadow`).
     pub fn castShadows(model: *Model, gpa: Allocator, scene: *srcore.Scene) Allocator.Error!void {
         for (model.parts) |*part| {

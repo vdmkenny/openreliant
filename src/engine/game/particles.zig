@@ -1,6 +1,6 @@
 //! `C:\lancer\game\particles.cpp`: particles, sprites that fly off an emitter and change size and
-//! colour over their life. A template says how its particles live, and an emitter sends them out
-//! of it, all at once (`Pool.burst`) or over its own life (`Pool.stream`). A particle comes from its
+//! colour over their life. A template says how its particles live, and an emitter sends them out of
+//! it, all at once (`Pool.burst`) or over its own life (`Pool.stream`). A particle comes from its
 //! template's pool, drawn as one set of sprites over the pool's texture, coloured by each sprite's
 //! colour. A template of kind `sometimes_sparks` or `sparks` sends sparks as well, which are
 //! `explode.cpp`'s small bits of debris (`explode.Explosions.throwSpark`).
@@ -55,7 +55,7 @@ pub const Template = extern struct {
     /// A particle's half-size, and its red, green and blue, over its life.
     size: Curve,
     colour: [3]Curve,
-    /// The pool it draws from. The port hands a burst or a stream its pool instead.
+    /// The pool it draws from. OpenReliant hands a burst or a stream its pool instead.
     pool: Pointer(anyopaque) = .null,
     /// How much a burst thins with distance; none at zero.
     distance: f32 = 1,
@@ -183,10 +183,10 @@ pub const Particle = struct {
     /// How far it moves a tick.
     velocity: Vector = @splat(0),
     template: ?*const Template = null,
-    /// Where it is at the frame's tick. The game keeps it in the particle's sprite; the port draws
-    /// the sprite from it, further along between the ticks (`Pool.draw`).
+    /// Where it is at the frame's tick. The game keeps it in the particle's sprite; OpenReliant
+    /// draws the sprite from it, further along between the ticks (`Pool.draw`).
     at: Vector = @splat(0),
-    /// The port's: its size and its shade, as shares of its template's (`Pool.Variety`).
+    /// OpenReliant's: its size and its shade, as shares of its template's (`Pool.Variety`).
     scale: f32 = 1,
     shade: f32 = 1,
 
@@ -213,7 +213,7 @@ pub const Pool = struct {
     /// One past the last particle alive at the last frame (`+0x0C`), up to which the frame looks.
     used: u32 = 0,
 
-    /// How a pool sends and draws its particles where the port does more than the game.
+    /// How a pool sends and draws its particles where OpenReliant does more than the game.
     pub const Settings = struct {
         /// Whether what goes out far from the camera is thinned.
         distant: Distant = .whole,

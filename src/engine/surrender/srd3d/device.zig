@@ -1,4 +1,4 @@
-//! The parts of Direct3D 7 the driver uses (`IDirect3DDevice7`), as the port provides them: a
+//! The parts of Direct3D 7 the driver uses (`IDirect3DDevice7`), as OpenReliant provides them: a
 //! device that draws transformed, lit vertices with the states `set_material` and `set_depth`
 //! choose. `software.zig` draws them as Direct3D 7 rasterizes; the executable's device draws them
 //! with SDL's GPU interface.
@@ -12,7 +12,7 @@ const srtexture = @import("../surrenderlib/srtexture.zig");
 
 /// A vertex as the driver hands it over (`D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_SPECULAR |
 /// D3DFVF_TEX1`, `0x1C4`): on the screen, with pixel centres at whole numbers, as Direct3D 7 has
-/// them. The fields after `v` are the port's, for a device that lights each pixel (`lights`).
+/// them. The fields after `v` are OpenReliant's, for a device that lights each pixel (`lights`).
 pub const Vertex = extern struct {
     x: f32,
     y: f32,
@@ -81,13 +81,14 @@ pub const Primitive = enum {
     fan,
 };
 
-/// The render states for a draw: the texture, modulated by the diffuse colour, or the diffuse colour
-/// alone without one; the depth test and writes; and the blend factors, or none for blending off.
+/// The render states for a draw: the texture, modulated by the diffuse colour, or the diffuse
+/// colour alone without one; the depth test and writes; and the blend factors, or none for blending
+/// off.
 pub const State = struct {
     texture: ?*srtexture.Image,
     depth: srd3d.Depth,
     blend: ?srd3d.Factors,
-    /// The port's: the shadows the draw's lit pixels are looked up in, for a device that draws
+    /// OpenReliant's: the shadows the draw's lit pixels are looked up in, for a device that draws
     /// them.
     receives: Receives = .nothing,
 };
@@ -115,15 +116,15 @@ pub const Device = struct {
         /// straight over the finished frame, so a device that adds anything to the frame of its
         /// own, as the GPU's bloom does, leaves out what follows this.
         overlay: *const fn (*anyopaque) void,
-        /// The port's: takes the frame's directional and point lights, most wanted first, and
+        /// OpenReliant's: takes the frame's directional and point lights, most wanted first, and
         /// returns how many of them, from the first, it adds to each pixel. The driver lights
         /// the vertices with the rest. A device without it lights nothing itself, and the
         /// driver's vertices come lit, as Direct3D 7's did.
         lights: ?*const fn (*anyopaque, []const Light) usize = null,
-        /// The port's: how it draws shadows, or null where it draws none. A device without it
+        /// OpenReliant's: how it draws shadows, or null where it draws none. A device without it
         /// draws none.
         shadow_settings: ?*const fn (*anyopaque) ?srshadow.Settings = null,
-        /// The port's: the frame's shadows, after its lights, which last until the scene ends.
+        /// OpenReliant's: the frame's shadows, after its lights, which last until the scene ends.
         shadows: ?*const fn (*anyopaque, *const srshadow.Frame) void = null,
     };
 

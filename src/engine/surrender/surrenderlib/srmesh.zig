@@ -70,7 +70,7 @@ pub const Drawn = struct {
     outcodes: []Outcode,
     /// Red, green, blue and alpha (`+0x100`), for a lit or baked object.
     colours: ?[][4]f32,
-    /// The port's: the normals in the camera's frame, for a lit object in a frame whose device
+    /// OpenReliant's: the normals in the camera's frame, for a lit object in a frame whose device
     /// lights each pixel (`srapi.Context.pixel_lighting`).
     normals: ?[]Vector = null,
     /// Coordinates from the normals (`+0x104`, `+0x108`), for the passes the object asks them for.
@@ -349,8 +349,8 @@ fn blendedNormal(mesh: *const Mesh, morph: Morph, v: usize) Vector {
 ///
 /// **Fix:** the game takes an object's own colours (`baked_object`) in place of the mesh's
 /// (`baked_mesh`), so a model that can cloak, whose parts have colours of their own for the cloak,
-/// never shows the static lights baked into its meshes. The port adds the mesh's too, whose alpha
-/// is nothing, so the cloak's see-through hull is as clear as the game has it.
+/// never shows the static lights baked into its meshes. OpenReliant adds the mesh's too, whose
+/// alpha is nothing, so the cloak's see-through hull is as clear as the game has it.
 fn light(
     arena: Allocator,
     object: *const MeshObject,
@@ -433,7 +433,8 @@ fn light(
     return colours;
 }
 
-/// Coordinates from the listed vertices' normals turned into the camera's frame (`mesh_sphere_map`).
+/// Coordinates from the listed vertices' normals turned into the camera's frame
+/// (`mesh_sphere_map`).
 fn sphereMapped(arena: Allocator, mesh: *const Mesh, matrix: math.Matrix, listed: []const u16, morph: Morph) Allocator.Error![][2]f32 {
     const out = try arena.alloc([2]f32, mesh.positions.len);
     for (listed) |v| {

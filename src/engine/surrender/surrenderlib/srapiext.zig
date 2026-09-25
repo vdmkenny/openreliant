@@ -1,6 +1,6 @@
 //! `C:\lancer\surrender\surrenderlib\srAPIext.cpp`: Surrender's frames, the transforms of its scene
 //! graph, its meshes' materials, and the scene objects: meshes, sprite sets. The extern structs lay
-//! out the game's memory; the rest are the port's.
+//! out the game's memory; the rest are OpenReliant's.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -115,7 +115,8 @@ pub const Group = extern struct {
     }
 };
 
-// --- The port's scene objects --------------------------------------------------------------------
+// --- OpenReliant's scene objects
+// --------------------------------------------------------------------
 
 /// A scene object's kind (`+0x00`), which picks its pipeline in `sr_draw_layers`.
 pub const Kind = enum(u32) {
@@ -140,8 +141,8 @@ pub const ObjectFlags = packed struct(u32) {
     /// Always its finest level of detail.
     finest: bool = false,
     _unknown_4: bool = false,
-    /// A star field takes this frame as its last, so it draws no streaks (`backdrop_reset_streaks`);
-    /// `stars_project` clears it.
+    /// A star field takes this frame as its last, so it draws no streaks
+    /// (`backdrop_reset_streaks`); `stars_project` clears it.
     fresh: bool = false,
     _unknown_6: u2 = 0,
     /// Lit: its colour, the ambient lights and the rest (`mesh_light`).
@@ -192,7 +193,7 @@ pub const Texture = union(enum) {
     image: *srtexture.Image,
 };
 
-/// What a run of a mesh's polygons, a set of sprites or a star field is drawn with, as the port
+/// What a run of a mesh's polygons, a set of sprites or a star field is drawn with, as OpenReliant
 /// holds it: the material as the game lays it out, less its images, which `textures` holds.
 pub const Surface = struct {
     /// For a mesh's run, how many polygons.
@@ -410,8 +411,8 @@ pub const MeshObject = struct {
     /// `+0xAC`: the portal that clips it, where its flags ask (`portal_clipped`); none clips
     /// nothing.
     portal: ?*const Portal = null,
-    /// The port's: its surfaces blended by alpha cast a shadow as strong as its colour's alpha, as
-    /// a cloaked part's see-through hull does (`srshadow`). Otherwise only its solid ones cast.
+    /// OpenReliant's: its surfaces blended by alpha cast a shadow as strong as its colour's alpha,
+    /// as a cloaked part's see-through hull does (`srshadow`). Otherwise only its solid ones cast.
     alpha_shadow: bool = false,
 
     /// The mesh of the level drawn, or of the coarsest where the level is past them; it has one
@@ -488,7 +489,7 @@ pub const Sprite = struct {
     uv: [4]f32 = .{ 0, 1, 0, 1 },
     /// Left out (the set's flags at `+0xC8`).
     hidden: bool = false,
-    /// The port's: how much of it shows, its colour and its alpha both scaled, which a fireball
+    /// OpenReliant's: how much of it shows, its colour and its alpha both scaled, which a fireball
     /// fades from one frame of its animation into the next by.
     fade: f32 = 1,
 };

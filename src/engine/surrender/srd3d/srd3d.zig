@@ -1,6 +1,6 @@
-//! `C:\lancer\surrender\srD3D\srD3D.cpp`: Surrender's Direct3D 7 driver, `srd3d.dll`. It draws
-//! what the payload's pipelines hand it: it turns materials into render states, draws what is opaque
-//! at once, puts what is blended aside for the payload to sort, and clips. The port's driver draws
+//! `C:\lancer\surrender\srD3D\srD3D.cpp`: Surrender's Direct3D 7 driver, `srd3d.dll`. It draws what
+//! the payload's pipelines hand it: it turns materials into render states, draws what is opaque at
+//! once, puts what is blended aside for the payload to sort, and clips. OpenReliant's driver draws
 //! on a `device.Device`, the parts of Direct3D 7 it uses.
 
 const std = @import("std");
@@ -102,9 +102,9 @@ const highlight_exponents = [4]f32{ 1.01, 2.01, 5.01, 10.01 };
 /// The brightness a highlight falls to at its rim and keeps outside it.
 const highlight_floor: f32 = 0.4;
 
-/// Texel `(x, y)` of highlight texture `index` as red, green, blue and alpha: grey, brightest at the
-/// centre (`0x10001620`). Indices 4 to 7 repeat 0 to 3 at seven tenths the brightness. The driver
-/// makes the eight at start-up; a material whose image is below 8 names one.
+/// Texel `(x, y)` of highlight texture `index` as red, green, blue and alpha: grey, brightest at
+/// the centre (`0x10001620`). Indices 4 to 7 repeat 0 to 3 at seven tenths the brightness. The
+/// driver makes the eight at start-up; a material whose image is below 8 names one.
 pub fn highlightTexel(index: u3, x: u6, y: u6) [4]u8 {
     const e: f32 = highlight_exponents[index & 3];
     const peak: f32 = @floatCast(std.math.pow(f64, @as(f64, e) + 1, 1 / @as(f64, e)));
@@ -140,7 +140,7 @@ pub fn highlight(index: u3) Highlight {
 
 // --- The driver ---------------------------------------------------------------------------------
 
-/// The driver (`SR_driver_init`, `0x100056B0`, fills `sr`'s table with these). The port draws a
+/// The driver (`SR_driver_init`, `0x100056B0`, fills `sr`'s table with these). OpenReliant draws a
 /// material's two passes one after the other, as the driver does on a device that cannot draw both
 /// at once, to the same effect.
 pub const Driver = struct {
@@ -201,7 +201,7 @@ pub const Driver = struct {
         .shadows = shadows,
     };
 
-    /// The port's: hands the device the frame's shadows.
+    /// OpenReliant's: hands the device the frame's shadows.
     fn shadows(ptr: *anyopaque, frame: *const srshadow.Frame) void {
         from(ptr).target.shadows(frame);
     }
@@ -222,7 +222,7 @@ pub const Driver = struct {
         from(ptr).target.end();
     }
 
-    /// The port's: hands the device the frame's directional and point lights in the camera's
+    /// OpenReliant's: hands the device the frame's directional and point lights in the camera's
     /// frame, the directional lights first and then the point lights nearest the camera, and
     /// marks those it adds to each pixel. The pipeline adds the rest to each vertex.
     fn lights(ptr: *anyopaque, list: []srlight.Light) Allocator.Error!void {
@@ -384,9 +384,9 @@ pub const Driver = struct {
         return .{ 0, 0 };
     }
 
-    /// `draw_pass` (`0x10002920`): a surface's visible polygons for one pass. A polygon runs on into
-    /// the records of its strip or fan after it, while they are visible and unclipped; the lot is
-    /// drawn as one list of triangles. Clipped polygons are drawn on their own as they come.
+    /// `draw_pass` (`0x10002920`): a surface's visible polygons for one pass. A polygon runs on
+    /// into the records of its strip or fan after it, while they are visible and unclipped; the lot
+    /// is drawn as one list of triangles. Clipped polygons are drawn on their own as they come.
     fn drawPass(driver: *Driver, drawn: *const srmesh.Drawn, visible: []const srmesh.Visible, surface: *const srapiext.Surface, pass: u1, layer: Layer) Allocator.Error!void {
         const gpa = driver.gpa;
         const mesh = drawn.mesh;
@@ -477,7 +477,7 @@ pub const Driver = struct {
 
     /// `draw_polygon` (`0x10006F90`): one polygon as a fan, or its lines. **Improvement:** the
     /// driver tests a sorted polygon's triangles against the sun with indices left over from the
-    /// last list it drew; the port tests the polygon's own, where it is solid (`hidesSun`).
+    /// last list it drew; OpenReliant tests the polygon's own, where it is solid (`hidesSun`).
     fn drawPolygon(driver: *Driver, drawn: *const srmesh.Drawn, v: srmesh.Visible, material: Material, pass: u1, st: device.State) Allocator.Error!void {
         const p = drawn.mesh.polygons[v.polygon];
         driver.single.clearRetainingCapacity();
@@ -636,14 +636,15 @@ pub const Driver = struct {
 
     /// Whether a polygon's first pass, drawn with `material`, is tested against the sun: an object
     /// flagged `sun_occluder` has its polygons tested. **Improvement:** only a solid one, which
-    /// blends with nothing; the port lets the sun through what is blended, such as a canopy's glass.
+    /// blends with nothing; OpenReliant lets the sun through what is blended, such as a canopy's
+    /// glass.
     fn hidesSun(drawn: *const srmesh.Drawn, material: Material, pass: u1) bool {
         return pass == 0 and drawn.object.flags.sun_occluder and material.blend[0] == .off;
     }
 
-    /// `sun_test` (`0x10001FD0`): lessens the sun's visibility to a triangle's nearest edge, measured
-    /// across plus down, or to 0 when the triangle covers the sun's point. It stops at the first edge
-    /// no nearer than the visibility.
+    /// `sun_test` (`0x10001FD0`): lessens the sun's visibility to a triangle's nearest edge,
+    /// measured across plus down, or to 0 when the triangle covers the sun's point. It stops at the
+    /// first edge no nearer than the visibility.
     fn sunTest(driver: *Driver, a: Vertex, b: Vertex, c: Vertex) void {
         const sun = driver.context.sun;
         const visibility = &driver.context.sun_visibility;

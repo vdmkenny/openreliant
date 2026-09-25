@@ -1,7 +1,7 @@
 //! `C:\lancer\surrender\surrenderlib\srTexture.cpp`: the texture table. `texture_find`
 //! (`0x004C9E20`) looks a name up in the texture cache and reads the pixels on first use; the
 //! driver makes its device texture when it first draws with it (`texture_upload`, `0x004C9C90`).
-//! The port keeps each image as 8-bit RGBA mip levels.
+//! OpenReliant keeps each image as 8-bit RGBA mip levels.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -16,7 +16,7 @@ pub const Level = struct {
     rgba: []const u8,
 };
 
-/// An image as the port holds it, the counterpart of `TextureImage`.
+/// An image as OpenReliant holds it, the counterpart of `TextureImage`.
 pub const Image = struct {
     /// The full-size level first.
     levels: []const Level,

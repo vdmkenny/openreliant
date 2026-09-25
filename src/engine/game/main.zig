@@ -1,12 +1,12 @@
 //! `C:\lancer\game\main.cpp`: a mission's loop. `mission_run` (`0x00494040`) runs a game tick for
-//! each tick of the timer and draws a frame with `mission_frame` (`0x004924B0`). **Unverified:** the
-//! two lie after `language.cpp`'s code, where `main.cpp`'s begins; by what they do they are this
-//! file's.
+//! each tick of the timer and draws a frame with `mission_frame` (`0x004924B0`). **Unverified:**
+//! the two lie after `language.cpp`'s code, where `main.cpp`'s begins; by what they do they are
+//! this file's.
 //!
 //! Ported so far: the clocks and the pacing, how `mission_frame` frames the objects and puts the
 //! scene together and draws it, the damaged ships' smoke (`smoke`), what the mission's start
-//! (`0x004934F0`) fits the player's ship with, the armour's conditions (`0x00492370`), and the pause
-//! (`game_pause`). Not yet: the rest of the effects and of what it adds to the scene, and
+//! (`0x004934F0`) fits the player's ship with, the armour's conditions (`0x00492370`), and the
+//! pause (`game_pause`). Not yet: the rest of the effects and of what it adds to the scene, and
 //! `mission_paused_frame`, which `openreliant`'s loop stands in for.
 
 const std = @import("std");
@@ -100,10 +100,10 @@ pub const Showing = enum(u8) {
 /// A mission's clocks, and the pacing they drive: the timer ticks 100 times a second, the loop
 /// runs one game tick for each tick of the timer, and the simulation steps on every fourth.
 ///
-/// **Improvement:** the port has no periodic timer. The platform's monotonic counter of hundredths
-/// of a second stands in for the multimedia timer `timer_start` (`0x004A70F0`) sets up, so the
-/// clocks advance at the same rate without a thread of their own and without the drift a timer
-/// whose period the device rounds would bring.
+/// **Improvement:** OpenReliant has no periodic timer. The platform's monotonic counter of
+/// hundredths of a second stands in for the multimedia timer `timer_start` (`0x004A70F0`) sets up,
+/// so the clocks advance at the same rate without a thread of their own and without the drift a
+/// timer whose period the device rounds would bring.
 pub const Clock = struct {
     /// `timer_ticks` (`0x005DB8E8`): every tick of the timer, the paused ones included.
     timer_ticks: u32 = 0,
@@ -129,7 +129,7 @@ pub const Clock = struct {
     ran_to: u32 = 0,
     /// Where the platform's count of hundredths stood at the last tick, in place of the timer.
     timer_at: u64 = 0,
-    /// The port's: how far the platform's time has run past the last tick, as a share of a tick,
+    /// OpenReliant's: how far the platform's time has run past the last tick, as a share of a tick,
     /// which `stepFraction` draws between the ticks by.
     past_tick: f32 = 0,
 
@@ -421,13 +421,13 @@ const avoid_widening: f32 = 10000;
 const avoid_steps: f32 = 50;
 const avoid_margin: f32 = 2000;
 
-/// `avoidance_scan` (`0x00492190`): for a ship whose current order avoids (`orders.Flags.avoidance`)
-/// and that has no `no_avoidance`, the objects it could hit, for the avoidance code
-/// (`ai.avoidNear`, `ai.avoidAhead`), up to ten of each: those that list components whose spheres,
-/// 10000 wider, overlap its own where the step takes them both; and, where the ship lists none
-/// itself, the rest it is on course to hit within 50 steps by 2000. It passes over stand-ins,
-/// disabled and jumping objects, planets, the ship itself, what it fights, and what either passes
-/// through the other.
+/// `avoidance_scan` (`0x00492190`): for a ship whose current order avoids
+/// (`orders.Flags.avoidance`) and that has no `no_avoidance`, the objects it could hit, for the
+/// avoidance code (`ai.avoidNear`, `ai.avoidAhead`), up to ten of each: those that list components
+/// whose spheres, 10000 wider, overlap its own where the step takes them both; and, where the ship
+/// lists none itself, the rest it is on course to hit within 50 steps by 2000. It passes over
+/// stand-ins, disabled and jumping objects, planets, the ship itself, what it fights, and what
+/// either passes through the other.
 ///
 /// Not ported: in a multiplayer game, the other players' ships a ship passes by.
 fn avoidanceScan(world: gameobj.World, index: u16) void {
@@ -540,10 +540,10 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     try srcore.render(arena, context, scene, driver, frame.overlay);
 }
 
-/// Where `mission_frame` holds `detail_divisor` (`srapi.Context.detail`) at the high detail
-/// setting on a machine that keeps up: it raises it by 0.05 each frame whose timed sections take
-/// under 1/60 s, up to 3, and lowers it by 0.5 each frame over 1/40 s, down to 1.5. The port holds
-/// it at the top.
+/// Where `mission_frame` holds `detail_divisor` (`srapi.Context.detail`) at the high detail setting
+/// on a machine that keeps up: it raises it by 0.05 each frame whose timed sections take under 1/60
+/// s, up to 3, and lowers it by 0.5 each frame over 1/40 s, down to 1.5. OpenReliant holds it at
+/// the top.
 pub const high_detail: f32 = 3;
 
 /// How far the finer levels of detail reach (`srapi.Context.finer`).
@@ -566,7 +566,7 @@ pub const DetailReach = enum {
 /// How much a frame may draw (`srapi.Context.budget`).
 pub const DrawBudget = enum {
     /// **Improvement:** ten times the original's, 200000 vertices and as many polygons, which
-    /// a current computer draws with ease. The port keeps up to 4000 burning bits where the
+    /// a current computer draws with ease. OpenReliant keeps up to 4000 burning bits where the
     /// original keeps 500 (`explode.BitPool`), and a view full of them and of a split's bodies
     /// takes the original's budget; since the layers are drawn from what went in last, the bits
     /// then crowd out the ships' parts, which vanish while the view is full.
@@ -728,7 +728,7 @@ test "the passes draw a cloaked object through its cloak" {
 /// start unprojects its corners to 1000 in front of the camera, and the object stands in the
 /// camera's frame, so it keeps its place on the screen.
 ///
-/// **Improvement.** The port keeps it on the radar as the display is scaled: its corners are
+/// **Improvement.** OpenReliant keeps it on the radar as the display is scaled: its corners are
 /// measured in the display's pixels from where the radar stands, and worked out again each frame
 /// for the window's size.
 pub const RadarBacking = struct {

@@ -1,14 +1,14 @@
 //! `C:\lancer\game\Create.cpp`: creating live objects. `create_object` (`0x00466C10`) fills a slot
-//! of `game_objects`, which the port keeps in `Objects`, with an object of a ship type, and
+//! of `game_objects`, which OpenReliant keeps in `Objects`, with an object of a ship type, and
 //! `objects_reset` (`0x00466630`) fills every slot with a stand-in as a mission starts.
 //! `stats_load_ships` (`0x00466500`) fills `ship_flight_stats` and `ship_combat_stats` from
 //! `shipstats.bin`, [`formats/stats.zig`](../../formats/stats.zig).
 //! [`create/models.zig`](create/models.zig) names each ship type's and attachment's models, and
 //! [`create/combat.zig`](create/combat.zig) holds the combat stats' words that the executable
 //! keeps, and [`create/library.zig`](create/library.zig) reads the models the types and their
-//! attachment points use. **Unverified:** the loader, `objects_reset`, `ship_type_load` and the ship type table lie
-//! between `collision.cpp`'s code and data and this file's, and `object_reset` and
-//! `objects_update` after this file's known code, before `environfx.cpp`'s.
+//! attachment points use. **Unverified:** the loader, `objects_reset`, `ship_type_load` and the
+//! ship type table lie between `collision.cpp`'s code and data and this file's, and `object_reset`
+//! and `objects_update` after this file's known code, before `environfx.cpp`'s.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -236,8 +236,8 @@ pub const ShipCombat = extern struct {
         return @floatFromInt(combat.armor_class * 6);
     }
 
-    /// A quadrant's armour as `create_object` fills it, one short of `fullArmor`, which the armour's
-    /// conditions and warning count from (`main.armorConditions`).
+    /// A quadrant's armour as `create_object` fills it, one short of `fullArmor`, which the
+    /// armour's conditions and warning count from (`main.armorConditions`).
     pub fn startingArmor(combat: *const ShipCombat) f32 {
         return combat.fullArmor() - 1;
     }
@@ -260,7 +260,8 @@ pub const ShipCombat = extern struct {
     }
 };
 
-/// An entry of `ship_types`, one for each ship type; [`create/models.zig`](create/models.zig) has the names.
+/// An entry of `ship_types`, one for each ship type; [`create/models.zig`](create/models.zig) has
+/// the names.
 pub const ShipType = extern struct {
     model_name: Pointer(u8),
     schematic_name: Pointer(u8),
@@ -295,7 +296,7 @@ pub const MountedModel = extern struct {
 };
 
 /// A ship type's model as `ship_type_load` (`0x00466740`) loads it for the type's first object.
-/// It loads the type's schematic as well, which the port leaves with whoever loads the model,
+/// It loads the type's schematic as well, which OpenReliant leaves with whoever loads the model,
 /// since the display draws it.
 pub const Type = struct {
     model: *const shp.Model,
@@ -328,7 +329,7 @@ pub const TypeUse = struct {
 /// player's ship and this slot's object are drawn.
 pub const cutaway_slot: u16 = gameobj.max_objects - 1;
 
-/// A slot of `game_objects`: the object's record, and what the port keeps beside it where the
+/// A slot of `game_objects`: the object's record, and what OpenReliant keeps beside it where the
 /// record holds the original's 32-bit pointers.
 pub const Slot = struct {
     object: GameObject,
@@ -453,10 +454,10 @@ pub const Objects = struct {
     /// port keeps them here, beside the objects they fly among.
     bullets: guns.Bullets = .{},
     /// The missiles in flight (`0x005887F0`), which the game keeps in `missiles.cpp`'s own globals.
-    /// The port keeps them here too.
+    /// OpenReliant keeps them here too.
     missiles: missiles.Missiles = .{},
     /// The player's wing (`player_wing`, `0x00515D88`), which the game keeps in `mission.cpp`'s
-    /// own globals and a mission lists (`mission.listPlayerWing`). The port keeps it here too.
+    /// own globals and a mission lists (`mission.listPlayerWing`). OpenReliant keeps it here too.
     wing: WingSlots = @splat(null),
     /// The working lists of the collision sweep `objectsUpdate` runs.
     sweep: Sweep = .{},
@@ -466,7 +467,7 @@ pub const Objects = struct {
     /// The sphere the action keeps to.
     action_sphere: aigeneric.ActionSphere = .default,
     /// The ships whose engine exhaust burns the player's ship, which the game keeps in
-    /// `environfx.cpp`'s own globals. The port keeps them here, as `create_object` adds to them.
+    /// `environfx.cpp`'s own globals. OpenReliant keeps them here, as `create_object` adds to them.
     exhaust: environfx.Exhaust = .{},
 
     /// Every slot standing in, as a mission's start leaves them (`reset`), made in `gpa`.
@@ -485,8 +486,8 @@ pub const Objects = struct {
 
     /// `objects_reset` (`0x00466630`), as a mission starts: every slot gets a new stand-in, of
     /// `gameobj.Type.stand_in` and flagged `stand_in` (`object_alloc`), no slot is handed out, and
-    /// no ship type has objects or a model loaded. The port lets go of the objects' nodes as well,
-    /// which the game frees as the mission before ends.
+    /// no ship type has objects or a model loaded. OpenReliant lets go of the objects' nodes as
+    /// well, which the game frees as the mission before ends.
     ///
     /// Not ported: the planets' atmospheres, whose texture it loads and whose table it empties.
     pub fn reset(all: *Objects, random: *libcmt.Rand) void {
@@ -535,7 +536,7 @@ pub const Objects = struct {
     /// every slot, so an object created on the way is walked as well.
     ///
     /// **Improvement:** with every slot handed out, the cutaway slot comes round again and again in
-    /// the game's loops, which never end; the port walks it once.
+    /// the game's loops, which never end; OpenReliant walks it once.
     pub const Walk = struct {
         all: *const Objects,
         at: u16 = 0,
@@ -621,9 +622,10 @@ pub fn wreckMade(world: gameobj.World, index: u16) void {
 /// for each fuel pod.
 ///
 /// Not ported: the components (#40); what it does for capital ships, planets, gates and other
-/// single types but the wrecks (#233, `wreckMade`); for a player's slot, the ship and the missiles the player chose on the loadout
-/// screen (#44), where the port fits a player's ship by the tier as the game does when the briefing
-/// is skipped, and its `t_` twin from the 14th mission on; and what differs in a multiplayer game.
+/// single types but the wrecks (#233, `wreckMade`); for a player's slot, the ship and the missiles
+/// the player chose on the loadout screen (#44), where OpenReliant fits a player's ship by the tier
+/// as the game does when the briefing is skipped, and its `t_` twin from the 14th mission on; and
+/// what differs in a multiplayer game.
 pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, ship_type: gameobj.Type, tier: i32, at: Vector, random: *libcmt.Rand) Error!u16 {
     const index = wanted orelse all.count;
     if (index >= gameobj.max_objects) return error.Overrun;
@@ -937,7 +939,7 @@ pub fn objectsUpdate(world: gameobj.World) void {
 /// Sorting by the far end of each extent leaves every object that can reach a given one after it in
 /// the order, so each object is tested against those that follow while their extents still reach
 /// back to it. A pass that moves anything is followed by another, up to `passes` of them; the game
-/// puts a "collision" message on the screen when the last one still finds a pair, which the port
+/// puts a "collision" message on the screen when the last one still finds a pair, which OpenReliant
 /// leaves out.
 pub const Sweep = struct {
     entries: [gameobj.max_objects]Entry = @splat(.{}),
@@ -1017,7 +1019,7 @@ pub const Sweep = struct {
 /// a turret's own components come after the hull's. Each one is marked on its part, and a part the
 /// model marks as targetable becomes targetable.
 ///
-/// The game stops with a fatal error past `max_components`; the port leaves the rest unlisted,
+/// The game stops with a fatal error past `max_components`; OpenReliant leaves the rest unlisted,
 /// since nothing can name them.
 pub fn collectComponents(slot: *Slot) void {
     const model = if (slot.model) |*live| live else return;

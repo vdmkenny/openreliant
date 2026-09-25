@@ -25,7 +25,7 @@ mission number is invalid".
 
 A retail install carries two loose missions, `missions\mission18.dte` and `missions\mission25.dte`,
 which stand in for their archive copies. A mission added to the `missions` folder under a mission's
-name takes that mission's place the same way. The port finds the loose file whatever the case of
+name takes that mission's place the same way. OpenReliant finds the loose file whatever the case of
 its names, as Windows does, on every system
 ([`files.zig`](../../src/engine/files.zig)).
 
@@ -60,10 +60,10 @@ Last it starts the script's clock (`vm_clock_start`) and the script (`mission_sc
 mission's start then sets the game's object count to the mission's ship count, so the objects and
 the mission's ships share their numbers, and loads the model of each ship type the mission places.
 
-A mission may carry a name for OpenReliant in section 21, which the game binds into a local
-variable and never reads ([OpenReliant's mission name](../formats/dte.md#openreliants-mission-name)).
+A mission may carry a name for OpenReliant in section 21, which the game binds into a local variable
+and never reads ([OpenReliant's mission name](../formats/dte.md#openreliants-mission-name)).
 
-The port binds all 44 shipped missions. `openreliant missions` lists the missions a game's folder
+OpenReliant binds all 44 shipped missions. `openreliant missions` lists the missions a game's folder
 holds and binds each ([Platform](../port/platform.md)). A section that runs past the file fails to
 bind, where the game would read past its buffer.
 

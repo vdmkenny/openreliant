@@ -1,12 +1,13 @@
 //! The pause menu's items and how they are drawn: `menu_draw` (`0x0048DB00`) and the pieces the
 //! screens are made of. A screen is a list of `Item`s and what choosing each does; the widgets here
 //! (`buttons`, `Slider`, `Selector`) make the items the screens share and read what the pointer
-//! does to them. [`pause-menu.md`](../../../../docs/engine/pause-menu.md#menu-items) describes them.
+//! does to them. [`pause-menu.md`](../../../../docs/engine/pause-menu.md#menu-items) describes
+//! them.
 //!
 //! **Improvement.** The game lays a menu out in pixels about fractions of the screen, at the size
-//! of its art whatever the screen's. The port multiplies the pixels by `hud.scaleFor`, as it does
-//! the display's, so the menu keeps its proportions on a larger screen; at a scale of 1 it is the
-//! game's own layout.
+//! of its art whatever the screen's. OpenReliant multiplies the pixels by `hud.scaleFor`, as it
+//! does the display's, so the menu keeps its proportions on a larger screen; at a scale of 1 it is
+//! the game's own layout.
 
 const std = @import("std");
 const assert = std.debug.assert;

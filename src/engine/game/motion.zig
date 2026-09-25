@@ -15,8 +15,8 @@ const objects = @import("objects.zig");
 const GameObject = gameobj.GameObject;
 
 /// The routine `GameObject.motion` points at, which moves it for one update. `create_object` gives
-/// every object `motion_forward`. The orders select eight more, of which the port has those of the
-/// pilot's ejection; the rest aren't ported yet (#30), and docs/engine/objects.md lists them.
+/// every object `motion_forward`. The orders select eight more, of which OpenReliant has those of
+/// the pilot's ejection; the rest aren't ported yet (#30), and docs/engine/objects.md lists them.
 pub const Motion = enum {
     /// `motion_forward` (`0x004744C0`): the flight model thrusting ahead.
     forward,

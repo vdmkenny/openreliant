@@ -1,8 +1,8 @@
-//! `C:\lancer\game\guns.cpp`'s Nova Cannon: the Phoenix's gun, which the trigger charges rather than
-//! fires (`object_fire_guns`, `0x0047B1F0`) and which, let go, strikes everything straight ahead of
-//! the ship at once (`nova_release`, `0x0047B3D0`). Its beam shows for `beam_ticks`
-//! (`nova_beams_frame`, `0x00480690`, which `bullets_frame` runs), with strands spiralling along
-//! it after a full charge.
+//! `C:\lancer\game\guns.cpp`'s Nova Cannon: the Phoenix's gun, which the trigger charges rather
+//! than fires (`object_fire_guns`, `0x0047B1F0`) and which, let go, strikes everything straight
+//! ahead of the ship at once (`nova_release`, `0x0047B3D0`). Its beam shows for `beam_ticks`
+//! (`nova_beams_frame`, `0x00480690`, which `bullets_frame` runs), with strands spiralling along it
+//! after a full charge.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -329,7 +329,7 @@ pub fn release(world: gameobj.World, index: u16) void {
 ///
 /// **Fix:** the game takes where the beam enters the box, in the object's own frame, for a point in
 /// the world's, for the quadrant struck and the flare alike, which then land wherever that puts
-/// them. The port takes the point where it enters.
+/// them. OpenReliant takes the point where it enters.
 ///
 /// Not ported: in a multiplayer mission, a quarter of the damage.
 fn strike(world: gameobj.World, owner: u16, fired: f32) void {

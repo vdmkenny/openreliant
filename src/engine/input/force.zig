@@ -4,12 +4,12 @@
 //! (`force_hit_pushes`, `0x004BE060`).
 //!
 //! The game hands each file to the SideWinder Force Feedback SDK (`force_effects_read`,
-//! `0x004BDB10`, the SDK's `SWFF_CreateDIEffectFromFileEx`), whose Visual Force Effects server makes DirectInput effects of
-//! it, and starts them on the joystick. The port plays them itself instead, as rumble: each frame
-//! `Forces.motors` works out how hard every effect playing pushes at that moment, and the platform
-//! drives the controller's two motors by it. A waveform slower than `buzz_frequency` shakes the low
-//! motor as it swings; a faster one buzzes the high motor at its strength. The way an effect
-//! pushes, which a force-feedback joystick shows, rumble cannot
+//! `0x004BDB10`, the SDK's `SWFF_CreateDIEffectFromFileEx`), whose Visual Force Effects server
+//! makes DirectInput effects of it, and starts them on the joystick. OpenReliant plays them itself
+//! instead, as rumble: each frame `Forces.motors` works out how hard every effect playing pushes at
+//! that moment, and the platform drives the controller's two motors by it. A waveform slower than
+//! `buzz_frequency` shakes the low motor as it swings; a faster one buzzes the high motor at its
+//! strength. The way an effect pushes, which a force-feedback joystick shows, rumble cannot
 //! ([#244](https://github.com/vdmkenny/openreliant/issues/244)).
 //!
 //! **Improvement:** any controller that rumbles plays the effects, gamepads among them, where the
@@ -37,7 +37,7 @@ pub const Effect = enum {
     nc,
     missile,
     shake,
-    // The port's, from files the game ships but never reads (`Unread`).
+    // OpenReliant's, from files the game ships but never reads (`Unread`).
     shield,
     hullshock,
     hullshock1,
@@ -90,7 +90,7 @@ pub const HitShake = enum {
     with_force_feedback,
 };
 
-/// How the port plays the force feedback where it does more than the game.
+/// How OpenReliant plays the force feedback where it does more than the game.
 pub const Settings = struct {
     unread: Unread = .played,
     hit_shake: HitShake = .always,
@@ -199,8 +199,8 @@ pub const Forces = struct {
         if (!forces.playing(effect, now)) forces.start(effect, now);
     }
 
-    /// The port's, each frame the player's orders run (`Unread.played`): `Afterburn` plays as the
-    /// afterburner lights, and stops as it goes out.
+    /// OpenReliant's, each frame the player's orders run (`Unread.played`): `Afterburn` plays as
+    /// the afterburner lights, and stops as it goes out.
     pub fn afterburner(forces: *Forces, burning: bool, now: i32) void {
         defer forces.afterburning = burning;
         if (burning == forces.afterburning) return;
@@ -478,7 +478,7 @@ test Forces {
     try std.testing.expectEqual(100, forces.started.get(.shake));
     try std.testing.expectEqual(Motors{ .high = 0.3 }, forces.motors(150));
 
-    // An effect the game never reads plays only where the port lets it.
+    // An effect the game never reads plays only where OpenReliant lets it.
     forces.settings = .original;
     forces.start(.shield, 200);
     try std.testing.expect(!forces.playing(.shield, 200));

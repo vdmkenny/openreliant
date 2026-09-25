@@ -1,10 +1,11 @@
-//! `C:\lancer\surrender\surrenderlib\srClip.cpp`: the clipper, which the driver links in; the port
-//! follows `srd3d.dll`'s copy. `clip_triangle` (`0x1000BEB0`) cuts a polygon in the camera's frame
-//! by the planes of the view volume it crosses, the near plane, then left, right, top and bottom.
-//! A vertex a cut makes gets clip flags of its own (`SR_clip_vertex_set_clip_flags`,
-//! `0x1000C700`), against the sides as well as the near plane, and each plane they name joins
-//! those still to cut by: a cut through the near plane that lands off the screen is cut again by
-//! the sides it lies beyond. An object's portal cuts last (`portal_clip`, `0x004CCF30`).
+//! `C:\lancer\surrender\surrenderlib\srClip.cpp`: the clipper, which the driver links in;
+//! OpenReliant follows `srd3d.dll`'s copy. `clip_triangle` (`0x1000BEB0`) cuts a polygon in the
+//! camera's frame by the planes of the view volume it crosses, the near plane, then left, right,
+//! top and bottom. A vertex a cut makes gets clip flags of its own
+//! (`SR_clip_vertex_set_clip_flags`, `0x1000C700`), against the sides as well as the near plane,
+//! and each plane they name joins those still to cut by: a cut through the near plane that lands
+//! off the screen is cut again by the sides it lies beyond. An object's portal cuts last
+//! (`portal_clip`, `0x004CCF30`).
 
 const std = @import("std");
 
@@ -26,7 +27,7 @@ pub const Vertex = struct {
     colour: [4]f32,
     mesh_uv: [2][2]f32,
     generated: [2][2]f32,
-    /// The port's: its normal in the camera's frame, for a device that lights each pixel.
+    /// OpenReliant's: its normal in the camera's frame, for a device that lights each pixel.
     normal: Vector = @splat(0),
 
     /// `clip_vertex_between` (`0x1000C5E0`): the vertex `t` of the way from `a` to `b`, each
@@ -195,7 +196,7 @@ test clip {
 test "Vertex.between" {
     const a: Vertex = .{ .view = .{ 0, 0, 100 }, .colour = .{ 0, 0.5, 1, 1 }, .mesh_uv = @splat(.{ 0, 0 }), .generated = @splat(.{ 0, 0 }), .normal = .{ 0, 0, -1 } };
     const b: Vertex = .{ .view = .{ 40, 0, 200 }, .colour = .{ 1, 0.5, 0, 1 }, .mesh_uv = @splat(.{ 1, 2 }), .generated = @splat(.{ 0, 0 }), .normal = .{ 1, 0, 0 } };
-    // A quarter of the way along, each attribute alike, the port's normal among them.
+    // A quarter of the way along, each attribute alike, OpenReliant's normal among them.
     const c = a.between(b, 0.25);
     try std.testing.expectEqual(Vector{ 10, 0, 125 }, c.view);
     try std.testing.expectEqual([4]f32{ 0.25, 0.5, 0.75, 1 }, c.colour);

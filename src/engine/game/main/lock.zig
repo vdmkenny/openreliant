@@ -88,7 +88,7 @@ pub const Lock = struct {
     /// **Fix:** the game means to play a sound as the rings close (`stdsmp` 2), keeping its voice
     /// at `0x0057DFC0`, and to end it once they have; but nothing sets that voice to none first, so
     /// the sound never plays and the game ends the first voice every frame instead, cutting what
-    /// plays there. The port leaves the first voice alone, and the sound unplayed.
+    /// plays there. OpenReliant leaves the first voice alone, and the sound unplayed.
     ///
     /// Not ported: in a multiplayer game, the power-up a lock needs.
     pub fn frame(lock: *Lock, world: gameobj.World, ring: *missile_display.Ring) void {

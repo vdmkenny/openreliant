@@ -132,7 +132,7 @@ const Sides = std.meta.Int(.unsigned, @intFromEnum(Cuts.three));
 /// **Improvement:** the game makes each polygon a plain one, which turns a strip's odd members
 /// inside out, and gives it the source's plane unturned with its distance left at 0, so the
 /// piece's faces show and hide by the wrong planes; and it leaves the baked colours and the second
-/// pass's texture coordinates behind. The port keeps each polygon's kind, works the planes out
+/// pass's texture coordinates behind. OpenReliant keeps each polygon's kind, works the planes out
 /// from the piece's own corners, and carries the colours and coordinates, so a piece looks as its
 /// part did. It also leaves out the polygons in no surface, which draw nothing.
 pub fn cut(gpa: Allocator, frame: math.Place, source: Source, cuts: Cuts, random: *libcmt.Rand) Allocator.Error![max_pieces]?Piece {
@@ -393,8 +393,8 @@ fn stream(world: gameobj.World, trail: *particles.Emitter, from: math.Place) voi
 /// `first_speed` a step and up to `first_speed_range` more (`0x004DC820`, `0x004DC520`), turning up
 /// to `first_tumble` either way about each axis a tick (`0x004DC610`), trailing smoke for its
 /// flight, two to five seconds; the rest cut again, in two for the second and four for the third,
-/// each flying away at `second_speed` a step times the cuts (`0x004DC72C`). Each carries on with the
-/// ship's velocity, and moves at a quarter of that a tick.
+/// each flying away at `second_speed` a step times the cuts (`0x004DC72C`). Each carries on with
+/// the ship's velocity, and moves at a quarter of that a tick.
 const first_speed: f32 = 14;
 const first_speed_range: f32 = 10;
 const first_tumble: f32 = 0.04;

@@ -107,7 +107,7 @@ pub fn dustBrightness(distance_squared: f32, cube_mask: u32, motion: f32) f32 {
     return std.math.clamp((0.25 - distance_squared / (side * side)) * 16 / (motion * 100 + 1), 0, 1);
 }
 
-/// A star field as the port holds it (`stars_create`).
+/// A star field as OpenReliant holds it (`stars_create`).
 pub const Field = struct {
     kind: Stars.Kind,
     flags: srapiext.ObjectFlags = .{ .fresh = true },

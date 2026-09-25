@@ -202,7 +202,7 @@ vertex's colour is the sum, each channel then clamped to 1, of:
    normal's dot product with the light's forward axis, where that is positive.
 
 Point and directional lights add no alpha. A light reaches an object unless their light masks
-share a bit; an object whose mask is all ones takes no lights. The port adds the point and
+share a bit; an object whose mask is all ones takes no lights. OpenReliant adds the point and
 directional lights for each pixel instead, as many as its shader takes, with the same sums
 ([Renderer](../port/renderer.md#improvements)).
 
@@ -254,7 +254,7 @@ The Ripper is the exception, and `node_draw` names its parts outright: while it 
 draws only `Ripper_l_thrust` and `Ripper_r_thrust`, and while it backs up only its four
 `Ripper_Back_pincer` parts, whose plumes burn the other way.
 
-The port builds the meshes and draws the glows in `engine/game/environfx.zig` and
+OpenReliant builds the meshes and draws the glows in `engine/game/environfx.zig` and
 `engine/game/objects.zig`. Not ported: the Ripper's rule, which needs the motion routines it tells
 its states apart by.
 
@@ -282,11 +282,11 @@ own class, so a component's damaged model is lit separately from its intact one.
 class that holds a light takes baked colours for all of its levels, which is what the part flag
 `has_static_light` marks (`static_lights_bake`, `0x004A4310`).
 
-`mesh_light` takes an object's own colours (flag `0x80000`) in place of its mesh's baked colours,
-so a model that can cloak, whose parts have colours of their own for the [cloak](cloak.md), never
-shows its static lights: of the shipped models, the Basilisk's red light at its tail.
-**Fix:** the port adds the mesh's baked colours to the object's own; their alpha is nothing, so the
-cloak's see-through hull stays as clear.
+`mesh_light` takes an object's own colours (flag `0x80000`) in place of its mesh's baked colours, so
+a model that can cloak, whose parts have colours of their own for the [cloak](cloak.md), never shows
+its static lights: of the shipped models, the Basilisk's red light at its tail. **Fix:** OpenReliant
+adds the mesh's baked colours to the object's own; their alpha is nothing, so the cloak's
+see-through hull stays as clear.
 
 Drawing a light is another matter. `node_mount_light` (`0x00499730`) makes up to two nodes of each
 light attachment, and `node_draw` (`0x0049A8C0`) draws them at the light's place on the part that
@@ -306,8 +306,8 @@ carries it:
   there is none for an object of type 13, the Yamato.
 
 The drawing takes more ids than the baking does: 0 blue, 1 green, 2 yellow, 3 red, 4 cyan and 5
-white, with the lamp paler: (0.2, 0.5, 1), (0.5, 1, 0.5), (1, 1, 0.5), (1, 0.5, 0.2), (0.5, 1, 1) and
-white. A light of id 4 or 5 is therefore drawn in its own colour but bakes nothing, since the
+white, with the lamp paler: (0.2, 0.5, 1), (0.5, 1, 0.5), (1, 1, 0.5), (1, 0.5, 0.2), (0.5, 1, 1)
+and white. A light of id 4 or 5 is therefore drawn in its own colour but bakes nothing, since the
 baking knows only the first four.
 
 A light blinks by its two blink values, the first how long it stays on and the second how long it
@@ -360,14 +360,14 @@ by its own colours, black at three quarters (flag `0x40000`), and blended by alp
 The start unprojects its corners to 1000 in front of the camera, and the object stands in the
 camera's own frame, so it keeps its place on the screen.
 
-**Improvement:** the port measures the backing's corners in the display's pixels from where the
+**Improvement:** OpenReliant measures the backing's corners in the display's pixels from where the
 radar stands, and works them out again each frame, so it stays under the radar as the display is
 scaled.
 
 ## Highlight textures
 
-The driver makes eight 64x64 grey textures at start-up (`make_highlight`, `0x10001620`), brightest at
-the centre. For texel `(x, y)`, with `d` its distance from the centre in half-widths, the vector
+The driver makes eight 64x64 grey textures at start-up (`make_highlight`, `0x10001620`), brightest
+at the centre. For texel `(x, y)`, with `d` its distance from the centre in half-widths, the vector
 `((2x - 64) / 64, (2y - 64) / 64)`, and `e` 1.01, 2.01, 5.01 or 10.01 for index 0 to 3:
 
 - `I = ((P * (1 - d))^e + 0.4) / 1.4` inside the circle, `0.4 / 1.4` outside it, where

@@ -759,7 +759,7 @@ const end_wave_life = 500;
 /// only as it empties a reserve, the fore's while it holds any, else the aft's; with neither
 /// holding anything, or on any other quadrant, it does the player's shields no harm. Every other
 /// hit on the player's shields, a shot's, a knock's and a shockwave's, draws the reserve of the
-/// side struck and then reaches the shield, so the port takes a missile's the same way.
+/// side struck and then reaches the shield, so OpenReliant takes a missile's the same way.
 ///
 /// Not ported: in a multiplayer mission, the shield damage five times over.
 fn collide(world: gameobj.World, at: u8) bool {
@@ -823,7 +823,7 @@ fn stop(world: gameobj.World, at: u8) bool {
 /// missile stops and ends.
 ///
 /// **Fix.** Where the segment meets no part's box, the game still reports contact without ending
-/// the missile, which is then left out of the frame's drawing and flies on; the port reports
+/// the missile, which is then left out of the frame's drawing and flies on; OpenReliant reports
 /// none, and draws it.
 fn hitHull(world: gameobj.World, at: u8, index: u16, struck: collision.Quadrant) bool {
     const all = world.objects;
@@ -840,8 +840,8 @@ fn hitHull(world: gameobj.World, at: u8, index: u16, struck: collision.Quadrant)
 }
 
 /// `missile_hit_components` (`0x00495AC0`): for an object that lists components, the face of its
-/// parts, or of the models mounted on it, the segment meets (`objects.hitSegment`); but for a
-/// Havoc or an Imp, the hit leaves what it leaves on the part (`shieldfx.componentHit`) and the part
+/// parts, or of the models mounted on it, the segment meets (`objects.hitSegment`); but for a Havoc
+/// or an Imp, the hit leaves what it leaves on the part (`shieldfx.componentHit`) and the part
 /// takes the type's component damage. The missile stops and ends.
 fn hitComponents(world: gameobj.World, at: u8, index: u16) bool {
     const all = world.objects;

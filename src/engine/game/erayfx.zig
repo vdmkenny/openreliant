@@ -125,7 +125,7 @@ pub const Ray = struct {
     /// When it last moved on (`+0x24`), or null before it first does.
     moved: ?i32 = null,
     /// When it last lit or went dark (`+0x28`), how long it stays lit (`+0x2C`) and dark (`+0x30`).
-    /// The game leaves the first two unset; the port starts them at nothing, so a flickering ray
+    /// The game leaves the first two unset; OpenReliant starts them at nothing, so a flickering ray
     /// goes dark on its first frame.
     changed: i32 = 0,
     lit_for: i32 = 0,

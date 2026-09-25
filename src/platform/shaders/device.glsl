@@ -1,5 +1,5 @@
 // The device's shader: what Direct3D 7's fixed function did with the vertices Surrender's driver
-// hands over, for SDL's GPU interface, with the port's lighting of each pixel and its shadows. `make shaders` compiles the vertex stage, with VERTEX
+// hands over, for SDL's GPU interface, with OpenReliant's lighting of each pixel and its shadows. `make shaders` compiles the vertex stage, with VERTEX
 // defined, and the fragment stage, with FRAGMENT, into SPIR-V, and from that into Metal's
 // language. The platform layer embeds what it makes (src/platform/gpu.zig).
 #version 450

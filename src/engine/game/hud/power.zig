@@ -4,7 +4,7 @@
 //!
 //! The ball is a sphere textured with `powerball.tga` and lit from the front and above. The
 //! texture scrolls with the power setting, so the ball looks as if it turns toward wherever the
-//! power is. The game writes it into the display a pixel at a time; the port writes the same
+//! power is. The game writes it into the display a pixel at a time; OpenReliant writes the same
 //! pixels into an image each frame and draws that.
 
 const std = @import("std");
@@ -43,7 +43,7 @@ pub const image_width = size + most_jitter;
 /// A step across the ball, from one pixel to the next: its radius is 1 in the tables' sums.
 const step: f32 = 1.0 / 31.0;
 
-/// The tables the ball is drawn from, and the image the port draws it into.
+/// The tables the ball is drawn from, and the image OpenReliant draws it into.
 pub const Ball = struct {
     /// `powerball.tga`'s levels, a byte a pixel, top row first (`0x00569984`). The image is grey,
     /// and `hud_init` keeps the top 5 bits of each pixel's first channel.

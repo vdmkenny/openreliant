@@ -2,9 +2,9 @@
 
 While a mission is paused, the game draws a configuration menu in place of the head-up display. The menu has a main screen and screens for audio, video and control settings; multiplayer has its own screen. The mouse drives the menu, and Escape backs out of it.
 
-**Unverified:** the source file's name. The menu's code (`0x0048D820` to `0x004906F0`) and its data lie between `hudmovie.cpp`'s and `language.cpp`'s in link order ([Source files](../binary/sources.md)), and no assertion names the file. The port calls it `hudoptions.cpp`: it sorts between those two, and the menu draws through the display's pane in `hud_draw`'s place. `game_pause` and `mission_paused_frame` lie between `language.cpp` and `main.cpp`'s first placed function, and `paused` among `main.cpp`'s variables, so they are taken to be `main.cpp`'s.
+**Unverified:** the source file's name. The menu's code (`0x0048D820` to `0x004906F0`) and its data lie between `hudmovie.cpp`'s and `language.cpp`'s in link order ([Source files](../binary/sources.md)), and no assertion names the file. OpenReliant calls it `hudoptions.cpp`: it sorts between those two, and the menu draws through the display's pane in `hud_draw`'s place. `game_pause` and `mission_paused_frame` lie between `language.cpp` and `main.cpp`'s first placed function, and `paused` among `main.cpp`'s variables, so they are taken to be `main.cpp`'s.
 
-## In the port
+## In OpenReliant
 
 [`game/hudoptions.zig`](../../src/engine/game/hudoptions.zig) holds the menu and its screens, with the items, their drawing and the widgets the screens share in [`hudoptions/menu.zig`](../../src/engine/game/hudoptions/menu.zig) and the screens in [`hudoptions/screens.zig`](../../src/engine/game/hudoptions/screens.zig); `game_pause` is in [`game/main.zig`](../../src/engine/game/main.zig). Ported so far: pausing and resuming, the paused frame's outcomes, the menu's items and pointer, and the main, audio and video screens, which save to `starlancer.ini` as the game does. Not yet: the controls screen and F1 ([#210](https://github.com/vdmkenny/openreliant/issues/210)), the multiplayer screen ([#211](https://github.com/vdmkenny/openreliant/issues/211)), and the brightness slider, which stays hidden as it does where hardware cannot set it ([#209](https://github.com/vdmkenny/openreliant/issues/209)). The sandbox's RESTART starts the sandbox again and its LEAVE MISSION quits.
 
@@ -167,8 +167,9 @@ Entering keeps `cockpit_mode_setting` and the brightness (`sr + 0x15FA`) for CAN
 - DEFAULT VIEW (`0x28A`): the arrow box, shape `0x178`, placed `0x13` at (0.5 W - 16, 0.5 H + 30),
   its label right-aligned at (-41, -6). Its halves are hover-only items: `0x179` at x offset -33
   goes back, `0x17A` at -16 forward, through the settings 0, 1 and 2, setting `cockpit_mode` 1, 2
-  and 0 to match: forward past 2 to 0, back before 0 to 2, and a setting out of range by one. The value is drawn left-aligned at (0.5 W + 16, 0.5 H + 24): COCKPIT VIEW
-  (`0x28B`), CHASE VIEW (`0x28C`) or NO COCKPIT VIEW (`0x57F`).
+  and 0 to match: forward past 2 to 0, back before 0 to 2, and a setting out of range by one. The
+  value is drawn left-aligned at (0.5 W + 16, 0.5 H + 24): COCKPIT VIEW (`0x28B`), CHASE VIEW
+  (`0x28C`) or NO COCKPIT VIEW (`0x57F`).
 - RESET DEFAULTS: brightness 1, `sr + 0x54`, and both `cockpit_mode_setting` and `cockpit_mode` 0
   (from `0x004E5C08`). Mode 0 is no cockpit where setting 0 is the cockpit.
 - CANCEL CHANGES: the kept values. OK: 1. Escape: 1.
@@ -195,7 +196,8 @@ CHANGES. Title `0x17A` CONTROL CONFIGURATION; the items are the table at `0x0050
   and its binding: SHIFT + K, CONTROL + K or K, with AND JOY n for a button. Alt is never shown. An
   empty binding shows ! NOT ASSIGNED ! (`0x5B1`) in yellow.
 - The scroll widget `0x17B` at (0.5 W + 63, 0.2 H + 36), with hover-only halves `0x17C` up and
-  `0x17D` down. Holding one scrolls by `frame_duration` a frame; the list then settles on whole rows.
+  `0x17D` down. Holding one scrolls by `frame_duration` a frame; the list then settles on whole
+  rows.
 - Clicking a row keeps its binding, clears it and waits for a key: each of the 89 keys of
   `key_names` (`0x004E5CD0`, a DirectInput code and a name in 0x24 bytes) with no modifier, Shift
   or Ctrl, then the joystick's buttons.
@@ -224,9 +226,9 @@ pane; leaving destroys it. Title `0xA9` PAUSED.
 - The message log and the chat line, with a `_` caret.
 - At (0.5 W, 0.2 H + 32) in the large font, `%s: %s` with the pausing player's name and Player has
   paused the game (`0x53E`), or Game paused due to bad connection. (`0x55A`).
-- With `mission_ending` 9, the session-lost dialog instead (`pause_session_lost`, `0x0048E370`): Your
-  session has been terminated due to a bad connection (`0x5F1`) and OK (`0x316`), which leaves (7)
-  as the button is released.
+- With `mission_ending` 9, the session-lost dialog instead (`pause_session_lost`, `0x0048E370`):
+  Your session has been terminated due to a bad connection (`0x5F1`) and OK (`0x316`), which leaves
+  (7) as the button is released.
 
 ### Unreachable screens (0 and 8)
 

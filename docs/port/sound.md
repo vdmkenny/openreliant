@@ -1,6 +1,6 @@
-# Sound in the port
+# Sound in OpenReliant
 
-The game's sound code ([Sound](../engine/sound.md)) calls the Miles Sound System. In the port it calls `mss.Driver` in [`engine/mss.zig`](../../src/engine/mss.zig), an interface with two players behind it: OpenAL Soft by default, and the port's own software mixer as the reference, which `--original` plays with. SDL3 plays either. Nothing of Miles is carried over but what its calls mean.
+The game's sound code ([Sound](../engine/sound.md)) calls the Miles Sound System. In OpenReliant it calls `mss.Driver` in [`engine/mss.zig`](../../src/engine/mss.zig), an interface with two players behind it: OpenAL Soft by default, and OpenReliant's own software mixer as the reference, which `--original` plays with. SDL3 plays either. Nothing of Miles is carried over but what its calls mean.
 
 | Module | In place of |
 |---|---|
@@ -14,9 +14,9 @@ The game's sound code ([Sound](../engine/sound.md)) calls the Miles Sound System
 
 ## The driver
 
-`mss.Driver` has a call for each `AIL_` function the game makes, named for it, on handles to samples, 3D samples and streams. A handle's status is Miles's: done once finished or never started, playing, or stopped part of the way. Samples, 3D samples and streams play a WAVE sound from memory the caller keeps, at a rate of their own, as many times as their loop count says (0 for ever). The game's decompression of its 3D sounds into PCM (`AIL_decompress_ADPCM`) has nothing to do in the port: both players decode IMA ADPCM themselves. A stream's loop block and position, byte offsets into its data, fall on the start of their ADPCM block.
+`mss.Driver` has a call for each `AIL_` function the game makes, named for it, on handles to samples, 3D samples and streams. A handle's status is Miles's: done once finished or never started, playing, or stopped part of the way. Samples, 3D samples and streams play a WAVE sound from memory the caller keeps, at a rate of their own, as many times as their loop count says (0 for ever). The game's decompression of its 3D sounds into PCM (`AIL_decompress_ADPCM`) has nothing to do in OpenReliant: both players decode IMA ADPCM themselves. A stream's loop block and position, byte offsets into its data, fall on the start of their ADPCM block.
 
-What Miles made of a volume or a pan, and how its providers placed a sound, is not known here; the port takes:
+What Miles made of a volume or a pan, and how its providers placed a sound, is not known here; OpenReliant takes:
 
 - A volume's share of 127 as its gain.
 - A 3D sample as DirectSound3D would have it, which the providers followed: full volume within its `min_distance`, falling off as the minimum over the distance and no further past its maximum; quietened by its cone when it faces away, to its outside volume past the outer angle; and shifted in pitch by its velocity along the line to the listener, against a speed of sound of 343 metres a second in Miles's units a millisecond. The velocity along that line is held within half the speed of sound either way.

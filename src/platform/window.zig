@@ -76,7 +76,7 @@ pub const Window = struct {
         return .{ @intCast(@max(width, 1)), @intCast(@max(height, 1)) };
     }
 
-    /// The next event waiting, or null. Alt and Enter, added for the port, switch between the
+    /// The next event waiting, or null. Alt and Enter, added for OpenReliant, switch between the
     /// window and the full screen, and do not reach the game.
     pub fn poll(window: *Window) ?Event {
         var event: c.SDL_Event = undefined;
@@ -130,8 +130,8 @@ pub const Window = struct {
         if (!c.SDL_SetWindowRelativeMouseMode(window.handle, held)) return fail("SDL_SetWindowRelativeMouseMode");
     }
 
-    /// Puts a frame drawn in memory, rows of red, green, blue and alpha from the top, on the screen,
-    /// scaled to the window.
+    /// Puts a frame drawn in memory, rows of red, green, blue and alpha from the top, on the
+    /// screen, scaled to the window.
     pub fn present(window: *Window, rgba: []const u8, width: u32, height: u32) Error!void {
         const frame = try window.frameOf(width, height);
         const mapped: [*]u8 = @ptrCast(c.SDL_MapGPUTransferBuffer(window.gpu, frame.transfer, true) orelse return fail("SDL_MapGPUTransferBuffer"));

@@ -1,12 +1,12 @@
 //! A software device: draws what the driver hands it the way Direct3D 7 rasterizes, into a colour
-//! buffer and a depth buffer. The port's reference: the same frame gives the same image on the GPU
-//! device.
+//! buffer and a depth buffer. OpenReliant's reference: the same frame gives the same image on the
+//! GPU device.
 //!
 //! Pixel centres lie at whole numbers, and a pixel whose centre lies on an edge belongs to the
 //! triangle whose top or left edge it is; screen positions are kept in sixteenths of a pixel.
 //! Colours and texture coordinates are interpolated in perspective, by the vertices' `rhw`, depth
-//! straight across the screen. Textures are sampled bilinearly, wrapping, from the mip level nearest
-//! to the texels a pixel spans.
+//! straight across the screen. Textures are sampled bilinearly, wrapping, from the mip level
+//! nearest to the texels a pixel spans.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;

@@ -71,8 +71,8 @@ pub const Kind = enum(u4) {
     pub const blasts = [_]Kind{ .blast_02, .blast_03, .blast_04 };
 };
 
-/// How a shockwave is set off: how far it spreads, over how long, drifting how far a tick, and whose
-/// it is.
+/// How a shockwave is set off: how far it spreads, over how long, drifting how far a tick, and
+/// whose it is.
 pub const Spec = struct {
     kind: Kind,
     size: f32,
@@ -92,8 +92,8 @@ pub const Shockwave = struct {
     object: srapiext.MeshObject,
     colours: [Roundness.round.corners()][4]f32,
     /// Where it is, how far through its life and how far it has spread at the frame's tick. The
-    /// game keeps the last in the ring's scale; the port draws the ring from these, further along
-    /// between the ticks (`Shockwaves.draw`).
+    /// game keeps the last in the ring's scale; OpenReliant draws the ring from these, further
+    /// along between the ticks (`Shockwaves.draw`).
     at: Vector,
     done: f32 = 0,
     reach: f32 = 0,
@@ -182,14 +182,14 @@ pub const Shockwave = struct {
         slot.orders[0].data = .{ .disrupted = .{ .ticks = @intFromFloat(strength * ticks), .push = push } };
     }
 
-    /// A torpedo's or a split's shockwave passing the player's ship shakes the view and damages each
-    /// quadrant (`harm`), unless the ship lists
-    /// components, is a stand-in, exploding or disabled, or another shockwave harmed it less than
-    /// `harm_pause` ticks ago. A shield's reserve takes it first: while the reserve holds, the
-    /// shield is spared, and once the reserve runs out the shield takes what the reserve held.
+    /// A torpedo's or a split's shockwave passing the player's ship shakes the view and damages
+    /// each quadrant (`harm`), unless the ship lists components, is a stand-in, exploding or
+    /// disabled, or another shockwave harmed it less than `harm_pause` ticks ago. A shield's
+    /// reserve takes it first: while the reserve holds, the shield is spared, and once the reserve
+    /// runs out the shield takes what the reserve held.
     ///
     /// **Improvement:** the game damages the player as if the attacker were object 16, whatever a
-    /// loop left in a register; the port names the shockwave's owner.
+    /// loop left in a register; OpenReliant names the shockwave's owner.
     /// What each quadrant takes as the shockwave passes, with `left` of its life to go: a
     /// torpedo's `torpedo_harm` of its size times `left`, a split's by its owner's type times the
     /// cube of `left`.

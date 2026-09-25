@@ -152,7 +152,7 @@ const unheard_own_flyby_views = [_]u8{ 0, 1, 2, 3, 0x0C, 0x0F };
 
 /// `sound3d_init` (`0x0049D160`), once a provider is open: `smp3d` the bank, each 3D voice given
 /// its class from the row for as many voices as there are, and the engine's and the afterburner's
-/// voice found. The game scales the table's distances into Miles's units here; the port scales
+/// voice found. The game scales the table's distances into Miles's units here; OpenReliant scales
 /// them where it uses them.
 pub fn init(sound: *Sound, smp3d: fat.Bank) void {
     const effects = &sound.effects;
@@ -449,7 +449,7 @@ fn flybys(sound: *Sound, scene: Scene) void {
         const cosine = math.dot(velocity, looking) / @sqrt(math.dot(velocity, velocity) * math.dot(looking, looking));
         const hostile = object.side == .hostile;
         if (cosine > @as(f32, if (hostile) 0.75 else 0)) continue;
-        // In a multiplayer game every ship sounds as a friendly one; the port has none.
+        // In a multiplayer game every ship sounds as a friendly one; OpenReliant has none.
         const which: sounds.Sound = if (hostile) .pass01 else .pass02;
         if (play(sound, scene, null, null, @intCast(index), which, 1, .flyby) != null) object.flyby_at = scene.clock.frame_start;
     }
@@ -473,7 +473,7 @@ const testing = struct {
     /// A bank as large as `smp3d.fat`'s entries reach, each sound a short PCM one.
     const bank_bytes = hog_snd.testing.bank(80);
 
-    /// A sound on the port's Miles with its provider's 32 voices open, and the effects set up.
+    /// A sound on OpenReliant's Miles with its provider's 32 voices open, and the effects set up.
     fn open(driver: mss.Driver, sound: *Sound) !void {
         sound.init(driver, 4, null);
         sound.open3D(try fat.Bank.parse(&bank_bytes));
@@ -495,7 +495,7 @@ test init {
     const driver = mixer.driver();
     var sound: Sound = undefined;
     try testing.open(driver, &sound);
-    // The port's provider has 32 voices, so each takes its class from the third row.
+    // OpenReliant's provider has 32 voices, so each takes its class from the third row.
     try std.testing.expectEqual(mss.max_3d_samples, sound.voice_3d_count);
     try std.testing.expectEqual(sounds.classes[2][0], sound.effects.classes[0]);
     try std.testing.expectEqual(Class.player_engines, sound.effects.classes[sound.engine_voice.?]);

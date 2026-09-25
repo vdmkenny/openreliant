@@ -68,8 +68,8 @@ pub const Chunks = struct {
 
     /// Each chunk flying goes into the world's layer, `ahead` of a tick past the frame's tick.
     ///
-    /// **Improvement:** the game draws a chunk where the frame's tick leaves it; the port draws it
-    /// that much further along and turned (`objects.pastTick`).
+    /// **Improvement:** the game draws a chunk where the frame's tick leaves it; OpenReliant draws
+    /// it that much further along and turned (`objects.pastTick`).
     pub fn draw(chunks: *Chunks, gpa: Allocator, scene: *srcore.Scene, ahead: f32) Allocator.Error!void {
         for (&chunks.ring.slots) |*slot| {
             const chunk = &(slot.* orelse continue);

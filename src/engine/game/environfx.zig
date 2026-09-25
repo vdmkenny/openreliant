@@ -1,4 +1,4 @@
-//! `C:\lancer\game\environfx.cpp`: the effects a mission's space is drawn with. The port has the
+//! `C:\lancer\game\environfx.cpp`: the effects a mission's space is drawn with. OpenReliant has the
 //! engine glows, the flares a ship's thrusters burn, which `engine_glows_build` (`0x00469620`)
 //! makes once at start-up and every ship's attachments of kind `engine_glow` then draw, and the
 //! capital ships' exhaust, which burns the player's ship flying into it (`Exhaust`). The file also
@@ -81,7 +81,8 @@ const sort_bias: f32 = -10;
 /// A flare's material: added to what stands behind it, unlit, with the mesh's own coordinates.
 const flare_material: srapiext.Material = .onePass(.{ .coordinates = .mesh, .lit = false, .blend = .add });
 
-/// The material a glow's nozzle draws with, and the one its blades draw with (`engine_glows_build`).
+/// The material a glow's nozzle draws with, and the one its blades draw with
+/// (`engine_glows_build`).
 const nozzle_materials = materialNames("matflarea");
 const blade_materials = materialNames("matflareb");
 
@@ -173,8 +174,8 @@ pub const Exhaust = struct {
     /// `exhaust_ship_add` (`0x004699E0`): the object in slot `index` listed, where it lists
     /// components and carries an engine glow (`0x00469BC0`).
     ///
-    /// **Fix:** the game lists past its room, for a list that a slot made again has grown; the port
-    /// lists no more.
+    /// **Fix:** the game lists past its room, for a list that a slot made again has grown;
+    /// OpenReliant lists no more.
     fn add(exhaust: *Exhaust, all: *const create.Objects, index: u16) void {
         const slot = &all.slots[index];
         if (!slot.object.flags.components) return;
@@ -193,9 +194,9 @@ pub const Exhaust = struct {
     }
 
     /// `exhaust_burn` (`0x00469850`), once a frame as `mission_frame` runs: while the player's ship
-    /// flies under Player Control, each listed ship whose throttle is not at nothing, and whose reach
-    /// of `reach_radii` of its radius meets the player's ship, measures how deep the player's ship
-    /// stands in its exhaust (`depth`), by its throttle and its engines. Anywhere in it, the
+    /// flies under Player Control, each listed ship whose throttle is not at nothing, and whose
+    /// reach of `reach_radii` of its radius meets the player's ship, measures how deep the player's
+    /// ship stands in its exhaust (`depth`), by its throttle and its engines. Anywhere in it, the
     /// display's red keeps away (`burning`). The screen's flash lasts `flash_per_depth` ticks for
     /// each of the depth, which also cuts short a flash where the depth is nothing, and on a tick
     /// that `burn_ticks` divides, a depth above nothing burns the ship on its fore quadrant as a
@@ -204,7 +205,7 @@ pub const Exhaust = struct {
     /// The ships meet where the distance between them, squared, is no more than the reach squared
     /// and the player's ship's radius squared together, as the game has it.
     ///
-    /// The game lets go of `burning` each time round its loop (`mission_run`); the port as this
+    /// The game lets go of `burning` each time round its loop (`mission_run`); OpenReliant as this
     /// starts.
     pub fn burn(exhaust: *Exhaust, world: gameobj.World) void {
         const all = world.objects;

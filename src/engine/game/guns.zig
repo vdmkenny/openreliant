@@ -162,7 +162,8 @@ pub const Fitted = struct {
 };
 
 /// What a gun stands on: no turret, or one of the turrets a turret part makes of its assembly by
-/// its turret kind (`shp.Part.TurretKind`), with what it keeps ([`guns/turrets.zig`](guns/turrets.zig)).
+/// its turret kind (`shp.Part.TurretKind`), with what it keeps
+/// ([`guns/turrets.zig`](guns/turrets.zig)).
 pub const Turret = union(enum) {
     /// A gun that does not move, which fires by its object's trigger (kind 0).
     fixed: Barrel,
@@ -636,7 +637,7 @@ pub const held_ticks: i32 = 1;
 /// (`nova.charges`, `nova.charge`).
 ///
 /// **Fix:** the game reads a missile turret's gun type, of a muzzle it has none of, and a
-/// destroyed turret's; the port passes over a gun with no barrel.
+/// destroyed turret's; OpenReliant passes over a gun with no barrel.
 ///
 /// Not ported: `0x004BA780`, which the player's trigger runs last.
 pub fn fire(object: *gameobj.GameObject, trigger: Trigger, ticks: i32) void {
@@ -1122,8 +1123,8 @@ test heard {
 // --- Bullets -----------------------------------------------------------------------------------
 
 /// The shots in flight (`0x00563148`): the game keeps 200 records of `0xC4` bytes and links the
-/// live ones into a list, newest first; the port keeps the same 200 and walks them in order, which
-/// tells only in which order two shots that land on one object in a frame are dealt with.
+/// live ones into a list, newest first; OpenReliant keeps the same 200 and walks them in order,
+/// which tells only in which order two shots that land on one object in a frame are dealt with.
 pub const max_bullets = 200;
 
 /// The objects one shot is tested against (`bullet_place`).
@@ -1270,7 +1271,7 @@ fn shotColour(player: bool, side: gameobj.Side(i32)) [3]f32 {
 /// far it could travel meanwhile, the shot's path comes within. The frame pass tests only those
 /// (`bulletHit`).
 ///
-/// The shot is drawn with its type's bolt where the port has one (`Bolts`).
+/// The shot is drawn with its type's bolt where OpenReliant has one (`Bolts`).
 ///
 /// It casts a light while it is one of the latest two of its ring (`Bullets.Ring`), or for its
 /// whole flight under `ShotLights.every_shot`.
@@ -2132,7 +2133,7 @@ test "only the latest two shots of a ring cast a light" {
     try std.testing.expect(!bullets.pool[2].live);
 }
 
-test "every shot casts a light where the port lets them" {
+test "every shot casts a light where OpenReliant lets them" {
     const gpa = std.testing.allocator;
     var ship: testing.Ship = undefined;
     try ship.init(gpa);
@@ -2246,9 +2247,9 @@ pub const Image = enum {
 /// The meshes the shots are drawn with, which `guns_init` builds once.
 ///
 /// The game builds each twice, one set for the player's side and one for the rest, and the two are
-/// the same but for the Turret Lasers' rings, so the port builds the rest once. It also builds four
-/// Messon Blaster bolts where the shots use three, and four Vulcan Battery bolts that are the same,
-/// which the port builds once.
+/// the same but for the Turret Lasers' rings, so OpenReliant builds the rest once. It also builds
+/// four Messon Blaster bolts where the shots use three, and four Vulcan Battery bolts that are the
+/// same, which OpenReliant builds once.
 pub const Shape = enum {
     laser,
     messon_0,
@@ -2550,7 +2551,7 @@ pub fn meshMaterial(lit: bool) srapiext.Material {
 /// nothing reads them here: every shot is never culled and lit by nothing but its own colours.
 ///
 /// `mesh_create` gives the mesh's one run of polygons as many as it has vertices, so the game walks
-/// empty polygons after the real ones, which draw nothing; the port's run holds the real ones.
+/// empty polygons after the real ones, which draw nothing; OpenReliant's run holds the real ones.
 pub fn meshOf(
     comptime n: u16,
     gpa: Allocator,
@@ -2624,8 +2625,8 @@ fn flarePiece(looks: *const Looks, image: Image, half: f32, offset: Vector) Piec
     };
 }
 
-/// `bullet_build` (`0x0047D9A0`): what a new shot of its type is drawn with. `turn` is the muzzle's,
-/// which the first piece takes.
+/// `bullet_build` (`0x0047D9A0`): what a new shot of its type is drawn with. `turn` is the
+/// muzzle's, which the first piece takes.
 fn dress(bullet: *Bullet, looks: *const Looks, random: *libcmt.Rand, turn: math.Matrix) void {
     // Which set of shapes and textures a shot takes, and which half of the shot texture. The game
     // tests the side for the one and whether it is hostile for the other.
@@ -2858,8 +2859,8 @@ fn fade(bullet: *const Bullet, clock: *const Clock, record: Gun) f32 {
 /// The shots in flight, added to the world's layer as `bullets_frame` adds them once it has placed
 /// them, with the lights they cast where the renderer is a hardware one.
 ///
-/// The game gives a shot no light at all on its software renderer (`sr + 0x1AC`); the port gives it
-/// one and leaves it out here, which shows the same.
+/// The game gives a shot no light at all on its software renderer (`sr + 0x1AC`); OpenReliant gives
+/// it one and leaves it out here, which shows the same.
 pub fn drawBullets(gpa: Allocator, scene: *srcore.Scene, bullets: *Bullets, lights: bool) Allocator.Error!void {
     for (&bullets.pool) |*bullet| {
         if (!bullet.live) continue;

@@ -1,4 +1,4 @@
-//! The fixed tables the game keeps its effects in, as the port holds them. Not from any file of
+//! The fixed tables the game keeps its effects in, as OpenReliant holds them. Not from any file of
 //! the original: its tables find a slot for a new record in one of two ways, which these share.
 
 const std = @import("std");

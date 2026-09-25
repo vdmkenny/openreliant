@@ -3,7 +3,7 @@
 //!
 //! `create_object` (`0x00466C10`) fills a slot of `game_objects`, which it calls the GO array: 400
 //! pointers to objects, a mission ship's slot being its index among the mission's ship records.
-//! [`create.Objects`](create.zig) is the port's. Each object embeds the root of a hierarchy of
+//! [`create.Objects`](create.zig) is OpenReliant's. Each object embeds the root of a hierarchy of
 //! nodes, one for each part of its model.
 
 const std = @import("std");
@@ -52,8 +52,9 @@ pub const Routine = engine.Code("void __fastcall (int slot)");
 pub const max_objects = 400;
 
 /// Whose side something is on: an object's (`GameObject.side`, four bytes) and a ship type's
-/// (`create.ShipCombat.side`, two). The Alliance's types start friendly and the Coalition's hostile;
-/// `SetHostile` makes an object one or the other. Two objects on different sides are enemies.
+/// (`create.ShipCombat.side`, two). The Alliance's types start friendly and the Coalition's
+/// hostile; `SetHostile` makes an object one or the other. Two objects on different sides are
+/// enemies.
 pub fn Side(comptime Tag: type) type {
     return enum(Tag) {
         /// On the player's side.
@@ -69,7 +70,8 @@ pub fn Side(comptime Tag: type) type {
 /// keeps its armour whole (`collision.armorDamage`).
 pub const Invulnerability = enum(u8) {
     none = 0,
-    /// Only a player's ship can harm it: an ejected pilot, until it is picked up (`order_eject_spin`).
+    /// Only a player's ship can harm it: an ejected pilot, until it is picked up
+    /// (`order_eject_spin`).
     player_can_hit = 1,
     /// Nothing harms it: what the Ripper has grabbed, and some types as they are created.
     full = 2,
@@ -218,7 +220,7 @@ pub const Wing = enum(u16) {
 
 /// An object's type (`GameObject.type`): for a ship, missile, mine or asteroid its record in
 /// `shipstats.bin`, and past those what else the game places, markers and nav points among them,
-/// which have no stats. The names are the port's, for the types the game's code singles out.
+/// which have no stats. The names are OpenReliant's, for the types the game's code singles out.
 pub const Type = enum(u32) {
     predator = 0x00,
     /// The Grendel, the Wolverine and the Reaper, whose guns fire rounds, which the gunnery display
@@ -522,8 +524,8 @@ pub const GameObject = extern struct {
     /// The parts of its model whose flags mark them as components, in the order `0x00468760`
     /// finds them: each node's marked children, then each child's in turn.
     components: [max_components]Component,
-    /// For an object that lists components, its part nodes by their numbers (`object_number_parts`),
-    /// which a shot's candidates name its parts by; null for any other.
+    /// For an object that lists components, its part nodes by their numbers
+    /// (`object_number_parts`), which a shot's candidates name its parts by; null for any other.
     part_nodes: Pointer(Pointer(objects.Node)),
     /// How many knocks, from collisions and explosions, the object has taken since its last move
     /// (`knock`). The next `object_move` applies them in place of the object's own motion
@@ -540,7 +542,7 @@ pub const GameObject = extern struct {
     angular_impulse: shp.Vec3,
     /// The inverse of the object's inertia tensor, which `object_recentre` builds from its parts
     /// (`object_bounds`) and inverts (`0x004AD9F0`). `applyKnocks` turns the angular impulse by it.
-    /// Not filled in by the port yet (#87).
+    /// Not filled in by OpenReliant yet (#87).
     angular_response: [9]f32,
     /// The turn applied to its orientation each update, which `object_steer` builds from the
     /// angular rates.
@@ -592,7 +594,7 @@ pub const GameObject = extern struct {
     /// What the explosions' routines note of it as it comes apart.
     ends: Ends,
     /// The routine in `explode.cpp` that `create_object` gives most capital ships, bases and
-    /// stations, which `node_draw` runs as one of the object's components is destroyed. The port
+    /// stations, which `node_draw` runs as one of the object's components is destroyed. OpenReliant
     /// leaves it null and picks the routine by type as it needs it (`explode.ComponentLoss`).
     component_loss: Pointer(Routine),
     /// The slots of two objects it passes through: the collision sweep of `objects_update` tests
@@ -633,7 +635,7 @@ pub const GameObject = extern struct {
     /// (`shockwave.Shockwave.harmPlayer`).
     shockwave_until: i32,
     /// Its smoke's template, which its level picks (`0x00494400`), and its smoke's emitter, or
-    /// null for none. The port keeps its smoke in its slot (`create.Slot.smoke`).
+    /// null for none. OpenReliant keeps its smoke in its slot (`create.Slot.smoke`).
     smoke_template: Pointer(@import("particles.zig").Template),
     smoke: Pointer(anyopaque),
     /// How damaged it shows itself to be, by its smoke (`smoke.Level.of`).
@@ -761,9 +763,9 @@ pub const GameObject = extern struct {
     };
 
     pub const Flags = packed struct(u32) {
-        /// Not drawn: `camera_set_view` sets it on the object whose cockpit the camera is in, and the
-        /// warp orders while it warps. `mission_frame` hands `node_draw` flag `0x10` for it, which
-        /// adds none of its parts to the scene.
+        /// Not drawn: `camera_set_view` sets it on the object whose cockpit the camera is in, and
+        /// the warp orders while it warps. `mission_frame` hands `node_draw` flag `0x10` for it,
+        /// which adds none of its parts to the scene.
         hidden: bool = false,
         /// Its components are listed, as its model's header asks. The collision code treats such
         /// objects apart.
@@ -799,7 +801,8 @@ pub const GameObject = extern struct {
         tractored: bool = false,
         /// `DisableLights`.
         lights_disabled: bool = false,
-        /// It has a shield generator, a part of subsystem class 6, which destroying the part clears.
+        /// It has a shield generator, a part of subsystem class 6, which destroying the part
+        /// clears.
         shield_generator: bool = false,
         /// `DisableGuns`. `orders_update` skips `0x0047C950` for it.
         guns_disabled: bool = false,
@@ -1340,7 +1343,7 @@ pub fn gameTick(clock: *Clock, devices: *input.Devices, world: World) bool {
 /// update: orthonormalizes the root's next orientation (`mat3_orthonormalize`), so that rounding
 /// doesn't build up in the matrix from one step to the next. The game does the same to the
 /// orientation at `GameObject + 0x7A4`, which a multiplayer game draws other players' ships by;
-/// the port doesn't keep that one yet (#55).
+/// OpenReliant doesn't keep that one yet (#55).
 pub fn orthonormalizeTurn(root: *objects.Node) void {
     root.next_orientation = math.orthonormalize(root.next_orientation);
 }
@@ -1452,8 +1455,8 @@ pub fn recentre(model: *objects.Model, source: *const shp.Model) void {
     tensor[1] = tensor[3];
     tensor[2] = tensor[6];
     tensor[5] = tensor[7];
-    // A model whose parts have no volume, as a few do, leaves a tensor that cannot be inverted:
-    // the game divides by its determinant whatever it is, and the port leaves nothing to turn by.
+    // A model whose parts have no volume, as a few do, leaves a tensor that cannot be inverted: the
+    // game divides by its determinant whatever it is, and OpenReliant leaves nothing to turn by.
     model.angular_response = math.inverse(tensor) orelse @splat(0);
 }
 
@@ -1486,8 +1489,8 @@ fn partInertia(at: math.Vector, part: *const shp.Part) math.Matrix {
 /// worked out, and until the next step its `position` stays one step behind `next_position`, which
 /// is what the rest of the game reads as its place.
 ///
-/// The root has no part, so it plays no track of its own: it stays marked as animating while a
-/// part standing at it does. The port keeps the part nodes in the object's `Model`, which goes on
+/// The root has no part, so it plays no track of its own: it stays marked as animating while a part
+/// standing at it does. OpenReliant keeps the part nodes in the object's `Model`, which goes on
 /// with the walk (`walk`).
 pub fn updateTree(root: *Node, model: ?*objects.Model, events: ?Events) void {
     root.commitNext();
@@ -1495,7 +1498,7 @@ pub fn updateTree(root: *Node, model: ?*objects.Model, events: ?Events) void {
 }
 
 /// The nodes `node_tree_update` can hold on its stack at once, which is as far into a model as
-/// the port's walks go.
+/// OpenReliant's walks go.
 pub const walk_room = 500;
 
 /// The spans of a track's time whose events `node_tree_update` sets off as a node passes
@@ -1522,7 +1525,7 @@ const Windows = struct {
 /// which keeps the root marked.
 ///
 /// The game marks a node animating and every node it hangs from, up through a model's root to the
-/// part carrying it (`node_mark_animating`); the port marks up to a model's root
+/// part carrying it (`node_mark_animating`); OpenReliant marks up to a model's root
 /// (`objects.Model.markAnimating`), and takes a part as animating, or a model's root, while it
 /// carries a model that has an animating part.
 fn walk(model: *objects.Model, events: ?Events) bool {
