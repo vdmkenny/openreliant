@@ -38,7 +38,7 @@ pub const Follows = enum(i32) {
     /// where it is, its heading and its velocity.
     missile = 3,
     /// An object, by its slot: where it is, its heading and its velocity. The player's own sounds
-    /// 200 units from its ship.
+    /// `player_sound_offset` from its ship.
     object = 4,
     _,
 };
@@ -57,6 +57,18 @@ pub const MissileSound = enum {
 /// **Improvement:** how much farther than its definition has it a missile's sound that follows it
 /// keeps its full volume, so it carries a little as the missile flies off.
 const followed_missile_reach: f32 = 1.5;
+
+/// Where along its nose the player's own sounds are heard from its ship: `sound3d_play` starts
+/// them this far ahead (an immediate in `sound3d_play`), and `sound_3d_update` places them as far
+/// behind each frame after.
+pub const player_sound_offset: Vector = .{ 0, 0, 200 };
+
+/// The rate every 3D sound plays at (an immediate in `sound3d_play`), but the explosions: they play
+/// at `explosion_rate` less a share drawn at random of `explosion_spread` (`0x004DC9B8`), which is
+/// negative, so from 18,050 to 25,050.
+pub const sample_rate = 22050;
+const explosion_rate = 18050;
+const explosion_spread: f32 = -7000;
 
 /// Which of the 3D voices a sound may take (`0x0058CB1C`): voices set aside for a class, which
 /// other sounds borrow only while they are free. The names are the executable's own (`0x00508614`).
@@ -122,6 +134,11 @@ pub const Engine = struct {
 pub const class_rows = 3;
 pub const classes_per_row = 32;
 
+/// The most voices of a provider that takes the first row of classes, and the second (immediates
+/// in `sound3d_init`).
+const first_row_voices = 14;
+const second_row_voices = 30;
+
 /// The 3D sounds' own state (`0x0050713C`, `0x0058CB00` on).
 pub const Effects = struct {
     /// Set up for the open provider (`0x0058CB65`).
@@ -146,9 +163,46 @@ pub const EngineState = enum(u32) {
     _,
 };
 
-/// The views the player's own ship is not heard flying past in: from the cockpit, and around it
-/// (`sound3d_engine_update`). **Unknown:** what view 15 is.
-const unheard_own_flyby_views = [_]u8{ 0, 1, 2, 3, 0x0C, 0x0F };
+/// Whether the player's own ship is heard flying past in `view`: not from the cockpit, nor around
+/// it, nor in view 15 (`sound3d_engine_update`).
+fn hearsOwnFlyby(view: camera.View) bool {
+    return !(view.fromCockpit() or view == .external or view == view_15);
+}
+
+/// **Unknown:** what view 15 is, which `camera.View` does not name.
+const view_15: camera.View = @enumFromInt(0x0F);
+
+/// The player's engine's sounds (`sound3d_engine_update`). The afterburner's own voice plays at
+/// `burner_volume` times the engine's volume factor (`0x004DC75C`). Burning, its sound grows
+/// from `burner_start` by `burner_growth` a tick (`0x004DC410`), rounded, to at most
+/// `burner_most`; it is as loud as that and `burner_base` (`0x004DC9C0`) more, and plays at
+/// `burner_rate` less `burner_pitch_step` (`0x004DC9BC`) for each, or at `reverse_rate` for
+/// reverse thrust. Let go, it fades by `cooling_step` (`0x004DC9C4`) of the loudest a tick, and
+/// ends past `cooling_ticks`. The integers are immediates in `sound3d_engine_update`.
+const burner_volume: f32 = 70;
+const burner_start = 5;
+const burner_growth: f32 = 0.8;
+const burner_most = 70;
+const burner_base: f32 = 57;
+const burner_rate = 12000;
+const burner_pitch_step: f32 = -90;
+const reverse_rate = 7000;
+const cooling_step: f32 = 0.04;
+const cooling_ticks = 25;
+
+/// A fighter is heard flying past the camera within the square root of `flyby_reach_squared`
+/// (`0x004DC878`), at a throttle of `flyby_throttle` (`0x004DC4DC`) or more and a speed of
+/// `flyby_speed` (`0x004DC440`) or more, heading away from where the camera looks: no nearer it
+/// than the cosine `hostile_flyby_cosine` (`0x004DC550`) for a hostile ship, or than a right
+/// angle for the rest (`0x004DC3D0`). Each is heard once in `flyby_gap` ticks, or `own_flyby_gap`
+/// for the player's own ship (immediates in `sound3d_engine_update`).
+const flyby_reach_squared: f32 = 1e8;
+const flyby_throttle: f32 = 0.4;
+const flyby_speed: f32 = 100;
+const hostile_flyby_cosine: f32 = 0.75;
+const friendly_flyby_cosine: f32 = 0;
+const flyby_gap = 500;
+const own_flyby_gap = 200;
 
 /// `sound3d_init` (`0x0049D160`), once a provider is open: `smp3d` the bank, each 3D voice given
 /// its class from the row for as many voices as there are, and the engine's and the afterburner's
@@ -158,7 +212,7 @@ pub fn init(sound: *Sound, smp3d: fat.Bank) void {
     const effects = &sound.effects;
     effects.* = .{ .bank = smp3d };
     const count = sound.voice_3d_count;
-    const row: usize = if (count > 14) (if (count > 30) 2 else 1) else 0;
+    const row: usize = if (count > first_row_voices) (if (count > second_row_voices) 2 else 1) else 0;
     for (0..count) |v| {
         effects.classes[v] = if (v < classes_per_row) sounds.classes[row][v] else .not_reserved;
         sound.end3D(@intCast(v));
@@ -228,7 +282,7 @@ pub fn play(sound: *Sound, scene: Scene, at: ?Vector, facing: ?Vector, owner: i3
             if (owner < 0 or owner >= scene.objects.slots.len) return null;
             const slot = &scene.objects.slots[@intCast(owner)];
             position = slot.object.nextPosition();
-            if (owner == scene.objects.player) position += math.transform(slot.drawn.orientation, .{ 0, 0, 200 });
+            if (owner == scene.objects.player) position += math.transform(slot.drawn.orientation, player_sound_offset);
             velocity = gameobj.vector(slot.object.velocity);
             direction = math.forward(slot.drawn.orientation);
             if (slot.model) |model| radius = model.radius;
@@ -241,7 +295,7 @@ pub fn play(sound: *Sound, scene: Scene, at: ?Vector, facing: ?Vector, owner: i3
 
     const v = chooseVoice(sound, class) orelse return null;
     const voice = &sound.voices_3d[v];
-    if (voice.owner != -1) sound.end3D(v);
+    if (!voice.isFree()) sound.end3D(v);
     if (definition.follows == .point_facing) {
         voice.position = gameobj.vec3(position);
         voice.direction = gameobj.vec3(direction.?);
@@ -260,19 +314,18 @@ pub fn play(sound: *Sound, scene: Scene, at: ?Vector, facing: ?Vector, owner: i3
     const moving = math.transformTransposed(scene.camera.orientation, velocity);
     if (!driver.set3DSampleFile(voice.sample, file)) return null;
     driver.set3DSampleLoopCount(voice.sample, definition.loop_count);
-    driver.set3DSampleVolume(voice.sample, @intFromFloat(@trunc(level)));
+    driver.set3DSampleVolume(voice.sample, math.ftol(level));
     driver.set3DPosition(voice.sample, hog_snd.miles(turned));
     driver.set3DOrientation(voice.sample, hog_snd.miles(heading), .{ 0, 1, 0 });
     driver.set3DVelocity(voice.sample, hog_snd.miles(moving));
-    driver.set3DSampleCone(voice.sample, definition.cone_inner, definition.cone_outer, @intFromFloat(@trunc(definition.cone_outer_volume)));
+    driver.set3DSampleCone(voice.sample, definition.cone_inner, definition.cone_outer, math.ftol(definition.cone_outer_volume));
     driver.set3DSampleDistances(voice.sample, range, min_distance * hog_snd.distance_scale);
     // Not the game's: how far the sound of what it follows spreads, its model's radius, which the
     // software mixer leaves out.
     driver.set3DSampleRadius(voice.sample, radius * hog_snd.distance_scale);
-    // Every sound plays at 22,050 Hz; the explosions somewhere between 18,050 and 25,050.
     const rate: u32 = switch (which) {
-        .explosion01, .explosion02 => 18050 + @as(u32, @intFromFloat(@trunc(scene.random.fraction() * 7000))),
-        else => 22050,
+        .explosion01, .explosion02 => @intCast(explosion_rate - math.ftol(scene.random.fraction() * explosion_spread)),
+        else => sample_rate,
     };
     driver.set3DSamplePlaybackRate(voice.sample, rate);
     driver.start3DSample(voice.sample);
@@ -303,57 +356,52 @@ fn chooseVoice(sound: *Sound, class: Class) ?u8 {
         else => if (takes(sound, class)) |v| return v,
     }
     if (takes(sound, .not_reserved)) |v| return v;
-    for (sound.voices_3d[0..sound.voice_3d_count], sound.effects.classes[0..sound.voice_3d_count], 0..) |*voice, voice_class, v| {
-        if (isVoice(sound.engine_voice, v) or isVoice(sound.burner_voice, v)) continue;
-        if (voice_class == .guaranteed or voice.owner != -1) continue;
+    for (sound.voices_3d[0..sound.voice_3d_count], sound.effects.classes[0..sound.voice_3d_count], 0..) |*voice, voice_class, index| {
+        const v: u8 = @intCast(index);
+        if (sound.reserved(v)) continue;
+        if (voice_class == .guaranteed or !voice.isFree()) continue;
         voice.borrowed = true;
-        return @intCast(v);
+        return v;
     }
     return null;
 }
 
 /// The first voice of `class`, past the engine's, that is free or borrowed.
 fn takes(sound: *Sound, class: Class) ?u8 {
-    for (sound.voices_3d[0..sound.voice_3d_count], sound.effects.classes[0..sound.voice_3d_count], 0..) |*voice, voice_class, v| {
-        if (isVoice(sound.engine_voice, v) or voice_class != class) continue;
-        if (voice.owner != -1 and !voice.borrowed) continue;
+    for (sound.voices_3d[0..sound.voice_3d_count], sound.effects.classes[0..sound.voice_3d_count], 0..) |*voice, voice_class, index| {
+        const v: u8 = @intCast(index);
+        if (sound.engine_voice == v or voice_class != class) continue;
+        if (!voice.isFree() and !voice.borrowed) continue;
         voice.borrowed = false;
-        return @intCast(v);
+        return v;
     }
     return null;
 }
 
-fn isVoice(reserved: ?u8, v: usize) bool {
-    return if (reserved) |held| held == v else false;
-}
-
-/// `sound3d_engine_sound` (`0x0049DCB0`): the player's engine sound for its ship type. Types from
-/// 244 count again from 0.
+/// `sound3d_engine_sound` (`0x0049DCB0`): the player's engine sound for its ship type, the
+/// player's twin types sounding as the first set's (`gameobj.Type.untwinned`). A type past the
+/// engine tables' rows sounds as the first.
 pub fn engineSound(ship_type: gameobj.Type) sounds.Sound {
-    const own = engineType(ship_type);
+    const own = ship_type.untwinned();
     if (own == .kamov) return .pship07;
-    if (own.number() < 13) return @enumFromInt(@intFromEnum(sounds.Sound.pship01) + own.number());
+    if (own.number() < sounds.engines.len) return @enumFromInt(@intFromEnum(sounds.Sound.pship01) + own.number());
     return .pship01;
 }
 
-/// The type whose engine a type's engine sounds like: its own, but for the types from `0xF4`,
-/// which sound like those from the first.
-fn engineType(ship_type: gameobj.Type) gameobj.Type {
-    const number = ship_type.number();
-    return @enumFromInt(if (number > 0xF3) number - 0xF4 else number);
-}
+/// The engine tables' row for the Kamov, their last (an immediate in `sound3d_engine_update`).
+const kamov_row = sounds.engines.len - 1;
 
-/// The row of the engine tables for the player's ship type: 0x2D as 12. A type the tables have no
-/// row for takes the last, where the game reads past them.
+/// The row of the engine tables for the player's ship type, the twin types taking the first set's.
+/// A type the tables have no row for takes the last, where the game reads past them.
 fn engineRow(ship_type: gameobj.Type) usize {
-    const own = engineType(ship_type);
-    return if (own == .kamov) 12 else @min(own.number(), sounds.engines.len - 1);
+    const own = ship_type.untwinned();
+    return if (own == .kamov) kamov_row else @min(own.number(), sounds.engines.len - 1);
 }
 
-/// The engine's volume factor: the effects volume and the master volume, each over 127
+/// The engine's volume factor: the effects volume and the master volume, each over the loudest
 /// (`0x004DC9C8`).
 fn engineScale(sound: *const Sound) f32 {
-    return @as(f32, @floatFromInt(sound.volumes.master * sound.volumes.effects)) / (127 * 127);
+    return @as(f32, @floatFromInt(sound.volumes.master * sound.volumes.effects)) / (hog_snd.loudest * hog_snd.loudest);
 }
 
 /// `sound3d_engine_update` (`0x0049DCF0`), once a frame from `hog_snd.Sound.update3D`: the player's
@@ -363,7 +411,7 @@ fn engineScale(sound: *const Sound) f32 {
 pub fn engineUpdate(sound: *Sound, scene: Scene) void {
     const driver = sound.driver orelse return;
     const engine = sound.engine_voice orelse return;
-    if (sound.voices_3d[engine].owner == -1) return;
+    if (sound.voices_3d[engine].isFree()) return;
     const all = scene.objects;
     const player = &all.slots[all.player].object;
     const scale = engineScale(sound);
@@ -371,16 +419,16 @@ pub fn engineUpdate(sound: *Sound, scene: Scene) void {
     const effects = &sound.effects;
     // The voice the afterburner's sound plays on: its own, else the engine's.
     const burner = sound.burner_voice orelse engine;
-    if (sound.burner_voice) |own| driver.set3DSampleVolume(sound.voices_3d[own].sample, @intFromFloat(@trunc(scale * 70)));
+    if (sound.burner_voice) |own| driver.set3DSampleVolume(sound.voices_3d[own].sample, math.ftol(scale * burner_volume));
     const burning = player.afterburner or player.reverse_thrust;
     switch (effects.engine) {
         .idle => if (!burning) {
             const row = sounds.engines[engineRow(player.type)];
-            const rate = row.rate + @as(i32, @intFromFloat(@trunc(@as(f32, @floatFromInt(row.rate_by_throttle)) * player.throttle)));
+            const rate = row.rate + math.ftol(@as(f32, @floatFromInt(row.rate_by_throttle)) * player.throttle);
             driver.set3DSamplePlaybackRate(sound.voices_3d[engine].sample, @intCast(@max(rate, 0)));
-            const loud = row.volume + @as(i32, @intFromFloat(@trunc(@as(f32, @floatFromInt(row.volume_by_throttle)) * player.throttle)));
-            driver.set3DSampleVolume(sound.voices_3d[engine].sample, @intFromFloat(@trunc(@as(f32, @floatFromInt(loud)) * scale)));
-            if (sound.burner_voice) |own| if (sound.voices_3d[own].owner != -1) sound.end3D(own);
+            const loud = row.volume + math.ftol(@as(f32, @floatFromInt(row.volume_by_throttle)) * player.throttle);
+            driver.set3DSampleVolume(sound.voices_3d[engine].sample, math.ftol(@as(f32, @floatFromInt(loud)) * scale));
+            if (sound.burner_voice) |own| if (!sound.voices_3d[own].isFree()) sound.end3D(own);
         } else {
             effects.engine_changed_at = frame_start;
             effects.engine = .burning;
@@ -390,10 +438,10 @@ pub fn engineUpdate(sound: *Sound, scene: Scene) void {
         },
         .burning => if (burning) {
             const since: f32 = @floatFromInt(frame_start - effects.engine_changed_at);
-            const grown = @min(@as(i32, @intFromFloat(@round(since * 0.8))) + 5, 70);
+            const grown: f32 = @floatFromInt(@min(math.round(since * burner_growth) + burner_start, burner_most));
             const sample = sound.voices_3d[burner].sample;
-            driver.set3DSampleVolume(sample, @intFromFloat(@trunc(@as(f32, @floatFromInt(grown + 57)) * scale)));
-            driver.set3DSamplePlaybackRate(sample, if (player.reverse_thrust) 7000 else @intCast(12000 + 90 * grown));
+            driver.set3DSampleVolume(sample, math.ftol((grown + burner_base) * scale));
+            driver.set3DSamplePlaybackRate(sample, if (player.reverse_thrust) reverse_rate else @intCast(burner_rate - math.ftol(grown * burner_pitch_step)));
         } else if (sound.burner_voice == null) {
             effects.engine_changed_at = -1;
             _ = play(sound, scene, null, null, @intCast(all.player), engineSound(player.type), 0, .player_engines);
@@ -404,15 +452,15 @@ pub fn engineUpdate(sound: *Sound, scene: Scene) void {
         },
         .cooling => {
             const since = frame_start - effects.engine_changed_at;
-            if (since > 25) {
+            if (since > cooling_ticks) {
                 sound.end3D(burner);
                 effects.engine_changed_at = -1;
                 effects.engine = .idle;
             } else if (burning) {
                 effects.engine = .idle;
             } else {
-                const left: i32 = @intFromFloat(@trunc((1 - @as(f32, @floatFromInt(since)) * 0.04) * 127));
-                driver.set3DSampleVolume(sound.voices_3d[burner].sample, @intFromFloat(@trunc(@as(f32, @floatFromInt(left)) * scale)));
+                const left = math.ftol((1 - @as(f32, @floatFromInt(since)) * cooling_step) * hog_snd.loudest);
+                driver.set3DSampleVolume(sound.voices_3d[burner].sample, math.ftol(@as(f32, @floatFromInt(left)) * scale));
             }
         },
         _ => {},
@@ -425,30 +473,31 @@ pub fn engineUpdate(sound: *Sound, scene: Scene) void {
 }
 
 /// The ships heard flying past the camera: each fighter close by, moving at a speed and not toward
-/// where the camera looks, once in 500 ticks, or 200 for the player's own ship.
+/// where the camera looks, once in `flyby_gap` ticks, or `own_flyby_gap` for the player's own
+/// ship.
 fn flybys(sound: *Sound, scene: Scene) void {
     const all = scene.objects;
-    const view = @intFromEnum(scene.view);
-    const target: i32 = if (aigeneric.current(all, all.player)) |entry| entry.target.index else -1;
+    // The index the player's order aims at, which the game takes for a ship's whatever its kind.
+    const aimed_at: ?i16 = if (aigeneric.current(all, all.player)) |entry| entry.target.index else null;
     const looking = math.forward(scene.camera.orientation);
     for (all.slots[0..all.count], 0..) |*slot, index| {
         const combat = slot.combat orelse continue;
         if (combat.class != .fighter) continue;
         const own = index == all.player;
-        if (own and std.mem.indexOfScalar(u8, &unheard_own_flyby_views, view) != null) continue;
-        if (target == index and view == @intFromEnum(camera.View.target)) continue;
+        if (own and !hearsOwnFlyby(scene.view)) continue;
+        if (scene.view == .target) if (aimed_at) |at| if (at == index) continue;
         const offset = slot.drawn.position - scene.camera.position;
-        if (math.dot(offset, offset) > 1e8) continue;
+        if (math.dot(offset, offset) > flyby_reach_squared) continue;
         const object = &slot.object;
         if (object.flags.disabled or object.flags.hidden or object.flags.exploding) continue;
-        if (!(object.throttle >= 0.4)) continue;
-        const gap: i32 = if (own) 200 else 500;
+        if (!(object.throttle >= flyby_throttle)) continue;
+        const gap: i32 = if (own) own_flyby_gap else flyby_gap;
         if (scene.clock.frame_start < object.flyby_at + gap) continue;
         const velocity = gameobj.vector(object.velocity);
-        if (!(math.length(velocity) >= 100)) continue;
+        if (!(math.length(velocity) >= flyby_speed)) continue;
         const cosine = math.dot(velocity, looking) / @sqrt(math.dot(velocity, velocity) * math.dot(looking, looking));
         const hostile = object.side == .hostile;
-        if (cosine > @as(f32, if (hostile) 0.75 else 0)) continue;
+        if (cosine > (if (hostile) hostile_flyby_cosine else friendly_flyby_cosine)) continue;
         // In a multiplayer game every ship sounds as a friendly one; OpenReliant has none.
         const which: sounds.Sound = if (hostile) .pass01 else .pass02;
         if (play(sound, scene, null, null, @intCast(index), which, 1, .flyby) != null) object.flyby_at = scene.clock.frame_start;
@@ -460,7 +509,7 @@ fn flybys(sound: *Sound, scene: Scene) void {
 pub fn pause(sound: *Sound, paused: bool) void {
     const driver = sound.driver orelse return;
     for (sound.voices_3d[0..sound.voice_3d_count]) |voice| {
-        if (voice.owner == -1) continue;
+        if (voice.isFree()) continue;
         if (paused) driver.stop3DSample(voice.sample) else driver.resume3DSample(voice.sample);
     }
 }
@@ -608,7 +657,15 @@ test engineUpdate {
     mission.clock.frame_start += 26;
     engineUpdate(&sound, scene);
     try std.testing.expectEqual(EngineState.idle, sound.effects.engine);
-    try std.testing.expectEqual(-1, sound.voices_3d[sound.burner_voice.?].owner);
+    try std.testing.expect(sound.voices_3d[sound.burner_voice.?].isFree());
+}
+
+test hearsOwnFlyby {
+    try std.testing.expect(hearsOwnFlyby(.chase));
+    try std.testing.expect(hearsOwnFlyby(.target));
+    try std.testing.expect(!hearsOwnFlyby(.cockpit_rear));
+    try std.testing.expect(!hearsOwnFlyby(.external));
+    try std.testing.expect(!hearsOwnFlyby(view_15));
 }
 
 test "a fighter flying past the camera is heard" {

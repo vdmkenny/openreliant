@@ -23,7 +23,8 @@ const Vector = math.Vector;
 const mss = @import("../mss.zig");
 const profile = @import("../profile.zig");
 const camera = @import("camera.zig");
-const Clock = @import("main.zig").Clock;
+const main = @import("main.zig");
+const Clock = main.Clock;
 const gameobj = @import("gameobj.zig");
 const sound3d = @import("sound3d.zig");
 
@@ -56,6 +57,35 @@ pub const buffered_sounds = 18;
 /// The ticks between the fades' steps (`tick_timer`).
 const fade_ticks = 5;
 
+/// The priority `sound_play` starts its search for the lowest from, above any a bank gives (an
+/// immediate in `sound_play`).
+const priority_ceiling = 9999;
+
+/// What `sound_start` divides the effects volume times a sound's by, where the rest of the file
+/// divides by `loudest` (an immediate in `sound_start`).
+const start_divisor = 128;
+
+/// What a positional sound's volume is multiplied by before its levels are worked out
+/// (`sound_buffer_at`, `0x004DC72C`).
+const buffered_loudness: f32 = 20;
+
+/// The most quarter tones `sound_pitch_factor` moves a sound up or down (an immediate in
+/// `sound_pitch_factor`), and the quarter tones to the octave its tables are made for.
+const max_quarter_tones = 96;
+const quarter_tones_per_octave = 24;
+
+/// The bytes of 16-bit sound at the 3D sounds' rate that a tick plays, as `sound_3d_update` counts
+/// a sound's length in ticks. The game multiplies by their reciprocal (`0x004DC8B8`).
+const bytes_per_tick = sound3d.sample_rate * @sizeOf(i16) / main.ticks_per_second;
+
+comptime {
+    assert(bytes_per_tick == 441);
+}
+
+/// The count past which `tick_timer` rolls the mission's seconds and minutes over, a tick after
+/// they reach it, so each counts 0 to 59 (an immediate in `tick_timer`).
+const rollover_after = 58;
+
 /// What turns the game's units into Miles's for a 3D sound's place and speed: its distances
 /// (`0x004DC9B4`) and the step's movement into a millisecond's.
 pub const distance_scale: f32 = 0.0004;
@@ -83,13 +113,23 @@ pub const Voice = extern struct {
         assert(@offsetOf(Voice, "fading") == 0x10);
         assert(@sizeOf(Voice) == 0x20);
     }
+
+    /// Starts it fading out by `step` every five ticks, and lets any sound take it, as
+    /// `sound_voice_fade` and `sound_fade_all` do.
+    fn startFade(voice: *Voice, step: i32) void {
+        voice.priority = 0;
+        voice.held = 0;
+        voice.fading = 1;
+        voice.fade_step = step;
+    }
 };
 
 /// One of the 3D voices (`0x00563F60`): a Miles 3D sample and the sound on it.
 pub const Voice3D = extern struct {
     sample: mss.Sample3D,
     follows: sound3d.Follows,
-    /// What it follows: a shot's record, a missile's or an object's slot; -1 while it is free.
+    /// What it follows: a shot's record, a missile's or an object's slot; `no_owner` while it is
+    /// free.
     owner: i32,
     _unknown_0c: u32,
     /// The playing sound's priority, from its entry in `smp3d.fat`.
@@ -118,10 +158,24 @@ pub const Voice3D = extern struct {
         assert(@sizeOf(Voice3D) == 0x44);
     }
 
+    /// `owner` while the voice is free. A sound at a point started with this for its owner
+    /// leaves the voice free while it plays, for any other sound to take.
+    pub const no_owner: i32 = -1;
+
+    /// Whether the voice is free: its `owner` is `no_owner`.
+    pub fn isFree(voice: Voice3D) bool {
+        return voice.owner == no_owner;
+    }
+
+    /// The record or the slot of what it follows, where `owner` names one.
+    pub fn ownerIndex(voice: Voice3D) ?u32 {
+        return std.math.cast(u32, voice.owner);
+    }
+
     const free: Voice3D = .{
         .sample = @enumFromInt(0),
         .follows = .none,
-        .owner = -1,
+        .owner = no_owner,
         ._unknown_0c = 0,
         .priority = 0,
         .range = 0,
@@ -160,6 +214,13 @@ pub const Volumes = struct {
     /// The master volume's share, as the game multiplies by it (`0x004DC6B0`, `1 / 127`).
     pub fn masterShare(volumes: Volumes) f32 {
         return @as(f32, @floatFromInt(volumes.master)) / loudest;
+    }
+
+    /// `volume` as the game hands it to Miles: scaled by a channel's volume, `channel` over
+    /// `divisor` in whole numbers, then by the master volume's share, rounded by `sr_round`.
+    pub fn mastered(volumes: Volumes, channel: i32, volume: i32, divisor: i32) i32 {
+        const scaled = @divTrunc(channel * volume, divisor);
+        return math.round(@as(f32, @floatFromInt(scaled)) * volumes.masterShare());
     }
 
     /// The volumes `settings` keeps, each at most `loudest`, and the defaults for any it lacks.
@@ -261,7 +322,7 @@ pub const Hearing = struct {
     clock: *const Clock,
 
     /// The scene a 3D sound is placed in, for `world`.
-    pub fn scene(hearing: Hearing, world: @import("gameobj.zig").World) Scene {
+    pub fn scene(hearing: Hearing, world: gameobj.World) Scene {
         return .{ .objects = world.objects, .camera = hearing.camera.*, .view = world.view, .clock = hearing.clock, .random = world.random };
     }
 };
@@ -340,7 +401,7 @@ pub const Sound = struct {
         const chosen = chosen: {
             for (1..count) |v| if (driver.sampleStatus(sound.voices[v].sample) == .done) break :chosen v;
             for (0..count) |v| if (driver.sampleStatus(sound.voices[v].sample) == .stopped) break :chosen v;
-            var lowest: i32 = 9999;
+            var lowest: i32 = priority_ceiling;
             var found: ?usize = null;
             for (sound.voices[0..count], 0..) |voice, v| {
                 if (voice.priority < lowest and voice.held == 0) {
@@ -383,10 +444,9 @@ pub const Sound = struct {
         const rate = if (wave.Wave.parse(file)) |info| info.rate else |_| 0;
         if (pitch != 0) {
             const moved = @as(f32, @floatFromInt(rate)) * pitchFactor(pitch);
-            driver.setSamplePlaybackRate(voice.sample, @intFromFloat(@trunc(moved)));
+            driver.setSamplePlaybackRate(voice.sample, @intCast(math.ftol(moved)));
         }
-        const scaled = @divTrunc(sound.volumes.effects * volume, 128);
-        driver.setSampleVolume(voice.sample, @intFromFloat(@round(@as(f32, @floatFromInt(scaled)) * sound.volumes.masterShare())));
+        driver.setSampleVolume(voice.sample, sound.volumes.mastered(sound.volumes.effects, volume, start_divisor));
         driver.setSampleLoopCount(voice.sample, loops);
         driver.setSamplePan(voice.sample, pan);
         voice.priority = @intCast(bank.entries[index].priority);
@@ -434,30 +494,21 @@ pub const Sound = struct {
         const driver = sound.driver orelse return;
         if (!sound.voicePlaying(v)) return;
         sound.voices[v].volume = volume;
-        const scaled = @divTrunc(sound.volumes.effects * volume, loudest);
-        driver.setSampleVolume(sound.voices[v].sample, @intFromFloat(@round(@as(f32, @floatFromInt(scaled)) * sound.volumes.masterShare())));
+        driver.setSampleVolume(sound.voices[v].sample, sound.volumes.mastered(sound.volumes.effects, volume, loudest));
     }
 
     /// `sound_voice_fade` (`0x004824C0`): fades a playing voice out by `step` every five ticks, and
     /// lets any sound take it.
     pub fn fadeVoice(sound: *Sound, v: u8, step: i32) void {
         if (!sound.voicePlaying(v)) return;
-        const voice = &sound.voices[v];
-        voice.priority = 0;
-        voice.held = 0;
-        voice.fading = 1;
-        voice.fade_step = step;
+        sound.voices[v].startFade(step);
     }
 
     /// `sound_fade_all` (`0x00482510`): every voice not finished fades by `step`.
     pub fn fadeAll(sound: *Sound, step: i32) void {
         const driver = sound.driver orelse return;
         for (sound.voices[0..sound.voice_count]) |*voice| {
-            if (driver.sampleStatus(voice.sample) == .done) continue;
-            voice.priority = 0;
-            voice.held = 0;
-            voice.fading = 1;
-            voice.fade_step = step;
+            if (driver.sampleStatus(voice.sample) != .done) voice.startFade(step);
         }
     }
 
@@ -491,10 +542,7 @@ pub const Sound = struct {
     /// music's, and each voice's still playing.
     pub fn applyVolumes(sound: *Sound) void {
         const driver = sound.driver orelse return;
-        if (sound.music.stream) |stream| {
-            const scaled = @divTrunc(sound.volumes.music * sound.music.level, loudest);
-            driver.setStreamVolume(stream, @intFromFloat(@round(@as(f32, @floatFromInt(scaled)) * sound.volumes.masterShare())));
-        }
+        if (sound.music.stream) |stream| driver.setStreamVolume(stream, sound.volumes.mastered(sound.volumes.music, sound.music.level, loudest));
         for (0..sound.voice_count) |v| {
             if (driver.sampleStatus(sound.voices[v].sample) != .done) sound.setVoiceVolume(@intCast(v), sound.voices[v].volume);
         }
@@ -537,11 +585,11 @@ pub const Sound = struct {
     /// is. Only the first 18 are gathered.
     pub fn bufferAt(sound: *Sound, index: usize, position: Vector, view: camera.Place, volume: f32) void {
         if (index >= buffered_sounds) return;
-        const loud = volume * 20;
+        const loud = volume * buffered_loudness;
         const offset = position - view.position;
         const distance = math.length(offset);
         const across = math.transformTransposed(view.orientation, offset);
-        const share = 1 / (distance * 127);
+        const share = 1 / (distance * loudest);
         const side = across[0] * share;
         const left = std.math.clamp((if (side >= 0) 1 - side else 1) * share * loud, 0, 1);
         const right = std.math.clamp((if (side >= 0) 1 else side + 1) * share * loud, 0, 1);
@@ -597,11 +645,11 @@ pub const Sound = struct {
     pub fn end3D(sound: *Sound, v: u8) void {
         const driver = sound.driver orelse return;
         const voice = &sound.voices_3d[v];
-        if (voice.owner == -1) return;
-        if (sound.objects) |all| {
+        if (voice.isFree()) return;
+        if (sound.objects) |all| if (voice.ownerIndex()) |at| {
             const followed: ?*gameobj.GameObject = switch (voice.follows) {
-                .object => if (voice.owner < all.slots.len) &all.slots[@intCast(voice.owner)].object else null,
-                .missile => if (all.missiles.get(@intCast(voice.owner))) |missile| &missile.slot.object else null,
+                .object => if (at < all.slots.len) &all.slots[at].object else null,
+                .missile => if (all.missiles.get(at)) |missile| &missile.slot.object else null,
                 else => null,
             };
             // The game lets go of the object's voice whichever it is; only a missile's sound that
@@ -609,13 +657,18 @@ pub const Sound = struct {
             if (followed) |object| if (object.sound_voice.index() == v) {
                 object.sound_voice = .none;
             };
-        }
+        };
         voice.priority = 0;
         voice._unknown_0c = 0;
-        voice.owner = -1;
+        voice.owner = Voice3D.no_owner;
         voice.borrowed = false;
         voice.follows = .none;
         driver.end3DSample(voice.sample);
+    }
+
+    /// Whether voice `v` is the one set aside for the player's engine or its afterburner's.
+    pub fn reserved(sound: *const Sound, v: u8) bool {
+        return sound.engine_voice == v or sound.burner_voice == v;
     }
 
     /// `sound_3d_end_all` (`0x00481BA0`): ends every 3D voice's sound, keeping what it held.
@@ -639,15 +692,14 @@ pub const Sound = struct {
         // Not the game's, which opens no listener: the listener moves with the player's ship, for
         // the Doppler shifts. The software mixer's stays still.
         const player = &scene.objects.slots[scene.objects.player].object;
-        driver.set3DListenerVelocity(miles(math.transformTransposed(scene.camera.orientation, vector(player.velocity)) * @as(Vector, @splat(velocity_scale))));
+        driver.set3DListenerVelocity(miles(math.transformTransposed(scene.camera.orientation, gameobj.vector(player.velocity)) * @as(Vector, @splat(velocity_scale))));
         const frame_start = scene.clock.frame_start;
         for (sound.voices_3d[0..sound.voice_3d_count], 0..) |*voice, index| {
-            if (voice.owner == -1) continue;
+            if (voice.isFree()) continue;
             const v: u8 = @intCast(index);
-            const reserved = (if (sound.engine_voice) |held| held == v else false) or (if (sound.burner_voice) |held| held == v else false);
-            if (!reserved) {
-                // The length in bytes of 16-bit sound at 22,050 Hz, turned into ticks.
-                const ticks: i32 = @intFromFloat(@round(@as(f32, @floatFromInt(driver.sample3DLength(voice.sample))) / 441));
+            const set_aside = sound.reserved(v);
+            if (!set_aside) {
+                const ticks = math.round(@as(f32, @floatFromInt(driver.sample3DLength(voice.sample))) / bytes_per_tick);
                 if (ticks < frame_start - voice.started) {
                     sound.end3D(v);
                     continue;
@@ -668,9 +720,9 @@ pub const Sound = struct {
                 // Where missiles' sounds follow them, one moves with its missile while the voice
                 // is still that missile's.
                 .missile => follow: {
-                    if (sound.missile_sound == .follows) if (scene.objects.missiles.get(@intCast(voice.owner))) |missile| if (missile.slot.object.sound_voice.index() == v) {
+                    if (sound.missile_sound == .follows) if (scene.objects.missiles.get(voice.ownerIndex().?)) |missile| if (missile.slot.object.sound_voice.index() == v) {
                         position = missile.slot.drawn.position;
-                        velocity = vector(missile.slot.object.velocity);
+                        velocity = gameobj.vector(missile.slot.object.velocity);
                         direction = math.forward(missile.slot.drawn.orientation);
                         break :follow;
                     };
@@ -679,8 +731,8 @@ pub const Sound = struct {
                     move = false;
                 },
                 .point_facing => {
-                    position = vector(voice.position);
-                    direction = vector(voice.direction);
+                    position = gameobj.vector(voice.position);
+                    direction = gameobj.vector(voice.direction);
                     move = false;
                 },
                 .point => {
@@ -689,21 +741,22 @@ pub const Sound = struct {
                     move = false;
                 },
                 .object => {
-                    const slot = &scene.objects.slots[@intCast(voice.owner)];
+                    const at = voice.ownerIndex().?;
+                    const slot = &scene.objects.slots[at];
                     if (slot.object.type == .stand_in) {
                         sound.end3D(v);
                         continue;
                     }
                     position = slot.drawn.position;
-                    if (voice.owner == scene.objects.player) {
-                        position += math.transform(slot.drawn.orientation, .{ 0, 0, -200 });
+                    if (at == scene.objects.player) {
+                        position += math.transform(slot.drawn.orientation, -sound3d.player_sound_offset);
                     }
-                    velocity = vector(slot.object.velocity);
+                    velocity = gameobj.vector(slot.object.velocity);
                     direction = math.forward(slot.drawn.orientation);
                 },
             }
             const relative = (position - scene.camera.position) * @as(Vector, @splat(distance_scale));
-            const in_range = reserved or !place or math.dot(relative, relative) <= voice.range * voice.range;
+            const in_range = set_aside or !place or math.dot(relative, relative) <= voice.range * voice.range;
             if (!in_range) {
                 sound.end3D(v);
                 continue;
@@ -799,14 +852,14 @@ pub const Sound = struct {
 /// at 96 down to sixteen at 96 up. **Improvement:** the game looks it up in a table of rounded
 /// powers of two; OpenReliant works it out.
 pub fn pitchFactor(n: i32) f32 {
-    const clamped = std.math.clamp(n, -96, 96);
-    return std.math.pow(f32, 2, @as(f32, @floatFromInt(clamped)) / 24);
+    const clamped = std.math.clamp(n, -max_quarter_tones, max_quarter_tones);
+    return std.math.pow(f32, 2, @as(f32, @floatFromInt(clamped)) / quarter_tones_per_octave);
 }
 
 /// The byte a piece of music loops back to: the loop table's, for the piece whose name the file's
 /// name starts with, ignoring case, or 0.
 pub fn musicLoopStart(path: []const u8) i32 {
-    const name = if (std.mem.lastIndexOfAny(u8, path, "\\/")) |at| path[at + 1 ..] else path;
+    const name = std.fs.path.basenameWindows(path);
     for (music_loops) |piece| {
         if (name.len >= piece.name.len and std.ascii.eqlIgnoreCase(name[0..piece.name.len], piece.name)) return piece.loop_start;
     }
@@ -817,10 +870,6 @@ pub fn musicLoopStart(path: []const u8) i32 {
 /// directory, found whatever the case of its names, as Windows finds it (`files.find`).
 fn readMusic(files: Files, path: []const u8) ![]u8 {
     return try paths.readFile(files.io, files.gpa, files.dir, path, .limited(paths.max_file_size)) orelse error.FileNotFound;
-}
-
-pub fn vector(v: shp.Vec3) Vector {
-    return @import("gameobj.zig").vector(v);
 }
 
 /// A camera-space vector as Miles takes it: the camera's `y` points down, Miles's up.
@@ -836,14 +885,14 @@ pub fn tickTimer(clock: *Clock) void {
     if (clock.paused) return;
     clock.game_ticks +%= 1;
     clock.play.ticks += 1;
-    if (clock.play.ticks > 100) {
+    if (clock.play.ticks > main.ticks_per_second) {
         clock.play.ticks = 0;
-        // Each unit rolls when it stood past 58 before this one, so each counts 0 to 59.
-        const second_over = clock.play.seconds > 58;
+        // Each unit rolls when it stood past `rollover_after` before this one.
+        const second_over = clock.play.seconds > rollover_after;
         clock.play.seconds += 1;
         if (second_over) {
             clock.play.seconds = 0;
-            const minute_over = clock.play.minutes > 58;
+            const minute_over = clock.play.minutes > rollover_after;
             clock.play.minutes += 1;
             if (minute_over) {
                 clock.play.minutes = 0;
@@ -971,6 +1020,92 @@ test "Sound gathers positional sounds and plays them panned" {
     try std.testing.expectEqual([2]f32{ 0, 0 }, sound.buffered[20]);
     sound.playBuffered(bank);
     try std.testing.expectEqual([2]f32{ 0, 0 }, sound.buffered[2]);
+}
+
+test "Sound.fadeAll fades every voice that has not finished" {
+    var mixer: mss.Mixer = .init(22050);
+    const driver = mixer.driver();
+    var sound: Sound = undefined;
+    sound.init(driver, 3, null);
+    const bytes = comptime testing.bank(2);
+    const bank = try fat.Bank.parse(&bytes);
+    const v = sound.play(bank, 1, loudest, forever, centre, own_pitch).?;
+    sound.voices[v].held = 1;
+    sound.fadeAll(30);
+    // The playing voice fades, held or not, and any sound may take it over.
+    try std.testing.expectEqual(1, sound.voices[v].fading);
+    try std.testing.expectEqual(30, sound.voices[v].fade_step);
+    try std.testing.expectEqual(0, sound.voices[v].held);
+    try std.testing.expectEqual(0, sound.voices[v].priority);
+    // One that never played has nothing to fade.
+    try std.testing.expectEqual(0, sound.voices[if (v == 0) 1 else 0].fading);
+}
+
+test "Volumes.mastered" {
+    const volumes: Volumes = .{ .master = 64 };
+    // 80 of 128 of 127 is 79 in whole numbers, which 64 of 127 makes 39.8, rounded to 40.
+    try std.testing.expectEqual(40, volumes.mastered(80, loudest, start_divisor));
+    try std.testing.expectEqual(0, volumes.mastered(0, loudest, loudest));
+}
+
+test "Voice3D" {
+    var voice: Voice3D = .free;
+    try std.testing.expect(voice.isFree());
+    try std.testing.expectEqual(null, voice.ownerIndex());
+    voice.owner = 7;
+    try std.testing.expect(!voice.isFree());
+    try std.testing.expectEqual(7, voice.ownerIndex());
+}
+
+test "Sound.reserved" {
+    var sound: Sound = .{ .engine_voice = 3, .burner_voice = 5 };
+    try std.testing.expect(sound.reserved(3) and sound.reserved(5));
+    try std.testing.expect(!sound.reserved(4));
+    sound.burner_voice = null;
+    try std.testing.expect(!sound.reserved(5));
+}
+
+test "Sound.playMusic queues a piece until the music has stopped" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "music");
+    try tmp.dir.writeFile(io, .{ .sub_path = "music/one.wav", .data = testing.sound_file });
+    try tmp.dir.writeFile(io, .{ .sub_path = "music/two.wav", .data = testing.sound_file });
+    var mixer: mss.Mixer = .init(22050);
+    var sound: Sound = undefined;
+    sound.init(mixer.driver(), 2, .{ .gpa = gpa, .io = io, .dir = tmp.dir });
+    defer sound.closeMusic();
+
+    sound.playMusic("music\\one.wav", forever, loudest, true);
+    try std.testing.expect(sound.musicPlaying());
+    // Queued, the next piece waits while the music playing fades out.
+    sound.playMusic("music\\two.wav", once, 100, false);
+    try std.testing.expect(sound.music.fading);
+    const queued = sound.music.queued.?;
+    try std.testing.expectEqualStrings("music\\two.wav", queued.path[0..queued.path_len]);
+    sound.updateMusic();
+    try std.testing.expectEqual(loudest, sound.music.level);
+    // Once the music has stopped, the queued piece starts at its own level.
+    sound.closeMusic();
+    sound.updateMusic();
+    try std.testing.expectEqual(null, sound.music.queued);
+    try std.testing.expect(sound.musicPlaying() and !sound.music.fading);
+    try std.testing.expectEqual(100, sound.music.level);
+}
+
+test tickTimer {
+    var clock: Clock = .{ .play = .{ .ticks = main.ticks_per_second, .seconds = 59, .minutes = 59 } };
+    // Past a second's ticks, the seconds roll over into the minutes, and they into the hours.
+    tickTimer(&clock);
+    try std.testing.expectEqual(main.PlayTime{ .hours = 1 }, clock.play);
+    try std.testing.expectEqual(1, clock.game_ticks);
+    // Paused, only the timer's own count goes on.
+    clock.paused = true;
+    tickTimer(&clock);
+    try std.testing.expectEqual(2, clock.timer_ticks);
+    try std.testing.expectEqual(1, clock.game_ticks);
 }
 
 test pitchFactor {
