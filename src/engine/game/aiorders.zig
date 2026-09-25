@@ -94,8 +94,10 @@ pub fn fly(ctx: Context, index: u16) void {
         object.throttle = speed / ai.cruiseSpeed(object, flight, ctx.world.view);
     } else {
         const ticks: f32 = @floatFromInt(ctx.clock.frame_duration);
-        const at = object.nextPosition() + heading * @as(Vector, @splat(speed * ticks * drift_per_tick));
-        objects.setPosition(object, &slot.drawn, at);
+        const per_tick = heading * @as(Vector, @splat(speed * drift_per_tick));
+        objects.setPosition(object, &slot.drawn, object.nextPosition() + per_tick * @as(Vector, @splat(ticks)));
+        // Drawn on between the ticks (`create.Slot.glide`).
+        slot.glide = per_tick;
         return;
     }
 
@@ -380,6 +382,26 @@ test "Fly without a target holds the heading it started on" {
     // The heading is where it points, so it steers straight on.
     try std.testing.expectApproxEqAbs(0, slot.object.yaw_input, 1e-6);
     try std.testing.expectEqual(1, slot.object.order_count);
+}
+
+test "Fly moves an object with no flight stats, and glides it between the ticks" {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const ctx = mission.orders();
+
+    const index = try mission.addOther(@splat(0));
+    const slot = &all.slots[index];
+    slot.flight = null;
+    try std.testing.expect(try aigeneric.push(ctx, index, .fly, .{ .kind = .ship, .index = -1, .component = -1 }));
+    slot.orders[0].data.fly = 100;
+    // Placed on by its speed for the ticks the frame spans, and gliding that much a tick.
+    mission.clock.frame_duration = 2;
+    aigeneric.objectOrders(ctx, index);
+    const per_tick = 100 * drift_per_tick;
+    try std.testing.expectApproxEqAbs(2 * per_tick, slot.object.root.position.z, 1e-4);
+    try std.testing.expectApproxEqAbs(per_tick, slot.glide[2], 1e-6);
 }
 
 test "a ship under a Fly order closes on its target and stops there" {

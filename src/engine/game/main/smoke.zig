@@ -328,7 +328,7 @@ test frame {
     model.data[0].attachments = &glow;
     const index = try create.createObject(mission.objects, &mission.tables, model.types(), null, .predator, 0, @splat(0), &mission.random);
     const slot = mission.slot(index);
-    @import("../main.zig").frameObjects(mission.objects, 0, mission.clock.frame_start);
+    @import("../main.zig").frameObjects(mission.objects, .{}, mission.clock.frame_start);
 
     var image: srtexture.Image = undefined;
     var pools: Pools = .{};

@@ -838,7 +838,7 @@ test "a Sabre fights the player" {
         mission.clock.advanceTimer(4);
         _ = mission.clock.runTicks(&devices, mission.world());
         mission.clock.frameBegin();
-        _ = @import("main.zig").missionFrame(fighter.ctx, 0);
+        _ = @import("main.zig").missionFrame(fighter.ctx, .{});
         nearest = @min(nearest, math.length(fighter.position()));
         if (state.maneuver != last) changes += 1;
         last = state.maneuver;

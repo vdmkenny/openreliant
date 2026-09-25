@@ -797,7 +797,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             // the player's controls, and then, before anything is drawn, has every object's frames
             // drawn between its last two places, as far into the step as the clock is; the camera
             // follows the player's.
-            const over = game.main.missionFrame(orders, game.objects.stepFraction(&clock, options.smooth_motion));
+            const over = game.main.missionFrame(orders, .of(&clock, options.smooth_motion));
             // The mission over, once the camera has watched the player's end or the pilot's pickup,
             // the sandbox starts again where a mission would go to its debriefing.
             if (over) try restartSandbox(&player, &sandbox, orders, &display, &view, at);

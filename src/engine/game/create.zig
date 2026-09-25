@@ -339,6 +339,13 @@ pub const Slot = struct {
     model: ?objects.Model = null,
     /// What moves it each update (`GameObject.motion`); null for nothing.
     motion: ?motion.Motion = null,
+    /// How far it goes a tick where the orders place it from tick to tick rather than move it: it
+    /// is drawn that much further along for the time the frame is past its tick
+    /// (`objects.frameTree`). The orders set it each frame they place it, and the frame's pass
+    /// lets it go (`main.frameObjects`), keeping whether it glided, so that the frame after it is
+    /// drawn back where it was placed.
+    glide: Vector = @splat(0),
+    glided: bool = false,
     /// Where its root's frame has it drawn (`objects.frameTree`), which stays put between the
     /// steps that move it.
     drawn: objects.Model.Local = .{},
