@@ -292,6 +292,8 @@ Document each finding under [`docs/`](docs/README.md), by topic, in the same cha
 - **Structural numbers.** Keep the numbers that define the format or the engine: offsets, sizes,
   capacities, magic values. State verification as a property, such as "in every shipped file".
   Tallies and timings go out of date as tools and readings change.
+- **Its name.** Call the project OpenReliant, and the game it reimplements the original;
+  `openreliant` is the executable.
 - **Plain English.** Use ordinary technical English in normal sentence order: "the key bindings",
   "is presented to the game as a joystick device".
 - **Punctuation.** Use colons, commas, parentheses or a second sentence. The project's text keeps
