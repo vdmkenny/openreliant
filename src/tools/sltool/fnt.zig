@@ -49,6 +49,9 @@ pub const Command = union(enum) {
 /// Codes to a row of the atlas and of the width listing.
 const columns = 16;
 
+/// The character codes a byte can hold, which the listing and the atlas stop at.
+const codes = std.math.maxInt(u8) + 1;
+
 fn info(ctx: Context, font: fnt.Font) !void {
     var glyphs: usize = 0;
     for (0..font.offsets.len) |code| {
@@ -63,7 +66,7 @@ fn info(ctx: Context, font: fnt.Font) !void {
     });
 
     try ctx.stdout.writeAll("widths, by character code:\n");
-    const shown = @min(font.offsets.len, 256);
+    const shown = @min(font.offsets.len, codes);
     var row: usize = 0;
     while (row < shown) : (row += columns) {
         try ctx.stdout.print("  {x:0>2}:", .{row});
@@ -79,7 +82,7 @@ fn info(ctx: Context, font: fnt.Font) !void {
 }
 
 fn render(ctx: Context, font: fnt.Font, out_path: []const u8) !void {
-    const shown = @min(font.offsets.len, 256);
+    const shown = @min(font.offsets.len, codes);
     var widest: u32 = 1;
     for (0..shown) |code| {
         if (font.glyph(code)) |glyph| widest = @max(widest, glyph.width);
@@ -105,11 +108,7 @@ fn render(ctx: Context, font: fnt.Font, out_path: []const u8) !void {
 
     // Coverage as grey. A trailing palette is not used: the text's colour comes from the remap
     // table the caller draws with, and some fonts' palettes are not a coverage ramp at all.
-    var palette: [256 * 3]u8 = undefined;
-    for (0..256) |i| {
-        const level: u8 = @intCast(@min(255, i * 255 / fnt.full_coverage));
-        @memset(palette[i * 3 ..][0..3], level);
-    }
+    const palette = png.greys(fnt.full_coverage);
 
     const file = try Io.Dir.cwd().createFile(ctx.io, out_path, .{});
     defer file.close(ctx.io);

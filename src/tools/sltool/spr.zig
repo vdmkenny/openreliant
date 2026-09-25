@@ -123,14 +123,7 @@ fn extract(ctx: Context, sprite: spr.Sprite, source: []const u8, out_path: []con
     defer out_dir.close(io);
 
     const stem = std.fs.path.stem(std.fs.path.basename(source));
-
-    var greyscale: [spr.palette_size]u8 = undefined;
-    for (0..256) |i| {
-        const level: u8 = @intCast(i);
-        greyscale[i * 3 + 0] = level;
-        greyscale[i * 3 + 1] = level;
-        greyscale[i * 3 + 2] = level;
-    }
+    const greyscale = png.greys(std.math.maxInt(u8));
 
     var written: usize = 0;
     var without_palette: usize = 0;
@@ -142,7 +135,7 @@ fn extract(ctx: Context, sprite: spr.Sprite, source: []const u8, out_path: []con
         const pixels = try shape.decode(ctx.arena);
         defer ctx.arena.free(pixels);
 
-        var palette: [spr.palette_size]u8 = undefined;
+        var palette: png.Palette = undefined;
         if (sprite.paletteFor(i)) |packed_palette| {
             spr.expandPalette(packed_palette, &palette);
         } else {

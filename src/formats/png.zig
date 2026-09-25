@@ -12,21 +12,37 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 
+const spr = @import("spr.zig");
+
 pub const signature = "\x89PNG\r\n\x1a\n";
 
 /// Largest payload a single stored deflate block can carry.
 const stored_block_max = 0xFFFF;
 
+/// 256 RGB triples, 8 bits a channel: the size of a sprite set's palette.
+pub const Palette = [spr.palette_size]u8;
+
 pub const Options = struct {
     width: u32,
     height: u32,
-    /// 256 RGB triples.
-    palette: []const u8,
+    palette: *const Palette,
     /// Index rendered fully transparent, if any.
     transparent: ?u8 = null,
 };
 
-pub const Error = error{ DimensionsInvalid, PaletteInvalid, PixelCountMismatch };
+pub const Error = error{ DimensionsInvalid, PixelCountMismatch };
+
+/// A palette of greys, entry `i` at `i / full` of white and white from `full` on: `greys(255)`
+/// shows the indices themselves as levels of grey.
+pub fn greys(comptime full: u8) Palette {
+    comptime std.debug.assert(full != 0);
+    var palette: Palette = undefined;
+    for (0..palette.len / 3) |i| {
+        const level: u8 = @intCast(@min(255, i * 255 / full));
+        @memset(palette[i * 3 ..][0..3], level);
+    }
+    return palette;
+}
 
 /// Writes an 8-bit indexed PNG. `pixels` is `width * height` palette indices, row-major.
 pub fn writeIndexed(
@@ -36,7 +52,6 @@ pub fn writeIndexed(
     pixels: []const u8,
 ) (Error || Allocator.Error || Writer.Error)!void {
     if (options.width == 0 or options.height == 0) return error.DimensionsInvalid;
-    if (options.palette.len != 256 * 3) return error.PaletteInvalid;
     if (pixels.len != @as(usize, options.width) * options.height) return error.PixelCountMismatch;
 
     try writeHeader(out, options.width, options.height, .indexed);
@@ -159,13 +174,11 @@ test "writes a readable indexed PNG" {
     var buffer: std.Io.Writer.Allocating = .init(gpa);
     defer buffer.deinit();
 
-    const palette = try gpa.alloc(u8, 256 * 3);
-    defer gpa.free(palette);
-    @memset(palette, 0);
+    var palette: Palette = @splat(0);
     palette[3] = 0xFF; // index 1 is red
 
     const pixels = [_]u8{ 0, 1, 1, 0 };
-    try writeIndexed(gpa, &buffer.writer, .{ .width = 2, .height = 2, .palette = palette, .transparent = 0 }, &pixels);
+    try writeIndexed(gpa, &buffer.writer, .{ .width = 2, .height = 2, .palette = &palette, .transparent = 0 }, &pixels);
 
     const png = buffer.written();
     try std.testing.expectEqualSlices(u8, signature, png[0..8]);
@@ -203,20 +216,30 @@ test "rejects mismatched input" {
     const gpa = std.testing.allocator;
     var buffer: std.Io.Writer.Allocating = .init(gpa);
     defer buffer.deinit();
-    const palette = try gpa.alloc(u8, 256 * 3);
-    defer gpa.free(palette);
-    @memset(palette, 0);
+    const palette: Palette = @splat(0);
 
     try std.testing.expectError(error.PixelCountMismatch, writeIndexed(
         gpa,
         &buffer.writer,
-        .{ .width = 4, .height = 4, .palette = palette },
+        .{ .width = 4, .height = 4, .palette = &palette },
         &.{ 0, 0 },
     ));
-    try std.testing.expectError(error.PaletteInvalid, writeIndexed(
+    try std.testing.expectError(error.DimensionsInvalid, writeIndexed(
         gpa,
         &buffer.writer,
-        .{ .width = 1, .height = 1, .palette = &.{} },
-        &.{0},
+        .{ .width = 0, .height = 1, .palette = &palette },
+        &.{},
     ));
+}
+
+test greys {
+    // Each index as its own level.
+    const levels = greys(255);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 0, 1, 1, 1 }, levels[0..6]);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 255, 255 }, levels[levels.len - 3 ..]);
+    // Levels of coverage up to 16, and white past it.
+    const coverage = greys(16);
+    try std.testing.expectEqual(127, coverage[8 * 3]);
+    try std.testing.expectEqual(255, coverage[16 * 3]);
+    try std.testing.expectEqual(255, coverage[200 * 3]);
 }
