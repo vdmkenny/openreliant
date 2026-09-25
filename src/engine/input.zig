@@ -741,6 +741,7 @@ const camera = @import("game/camera.zig");
 const guns = @import("game/guns.zig");
 const hud = @import("game/hud.zig");
 const hog_snd = @import("game/hog_snd.zig");
+const betty = hog_snd.betty;
 const ai = @import("game/ai.zig");
 const aigeneric = @import("game/aigeneric.zig");
 const objects = @import("game/objects.zig");
@@ -1066,14 +1067,14 @@ pub fn playerWeapons(world: gameobj.World, devices: *Devices, index: u16) void {
         setCloak(world, on);
         if (settled) {
             hud.beep(world, if (on) .on else .off);
-            hud.say(world, cloak_said.of(on));
+            betty.sayIn(world, cloak_said.of(on));
         }
     }
     if (devices.active(.countermeasures, true) and world.player.ending == .playing) {
         const left = world.objects.slots[index].object.countermeasures;
         switch (left) {
-            0 => hud.say(world, .countermeasures_gone),
-            2, 4, 6 => hud.say(world, .countermeasures_low),
+            0 => betty.sayIn(world, .countermeasures_gone),
+            2, 4, 6 => betty.sayIn(world, .countermeasures_low),
             else => {},
         }
         if (world.countermeasures) |dropped| dropped.spend(world, index);
@@ -1108,17 +1109,17 @@ pub fn launchMissile(world: gameobj.World, index: u16) void {
     const sound = if (world.hearing) |hearing| hearing.sound else null;
     if (armed.type.needsLock() and !locked) {
         if (sound) |player| if (player.stdsmp) |bank| {
-            _ = player.play(bank, refused_sample, 127, 1, 64, 0);
+            _ = player.play(bank, refused_sample, hog_snd.loudest, hog_snd.once, hog_snd.centre, hog_snd.own_pitch);
         };
         if (armed.count != 0 or world.clock.game_ticks <= ring.empty_warned_until) return;
-        if (sound) |player| _ = player.say(.missiles_gone);
+        if (sound) |player| _ = betty.say(player, .missiles_gone);
         ring.empty_warned_until = world.clock.game_ticks + gone_pause;
         return;
     }
     if (ship.flags.cloaked) return setCloak(world, false);
     if (display.windows.open(.missiles, false)) display.windows.status.getPtr(.missiles).held = true;
     if (armed.count == 0) if (sound) |player| {
-        _ = player.say(.missiles_gone);
+        _ = betty.say(player, .missiles_gone);
     };
     for (ship.fittedRacks(), 0..) |rack, at| {
         if (rack.type != armed.type or rack.count < 1) continue;
@@ -1413,10 +1414,10 @@ pub const FrameKeys = struct {
 
 /// Betty's word as a device turns on and as it turns off.
 const Said = struct {
-    on: hog_snd.Betty,
-    off: hog_snd.Betty,
+    on: betty.Line,
+    off: betty.Line,
 
-    fn of(said: Said, on: bool) hog_snd.Betty {
+    fn of(said: Said, on: bool) betty.Line {
         return if (on) said.on else said.off;
     }
 };
@@ -1471,7 +1472,7 @@ pub fn frameKeys(keys: FrameKeys) void {
     const groups = slot.groupCount();
     if (devices.active(.toggle_blindfire, true) and display.blind_fire_fitted) {
         display.blind_fire = !display.blind_fire;
-        hud.say(keys.world, blind_fire_said.of(display.blind_fire));
+        betty.sayIn(keys.world, blind_fire_said.of(display.blind_fire));
     }
     if (devices.active(.comms_window, true)) {
         hud.beep(keys.world, .done);
@@ -1568,7 +1569,7 @@ pub fn frameKeys(keys: FrameKeys) void {
     {
         const on = !object.flags.spectral_shields;
         hud.beep(keys.world, if (on) .on else .off);
-        hud.say(keys.world, spectral_shields_said.of(on));
+        betty.sayIn(keys.world, spectral_shields_said.of(on));
         setSpectralShields(display, object, on);
     }
 }

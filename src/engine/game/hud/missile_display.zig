@@ -10,6 +10,7 @@ const assert = std.debug.assert;
 
 const gameobj = @import("../gameobj.zig");
 const hog_snd = @import("../hog_snd.zig");
+const betty = hog_snd.betty;
 const hud = @import("../hud.zig");
 const missiles = @import("../missiles.zig");
 const Type = missiles.Type;
@@ -122,7 +123,7 @@ pub const Ring = struct {
         if (armed.count == -1) return;
         const name = bettyName(armed.type) orelse return;
         if (ring.name_voice) |voice| sound.endVoice(voice);
-        ring.name_voice = sound.say(name);
+        ring.name_voice = betty.say(sound, name);
     }
 };
 
@@ -130,9 +131,9 @@ pub const Ring = struct {
 pub const Turn = enum { clockwise, anticlockwise };
 
 /// Betty's name of a missile type, the Screamer to the Hawk, which is her line of the same name.
-fn bettyName(missile: missiles.Type) ?hog_snd.Betty {
+fn bettyName(missile: missiles.Type) ?betty.Line {
     return switch (missile) {
-        inline .screamer, .raptor, .havoc, .jack_hammer, .bandit, .vagabond, .solomon, .imp, .hawk => |named| @field(hog_snd.Betty, @tagName(named)),
+        inline .screamer, .raptor, .havoc, .jack_hammer, .bandit, .vagabond, .solomon, .imp, .hawk => |named| @field(betty.Line, @tagName(named)),
         else => null,
     };
 }

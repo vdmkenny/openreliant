@@ -39,6 +39,7 @@ const shockwave = @import("shockwave.zig");
 const sparks = @import("sparks.zig");
 const bigfile = @import("bigfile.zig");
 const hog_snd = @import("hog_snd.zig");
+const betty = hog_snd.betty;
 const hud = @import("hud.zig");
 const hudoptions = @import("hudoptions.zig");
 const sound3d = @import("sound3d.zig");
@@ -859,7 +860,7 @@ pub fn armorWarning(hearing: hog_snd.Hearing, object: *const gameobj.GameObject,
     const half = combat.startingArmor() * 0.5;
     for (object.shields.values(), object.armor.values()) |held, armor| {
         if (held > 0 or armor >= half) continue;
-        _ = sound.say(.armor_failing);
+        _ = betty.say(sound, .armor_failing);
         sound.armor_warned_at = frame_start;
         return;
     }

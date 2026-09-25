@@ -164,7 +164,7 @@ pub const Lock = struct {
             }
             if (!ahead) return;
             const bank = player.stdsmp orelse return;
-            lock.tone = player.play(bank, tone_sample, 127, 2, 64, 0);
+            lock.tone = player.play(bank, tone_sample, hog_snd.loudest, tone_plays, hog_snd.centre, hog_snd.own_pitch);
             if (lock.tone) |voice| player.voices[voice].held = 1;
         } else if (lock.tone) |voice| lock.endTone(player, voice);
     }
@@ -176,8 +176,9 @@ pub const Lock = struct {
     }
 };
 
-/// The locked tone's sample of `bank_stdsmp`.
+/// The locked tone's sample of `bank_stdsmp`, and how often it plays.
 const tone_sample = 0x15;
+const tone_plays = 2;
 
 /// `missile_lock_possible` (`0x00491350`): whether the armed missile can lock on `target`: it has
 /// missiles left, or one the player launched still flies at a target; it is not a Solomon; the
