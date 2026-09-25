@@ -35,10 +35,8 @@ pub const Drawn = struct {
 pub fn project(arena: Allocator, context: *const srapi.Context, set: *const srapiext.SpriteSet) Allocator.Error!?*const Drawn {
     const projection = context.projection;
     const relative = context.view(set.position);
-    var matrix = math.transpose(context.camera.orientation);
-    if (set.scale != 1) {
-        for (&matrix) |*m| m.* *= set.scale;
-    }
+    // A set has no orientation of its own: the camera's turned back, scaled.
+    const matrix = srapi.scaled(math.transpose(context.camera.orientation), set.scale);
     var shown: std.ArrayList(Projected) = .empty;
     for (set.sprites, 0..) |sprite, index| {
         if (sprite.hidden) continue;

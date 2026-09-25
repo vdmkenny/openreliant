@@ -119,15 +119,15 @@ pub const Software = struct {
         if (!(x >= 0 and y >= 0 and x < @as(f32, @floatFromInt(software.width)) and y < @as(f32, @floatFromInt(software.height)))) return;
         const index = software.at(std.math.lossyCast(usize, x), std.math.lossyCast(usize, y));
         const texel: ?[4]f32 = if (state.texture) |t| t.sample(0, v.u, v.v) else null;
-        software.fragment(state, index, v.z, unpack(v.diffuse), texel);
+        software.fragment(state, index, v.z, device.unpack(v.diffuse), texel);
     }
 
     fn line(software: *Software, state: device.State, a: Vertex, b: Vertex) void {
         const span = @max(@abs(b.x - a.x), @abs(b.y - a.y));
         if (!(span < guard_band)) return;
         const steps = @max(std.math.lossyCast(usize, @ceil(span)), 1);
-        const ca = unpack(a.diffuse);
-        const cb = unpack(b.diffuse);
+        const ca = device.unpack(a.diffuse);
+        const cb = device.unpack(b.diffuse);
         for (0..steps + 1) |i| {
             const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(steps));
             const x = @floor(a.x + (b.x - a.x) * t + 0.5);
@@ -181,7 +181,7 @@ pub const Software = struct {
             step[1][i] = @as(f32, @floatFromInt(s[e[1]].x - s[e[0]].x)) * subpixel / size;
         }
         var colours: [3][4]f32 = undefined;
-        for (&colours, v) |*c, x| c.* = unpack(x.diffuse);
+        for (&colours, v) |*c, x| c.* = device.unpack(x.diffuse);
 
         var py = y_range[0];
         while (py < y_range[1]) : (py += 1) {
@@ -218,16 +218,6 @@ pub const Software = struct {
         }
     }
 };
-
-/// A colour as the device takes it: alpha, red, green and blue from the top byte down.
-fn unpack(diffuse: u32) [4]f32 {
-    return .{
-        @as(f32, @floatFromInt((diffuse >> 16) & 0xFF)) / 255,
-        @as(f32, @floatFromInt((diffuse >> 8) & 0xFF)) / 255,
-        @as(f32, @floatFromInt(diffuse & 0xFF)) / 255,
-        @as(f32, @floatFromInt(diffuse >> 24)) / 255,
-    };
-}
 
 /// The pixels whose centres, at whole numbers, can lie between `low` and `high`, in sixteenths of a
 /// pixel, cut to `size`; null when none can.

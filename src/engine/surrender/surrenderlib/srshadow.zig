@@ -14,6 +14,7 @@ const math = @import("../math.zig");
 const Vector = math.Vector;
 const srapi = @import("srapi.zig");
 const srapiext = @import("srapiext.zig");
+const srclip = @import("srclip.zig");
 const srcore = @import("srcore.zig");
 const srlight = @import("srlight.zig");
 
@@ -40,6 +41,13 @@ pub const Settings = struct {
 pub const Corner = extern struct {
     position: [3]f32,
     strength: f32 = 1,
+
+    comptime {
+        // The GPU's shadow vertex (`platform/gpu/shadows.zig`) reads it as it lies.
+        std.debug.assert(@offsetOf(Corner, "position") == 0);
+        std.debug.assert(@offsetOf(Corner, "strength") == 12);
+        std.debug.assert(@sizeOf(Corner) == 16);
+    }
 };
 
 /// The frame's shadows as a device takes them, in the camera's frame.
@@ -118,7 +126,7 @@ const Axes = struct {
     /// moves.
     fn box(axes: Axes, context: srapi.Context, sphere: Sphere, texels: u32) Box {
         const texel = 2 * sphere.radius / @as(f32, @floatFromInt(texels));
-        const centre_world = math.transform(context.camera.orientation, sphere.centre) + context.camera.position;
+        const centre_world = context.camera.point(sphere.centre);
         var offsets: [3]f32 = undefined;
         for (axes.world, &offsets, 0..) |axis, *offset, index| {
             // In doubles: the world's coordinates are large, and the snapping must not wander.
@@ -303,10 +311,7 @@ const Casters = struct {
         const reached = casters.reachedBy(relative, object.radius * object.scale).intersectWith(allowed);
         if (reached.count() == 0) return;
         const mesh = object.shown();
-        var matrix = math.product(math.transpose(context.camera.orientation), object.orientation);
-        if (object.scale != 1) {
-            for (&matrix) |*m| m.* *= object.scale;
-        }
+        const matrix = context.objectMatrix(object.orientation, object.scale);
         // The corners the solid surfaces cast from, and those the see-through ones do.
         var solid: ?u32 = null;
         var faint: ?u32 = null;
@@ -358,31 +363,18 @@ const Casters = struct {
     }
 
     /// Adds what `plane`, a portal's in the camera's frame, keeps of the triangle of the corners
-    /// at `triangle`: all of it, none, or the piece on its side, as a fan of new corners as strong
-    /// as the triangle's.
+    /// at `triangle`: all of it, none, or the piece on its side, cut as the clipper cuts
+    /// (`srclip.cut`), as a fan of new corners as strong as the triangle's.
     fn addClipped(casters: *Casters, plane: srapiext.Portal.View, triangle: [3]u32) Allocator.Error!void {
         var corners: [3]Vector = undefined;
-        var inside: [3]f32 = undefined;
-        for (triangle, &corners, &inside) |index, *corner, *side| {
-            corner.* = casters.corners.items[index].position;
-            side.* = plane.inside(corner.*);
-        }
+        for (triangle, &corners) |index, *corner| corner.* = casters.corners.items[index].position;
         const strength = casters.corners.items[triangle[0]].strength;
-        if (inside[0] >= 0 and inside[1] >= 0 and inside[2] >= 0) return casters.indices.appendSlice(casters.arena, &triangle);
-        var kept: [4]Vector = undefined;
-        var count: usize = 0;
-        for (0..3) |i| {
-            const j = (i + 1) % 3;
-            if (inside[i] >= 0) {
-                kept[count] = corners[i];
-                count += 1;
-            }
-            if ((inside[i] >= 0) != (inside[j] >= 0)) {
-                const t = inside[i] / (inside[i] - inside[j]);
-                kept[count] = corners[i] + (corners[j] - corners[i]) * @as(Vector, @splat(t));
-                count += 1;
-            }
+        const side: PortalSide = .{ .plane = plane };
+        if (side.inside(corners[0]) >= 0 and side.inside(corners[1]) >= 0 and side.inside(corners[2]) >= 0) {
+            return casters.indices.appendSlice(casters.arena, &triangle);
         }
+        var kept: [4]Vector = undefined;
+        const count = srclip.cut(Vector, &corners, &kept, side);
         if (count < 3) return;
         const base: u32 = @intCast(casters.corners.items.len);
         for (kept[0..count]) |corner| try casters.corners.append(casters.arena, .{ .position = corner, .strength = strength });
@@ -397,6 +389,19 @@ const Casters = struct {
         for (casters.cascades, 0..) |cascade, map| reached.setValue(map, cascade.reachedBy(centre, radius));
         if (casters.cockpit) |cockpit| reached.setValue(cockpit_map, cockpit.reachedBy(centre, radius));
         return reached;
+    }
+};
+
+/// A portal's plane as `srclip.cut` cuts a caster's triangle by it.
+const PortalSide = struct {
+    plane: srapiext.Portal.View,
+
+    pub fn inside(side: PortalSide, v: Vector) f32 {
+        return side.plane.inside(v);
+    }
+
+    pub fn between(_: PortalSide, a: Vector, b: Vector, t: f32) Vector {
+        return math.lerp(a, b, t);
     }
 };
 

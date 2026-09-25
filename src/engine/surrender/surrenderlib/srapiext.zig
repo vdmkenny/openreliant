@@ -11,6 +11,7 @@ const Pointer = engine.Pointer;
 const shp = @import("../../../formats/shp.zig");
 const tcache = @import("../../../formats/tcache.zig");
 const math = @import("../math.zig");
+const srlight = @import("srlight.zig");
 const srtexture = @import("srtexture.zig");
 const Vector = math.Vector;
 
@@ -248,6 +249,12 @@ pub const PolygonKind = enum(u16) {
 pub const Plane = struct {
     normal: Vector,
     distance: f32,
+
+    /// Whether `viewpoint`, in the polygon's frame, lies on its front side, which is the side the
+    /// normal points to, or on the plane (`mesh_cull`, `0x004C6280`).
+    pub fn faces(plane: Plane, viewpoint: Vector) bool {
+        return plane.distance <= math.dot(viewpoint, plane.normal);
+    }
 };
 
 /// A mesh (`mesh_create`, `0x004C4440`), as `mesh_build` makes it.
@@ -414,9 +421,11 @@ pub const MeshObject = struct {
     scale: f32 = 1,
     /// `+0xD0`: the finest level's radius.
     radius: f32,
-    /// `+0xD4`: all ones when created.
-    face_mask: u8 = 0xFF,
-    /// `+0xDC`: which lights reach it; all ones for none.
+    /// `+0xD4`: which of the faces' flags it heeds (`srmesh.showing`); `default_face_mask` when
+    /// created.
+    face_mask: u8 = default_face_mask,
+    /// `+0xDC`: the lights that don't reach it (`srlight.Light.reaches`); `srlight.no_lights` for
+    /// none at all.
     light_mask: u32 = 0,
     /// Red, green, blue and alpha (`+0xC4`, `+0xC8`, `+0xCC`, `+0xC0`); zero when created.
     colour: [4]f32 = @splat(0),
@@ -440,7 +449,29 @@ pub const MeshObject = struct {
     pub fn shown(object: *const MeshObject) *const Mesh {
         return object.levels[@min(object.level, object.levels.len - 1)].mesh;
     }
+
+    /// Where it stands in the world and which way it faces.
+    pub fn place(object: *const MeshObject) math.Place {
+        return .{ .position = object.position, .orientation = object.orientation };
+    }
+
+    /// Whether any light may reach it: none reaches an object whose light mask is all ones.
+    pub fn takesLights(object: *const MeshObject) bool {
+        return object.light_mask != srlight.no_lights;
+    }
 };
+
+/// The face mask a mesh object starts with (`mesh_object_create`): every flag heeded.
+pub const default_face_mask: u8 = 0xFF;
+
+test MeshObject {
+    var object: MeshObject = .{ .flags = .{}, .position = .{ 1, 2, 3 }, .radius = 1, .levels = &.{} };
+    try std.testing.expectEqual(default_face_mask, object.face_mask);
+    try std.testing.expect(object.takesLights());
+    object.light_mask = srlight.no_lights;
+    try std.testing.expect(!object.takesLights());
+    try std.testing.expectEqual(Vector{ 1, 2, 3 }, object.place().position);
+}
 
 /// `portal_create` (`0x004C50D0`) for a portal of no corners, a single plane (flag `0x100`): a
 /// plane through its place, facing along `normal` in its own frame, that clips the mesh objects
@@ -474,7 +505,7 @@ pub const Portal = struct {
         const normal = math.transform(portal.orientation, portal.normal);
         portal.view = .{
             .normal = math.transformTransposed(camera.orientation, normal),
-            .point = math.transformTransposed(camera.orientation, portal.position - camera.position),
+            .point = camera.inverse(portal.position),
         };
     }
 };

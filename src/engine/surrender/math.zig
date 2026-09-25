@@ -189,15 +189,52 @@ pub fn transpose(m: Matrix) Matrix {
     return .{ m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8] };
 }
 
+/// The matrix whose columns are `x`, `y` and `z`: for an orientation, its right, down and forward
+/// axes, as `mat3_from_axes` (`0x004C2610`) lays out the axes it works out.
+pub fn fromAxes(x: Vector, y: Vector, z: Vector) Matrix {
+    return .{ x[0], y[0], z[0], x[1], y[1], z[1], x[2], y[2], z[2] };
+}
+
 /// `mat3_orthonormalize` (`0x004C2690`): `m` with its axes, the columns, made unit length and
 /// perpendicular again. The Z axis keeps its direction, the Y axis becomes Z × X normalized, and
 /// the X axis Y × Z (`mat3_from_axes`, `0x004C2610`).
 pub fn orthonormalize(m: Matrix) Matrix {
-    const x: Vector = .{ m[0], m[3], m[6] };
-    const z = normalize(.{ m[2], m[5], m[8] });
-    const y = normalize(cross(z, x));
-    const new_x = cross(y, z);
-    return .{ new_x[0], y[0], z[0], new_x[1], y[1], z[1], new_x[2], y[2], z[2] };
+    const z = normalize(forward(m));
+    const y = normalize(cross(z, xAxis(m)));
+    return fromAxes(cross(y, z), y, z);
+}
+
+/// A corner of a box given by its two ends, low and high: which end it takes on each axis. Taken as
+/// a number from 0 to 7, bit 0 picks the end across, bit 1 down and bit 2 forward.
+pub const Corner = packed struct(u3) {
+    x: u1,
+    y: u1,
+    z: u1,
+
+    /// The corner numbered `n`.
+    pub fn of(n: usize) Corner {
+        return @bitCast(@as(u3, @intCast(n)));
+    }
+
+    /// Where the corner of the box from `ends[0]` to `ends[1]` stands.
+    pub fn in(corner: Corner, ends: [2]Vector) Vector {
+        return .{ ends[corner.x][0], ends[corner.y][1], ends[corner.z][2] };
+    }
+};
+
+test fromAxes {
+    const m = fromAxes(.{ 1, 2, 3 }, .{ 4, 5, 6 }, .{ 7, 8, 9 });
+    try std.testing.expectEqual(Vector{ 1, 2, 3 }, xAxis(m));
+    try std.testing.expectEqual(Vector{ 4, 5, 6 }, yAxis(m));
+    try std.testing.expectEqual(Vector{ 7, 8, 9 }, forward(m));
+}
+
+test Corner {
+    const ends = [2]Vector{ .{ -1, -2, -3 }, .{ 1, 2, 3 } };
+    try std.testing.expectEqual(Vector{ -1, -2, -3 }, Corner.of(0).in(ends));
+    try std.testing.expectEqual(Vector{ 1, -2, -3 }, Corner.of(1).in(ends));
+    try std.testing.expectEqual(Vector{ -1, 2, -3 }, Corner.of(2).in(ends));
+    try std.testing.expectEqual(Vector{ 1, 2, 3 }, Corner.of(7).in(ends));
 }
 
 /// `mat3_angles` (`0x004C2740`): the angles about X, Y and Z that make up `m`, in radians. When

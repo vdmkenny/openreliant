@@ -27,6 +27,14 @@ pub const Image = struct {
     /// again and clears it.
     changed: bool = false,
 
+    /// An image of one level, `across` by `down` pixels of `rgba`, which it takes: `deinit` frees
+    /// them with the level.
+    pub fn single(gpa: Allocator, across: u32, down: u32, rgba: []const u8) Allocator.Error!Image {
+        const levels = try gpa.alloc(Level, 1);
+        levels[0] = .{ .width = across, .height = down, .rgba = rgba };
+        return .{ .levels = levels };
+    }
+
     pub fn width(image: Image) u32 {
         return image.levels[0].width;
     }
@@ -137,6 +145,16 @@ fn decode(gpa: Allocator, texture: tcache.Texture, palette: *const tga.Palette) 
         try levels.append(gpa, .{ .width = source.width, .height = source.height, .rgba = rgba });
     }
     return .{ .levels = try levels.toOwnedSlice(gpa) };
+}
+
+test "Image.single" {
+    const gpa = std.testing.allocator;
+    const rgba = try gpa.dupe(u8, &.{ 1, 2, 3, 4, 5, 6, 7, 8 });
+    const image: Image = try .single(gpa, 2, 1, rgba);
+    defer image.deinit(gpa);
+    try std.testing.expectEqual(1, image.levels.len);
+    try std.testing.expectEqual(2, image.width());
+    try std.testing.expectEqual(1, image.height());
 }
 
 test "images sample bilinearly and wrap" {

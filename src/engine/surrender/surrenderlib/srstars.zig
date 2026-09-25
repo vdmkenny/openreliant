@@ -73,12 +73,23 @@ pub const Stars = extern struct {
 /// opposite part of the sky.
 pub const field_cosine: f32 = 0.6;
 
-pub const FieldView = enum { hidden, ahead, mirrored };
+pub const FieldView = enum {
+    hidden,
+    ahead,
+    mirrored,
 
-/// How a sky field is drawn, for the cosine of its axis with the view axis.
+    /// What turns a star's cosine with the view axis toward the field's side of it.
+    fn sign(view: FieldView) f32 {
+        return if (view == .mirrored) -1 else 1;
+    }
+};
+
+/// How a sky field is drawn, for the cosine of its axis with the view axis: mirrored for a negative
+/// one, and hidden where, made positive, it falls short of `field_cosine`.
 pub fn fieldView(cosine: f32) FieldView {
-    if (@abs(cosine) < field_cosine) return .hidden;
-    return if (cosine > 0) .ahead else .mirrored;
+    const view: FieldView = if (cosine < 0) .mirrored else .ahead;
+    if (cosine * view.sign() < field_cosine) return .hidden;
+    return view;
 }
 
 /// A sky star is drawn only while its direction is within the first cosine of the view axis this
@@ -88,23 +99,37 @@ pub const star_cosines = [2]f64{ 0.6, 0.7 };
 /// Whether a sky star is drawn, for the cosines of its direction with the view axis this frame and
 /// last.
 pub fn starShown(now: f32, last: f32) bool {
-    return @min(now, last) >= star_cosines[0] and @max(now, last) >= star_cosines[1];
+    return now >= star_cosines[0] and last >= star_cosines[0] and (now >= star_cosines[1] or last >= star_cosines[1]);
 }
 
 /// Longest streak, in view units: a star's screen position over its depth, before scaling to the
-/// viewport. A longer one is cut back along its line.
+/// viewport (`0x004DC420`). A longer one is cut back along its line.
 pub const streak_limit: f32 = 0.1;
+
+/// How much a star's motion since last frame dims it: its brightness is divided by the motion,
+/// `|dx| + |dy|` in view units, times this, plus 1 (`0x004DC440`).
+const motion_dimming: f32 = 100;
+
+fn dimming(motion: f32) f32 {
+    return motion * motion_dimming + 1;
+}
+
+/// A dust mote's brightness falls off with its distance squared over the cube's side squared,
+/// from `dust_near` times that far off to nothing at a quarter of it, half the side away
+/// (`0x004DC848`, `0x004DC3D4`).
+const dust_near: f32 = 16;
+const dust_reach: f32 = 0.25;
 
 /// A sky star's brightness, for `motion`, `|dx| + |dy|` in view units since last frame.
 pub fn skyBrightness(motion: f32) f32 {
-    return std.math.clamp(1 / (motion * 100 + 1), 0, 1);
+    return std.math.clamp(1 / dimming(motion), 0, 1);
 }
 
 /// A dust mote's brightness at `distance_squared` from the camera: full nearby, gone by half the
 /// cube's side.
 pub fn dustBrightness(distance_squared: f32, cube_mask: u32, motion: f32) f32 {
     const side: f32 = @floatFromInt(cube_mask);
-    return std.math.clamp((0.25 - distance_squared / (side * side)) * 16 / (motion * 100 + 1), 0, 1);
+    return std.math.clamp((dust_reach - distance_squared / (side * side)) * dust_near / dimming(motion), 0, 1);
 }
 
 /// A star field as OpenReliant holds it (`stars_create`).
@@ -149,22 +174,21 @@ pub const Drawn = struct {
 /// Null when the field is out of view.
 pub fn project(arena: Allocator, context: *const srapi.Context, field: *Field) Allocator.Error!?*const Drawn {
     defer field.flags.fresh = false;
-    const rotation = math.product(math.transpose(context.camera.orientation), field.orientation);
+    const rotation = context.objectMatrix(field.orientation, 1);
     var visible: std.ArrayList(Visible) = .empty;
     switch (field.kind) {
         .sky => {
             const previous = if (field.flags.fresh) rotation else field.previous_rotation;
             field.previous_rotation = rotation;
-            const sign: f32 = if (rotation[8] < 0) -1 else 1;
-            if (rotation[8] * sign < field_cosine) return null;
+            const sign = switch (fieldView(rotation[8])) {
+                .hidden => return null,
+                else => |view| view.sign(),
+            };
             for (field.stars, 0..) |star, index| {
                 const p = star.position;
                 const z = row(rotation, 2, p);
-                const now_cosine = z * sign;
-                if (!(now_cosine >= star_cosines[0])) continue;
                 const z_before = row(previous, 2, p);
-                const before_cosine = z_before * sign;
-                if (!(before_cosine >= star_cosines[0] and (now_cosine >= star_cosines[1] or before_cosine >= star_cosines[1]))) continue;
+                if (!starShown(z * sign, z_before * sign)) continue;
                 const now = [2]f32{ row(rotation, 0, p) / z, row(rotation, 1, p) / z };
                 var before = [2]f32{ row(previous, 0, p) / z_before, row(previous, 1, p) / z_before };
                 const motion = shorten(now, &before, 1);
@@ -322,6 +346,8 @@ test fieldView {
     try std.testing.expectEqual(FieldView.mirrored, fieldView(-0.9));
     try std.testing.expectEqual(FieldView.hidden, fieldView(0.3));
     try std.testing.expectEqual(FieldView.hidden, fieldView(-0.5));
+    // No number at all is drawn ahead, as the game's sign test leaves it.
+    try std.testing.expectEqual(FieldView.ahead, fieldView(std.math.nan(f32)));
 }
 
 test starShown {
@@ -331,6 +357,8 @@ test starShown {
     // Moving: within the first both times and the second once.
     try std.testing.expect(starShown(0.65, 0.8));
     try std.testing.expect(!starShown(0.5, 0.9));
+    // No number at all is not drawn.
+    try std.testing.expect(!starShown(std.math.nan(f32), 0.9));
 }
 
 test skyBrightness {

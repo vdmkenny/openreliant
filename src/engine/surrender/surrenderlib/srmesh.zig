@@ -12,37 +12,27 @@ const shp = @import("../../../formats/shp.zig");
 const math = @import("../math.zig");
 const srapi = @import("srapi.zig");
 const srapiext = @import("srapiext.zig");
+const srclip = @import("srclip.zig");
 const srlight = @import("srlight.zig");
 const Vector = math.Vector;
 const Outcode = srapi.Outcode;
 const MeshObject = srapiext.MeshObject;
 const Mesh = srapiext.Mesh;
 
-/// A polygon's normal, whose side is its front: `(v1 - v0) x (v2 - v0)`, with the last two corners
-/// swapped for an odd strip member.
-pub fn normal(corners: [3]Vector, polygon: shp.Face.Polygon) Vector {
-    const a, const b = if (polygon == .strip_odd) .{ corners[2], corners[1] } else .{ corners[1], corners[2] };
-    return math.cross(a - corners[0], b - corners[0]);
-}
-
-/// Whether a viewpoint lies on a polygon's front side (`mesh_cull`).
-pub fn facing(polygon_normal: Vector, corner: Vector, viewpoint: Vector) bool {
-    return math.dot(polygon_normal, viewpoint) >= math.dot(polygon_normal, corner);
-}
-
-/// The face mask a mesh object starts with (`mesh_object_create`).
-pub const default_face_mask: u8 = 0xFF;
-
 /// The face mask's bit that hides the cap faces (`shp.Face.Flags.cap`), which close a part where it
 /// meets another: an object that comes apart there clears it, and they show.
 pub const caps_hidden: u8 = @truncate(@as(u32, @bitCast(shp.Face.Flags{ .cap = true })));
 
-/// Whether a face is drawn: its flags against the object's face mask decide whether it is hidden or
-/// never culled; `culling` is off for objects flagged `not_culled`.
-pub fn shown(flags: shp.Face.Flags, face_mask: u8, faces_viewpoint: bool, culling: bool) bool {
+/// How `mesh_cull` draws a face: never, always, or while the viewpoint lies on its front side.
+pub const Showing = enum { never, always, facing };
+
+/// How a face of `flags` is drawn under an object's `face_mask`, which says which of the flags it
+/// heeds: a cap face heeded is hidden, and a two-sided one never culled; `culling` is off for
+/// objects flagged `not_culled`.
+pub fn showing(flags: shp.Face.Flags, face_mask: u8, culling: bool) Showing {
     const masked: shp.Face.Flags = @bitCast(@as(u32, @bitCast(flags)) & face_mask);
-    if (masked.cap) return false;
-    return !culling or masked.two_sided or faces_viewpoint;
+    if (masked.cap) return .never;
+    return if (!culling or masked.two_sided) .always else .facing;
 }
 
 /// Texture coordinates from a vertex normal turned into the camera's frame (`mesh_sphere_map`,
@@ -92,7 +82,25 @@ pub const Budget = struct {
 
 /// How far a vertex has moved toward its counterpart in the next level, and its normal likewise
 /// (`+0xE0`, `+0xE4`).
-const Morph = struct { positions: f32 = 0, normals: f32 = 0 };
+const Morph = struct {
+    positions: f32 = 0,
+    normals: f32 = 0,
+
+    /// How far through its level an object starts moving toward the next (`0x004DC550`), and how
+    /// many times as fast as it goes on through the level it then moves (`0x004DC424`), so that it
+    /// has moved all the way by the level's end.
+    const start: f32 = 0.75;
+    const rate: f32 = 4;
+
+    /// How far an object `along` of the way through its level has moved toward the next.
+    fn moved(along: f32) f32 {
+        return if (start <= along) (along - start) * rate else 0;
+    }
+
+    comptime {
+        std.debug.assert((1 - start) * rate == 1);
+    }
+};
 
 /// Runs `object` through the pipeline (`SR_meshpipe_init`), lit by `lights`, the scene's in order.
 /// Null when nothing of it is drawn. What it returns lives in `arena`.
@@ -109,10 +117,7 @@ pub fn pipe(
 
     // The object in the camera's frame (`SR_object_rotate`, `0x004C7D00`).
     const relative = context.view(object.position);
-    var matrix = math.product(math.transpose(context.camera.orientation), object.orientation);
-    if (object.scale != 1) {
-        for (&matrix) |*m| m.* *= object.scale;
-    }
+    const matrix = context.objectMatrix(object.orientation, object.scale);
 
     var clip: Outcode = Outcode.all;
     var morph: Morph = .{};
@@ -162,11 +167,11 @@ pub fn pipe(
         }
     }
 
-    const pixel_lit = context.pixel_lighting and object.flags.lit and object.light_mask != std.math.maxInt(u32);
+    const pixel_lit = context.pixel_lighting and object.flags.lit and object.takesLights();
     drawn.colours = try light(arena, object, mesh, lights, listed.items, morph, pixel_lit);
     if (pixel_lit) {
         // Turned into the camera's frame without the object's scale, as the lights see them.
-        const turn = math.product(math.transpose(context.camera.orientation), object.orientation);
+        const turn = context.objectMatrix(object.orientation, 1);
         const normals = try arena.alloc(Vector, mesh.positions.len);
         for (listed.items) |v| normals[v] = math.transform(turn, blendedNormal(mesh, morph, v));
         drawn.normals = normals;
@@ -199,9 +204,10 @@ fn sphereTest(projection: srapi.Projection, object: *const MeshObject, relative:
 }
 
 /// Picks the level of detail by depth, and how far toward the next it has moved; then, for an
-/// object that may need clipping, tests the level's bounding box (`0x004C5FB0`). Null when the
-/// object is past its last level or wholly outside a plane. The finer levels reach
-/// `context.finer` times further than the depth has them, the last one not.
+/// object that may need clipping, tests the level's bounding box, each corner as the clipper tests
+/// a vertex (`srclip.flags`) (`object_level_select`, `0x004C5FB0`). Null when the object is past
+/// its last level or wholly outside a plane. The finer levels reach `context.finer` times further
+/// than the depth has them, the last one not.
 fn chooseLevel(
     context: *const srapi.Context,
     object: *MeshObject,
@@ -222,7 +228,7 @@ fn chooseLevel(
         if (level + 1 < count) {
             const start: f32 = if (level == 0) 0 else object.levels[level - 1].until;
             const along = (reach - start) / (object.levels[level].until - start);
-            const moved: f32 = if (0.75 <= along) (along - 0.75) * 4 else 0;
+            const moved = Morph.moved(along);
             if (object.flags.geomorph_normals) morph.normals = moved;
             if (object.flags.geomorph_positions) morph.positions = moved;
         }
@@ -235,17 +241,9 @@ fn chooseLevel(
         const mesh = object.levels[object.level].mesh;
         var outside: Outcode = .{};
         var every: Outcode = Outcode.all;
-        for (0..8) |corner| {
-            const local: Vector = .{
-                mesh.bounds[corner & 1][0],
-                mesh.bounds[(corner >> 1) & 1][1],
-                mesh.bounds[corner >> 2][2],
-            };
-            const point = math.transform(matrix, local) + relative;
-            var code: Outcode = .{ .near = point[2] < context.projection.near };
-            const bounds = context.projection.bounds;
-            if (point[0] < bounds[0] * point[2]) code.left = true else if (bounds[2] * point[2] < point[0]) code.right = true;
-            if (point[1] < bounds[1] * point[2]) code.top = true else if (bounds[3] * point[2] < point[1]) code.bottom = true;
+        for (0..8) |n| {
+            const point = math.transform(matrix, math.Corner.of(n).in(mesh.bounds)) + relative;
+            const code = srclip.flags(context.projection, point);
             outside = outside.either(code);
             every = every.both(code);
         }
@@ -267,8 +265,7 @@ fn cull(
     marks: []u8,
 ) Allocator.Error!?[]Visible {
     if (mesh.polygons.len == 0) return null;
-    const viewpoint = math.transformTransposed(object.orientation, context.camera.position - object.position) /
-        @as(Vector, @splat(object.scale));
+    const viewpoint = object.place().inverse(context.camera.position) / @as(Vector, @splat(object.scale));
     var visible: std.ArrayList(Visible) = try .initCapacity(arena, mesh.polygons.len);
     var polygon: u32 = 0;
     for (mesh.surfaces, drawn.counts) |surface, *count| {
@@ -276,11 +273,10 @@ fn cull(
         for (0..surface.polygons) |_| {
             defer polygon += 1;
             const flags: shp.Face.Flags = if (mesh.face_flags) |all| all[polygon] else .{};
-            const masked: shp.Face.Flags = @bitCast(@as(u32, @bitCast(flags)) & object.face_mask);
-            if (masked.cap) continue;
-            if (!object.flags.not_culled and !masked.two_sided) {
-                const plane = mesh.planes[polygon];
-                if (!(plane.distance <= math.dot(viewpoint, plane.normal))) continue;
+            switch (showing(flags, object.face_mask, !object.flags.not_culled)) {
+                .never => continue,
+                .facing => if (!mesh.planes[polygon].faces(viewpoint)) continue,
+                .always => {},
             }
             visible.appendAssumeCapacity(.{ .polygon = polygon });
             count.* += 1;
@@ -363,7 +359,7 @@ fn light(
     const flags = object.flags;
     if (!flags.lit and !flags.baked_mesh and !flags.baked_object) return null;
     const colours = try arena.alloc([4]f32, mesh.positions.len);
-    const takes_lights = object.light_mask != std.math.maxInt(u32);
+    const takes_lights = object.takesLights();
 
     var base: [4]f32 = @splat(0);
     if (flags.lit) {
@@ -406,8 +402,8 @@ fn light(
                     clamp = true;
                 },
                 .point => |point| {
-                    const to = math.transformTransposed(object.orientation, @as(Vector, point.position) - object.position);
-                    const reach = l.intensity * point.range;
+                    const to = object.place().inverse(point.position);
+                    const reach = l.reach(point);
                     const within = reach + mesh.radius;
                     if (within * within <= math.dot(to, to)) continue;
                     for (listed) |v| {
@@ -416,8 +412,7 @@ fn light(
                         if (!(r2 < reach * reach)) continue;
                         const along = math.dot(d, blendedNormal(mesh, morph, v));
                         if (!(along > 0)) continue;
-                        const r = @sqrt(r2);
-                        const amount = (1 / r + r / (reach * reach) - 2 / reach) * along;
+                        const amount = srlight.falloff(r2, reach) * along;
                         for (0..3) |c| colours[v][c] += amount * l.intensity * l.colour[c];
                     }
                     clamp = true;
@@ -444,26 +439,29 @@ fn sphereMapped(arena: Allocator, mesh: *const Mesh, matrix: math.Matrix, listed
     return out;
 }
 
-test normal {
-    const corners = [3]Vector{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 } };
-    try std.testing.expectEqual(@as(Vector, .{ 0, 0, 1 }), normal(corners, .triangle));
-    try std.testing.expectEqual(@as(Vector, .{ 0, 0, -1 }), normal(corners, .strip_odd));
-    try std.testing.expect(facing(normal(corners, .triangle), corners[0], .{ 0, 0, 5 }));
-    try std.testing.expect(!facing(normal(corners, .triangle), corners[0], .{ 0, 0, -5 }));
-}
-
-test shown {
+test showing {
+    const default_face_mask = srapiext.default_face_mask;
     const plain: shp.Face.Flags = .{};
     const cap: shp.Face.Flags = .{ .cap = true };
     const two_sided: shp.Face.Flags = .{ .two_sided = true };
-    try std.testing.expect(shown(plain, default_face_mask, true, true));
-    try std.testing.expect(!shown(plain, default_face_mask, false, true));
-    try std.testing.expect(!shown(cap, default_face_mask, true, true));
-    try std.testing.expect(shown(cap, default_face_mask & ~caps_hidden, true, true));
-    try std.testing.expect(shown(cap, 0xFE, true, true));
-    try std.testing.expect(shown(two_sided, default_face_mask, false, true));
-    try std.testing.expect(!shown(two_sided, 0xFD, false, true));
-    try std.testing.expect(shown(plain, default_face_mask, false, false));
+    // A plain face shows while it faces the viewpoint; a cap face never, until the mask clears
+    // its bit.
+    try std.testing.expectEqual(Showing.facing, showing(plain, default_face_mask, true));
+    try std.testing.expectEqual(Showing.never, showing(cap, default_face_mask, true));
+    try std.testing.expectEqual(Showing.facing, showing(cap, default_face_mask & ~caps_hidden, true));
+    try std.testing.expectEqual(Showing.facing, showing(cap, 0xFE, true));
+    // A two-sided face always shows, unless the mask leaves its bit out.
+    try std.testing.expectEqual(Showing.always, showing(two_sided, default_face_mask, true));
+    try std.testing.expectEqual(Showing.facing, showing(two_sided, 0xFD, true));
+    // Without culling, every face that isn't hidden shows.
+    try std.testing.expectEqual(Showing.always, showing(plain, default_face_mask, false));
+}
+
+test "Morph.moved" {
+    try std.testing.expectEqual(0, Morph.moved(0.5));
+    try std.testing.expectEqual(0, Morph.moved(0.75));
+    try std.testing.expectEqual(0.5, Morph.moved(0.875));
+    try std.testing.expectEqual(1, Morph.moved(1));
 }
 
 test sphereMap {
@@ -600,6 +598,38 @@ test "an object's own colours and its mesh's baked ones add up" {
     try std.testing.expectEqual([4]f32{ 0.5, 0, 0, 0 }, colours[1]);
 }
 
+test "each light's share of a vertex's colour" {
+    const gpa = std.testing.allocator;
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const mesh = try testing.square(gpa);
+    defer mesh.deinit(gpa);
+    const levels = [_]srapiext.Level{.{ .mesh = &mesh, .until = std.math.inf(f32) }};
+    // The square faces -Z; its first corner stands at (-100, -100, 0).
+    const object: MeshObject = .{ .flags = .{ .lit = true }, .position = @splat(0), .radius = mesh.radius, .levels = &levels };
+    const listed = [_]u16{ 0, 1, 2, 3 };
+
+    // An ambient light adds its colour times its intensity, and nothing past it is clamped.
+    const ambient = [_]srlight.Light{.{ .mask = 4, .intensity = 0.5, .colour = .{ 0.08, 0.08, 0.08 }, .alpha = 0.5, .kind = .ambient }};
+    const dim = (try light(arena, &object, &mesh, &ambient, &listed, .{}, false)).?;
+    try std.testing.expectEqual([4]f32{ 0.04, 0.04, 0.04, 0.25 }, dim[0]);
+
+    // A directional light along the normal adds its colour times its intensity; one from behind
+    // adds nothing.
+    var lights = [_]srlight.Light{.{ .mask = 1, .intensity = 0.5, .colour = .{ 1, 1, 0.8 }, .kind = .{ .directional = .{ 0, 0, -1 } } }};
+    try std.testing.expectEqual([4]f32{ 0.5, 0.5, 0.4, 0 }, (try light(arena, &object, &mesh, &lights, &listed, .{}, false)).?[0]);
+    lights[0].kind = .{ .directional = .{ 0, 0, 1 } };
+    try std.testing.expectEqual([4]f32{ 0, 0, 0, 0 }, (try light(arena, &object, &mesh, &lights, &listed, .{}, false)).?[0]);
+
+    // A point light straight in front of a corner, at half its reach: the cosine is 1 and
+    // (1 - 1/2)^2 a quarter. Out of its reach, nothing.
+    lights[0] = .{ .mask = 1, .intensity = 1, .colour = .{ 1, 1, 1 }, .kind = .{ .point = .{ .position = .{ -100, -100, -10 }, .range = 20 } } };
+    const near = (try light(arena, &object, &mesh, &lights, &listed, .{}, false)).?;
+    try std.testing.expectApproxEqAbs(0.25, near[0][0], 1e-6);
+    try std.testing.expectEqual(0, near[2][0]);
+}
+
 test "pipe for a device that lights each pixel" {
     const gpa = std.testing.allocator;
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
@@ -633,7 +663,7 @@ test "pipe for a device that lights each pixel" {
 
     // An object that takes no lights has none to hand over, and neither does a device that
     // lights each vertex.
-    object.light_mask = std.math.maxInt(u32);
+    object.light_mask = srlight.no_lights;
     try std.testing.expectEqual(null, (try pipe(arena, &context, &object, &lights, &budget)).?.normals);
     object.light_mask = 0;
     context.pixel_lighting = false;

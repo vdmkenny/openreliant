@@ -118,11 +118,7 @@ fn outFrom(normal: Vector) math.Matrix {
     if (!(math.length(side) > 1e-6)) return math.lookAt(forward);
     const across = math.normalize(side);
     const up = math.normalize(math.cross(across, forward));
-    return .{
-        up[0], across[0], forward[0],
-        up[1], across[1], forward[1],
-        up[2], across[2], forward[2],
-    };
+    return math.fromAxes(up, across, forward);
 }
 
 /// How long after a shot last sounded on the player's hull another does (`0x00593794`).
