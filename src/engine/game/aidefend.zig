@@ -229,7 +229,7 @@ fn start(fighter: Fighter, instruction: script.Instruction) bool {
         },
         .new_attack_run => |clear| {
             startAttackRun(fighter);
-            if (clear) fighter.ship().fighting = -1;
+            if (clear) fighter.ship().fighting = .none;
             return true;
         },
         .run_to_ship => {
@@ -455,7 +455,7 @@ fn attackRun(fighter: Fighter, far: bool) bool {
     const reach = if (far and enemy.radius > run_out) enemy.radius * 2 else run_out;
     const staging = out * @as(Vector, @splat(reach)) + aimed.position;
     if (math.lengthSquared(staging - fighter.position()) < run_done * run_done) {
-        ship.fighting = fighter.target().index;
+        ship.fighting = .from(fighter.target().ship());
         return false;
     }
     fighter.steer(staging, .{ .avoid_near = true, .avoid_ahead = true });

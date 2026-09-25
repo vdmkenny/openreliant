@@ -276,7 +276,7 @@ pub fn play(sound: *Sound, scene: Scene, at: ?Vector, facing: ?Vector, owner: i3
     };
     driver.set3DSamplePlaybackRate(voice.sample, rate);
     driver.start3DSample(voice.sample);
-    if (followed) |object| object.sound_voice = v;
+    if (followed) |object| object.sound_voice = .of(v);
     return v;
 }
 
@@ -552,7 +552,7 @@ test MissileSound {
 
     // Following, the voice is the missile's, carries farther, and moves with it.
     const v = play(&sound, scene, null, null, 0, .missile01, 1, .guaranteed).?;
-    try std.testing.expectEqual(v, missile.slot.object.sound_voice);
+    try std.testing.expectEqual(v, missile.slot.object.sound_voice.index());
     const reach = mixer.samples_3d[@intFromEnum(sound.voices_3d[v].sample)].state.placing.min_distance;
     try std.testing.expectApproxEqAbs(sounds.definitions[@intFromEnum(sounds.Sound.missile01)].min_distance * followed_missile_reach * hog_snd.distance_scale, reach, 1e-6);
     missile.slot.drawn.position = .{ 0, 0, 5000 };
@@ -560,12 +560,12 @@ test MissileSound {
     try std.testing.expectApproxEqAbs(5000 * hog_snd.distance_scale, placed(&mixer, sound.voices_3d[v])[2], 1e-6);
     // Ended, the missile has no voice.
     sound.end3D(v);
-    try std.testing.expectEqual(0xFFFF, missile.slot.object.sound_voice);
+    try std.testing.expectEqual(null, missile.slot.object.sound_voice.index());
 
     // Staying, the missile has no voice, and the sound keeps where it started.
     sound.missile_sound = .stays;
     const still = play(&sound, scene, null, null, 0, .missile01, 1, .guaranteed).?;
-    try std.testing.expectEqual(0xFFFF, missile.slot.object.sound_voice);
+    try std.testing.expectEqual(null, missile.slot.object.sound_voice.index());
     const started = placed(&mixer, sound.voices_3d[still]);
     missile.slot.drawn.position = .{ 0, 0, 20000 };
     sound.update3D(scene);

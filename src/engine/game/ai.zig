@@ -713,8 +713,7 @@ pub fn targetValid(all: *const create.Objects, target: aigeneric.Target, allowed
     const slot = &all.slots[@intCast(target.index)];
     const object = &slot.object;
     if (!object.flags.targetable) return false;
-    const barred = @as(u32, @bitCast(object.flags)) & ~@as(u32, @bitCast(allowed)) & @as(u32, @bitCast(target_barred));
-    if (barred != 0) return false;
+    if (object.flags.without(allowed).within(target_barred).any()) return false;
     if (target.component < 0) return true;
     if (target.component >= object.component_count) return false;
     const part = slot.components[@intCast(target.component)] orelse return false;

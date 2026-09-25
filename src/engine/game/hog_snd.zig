@@ -606,8 +606,8 @@ pub const Sound = struct {
             };
             // The game lets go of the object's voice whichever it is; only a missile's sound that
             // follows it gives it one (`sound3d.MissileSound`).
-            if (followed) |object| if (object.sound_voice == v) {
-                object.sound_voice = 0xFFFF;
+            if (followed) |object| if (object.sound_voice.index() == v) {
+                object.sound_voice = .none;
             };
         }
         voice.priority = 0;
@@ -668,7 +668,7 @@ pub const Sound = struct {
                 // Where missiles' sounds follow them, one moves with its missile while the voice
                 // is still that missile's.
                 .missile => follow: {
-                    if (sound.missile_sound == .follows) if (scene.objects.missiles.get(@intCast(voice.owner))) |missile| if (missile.slot.object.sound_voice == v) {
+                    if (sound.missile_sound == .follows) if (scene.objects.missiles.get(@intCast(voice.owner))) |missile| if (missile.slot.object.sound_voice.index() == v) {
                         position = missile.slot.drawn.position;
                         velocity = vector(missile.slot.object.velocity);
                         direction = math.forward(missile.slot.drawn.orientation);
@@ -816,7 +816,7 @@ pub fn musicLoopStart(path: []const u8) i32 {
 /// Reads the music file at `path`, a path of the game's with backslashes, from the game's
 /// directory, found whatever the case of its names, as Windows finds it (`files.find`).
 fn readMusic(files: Files, path: []const u8) ![]u8 {
-    return try paths.readFile(files.io, files.gpa, files.dir, path, .limited(64 << 20)) orelse error.FileNotFound;
+    return try paths.readFile(files.io, files.gpa, files.dir, path, .limited(paths.max_file_size)) orelse error.FileNotFound;
 }
 
 pub fn vector(v: shp.Vec3) Vector {

@@ -300,7 +300,7 @@ test patchMesh {
 
 test Sky {
     const gpa = std.testing.allocator;
-    const textures = try backdrop.testing.Textures.init(gpa);
+    const textures = try srtexture.testing.Textures.init(gpa, backdrop.testing.names);
     defer textures.deinit(gpa);
     const rgb = try gpa.alloc(u8, 256 * 256 * 3);
     defer gpa.free(rgb);

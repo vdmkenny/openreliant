@@ -400,8 +400,8 @@ pub const Attachment = extern struct {
     /// Row-major 3x3.
     orientation: [9]f32,
     /// Which model of its kind the engine mounts: `models.attachment(kind, id)`. A `light` takes
-    /// its colour from it instead: 0 blue, 1 green, 2 yellow, 3 red, and nothing beyond
-    /// (`static_lights_bake`). A missile hardpoint's id is its missile for loadout tier 0.
+    /// its colour from it instead (`light`). A missile hardpoint's id is its missile for loadout
+    /// tier 0.
     id: u32,
     /// A missile hardpoint's missile for loadout tiers 1 to 4, the low half of each
     /// (`object_loadout_by_tier`, `0x0045E500`).
@@ -466,6 +466,22 @@ pub const Attachment = extern struct {
         assert(@offsetOf(Attachment, "light_brightness") == 0x78);
         assert(@sizeOf(Attachment) == 0x7C);
     }
+
+    /// The colour of a `light` (`id`).
+    pub const Light = enum(u32) {
+        blue = 0,
+        green = 1,
+        yellow = 2,
+        red = 3,
+        cyan = 4,
+        white = 5,
+        _,
+    };
+
+    /// The colour of a `light`.
+    pub fn light(attachment: Attachment) Light {
+        return @enumFromInt(attachment.id);
+    }
 };
 
 /// Tag `0x02`. One per level of detail of a part, up to nine. Records hold only the distance at
@@ -511,8 +527,18 @@ pub const Keyframe = extern struct {
 /// field.
 pub const ClipEvent = extern struct {
     time: i32,
-    kind: i32,
+    kind: Kind,
     _unknown_08: i32,
+
+    /// What the event sets off as a node passes it (`node_tree_update`).
+    pub const Kind = enum(i32) {
+        /// Fires a shot from each of the part's muzzles (`clip_event_muzzles`, `0x0047C7B0`).
+        muzzles = 0,
+        /// Puffs particles from each of the part's attachments of kind 7 (`clip_event_particles`,
+        /// `0x0047C800`).
+        puff = 2,
+        _,
+    };
 
     comptime {
         assert(@sizeOf(ClipEvent) == 12);

@@ -1619,12 +1619,12 @@ pub const Model = struct {
                 };
                 if (attachment.size[0] > 0) {
                     light.sprites = .{
-                        .colour = lightColour(attachment.id),
-                        .lamp_colour = lampColour(attachment.id),
+                        .colour = lightColour(attachment.light()),
+                        .lamp_colour = lampColour(attachment.light()),
                         .size = attachment.size[1],
-                        .set = .{ .flags = .{ ._unknown_6 = 1 }, .surface = lightSurface(images.flare), .sprites = &.{} },
+                        .set = .{ .flags = .{ ._unknown_6 = 1 }, .surface = srapiext.Surface.glow(images.flare), .sprites = &.{} },
                         .sprite = @splat(.{ .bias = attachment.size[0] * 9 * sprite_bias }),
-                        .lamp = lightSurface(images.lamp),
+                        .lamp = srapiext.Surface.glow(images.lamp),
                     };
                     // The set and its lamp point into the light itself, which does not move again.
                     const sprites = &light.sprites.?;
@@ -1639,7 +1639,7 @@ pub const Model = struct {
                     light.cast = .{
                         .mask = 0,
                         .intensity = attachment.light_brightness,
-                        .colour = lightColour(attachment.id),
+                        .colour = lightColour(attachment.light()),
                         .kind = .{ .point = .{ .position = @splat(0), .range = attachment.light_range } },
                     };
                 }
@@ -2207,39 +2207,30 @@ pub const LightSprites = struct {
     }
 };
 
-/// The colour of a light of each attachment id: its flare's, and the light it casts
-/// (`node_draw`, `node_mount_light`). Past the sixth it takes none.
-fn lightColour(id: u32) [3]f32 {
-    return switch (id) {
-        0 => .{ 0, 0, 1 },
-        1 => .{ 0, 1, 0 },
-        2 => .{ 1, 1, 0 },
-        3 => .{ 1, 0, 0 },
-        4 => .{ 0, 1, 1 },
-        5 => .{ 1, 1, 1 },
-        else => .{ 0, 0, 0 },
+/// The colour of a light: its flare's, and the light it casts (`node_draw`, `node_mount_light`).
+/// Past the sixth it takes none.
+pub fn lightColour(light: shp.Attachment.Light) [3]f32 {
+    return switch (light) {
+        .blue => .{ 0, 0, 1 },
+        .green => .{ 0, 1, 0 },
+        .yellow => .{ 1, 1, 0 },
+        .red => .{ 1, 0, 0 },
+        .cyan => .{ 0, 1, 1 },
+        .white => .{ 1, 1, 1 },
+        _ => .{ 0, 0, 0 },
     };
 }
 
-/// A light's sprite, added and lit by its own colour, as the sun's sprites are.
-fn lightSurface(image: ?*srtexture.Image) srapiext.Surface {
-    return .{
-        .material = .onePass(.{ .coordinates = .mesh, .lit = true, .blend = .add }),
-        .textures = .{ if (image) |texture| .{ .image = texture } else .none, .none },
-    };
-}
-
-/// The paler colour of a light's lamp, for each attachment id (`node_draw`). Past the sixth it
-/// takes none.
-fn lampColour(id: u32) [3]f32 {
-    return switch (id) {
-        0 => .{ 0.2, 0.5, 1 },
-        1 => .{ 0.5, 1, 0.5 },
-        2 => .{ 1, 1, 0.5 },
-        3 => .{ 1, 0.5, 0.2 },
-        4 => .{ 0.5, 1, 1 },
-        5 => .{ 1, 1, 1 },
-        else => .{ 0, 0, 0 },
+/// The paler colour of a light's lamp (`node_draw`). Past the sixth it takes none.
+fn lampColour(light: shp.Attachment.Light) [3]f32 {
+    return switch (light) {
+        .blue => .{ 0.2, 0.5, 1 },
+        .green => .{ 0.5, 1, 0.5 },
+        .yellow => .{ 1, 1, 0.5 },
+        .red => .{ 1, 0.5, 0.2 },
+        .cyan => .{ 0.5, 1, 1 },
+        .white => .{ 1, 1, 1 },
+        _ => .{ 0, 0, 0 },
     };
 }
 
@@ -2343,7 +2334,7 @@ test Model {
             .size = 10,
             .set = .{ .sprites = &.{} },
             .sprite = @splat(.{}),
-            .lamp = lightSurface(null),
+            .lamp = srapiext.Surface.glow(null),
         },
         .cast = null,
     }};
@@ -2395,19 +2386,19 @@ test Model {
 
 test lightColour {
     // The six the drawing knows, and nothing beyond them.
-    try std.testing.expectEqual([3]f32{ 0, 0, 1 }, lightColour(0));
-    try std.testing.expectEqual([3]f32{ 1, 0, 0 }, lightColour(3));
-    try std.testing.expectEqual([3]f32{ 0, 1, 1 }, lightColour(4));
-    try std.testing.expectEqual([3]f32{ 1, 1, 1 }, lightColour(5));
-    try std.testing.expectEqual([3]f32{ 0, 0, 0 }, lightColour(6));
+    try std.testing.expectEqual([3]f32{ 0, 0, 1 }, lightColour(.blue));
+    try std.testing.expectEqual([3]f32{ 1, 0, 0 }, lightColour(.red));
+    try std.testing.expectEqual([3]f32{ 0, 1, 1 }, lightColour(.cyan));
+    try std.testing.expectEqual([3]f32{ 1, 1, 1 }, lightColour(.white));
+    try std.testing.expectEqual([3]f32{ 0, 0, 0 }, lightColour(@enumFromInt(6)));
 }
 
 test lampColour {
     // Paler than the light's own colour, and nothing past the sixth.
-    try std.testing.expectEqual([3]f32{ 0.2, 0.5, 1 }, lampColour(0));
-    try std.testing.expectEqual([3]f32{ 1, 0.5, 0.2 }, lampColour(3));
-    try std.testing.expectEqual([3]f32{ 1, 1, 1 }, lampColour(5));
-    try std.testing.expectEqual([3]f32{ 0, 0, 0 }, lampColour(6));
+    try std.testing.expectEqual([3]f32{ 0.2, 0.5, 1 }, lampColour(.blue));
+    try std.testing.expectEqual([3]f32{ 1, 0.5, 0.2 }, lampColour(.red));
+    try std.testing.expectEqual([3]f32{ 1, 1, 1 }, lampColour(.white));
+    try std.testing.expectEqual([3]f32{ 0, 0, 0 }, lampColour(@enumFromInt(6)));
 }
 
 test "Model.Blink.brightness" {
@@ -2439,7 +2430,7 @@ test "Model.Light.Sprites.show" {
         .size = 10,
         .set = .{ .sprites = &.{} },
         .sprite = @splat(.{}),
-        .lamp = lightSurface(null),
+        .lamp = srapiext.Surface.glow(null),
     };
     const flare = &sprites.sprite[Model.Light.Sprites.flare];
     const lamp = &sprites.sprite[Model.Light.Sprites.lamp_sprite];
@@ -3295,14 +3286,14 @@ test "Model.play" {
 
 /// Keeps the events a model's tracks set off.
 const Fired = struct {
-    kinds: [8]gameobj.EventKind = undefined,
+    kinds: [8]shp.ClipEvent.Kind = undefined,
     count: usize = 0,
 
     fn events(fired: *Fired) gameobj.Events {
         return .{ .context = fired, .fire = fire };
     }
 
-    fn fire(context: *anyopaque, _: u16, _: *Model, _: usize, kind: gameobj.EventKind) void {
+    fn fire(context: *anyopaque, _: u16, _: *Model, _: usize, kind: shp.ClipEvent.Kind) void {
         const fired: *Fired = @ptrCast(@alignCast(context));
         fired.kinds[fired.count] = kind;
         fired.count += 1;
@@ -3316,9 +3307,9 @@ test "a track plays once, round and round, and back and forth" {
     defer mesh.deinit(gpa);
     var keys = [_]shp.Keyframe{ testingKey(0, .{ 0, 0, 0 }, .{ 0, 0, 0 }), testingKey(100, .{ 0, 0, 0 }, .{ 0, 0, 100 }) };
     var events = [_]shp.ClipEvent{
-        .{ .time = 10, .kind = 0, ._unknown_08 = 0 },
-        .{ .time = 90, .kind = 2, ._unknown_08 = 0 },
-        .{ .time = 50, .kind = 3, ._unknown_08 = 0 },
+        .{ .time = 10, .kind = .muzzles, ._unknown_08 = 0 },
+        .{ .time = 90, .kind = .puff, ._unknown_08 = 0 },
+        .{ .time = 50, .kind = @enumFromInt(3), ._unknown_08 = 0 },
     };
     var tracks = [_]shp.Track{.{ .clip = testingClip(100, .once, "fire"), .keyframes = &keys, .events = &events }};
     var animated: Animated = undefined;
@@ -3336,14 +3327,14 @@ test "a track plays once, round and round, and back and forth" {
     gameobj.updateTree(&root, &model, fired.events());
     try std.testing.expectEqual(40, a.time);
     try std.testing.expectEqual(1, fired.count);
-    try std.testing.expectEqual(gameobj.EventKind.muzzles, fired.kinds[0]);
+    try std.testing.expectEqual(shp.ClipEvent.Kind.muzzles, fired.kinds[0]);
     try std.testing.expect(root.flags.animating);
     gameobj.updateTree(&root, &model, fired.events());
     gameobj.updateTree(&root, &model, fired.events());
     try std.testing.expectEqual(100, a.time);
     try std.testing.expectEqual(0, a.speed);
     try std.testing.expectEqual(2, fired.count);
-    try std.testing.expectEqual(gameobj.EventKind.puff, fired.kinds[1]);
+    try std.testing.expectEqual(shp.ClipEvent.Kind.puff, fired.kinds[1]);
     // Each step commits the place the last worked out. The part it is linked to, a child of the
     // root as every part is, plays nothing and cleared its mark on its first visit. Stopped, the
     // part clears its own on its next visit, and the root on the one after.

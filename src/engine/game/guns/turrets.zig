@@ -734,7 +734,7 @@ const Stage = struct {
     fn init(stage: *Stage, gpa: std.mem.Allocator) !void {
         try stage.mission.init(gpa);
         stage.parts.init();
-        stage.events = .{.{ .time = 0, .kind = 0, ._unknown_08 = 0 }};
+        stage.events = .{.{ .time = 0, .kind = .muzzles, ._unknown_08 = 0 }};
         stage.tracks = .{
             .{ .clip = objects.testing.clip(10, .once, "fire"), .keyframes = &.{}, .events = &stage.events },
             .{ .clip = objects.testing.clip(10, .once, "reload"), .keyframes = &.{}, .events = &.{} },

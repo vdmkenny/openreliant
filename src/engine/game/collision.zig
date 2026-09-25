@@ -378,7 +378,7 @@ pub fn damage(world: gameobj.World, index: u16, struck: Quadrant, value: f32, fa
     if (counted(kind)) object.recent_damage += scaled;
     if (held.* >= 0 and object.invulnerable != ._unknown_4) held.* -= scaled;
     if (held.* < 0) armorDamage(world, index, struck, through * factor, attacker, kind);
-    object.last_attacker = attacker;
+    object.last_attacker = .of(attacker);
     if (smartTargeting(world, attacker, kind)) |display| input.setPlayerTarget(display, all, @intCast(index), -1, false);
 }
 
@@ -433,7 +433,7 @@ pub fn armorDamage(world: gameobj.World, index: u16, struck: Quadrant, value: f3
         main.armorConditions(object, combat);
         if (index == all.player) if (world.hearing) |hearing| main.armorWarning(hearing, object, combat);
     }
-    object.last_attacker = attacker;
+    object.last_attacker = .of(attacker);
     if (armor.* < 0) ai.objectDestroyed(.{ .world = world, .clock = world.clock }, index, true, taken > heavy_blow);
     const current = &all.slots[all.player].orders[0].target;
     if (smartTargeting(world, attacker, kind) != null) current.index = @intCast(index);
@@ -555,7 +555,7 @@ pub fn componentDamage(world: gameobj.World, index: u16, struck_part: objects.Pa
 
     const left = struck.armor - share;
     if (left >= 0 or !protected) struck.armor = left;
-    object.last_attacker = attacker;
+    object.last_attacker = .of(attacker);
     if (struck.armor < 0) {
         model.destroyed = true;
     }
@@ -776,7 +776,7 @@ test damage {
     damage(world, index, .fore, 4, 1, 1, .collision);
     try std.testing.expectEqual(6, object.shields.fore);
     try std.testing.expectEqual(20, object.armor.fore);
-    try std.testing.expectEqual(1, object.last_attacker);
+    try std.testing.expectEqual(1, object.last_attacker.index());
 
     // Past the shield, the rest wears the armour, and the armour's conditions follow.
     damage(world, index, .fore, 10, 1, 1, .collision);
@@ -977,7 +977,7 @@ test componentDamage {
     // A shot wears it down, and the attacker is recorded.
     componentDamage(world, index, struck, 40, 1, .bullet);
     try std.testing.expectEqual(60, part.armor);
-    try std.testing.expectEqual(1, all.slots[index].object.last_attacker);
+    try std.testing.expectEqual(1, all.slots[index].object.last_attacker.index());
 
     // Past its armour, its model's root is marked destroyed.
     componentDamage(world, index, struck, 100, 1, .bullet);
@@ -1011,7 +1011,7 @@ test goOff {
     const shielded = all.slots[ship].object.shields.fore;
     try std.testing.expect(collide(world, ship, torpedo, 0));
     try std.testing.expect(all.slots[ship].object.shields.fore < shielded);
-    try std.testing.expectEqual(ship, all.slots[ship].object.last_attacker);
+    try std.testing.expectEqual(ship, all.slots[ship].object.last_attacker.index());
     try std.testing.expectEqual(.explode, aigeneric.current(all, torpedo).?.order);
 
     // A mine goes off against a fighter, which is not pushed.

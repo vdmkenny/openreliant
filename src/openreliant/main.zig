@@ -782,7 +782,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         const orders: game.aigeneric.Context = .{ .world = world, .clock = &clock, .devices = &devices };
         while (clock.nextTick(&devices, world)) |_| {}
         clock.frameBegin();
-        const ticks: u32 = @intCast(@max(clock.frame_duration, 0));
+        const ticks = clock.frameTicks();
         const at = clock.viewTime();
         const slot = sandbox.player();
         // `mission_frame` looks for Escape before its work, and pausing into the menu leaves the
@@ -944,7 +944,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .tractors = &tractors,
             .flash = &flash,
             .interference = &display.state.interference,
-            .ticks = @intCast(@max(clock.frame_duration, 0)),
+            .ticks = clock.frameTicks(),
             .paused = clock.paused,
             .attachments = .{
                 .camera = view.place.position,

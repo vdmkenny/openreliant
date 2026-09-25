@@ -1040,11 +1040,11 @@ test {
 pub const testing = struct {
     /// The bubbles' meshes built over a table holding nothing but their textures.
     pub const Built = struct {
-        textures: *@import("backdrop.zig").testing.Textures,
+        textures: *@import("../surrender/surrenderlib/srtexture.zig").testing.Textures,
         shields: Shields,
 
         pub fn init(gpa: Allocator) !Built {
-            const textures = try @import("backdrop.zig").testing.Textures.initNames(gpa, &.{ "shield128", "ffield" });
+            const textures = try @import("../surrender/surrenderlib/srtexture.zig").testing.Textures.init(gpa, &.{ "shield128", "ffield" });
             errdefer textures.deinit(gpa);
             return .{ .textures = textures, .shields = try .create(gpa, &textures.table, .high, true, .original) };
         }

@@ -331,12 +331,12 @@ pub const Flash = struct {
 pub const testing = struct {
     /// The flashes' looks built over a table holding nothing but their textures.
     pub const Built = struct {
-        textures: *@import("../backdrop.zig").testing.Textures,
+        textures: *@import("../../surrender/surrenderlib/srtexture.zig").testing.Textures,
         looks: Looks,
 
         pub fn init(gpa: Allocator, settings: Settings) !Built {
             // The texture cache keeps each file's name, without the directory the game names it by.
-            const textures = try @import("../backdrop.zig").testing.Textures.initNames(gpa, &.{ "matflarea3", "matflareb3", "sfxalpha1", "matflarea7", "matflareb7" });
+            const textures = try @import("../../surrender/surrenderlib/srtexture.zig").testing.Textures.init(gpa, &.{ "matflarea3", "matflareb3", "sfxalpha1", "matflarea7", "matflareb7" });
             errdefer textures.deinit(gpa);
             return .{ .textures = textures, .looks = try .create(gpa, &textures.table, settings) };
         }

@@ -420,11 +420,11 @@ test {
 pub const testing = struct {
     /// The rays over a table holding nothing but their texture.
     pub const Built = struct {
-        textures: *@import("backdrop.zig").testing.Textures,
+        textures: *@import("../surrender/surrenderlib/srtexture.zig").testing.Textures,
         rays: Rays,
 
         pub fn init(gpa: Allocator) !Built {
-            const textures = try @import("backdrop.zig").testing.Textures.initNames(gpa, &.{"laser2"});
+            const textures = try @import("../surrender/surrenderlib/srtexture.zig").testing.Textures.init(gpa, &.{"laser2"});
             errdefer textures.deinit(gpa);
             return .{ .textures = textures, .rays = try .init(gpa, &textures.table) };
         }

@@ -1381,7 +1381,7 @@ pub fn clipEvents(world: *gameobj.World, owner: u16) gameobj.Events {
     return .{ .context = world, .owner = owner, .fire = clipEvent };
 }
 
-fn clipEvent(context: *anyopaque, owner: u16, model: *objects.Model, part: usize, kind: gameobj.EventKind) void {
+fn clipEvent(context: *anyopaque, owner: u16, model: *objects.Model, part: usize, kind: shp.ClipEvent.Kind) void {
     const world: *const gameobj.World = @ptrCast(@alignCast(context));
     switch (kind) {
         .muzzles => clipEventMuzzles(world.*, owner, model, part),
@@ -2893,7 +2893,7 @@ pub fn drawBullets(gpa: Allocator, scene: *srcore.Scene, bullets: *Bullets, ligh
 /// the tests that draw shots.
 const test_looks = struct {
     const Fixture = struct {
-        textures: *@import("backdrop.zig").testing.Textures,
+        textures: *@import("../surrender/surrenderlib/srtexture.zig").testing.Textures,
         looks: *Looks,
 
         fn init(gpa: Allocator) !Fixture {
@@ -2902,7 +2902,7 @@ const test_looks = struct {
             var names: [shots.len + nova.images.len][]const u8 = undefined;
             for (names[0..shots.len], shots) |*name, image| name.* = std.fs.path.basenameWindows(image.name());
             names[shots.len..].* = nova.images;
-            const textures = try @import("backdrop.zig").testing.Textures.initNames(gpa, &names);
+            const textures = try @import("../surrender/surrenderlib/srtexture.zig").testing.Textures.init(gpa, &names);
             errdefer textures.deinit(gpa);
             return .{ .textures = textures, .looks = try .create(gpa, &textures.table) };
         }

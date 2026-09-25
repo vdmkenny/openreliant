@@ -42,10 +42,23 @@ pub const Target = extern struct {
     /// name.
     pub const none: Target = .{ .kind = .ship, .index = -1, .component = -1 };
 
+    /// The ship in `slot`, whole or, where `part` names one, one of its components.
+    pub fn at(slot: u16, part_index: ?u16) Target {
+        return .{ .kind = .ship, .index = @intCast(slot), .component = if (part_index) |p| @intCast(p) else whole };
+    }
+
     /// The slot of the ship it names, where it names one.
     pub fn ship(target: Target) ?u16 {
         return if (target.kind == .ship and target.index >= 0) @intCast(target.index) else null;
     }
+
+    /// The component it names, or null for the whole ship.
+    pub fn part(target: Target) ?u16 {
+        return if (target.component >= 0) @intCast(target.component) else null;
+    }
+
+    /// The `component` of a target that names the whole ship.
+    pub const whole: i16 = -1;
 
     /// The kinds of the mission's object table, as a word.
     pub const Kind = enum(i16) {
@@ -61,6 +74,17 @@ pub const Target = extern struct {
         }
     }
 };
+
+test Target {
+    try std.testing.expectEqual(null, Target.none.ship());
+    try std.testing.expectEqual(null, Target.none.part());
+    const whole: Target = .at(7, null);
+    try std.testing.expectEqual(7, whole.ship());
+    try std.testing.expectEqual(null, whole.part());
+    try std.testing.expectEqual(2, Target.at(7, 2).part());
+    // A flight group names no ship.
+    try std.testing.expectEqual(null, (Target{ .kind = .flight_group, .index = 1, .component = Target.whole }).ship());
+}
 
 /// An order on an object's stack.
 pub const Entry = extern struct {
@@ -276,7 +300,7 @@ pub fn popAll(ctx: Context, index: u16) void {
 /// updates, which both `order_push` and `order_pop` do.
 fn start(slot: *create.Slot) void {
     slot.object.order_starting = true;
-    slot.object.fighting = -1;
+    slot.object.fighting = .none;
     slot.state = .{ .bytes = @splat(0) };
 }
 
@@ -369,7 +393,7 @@ pub fn retaliate(ctx: Context, index: u16) void {
     if (@as(f32, @floatFromInt(combat.armor_class)) * retaliation_damage > object.recent_damage) return;
     if (object.flags.do_not_disturb) return;
 
-    const attacker: Target = .{ .kind = .ship, .index = @intCast(object.last_attacker), .component = -1 };
+    const attacker: Target = .at(object.last_attacker.index() orelse return, null);
     if (!ai.targetValid(all, attacker, .{})) return;
     if (attacker.index == slot.orders[0].target.index) return;
     const other = &all.slots[@intCast(attacker.index)];

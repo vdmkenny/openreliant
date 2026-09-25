@@ -436,13 +436,13 @@ fn ringMesh(gpa: Allocator, image: *srtexture.Image, roundness: Roundness) Alloc
 pub const testing = struct {
     /// The shockwaves built over a table holding nothing but the rings' textures.
     pub const Built = struct {
-        textures: *@import("backdrop.zig").testing.Textures,
+        textures: *@import("../surrender/surrenderlib/srtexture.zig").testing.Textures,
         waves: Shockwaves,
 
         pub fn init(gpa: Allocator) !Built {
             var names: [std.enums.values(Ring).len][]const u8 = undefined;
             for (&names, std.enums.values(Ring)) |*name, ring| name.* = @tagName(ring);
-            const textures = try @import("backdrop.zig").testing.Textures.initNames(gpa, &names);
+            const textures = try @import("../surrender/surrenderlib/srtexture.zig").testing.Textures.init(gpa, &names);
             errdefer textures.deinit(gpa);
             return .{ .textures = textures, .waves = try .create(gpa, &textures.table, .round) };
         }
@@ -590,7 +590,7 @@ test "a torpedo's shockwave" {
     try std.testing.expectEqual(1000, shields.at(.aft).*);
     try std.testing.expectEqual(0, mission.player.shield_reserves.fore);
     try std.testing.expectApproxEqAbs(760, mission.player.shield_reserves.aft, 1e-3);
-    try std.testing.expectEqual(torpedo, slot.object.last_attacker);
+    try std.testing.expectEqual(torpedo, slot.object.last_attacker.index());
     try std.testing.expectEqual(2, mission.shake);
     try std.testing.expectEqual(20 + harm_pause, slot.object.shockwave_until);
 

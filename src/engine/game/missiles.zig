@@ -722,7 +722,7 @@ pub fn end(world: gameobj.World, at: u8) void {
     const all = world.objects;
     const missile = all.missiles.get(at) orelse return;
     const object = missile.object();
-    if (object.sound_voice != 0xFFFF) if (world.hearing) |hearing| hearing.sound.end3D(@intCast(object.sound_voice));
+    if (object.sound_voice.index()) |voice| if (world.hearing) |hearing| hearing.sound.end3D(voice);
     if (missile.type.shockwave()) |kind| shockwave_mod.setOff(world, missile.slot.drawn, .{
         .kind = kind,
         .size = end_wave_size,

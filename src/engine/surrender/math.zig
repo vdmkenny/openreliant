@@ -29,14 +29,19 @@ pub const Place = struct {
     /// (`SR_object_concate_parents`, `0x004C3570`, one level up).
     pub fn within(place: Place, parent: Place) Place {
         return .{
-            .position = transform(parent.orientation, place.position) + parent.position,
+            .position = parent.point(place.position),
             .orientation = product(parent.orientation, place.orientation),
         };
     }
 
-    /// `point`, given in the world, in this place's own frame.
-    pub fn inverse(place: Place, point: Vector) Vector {
-        return transformTransposed(place.orientation, point - place.position);
+    /// `local`, given in this place's own frame, in the world.
+    pub fn point(place: Place, local: Vector) Vector {
+        return transform(place.orientation, local) + place.position;
+    }
+
+    /// `at`, given in the world, in this place's own frame: the reverse of `point`.
+    pub fn inverse(place: Place, at: Vector) Vector {
+        return transformTransposed(place.orientation, at - place.position);
     }
 };
 
@@ -68,9 +73,12 @@ pub fn distance(a: Vector, b: Vector) f32 {
     return @sqrt(d[1] * d[1] + d[2] * d[2] + d[0] * d[0]);
 }
 
-/// The value `t` of the way from `a` to `b` (`lerp`, `0x004C1050`).
-pub fn lerp(a: f32, b: f32, t: f32) f32 {
-    return (b - a) * t + a;
+/// The value `t` of the way from `a` to `b` (`lerp`, `0x004C1050`), or for vectors of each
+/// component.
+pub fn lerp(a: anytype, b: anytype, t: f32) @TypeOf(a, b) {
+    const T = @TypeOf(a, b);
+    const share: T = if (@typeInfo(T) == .vector) @splat(t) else t;
+    return (b - a) * share + a;
 }
 
 /// `angle` brought round to within a half turn either way: a turn less past a half turn, a turn
@@ -226,6 +234,15 @@ pub fn round(x: f32) i32 {
     return @intFromFloat(r);
 }
 
+/// `__ftol` (`0x004CF28C`), which the compiler calls to turn a float into an integer: `x` with its
+/// fraction dropped, as a 64-bit integer whose low half an `int` keeps. A value no `i64` holds, or
+/// no number at all, gives the x87's indefinite integer, whose low half is zero.
+pub fn ftol(x: f32) i32 {
+    const t = @trunc(x);
+    if (!(t >= -0x1p63 and t < 0x1p63)) return 0;
+    return @truncate(@as(i64, @intFromFloat(t)));
+}
+
 pub const Axis = enum { x, y, z };
 
 /// A right-handed turn by `angle` radians about `axis`.
@@ -323,12 +340,33 @@ test distance {
     try std.testing.expectEqual(0, distance(.{ 7, 7, 7 }, .{ 7, 7, 7 }));
 }
 
+test ftol {
+    try std.testing.expectEqual(3, ftol(3.7));
+    try std.testing.expectEqual(-3, ftol(-3.7));
+    // Past an `int`, the low half of the 64-bit integer.
+    try std.testing.expectEqual(-1294967296, ftol(3e9));
+    try std.testing.expectEqual(0, ftol(0x1p32));
+    try std.testing.expectEqual(0, ftol(std.math.nan(f32)));
+    try std.testing.expectEqual(0, ftol(0x1p70));
+}
+
 test lerp {
-    try std.testing.expectEqual(1, lerp(1, 0.1, 0));
-    try std.testing.expectEqual(3, lerp(2, 6, 0.25));
+    const one: f32 = 1;
+    try std.testing.expectEqual(1, lerp(one, 0.1, 0));
+    try std.testing.expectEqual(3, lerp(@as(f32, 2), 6, 0.25));
     // In single precision the far end can miss `b` by the rounding of `b - a`, as the engine's
     // does.
-    try std.testing.expectEqual(0.100000024, lerp(1, 0.1, 1));
+    try std.testing.expectEqual(0.100000024, lerp(one, 0.1, 1));
+    // A vector goes the same share of the way in each component.
+    try std.testing.expectEqual(Vector{ 3, 1, -1 }, lerp(Vector{ 2, 0, 0 }, Vector{ 6, 4, -4 }, 0.25));
+}
+
+test Place {
+    const place: Place = .{ .position = .{ 1, 2, 3 }, .orientation = .{ 0, -1, 0, 1, 0, 0, 0, 0, 1 } };
+    const local: Vector = .{ 5, 0, 0 };
+    const world = place.point(local);
+    try std.testing.expectEqual(Vector{ 1, 7, 3 }, world);
+    try std.testing.expectEqual(local, place.inverse(world));
 }
 
 test halfTurn {

@@ -658,7 +658,7 @@ const Glow = struct {
     fn init(glow: *Glow, image: *srtexture.Image, tint: [3]f32) void {
         glow.sprites = .{ .{ .colour = tint }, .{ .colour = .{ 1, 1, 1 } } };
         glow.set = .{
-            .surface = .{ .material = .onePass(.{ .coordinates = .mesh, .lit = true, .blend = .add }), .textures = .{ .{ .image = image }, .none } },
+            .surface = .glow(image),
             .sprites = &glow.sprites,
         };
         glow.shown = false;
@@ -674,14 +674,14 @@ const testing = struct {
     /// Trails over small textures of their own names, in an armed mission.
     const Stage = struct {
         armed: missiles.testing.Armed,
-        textures: *@import("../backdrop.zig").testing.Textures,
+        textures: *@import("../../surrender/surrenderlib/srtexture.zig").testing.Textures,
         trails: Trails,
 
         fn init(stage: *Stage) !void {
             const gpa = std.testing.allocator;
             try stage.armed.init(gpa);
             errdefer stage.armed.deinit();
-            stage.textures = try .initNames(gpa, &.{ "mtrail2", "shield128", "partic6" });
+            stage.textures = try .init(gpa, &.{ "mtrail2", "shield128", "partic6" });
             stage.trails = .init(gpa, try .load(&stage.textures.table));
             stage.armed.mission.clock.frame_duration = 1;
         }

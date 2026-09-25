@@ -264,11 +264,22 @@ fn decodeRow(rows: []const u8, start: usize, dest: []u8) Error!usize {
 
 /// Expands a 6-bit palette into the 8-bit RGB triples an image file wants.
 pub fn expandPalette(palette: *const [palette_size]u8, out: *[palette_size]u8) void {
-    for (palette, out) |level, *channel| {
-        // Six bits scaled to eight: the top bits repeat into the bottom so full scale stays full.
-        const six: u8 = level & 0x3F;
-        channel.* = (six << 2) | (six >> 4);
-    }
+    for (palette, out) |level, *channel| channel.* = expandLevel(level);
+}
+
+/// A 6-bit palette level as an 8-bit one: the top bits repeat into the bottom so full scale stays
+/// full.
+pub fn expandLevel(level: u8) u8 {
+    const six: u6 = @truncate(level);
+    return @as(u8, six) << 2 | six >> 4;
+}
+
+test expandLevel {
+    try std.testing.expectEqual(0, expandLevel(0));
+    try std.testing.expectEqual(0xFF, expandLevel(0x3F));
+    try std.testing.expectEqual(0x82, expandLevel(0x20));
+    // The two bits above the six are not the level's.
+    try std.testing.expectEqual(0xFF, expandLevel(0xFF));
 }
 
 test decodeRow {

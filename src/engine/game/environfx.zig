@@ -301,7 +301,7 @@ fn glowDepth(bounds: [2]Vector, scale: Vector, local: Vector) f32 {
 pub const testing = struct {
     /// The glows built over a table holding nothing but their flares, for tests that draw them.
     pub const Built = struct {
-        textures: *@import("backdrop.zig").testing.Textures,
+        textures: *@import("../surrender/surrenderlib/srtexture.zig").testing.Textures,
         glows: Glows,
 
         pub fn init(gpa: Allocator) !Built {
@@ -310,7 +310,7 @@ pub const testing = struct {
                 names[kind * 2] = nozzle;
                 names[kind * 2 + 1] = blade;
             }
-            const textures = try @import("backdrop.zig").testing.Textures.initNames(gpa, &names);
+            const textures = try @import("../surrender/surrenderlib/srtexture.zig").testing.Textures.init(gpa, &names);
             errdefer textures.deinit(gpa);
             return .{ .textures = textures, .glows = try .create(gpa, &textures.table) };
         }
@@ -324,7 +324,7 @@ pub const testing = struct {
 
 test glowMesh {
     const gpa = std.testing.allocator;
-    const textures = try @import("backdrop.zig").testing.Textures.initNames(gpa, &.{ "matflarea1", "matflareb1" });
+    const textures = try @import("../surrender/surrenderlib/srtexture.zig").testing.Textures.init(gpa, &.{ "matflarea1", "matflareb1" });
     defer textures.deinit(gpa);
     const mesh = try glowMesh(gpa, &textures.table, 0);
     defer mesh.deinit(gpa);
@@ -358,7 +358,7 @@ test glowMesh {
 
 test plumeMesh {
     const gpa = std.testing.allocator;
-    const textures = try @import("backdrop.zig").testing.Textures.initNames(gpa, &.{ "matflarea3", "matflareb3" });
+    const textures = try @import("../surrender/surrenderlib/srtexture.zig").testing.Textures.init(gpa, &.{ "matflarea3", "matflareb3" });
     defer textures.deinit(gpa);
     const nozzle = try matmanager.textureRequire(&textures.table, "matflarea3");
     const mesh = try plumeMesh(gpa, .{ 60, 60, 600 }, flare_material, nozzle, nozzle);

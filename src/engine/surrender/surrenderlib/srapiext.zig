@@ -191,6 +191,11 @@ pub const Texture = union(enum) {
     none,
     highlight: u3,
     image: *srtexture.Image,
+
+    /// The image, or none where there is none.
+    pub fn of(found: ?*srtexture.Image) Texture {
+        return if (found) |image| .{ .image = image } else .none;
+    }
 };
 
 /// What a run of a mesh's polygons, a set of sprites or a star field is drawn with, as OpenReliant
@@ -200,7 +205,22 @@ pub const Surface = struct {
     polygons: u32 = 0,
     material: Material,
     textures: [2]Texture = .{ .none, .none },
+
+    /// A glowing sprite's: `image` added over what is behind it, lit by the sprite's own colour, as
+    /// the sun's sprites, the lights and the glows of the explosions and the missiles' trails are.
+    pub fn glow(image: ?*srtexture.Image) Surface {
+        return .{
+            .material = .onePass(.{ .coordinates = .mesh, .lit = true, .blend = .add }),
+            .textures = .{ .of(image), .none },
+        };
+    }
 };
+
+test "Surface.glow" {
+    const glowing: Surface = .glow(null);
+    try std.testing.expectEqual(Texture.none, glowing.textures[0]);
+    try std.testing.expectEqual(Material.Blend.add, glowing.material.blend[0]);
+}
 
 /// A polygon of a mesh (`mesh+0x38`): a run of the mesh's indices.
 pub const Polygon = struct {

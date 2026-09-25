@@ -108,7 +108,7 @@ pub const Template = extern struct {
 };
 
 /// Where `now` is in a life from `born`, `life` ticks long, as a share of it.
-fn through(now: i32, born: i32, life: i32) f32 {
+pub fn through(now: i32, born: i32, life: i32) f32 {
     return @as(f32, @floatFromInt(now - born)) / @as(f32, @floatFromInt(life));
 }
 
@@ -158,12 +158,9 @@ pub const Emitter = struct {
     /// `particle_spark` (`0x0049C340`): a spark from where it stands, as fast as a particle leaves
     /// but inheriting nothing, its velocity a second's.
     fn spark(emitter: *const Emitter, explosions: *explode.Explosions, clock: *const Clock, random: *libcmt.Rand) void {
-        const velocity_per_second = emitter.leaving(random) * @as(Vector, @splat(ticks_per_second));
+        const velocity_per_second = emitter.leaving(random) * @as(Vector, @splat(@import("main.zig").ticks_per_second));
         explosions.throwSpark(emitter.world.position, velocity_per_second, clock, random);
     }
-
-    /// A spark's velocity is a second's, which is 100 ticks.
-    const ticks_per_second: f32 = 100;
 };
 
 /// What a burst or a stream is sent out with: the camera's place, which thins it, the clock and the

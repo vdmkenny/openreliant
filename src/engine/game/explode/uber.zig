@@ -435,10 +435,7 @@ pub const Uber = struct {
         const ball_vertices = shape.ball.vertices();
         blast.ball.baked = blast.ball_colours[0..ball_vertices];
         blast.ball.own_uv = .{ blast.ball_uv[0..ball_vertices], null };
-        blast.glow.surface = .{
-            .material = .onePass(.{ .coordinates = .mesh, .lit = true, .blend = .add }),
-            .textures = .{ .{ .image = uber.glow }, .none },
-        };
+        blast.glow.surface = .glow(uber.glow);
         blast.glow.sprites = &blast.glow_sprite;
 
         const all = world.objects;

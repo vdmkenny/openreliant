@@ -97,6 +97,9 @@ pub const Showing = enum(u8) {
     _,
 };
 
+/// The game's ticks a second: `tick_timer` (`0x004827C0`) runs every hundredth of a second.
+pub const ticks_per_second = 100;
+
 /// A mission's clocks, and the pacing they drive: the timer ticks 100 times a second, the loop
 /// runs one game tick for each tick of the timer, and the simulation steps on every fourth.
 ///
@@ -205,6 +208,11 @@ pub const Clock = struct {
     pub fn frameReset(clock: *Clock) void {
         clock.frame_start = clock.mission_ticks;
         clock.frame_duration = 0;
+    }
+
+    /// The ticks the current frame covers (`frame_duration`), none where the clock ran back.
+    pub fn frameTicks(clock: *const Clock) u32 {
+        return @intCast(@max(clock.frame_duration, 0));
     }
 };
 
@@ -444,8 +452,8 @@ fn avoidanceScan(world: gameobj.World, index: u16) void {
         const object = &other_slot.object;
         if (object.flags.stand_in or object.flags.disabled or object.flags.jumping or other == index) continue;
         if (other_slot.combat) |combat| if (combat.class == .planet) continue;
-        if (@intFromEnum(ship.passes_through[0]) == other or ship.fighting == other) continue;
-        if (@intFromEnum(object.passes_through[0]) == index) continue;
+        if (ship.passes_through[0].index() == other or ship.fighting.index() == other) continue;
+        if (object.passes_through[0].index() == index) continue;
         if (object.flags.components) {
             const reach = object.radius + ship.radius + avoid_widening;
             if (math.lengthSquared(ship.nextPosition() - object.nextPosition()) < reach * reach) ship.avoid_near.add(other);
@@ -1153,6 +1161,7 @@ test "a frame measures the ticks since the last one" {
     _ = clock.runTicks(&devices, mission.world());
     clock.frameBegin();
     try std.testing.expectEqual(10, clock.frame_duration);
+    try std.testing.expectEqual(10, clock.frameTicks());
     try std.testing.expectEqual(10, clock.frame_start);
     // A frame with no tick between takes no time.
     clock.frameBegin();

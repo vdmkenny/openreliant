@@ -155,7 +155,7 @@ fn separate(ctx: Context, index: u16, cockpit: usize) void {
     pod.object.smoke_level = .none;
     ship.object.flags = .{ .ejected = true, ._unknown_24 = true };
     ship.object.side = .neutral;
-    ship.object.passes_through[0] = @enumFromInt(index);
+    ship.object.passes_through[0] = .of(index);
     ship.object.shield_factor = 0;
     ship.motion = .drift;
     // The ship has the model it flew with; the pod a new one of the same.
@@ -175,7 +175,7 @@ fn separate(ctx: Context, index: u16, cockpit: usize) void {
     const object = &pod.object;
     object.flags.unpowered = true;
     object.flags.ejected = true;
-    object.passes_through[0] = @enumFromInt(left);
+    object.passes_through[0] = .of(left);
     pod.orders[0].target.index = @intCast(left);
     object.rack_count = 0;
     object.shield_factor = 0;

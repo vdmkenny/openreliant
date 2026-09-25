@@ -340,7 +340,7 @@ pub const Art = struct {
         const palette = art.global orelse return .{ 1, 1, 1, 1 };
         var colour: [4]f32 = .{ 0, 0, 0, 1 };
         for (colour[0..3], palette[@as(usize, index) * 3 ..][0..3]) |*channel, level| {
-            channel.* = @as(f32, @floatFromInt(expand(level))) / 255;
+            channel.* = @as(f32, @floatFromInt(spr.expandLevel(level))) / 255;
         }
         return colour;
     }
@@ -599,7 +599,7 @@ fn glyphImage(opened: *Opened, gpa: Allocator, code: u8) Allocator.Error!?*srtex
         const pixel = rgba[at * 4 ..][0..4];
         if (palette) |colours| {
             // The palette holds 6-bit levels, as the sprites' does.
-            for (pixel[0..3], colours[@as(usize, index) * 3 ..][0..3]) |*channel, level| channel.* = expand(level);
+            for (pixel[0..3], colours[@as(usize, index) * 3 ..][0..3]) |*channel, level| channel.* = spr.expandLevel(level);
         } else {
             @memset(pixel[0..3], rampLevel(index));
         }
@@ -619,12 +619,6 @@ fn rampLevel(level: u8) u8 {
 
 /// The top of the ramp `hud_palette_ramp` sets: entries 1 to 15.
 const ramp_top = 15;
-
-/// A 6-bit palette level as an 8-bit one, as `spr.expandPalette` does.
-fn expand(level: u8) u8 {
-    const six: u8 = level & 0x3F;
-    return (six << 2) | (six >> 4);
-}
 
 /// Draws `text` at `at`, tinted by `colour`, `scale` times the font's own size, and returns where
 /// the line ends. `hud_text` aligns the line first; the glyphs then follow one another by their
@@ -3321,7 +3315,7 @@ pub const Radar = struct {
                 const index = it.at;
                 it.at += 1;
                 const slot = &all.slots[index];
-                const nav_point = index == own.object.nav_point;
+                const nav_point = own.object.nav_point == gameobj.Slot.of(@intCast(index));
                 if (!nav_point and !shown(all, index)) continue;
                 const apart = slot.drawn.position - own.drawn.position;
                 if (!(math.length(apart) < it.reach)) continue;

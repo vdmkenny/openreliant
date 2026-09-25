@@ -364,7 +364,7 @@ pub const Pieces = struct {
             const place = &flight.place;
             place.position += flight.velocity * @as(Vector, @splat(@floatFromInt(clock.frame_duration)));
             const spin = math.fromAngleVector(flight.tumble);
-            for (0..@intCast(@max(clock.frame_duration, 0))) |_| place.orientation = math.product(place.orientation, spin);
+            for (0..clock.frameTicks()) |_| place.orientation = math.product(place.orientation, spin);
         }
     }
 

@@ -141,7 +141,7 @@ pub const TypeCache = struct {
 const TestFiles = struct {
     tmp: std.testing.TmpDir,
     resources: bigfile.Hog,
-    textures: *srofiles.testing.Textures,
+    textures: *srtexture.testing.Textures,
 
     fn init(gpa: Allocator, file: []const u8) !TestFiles {
         const io = std.testing.io;
@@ -151,7 +151,7 @@ const TestFiles = struct {
         try bigfile.testing.write(gpa, io, tmp.dir, bigfile.resource_name, &.{.{ .name = file, .data = @import("../../../formats/shp.zig").testing.buildModel(&buffer) }});
         var resources: bigfile.Hog = try .open(gpa, io, tmp.dir, bigfile.resource_name);
         errdefer resources.close(gpa);
-        return .{ .tmp = tmp, .resources = resources, .textures = try .initNamed(gpa, &.{ "yank_1", "lyank_1", "cloak64" }) };
+        return .{ .tmp = tmp, .resources = resources, .textures = try .init(gpa, &.{ "yank_1", "lyank_1", "cloak64" }) };
     }
 
     fn deinit(files: *TestFiles, gpa: Allocator) void {

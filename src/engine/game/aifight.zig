@@ -249,7 +249,7 @@ pub fn init(ctx: aigeneric.Context, index: u16) void {
     choose(fighter);
     drawMissileWait(fighter);
     const ship = fighter.ship();
-    ship.fighting = target;
+    ship.fighting = .of(@intCast(target));
     fighter.enemy().object.fought_by += 1;
     ship.recent_damage = 0;
 }
@@ -638,7 +638,7 @@ fn callForHelp(fighter: Fighter) void {
     const combat = fighter.slot.combat orelse return;
     const worth = combat.fullArmor();
     if (ship.recent_damage < worth * help_damage) return;
-    if (ship.last_attacker != all.player) return;
+    if (ship.last_attacker.index() != all.player) return;
     for (ship.armor.values()) |armor| {
         if (armor < worth * help_armor) break;
     } else return;
@@ -704,7 +704,7 @@ test init {
 
     // The ship fights the player, who is fought once, and the wait for the first missile is drawn
     // from the pilot's range.
-    try std.testing.expectEqual(0, fighter.ship().fighting);
+    try std.testing.expectEqual(0, fighter.ship().fighting.index());
     try std.testing.expectEqual(1, all.slots[0].object.fought_by);
     const wait = fighter.pilot.timings.missiles;
     try std.testing.expect(fighter.ship().missile_at >= wait.least and fighter.ship().missile_at < wait.most);
@@ -808,7 +808,7 @@ test callForHelp {
 
     // Not hurt enough: nobody is called.
     const ship = fighter.ship();
-    ship.last_attacker = 0;
+    ship.last_attacker = .of(0);
     callForHelp(fighter);
     try std.testing.expectEqual(Order.fly, mission.objects.slots[near].orders[0].order);
 

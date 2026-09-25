@@ -172,3 +172,42 @@ test Table {
     try std.testing.expect((try table.findLightMap("KIEV_1")).? != kiev);
     try std.testing.expectEqual(null, try table.findLightMap("lKiev_1"));
 }
+
+/// Fixtures for the tests here and in the modules that draw with textures.
+pub const testing = struct {
+    /// A table of small textures, one under each name it is made with.
+    pub const Textures = struct {
+        bytes: []u8,
+        cache: tcache.Cache,
+        table: Table,
+
+        /// A table holding an eight-by-four texture under each of `names`.
+        pub fn init(gpa: Allocator, names: []const []const u8) !*Textures {
+            const specs = try gpa.alloc(tcache.testing.Spec, names.len);
+            defer gpa.free(specs);
+            for (specs, names) |*spec, name| spec.* = .{ .name = name, .encoding = .index8, .width = 8, .height = 4 };
+            const textures = try gpa.create(Textures);
+            errdefer gpa.destroy(textures);
+            textures.bytes = try tcache.testing.build(gpa, specs);
+            errdefer gpa.free(textures.bytes);
+            textures.cache = try .parse(gpa, textures.bytes);
+            textures.table = .init(gpa, textures.cache, std.mem.zeroes(tga.Palette));
+            return textures;
+        }
+
+        pub fn deinit(textures: *Textures, gpa: Allocator) void {
+            textures.table.deinit();
+            textures.cache.deinit(gpa);
+            gpa.free(textures.bytes);
+            gpa.destroy(textures);
+        }
+    };
+};
+
+test "testing.Textures" {
+    const gpa = std.testing.allocator;
+    const textures = try testing.Textures.init(gpa, &.{ "hull", "lhull" });
+    defer textures.deinit(gpa);
+    try std.testing.expect((try textures.table.find("hull")) != null);
+    try std.testing.expect((try textures.table.findLightMap("hull")) != null);
+}

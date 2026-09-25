@@ -37,11 +37,37 @@ pub const Slot = enum(i32) {
         return @enumFromInt(slot);
     }
 
+    /// The slot `index` names, or none.
+    pub fn from(found: ?u16) Slot {
+        return if (found) |slot| of(slot) else .none;
+    }
+
     /// The slot it names, or null for none.
     pub fn index(slot: Slot) ?u16 {
         return if (slot == .none) null else @intCast(@intFromEnum(slot));
     }
 };
+
+/// One of the positional voices (`hog_snd.Sound.voices3d`) as an object names the one following
+/// it, or `none`, which the game holds as `0xFFFF`.
+pub const Voice = enum(u16) {
+    none = 0xFFFF,
+    _,
+
+    pub fn of(voice: u8) Voice {
+        return @enumFromInt(voice);
+    }
+
+    /// The voice it names, or null for none.
+    pub fn index(voice: Voice) ?u8 {
+        return if (voice == .none) null else @intCast(@intFromEnum(voice));
+    }
+};
+
+test Voice {
+    try std.testing.expectEqual(null, Voice.none.index());
+    try std.testing.expectEqual(3, Voice.of(3).index());
+}
 
 /// Code that acts for the object in a slot: its `motion`, which moves it for one update, such as
 /// `motion_forward` (`0x004744C0`), which flies it forward by the flight model, and the routines
@@ -84,7 +110,24 @@ pub const Invulnerability = enum(u8) {
     /// hull, and a shield generator does not soften a component's hits.
     _unknown_5 = 5,
     _,
+
+    /// Whether it keeps off a hit: always under `full`, and under `player_can_hit` where a player's
+    /// ship did not deal it.
+    pub fn protects(invulnerable: Invulnerability, by_player: bool) bool {
+        return switch (invulnerable) {
+            .full => true,
+            .player_can_hit => !by_player,
+            else => false,
+        };
+    }
 };
+
+test "Invulnerability.protects" {
+    try std.testing.expect(Invulnerability.full.protects(true));
+    try std.testing.expect(Invulnerability.player_can_hit.protects(false));
+    try std.testing.expect(!Invulnerability.player_can_hit.protects(true));
+    try std.testing.expect(!Invulnerability.none.protects(false));
+}
 
 /// A deathmatch power-up (`GameObject.power_up`): its record of 0x28 bytes in the table at
 /// `0x0050C510`, which gives how long it lasts and the routines that start and end it. `0x004B1C00`
@@ -401,6 +444,15 @@ pub const Type = enum(u32) {
         return object_type.number() < create.ship_type_count;
     }
 
+    /// The type it stands for among the player's ships: one of the second set, from
+    /// `main.player_twins_first`, stands for the first set's in the same place, and any other for
+    /// itself.
+    pub fn untwinned(object_type: Type) Type {
+        const first = @import("main.zig").player_twins_first;
+        const at = object_type.number();
+        return @enumFromInt(if (at >= first) at - first else at);
+    }
+
     /// Whether it is a Phoenix, the ship that carries the Nova Cannon, or its twin.
     pub fn carriesNova(object_type: Type) bool {
         return object_type == .phoenix or object_type == .t_phoenix;
@@ -600,10 +652,9 @@ pub const GameObject = extern struct {
     /// The slots of two objects it passes through: the collision sweep of `objects_update` tests
     /// no pair where either names the other. Both are `none` when created.
     passes_through: [2]Slot,
-    /// The slot of the ship Fight has it attack, or -1: Fight sets it as it starts
-    /// (`order_fight_init`), an attack run leaves it clear until it is done, and a new order clears
-    /// it. -1 when created.
-    fighting: i32,
+    /// The slot of the ship Fight has it attack: Fight sets it as it starts (`order_fight_init`),
+    /// an attack run leaves it clear until it is done, and a new order clears it. None when created.
+    fighting: Slot,
     _unknown_624: u8,
     _unknown_625: [3]u8,
     _unknown_628: shp.Vec3,
@@ -678,8 +729,8 @@ pub const GameObject = extern struct {
     /// Damage of kinds 0, 1 and 5 taken since `orders_update` last zeroed it, which it does every
     /// 500 ticks.
     recent_damage: f32,
-    /// The slot of the object that last damaged it, or -1.
-    last_attacker: i32,
+    /// The slot of the object that last damaged it.
+    last_attacker: Slot,
     _unknown_698: u32,
     /// Fight's timers: until when it holds its fire, until when it holds its missiles, and until
     /// when it holds its countermeasures, each from the pilot's `timings`.
@@ -702,8 +753,8 @@ pub const GameObject = extern struct {
     _unknown_710: [4]u32,
     /// The object of the nav point the display points to, set by the mission's `SetNavPoint` and
     /// `nav_point_next` (`0x004152A0`), which passes on to the next the player's ship has not
-    /// reached; -1 for none, as when created.
-    nav_point: i32,
+    /// reached; none when created.
+    nav_point: Slot,
     /// **Unknown.** -1 when created.
     _unknown_724: i32,
     /// Where the power distribution stands on the power ball (`input.power`): a point within a disc
@@ -748,9 +799,9 @@ pub const GameObject = extern struct {
     created: bool,
     /// How far harm reaches it (`SetInvulnerability`).
     invulnerable: Invulnerability,
-    /// The 3D voice following it, `0xFFFF` for none: `sound_3d_voice_end` sets it back, and the
-    /// missiles' code reads it (`0x00495CF0`).
-    sound_voice: u16,
+    /// The 3D voice following it: `sound_3d_voice_end` sets it back to none, and the missiles'
+    /// code reads it (`0x00495CF0`).
+    sound_voice: Voice,
 
     /// The names of the script commands that set a bit are the developers' own.
     /// What the explosions' routines note of an object as it comes apart (`+0x610`).
@@ -856,12 +907,54 @@ pub const GameObject = extern struct {
         pub fn outOfFrame(flags: Flags) bool {
             return flags.stand_in or flags.disabled or flags.jumping;
         }
+
+        /// Whether the AI's searches pass it over: a stand-in, or an exploding or disabled object.
+        pub fn outOfSearch(flags: Flags) bool {
+            return flags.stand_in or flags.exploding or flags.disabled;
+        }
+
+        /// The flags set in either.
+        pub fn with(flags: Flags, more: Flags) Flags {
+            return @bitCast(word(flags) | word(more));
+        }
+
+        /// The flags set in both.
+        pub fn within(flags: Flags, other: Flags) Flags {
+            return @bitCast(word(flags) & word(other));
+        }
+
+        /// The flags set here but not in `other`.
+        pub fn without(flags: Flags, other: Flags) Flags {
+            return @bitCast(word(flags) & ~word(other));
+        }
+
+        /// Whether any flag is set.
+        pub fn any(flags: Flags) bool {
+            return word(flags) != 0;
+        }
+
+        fn word(flags: Flags) u32 {
+            return @bitCast(flags);
+        }
     };
 
     /// Where it will stand at the next step (`root.next_position`), which the AI, the collisions
     /// and the sounds go by.
     pub fn nextPosition(object: *const GameObject) Vector {
         return vector(object.root.next_position);
+    }
+
+    /// Lets go of the turns: no roll, pitch or yaw.
+    pub fn holdTurns(object: *GameObject) void {
+        object.roll_input = 0;
+        object.pitch_input = 0;
+        object.yaw_input = 0;
+    }
+
+    /// Lets go of the controls: no throttle and no turns.
+    pub fn letGo(object: *GameObject) void {
+        object.throttle = 0;
+        object.holdTurns();
     }
 
     /// Where its root stands at `step`: its committed place, or its next.
@@ -995,6 +1088,36 @@ pub const GunMode = packed struct(u16) {
         return .{ .group = 0, ._unknown_3 = false, .all = groups != 1, .synchronised = true, ._unknown_6 = 0 };
     }
 };
+
+test "Type.untwinned" {
+    try std.testing.expectEqual(.predator, Type.untwinned(@enumFromInt(0xF4)));
+    try std.testing.expectEqual(.grendel, Type.untwinned(@enumFromInt(0xF6)));
+    try std.testing.expectEqual(.grendel, Type.grendel.untwinned());
+    try std.testing.expectEqual(@as(Type, @enumFromInt(0xF3)), Type.untwinned(@enumFromInt(0xF3)));
+}
+
+test "GameObject.Flags" {
+    const flags: GameObject.Flags = .{ .stand_in = true, .targetable = true };
+    try std.testing.expectEqual(GameObject.Flags{ .stand_in = true, .targetable = true, .frozen = true }, flags.with(.{ .frozen = true }));
+    try std.testing.expectEqual(GameObject.Flags{ .targetable = true }, flags.without(.{ .stand_in = true }));
+    try std.testing.expectEqual(GameObject.Flags{ .stand_in = true }, flags.within(.{ .stand_in = true, .frozen = true }));
+    try std.testing.expect(flags.any());
+    try std.testing.expect(!flags.within(.{ .frozen = true }).any());
+    try std.testing.expect(flags.outOfSearch());
+}
+
+test "GameObject.letGo" {
+    var object = testing.object();
+    object.throttle = 1;
+    object.yaw_input = 0.5;
+    object.pitch_input = -0.5;
+    object.roll_input = 0.25;
+    object.letGo();
+    try std.testing.expectEqual(0, object.throttle);
+    try std.testing.expectEqual(0, object.yaw_input);
+    try std.testing.expectEqual(0, object.pitch_input);
+    try std.testing.expectEqual(0, object.roll_input);
+}
 
 test "Type.rock" {
     try std.testing.expectEqual(.asteroid, Type.rock(@enumFromInt(0x7F)));
@@ -1175,7 +1298,7 @@ pub fn objectAlloc(object_type: Type, random: *libcmt.Rand) GameObject {
     object.power_up = .none;
     object._unknown_764 = -1;
     object.root.flags.component = true;
-    object.sound_voice = 0xFFFF;
+    object.sound_voice = .none;
     object.blink_offset = blinkOffset(random);
     object.visibility = 1;
     return object;
@@ -1675,30 +1798,19 @@ fn visit(model: *objects.Model, index: usize, windows: *Windows, events: ?Events
     const sink = events orelse return;
     for (track.events) |event| {
         if (!windows.passes(event.time)) continue;
-        const kind: EventKind = @enumFromInt(event.kind);
-        switch (kind) {
-            .muzzles, .puff => sink.fire(sink.context, sink.owner, model, index, kind),
+        switch (event.kind) {
+            .muzzles, .puff => sink.fire(sink.context, sink.owner, model, index, event.kind),
             _ => {},
         }
     }
 }
-
-/// What a track's event sets off as a node passes it (`node_tree_update`).
-pub const EventKind = enum(i32) {
-    /// Fires a shot from each of the part's muzzles (`clip_event_muzzles`, `0x0047C7B0`).
-    muzzles = 0,
-    /// Puffs particles from each of the part's attachments of kind 7 (`clip_event_particles`,
-    /// `0x0047C800`).
-    puff = 2,
-    _,
-};
 
 /// Whoever sets off the effects of the events the tracks of the model of the object in slot
 /// `owner` pass: the game's own (`guns.clipEvents`), or a test's.
 pub const Events = struct {
     context: *anyopaque,
     owner: u16 = 0,
-    fire: *const fn (context: *anyopaque, owner: u16, model: *objects.Model, part: usize, kind: EventKind) void,
+    fire: *const fn (context: *anyopaque, owner: u16, model: *objects.Model, part: usize, kind: shp.ClipEvent.Kind) void,
 };
 
 /// Fixtures for the tests here and in the modules that move objects.

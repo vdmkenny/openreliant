@@ -292,11 +292,11 @@ pub fn spray(world: gameobj.World, kind: Kind, at: Vector, direction: Vector, ca
 pub const testing = struct {
     /// The sparks built over a table holding nothing but their textures.
     pub const Built = struct {
-        textures: *@import("backdrop.zig").testing.Textures,
+        textures: *@import("../surrender/surrenderlib/srtexture.zig").testing.Textures,
         sparks: Sparks,
 
         pub fn init(gpa: Allocator) !Built {
-            const textures = try @import("backdrop.zig").testing.Textures.initNames(gpa, &.{ texture, beam_texture });
+            const textures = try @import("../surrender/surrenderlib/srtexture.zig").testing.Textures.init(gpa, &.{ texture, beam_texture });
             errdefer textures.deinit(gpa);
             return .{ .textures = textures, .sparks = try .create(gpa, &textures.table) };
         }

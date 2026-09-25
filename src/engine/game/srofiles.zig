@@ -598,12 +598,9 @@ fn staticLight(part: *const shp.PartData, attachment: shp.Attachment) StaticLigh
             attachment.position.y + origin.y,
             attachment.position.z + origin.z,
         },
-        // The id stands for the colour, and for nothing the engine knows past red.
-        .colour = switch (attachment.id) {
-            0 => .{ 0, 0, 1 },
-            1 => .{ 0, 1, 0 },
-            2 => .{ 1, 1, 0 },
-            3 => .{ 1, 0, 0 },
+        // The bake knows no colour past red.
+        .colour = switch (attachment.light()) {
+            .blue, .green, .yellow, .red => |light| @import("objects.zig").lightColour(light),
             else => .{ 0, 0, 0 },
         },
         .brightness = attachment.light_brightness,
@@ -757,20 +754,16 @@ fn renumber(face_lists: []const []u32, polygon: u32, extra: u32) void {
 
 /// A run's surface: its look, with the textures its material found.
 fn surface(face_look: Look, images: Found) srapiext.Surface {
-    var textures: [2]srapiext.Texture = .{ image(images.texture), .none };
+    var textures: [2]srapiext.Texture = .{ .of(images.texture), .none };
     if (face_look.second) |second| textures[1] = switch (second.texture) {
         .none => .none,
-        .material => image(images.texture),
-        .light_map => image(images.light_map),
+        .material => .of(images.texture),
+        .light_map => .of(images.light_map),
         .highlight => |index| .{ .highlight = index },
     };
     var record = material(face_look, .{});
     record.image = .{ .null, .null };
     return .{ .material = record, .textures = textures };
-}
-
-fn image(found: ?*srtexture.Image) srapiext.Texture {
-    return if (found) |i| .{ .image = i } else .none;
 }
 
 /// A texture's `name` after a letter, if any, in `buffer`.
@@ -855,42 +848,6 @@ fn testMaterial(name: []const u8) shp.Material {
     return m;
 }
 
-pub const testing = struct {
-    /// A texture table of small textures, for the tests.
-    pub const Textures = TestTextures;
-};
-
-/// A texture table holding `hull` and its light map, or the textures `names` names.
-const TestTextures = struct {
-    bytes: []u8,
-    cache: tcache.Cache,
-    table: srtexture.Table,
-
-    fn init(gpa: Allocator) !*TestTextures {
-        return initNamed(gpa, &.{ "hull", "lhull" });
-    }
-
-    /// A table of a two-by-two texture for each of `names`, at most eight.
-    pub fn initNamed(gpa: Allocator, names: []const []const u8) !*TestTextures {
-        var specs: [8]tcache.testing.Spec = undefined;
-        for (specs[0..names.len], names) |*spec, name| spec.* = .{ .name = name, .encoding = .index8, .width = 2, .height = 2 };
-        const t = try gpa.create(TestTextures);
-        errdefer gpa.destroy(t);
-        t.bytes = try tcache.testing.build(gpa, specs[0..names.len]);
-        errdefer gpa.free(t.bytes);
-        t.cache = try .parse(gpa, t.bytes);
-        t.table = .init(gpa, t.cache, std.mem.zeroes(@import("../../formats/tga.zig").Palette));
-        return t;
-    }
-
-    pub fn deinit(t: *TestTextures, gpa: Allocator) void {
-        t.table.deinit();
-        t.cache.deinit(gpa);
-        gpa.free(t.bytes);
-        gpa.destroy(t);
-    }
-};
-
 fn testPart(meshes: []shp.Mesh, flags: shp.Part.Flags) shp.PartData {
     var part = std.mem.zeroes(shp.Part);
     part.flags = flags;
@@ -899,7 +856,7 @@ fn testPart(meshes: []shp.Mesh, flags: shp.Part.Flags) shp.PartData {
 
 test "build: surfaces, planes and a wire face's edges" {
     const gpa = std.testing.allocator;
-    const textures = try TestTextures.init(gpa);
+    const textures = try srtexture.testing.Textures.init(gpa, &.{ "hull", "lhull" });
     defer textures.deinit(gpa);
 
     var vertices = [_]shp.Vertex{ testVertex(-100, -100, -1), testVertex(100, -100, -1), testVertex(100, 100, -1), testVertex(-100, 100, -1) };
@@ -946,7 +903,7 @@ test "build: surfaces, planes and a wire face's edges" {
 
 test "build: fans merge when flat, and the part's face lists follow" {
     const gpa = std.testing.allocator;
-    const textures = try TestTextures.init(gpa);
+    const textures = try srtexture.testing.Textures.init(gpa, &.{ "hull", "lhull" });
     defer textures.deinit(gpa);
 
     var vertices = [_]shp.Vertex{ testVertex(0, 0, -1), testVertex(100, 0, -1), testVertex(100, 100, -1), testVertex(0, 100, -1), testVertex(-50, 50, -1) };
@@ -982,7 +939,7 @@ test "build: fans merge when flat, and the part's face lists follow" {
 
 test "build: light maps, baked colours and geomorphing" {
     const gpa = std.testing.allocator;
-    const textures = try TestTextures.init(gpa);
+    const textures = try srtexture.testing.Textures.init(gpa, &.{ "hull", "lhull" });
     defer textures.deinit(gpa);
 
     // The third vertex has no counterpart in the coarser level.
@@ -1028,7 +985,7 @@ test "build: light maps, baked colours and geomorphing" {
 
 test "build: faults the game stops on or does not check" {
     const gpa = std.testing.allocator;
-    const textures = try TestTextures.init(gpa);
+    const textures = try srtexture.testing.Textures.init(gpa, &.{ "hull", "lhull" });
     defer textures.deinit(gpa);
 
     var vertices = [_]shp.Vertex{ testVertex(0, 0, -1), testVertex(100, 0, -1), testVertex(0, 100, -1) };
@@ -1134,7 +1091,7 @@ test readModel {
     try bigfile.testing.write(gpa, io, tmp.dir, bigfile.resource_name, &.{.{ .name = "Ship.SHP", .data = shp.testing.buildModel(&buffer) }});
     var resources: bigfile.Hog = try .open(gpa, io, tmp.dir, bigfile.resource_name);
     defer resources.close(gpa);
-    const textures = try TestTextures.initNamed(gpa, &.{ "yank_1", "lyank_1", "cloak64" });
+    const textures = try srtexture.testing.Textures.init(gpa, &.{ "yank_1", "lyank_1", "cloak64" });
     defer textures.deinit(gpa);
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();

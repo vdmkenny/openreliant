@@ -384,6 +384,23 @@ pub const Slot = struct {
         slot.shield = null;
     }
 
+    /// Its current order, the first of its stack, where it has one.
+    pub fn current(slot: *Slot) ?*aigeneric.Entry {
+        if (slot.object.order_count == 0) return null;
+        return &slot.orders[0];
+    }
+
+    /// The parts it lists as components, `GameObject.component_count` of them.
+    pub fn listed(slot: *const Slot) []const ?*objects.Model.Part {
+        return slot.components[0..@intCast(@max(slot.object.component_count, 0))];
+    }
+
+    /// Its component `n`, where it lists one there.
+    pub fn component(slot: *const Slot, n: usize) ?*objects.Model.Part {
+        const parts = slot.listed();
+        return if (n < parts.len) parts[n] else null;
+    }
+
     /// Lets its guns go: it has none from now on.
     pub fn dropGuns(slot: *Slot, gpa: Allocator) void {
         gpa.free(slot.guns);
@@ -661,8 +678,8 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.order_count = 0;
     object.orders = .null;
     object.created = true;
-    object.last_attacker = -1;
-    object.nav_point = -1;
+    object.last_attacker = .none;
+    object.nav_point = .none;
     object._unknown_724 = -1;
     object.fought_by = 0;
     object.motion = .null;
@@ -674,7 +691,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.armor_speed_factor = 1;
     object.gun_condition = 1;
     object._unknown_750 = 0;
-    object.sound_voice = 0xFFFF;
+    object.sound_voice = .none;
     object.gun_turn = .first;
     object.blind_fire_aim = 0;
     object._unknown_678 = 0;
@@ -743,7 +760,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
 
     object.engines_intact = 1;
     object.passes_through = @splat(.none);
-    object.fighting = -1;
+    object.fighting = .none;
     object.power_up = .none;
     object.afterburner_fuel = combat.afterburner_fuel * 100;
     object.countermeasures = gameobj.countermeasures_when_created;
@@ -1196,7 +1213,7 @@ pub const testing = struct {
 pub fn retire(ctx: aigeneric.Context, index: u16) void {
     const object = &ctx.world.objects.slots[index].object;
     object.type = .stand_in;
-    object.flags = @bitCast(@as(u32, @bitCast(object.flags)) | @as(u32, @bitCast(gameobj.GameObject.Flags.standing_in)));
+    object.flags = object.flags.with(.standing_in);
     object.flags.exploding = true;
     object.flags.targetable = false;
     aigeneric.popAll(ctx, index);

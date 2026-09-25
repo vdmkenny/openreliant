@@ -38,7 +38,7 @@ pub const File = struct {
 /// expanded where RefPack packed it. Null where there is neither, on which the mission's start
 /// stops the game: "The mission number is invalid".
 pub fn read(io: Io, gpa: Allocator, dir: Io.Dir, resources: *const bigfile.Hog, path: []const u8) !?File {
-    if (try files.readFile(io, gpa, dir, path, .limited(64 << 20))) |bytes| {
+    if (try files.readFile(io, gpa, dir, path, .limited(files.max_file_size))) |bytes| {
         if (bytes.len <= loose_limit) return .{ .image = bytes, .source = .loose };
         // The game reads no more than its buffer holds, and binds what it read.
         log.warn("{s} is {d} bytes: the game reads the first {d}", .{ path, bytes.len, loose_limit });

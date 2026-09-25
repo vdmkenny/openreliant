@@ -153,7 +153,7 @@ pub const Explosions = struct {
     pub fn frame(explosions: *Explosions, world: gameobj.World) void {
         explosions.uber.frame(world);
         const clock = world.clock;
-        if (explosions.marker) |*marker| marker.position += marker.drift * @as(Vector, @splat(@floatFromInt(@max(clock.frame_duration, 0))));
+        if (explosions.marker) |*marker| marker.position += marker.drift * @as(Vector, @splat(@floatFromInt(clock.frameTicks())));
         const ticks: f32 = @floatFromInt(clock.frame_start - explosions.moved_at);
         const seconds = ticks * Bit.per_tick;
         for (&explosions.bits.slots) |*slot| {
@@ -1146,7 +1146,7 @@ pub fn loseHull(ctx: aigeneric.Context, index: u16) void {
         .kurgan, .antanov, .gurevich => true,
         else => false,
     };
-    if (object.last_attacker == all.player and credited) deathmatch.addKills(world.player, all, all.player, 1);
+    if (object.last_attacker.index() == all.player and credited) deathmatch.addKills(world.player, all, all.player, 1);
     ai.hullLost(ctx, index);
 }
 
@@ -1445,14 +1445,14 @@ test loseHull {
 
     // The player's taking a Kurgan's hull is a kill; any ship so ends, its orders cleared.
     const kurgan = try mission.add(.kurgan, .{ 0, 0, 1000 });
-    mission.slot(kurgan).object.last_attacker = player;
+    mission.slot(kurgan).object.last_attacker = .of(player);
     loseHull(ctx, kurgan);
     try std.testing.expectEqual(1, mission.player.kills.count);
     try std.testing.expect(mission.slot(kurgan).object.flags.exploding);
 
     // A Badanov's is not.
     const badanov = try mission.add(.badanov, .{ 0, 0, 2000 });
-    mission.slot(badanov).object.last_attacker = player;
+    mission.slot(badanov).object.last_attacker = .of(player);
     loseHull(ctx, badanov);
     try std.testing.expectEqual(1, mission.player.kills.count);
     try std.testing.expect(mission.slot(badanov).object.flags.exploding);

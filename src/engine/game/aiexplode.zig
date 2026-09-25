@@ -366,7 +366,7 @@ pub fn killCredit(world: gameobj.World, index: u16) void {
     const all = world.objects;
     const slot = &all.slots[index];
     const object = &slot.object;
-    if (object.last_attacker != all.player or object.side != .hostile) return;
+    if (object.last_attacker.index() != all.player or object.side != .hostile) return;
     const fighter = if (slot.combat) |combat| combat.class == .fighter else false;
     const credited = fighter or switch (object.type) {
         .kamov, .kurgan, .gurevich => true,
@@ -788,7 +788,7 @@ test killCredit {
     const credit = struct {
         fn of(m: *gameobj.testing.Mission, w: gameobj.World, ship_type: gameobj.Type, by: u16) !i32 {
             const index = try m.add(ship_type, .{ 0, 0, 1000 });
-            m.slot(index).object.last_attacker = by;
+            m.slot(index).object.last_attacker = .of(by);
             const before = m.player.kills.count;
             killCredit(w, index);
             return m.player.kills.count - before;

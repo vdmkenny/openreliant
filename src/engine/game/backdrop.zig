@@ -305,13 +305,13 @@ pub const Backdrop = struct {
             const set = &backdrop.sun[layer.sprite()];
             const image = try matmanager.textureRequire(textures, layer.texture());
             backdrop.texels[layer.sprite()] = texelsOf(image);
-            set.surface = sunSurface(try backdrop.drawn(gpa, image, layer.texture(), layer.detail(), sun));
+            set.surface = .glow(try backdrop.drawn(gpa, image, layer.texture(), layer.detail(), sun));
             set.sprites[0].offset = backdrop.sun_direction;
         }
         for (flares, backdrop.sun[first_flare..][0..flares.len], backdrop.texels[first_flare..][0..flares.len]) |flare, *set, *texels| {
             const image = try matmanager.textureRequire(textures, flare.texture);
             texels.* = texelsOf(image);
-            set.surface = sunSurface(try backdrop.drawn(gpa, image, flare.texture, .round, sun));
+            set.surface = .glow(try backdrop.drawn(gpa, image, flare.texture, .round, sun));
             set.sprites[0].bias = near;
         }
         return backdrop;
@@ -433,14 +433,6 @@ fn texelsOf(image: *const srtexture.Image) [2]f32 {
     return .{ @floatFromInt(image.width()), @floatFromInt(image.height()) };
 }
 
-/// A sun sprite's surface: textured, lit and added, so it takes its sprite's colour.
-fn sunSurface(image: *srtexture.Image) srapiext.Surface {
-    return .{
-        .material = .onePass(.{ .coordinates = .mesh, .lit = true, .blend = .add }),
-        .textures = .{ .{ .image = image }, .none },
-    };
-}
-
 test fieldAxis {
     // The first field is 9 degrees from +Y, toward +X and +Z; the middle ones straddle the horizon.
     const first = fieldAxis(0, 0);
@@ -507,43 +499,13 @@ test initialLights {
 
 /// A texture table holding the sun's textures and the nebulae's, each 8 by 4.
 pub const testing = struct {
-    pub const Textures = struct {
-        bytes: []u8,
-        cache: @import("../../formats/tcache.zig").Cache,
-        table: srtexture.Table,
-
-        /// A table holding the backdrop's own textures.
-        pub fn init(gpa: Allocator) !*Textures {
-            return initNames(gpa, &.{ "sunlayer1", "sunlayer2", "sunlayer3", "sunflare1", "sunflare2", "sunflare3", "sunflare4", "neb01", "neb06" });
-        }
-
-        /// A table holding one small texture under each of `names`.
-        pub fn initNames(gpa: Allocator, names: []const []const u8) !*Textures {
-            const tcache = @import("../../formats/tcache.zig");
-            const specs = try gpa.alloc(tcache.testing.Spec, names.len);
-            defer gpa.free(specs);
-            for (specs, names) |*spec, name| spec.* = .{ .name = name, .encoding = .index8, .width = 8, .height = 4 };
-            const textures = try gpa.create(Textures);
-            errdefer gpa.destroy(textures);
-            textures.bytes = try tcache.testing.build(gpa, specs);
-            errdefer gpa.free(textures.bytes);
-            textures.cache = try .parse(gpa, textures.bytes);
-            textures.table = .init(gpa, textures.cache, std.mem.zeroes(tga.Palette));
-            return textures;
-        }
-
-        pub fn deinit(textures: *Textures, gpa: Allocator) void {
-            textures.table.deinit();
-            textures.cache.deinit(gpa);
-            gpa.free(textures.bytes);
-            gpa.destroy(textures);
-        }
-    };
+    /// The backdrop's own textures, for a table of test textures.
+    pub const names: []const []const u8 = &.{ "sunlayer1", "sunlayer2", "sunlayer3", "sunflare1", "sunflare2", "sunflare3", "sunflare4", "neb01", "neb06" };
 };
 
 test Backdrop {
     const gpa = std.testing.allocator;
-    const textures = try testing.Textures.init(gpa);
+    const textures = try srtexture.testing.Textures.init(gpa, testing.names);
     defer textures.deinit(gpa);
 
     const rgb = try gpa.alloc(u8, star_map_size * star_map_size * 3);
@@ -577,7 +539,7 @@ test Backdrop {
 
 test "Backdrop.frame" {
     const gpa = std.testing.allocator;
-    const textures = try testing.Textures.init(gpa);
+    const textures = try srtexture.testing.Textures.init(gpa, testing.names);
     defer textures.deinit(gpa);
     const rgb = try gpa.alloc(u8, star_map_size * star_map_size * 3);
     defer gpa.free(rgb);
