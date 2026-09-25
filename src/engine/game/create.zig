@@ -22,6 +22,7 @@ const Pointer = engine.Pointer;
 const libcmt = @import("../libcmt.zig");
 const ai = @import("ai.zig");
 const camera = @import("camera.zig");
+const cloak = @import("cloak.zig");
 const aigeneric = @import("aigeneric.zig");
 const collision = @import("collision.zig");
 const gameobj = @import("gameobj.zig");
@@ -358,14 +359,14 @@ pub const Slot = struct {
     /// debris has.
     shield: ?*shield.Bubble = null,
     /// Its cloak, from the moment it starts to come on until it has gone (`GameObject.cloak`).
-    cloak: ?@import("cloak.zig").Cloak = null,
+    cloak: ?cloak.Cloak = null,
     /// Its smoke, while its damage shows (`GameObject.smoke`).
     smoke: ?smoke.Stream = null,
 
     /// Lets go of what the slot holds for its object: its cloak (`cloak.drop`), its model, its guns
     /// and its shield bubble (`object_free`).
     pub fn release(slot: *Slot, gpa: Allocator) void {
-        if (slot.cloak != null) @import("cloak.zig").drop(slot);
+        cloak.drop(slot);
         if (slot.model) |model| model.deinit(gpa);
         gpa.free(slot.guns);
         slot.guns = &.{};

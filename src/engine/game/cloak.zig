@@ -28,6 +28,7 @@ const aigeneric = @import("aigeneric.zig");
 const create = @import("create.zig");
 const libcmt = @import("../libcmt.zig");
 const sound3d = @import("sound3d.zig");
+const shield = @import("shield.zig");
 const srofiles = @import("srofiles.zig");
 
 // --- The cloak --------------------------------------------------------------------------------
@@ -81,8 +82,7 @@ pub const Cloak = struct {
 
 /// Whether the object in `slot` can cloak: its model's header says so (`shp.Header.Flags.cloak`).
 pub fn canCloak(slot: *const create.Slot) bool {
-    const model = if (slot.model) |*live| live else return false;
-    return model.source.header.flags.cloak;
+    return if (slot.model) |*model| model.source.header.flags.cloak else false;
 }
 
 /// `object_set_cloak` (`0x00463560`): the object in slot `index`, where it can cloak, cloaked or
@@ -98,8 +98,9 @@ pub fn set(world: gameobj.World, index: u16, on: bool) void {
         display.devices.getPtr(.cloak).setting = if (on) .on else .off;
     };
     for (0..all.count) |at| {
-        const entry = aigeneric.current(all, @intCast(at)) orelse continue;
-        if (entry.order == .launch and entry.target.index == index) set(world, @intCast(at), on);
+        const other: u16 = @intCast(at);
+        const entry = aigeneric.current(all, other) orelse continue;
+        if (entry.order == .launch and entry.target.index == index) set(world, other, on);
     }
 }
 
@@ -123,9 +124,8 @@ fn cloakOn(world: gameobj.World, index: u16) void {
     slot.object.flags.cloaked = true;
     slot.cloak = .{ .came_at = world.clock.frame_start };
     const model = if (slot.model) |*live| live else return;
-    const kafelnikof = slot.object.type == .kafelnikof;
-    seeThrough(model, kafelnikof);
-    shimmerOn(model, kafelnikof, world.random);
+    seeThrough(model, slot.object.type == .kafelnikof);
+    shimmerOn(model, world.random);
     sound3d.playIn(world, null, null, index, .cloak01, 1, soundClass(all, index));
 }
 
@@ -147,9 +147,9 @@ fn soundClass(all: *const create.Objects, index: u16) sound3d.Class {
     return if (index == all.player) .player_fx else .not_reserved;
 }
 
-/// `cloak_drop` (`0x00463420`): the object in `slot` has no cloak from now on, whatever its parts
-/// were showing, their callbacks let go (`cloak_node_free`, `0x00463470`), which the port's parts
-/// have none of. An explosion's blast drops it so.
+/// `cloak_drop` (`0x00463420`): the object in `slot` has no cloak from now on, if it had one,
+/// whatever its parts were showing, their callbacks let go (`cloak_node_free`, `0x00463470`),
+/// which the port's parts have none of. An explosion's blast drops it so.
 pub fn drop(slot: *create.Slot) void {
     slot.object.flags.cloaked = false;
     slot.cloak = null;
@@ -173,21 +173,17 @@ pub fn frame(slot: *create.Slot, now: i32) void {
         cloak.changing = true;
         return;
     }
-    const model = if (slot.model) |*live| live else null;
     if (cloak.going) {
-        if (model) |shown| restore(shown);
+        if (slot.model) |*model| restore(model);
         return drop(slot);
     }
-    if (cloak.changing) if (model) |shown| {
-        eachPart(shown, {}, struct {
-            fn at(_: void, part: *objects.Model.Part) void {
-                const effect = if (part.cloak) |*kept| kept else return;
-                effect.fade(part.object.shown().positions.len, change_ticks);
-                part.object.colour[3] = 0;
-                if (effect.shimmer_made) effect.swirl(change_ticks, 1);
-            }
-        }.at);
-    };
+    if (cloak.changing) if (slot.model) |*model| eachCloaking(model, {}, struct {
+        fn visit(_: void, part: *objects.Model.Part, effect: *PartCloak) void {
+            effect.fade(part.object.shown().positions.len, change_ticks);
+            part.object.colour[3] = 0;
+            if (effect.shimmer_made) effect.swirl(change_ticks, 1);
+        }
+    }.visit);
     cloak.changing = false;
     cloak.shimmer = 1;
     cloak.hull = 0;
@@ -200,8 +196,8 @@ const shear_most: f32 = 0.15;
 const shear_rates = [3]f32{ 20, 26, 14 };
 const shear_starts = [3]f32{ 0, 2.8, 0.9 };
 
-/// `cloak_wobble` (`0x004639B0`), in `mission_frame`'s pass before the camera's frame, for a
-/// cloaked object in `slot` but the Kafelnikof, at tick `now`: while its cloak changes, its frame,
+/// `cloak_wobble` (`0x004639B0`), in `mission_frame`'s pass before the camera's frame, for the
+/// object in `slot`, where it is cloaked and not the Kafelnikof, at tick `now`: while its cloak changes, its frame,
 /// as drawn, shears a little and back, three ways at their own rates, swelling and dying away over
 /// the change.
 pub fn wobble(slot: *create.Slot, now: i32) void {
@@ -228,20 +224,20 @@ pub fn wobble(slot: *create.Slot, now: i32) void {
 const struck_reach: f32 = 1.123;
 const struck_falloff: f32 = 0.45;
 
-/// `cloak_reveal` (`0x00463AF0`): a hit at `at` on the cloaked object in `slot`, at tick `now`,
-/// shows its hull round the point (`cloak_node_reveal`, `0x004629D0`): each vertex of a part that
-/// cloaks, where the part is drawn at its level now, within `struck_reach` of the object's radius,
-/// is the more solid the nearer it stands, up to whole. The Kafelnikof's parts go by their own
-/// smallest extent, not the radius. A shot spent on the shields shows it, and one on a component,
-/// the Nova Cannon's beam, and a shield's flare.
-pub fn reveal(slot: *create.Slot, at: Vector, now: i32) void {
+/// `cloak_reveal` (`0x00463AF0`): a hit at `at` on the object in slot `index`, where it is
+/// cloaked, shows its hull round the point (`cloak_node_reveal`, `0x004629D0`): each vertex of a
+/// part that cloaks, where the part is drawn at its level now, within `struck_reach` of the
+/// object's radius, is the more solid the nearer it stands, up to whole. The Kafelnikof's parts go
+/// by their own smallest extent, not the radius. A shot spent on the shields shows it, and one on a
+/// component, the Nova Cannon's beam, and a shield's flare.
+pub fn reveal(world: gameobj.World, index: u16, at: Vector) void {
+    const slot = &world.objects.slots[index];
     const cloak = if (slot.cloak) |*kept| kept else return;
-    cloak.struck_at = now;
+    cloak.struck_at = world.clock.frame_start;
     const model = if (slot.model) |*live| live else return;
     const Struck = struct { at: Vector, radius: f32, kafelnikof: bool };
-    eachPart(model, Struck{ .at = at, .radius = slot.object.radius, .kafelnikof = slot.object.type == .kafelnikof }, struct {
-        fn visit(struck: Struck, part: *objects.Model.Part) void {
-            const effect = if (part.cloak) |*kept| kept else return;
+    eachCloaking(model, Struck{ .at = at, .radius = slot.object.radius, .kafelnikof = slot.object.type == .kafelnikof }, struct {
+        fn visit(struck: Struck, part: *objects.Model.Part, effect: *PartCloak) void {
             if (!effect.cloaks) return;
             const shown = part.object.shown();
             const size = if (struck.kafelnikof) blk: {
@@ -273,71 +269,72 @@ fn cloaks(kafelnikof: bool, name: []const u8) bool {
 /// `cloak_node_see_through` (`0x00462B80`): each part of `model`, and of the models it carries,
 /// that cloaks is drawn see-through, its own colours clear.
 fn seeThrough(model: *objects.Model, kafelnikof: bool) void {
-    for (model.parts, model.source.parts) |*part, source| {
-        const effect = if (part.cloak) |*kept| kept else continue;
-        effect.cloaks = cloaks(kafelnikof, source.part.name());
-        if (!effect.cloaks) continue;
-        part.object.levels = effect.see_through;
-        @memset(effect.hull_colours, @splat(0));
-    }
-    var each = model.carried();
-    while (each.next()) |mount| seeThrough(&mount.model, kafelnikof);
+    eachCloaking(model, kafelnikof, struct {
+        fn visit(on_kafelnikof: bool, part: *objects.Model.Part, effect: *PartCloak) void {
+            effect.cloaks = cloaks(on_kafelnikof, effect.name);
+            if (!effect.cloaks) return;
+            part.object.levels = effect.see_through;
+            @memset(effect.hull_colours, @splat(0));
+        }
+    }.visit);
 }
 
 /// `cloak_node_shimmer` (`0x00462EB0`): each part of `model`, and of the models it carries, that
 /// cloaks has its shimmer, clear, its texture laid on anew at random.
-fn shimmerOn(model: *objects.Model, kafelnikof: bool, random: *libcmt.Rand) void {
-    for (model.parts, model.source.parts) |*part, source| {
-        const effect = if (part.cloak) |*kept| kept else continue;
-        if (!cloaks(kafelnikof, source.part.name())) continue;
-        effect.shimmer_made = true;
-        effect.shimmer.colour[3] = 0;
-        for (effect.shimmer_uv[0..effect.shimmer_levels[0].mesh.positions.len]) |*uv| {
-            const u = random.fraction();
-            uv.* = .{ u, random.fraction() };
+fn shimmerOn(model: *objects.Model, random: *libcmt.Rand) void {
+    eachCloaking(model, random, struct {
+        fn visit(drawn_from: *libcmt.Rand, _: *objects.Model.Part, effect: *PartCloak) void {
+            if (!effect.cloaks) return;
+            effect.shimmer_made = true;
+            effect.shimmer.colour[3] = 0;
+            for (effect.shimmer_uv[0..effect.shimmer_levels[0].mesh.positions.len]) |*uv| {
+                const u = drawn_from.fraction();
+                uv.* = .{ u, drawn_from.fraction() };
+            }
         }
-    }
-    var each = model.carried();
-    while (each.next()) |mount| shimmerOn(&mount.model, kafelnikof, random);
+    }.visit);
 }
 
 /// `cloak_node_restore` (`0x00462D30`): each part of `model`, and of the models it carries, that
 /// cloaks has its own levels back, solid and its own colours clear.
 fn restore(model: *objects.Model) void {
-    eachPart(model, {}, struct {
-        fn at(_: void, part: *objects.Model.Part) void {
-            const effect = if (part.cloak) |*kept| kept else return;
+    eachCloaking(model, {}, struct {
+        fn visit(_: void, part: *objects.Model.Part, effect: *PartCloak) void {
             if (!effect.cloaks) return;
             part.object.colour[3] = 1;
             part.object.levels = effect.own;
             @memset(effect.hull_colours, @splat(0));
         }
-    }.at);
+    }.visit);
 }
 
 /// The port's: each part that cloaks of `model`, which is not drawn, as the ship the camera sits in
 /// is not, as solid as its cloak's hull `hull`, which the part's shadow goes by (`srshadow`), as a
 /// drawn one's does (`Drawing.hull`).
 pub fn shadeUnseen(model: *objects.Model, hull: f32) void {
-    eachPart(model, hull, struct {
-        fn visit(solid: f32, part: *objects.Model.Part) void {
-            const effect = if (part.cloak) |*kept| kept else return;
+    eachCloaking(model, hull, struct {
+        fn visit(solid: f32, part: *objects.Model.Part, effect: *PartCloak) void {
             if (effect.cloaks) part.object.colour[3] = solid;
         }
     }.visit);
 }
 
-/// Runs `visit` on every part of `model` and of the models it carries, however deep.
-fn eachPart(model: *objects.Model, context: anytype, comptime visit: fn (@TypeOf(context), *objects.Model.Part) void) void {
-    for (model.parts) |*part| visit(context, part);
+/// Runs `visit` on each part of `model`, and of the models it carries however deep, that has the
+/// cloak's meshes, with them.
+fn eachCloaking(model: *objects.Model, context: anytype, comptime visit: fn (@TypeOf(context), *objects.Model.Part, *PartCloak) void) void {
+    for (model.parts) |*part| {
+        if (part.cloak) |*effect| visit(context, part, effect);
+    }
     var each = model.carried();
-    while (each.next()) |mount| eachPart(&mount.model, context, visit);
+    while (each.next()) |mount| eachCloaking(&mount.model, context, visit);
 }
 
-/// A part of a model that can cloak, as its cloak draws it (`srofiles.Cloaking`): its own levels
-/// and those seen through; its hull's own colours, which it is drawn see-through by; and its
-/// shimmer (`node + 0x0C`), with its own colours and texture coordinates.
+/// A part of a model that can cloak, as its cloak draws it (`srofiles.Cloaking`): its name, which
+/// says whether it cloaks on the Kafelnikof; its own levels and those seen through; its hull's own
+/// colours, which it is drawn see-through by; and its shimmer (`node + 0x0C`), with its own colours
+/// and texture coordinates.
 pub const PartCloak = struct {
+    name: []const u8,
     own: []const srapiext.Level,
     see_through: []const srapiext.Level,
     hull_colours: [][4]f32,
@@ -349,8 +346,9 @@ pub const PartCloak = struct {
     cloaks: bool = false,
     shimmer_made: bool = false,
 
-    /// The part's meshes for the cloak, `own` its levels and `radius` its farthest reach.
-    pub fn create(gpa: Allocator, cloaking: srofiles.Cloaking, own: []const srapiext.Level, radius: f32) Allocator.Error!PartCloak {
+    /// The part's meshes for the cloak, `name` the part's, `own` its levels and `radius` its
+    /// farthest reach.
+    pub fn create(gpa: Allocator, cloaking: srofiles.Cloaking, name: []const u8, own: []const srapiext.Level, radius: f32) Allocator.Error!PartCloak {
         var vertices: usize = 0;
         for (own) |level| vertices = @max(vertices, level.mesh.positions.len);
         const hull_colours = try gpa.alloc([4]f32, vertices);
@@ -362,6 +360,7 @@ pub const PartCloak = struct {
         const shimmer_uv = try gpa.alloc([2]f32, vertices);
         @memset(shimmer_uv, @splat(0));
         return .{
+            .name = name,
             .own = own,
             .see_through = cloaking.see_through_levels,
             .hull_colours = hull_colours,
@@ -428,7 +427,7 @@ const shimmer_full = [3]f32{ 0, 0, 80.0 / 256.0 };
 const shimmer_turn: f32 = 0.3;
 
 /// The shimmer's colour at `strength`, easing in and out from each colour to the next
-/// (`cloak_colour_at`, `0x004631E0`).
+/// (`cloak_colour_at`, `0x004631E0`, by `shield.ease`).
 ///
 /// **Improvement:** the game reads it from a table of 1024 (`cloak_colour`, `0x004632B0`, from
 /// `cloak_colours`, `0x0054142C`, which `cloak_init`, `0x00463500`, fills), a step at a time; the
@@ -437,9 +436,9 @@ pub fn shimmerColour(strength: f32) [3]f32 {
     var colour: [3]f32 = undefined;
     for (&colour, shimmer_bright, shimmer_full) |*channel, bright, full| {
         channel.* = if (strength < shimmer_turn)
-            math.cosineEase(0, bright, strength / shimmer_turn)
+            shield.ease(0, bright, strength / shimmer_turn)
         else
-            math.cosineEase(bright, full, (strength - shimmer_turn) / (1 - shimmer_turn));
+            shield.ease(bright, full, (strength - shimmer_turn) / (1 - shimmer_turn));
     }
     return colour;
 }
@@ -455,30 +454,28 @@ pub fn shimmerColour(strength: f32) [3]f32 {
 pub const Drawing = struct {
     cloak: *Cloak,
     kafelnikof: bool,
-    paused: bool,
-    hardware: bool,
 
-    /// The shimmer to add for `part`, at tick `now`, or null.
-    pub fn shimmer(drawing: Drawing, part: *objects.Model.Part, now: i32) ?*srapiext.MeshObject {
+    /// The shimmer to add for `part`, drawn in `view`, or null.
+    pub fn shimmer(drawing: Drawing, part: *objects.Model.Part, view: *const objects.View) ?*srapiext.MeshObject {
         const effect = if (part.cloak) |*kept| kept else return null;
         if (!effect.shimmer_made) return null;
         effect.shimmer.position = part.object.position;
         effect.shimmer.orientation = part.object.orientation;
-        if (drawing.paused) return &effect.shimmer;
-        const ticks = drawing.cloak.shimmer_drawn.since(now);
+        if (view.paused) return &effect.shimmer;
+        const ticks = drawing.cloak.shimmer_drawn.since(view.frame_start);
         if (drawing.cloak.shimmer == 0 or drawing.kafelnikof) return null;
         effect.swirl(ticks, drawing.cloak.shimmer);
         return &effect.shimmer;
     }
 
-    /// Whether `part`'s hull is drawn, at tick `now`, fading it as the cloak has it where it does.
-    /// A part with no shimmer is drawn as it would be uncloaked.
-    pub fn hull(drawing: Drawing, part: *objects.Model.Part, now: i32) bool {
+    /// Whether `part`'s hull is drawn in `view`, fading it as the cloak has it where it does. A
+    /// part with no shimmer is drawn as it would be uncloaked.
+    pub fn hull(drawing: Drawing, part: *objects.Model.Part, view: *const objects.View) bool {
         const effect = if (part.cloak) |*kept| kept else return true;
         if (!effect.shimmer_made) return true;
-        if (!drawing.hardware) return false;
-        if (!effect.cloaks or drawing.paused) return true;
-        const ticks = drawing.cloak.hull_drawn.since(now);
+        if (!view.hardware) return false;
+        if (!effect.cloaks or view.paused) return true;
+        const ticks = drawing.cloak.hull_drawn.since(view.frame_start);
         const solid = drawing.cloak.hull;
         if (solid == 0) {
             effect.fade(part.object.shown().positions.len, ticks);
@@ -607,13 +604,15 @@ test reveal {
     slot.object.radius = 100;
 
     // A hit on an edge shows the corner in reach, the more the nearer, and not those out of it.
-    reveal(slot, .{ -100, -20, 0 }, 500);
+    const world = stage.mission.world();
+    stage.mission.clock.frame_start = 500;
+    reveal(world, stage.index, .{ -100, -20, 0 });
     try std.testing.expectEqual(500, slot.cloak.?.struck_at);
     const near = (100 * struck_reach - 80) / (100 * struck_falloff);
     try std.testing.expectApproxEqAbs(near, colours[0][3], 1e-5);
     try std.testing.expectEqual(0, colours[3][3]);
     // Another on the corner shows it whole, and no more.
-    reveal(slot, .{ -100, -100, 0 }, 510);
+    reveal(world, stage.index, .{ -100, -100, 0 });
     try std.testing.expectEqual(1, colours[0][3]);
     try std.testing.expectEqual(0, colours[1][3]);
 }
@@ -629,28 +628,29 @@ test Drawing {
     set(stage.mission.world(), stage.index, true);
     frame(slot, change_ticks);
     part.object.position = .{ 1, 2, 3 };
-    var drawing: Drawing = .{ .cloak = &slot.cloak.?, .kafelnikof = false, .paused = false, .hardware = true };
+    var drawing: Drawing = .{ .cloak = &slot.cloak.?, .kafelnikof = false };
+    var view: objects.View = .{ .frame_start = 300 };
 
     // Come on: the shimmer where the part stands, at its full colour, unlit.
-    const shimmer = drawing.shimmer(part, 300) orelse return error.TestUnexpectedResult;
+    const shimmer = drawing.shimmer(part, &view) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(part.object.position, shimmer.position);
     try std.testing.expect(!shimmer.flags.lit);
     try std.testing.expectApproxEqAbs(shimmer_full[2], effect.shimmer_colours[0][2], 1e-6);
     // The hull drawn clear, what a hit showed fading a tick at a time since it was drawn last.
     effect.hull_colours[0][3] = 1;
     slot.cloak.?.hull_drawn.before = 250;
-    try std.testing.expect(drawing.hull(part, 300));
+    try std.testing.expect(drawing.hull(part, &view));
     try std.testing.expectApproxEqAbs(0.5, effect.hull_colours[0][3], 1e-6);
     // Paused, nothing changes; the Kafelnikof shows no shimmer, and the software renderer no
     // hull.
-    drawing.paused = true;
-    try std.testing.expect(drawing.hull(part, 400));
+    view = .{ .frame_start = 400, .paused = true };
+    try std.testing.expect(drawing.hull(part, &view));
     try std.testing.expectApproxEqAbs(0.5, effect.hull_colours[0][3], 1e-6);
-    drawing.paused = false;
+    view.paused = false;
     drawing.kafelnikof = true;
-    try std.testing.expectEqual(null, drawing.shimmer(part, 400));
-    drawing.hardware = false;
-    try std.testing.expect(!drawing.hull(part, 400));
+    try std.testing.expectEqual(null, drawing.shimmer(part, &view));
+    view.hardware = false;
+    try std.testing.expect(!drawing.hull(part, &view));
 }
 
 test shimmerColour {

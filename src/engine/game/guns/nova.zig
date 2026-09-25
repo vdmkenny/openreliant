@@ -382,8 +382,7 @@ fn strikeParts(world: gameobj.World, index: u16, owner: u16, model: *objects.Mod
         for (objects.leafCrossings(ref, place, from, to, &crossed)) |crossing| {
             shieldfx.componentHit(world, index, crossing, kind);
             collision.componentDamage(world, index, ref, value, owner, .bullet);
-            const slot = &world.objects.slots[index];
-            if (slot.object.flags.cloaked) cloak.reveal(slot, crossing.inWorld(), world.clock.frame_start);
+            cloak.reveal(world, index, crossing.inWorld());
         }
     }
     var carried = model.carried();

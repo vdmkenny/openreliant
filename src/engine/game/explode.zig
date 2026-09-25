@@ -971,14 +971,14 @@ const blast_shockwave_size: f32 = 10;
 const blast_shockwave_life = 100;
 const blast_shockwave_life_range = 50;
 
-/// `0x0046C980`: a ship's blast at the end of its Explode order: its cloak dropped where it is
-/// cloaked (`cloak.drop`), the ship broken up (`breakup.breakUp`), burning bits thrown every way, a
+/// `0x0046C980`: a ship's blast at the end of its Explode order: its cloak dropped
+/// (`cloak.drop`), the ship broken up (`breakup.breakUp`), burning bits thrown every way, a
 /// burst of flame, fast and wide, now and then a shockwave standing and drifting as the flame's
 /// emitter does, one of sparkle, a lit fireball of the ship's size drifting on with the sparkle,
 /// and the sound, heard on a sure voice close to the camera.
 pub fn blast(world: gameobj.World, index: u16) void {
     const slot = &world.objects.slots[index];
-    if (slot.object.flags.cloaked) cloak.drop(slot);
+    cloak.drop(slot);
     const at = slot.drawn.position;
     const velocity = gameobj.vector(slot.object.velocity);
     const small = slot.object.flags.ejected or switch (slot.object.type) {
@@ -1030,12 +1030,12 @@ pub fn missileBlast(world: gameobj.World, at: Vector, velocity: Vector, radius: 
 /// among the explosions. The player's leaves the marker the camera watches, drifting on at the
 /// ship's speed. **Unverified:** it lies after this file's known code.
 ///
-/// It drops the ship's cloak where it is cloaked (`cloak.drop`), then breaks the ship up and
+/// It drops the ship's cloak (`cloak.drop`), then breaks the ship up and
 /// throws small bits every way. Its 18 fireballs, lit and each up to a tenth of a second late,
 /// stand at random within 0.3 of its radius and drift on with the sparkle.
 pub fn burst(world: gameobj.World, index: u16) void {
     const slot = &world.objects.slots[index];
-    if (slot.object.flags.cloaked) cloak.drop(slot);
+    cloak.drop(slot);
     const at = slot.drawn.position;
     const velocity = gameobj.vector(slot.object.velocity);
     const radius = slot.object.radius;

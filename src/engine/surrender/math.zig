@@ -73,17 +73,6 @@ pub fn lerp(a: f32, b: f32, t: f32) f32 {
     return (b - a) * t + a;
 }
 
-/// From `a` to `b` as `t` goes from 0 to 1, slow at each end (`cosine_ease`, `0x004268C0`).
-pub fn cosineEase(a: f32, b: f32, t: f32) f32 {
-    return (b - a) * (@cos(t * std.math.pi + std.math.pi) * 0.5 + 0.5) + a;
-}
-
-test cosineEase {
-    try std.testing.expectApproxEqAbs(2, cosineEase(2, 6, 0), 1e-6);
-    try std.testing.expectApproxEqAbs(4, cosineEase(2, 6, 0.5), 1e-6);
-    try std.testing.expectApproxEqAbs(6, cosineEase(2, 6, 1), 1e-5);
-}
-
 /// `angle` brought round to within a half turn either way: a turn less past a half turn, a turn
 /// more below one the other way, once, as the game's turret code does.
 pub fn halfTurn(angle: f32) f32 {

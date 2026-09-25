@@ -1639,7 +1639,7 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
             hullHit(world, bullet, candidate.object, struck);
             return;
         }
-        if (object.flags.cloaked) cloak.reveal(slot, point, world.clock.frame_start);
+        cloak.reveal(world, candidate.object, point);
         defer if (!object.flags.cloaked) shield.flare(world, candidate.object, point);
         if (!object.flags.spectral_shields and record.damage.shield > 0) {
             var value = record.damage.shield;
@@ -1720,8 +1720,7 @@ fn componentHit(world: gameobj.World, bullet: *Bullet, index: u16, crossing: obj
     sparks.spray(world, .component, at, normal, @splat(0), component_sparks);
     const record = bullet.stats(&world.objects.gun_stats);
     collision.componentDamage(world, index, crossing.part, record.damage.hull, bullet.owner, .bullet);
-    const slot = &world.objects.slots[index];
-    if (slot.object.flags.cloaked) cloak.reveal(slot, at, world.clock.frame_start);
+    cloak.reveal(world, index, at);
 }
 
 /// `0x00479940`: a shot that has passed an object's shields. It finds the last of the object's

@@ -1060,28 +1060,25 @@ pub fn playerWeapons(world: gameobj.World, devices: *Devices, index: u16) void {
         guns.nova.release(world, index);
     }
     if (devices.active(.launch_missile, true)) launchMissile(world, index);
-    if (devices.active(.cloak_ship, true) and world.view != scripted_view and cloak.canCloak(slot)) {
-        const settled = if (slot.cloak) |on| !on.changing else true;
+    if (devices.active(.cloak_ship, true) and world.view != ._unknown_13 and cloak.canCloak(slot)) {
+        const settled = if (slot.cloak) |cloaking| !cloaking.changing else true;
         const on = !object.flags.cloaked;
         setCloak(world, on);
         if (settled) {
             hud.beep(world, if (on) .on else .off);
-            if (world.hearing) |hearing| _ = hearing.sound.say(cloak_said.of(on));
+            hud.say(world, cloak_said.of(on));
         }
     }
     if (devices.active(.countermeasures, true) and world.player.ending == .playing) {
         const left = world.objects.slots[index].object.countermeasures;
-        if (world.hearing) |hearing| switch (left) {
-            0 => _ = hearing.sound.say(.countermeasures_gone),
-            2, 4, 6 => _ = hearing.sound.say(.countermeasures_low),
+        switch (left) {
+            0 => hud.say(world, .countermeasures_gone),
+            2, 4, 6 => hud.say(world, .countermeasures_low),
             else => {},
-        };
+        }
         if (world.countermeasures) |dropped| dropped.spend(world, index);
     }
 }
-
-/// The view in which CLOAK SHIP does nothing. **Unknown:** what view 13 is.
-const scripted_view: camera.View = @enumFromInt(13);
 
 /// The display's sound for a launch refused (`bank_stdsmp`).
 const refused_sample = 1;
@@ -1412,11 +1409,6 @@ pub const FrameKeys = struct {
     multiplayer: bool,
     /// The world the keys' sounds are heard in; null where nothing is heard.
     world: ?gameobj.World = null,
-
-    fn say(keys: FrameKeys, line: hog_snd.Betty) void {
-        const world = keys.world orelse return;
-        if (world.hearing) |hearing| _ = hearing.sound.say(line);
-    }
 };
 
 /// Betty's word as a device turns on and as it turns off.
@@ -1479,7 +1471,7 @@ pub fn frameKeys(keys: FrameKeys) void {
     const groups = slot.groupCount();
     if (devices.active(.toggle_blindfire, true) and display.blind_fire_fitted) {
         display.blind_fire = !display.blind_fire;
-        keys.say(blind_fire_said.of(display.blind_fire));
+        hud.say(keys.world, blind_fire_said.of(display.blind_fire));
     }
     if (devices.active(.comms_window, true)) {
         hud.beep(keys.world, .done);
@@ -1576,7 +1568,7 @@ pub fn frameKeys(keys: FrameKeys) void {
     {
         const on = !object.flags.spectral_shields;
         hud.beep(keys.world, if (on) .on else .off);
-        keys.say(spectral_shields_said.of(on));
+        hud.say(keys.world, spectral_shields_said.of(on));
         setSpectralShields(display, object, on);
     }
 }

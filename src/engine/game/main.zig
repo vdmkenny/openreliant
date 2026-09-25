@@ -406,7 +406,7 @@ pub fn frameObjects(all: *create.Objects, fraction: f32, now: i32) void {
         if (object.flags.outOfFrame()) continue;
         object.missile_homing = 0;
         objects.frameTree(&object.root, if (slot.model) |*model| model else null, &slot.drawn, fraction);
-        if (object.flags.cloaked) cloak.wobble(slot, now);
+        cloak.wobble(slot, now);
     }
 }
 
@@ -536,7 +536,7 @@ pub fn drawObjects(gpa: Allocator, scene: *srcore.Scene, all: *create.Objects, a
         const model = if (slot.model) |*model| model else continue;
         if (object.flags.hidden) {
             if (index == seat) {
-                if (object.flags.cloaked) if (slot.cloak) |on| cloak.shadeUnseen(model, on.hull);
+                if (slot.cloak) |cloaking| cloak.shadeUnseen(model, cloaking.hull);
                 try model.castShadows(gpa, scene);
             }
             continue;
@@ -547,11 +547,11 @@ pub fn drawObjects(gpa: Allocator, scene: *srcore.Scene, all: *create.Objects, a
         view.throttle = object.last_throttle * object.engines_intact;
         if (splits) |under_way| view.glows = !under_way.splitting(index);
         // A cloaked object's lights and engine glows are out, and its cloak draws its parts.
-        if (object.flags.cloaked) if (slot.cloak) |*on| {
+        if (slot.cloak) |*cloaking| {
             view.lights = false;
             view.glows = false;
-            view.cloak = .{ .cloak = on, .kafelnikof = object.type == .kafelnikof, .paused = view.paused, .hardware = view.hardware };
-        };
+            view.cloak = .{ .cloak = cloaking, .kafelnikof = object.type == .kafelnikof };
+        }
         try model.draw(gpa, scene, .world, view);
     }
 }

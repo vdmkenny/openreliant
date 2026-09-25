@@ -107,6 +107,13 @@ pub fn beep(world: ?gameobj.World, which: Beep) void {
     playBeep(hearing.sound, heard.view, which);
 }
 
+/// Betty says `line`, where anything is heard (`hog_snd.Sound.say`).
+pub fn say(world: ?gameobj.World, line: hog_snd.Betty) void {
+    const heard = world orelse return;
+    const hearing = heard.hearing orelse return;
+    _ = hearing.sound.say(line);
+}
+
 /// The display's sounds asked for where no world is at hand, which `draw` plays later in the same
 /// frame: the windows' as they open and close (`windows.Windows`).
 pub const Beeps = struct {

@@ -28,7 +28,7 @@ const explode = @import("explode.zig");
 const sound3d = @import("sound3d.zig");
 const shield = @import("shield.zig");
 const flash = @import("guns/flash.zig");
-const cloak_effects = @import("cloak.zig");
+const cloak = @import("cloak.zig");
 const Vector = math.Vector;
 
 /// A node of an object's model hierarchy (`objects.cpp`), allocated at `0x004991D0`: the object's
@@ -1156,7 +1156,7 @@ pub const Model = struct {
         /// The node's frame: a scene object showing the part's meshes. `place` fills it in.
         object: srapiext.MeshObject,
         /// What its cloak draws it with, where its model can cloak (`srofiles.Cloaking`).
-        cloak: ?cloak_effects.PartCloak = null,
+        cloak: ?cloak.PartCloak = null,
         /// Its node's animation, and what `node_place` reads of its part.
         animation: Animation = .{},
 
@@ -1381,7 +1381,7 @@ pub const Model = struct {
             // through the cloak (`mesh_object_create`). Seen through, it casts a shadow as solid as
             // its hull (`cloak.Drawing`).
             if (part.cloaking) |cloaking| {
-                node.cloak = try .create(gpa, cloaking, part.levels, radius);
+                node.cloak = try .create(gpa, cloaking, source.part.name(), part.levels, radius);
                 node.object.baked = node.cloak.?.hull_colours;
                 node.object.alpha_shadow = true;
             }
@@ -1973,8 +1973,8 @@ pub const Model = struct {
         for (model.parts) |*part| {
             if (part.hidden) continue;
             if (view.cloak) |drawing| {
-                if (drawing.shimmer(part, view.frame_start)) |shimmer| try xtrabits.sceneAdd(gpa, scene, .{ .mesh = shimmer }, layer);
-                if (!drawing.hull(part, view.frame_start)) continue;
+                if (drawing.shimmer(part, &view)) |shimmer| try xtrabits.sceneAdd(gpa, scene, .{ .mesh = shimmer }, layer);
+                if (!drawing.hull(part, &view)) continue;
             }
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &part.object }, layer);
         }
@@ -2100,9 +2100,9 @@ pub const View = struct {
     scale: f32 = 0,
     /// How a cloaked object's cloak draws its parts (`node_draw`'s flag `0x80`); null for an
     /// object not cloaked.
-    cloak: ?cloak_effects.Drawing = null,
+    cloak: ?cloak.Drawing = null,
     /// Whether the game is paused, and whether a hardware renderer draws (`sr + 0x1AC`), which a
-    /// cloak draws by.
+    /// cloak draws by (`cloak.Drawing`).
     paused: bool = false,
     hardware: bool = true,
 

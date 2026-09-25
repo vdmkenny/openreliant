@@ -158,13 +158,20 @@ const Ramp = [ramp_steps]Colour;
 const ramp_brightness: f32 = 0.07;
 const other_share: f32 = 0.8;
 
-/// `0x004268C0`: from `a` to `b` as `share` goes from 0 to 1, slow at each end. It lies among the
-/// interface's code, between `wgate.cpp`'s and `interf.cpp`'s, and serves much of it; the port
-/// keeps it here, with the one routine that uses it so far.
+/// `cosine_ease` (`0x004268C0`): from `a` to `b` as `share` goes from 0 to 1, slow at each end. It
+/// lies among the interface's code, between `wgate.cpp`'s and `interf.cpp`'s, and serves much of
+/// it; the port keeps it here, with the ramps, and the cloak's shimmer uses it too
+/// (`cloak.shimmerColour`).
 ///
 /// **Improvement:** the cosine comes from `std.math` rather than the engine's table (`sr_cos`).
-fn ease(a: f32, b: f32, share: f32) f32 {
+pub fn ease(a: f32, b: f32, share: f32) f32 {
     return a + (b - a) * (1 - @cos(share * std.math.pi)) / 2;
+}
+
+test ease {
+    try std.testing.expectApproxEqAbs(2, ease(2, 6, 0), 1e-6);
+    try std.testing.expectApproxEqAbs(4, ease(2, 6, 0.5), 1e-6);
+    try std.testing.expectApproxEqAbs(6, ease(2, 6, 1), 1e-6);
 }
 
 /// `0x0049EB00` and `0x0049EC30`: a ramp's colour at `strength`, as red, green and blue. A friendly
@@ -657,7 +664,7 @@ pub fn flare(world: gameobj.World, index: u16, at: Vector) void {
     const object = &slot.object;
     const shields = object.shields.values();
     if (std.mem.allEqual(f32, &shields, 0)) return;
-    if (object.flags.cloaked) return cloak.reveal(slot, at, world.clock.frame_start);
+    if (object.flags.cloaked) return cloak.reveal(world, index, at);
     const bubble = slot.shield orelse return;
     const inside = if (world.camera) |watching| watching.inside(index) else false;
     if (!inside) {

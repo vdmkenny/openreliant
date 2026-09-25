@@ -280,8 +280,8 @@ pub fn build(
         } else false;
         if (!textured) continue;
         var buffer: [1 + @sizeOf(shp.Material)]u8 = undefined;
-        images.texture = try matmanager.textureRequire(textures, named(&buffer, settings.prefix.letter(), m));
-        if (light_mapped) images.light_map = try matmanager.textureRequire(textures, named(&buffer, 'l', m));
+        images.texture = try matmanager.textureRequire(textures, prefixed(&buffer, settings.prefix.letter(), m.name()));
+        if (light_mapped) images.light_map = try matmanager.textureRequire(textures, prefixed(&buffer, 'l', m.name()));
     }
 
     for (source.vertices, 0..) |vertex, i| {
@@ -541,12 +541,7 @@ pub fn modelLoad(gpa: Allocator, textures: *srtexture.Table, model: *const shp.M
     staticLightsBake(model, parts);
     if (level_settings.cloak) {
         var buffer: [1 + Cloaking.image.len]u8 = undefined;
-        const start: usize = if (settings.prefix.letter()) |letter| blk: {
-            buffer[0] = letter;
-            break :blk 1;
-        } else 0;
-        @memcpy(buffer[start..][0..Cloaking.image.len], Cloaking.image);
-        const shimmer = try matmanager.textureRequire(textures, buffer[0 .. start + Cloaking.image.len]);
+        const shimmer = try matmanager.textureRequire(textures, prefixed(&buffer, settings.prefix.letter(), Cloaking.image));
         // A part with no meshes has none for the cloak either.
         for (parts) |*part| {
             if (part.levels.len > 0) part.cloaking = try .build(gpa, part.levels, shimmer, settings.hardware);
@@ -760,9 +755,8 @@ fn image(found: ?*srtexture.Image) srapiext.Texture {
     return if (found) |i| .{ .image = i } else .none;
 }
 
-/// A material's name after a letter, if any.
-fn named(buffer: *[1 + @sizeOf(shp.Material)]u8, letter: ?u8, m: *const shp.Material) []const u8 {
-    const name = m.name();
+/// A texture's `name` after a letter, if any, in `buffer`.
+fn prefixed(buffer: []u8, letter: ?u8, name: []const u8) []const u8 {
     const start: usize = if (letter) |l| blk: {
         buffer[0] = l;
         break :blk 1;
