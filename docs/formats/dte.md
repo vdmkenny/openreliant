@@ -54,15 +54,41 @@ the count says how much of the reserved room is filled, so most missions are exa
 | 16 | sub_objects | `0x44` | |
 | 17 | parts_b | `0x1C` | Part descriptors for section 18 |
 | 18 | script_b | | A second bytecode section |
+| 21 | openreliant_name | 1 | **OpenReliant's own:** the mission's name, see [OpenReliant's mission name](#openreliants-mission-name) |
 | 22 | operands_b | 2 | |
 | 24 | command_flags | 2 | One `u16` per Executor command |
 | 25 | command_flags_b | 2 | The same for the second command catalogue |
 
-Sections 17 to 21 and 25 are empty in all 44 missions. Section 24, where a mission has it, holds one
+Sections 17 to 21 and 25 are empty in all 44 missions. The engine reads nothing of sections 9, 20,
+21 and 23: the binder binds 21 into a local variable of its own, and the rest into globals nothing
+reads. Sections 9 and 23 hold records in some missions, likely the original editor's. Of the
+directory's 128 slots before the first section, at `0x400`, the binder reads the first 27. Slot 27
+holds the file's size in most missions and is unused in the rest, and slots 28 on are unused in
+all of them. Section 24, where a mission has it, holds one
 entry per command of the [catalogue](#commands): `command` passes bit 0 of the entry, inverted, to
 the engine before each call. **Unknown:** what the flags mean; their values are cumulative masks
 such as 1, 3 and 7. In every mission `script_flags` holds twice
 the count of section 6: one entry per script byte.
+
+## OpenReliant's mission name
+
+**This is OpenReliant's convention, not the game's.** OpenReliant keeps a name for a mission in
+section 21, which the game binds but never reads and no shipped mission uses. The port shows it
+(`openreliant missions`); the game plays a mission with it as it plays any other, and a mission is
+complete without it.
+
+The section's count is its size in bytes. It holds an 8-byte header, then the name:
+
+| Offset | Type | Field |
+|---|---|---|
+| `0x00` | char x4 | Tag: `ORMN` |
+| `0x04` | u16 | Version: 1 |
+| `0x06` | u16 | The name's length in bytes |
+| `0x08` | | The name, in UTF-8, then a NUL |
+
+The port reads a name only where the tag is `ORMN`, the version 1, and the name fits in the section;
+anything else in section 21 it leaves alone. Other mission tools may not keep the section when they
+write a mission out.
 
 ## String pool
 

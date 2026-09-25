@@ -72,7 +72,10 @@ pub const Section = enum(u8) {
     script_b = 18,
     unused_19 = 19,
     unused_20 = 20,
-    transient_21 = 21,
+    /// **OpenReliant's own:** the mission's name, as `OpenReliantName` keeps it. The game binds this
+    /// section into a local variable of its binder and reads nothing of it, and no shipped mission
+    /// has one.
+    openreliant_name = 21,
     operands_b = 22,
     unknown_23 = 23,
     /// One `u16` of flags per Executor command. `command` passes bit 0, inverted, to the engine
@@ -466,6 +469,35 @@ pub const Object = extern struct {
 
     comptime {
         assert(@sizeOf(Object) == 8);
+    }
+};
+
+/// **OpenReliant's own:** a mission's name, which the port keeps in section `openreliant_name`, a
+/// section the game binds but never reads. The section's count is its size in bytes: this header,
+/// then `length` bytes of the name in UTF-8, then a NUL. A mission is complete without it, and the
+/// game plays one with it as it plays any other.
+pub const OpenReliantName = extern struct {
+    tag: [4]u8 = OpenReliantName.expected_tag,
+    version: u16 = OpenReliantName.current_version,
+    length: u16,
+
+    /// The tag that marks the section as holding a name of this kind, and the one version so far.
+    pub const expected_tag = "ORMN".*;
+    pub const current_version: u16 = 1;
+
+    /// The name `section` holds, where it starts with a header of this kind and the name fits;
+    /// null for anything else, which the port leaves alone.
+    pub fn read(section: []const u8) ?[]const u8 {
+        if (section.len < @sizeOf(OpenReliantName)) return null;
+        const header: *align(1) const OpenReliantName = @ptrCast(section[0..@sizeOf(OpenReliantName)]);
+        if (!std.mem.eql(u8, &header.tag, &expected_tag) or header.version != current_version) return null;
+        const name = section[@sizeOf(OpenReliantName)..];
+        if (header.length > name.len) return null;
+        return name[0..header.length];
+    }
+
+    comptime {
+        assert(@sizeOf(OpenReliantName) == 8);
     }
 };
 
@@ -1145,6 +1177,15 @@ pub const Mission = struct {
         return mission.image[slot.offset..][0..bytes];
     }
 
+    /// The mission's name as OpenReliant keeps it in section `openreliant_name`; null for a mission
+    /// without one, or one whose section holds anything else.
+    pub fn openReliantName(mission: Mission) ?[]const u8 {
+        const slot = mission.entry(.openreliant_name);
+        if (!slot.isUsed() or slot.offset > mission.image.len) return null;
+        const bytes = mission.image[slot.offset..];
+        return OpenReliantName.read(bytes[0..@min(slot.count, bytes.len)]);
+    }
+
     /// The script's named routines, in the order the loader installs them.
     pub fn parts(mission: Mission) Error![]align(1) const Part {
         return mission.records(Part, .parts);
@@ -1327,9 +1368,30 @@ test "directory and records line up" {
 
     // The player's own record is the one of the player's side.
     try std.testing.expectEqual(@as(u32, 3), (try mission.player()).?.object_id);
+    // Without OpenReliant's section, the mission has no name of the port's.
+    try std.testing.expectEqual(null, mission.openReliantName());
+    const name_at = 0x300;
+    directory[@intFromEnum(Section.openreliant_name)] = .{ .count = 8 + 12, ._unused = 0, .formats = 0xF, .offset = name_at };
+    @as(*align(1) OpenReliantName, @ptrCast(image[name_at..][0..8])).* = .{ .length = 11 };
+    @memcpy(image[name_at + 8 ..][0..12], "The Sandbox\x00");
+    try std.testing.expectEqualStrings("The Sandbox", (try Mission.parse(&image)).openReliantName().?);
 
     // An unused section yields nothing rather than reading stray bytes.
     try std.testing.expectEqual(@as(usize, 0), (try mission.triggers()).len);
+}
+
+test OpenReliantName {
+    var section: [@sizeOf(OpenReliantName) + 8]u8 = undefined;
+    @as(*align(1) OpenReliantName, @ptrCast(section[0..8])).* = .{ .length = 7 };
+    @memcpy(section[8..], "Sandbox\x00");
+    try std.testing.expectEqualStrings("Sandbox", OpenReliantName.read(&section).?);
+    // Too short for its name, of another tag or of a later version, it is left alone.
+    try std.testing.expectEqual(null, OpenReliantName.read(section[0..10]));
+    section[0] = 'X';
+    try std.testing.expectEqual(null, OpenReliantName.read(&section));
+    section[0] = 'O';
+    section[4] = 2;
+    try std.testing.expectEqual(null, OpenReliantName.read(&section));
 }
 
 test "rejects a compressed or truncated image" {

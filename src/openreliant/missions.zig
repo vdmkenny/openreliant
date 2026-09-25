@@ -1,8 +1,9 @@
 //! `openreliant missions`: lists the missions a game's folder holds, the loose files in its
 //! `missions` folder and those in `resource.hog`, and binds each as a mission's start does, to show
 //! that it loads. A mission of one's own, dropped into `missions`, is checked the same way. Each is
-//! shown by what its file holds, as the file holds it: its counts, its format flags, and the ship
-//! type and name of the player's own record.
+//! shown by what its file holds, as the file holds it: its counts, its format flags, the ship
+//! type and name of the player's own record, and the name OpenReliant's own section gives it, where
+//! the file has one (`dte.OpenReliantName`).
 
 const std = @import("std");
 const Io = std.Io;
@@ -21,8 +22,8 @@ pub const usage =
     \\
     \\Lists the missions in the game's missions folder and in resource.hog, and binds each as a
     \\mission's start does. A loose file stands in for the archive's copy, as in the game. Each
-    \\is shown by what its file holds: its counts, its format flags, and the ship type and name
-    \\of the player's own record.
+    \\is shown by what its file holds: its counts, its format flags, the ship type and name of
+    \\the player's own record, and the mission's name where the file carries OpenReliant's.
     \\
 ;
 
@@ -91,6 +92,8 @@ fn check(io: Io, gpa: Allocator, directory: Io.Dir, resources: *const game.bigfi
     } else {
         try out.writeAll("   -  -\n");
     }
+    // The name OpenReliant keeps in a mission of its own making, where the file has one.
+    if (mission.file.openReliantName()) |name| try out.print("         name: {s}\n", .{name});
 }
 
 /// The numbers of the missions `directory` holds, loose in its `missions` folder or in

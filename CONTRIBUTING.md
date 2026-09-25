@@ -109,7 +109,9 @@ files stay the standard format:
   the engine's own behaviour.
 - **No format of the port's own.** The port's own missions, such as the sandbox, are standard
   `.DTE` files. Anything the port adds stays outside the file format, so that the files work in the
-  original too.
+  original too. The one exception is a mission's name, which the port keeps in a section the game
+  never reads ([OpenReliant's mission name](docs/formats/dte.md#openreliants-mission-name)): it is
+  optional, the port never depends on it, and the game ignores it.
 
 `openreliant missions` binds every mission a game's folder holds; run `make check-missions` after a
 change to how missions load or run.
