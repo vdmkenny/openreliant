@@ -747,10 +747,7 @@ pub const Sound = struct {
                         sound.end3D(v);
                         continue;
                     }
-                    position = slot.drawn.position;
-                    if (at == scene.objects.player) {
-                        position += math.transform(slot.drawn.orientation, -sound3d.player_sound_offset);
-                    }
+                    position = if (at == scene.objects.player) slot.drawn.point(-sound3d.player_sound_offset) else slot.drawn.position;
                     velocity = gameobj.vector(slot.object.velocity);
                     direction = math.forward(slot.drawn.orientation);
                 },
