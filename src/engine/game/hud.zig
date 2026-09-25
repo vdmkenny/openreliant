@@ -1167,16 +1167,13 @@ pub fn instrumented(last_view: camera.View) bool {
 /// measures both from the screen's edge rather than placing the text with `hud_place`.
 pub const view_name_down: i32 = 10;
 
-/// The last of the fly-bys, views `0x24` (`camera.View.flyby`) to `0x26`, whose names `hud_draw`
-/// leaves out.
-const last_flyby: camera.View = @enumFromInt(0x26);
-
 /// Whether `hud_draw` names `last_view` at the top of the screen: every view but the one ahead
-/// from the cockpit, and but the fly-bys.
+/// from the cockpit, and but the fly-by and the two views after it (`0x24` to `0x26`).
 pub fn namesView(last_view: camera.View) bool {
-    if (last_view == .cockpit) return false;
-    const n = @intFromEnum(last_view);
-    return n < @intFromEnum(camera.View.flyby) or n > @intFromEnum(last_flyby);
+    return switch (last_view) {
+        .cockpit, .flyby, ._unknown_37, ._unknown_38 => false,
+        else => true,
+    };
 }
 
 /// Draws the name of `last_view` where `hud_draw` does, the view table's string for it out of
@@ -1242,7 +1239,7 @@ test namesView {
     try std.testing.expect(namesView(.external));
     try std.testing.expect(namesView(.chase));
     try std.testing.expect(!namesView(.flyby));
-    try std.testing.expect(!namesView(@enumFromInt(0x26)));
+    try std.testing.expect(!namesView(._unknown_38));
     try std.testing.expect(namesView(@enumFromInt(0x27)));
 }
 

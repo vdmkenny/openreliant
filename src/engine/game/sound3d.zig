@@ -166,11 +166,8 @@ pub const EngineState = enum(u32) {
 /// Whether the player's own ship is heard flying past in `view`: not from the cockpit, nor around
 /// it, nor in view 15 (`sound3d_engine_update`).
 fn hearsOwnFlyby(view: camera.View) bool {
-    return !(view.fromCockpit() or view == .external or view == view_15);
+    return !(view.fromCockpit() or view == .external or view == ._unknown_15);
 }
-
-/// **Unknown:** what view 15 is, which `camera.View` does not name.
-const view_15: camera.View = @enumFromInt(0x0F);
 
 /// The player's engine's sounds (`sound3d_engine_update`). The afterburner's own voice plays at
 /// `burner_volume` times the engine's volume factor (`0x004DC75C`). Burning, its sound grows
@@ -665,7 +662,7 @@ test hearsOwnFlyby {
     try std.testing.expect(hearsOwnFlyby(.target));
     try std.testing.expect(!hearsOwnFlyby(.cockpit_rear));
     try std.testing.expect(!hearsOwnFlyby(.external));
-    try std.testing.expect(!hearsOwnFlyby(view_15));
+    try std.testing.expect(!hearsOwnFlyby(._unknown_15));
 }
 
 test "a fighter flying past the camera is heard" {

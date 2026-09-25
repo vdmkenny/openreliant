@@ -2276,6 +2276,21 @@ pub const LightSprites = struct {
     }
 };
 
+/// Where `attachment` stands on its part, and how it is turned there: a muzzle's, a flash's, a case
+/// ejector's or an eject point's.
+pub fn attachmentPlace(attachment: *const shp.Attachment) math.Place {
+    return .{ .position = gameobj.vector(attachment.position), .orientation = attachment.orientation };
+}
+
+test attachmentPlace {
+    var attachment = std.mem.zeroes(shp.Attachment);
+    attachment.position = .{ .x = 1, .y = 2, .z = 3 };
+    attachment.orientation = math.rotation(.y, 1);
+    const place = attachmentPlace(&attachment);
+    try std.testing.expectEqual(Vector{ 1, 2, 3 }, place.position);
+    try std.testing.expectEqual(attachment.orientation, place.orientation);
+}
+
 /// The colour of a light: its flare's, and the light it casts (`node_draw`, `node_mount_light`).
 /// Past the sixth it takes none.
 pub fn lightColour(light: shp.Attachment.Light) [3]f32 {

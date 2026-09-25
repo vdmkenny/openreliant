@@ -217,7 +217,7 @@ pub const Muzzle = struct {
     }
 
     fn onPart(muzzle: Muzzle) math.Place {
-        return attachmentPlace(muzzle.attachment);
+        return objects.attachmentPlace(muzzle.attachment);
     }
 
     /// Its flash, where its model carries one (`node_mount_muzzle`).
@@ -228,21 +228,6 @@ pub const Muzzle = struct {
         return null;
     }
 };
-
-/// Where `attachment` stands on its part, and how it is turned there: a muzzle's, a flash's, a case
-/// ejector's or an eject point's.
-pub fn attachmentPlace(attachment: *const shp.Attachment) math.Place {
-    return .{ .position = gameobj.vector(attachment.position), .orientation = attachment.orientation };
-}
-
-test attachmentPlace {
-    var attachment = std.mem.zeroes(shp.Attachment);
-    attachment.position = .{ .x = 1, .y = 2, .z = 3 };
-    attachment.orientation = math.rotation(.y, 1);
-    const place = attachmentPlace(&attachment);
-    try std.testing.expectEqual(Vector{ 1, 2, 3 }, place.position);
-    try std.testing.expectEqual(attachment.orientation, place.orientation);
-}
 
 pub const turrets = @import("guns/turrets.zig");
 pub const flash = @import("guns/flash.zig");

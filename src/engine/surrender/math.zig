@@ -73,8 +73,8 @@ pub fn distance(a: Vector, b: Vector) f32 {
     return @sqrt(d[1] * d[1] + d[2] * d[2] + d[0] * d[0]);
 }
 
-/// The value `t` of the way from `a` to `b` (`lerp`, `0x004C1050`), or for vectors of each
-/// component.
+/// The value `t` of the way from `a` to `b` (`lerp`, `0x004C1050`), or for vectors the point `t` of
+/// the way, each component alike (`vec3_lerp`, `0x004C1070`).
 pub fn lerp(a: anytype, b: anytype, t: f32) @TypeOf(a, b) {
     const T = @TypeOf(a, b);
     const share: T = if (@typeInfo(T) == .vector) @splat(t) else t;

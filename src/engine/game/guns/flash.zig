@@ -17,6 +17,7 @@ const srtexture = @import("../../surrender/surrenderlib/srtexture.zig");
 const environfx = @import("../environfx.zig");
 const guns = @import("../guns.zig");
 const matmanager = @import("../matmanager.zig");
+const objects = @import("../objects.zig");
 const stats = @import("stats.zig");
 
 /// How the flashes are drawn where OpenReliant does more than the game.
@@ -314,7 +315,7 @@ pub const Flash = struct {
             return false;
         }
         const share: f32 = if (flash.ticks > 0) @min(@as(f32, @floatFromInt(until - now)) / @as(f32, @floatFromInt(flash.ticks)), 1) else 0;
-        const place = guns.attachmentPlace(flash.attachment).within(carrier);
+        const place = objects.attachmentPlace(flash.attachment).within(carrier);
         flash.object.position = place.position;
         flash.object.orientation = place.orientation;
         flash.object.scale = share;

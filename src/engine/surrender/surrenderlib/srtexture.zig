@@ -102,17 +102,7 @@ pub const Table = struct {
 
     /// The image the engine finds for `name` (`texture_find`), or null when the cache has none.
     pub fn find(table: *Table, name: []const u8) Allocator.Error!?*Image {
-        return table.lookUp("", name);
-    }
-
-    /// The light map a part flagged `lightmap` binds for the material `name`: the texture named
-    /// `l` and the material's name (`mesh_build`).
-    pub fn findLightMap(table: *Table, name: []const u8) Allocator.Error!?*Image {
-        return table.lookUp("l", name);
-    }
-
-    fn lookUp(table: *Table, prefix: []const u8, name: []const u8) Allocator.Error!?*Image {
-        const key = try std.mem.concat(table.gpa, u8, &.{ prefix, tcache.fileName(name) });
+        const key = try table.gpa.dupe(u8, tcache.fileName(name));
         for (key) |*c| c.* = std.ascii.toLower(c.*);
         const entry = table.images.getOrPut(table.gpa, key) catch |err| {
             table.gpa.free(key);
@@ -187,8 +177,7 @@ test Table {
     // The same image again, none for a name the cache lacks, and the light map apart.
     try std.testing.expectEqual(kiev, (try table.find("kiev_1")).?);
     try std.testing.expectEqual(null, try table.find("missing"));
-    try std.testing.expect((try table.findLightMap("KIEV_1")).? != kiev);
-    try std.testing.expectEqual(null, try table.findLightMap("lKiev_1"));
+    try std.testing.expect((try table.find("lkiev_1")).? != kiev);
 }
 
 /// Fixtures for the tests here and in the modules that draw with textures.
@@ -227,5 +216,5 @@ test "testing.Textures" {
     const textures = try testing.Textures.init(gpa, &.{ "hull", "lhull" });
     defer textures.deinit(gpa);
     try std.testing.expect((try textures.table.find("hull")) != null);
-    try std.testing.expect((try textures.table.findLightMap("hull")) != null);
+    try std.testing.expect((try textures.table.find("lhull")) != null);
 }

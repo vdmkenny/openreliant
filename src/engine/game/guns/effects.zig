@@ -268,7 +268,7 @@ pub fn throwCases(world: gameobj.World, owner: u16, model: *const objects.Model,
         const height = 1 / @as(f32, @floatFromInt(case_cells[1]));
         var case: particles.Emitter = .{
             .born = world.clock.frame_start,
-            .place = guns.attachmentPlace(attachment),
+            .place = objects.attachmentPlace(attachment),
             .direction = .{ 0, 0, -1 },
             .spread = case_spread,
             .speed = case_speed,

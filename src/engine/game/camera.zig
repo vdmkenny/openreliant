@@ -92,6 +92,13 @@ pub const View = enum(u8) {
     watch_marker = 0x1B,
     /// From a point the player flies past.
     flyby = 0x24,
+    /// **Unknown:** two views after the fly-by that share its name, which `hud_draw` leaves unnamed
+    /// with it.
+    _unknown_37 = 0x25,
+    _unknown_38 = 0x26,
+    /// **Unknown:** in which the player's own ship is heard flying past no more than from the
+    /// cockpit (`sound3d_engine_update`).
+    _unknown_15 = 0x0F,
     _,
 
     /// The view's record in the view table (`0x004F72A8`), or null for a number past it, which

@@ -223,7 +223,7 @@ fn ejectPoint(pod: *const create.Slot, cockpit: usize) ?math.Place {
     var found: ?math.Place = null;
     for (loaded.model.parts[cockpit].attachments) |*attachment| {
         if (attachment.kind != .eject_point) continue;
-        found = guns.attachmentPlace(attachment);
+        found = objects.attachmentPlace(attachment);
     }
     const local = found orelse return null;
     return local.within(model.partPlace(cockpit, .now).within(pod.object.placeAt(.now)));
