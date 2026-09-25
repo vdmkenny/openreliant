@@ -321,11 +321,9 @@ pub fn launch(world: gameobj.World, launcher: u16, rack: usize, target: aigeneri
     const at = spawn(world, launcher, racked.type, built, places) orelse return;
     if (launcher == all.player) if (world.forces) |forces| forces.start(.missile, world.clock.frame_start);
 
-    if (world.hearing) |hearing| {
-        const class: sound3d.Class = if (launcher == all.player) .guaranteed else .not_reserved;
-        const which: sound3d.sounds.Sound = @enumFromInt(missiles.records[at].?.stats(&all.missile_stats).launch_sound);
-        _ = sound3d.play(hearing.sound, hearing.scene(world), null, null, at, which, 1, class);
-    }
+    const class: sound3d.Class = if (launcher == all.player) .guaranteed else .not_reserved;
+    const which: sound3d.sounds.Sound = @enumFromInt(missiles.records[at].?.stats(&all.missile_stats).launch_sound);
+    sound3d.playIn(world, null, null, at, which, 1, class);
     racked.count -= 1;
     const order: Order = if (pod and racked.count < 0) .jettison else if (pod) .pod_launch else if (racked.type == .fuel_pod) .jettison else .rail_launch;
     // The game lays a rail's trail after the launch's first run, and a pod's before it.

@@ -97,7 +97,7 @@ pub fn throw(explosions: *explode.Explosions, at: Vector, direction: Vector, how
     velocity = math.transform(math.fromAngleVector(random.centredVector(@splat(stray))), velocity);
     var object: srapiext.MeshObject = .{
         .flags = .{ .lit = true },
-        .light_mask = explosions.settings.debris_lights.mask(@import("../objects.zig").lightMask(false)),
+        .light_mask = explosions.settings.debris_lights.loose(),
         .position = at,
         .orientation = orientation,
         .radius = levels[0].mesh.radius,

@@ -2016,9 +2016,7 @@ pub fn targetKeys(state: *State, keys: Keys) void {
         if (state.windows.open(.missiles, keys.multiplayer)) missiles.held = true;
         const turned = state.missiles.turn(key.turn);
         const world = keys.world orelse continue;
-        if (turned) if (world.hearing) |hearing| {
-            _ = sound3d.play(hearing.sound, hearing.scene(world), null, null, all.player, .missileselect, 1, .not_reserved);
-        };
+        if (turned) sound3d.playIn(world, null, null, all.player, .missileselect, 1, .not_reserved);
         beep(keys.world, if (turned) .done else .refused);
         if (world.hearing) |hearing| state.missiles.sayName(hearing.sound);
     }

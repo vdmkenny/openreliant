@@ -62,10 +62,8 @@ pub fn componentHit(world: gameobj.World, index: u16, crossing: objects.Crossing
         },
         .rock => {
             const drawn = crossing.part.part().drawn();
-            if (world.hearing) |hearing| {
-                const at = math.transform(drawn.orientation, crossing.point) + drawn.position;
-                _ = sound3d.play(hearing.sound, hearing.scene(world), at, @splat(0), -1, .coll02, 1, .not_reserved);
-            }
+            const at = math.transform(drawn.orientation, crossing.point) + drawn.position;
+            sound3d.playIn(world, at, @splat(0), -1, .coll02, 1, .not_reserved);
             explode.throwChunk(world, crossing.point, math.transform(drawn.orientation, crossing.normal), .{ .from_part = drawn });
         },
         .hull, .grey => {},

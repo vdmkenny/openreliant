@@ -28,6 +28,7 @@ const srcore = @import("../../surrender/surrenderlib/srcore.zig");
 const srtexture = @import("../../surrender/surrenderlib/srtexture.zig");
 const ai = @import("../ai.zig");
 const aigeneric = @import("../aigeneric.zig");
+const Slot = @import("../create.zig").Slot;
 const explode = @import("../explode.zig");
 const gameobj = @import("../gameobj.zig");
 const matmanager = @import("../matmanager.zig");
@@ -324,11 +325,11 @@ pub const Uber = struct {
             .life = @intFromFloat(@as(f32, @floatFromInt(duration)) * wave.life),
             .owner = owner,
         });
-        sound(world, owner, .uberexp, .guaranteed);
+        sound3d.playIn(world, null, null, owner, .uberexp, 1, .guaranteed);
     }
 
     /// Whether a blast of `size` at `at` lists the object in `slot`.
-    fn catches(slot: *const @import("../create.zig").Slot, at: Vector, size: f32) bool {
+    fn catches(slot: *const Slot, at: Vector, size: f32) bool {
         const object = &slot.object;
         if (object.flags.disabled or !object.created or object.order_count == 0) return false;
         const combat = slot.combat orelse return false;
@@ -373,7 +374,7 @@ pub const Uber = struct {
     fn end(uber: *Uber, world: gameobj.World) void {
         const blast = &uber.blast.?;
         defer uber.blast = null;
-        sound(world, blast.owner, .capexp, .player_fx);
+        sound3d.playIn(world, null, null, blast.owner, .capexp, 1, .player_fx);
         const ctx: aigeneric.Context = .{ .world = world, .clock = world.clock };
         for (blast.listed()) |caught| {
             if (!caught.reached) continue;
@@ -405,12 +406,6 @@ fn brightness(done: f32) f32 {
     if (done <= flared) return done / flared;
     if (done <= opened) return 1;
     return 1 - (done - opened) / (faded - opened);
-}
-
-/// Plays `which` from the ship in slot `owner`, on `class`.
-fn sound(world: gameobj.World, owner: u16, which: sound3d.sounds.Sound, class: sound3d.Class) void {
-    const hearing = world.hearing orelse return;
-    _ = sound3d.play(hearing.sound, hearing.scene(world), null, null, owner, which, 1, class);
 }
 
 /// `uber_hemisphere_open` (`0x00473EA0`): lays the hemisphere out `share` of the way open, of a

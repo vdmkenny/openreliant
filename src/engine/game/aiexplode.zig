@@ -142,7 +142,8 @@ pub fn update(ctx: Context, index: u16) void {
     }
 }
 
-/// How far the Huuuuuuuge Explosion reaches, and for how long, in ticks.
+/// How far the Huuuuuuuge Explosion reaches, and for how long, in ticks (`0x004086C8`,
+/// `0x004086C3`).
 const huge_size: f32 = 50000;
 const huge_duration = 1500;
 
@@ -206,12 +207,15 @@ fn asteroidInit(ctx: Context, index: u16) void {
 /// three smaller to take its place (`0x004DC4E0`, `0x004DC4D8`), each so much the size of the
 /// last (`0x004DC4DC`), standing its radius times `fragment_reach` from where it was, a turn of
 /// `fragment_turn` apart about the X axis (`0x004DC3D8`, `0x004DC4D4`).
+///
+/// **Improvement:** the game turns them by 1.88496, three fifths of a half turn rounded; the port
+/// computes it.
 const rock_fireball: f32 = 1.5;
 const least_breaking: f32 = 0.16;
 const fragment_share: f32 = 0.4;
 const fragments = 3;
 const fragment_reach: f32 = 3;
-const fragment_turn: f32 = 1.88496;
+const fragment_turn: f32 = 0.6 * std.math.pi;
 /// The fragments are asteroids from the third of the seven, one of the four from it.
 const fragment_first = 2;
 const fragment_kinds = 4;
@@ -250,6 +254,13 @@ fn asteroidUpdate(ctx: Context, index: u16) void {
 
 // --- The limpet car ----------------------------------------------------------------------------
 
+/// The model of the object in `slot`, where its first part still shows.
+fn shownModel(slot: *create.Slot) ?*objects.Model {
+    const model = if (slot.model) |*live| live else return null;
+    if (model.parts.len == 0 or model.parts[0].hidden) return null;
+    return model;
+}
+
 /// The bits the limpet car's trail has left, and how fast it may turn about its X and Y axes and
 /// about its Z axis, either way (`0x004DC474`, `0x004DC4C0`).
 const limpet_trail = 50;
@@ -285,14 +296,12 @@ fn limpetCarUpdate(ctx: Context, index: u16) void {
     const world = ctx.world;
     const all = world.objects;
     const slot = &all.slots[index];
-    const model = if (slot.model) |*live| live else null;
-    const shown = if (model) |held| held.parts.len > 0 and !held.parts[0].hidden else false;
-    if (!shown) {
+    const model = shownModel(slot) orelse {
         explode.blast(world, index);
         return create.retire(ctx, index);
-    }
-    model.?.parts[0].hidden = true;
-    const place = model.?.partPlace(0, .next).within(slot.object.placeAt(.next));
+    };
+    model.parts[0].hidden = true;
+    const place = model.partPlace(0, .next).within(slot.object.placeAt(.next));
     explode.blast(world, index);
     all.resetSlot(index, world.random);
     const spawn = world.spawn orelse return;

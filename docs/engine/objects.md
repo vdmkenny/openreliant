@@ -587,10 +587,11 @@ The other modes:
   frozen, it goes the frame after (`explode_asteroid`, `0x004092A0`) in a fireball as wide as 1.5
   times its radius, lighting what is round it, and is retired. Where its `visibility` times 0.4 is
   at least 0.16, three asteroids of types `0x7B` to `0x7E`, at random, take its place, that much of
-  its size: `visibility`, and the scale of their first part's frame (`+0x48`). Each is turned
-  1.88496 more than the last about the X axis, from 1.88496, and stands 3 of its own radii along its
-  nose from where the rock was, still and colliding with nothing. A whole rock so leaves three of
-  0.4, and each of those three of 0.16.
+  its size: `visibility`, and the scale of their first part's frame (`+0x48`). The first is turned
+  three times 1.88496 about the X axis, the next twice and the last once, and each stands 3 of its
+  own radii along its nose from where the rock was, still and colliding with nothing. A whole rock
+  so leaves three of 0.4, and each of those three of 0.16. **Improvement:** 1.88496 is three fifths
+  of a half turn, rounded; the port computes it.
 - The limpet car, type `0x1D` (`explode_limpet_car_init`, `0x004094D0`): it stops dead, unpowered,
   with a random turn up to ±0.025 about its first two axes and ±0.15 about its third, and goes up in
   a fireball as wide as its radius. Its update (`explode_limpet_car`, `0x004095F0`), the same step,

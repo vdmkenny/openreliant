@@ -1424,13 +1424,12 @@ test forceEffect {
 /// The sound a shot makes as it is fired (`bullet_fire`), its gun type's, following it: on a voice
 /// of the player's guns for the player's shots, and on a guaranteed one for the huge guns'.
 fn shotSound(world: gameobj.World, index: u8, kind: GunType, sound: i32, player: bool) void {
-    const hearing = world.hearing orelse return;
     const which = std.enums.fromInt(sound3d.sounds.Sound, sound) orelse return;
     const class: sound3d.Class = switch (kind) {
         .allied_huge_gun, .coalition_huge_gun => .guaranteed,
         else => if (player) .player_guns else .not_reserved,
     };
-    _ = sound3d.play(hearing.sound, hearing.scene(world), null, null, index, which, 1, class);
+    sound3d.playIn(world, null, null, index, which, 1, class);
 }
 
 /// The objects `bullet_place` gives a new shot: those its path comes near enough to over its life,
@@ -1717,7 +1716,7 @@ fn componentHit(world: gameobj.World, bullet: *Bullet, index: u16, crossing: obj
     if (huge) |kind| {
         explode.fireballAt(world, at, .{ .size = huge_fireball_size, .life = huge_fireball_life, .light = true });
         sparks.spray(world, kind, at, normal, @splat(0), huge_sparks);
-        if (world.hearing) |hearing| _ = sound3d.play(hearing.sound, hearing.scene(world), at, null, -1, .explosion01, 1, .explosions);
+        explode.sound(world, at, .explosions);
         return;
     }
     sparks.spray(world, .component, at, normal, @splat(0), component_sparks);

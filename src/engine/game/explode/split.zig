@@ -225,7 +225,7 @@ pub const Split = struct {
         if (@mod(@as(i32, @intCast(split.step)), 15 - skew) != 0) return;
         const which: sound3d.sounds.Sound = if (random.rand() % 2 == 0) .explosion01 else .explosion02;
         const volume = (random.fraction() + 1) * 0.5;
-        if (world.hearing) |hearing| _ = sound3d.play(hearing.sound, hearing.scene(world), at, null, -1, which, volume, .not_reserved);
+        sound3d.playIn(world, at, null, -1, which, volume, .not_reserved);
     }
 
     /// A step's bigger burst, one in `big_burst_odds`: halfway from the cut to the bow, a lit
@@ -300,7 +300,7 @@ pub const Split = struct {
     /// **Fix:** the game reads three points whatever the list holds.
     fn ending(split: *Split, world: gameobj.World) void {
         const slot = &world.objects.slots[split.object];
-        if (world.hearing) |hearing| _ = sound3d.play(hearing.sound, hearing.scene(world), null, null, split.object, .capexp, 1, .player_fx);
+        sound3d.playIn(world, null, null, split.object, .capexp, 1, .player_fx);
         gameobj.recentreObject(slot);
         const model = if (slot.model) |*live| live else return;
         const hull = split.hull orelse return;
@@ -402,7 +402,7 @@ pub const Split = struct {
         const random = world.random;
         const sequence = split.sequence;
         flashNear(world, split.object);
-        if (world.hearing) |hearing| _ = sound3d.play(hearing.sound, hearing.scene(world), null, null, split.object, .capexp, 1, .player_fx);
+        sound3d.playIn(world, null, null, split.object, .capexp, 1, .player_fx);
         for (0..split.points.len) |n| {
             const at = split.worldPoint(world, n);
             const late: i32 = random.rand() % 75;

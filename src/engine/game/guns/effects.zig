@@ -199,9 +199,7 @@ const bang_size_range: f32 = 56;
 /// two flashes of flak, a burst of the guns' flak particles, and the fireballs of `bangs`. Farther
 /// off, one flash of `flak_far`.
 pub fn flakBurst(world: gameobj.World, index: u8, at: Vector) void {
-    if (world.hearing) |hearing| {
-        _ = sound3d.play(hearing.sound, hearing.scene(world), null, null, index, .flak01, 1, .explosions);
-    }
+    sound3d.playIn(world, null, null, index, .flak01, 1, .explosions);
     const seen = world.camera orelse return;
     if (math.lengthSquared(seen.place.position - at) >= flak_near * flak_near) return explode.fireballAt(world, at, flak_far);
     const random = world.random;

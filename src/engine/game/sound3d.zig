@@ -284,6 +284,12 @@ pub fn play(sound: *Sound, scene: Scene, at: ?Vector, facing: ?Vector, owner: i3
     return v;
 }
 
+/// `play` where `world` is heard, in its scene; nothing where it is not.
+pub fn playIn(world: gameobj.World, at: ?Vector, facing: ?Vector, owner: i32, which: sounds.Sound, volume: f32, class: Class) void {
+    const hearing = world.hearing orelse return;
+    _ = play(hearing.sound, hearing.scene(world), at, facing, owner, which, volume, class);
+}
+
 /// The engines' and the afterburner's sounds, which are started however far off they are.
 fn heardAnywhere(which: sounds.Sound) bool {
     const n = @intFromEnum(which);

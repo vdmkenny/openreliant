@@ -140,10 +140,11 @@ pub const Explosions = struct {
         explosions.* = .{ .images = explosions.images, .settings = explosions.settings, .bits = explosions.bits, .chunks = explosions.chunks, .uber = explosions.uber, .pieces = explosions.pieces, .splits = explosions.splits };
     }
 
-    /// `explosions_update` (`0x0046E480`), once a frame, as far as the port goes: the Uber Explode
-    /// goes on (`uber.Uber.frame`), the marker drifts on, the bits fly on, the wrecks burn on (`burnFrame`), the pieces fly on
-    /// (`breakup.Pieces.frame`), the splits go on (`split.Splits.frame`), each fireball plays on
-    /// (`Fireball.frame`) until it is done, and the chunks of rock fly on (`rocks.Chunks.frame`).
+    /// `explosions_update` (`0x0046E480`), once a frame: the Uber Explode goes on
+    /// (`uber.Uber.frame`), the marker drifts on, the bits fly on, the wrecks burn on
+    /// (`burnFrame`), the pieces fly on (`breakup.Pieces.frame`), the splits go on
+    /// (`split.Splits.frame`), each fireball plays on (`Fireball.frame`) until it is done, and the
+    /// chunks of rock fly on (`rocks.Chunks.frame`).
     ///
     /// **Improvement:** the marker drifts by `drift` a tick, where the game adds it once a frame,
     /// which comes to the same at a frame a tick.
@@ -315,7 +316,7 @@ pub const Explosions = struct {
             .life = life,
             .object = .{
                 .flags = .{ .lit = true },
-                .light_mask = explosions.settings.debris_lights.mask(objects.lightMask(false)),
+                .light_mask = explosions.settings.debris_lights.loose(),
                 .position = at,
                 .scale = piece.scale,
                 .radius = piece.levels[0].mesh.radius,
@@ -416,6 +417,12 @@ pub const DebrisLights = enum {
             .like_ships => ship,
             .every_light => 0,
         };
+    }
+
+    /// The mask for a burning bit or a chunk of rock: a part's of a model that lists no
+    /// components.
+    pub fn loose(lights: DebrisLights) u32 {
+        return lights.mask(objects.lightMask(false));
     }
 };
 
@@ -625,13 +632,11 @@ pub const Fireball = struct {
         bang: bool,
         _: u29 = 0,
 
-        /// The sheet's cell `at`, three across and three down, as a sprite's span of it,
-        /// mirrored as the look says.
+        /// The sheet's cell `at` as a sprite's span of it, mirrored as the look says.
         fn cell(look: Look, at: u32) [4]f32 {
-            const u = @as(f32, @floatFromInt(at % 3)) * sheet_step;
-            const v = @as(f32, @floatFromInt(at / 3)) * sheet_step;
-            const across: [2]f32 = if (look.mirror_u) .{ u + sheet_cell, u } else .{ u, u + sheet_cell };
-            const down: [2]f32 = if (look.mirror_v) .{ v + sheet_cell, v } else .{ v, v + sheet_cell };
+            const span = gridCell(at, sheet_step, sheet_cell);
+            const across: [2]f32 = if (look.mirror_u) .{ span[0][1], span[0][0] } else span[0];
+            const down: [2]f32 = if (look.mirror_v) .{ span[1][1], span[1][0] } else span[1];
             return .{ across[0], across[1], down[0], down[1] };
         }
     };
@@ -658,11 +663,21 @@ pub const Fireball = struct {
     /// (`0x004DC614`).
     const flak_step: f32 = 0.33;
 
-    /// The flak's cell `at`, three across and three down, as a sprite's span of it.
+    /// The flak's cell `at` as a sprite's span of it.
     fn flakCell(at: u32) [4]f32 {
-        const u = @as(f32, @floatFromInt(at % 3)) * flak_step;
-        const v = @as(f32, @floatFromInt(at / 3)) * flak_step;
-        return .{ u, u + flak_step, v, v + flak_step };
+        const span = gridCell(at, flak_step, flak_step);
+        return .{ span[0][0], span[0][1], span[1][0], span[1][1] };
+    }
+
+    /// How many cells the sheet and the flak have across, and down.
+    const grid_side = 3;
+
+    /// Cell `at` of a grid of `grid_side` by `grid_side`, from the top left along each row, each
+    /// `step` from the last and `width` across and down: its span across, and down.
+    fn gridCell(at: u32, step: f32, width: f32) [2][2]f32 {
+        const u = @as(f32, @floatFromInt(at % grid_side)) * step;
+        const v = @as(f32, @floatFromInt(at / grid_side)) * step;
+        return .{ .{ u, u + width }, .{ v, v + width } };
     }
 
     /// The light's colour, and how far it reaches: its intensity times the square root of its size
@@ -731,7 +746,7 @@ pub const Fireball = struct {
     /// further along between the ticks as well (`particles.Pool.draw`).
     fn show(fireball: *Fireball, images: Explosions.Images, ahead: f32) void {
         const bang_images = fireball.look.bang and !fireball.special;
-        const frames: u32 = if (bang_images) 16 else 9;
+        const frames: u32 = if (bang_images) images.bang.len else grid_side * grid_side;
         const life: f32 = @floatFromInt(fireball.life);
         const played = @min((@as(f32, @floatFromInt(fireball.age)) + ahead) / life, 1);
         const step = @min((@as(f32, @floatFromInt(fireball.age * @as(i32, @intCast(frames)))) + ahead * @as(f32, @floatFromInt(frames))) / life, @as(f32, @floatFromInt(frames - 1)));
@@ -786,8 +801,7 @@ pub fn soundClass(world: gameobj.World, at: Vector) ?sound3d.Class {
 
 /// Plays the first explosion's sound at `at`, on `class`.
 pub fn sound(world: gameobj.World, at: Vector, class: sound3d.Class) void {
-    const hearing = world.hearing orelse return;
-    _ = sound3d.play(hearing.sound, hearing.scene(world), at, null, -1, .explosion01, 1, class);
+    sound3d.playIn(world, at, null, -1, .explosion01, 1, class);
 }
 
 /// The flame a blast bursts into (`0x00553348`): five to six seconds of it, growing from nothing

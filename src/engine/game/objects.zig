@@ -865,8 +865,7 @@ fn loseRoot(ctx: aigeneric.Context, index: u16, model: *Model, root: math.Place)
 
 /// A shield generator going down: `SHLDDOWN` from where it stands, facing its way.
 fn shieldsDown(world: gameobj.World, at: math.Place) void {
-    const hearing = world.hearing orelse return;
-    _ = sound3d.play(hearing.sound, hearing.scene(world), at.position, math.forward(at.orientation), -1, .shlddown, 1, .not_reserved);
+    sound3d.playIn(world, at.position, math.forward(at.orientation), -1, .shlddown, 1, .not_reserved);
 }
 
 /// `node_destroy` (`0x00499E30`) with `node_forget` (`0x00499BB0`): takes part `ref` out of the
