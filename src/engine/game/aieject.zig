@@ -449,7 +449,7 @@ const blow_up_spread = 200;
 /// `order_eject_player_init` (`0x00416310`), as the player's ship's armour runs out: the ship drifts
 /// on unpowered for four to six seconds before it blows up, and the pilot has that long to eject
 /// (EJECT, `input.eject`). The display's eject marker flashes (`hud.State.ejected`), and the
-/// cockpit glows red (`main.lightEmergency`).
+/// cockpit glows red (`main.cockpit.lightEmergency`).
 ///
 /// Not ported: Moose's call to eject on the radio (`ejt_001` to `ejt_008`), which waits for the
 /// radio ([#48](https://github.com/vdmkenny/openreliant/issues/48)).
@@ -465,7 +465,7 @@ pub fn playerInit(ctx: Context, index: u16) void {
         display.ejected = true;
         display.eject_ticks = 0;
     }
-    if (ctx.world.cockpit) |cockpit| @import("main.zig").lightEmergency(cockpit);
+    if (ctx.world.cockpit) |cockpit| @import("main.zig").cockpit.lightEmergency(cockpit);
 }
 
 /// `order_eject_player` (`0x00416450`): the player's controls run on until the ship's end, when it

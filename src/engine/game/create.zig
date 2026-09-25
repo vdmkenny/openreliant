@@ -5,7 +5,8 @@
 //! `shipstats.bin`, [`formats/stats.zig`](../../formats/stats.zig).
 //! [`create/models.zig`](create/models.zig) names each ship type's and attachment's models, and
 //! [`create/combat.zig`](create/combat.zig) holds the combat stats' words that the executable
-//! keeps. **Unverified:** the loader, `objects_reset`, `ship_type_load` and the ship type table lie
+//! keeps, and [`create/library.zig`](create/library.zig) reads the models the types and their
+//! attachment points use. **Unverified:** the loader, `objects_reset`, `ship_type_load` and the ship type table lie
 //! between `collision.cpp`'s code and data and this file's, and `object_reset` and
 //! `objects_update` after this file's known code, before `environfx.cpp`'s.
 
@@ -43,6 +44,7 @@ const xtrabits = @import("xtrabits.zig");
 
 pub const models = @import("create/models.zig");
 pub const combat_stats = @import("create/combat.zig");
+pub const library = @import("create/library.zig");
 
 /// Ship types: the records of `shipstats.bin`, and the entries of the tables they index. Types
 /// above the last, markers and nav points among them, have no stats.

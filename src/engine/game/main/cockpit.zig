@@ -1,0 +1,187 @@
+//! The cockpit a mission's start (`0x004934F0`) makes for the player's ship: its frame model,
+//! read from the game's archive and made into an object of its own (`Cockpit`, `create`), which
+//! hangs from the camera's frame (`place`) and moves with the ship's turns (`input`).
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const shp = @import("../../../formats/shp.zig");
+const math = @import("../../surrender/math.zig");
+const srapiext = @import("../../surrender/surrenderlib/srapiext.zig");
+const srtexture = @import("../../surrender/surrenderlib/srtexture.zig");
+const bigfile = @import("../bigfile.zig");
+const camera = @import("../camera.zig");
+const gameobj = @import("../gameobj.zig");
+const main = @import("../main.zig");
+const objects = @import("../objects.zig");
+const srofiles = @import("../srofiles.zig");
+
+const log = std.log.scoped(.cockpit);
+
+/// The cockpit loaded for the player's ship, in an arena of its own, so that another ship's can
+/// take its place.
+pub const Cockpit = struct {
+    arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator),
+    /// Null for a ship the player can't fly, or one whose cockpit the game lacks.
+    shown: ?Shown = null,
+
+    pub const Shown = struct {
+        /// The frame model as read, whose eye and hands the camera moves the cockpit by.
+        source: *const shp.Model,
+        model: objects.Model,
+    };
+
+    /// Loads the cockpit of `ship_type`, a ship the player can fly (`main.playerShip`), in place
+    /// of the one before, as each mission's start makes it afresh. A cockpit the game lacks or
+    /// can't read is left out.
+    pub fn load(cockpit: *Cockpit, resources: *const bigfile.Hog, textures: *srtexture.Table, ship_type: u8) Allocator.Error!void {
+        cockpit.shown = null;
+        _ = cockpit.arena.reset(.free_all);
+        const player_ship = main.playerShip(ship_type) orelse return;
+        const gpa = cockpit.arena.allocator();
+        const file = srofiles.readModel(gpa, resources, textures, player_ship.cockpit) catch |err| switch (err) {
+            error.OutOfMemory => |out| return out,
+            else => {
+                log.warn("the cockpit {s} is left out: {s}", .{ player_ship.cockpit, @errorName(err) });
+                return;
+            },
+        };
+        cockpit.shown = .{ .source = file.model, .model = try create(gpa, file.model, file.loaded) };
+    }
+
+    pub fn deinit(cockpit: *Cockpit) void {
+        cockpit.arena.deinit();
+    }
+};
+
+/// The cockpit model's two parts `mission_frame` draws: the cockpit's frame and the pilot's hands.
+/// A model with more has the rest left out; the Phoenix's has a third, its base.
+pub const frame = 0;
+pub const hands = 1;
+
+/// How far the cockpit's every level of detail reaches: the mission's start pushes them all out
+/// to this, so the finest is always the one drawn.
+pub const detail: f32 = 1048576;
+
+/// The lights' masks that reach the cockpit's parts, as a mask of those that do not (`+0xDC`).
+pub const light_mask: u32 = 0x12;
+
+/// The cockpit as the mission's start (`0x004934F0`) makes it: an object of its own
+/// (`0x005883F4`) with a part for each of the cockpit frame model's, each drawn always
+/// (`always_drawn`), reached only by the lights `light_mask` lets through, and with every
+/// level pushed out to `detail`; its root then hangs from the camera's frame. Its parts
+/// hang as an object's do, its origin at their centre of mass (`object_link_parts`). The levels
+/// are made in `gpa`.
+pub fn create(gpa: Allocator, model: *const shp.Model, loaded: *const srofiles.Loaded) Allocator.Error!objects.Model {
+    var cockpit: objects.Model = try .create(gpa, model, loaded, .{});
+    for (cockpit.parts) |*part| try fitPart(gpa, part);
+    gameobj.linkParts(&cockpit, model);
+    return cockpit;
+}
+
+/// What the start does to each of the cockpit's parts.
+fn fitPart(gpa: Allocator, part: *objects.Model.Part) Allocator.Error!void {
+    part.object.flags.always_drawn = true;
+    part.object.light_mask = light_mask;
+    const levels = try gpa.dupe(srapiext.Level, part.object.levels);
+    for (levels) |*level| level.until = detail;
+    part.object.levels = levels;
+}
+
+/// What `camera_frame` reads of the cockpit's model to move it, for a ship turning at `rates`,
+/// each over its full rate, and flying at `speed`, over its cruise speed.
+pub fn input(cockpit: *const objects.Model, model: *const shp.Model, rates: [3]f32, speed: f32) ?camera.Cockpit.Input {
+    if (cockpit.parts.len <= hands) return null;
+    const eye = model.header.eye;
+    const pivot = model.parts[hands].part.mount_point;
+    return .{
+        .rates = rates,
+        .speed = speed,
+        .eye = .{ eye.x, eye.y, eye.z },
+        .hands_origin = cockpit.parts[hands].origin,
+        .hands_pivot = .{ pivot.x, pivot.y, pivot.z },
+    };
+}
+
+/// The cockpit lit for a pilot about to eject (`order_eject_player_init`): each of its parts coloured
+/// pure red (`0x00416383`) and reached by the lights `emergency_light_mask` lets through
+/// (`0x004163E1`), the fill lights as well as the ambient ones but the first key light no more, a
+/// red glow that lasts until the mission ends.
+pub fn lightEmergency(cockpit: *objects.Model) void {
+    for (cockpit.parts) |*part| {
+        part.object.colour[0..3].* = emergency_red;
+        part.object.light_mask = emergency_light_mask;
+    }
+}
+
+const emergency_red = [3]f32{ 1, 0, 0 };
+const emergency_light_mask: u32 = 1;
+
+/// Places the cockpit's parts in the world for the camera at `at`: its root hangs from the
+/// camera's frame where `placed` puts it, each part stands from the root as it does in the model,
+/// and the hands where the camera turned them.
+pub fn place(cockpit: *objects.Model, at: camera.Place, placed: camera.Cockpit.Placed) void {
+    const root = placed.root.within(at);
+    cockpit.place(root.position, root.orientation);
+    if (cockpit.parts.len <= hands) return;
+    const held = placed.hands.within(root);
+    const object = &cockpit.parts[hands].object;
+    object.position = held.position;
+    object.orientation = held.orientation;
+}
+
+test "each part is drawn always, from its finest level" {
+    const gpa = std.testing.allocator;
+    const srmesh = @import("../../surrender/surrenderlib/srmesh.zig");
+    const mesh = try srmesh.testing.square(gpa);
+    defer mesh.deinit(gpa);
+    const levels = [_]srapiext.Level{ .{ .mesh = &mesh, .until = 1000 }, .{ .mesh = &mesh, .until = 5000 } };
+    var part: objects.Model.Part = .{
+        .hidden = false,
+        .parent = null,
+        .origin = @splat(0),
+        .object = .{ .flags = .{}, .position = @splat(0), .radius = 1, .levels = &levels },
+    };
+    try fitPart(gpa, &part);
+    defer gpa.free(part.object.levels);
+    try std.testing.expect(part.object.flags.always_drawn);
+    try std.testing.expectEqual(light_mask, part.object.light_mask);
+    for (part.object.levels) |level| try std.testing.expectEqual(detail, level.until);
+    // The model's own levels are left as they were.
+    try std.testing.expectEqual(1000, levels[0].until);
+}
+
+test place {
+    var parts = [_]objects.Model.Part{
+        .{ .hidden = false, .parent = null, .origin = .{ 0, 0, 100 }, .object = .{ .flags = .{}, .position = @splat(0), .radius = 1, .levels = &.{} } },
+        .{ .hidden = false, .parent = null, .origin = .{ 0, 0, 50 }, .object = .{ .flags = .{}, .position = @splat(0), .radius = 1, .levels = &.{} } },
+    };
+    var model: objects.Model = .{ .parts = &parts, .order = &.{ 0, 1 }, .lights = &.{}, .glows = &.{}, .mounts = &.{} };
+    // The camera turned a quarter about Y: the root, set back from the eye, turns with it.
+    const at: camera.Place = .{ .position = .{ 1000, 0, 0 }, .orientation = math.rotation(.y, std.math.pi / 2.0) };
+    const placed: camera.Cockpit.Placed = .{
+        .root = .{ .position = .{ 0, 0, -300 }, .orientation = math.identity },
+        .hands = .{ .position = .{ 0, 10, 0 }, .orientation = math.identity },
+    };
+    place(&model, at, placed);
+    const root = at.position + math.transform(at.orientation, .{ 0, 0, -300 });
+    const frame_at: [3]f32 = root + math.transform(at.orientation, .{ 0, 0, 100 });
+    for (frame_at, @as([3]f32, parts[frame].object.position)) |e, a| try std.testing.expectApproxEqAbs(e, a, 1e-3);
+    // The hands stand where the camera put them, not at their origin.
+    const hands_at: [3]f32 = root + math.transform(at.orientation, .{ 0, 10, 0 });
+    for (hands_at, @as([3]f32, parts[hands].object.position)) |e, a| try std.testing.expectApproxEqAbs(e, a, 1e-3);
+}
+
+test lightEmergency {
+    var parts = [_]objects.Model.Part{
+        .{ .hidden = false, .parent = null, .origin = @splat(0), .object = .{ .flags = .{}, .position = @splat(0), .radius = 1, .levels = &.{}, .light_mask = light_mask } },
+        .{ .hidden = false, .parent = null, .origin = @splat(0), .object = .{ .flags = .{}, .position = @splat(0), .radius = 1, .levels = &.{}, .light_mask = light_mask } },
+    };
+    var model: objects.Model = .{ .parts = &parts, .order = &.{ 0, 1 }, .lights = &.{}, .glows = &.{}, .mounts = &.{} };
+    // Every part glows red, and takes the lights but the first key light.
+    lightEmergency(&model);
+    for (parts) |part| {
+        try std.testing.expectEqual(emergency_red, part.object.colour[0..3].*);
+        try std.testing.expectEqual(emergency_light_mask, part.object.light_mask);
+    }
+}

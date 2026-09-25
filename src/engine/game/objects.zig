@@ -2066,10 +2066,7 @@ pub const Mounts = struct {
     /// Null for a model the game lacks or cannot read; whoever answers says why.
     load: *const fn (context: *anyopaque, file: []const u8) ?Mounted,
 
-    pub const Mounted = struct {
-        model: *const shp.Model,
-        loaded: *const srofiles.Loaded,
-    };
+    pub const Mounted = srofiles.ModelFile;
 
     /// The model `attachment` mounts, or null where its kind mounts none, the table names none, or
     /// the game lacks the file (`node_mount`, `0x00499A10`).
