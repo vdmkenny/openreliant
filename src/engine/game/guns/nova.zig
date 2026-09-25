@@ -21,6 +21,7 @@ const matmanager = @import("../matmanager.zig");
 const objects = @import("../objects.zig");
 const shield = @import("../shield.zig");
 const shieldfx = @import("../shieldfx.zig");
+const table = @import("../table.zig");
 const xtrabits = @import("../xtrabits.zig");
 
 /// How much each hold of the trigger charges the cannon for each share of the power the guns take
@@ -189,7 +190,7 @@ pub const Beam = struct {
     fn place(beam: *Beam, ship: math.Place, now: i32) void {
         const left = @as(f32, @floatFromInt(beam.until - now)) / beam_ticks;
         const narrow = beam.charge * beam.charge;
-        beam.ion.position = ship.position + math.transform(ship.orientation, ion_offset);
+        beam.ion.position = ship.point(ion_offset);
         beam.ion.orientation = math.product(ship.orientation, math.scaling(.{ narrow, narrow, 1 }));
         const bright = @min(left / fade_share, 1);
         for (0..ion_blades) |blade| {
@@ -234,7 +235,7 @@ fn strandsAt(strands: *[strand_count]Beam.Strand, ship: math.Place, through: f32
     for (&points, 0..) |*point, index| {
         var local = helix(@as(f32, @floatFromInt(index)) * helix_step + through - helix_lead);
         local[2] = @max(local[2], helix_nearest);
-        point.* = math.transform(ship.orientation, local) + ship.position;
+        point.* = ship.point(local);
     }
     const bright = riseAndFall(through);
     for (strands, points[0..strand_count], points[1..]) |*strand, from, to| {
@@ -289,10 +290,7 @@ pub const Beams = struct {
     }
 
     fn free(beams: *Beams) ?*?Beam {
-        for (&beams.slots) |*slot| {
-            if (slot.* == null) return slot;
-        }
-        return null;
+        return table.firstFree(Beam, &beams.slots);
     }
 };
 
@@ -336,7 +334,7 @@ fn strike(world: gameobj.World, owner: u16, fired: f32) void {
     const all = world.objects;
     const shooter = &all.slots[owner];
     const from = shooter.drawn.position;
-    const to = from + math.transform(shooter.drawn.orientation, .{ 0, 0, beam_reach });
+    const to = shooter.drawn.point(.{ 0, 0, beam_reach });
     const record = guns.GunType.nova_cannon.stats(&all.gun_stats);
     const strength = shooter.object.gun_condition * fired;
     var walk = all.walk();
@@ -353,10 +351,12 @@ fn strike(world: gameobj.World, owner: u16, fired: f32) void {
             strikeParts(world, index, owner, model, from, to, record.damage.hull * fired);
             continue;
         }
-        const entry = local_from + (local_to - local_from) * @as(Vector, @splat(along));
+        // Where it enters, as `segment_meets_box` works it out: the span times the share, plus the
+        // start.
+        const entry = math.lerp(local_from, local_to, along);
         const value = strength * record.damage.shield;
         collision.damage(world, index, collision.quadrant(object, entry), value, record.damage.hullShare(), owner, .bullet);
-        if (!object.flags.cloaked) shield.flare(world, index, from + (to - from) * @as(Vector, @splat(along)));
+        if (!object.flags.cloaked) shield.flare(world, index, math.lerp(from, to, along));
     }
 }
 
@@ -415,10 +415,10 @@ test charges {
         .{ .turret = .{ .fixed = .{ .muzzle = undefined, .type = .pulse_cannon } } },
         .{ .turret = .{ .fixed = .{ .muzzle = undefined, .type = .nova_cannon } } },
     };
-    var table = guns.no_groups;
-    table[0] = .{ .first = 0 };
-    table[1] = .{ .first = 1 };
-    const trigger: guns.Trigger = .{ .fitted = &fitted, .groups = &table, .frame_start = 0 };
+    var groups = guns.no_groups;
+    groups[0] = .{ .first = 0 };
+    groups[1] = .{ .first = 1 };
+    const trigger: guns.Trigger = .{ .fitted = &fitted, .groups = &groups, .frame_start = 0 };
     var object = std.mem.zeroes(gameobj.GameObject);
     object.type = .phoenix;
     // The Phoenix charges while it fires the group its Nova Cannon leads.

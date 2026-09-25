@@ -292,7 +292,7 @@ pub const Flash = struct {
         flash.until = now + flash.guns.ticks(kind);
         if (flash.look != .turret) return;
         const full: Vector = colour;
-        const pale = full + (@as(Vector, @splat(1)) - full) * @as(Vector, @splat(turret_core_paling));
+        const pale = math.lerp(full, @as(Vector, @splat(1)), turret_core_paling);
         for (&flash.colours, 0..) |*corner, at| {
             const shade = if (at < 4) pale else full;
             corner.* = .{ shade[0], shade[1], shade[2], 1 };
@@ -314,8 +314,7 @@ pub const Flash = struct {
             return false;
         }
         const share: f32 = if (flash.ticks > 0) @min(@as(f32, @floatFromInt(until - now)) / @as(f32, @floatFromInt(flash.ticks)), 1) else 0;
-        const at = flash.attachment.position;
-        const place = (math.Place{ .position = .{ at.x, at.y, at.z }, .orientation = flash.attachment.orientation }).within(carrier);
+        const place = guns.attachmentPlace(flash.attachment).within(carrier);
         flash.object.position = place.position;
         flash.object.orientation = place.orientation;
         flash.object.scale = share;
