@@ -18,6 +18,7 @@ const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
 const libcmt = @import("../libcmt.zig");
 const Objects = @import("create.zig").Objects;
 const Detail = @import("explode.zig").Detail;
+const cloak = @import("cloak.zig");
 const gameobj = @import("gameobj.zig");
 const matmanager = @import("matmanager.zig");
 const objects = @import("objects.zig");
@@ -157,13 +158,20 @@ const Ramp = [ramp_steps]Colour;
 const ramp_brightness: f32 = 0.07;
 const other_share: f32 = 0.8;
 
-/// `0x004268C0`: from `a` to `b` as `share` goes from 0 to 1, slow at each end. It lies among the
-/// interface's code, between `wgate.cpp`'s and `interf.cpp`'s, and serves much of it; the port
-/// keeps it here, with the one routine that uses it so far.
+/// `cosine_ease` (`0x004268C0`): from `a` to `b` as `share` goes from 0 to 1, slow at each end. It
+/// lies among the interface's code, between `wgate.cpp`'s and `interf.cpp`'s, and serves much of
+/// it; the port keeps it here, with the ramps, and the cloak's shimmer uses it too
+/// (`cloak.shimmerColour`).
 ///
 /// **Improvement:** the cosine comes from `std.math` rather than the engine's table (`sr_cos`).
-fn ease(a: f32, b: f32, share: f32) f32 {
+pub fn ease(a: f32, b: f32, share: f32) f32 {
     return a + (b - a) * (1 - @cos(share * std.math.pi)) / 2;
+}
+
+test ease {
+    try std.testing.expectApproxEqAbs(2, ease(2, 6, 0), 1e-6);
+    try std.testing.expectApproxEqAbs(4, ease(2, 6, 0.5), 1e-6);
+    try std.testing.expectApproxEqAbs(6, ease(2, 6, 1), 1e-6);
 }
 
 /// `0x0049EB00` and `0x0049EC30`: a ramp's colour at `strength`, as red, green and blue. A friendly
@@ -644,21 +652,19 @@ const shield_sparks: sparks.Spray = .{ .speed = 10, .speed_range = 5, .spread = 
 const sparks_carry: f32 = 0.25;
 
 /// `0x0049F1E0`: the shields of the ship in slot `index` struck at `at`, by a shot or a knock,
-/// while any of its shields holds anything. Sparks fly off the point struck, unless the camera is
-/// in the ship's cockpit, and its bubble ripples out from there.
+/// while any of its shields holds anything. A cloaked ship shows its hull there
+/// (`cloak.reveal`) and nothing more. Otherwise sparks fly off the point struck, unless the camera
+/// is in the ship's cockpit, and its bubble ripples out from there.
 ///
 /// **Improvement:** the game sends the sparks toward the world's origin, from the point struck
 /// taken as a direction; the port sends them out from the ship, as the game works out first and
 /// then writes over.
-///
-/// Not ported: a cloaked ship's shimmer where it is struck (`0x00463AF0`)
-/// ([#89](https://github.com/vdmkenny/openreliant/issues/89)); a cloaked ship shows nothing.
 pub fn flare(world: gameobj.World, index: u16, at: Vector) void {
     const slot = &world.objects.slots[index];
     const object = &slot.object;
     const shields = object.shields.values();
     if (std.mem.allEqual(f32, &shields, 0)) return;
-    if (object.flags.cloaked) return;
+    if (object.flags.cloaked) return cloak.reveal(world, index, at);
     const bubble = slot.shield orelse return;
     const inside = if (world.camera) |watching| watching.inside(index) else false;
     if (!inside) {
@@ -1112,15 +1118,18 @@ test flare {
     flare(world, index, .{ 0, 0, 900 });
     try std.testing.expectEqual(50, bubble.struck);
     try std.testing.expect(thrown.sparks.sparks.slots[0] != null);
-    // Not while every shield is empty, nor while it is cloaked.
+    // Not while every shield is empty, nor while it is cloaked, when the hit shows its hull.
     bubble.struck = null;
     slot.object.shields = .all(0);
     flare(world, index, .{ 0, 0, 900 });
     try std.testing.expectEqual(null, bubble.struck);
     slot.object.shields = .all(10);
     slot.object.flags.cloaked = true;
+    slot.cloak = .{ .came_at = 0 };
+    mission.clock.frame_start = 70;
     flare(world, index, .{ 0, 0, 900 });
     try std.testing.expectEqual(null, bubble.struck);
+    try std.testing.expectEqual(70, slot.cloak.?.struck_at);
 }
 
 test "Shields.draw" {

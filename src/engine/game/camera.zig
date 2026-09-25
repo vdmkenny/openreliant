@@ -61,6 +61,10 @@ pub const View = enum(u8) {
     target = 6,
     /// Around the player's ship, likewise.
     external = 0xC,
+    /// **Unknown:** what view 13 is. A ship keeps its undamaged speed in it (`ai.cruiseSpeed`),
+    /// the player's engine and afterburner are not heard (`sound3d`), and CLOAK SHIP does nothing
+    /// (`input.playerWeapons`).
+    _unknown_13 = 0xD,
     /// Behind the camera's object, turning slowly with it and pulling away, as the player's ship is
     /// destroyed.
     pull_back = 8,

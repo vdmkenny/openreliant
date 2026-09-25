@@ -87,7 +87,7 @@ The part's object gathers flags from the meshes of its levels:
 
 For those last models `model_load` also builds a second set of meshes, whose groups' first passes
 blend by alpha, and a third, one group textured by coordinates from the normals and added
-(`cloak_mesh_build`, `0x004A3CB0`), for the cloak effect. **Unverified:** that
+(`cloak_mesh_build`, `0x004A3CB0`), for the [cloak](cloak.md). **Unverified:** that
 `multiplayer_mission` marks the multiplayer maps; missions 81 to 85 and 87 set it.
 
 The material is 16 bytes (`Material` in
@@ -280,6 +280,12 @@ Parts fall into two classes by their `damaged` flag, and a light shines only on 
 own class, so a component's damaged model is lit separately from its intact one. Every part of a
 class that holds a light takes baked colours for all of its levels, which is what the part flag
 `has_static_light` marks (`static_lights_bake`, `0x004A4310`).
+
+`mesh_light` takes an object's own colours (flag `0x80000`) in place of its mesh's baked colours,
+so a model that can cloak, whose parts have colours of their own for the [cloak](cloak.md), never
+shows its static lights: of the shipped models, the Basilisk's red light at its tail.
+**Fix:** the port adds the mesh's baked colours to the object's own; their alpha is nothing, so the
+cloak's see-through hull stays as clear.
 
 Drawing a light is another matter. `node_mount_light` (`0x00499730`) makes up to two nodes of each
 light attachment, and `node_draw` (`0x0049A8C0`) draws them at the light's place on the part that

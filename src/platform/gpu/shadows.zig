@@ -1,6 +1,7 @@
 //! The shadow maps (`srshadow`): a depth texture with a layer for each cascade and one for the
-//! cockpit, the frame's casters drawn into each before the frame itself, and what the device's
-//! shader looks them up with (`shaders/device.glsl`).
+//! cockpit, the frame's casters drawn into each before the frame itself, a faint caster into a
+//! share of the texels as its strength, and what the device's shader looks them up with
+//! (`shaders/device.glsl`).
 //!
 //! **Improvement:** the original drew no shadows. `Quality.off`, which `Settings.original` sets,
 //! leaves them out.
@@ -122,7 +123,7 @@ pub const Shadows = struct {
     frame: ?*const srshadow.Frame = null,
     uniforms: Uniforms = .{},
 
-    const Vertex = [3]f32;
+    const Vertex = srshadow.Corner;
 
     pub fn init(handle: *c.SDL_GPUDevice, spirv: bool, quality: Quality) gpu.Error!Shadows {
         const format = depthFormat(handle);
@@ -185,16 +186,20 @@ pub const Shadows = struct {
         return c.SDL_CreateGPUTexture(handle, &info) orelse gpu.fail("SDL_CreateGPUTexture");
     }
 
-    /// Draws the casters' depth alone, both faces, with the bias against self-shadowing. What lies
+    /// Draws the casters' depth alone, both faces, with the bias against self-shadowing, a faint
+    /// caster's into a share of the texels as its strength (`shaders/shadow.glsl`). What lies
     /// nearer the sun than the box is held at its near side rather than cut off, so that it still
     /// casts.
     fn depthPipeline(shadows: Shadows, handle: *c.SDL_GPUDevice, format: c.SDL_GPUTextureFormat) error{Sdl}!*c.SDL_GPUGraphicsPipeline {
-        const attribute: c.SDL_GPUVertexAttribute = .{ .location = 0, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, .offset = 0 };
+        const attributes = [_]c.SDL_GPUVertexAttribute{
+            .{ .location = 0, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, .offset = @offsetOf(Vertex, "position") },
+            .{ .location = 1, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT, .offset = @offsetOf(Vertex, "strength") },
+        };
         const buffer: c.SDL_GPUVertexBufferDescription = .{ .slot = 0, .pitch = @sizeOf(Vertex), .input_rate = c.SDL_GPU_VERTEXINPUTRATE_VERTEX };
         var info = std.mem.zeroes(c.SDL_GPUGraphicsPipelineCreateInfo);
         info.vertex_shader = shadows.vertex_shader;
         info.fragment_shader = shadows.fragment_shader;
-        info.vertex_input_state = .{ .vertex_buffer_descriptions = &buffer, .num_vertex_buffers = 1, .vertex_attributes = &attribute, .num_vertex_attributes = 1 };
+        info.vertex_input_state = .{ .vertex_buffer_descriptions = &buffer, .num_vertex_buffers = 1, .vertex_attributes = &attributes, .num_vertex_attributes = attributes.len };
         info.primitive_type = c.SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
         info.rasterizer_state.fill_mode = c.SDL_GPU_FILLMODE_FILL;
         info.rasterizer_state.cull_mode = c.SDL_GPU_CULLMODE_NONE;
@@ -225,7 +230,7 @@ pub const Shadows = struct {
     /// Sends the casters up with the frame's other uploads.
     pub fn upload(shadows: *Shadows, handle: *c.SDL_GPUDevice, copy: *c.SDL_GPUCopyPass) gpu.Error!void {
         const frame = shadows.frame orelse return;
-        try Geometry.upload(&shadows.geometry, handle, copy, std.mem.sliceAsBytes(frame.positions), std.mem.sliceAsBytes(frame.indices));
+        try Geometry.upload(&shadows.geometry, handle, copy, std.mem.sliceAsBytes(frame.corners), std.mem.sliceAsBytes(frame.indices));
     }
 
     /// Draws the casters into each map the frame has, each run into the maps it reaches, before
@@ -262,7 +267,7 @@ pub const Shadows = struct {
 };
 
 test "Uniforms.of" {
-    var frame: srshadow.Frame = .{ .cascades = undefined, .cockpit = null, .positions = &.{}, .indices = &.{}, .runs = &.{} };
+    var frame: srshadow.Frame = .{ .cascades = undefined, .cockpit = null, .corners = &.{}, .indices = &.{}, .runs = &.{} };
     for (&frame.cascades, 0..) |*cascade, index| {
         const n: f32 = @floatFromInt(index);
         cascade.* = .{ .rows = @splat(@splat(n)), .far = 1000 * (n + 1), .texel = n + 0.5, .half = 1 };

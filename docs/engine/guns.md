@@ -70,7 +70,7 @@ Objects listing components resolve collisions part by part. Within the component
 
 What the hit leaves on the part (`node_add_effect`, `0x004992D0`) bursts into orange puffs, or glows on a shield generator's ship ([Effects](effects.md#sparks)).
 
-Not ported: cloaks revealed by weapon hits ([#89](https://github.com/vdmkenny/openreliant/issues/89)).
+A shot on a cloaked ship's shields or components shows its hull round the point struck ([The cloak](cloak.md#hits)).
 
 Expired shots are freed on the next frame. A shot striking a shield triggers a shield [flare](effects.md#shields) at the impact point unless the ship is cloaked.
 

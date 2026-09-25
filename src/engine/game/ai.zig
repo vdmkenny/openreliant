@@ -363,9 +363,6 @@ test setTargetable {
     try std.testing.expect(!object.flags.targetable);
 }
 
-/// The view `object_cruise_speed` leaves a ship its undamaged speed in, whatever its armor.
-const full_speed_view: camera.View = @enumFromInt(13);
-
 /// `object_cruise_speed` (`0x00403060`), which lies after this file's known code, before
 /// `aidefend.cpp`'s: `max_speed` scaled by `speed_factor`, by the share of its
 /// engines left, and, unless the camera is in view 13 or the object is invulnerable, by
@@ -375,7 +372,7 @@ const full_speed_view: camera.View = @enumFromInt(13);
 /// global, since `GameObject` holds the binary's own 32-bit pointers.
 pub fn cruiseSpeed(object: *const gameobj.GameObject, flight: *const create.FlightModel, view: camera.View) f32 {
     var speed = flight.max_speed * object.speed_factor * object.engines_intact;
-    if (view != full_speed_view and object.invulnerable == .none) speed *= object.armor_speed_factor;
+    if (view != ._unknown_13 and object.invulnerable == .none) speed *= object.armor_speed_factor;
     return speed;
 }
 
@@ -387,7 +384,7 @@ test cruiseSpeed {
     object.armor_speed_factor = 0.8;
     try std.testing.expectEqual(128, cruiseSpeed(&object, &gameobj.testing.flight, .chase));
     // The armor tells in every view but 13, and not at all while it is invulnerable.
-    try std.testing.expectEqual(160, cruiseSpeed(&object, &gameobj.testing.flight, @enumFromInt(13)));
+    try std.testing.expectEqual(160, cruiseSpeed(&object, &gameobj.testing.flight, ._unknown_13));
     object.invulnerable = .player_can_hit;
     try std.testing.expectEqual(160, cruiseSpeed(&object, &gameobj.testing.flight, .chase));
 }

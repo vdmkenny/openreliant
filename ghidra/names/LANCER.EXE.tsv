@@ -439,7 +439,7 @@ address	kind	name	type	comment
 0055ad0c	data	explode_marker	void *	The frame camera view 0x1B watches: where the player's ship burst
 0055ad10	data	explode_marker_drift	Vec3	How far explode_marker moves a frame: a quarter of the ship's velocity
 0055acfc	data	explode_marker_moving	bool	Set once explode_burst has placed explode_marker
-00463420	function	cloak_drop	ObjectRoutine	Drops an object's cloak: 0x00463470, the cloaked flag cleared and its record freed
+00463420	function	cloak_drop	ObjectRoutine	Drops an object's cloak: its nodes' callbacks freed (cloak_node_free), the cloaked flag cleared and its record freed
 004c1070	function	vec3_lerp	void __fastcall (Vec3 *out, Vec3 *from, Vec3 *to, float share)	out = from + (to - from) * share
 00588394	data	mission_ending	byte	How the mission is ending: 0 while it goes on, 1 the player's ship destroyed or the ejected pilot killed, 2 the ejected pilot picked up by a nanny ship, 3 picked up by the enemy, 8 the player ejecting until the pod's time is up (order_eject settles it by the rescue odds); mission_end_record keeps the pilot's kills for every ending but 1 and 3; the debriefing names the ending by it
 004645c0	function	component_damage	void __fastcall (GameObject *object, ModelNode *node, float damage, int attacker, DamageKind kind)	Damages a component: lowers its node's armor, records the attacker in last_attacker, and marks the component's holder destroyed once the armor is below zero
@@ -455,6 +455,29 @@ address	kind	name	type	comment
 00463600	function	object_toggle_cloak	void __fastcall (int slot)	Cloaks or uncloaks an object whose model can cloak
 00463560	function	object_set_cloak	void __fastcall (int slot, bool cloaked)	Cloaks or uncloaks an object, and the ships being launched from it
 00463780	function	object_uncloak	void __fastcall (int slot)	Uncloaks an object
+004629d0	function	cloak_node_reveal	void __fastcall (GameObject *object, ModelNode *node, int passed_on, Vec3 *at)	A hit at a point shows a cloaked node's hull round it, where the node cloaks (cloak_node_cloaks): each vertex of its drawn level within 1.123 of the object's radius (a Kafelnikof part's smallest extent) gains alpha in its frame's own colours (+0x110), the more the nearer, over 0.45 of it, up to 1; then its children
+00462b80	function	cloak_node_see_through	void __fastcall (GameObject *object, void *cloak, ModelNode *node)	A node that cloaks is drawn by the cloak: its frame takes the hull callback (cloak_hull_callback) and the see-through levels of the part's mesh set (+0x160, +0x18C), its own colours cleared; then its children
+00462d30	function	cloak_node_restore	void __fastcall (GameObject *object, void *cloak, ModelNode *node)	A node that cloaks has its own levels back (+0x10C, +0x138), alpha 1 and its own colours cleared; then its children
+00462eb0	function	cloak_node_shimmer	void __fastcall (GameObject *object, void *cloak, ModelNode *node)	A node that cloaks gets its shimmer at +0x0C: an object of the cloak's meshes (cloak_mesh_build), clear, its texture coordinates random in 0 to 1, drawn through cloak_shimmer_callback; then its children
+00463050	function	cloak_shimmer_swirl	void __fastcall (ModelNode *node, int ticks, float strength, bool children)	A node's shimmer, ticks since it was drawn: each texture coordinate turns about (0, 0) by 0.008 a tick over its squared distance from there, and each vertex takes cloak_colour at strength, unlit; with children, theirs too
+004631e0	function	cloak_colour_at	void __fastcall (float *rgb, float strength)	The shimmer's colour: from black to (185, 203, 82) / 256 by cosine_ease as strength goes to 0.3, then on to (0, 0, 80) / 256
+004632b0	function	cloak_colour	void __fastcall (float *rgb, float strength)	The shimmer's colour at strength, from cloak_colours
+004632f0	function	cloak_hull_fade	void __fastcall (ModelNode *node, int ticks, float solid, bool children)	A node's hull, ticks since it was drawn: while it is clear (solid 0), what hits showed of it fades by 0.01 a tick, else its alpha is solid; with children, theirs too
+00463470	function	cloak_node_free	void __fastcall (ModelNode *node)	Frees the records of a node's cloak callbacks, for its frame and its shimmer, and clears the callbacks; then its children
+00463500	function	cloak_init	void (void)	Fills cloak_colours from cloak_colour_at, a step of 1/1024, and requires cloak64 into cloak_texture
+00463550	function	cloak_free	void (void)	Releases cloak_texture
+00463810	function	cloak_frame	void __fastcall (int slot)	In the pass that draws the objects, for an object with a cloak: what its shimmer and hull were drawn at moves back a frame; over 250 ticks the shimmer strengthens and the hull fades, or the other way as it goes; come on, every node's hull is clear and its shimmer whole; gone, each node is restored and the cloak dropped
+004639b0	function	cloak_wobble	void __fastcall (int slot)	But for the Kafelnikof, while the cloak changes, the root frame shears by 0.15 at most, three ways at rates 20, 26 and 14 with starts 0, 2.8 and 0.9 over the change, swelling and dying away as sin(done * pi)
+00463af0	function	cloak_reveal	void __fastcall (int slot, int passed_on, Vec3 *at)	A hit on a cloaked object at a point: the cloak's struck time is now, and its nodes show their hull there (cloak_node_reveal)
+00463b20	function	cloak_shimmer_callback	int __fastcall (void *frame)	The shimmer's per-object callback: unless paused, swirls it (cloak_shimmer_swirl) for the ticks since it was drawn, or skips it (0x100) while the shimmer is nothing or on the Kafelnikof
+00463b90	function	cloak_hull_callback	int __fastcall (void *frame)	The hull's per-object callback: skipped (0x100) on the software renderer; else, unless paused or the node doesn't cloak, fades it (cloak_hull_fade) for the ticks since it was drawn
+00463c30	function	cloak_node_cloaks	bool __fastcall (GameObject *object, ModelNode *node)	Whether a node cloaks: every node, but on the Kafelnikof only those named in kafelnikof_cloaking_parts
+004c24f0	function	mat3_shear_x	void __fastcall (float *m, float a, float b)	m = m times (1, 0, 0, a, 1, 0, b, 0, 1)
+004c2550	function	mat3_shear_y	void __fastcall (float *m, float a, float b)	m = m times (1, a, 0, 0, 1, 0, 0, b, 1)
+004c25b0	function	mat3_shear_z	void __fastcall (float *m, float a, float b)	m = m times (1, 0, a, 0, 1, b, 0, 0, 1)
+00541428	data	cloak_texture	TextureImage *	cloak64, which cloak_init requires and cloak_free releases
+0054142c	data	cloak_colours	float[1024][3]	The shimmer's colours by strength, which cloak_init fills
+004e1998	data	kafelnikof_cloaking_parts	char[7][20]	The Kafelnikof's parts that cloak: Kaf bot vent, Kaf comms twr, Kaf ext vent, Kaf frnt vent, Kaf land plat, Kaf shield gen, Kaf top vent
 004c10d0	function	vec3_scale	void __fastcall (Vec3 *out, Vec3 *v, float s)	out = v * s
 004c10b0	function	vec3_scale_by	void __thiscall (float s)	Scales the vector in ECX by s
 004c1320	function	vec3_distance_squared	float __cdecl (Vec3 *a, Vec3 *b)	The square of the distance between two points

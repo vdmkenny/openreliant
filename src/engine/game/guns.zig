@@ -1590,10 +1590,9 @@ pub fn bulletsFrame(world: gameobj.World, clock: *const Clock, fraction: f32) vo
 /// before the quadrant does, and a turret's shot hurts a player's ship more. A ship with its
 /// spectral shields on takes nothing at all: the gun type they are tuned to is handed to the check
 /// and ignored, so every shot is turned. Whatever becomes of a shot spent on a shield, the shield
-/// flares where it struck (`shield.flare`). An object whose components are listed is struck part by
+/// flares where it struck (`shield.flare`), unless the ship is cloaked, when the shot shows its
+/// hull there instead (`cloak.reveal`). An object whose components are listed is struck part by
 /// part instead (`componentHit`).
-///
-/// Not ported: the cloak a hit reveals ([#89](https://github.com/vdmkenny/openreliant/issues/89)).
 fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
     const all = world.objects;
     const segment: objects.Segment = .between(bullet.last, bullet.at);
@@ -1640,7 +1639,8 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
             hullHit(world, bullet, candidate.object, struck);
             return;
         }
-        defer shield.flare(world, candidate.object, point);
+        cloak.reveal(world, candidate.object, point);
+        defer if (!object.flags.cloaked) shield.flare(world, candidate.object, point);
         if (!object.flags.spectral_shields and record.damage.shield > 0) {
             var value = record.damage.shield;
             // What the player has shifted fore or aft takes the hit before the quadrant does, and
@@ -1698,16 +1698,14 @@ const huge_fireball_life = 150;
 /// force field glows whole (`shield.flareCapital`), and the hit leaves what it leaves on the part
 /// (`shieldfx.componentHit`). A Huge Gun's shot sets off a lit fireball there, its own sparks
 /// along the face's normal and an explosion's sound, and does no damage; any other throws sparks
-/// along the normal, and the part takes the type's hull damage (`collision.componentDamage`).
-///
-/// Not ported: the cloak a hit reveals ([#89](https://github.com/vdmkenny/openreliant/issues/89)).
+/// along the normal, and the part takes the type's hull damage (`collision.componentDamage`),
+/// which shows the hull of a cloaked object there (`cloak.reveal`).
 fn componentHit(world: gameobj.World, bullet: *Bullet, index: u16, crossing: objects.Crossing) void {
     bullet.dies_at = spent;
     if (crossing.part.part().force_field) shield.flareCapital(world, index, crossing.part, null);
     shieldfx.componentHit(world, index, crossing, .onComponentOf(world.objects.slots[index].object.type));
-    const drawn = crossing.part.part().drawn();
-    const at = math.transform(drawn.orientation, crossing.point) + drawn.position;
-    const normal = math.transform(drawn.orientation, crossing.normal);
+    const at = crossing.inWorld();
+    const normal = math.transform(crossing.part.part().drawn().orientation, crossing.normal);
     const huge: ?sparks.Kind = switch (bullet.kind) {
         .allied_huge_gun => .allied_huge_gun,
         .coalition_huge_gun => .coalition_huge_gun,
@@ -1722,6 +1720,7 @@ fn componentHit(world: gameobj.World, bullet: *Bullet, index: u16, crossing: obj
     sparks.spray(world, .component, at, normal, @splat(0), component_sparks);
     const record = bullet.stats(&world.objects.gun_stats);
     collision.componentDamage(world, index, crossing.part, record.damage.hull, bullet.owner, .bullet);
+    cloak.reveal(world, index, at);
 }
 
 /// `0x00479940`: a shot that has passed an object's shields. It finds the last of the object's
@@ -3077,6 +3076,7 @@ test {
 
 const Allocator = std.mem.Allocator;
 const ai = @import("ai.zig");
+const cloak = @import("cloak.zig");
 const collision = @import("collision.zig");
 const explode = @import("explode.zig");
 const shield = @import("shield.zig");

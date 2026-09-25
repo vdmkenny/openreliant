@@ -280,8 +280,8 @@ pub fn build(
         } else false;
         if (!textured) continue;
         var buffer: [1 + @sizeOf(shp.Material)]u8 = undefined;
-        images.texture = try matmanager.textureRequire(textures, named(&buffer, settings.prefix.letter(), m));
-        if (light_mapped) images.light_map = try matmanager.textureRequire(textures, named(&buffer, 'l', m));
+        images.texture = try matmanager.textureRequire(textures, prefixed(&buffer, settings.prefix.letter(), m.name()));
+        if (light_mapped) images.light_map = try matmanager.textureRequire(textures, prefixed(&buffer, 'l', m.name()));
     }
 
     for (source.vertices, 0..) |vertex, i| {
@@ -383,37 +383,136 @@ pub const LoadedPart = struct {
     flags: srapiext.ObjectFlags,
     meshes: []srapiext.Mesh,
     levels: []srapiext.Level,
+    /// Its meshes for the cloak, where its model can cloak.
+    cloaking: ?Cloaking = null,
+
+    fn deinit(part: LoadedPart, gpa: Allocator) void {
+        if (part.cloaking) |cloaking| cloaking.deinit(gpa);
+        for (part.meshes) |mesh| mesh.deinit(gpa);
+        gpa.free(part.meshes);
+        gpa.free(part.levels);
+    }
 };
+
+/// The two mesh sets `model_load` builds for each part of a model that can cloak: the part's own
+/// meshes seen through, each surface's first pass blended by alpha (`part + 0x160`), and the
+/// cloak's shimmer over each (`cloak_mesh_build`, `0x004A3CB0`; `part + 0x1B4`). Each level of
+/// either shares its own level's geometry, owning only its surfaces, and switches at its distance.
+pub const Cloaking = struct {
+    see_through: []srapiext.Mesh,
+    see_through_levels: []srapiext.Level,
+    shimmer: []srapiext.Mesh,
+    shimmer_levels: []srapiext.Level,
+
+    /// The cloak's texture, which the shimmer shows (`0x004F7400`).
+    const image = "cloak64";
+
+    /// The sets for a part whose own levels are `levels`, its shimmer over `shimmer_image`,
+    /// coloured by its own colours on a hardware renderer and by white on the software one.
+    pub fn build(gpa: Allocator, levels: []const srapiext.Level, shimmer_image: *srtexture.Image, hardware: bool) Allocator.Error!Cloaking {
+        const see_through = try gpa.alloc(srapiext.Mesh, levels.len);
+        var through_made: usize = 0;
+        errdefer {
+            for (see_through[0..through_made]) |mesh| gpa.free(mesh.surfaces);
+            gpa.free(see_through);
+        }
+        for (see_through, levels) |*copy, level| {
+            copy.* = level.mesh.*;
+            copy.surfaces = try gpa.dupe(srapiext.Surface, level.mesh.surfaces);
+            for (copy.surfaces) |*run| run.material.blend[0] = .alpha;
+            through_made += 1;
+        }
+        const shimmer = try gpa.alloc(srapiext.Mesh, levels.len);
+        var shimmer_made: usize = 0;
+        errdefer {
+            for (shimmer[0..shimmer_made]) |mesh| gpa.free(mesh.surfaces);
+            gpa.free(shimmer);
+        }
+        for (shimmer, levels) |*over, level| {
+            over.* = level.mesh.*;
+            over.uv = .{ null, null };
+            over.baked = null;
+            var polygons: u32 = 0;
+            for (level.mesh.surfaces) |run| polygons += run.polygons;
+            over.surfaces = try gpa.alloc(srapiext.Surface, 1);
+            over.surfaces[0] = .{
+                .polygons = polygons,
+                .material = .onePass(.{ .coordinates = .generated, .lit = hardware, .blend = .add }),
+                .textures = .{ .{ .image = shimmer_image }, .none },
+            };
+            shimmer_made += 1;
+        }
+        const through_levels = try gpa.alloc(srapiext.Level, levels.len);
+        errdefer gpa.free(through_levels);
+        const shimmer_levels = try gpa.alloc(srapiext.Level, levels.len);
+        for (levels, through_levels, shimmer_levels, see_through, shimmer) |level, *through, *over, *through_mesh, *over_mesh| {
+            through.* = .{ .mesh = through_mesh, .until = level.until };
+            over.* = .{ .mesh = over_mesh, .until = level.until };
+        }
+        return .{ .see_through = see_through, .see_through_levels = through_levels, .shimmer = shimmer, .shimmer_levels = shimmer_levels };
+    }
+
+    pub fn deinit(cloaking: Cloaking, gpa: Allocator) void {
+        for (cloaking.see_through) |mesh| gpa.free(mesh.surfaces);
+        for (cloaking.shimmer) |mesh| gpa.free(mesh.surfaces);
+        gpa.free(cloaking.see_through);
+        gpa.free(cloaking.shimmer);
+        gpa.free(cloaking.see_through_levels);
+        gpa.free(cloaking.shimmer_levels);
+    }
+};
+
+test Cloaking {
+    const gpa = std.testing.allocator;
+    var mesh = try @import("../surrender/surrenderlib/srmesh.zig").testing.square(gpa);
+    defer mesh.deinit(gpa);
+    const levels = [_]srapiext.Level{.{ .mesh = &mesh, .until = 1000 }};
+    var texture: srtexture.Image = .{ .levels = &.{} };
+    const cloaking: Cloaking = try .build(gpa, &levels, &texture, true);
+    defer cloaking.deinit(gpa);
+
+    // Seen through: the part's own mesh at the same distance, its surfaces blended by their alpha,
+    // and the part's own left as they were.
+    const through = cloaking.see_through_levels[0];
+    try std.testing.expectEqual(1000, through.until);
+    try std.testing.expectEqual(mesh.positions.ptr, through.mesh.positions.ptr);
+    try std.testing.expectEqual(.alpha, through.mesh.surfaces[0].material.blend[0]);
+    try std.testing.expectEqual(.off, mesh.surfaces[0].material.blend[0]);
+    // The shimmer: every polygon in one surface over the texture, lit and added, its coordinates
+    // made each frame from the object's own.
+    const shimmer = cloaking.shimmer_levels[0].mesh;
+    try std.testing.expectEqual(1, shimmer.surfaces.len);
+    try std.testing.expectEqual(2, shimmer.surfaces[0].polygons);
+    const drawn_with = shimmer.surfaces[0].material;
+    try std.testing.expectEqual(.add, drawn_with.blend[0]);
+    try std.testing.expectEqual(.generated, drawn_with.coordinates[0]);
+    try std.testing.expect(drawn_with.lit[0]);
+    try std.testing.expectEqual(&texture, shimmer.surfaces[0].textures[0].image);
+    try std.testing.expectEqual(null, shimmer.uv[0]);
+    try std.testing.expectEqual(null, shimmer.baked);
+}
 
 /// A model's parts, their meshes built (`model_load`, `0x004A44D0`, once it has read the file).
 pub const Loaded = struct {
     parts: []LoadedPart,
 
     pub fn deinit(loaded: Loaded, gpa: Allocator) void {
-        for (loaded.parts) |part| {
-            for (part.meshes) |mesh| mesh.deinit(gpa);
-            gpa.free(part.meshes);
-            gpa.free(part.levels);
-        }
+        for (loaded.parts) |part| part.deinit(gpa);
         gpa.free(loaded.parts);
     }
 };
 
 /// Builds every level of every part of `model` (`model_load`), and bakes the static lights it
 /// carries into their vertex colours. `multiplayer_ship` is a ship type's model in a multiplayer
-/// mission, which with the model's header flag `cloak` gives its objects colours of their own.
-/// Not yet ported: the second and third mesh sets it builds for cloaking (`cloak_mesh_build`).
+/// mission, which with the model's header flag `cloak` gives its objects colours of their own and
+/// each part its meshes for the cloak (`Cloaking`), made once the lights are baked.
 pub fn modelLoad(gpa: Allocator, textures: *srtexture.Table, model: *const shp.Model, settings: Settings, multiplayer_ship: bool) Error!Loaded {
     var level_settings = settings;
     level_settings.cloak = model.header.flags.cloak or multiplayer_ship;
     const parts = try gpa.alloc(LoadedPart, model.parts.len);
     var made: usize = 0;
     errdefer {
-        for (parts[0..made]) |part| {
-            for (part.meshes) |mesh| mesh.deinit(gpa);
-            gpa.free(part.meshes);
-            gpa.free(part.levels);
-        }
+        for (parts[0..made]) |part| part.deinit(gpa);
         gpa.free(parts);
     }
     const lit_classes = staticLightsMark(model);
@@ -440,6 +539,14 @@ pub fn modelLoad(gpa: Allocator, textures: *srtexture.Table, model: *const shp.M
         made += 1;
     }
     staticLightsBake(model, parts);
+    if (level_settings.cloak) {
+        var buffer: [1 + Cloaking.image.len]u8 = undefined;
+        const shimmer = try matmanager.textureRequire(textures, prefixed(&buffer, settings.prefix.letter(), Cloaking.image));
+        // A part with no meshes has none for the cloak either.
+        for (parts) |*part| {
+            if (part.levels.len > 0) part.cloaking = try .build(gpa, part.levels, shimmer, settings.hardware);
+        }
+    }
     return .{ .parts = parts };
 }
 
@@ -648,9 +755,8 @@ fn image(found: ?*srtexture.Image) srapiext.Texture {
     return if (found) |i| .{ .image = i } else .none;
 }
 
-/// A material's name after a letter, if any.
-fn named(buffer: *[1 + @sizeOf(shp.Material)]u8, letter: ?u8, m: *const shp.Material) []const u8 {
-    const name = m.name();
+/// A texture's `name` after a letter, if any, in `buffer`.
+fn prefixed(buffer: []u8, letter: ?u8, name: []const u8) []const u8 {
     const start: usize = if (letter) |l| blk: {
         buffer[0] = l;
         break :blk 1;

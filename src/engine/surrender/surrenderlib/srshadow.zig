@@ -2,7 +2,8 @@
 //! split by depth into cascades, each an orthographic box along the sun around its slice of the
 //! view (`fit`), and the cockpit, where the scene holds one, gets a box of its own around it. The
 //! scene's solid meshes are gathered as casters, whatever the camera sees of them, into the maps
-//! they can reach (`gather`). A device that lights each pixel draws the casters into a map for each
+//! they can reach (`gather`), and a cloaking part's see-through hull as strongly as it is solid,
+//! so that a ship's shadow fades out as it cloaks. A device that lights each pixel draws the casters into a map for each
 //! box and scales a shadowed light's share of each pixel by what it finds there
 //! (`device.Device.shadows`): the world's pixels in the cascades, the cockpit's in its own map.
 
@@ -34,13 +35,20 @@ pub const Settings = struct {
     cockpit: bool = true,
 };
 
+/// A caster's corner, in the camera's frame, and how strong a shadow the triangles on it cast,
+/// from nothing to whole. A device draws a faint one into its maps a share of texels at a time.
+pub const Corner = extern struct {
+    position: [3]f32,
+    strength: f32 = 1,
+};
+
 /// The frame's shadows as a device takes them, in the camera's frame.
 pub const Frame = struct {
     cascades: [cascade_count]Box,
     /// Around the overlay layer's lit meshes, the cockpit's parts, where there are any.
     cockpit: ?Box,
     /// The casters' corners, and their triangles, three indices each.
-    positions: []const [3]f32,
+    corners: []const Corner,
     indices: []const u32,
     /// The triangles in runs, each drawn into the maps it can reach alone.
     runs: []const Run,
@@ -209,6 +217,14 @@ pub fn casts(object: *const srapiext.MeshObject) bool {
     return !object.flags.hidden and object.scale != 0 and object.flags.lit and object.levels.len > 0;
 }
 
+/// How strong a shadow `object`'s surfaces blended by alpha cast: its colour's alpha, where it
+/// asks for one (`alpha_shadow`) and they cast anything at all.
+fn alphaShadow(object: *const srapiext.MeshObject) ?f32 {
+    if (!object.alpha_shadow) return null;
+    const strength = std.math.clamp(object.colour[3], 0, 1);
+    return if (strength > 0) strength else null;
+}
+
 /// Where the casters of each kind may throw their shadows.
 const into = struct {
     /// The world's layer: anywhere, the cockpit included, so a ship between the cockpit and the
@@ -251,7 +267,7 @@ pub fn gather(
     return .{
         .cascades = casters.cascades,
         .cockpit = casters.cockpit,
-        .positions = casters.positions.items,
+        .corners = casters.corners.items,
         .indices = casters.indices.items,
         .runs = casters.runs.items,
     };
@@ -263,7 +279,7 @@ const Casters = struct {
     context: srapi.Context,
     cascades: [cascade_count]Box,
     cockpit: ?Box,
-    positions: std.ArrayList([3]f32) = .empty,
+    corners: std.ArrayList(Corner) = .empty,
     indices: std.ArrayList(u32) = .empty,
     runs: std.ArrayList(Run) = .empty,
 
@@ -276,29 +292,34 @@ const Casters = struct {
 
     /// Adds `object`'s triangles, where it casts and can reach one of the `allowed` maps: its
     /// opaque surfaces at its current level of detail, each polygon a fan of its corners, turned
-    /// into the camera's frame as the pipeline turns it. Lines cast nothing. The last run takes
-    /// them on where it goes into the same maps. An object its portal clips casts only what the
-    /// portal keeps of it, as it is drawn.
+    /// into the camera's frame as the pipeline turns it, and its surfaces blended by alpha, where
+    /// it asks, as strong as its alpha, on corners of their own. Lines cast nothing. The last run
+    /// takes them on where it goes into the same maps. An object its portal clips casts only what
+    /// the portal keeps of it, as it is drawn.
     fn add(casters: *Casters, object: *const srapiext.MeshObject, allowed: Maps) Allocator.Error!void {
         if (!casts(object)) return;
         const context = casters.context;
         const relative = context.view(object.position);
         const reached = casters.reachedBy(relative, object.radius * object.scale).intersectWith(allowed);
         if (reached.count() == 0) return;
-        const mesh = object.levels[@min(object.level, object.levels.len - 1)].mesh;
+        const mesh = object.shown();
         var matrix = math.product(math.transpose(context.camera.orientation), object.orientation);
         if (object.scale != 1) {
             for (&matrix) |*m| m.* *= object.scale;
         }
-        const base: u32 = @intCast(casters.positions.items.len);
-        try casters.positions.ensureUnusedCapacity(casters.arena, mesh.positions.len);
-        for (mesh.positions) |position| casters.positions.appendAssumeCapacity(math.transform(matrix, position) + relative);
+        // The corners the solid surfaces cast from, and those the see-through ones do.
+        var solid: ?u32 = null;
+        var faint: ?u32 = null;
         const first: u32 = @intCast(casters.indices.items.len);
         var polygon: usize = 0;
         for (mesh.surfaces) |surface| {
             const run = mesh.polygons[polygon..][0..surface.polygons];
             polygon += surface.polygons;
-            if (surface.material.blend[0] != .off) continue;
+            const opaque_surface = surface.material.blend[0] == .off;
+            const strength: f32 = if (opaque_surface) 1 else alphaShadow(object) orelse continue;
+            const corners_made = if (opaque_surface) &solid else &faint;
+            if (corners_made.* == null) corners_made.* = try casters.addCorners(mesh, matrix, relative, strength);
+            const base = corners_made.*.?;
             for (run) |shape| {
                 if (shape.kind == .lines or shape.count < 3) continue;
                 const corners = mesh.indices[shape.first..][0..shape.count];
@@ -325,15 +346,28 @@ const Casters = struct {
         try casters.runs.append(casters.arena, .{ .first = first, .count = count, .maps = reached });
     }
 
-    /// Adds what `plane`, a portal's in the camera's frame, keeps of the triangle of the positions
-    /// at `triangle`: all of it, none, or the piece on its side, as a fan of new corners.
+    /// Adds `mesh`'s corners, turned by `matrix` and moved by `relative`, casting as `strength`
+    /// says: the index of the first.
+    fn addCorners(casters: *Casters, mesh: *const srapiext.Mesh, matrix: math.Matrix, relative: Vector, strength: f32) Allocator.Error!u32 {
+        const base: u32 = @intCast(casters.corners.items.len);
+        try casters.corners.ensureUnusedCapacity(casters.arena, mesh.positions.len);
+        for (mesh.positions) |position| {
+            casters.corners.appendAssumeCapacity(.{ .position = math.transform(matrix, position) + relative, .strength = strength });
+        }
+        return base;
+    }
+
+    /// Adds what `plane`, a portal's in the camera's frame, keeps of the triangle of the corners
+    /// at `triangle`: all of it, none, or the piece on its side, as a fan of new corners as strong
+    /// as the triangle's.
     fn addClipped(casters: *Casters, plane: srapiext.Portal.View, triangle: [3]u32) Allocator.Error!void {
         var corners: [3]Vector = undefined;
         var inside: [3]f32 = undefined;
         for (triangle, &corners, &inside) |index, *corner, *side| {
-            corner.* = casters.positions.items[index];
+            corner.* = casters.corners.items[index].position;
             side.* = plane.inside(corner.*);
         }
+        const strength = casters.corners.items[triangle[0]].strength;
         if (inside[0] >= 0 and inside[1] >= 0 and inside[2] >= 0) return casters.indices.appendSlice(casters.arena, &triangle);
         var kept: [4]Vector = undefined;
         var count: usize = 0;
@@ -350,8 +384,8 @@ const Casters = struct {
             }
         }
         if (count < 3) return;
-        const base: u32 = @intCast(casters.positions.items.len);
-        for (kept[0..count]) |corner| try casters.positions.append(casters.arena, corner);
+        const base: u32 = @intCast(casters.corners.items.len);
+        for (kept[0..count]) |corner| try casters.corners.append(casters.arena, .{ .position = corner, .strength = strength });
         for (1..count - 1) |second| {
             try casters.indices.appendSlice(casters.arena, &.{ base, base + @as(u32, @intCast(second)), base + @as(u32, @intCast(second + 1)) });
         }
@@ -448,9 +482,9 @@ test gather {
     const lights = [_]srlight.Light{testing.keyLight(true)};
     const frame = (try gather(arena, context, &lights, &world, &.{}, &.{&unseen}, testing.settings)).?;
     try std.testing.expectEqual(null, frame.cockpit);
-    try std.testing.expectEqual(8, frame.positions.len);
+    try std.testing.expectEqual(8, frame.corners.len);
     try std.testing.expectEqual(12, frame.indices.len);
-    try std.testing.expectEqual([3]f32{ -100, -100, 1000 }, frame.positions[0]);
+    try std.testing.expectEqual(Corner{ .position = .{ -100, -100, 1000 } }, frame.corners[0]);
     try std.testing.expectEqualSlices(u32, &.{ 0, 2, 1, 0, 3, 2 }, frame.indices[0..6]);
     try std.testing.expectEqual(4, frame.indices[6]);
     // Both reach the same cascades, one after the other, so they go in one run; a square 1000
@@ -459,10 +493,21 @@ test gather {
     try std.testing.expectEqual(12, frame.runs[0].count);
     try std.testing.expect(frame.runs[0].maps.isSet(0) and frame.runs[0].maps.isSet(1));
 
-    // A blended surface casts nothing.
-    square.surfaces[0].material.blend[0] = .add;
+    // A blended surface casts nothing, unless its object asks: then as strong as its alpha, and
+    // nothing while it is clear.
+    square.surfaces[0].material.blend[0] = .alpha;
     const blended = (try gather(arena, context, &lights, &world, &.{}, &.{}, testing.settings)).?;
     try std.testing.expectEqual(0, blended.indices.len);
+    ahead.alpha_shadow = true;
+    ahead.colour[3] = 0.25;
+    const faint = (try gather(arena, context, &lights, &world, &.{}, &.{}, testing.settings)).?;
+    try std.testing.expectEqual(6, faint.indices.len);
+    try std.testing.expectEqual(4, faint.corners.len);
+    try std.testing.expectEqual(Corner{ .position = .{ -100, -100, 1000 }, .strength = 0.25 }, faint.corners[0]);
+    ahead.colour[3] = 0;
+    const clear = (try gather(arena, context, &lights, &world, &.{}, &.{}, testing.settings)).?;
+    try std.testing.expectEqual(0, clear.indices.len);
+    try std.testing.expectEqual(0, clear.corners.len);
 }
 
 test "a portal cuts a caster's shadow" {
@@ -484,7 +529,7 @@ test "a portal cuts a caster's shadow" {
     const lights = [_]srlight.Light{testing.keyLight(true)};
     const frame = (try gather(arena, context, &lights, &world, &.{}, &.{}, testing.settings)).?;
     try std.testing.expectEqual(9, frame.indices.len);
-    for (frame.indices) |index| try std.testing.expect(frame.positions[index][0] <= 1e-3);
+    for (frame.indices) |index| try std.testing.expect(frame.corners[index].position[0] <= 1e-3);
 
     // Not flagged, the portal leaves it whole.
     cut.flags.portal_clipped = false;

@@ -150,10 +150,6 @@ pub const EngineState = enum(u32) {
 /// (`sound3d_engine_update`). **Unknown:** what view 15 is.
 const unheard_own_flyby_views = [_]u8{ 0, 1, 2, 3, 0x0C, 0x0F };
 
-/// The view in which the player's engine and afterburner are not heard. **Unknown:** what view 13
-/// is.
-const muted_engine_view = 13;
-
 /// `sound3d_init` (`0x0049D160`), once a provider is open: `smp3d` the bank, each 3D voice given
 /// its class from the row for as many voices as there are, and the engine's and the afterburner's
 /// voice found. The game scales the table's distances into Miles's units here; the port scales
@@ -421,7 +417,7 @@ pub fn engineUpdate(sound: *Sound, scene: Scene) void {
         },
         _ => {},
     }
-    if (@intFromEnum(scene.view) == muted_engine_view) {
+    if (scene.view == ._unknown_13) {
         driver.set3DSampleVolume(sound.voices_3d[engine].sample, 0);
         if (sound.burner_voice) |own| driver.set3DSampleVolume(sound.voices_3d[own].sample, 0);
     }
