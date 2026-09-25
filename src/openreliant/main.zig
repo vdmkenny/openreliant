@@ -806,9 +806,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             // keys that are up, the music plays on, the frame's sounds are played and placed, and
             // the menu reads the pointer as it is drawn over the scene as it stood.
             devices.read();
-            sound.updateMusic();
-            sound.playBuffered(stdsmp);
-            sound.update3D(hearing.scene(world));
+            sound.frame(stdsmp, hearing.scene(world));
             // Nothing rumbles while the game is paused.
             devices.joystick.rumble(.{});
         } else {
@@ -893,9 +891,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             // the music waiting its turn, the positional sounds gathered, and the 3D sounds placed
             // again (`mission_frame`).
             sound.timerTick(clock.game_ticks);
-            sound.updateMusic();
-            sound.playBuffered(stdsmp);
-            sound.update3D(hearing.scene(world));
+            sound.frame(stdsmp, hearing.scene(world));
             // OpenReliant's: the effects playing turn the controller's motors (`input.force`).
             devices.joystick.rumble(force_feedback.motors(clock.frame_start));
         }

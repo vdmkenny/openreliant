@@ -549,6 +549,20 @@ test init {
     try std.testing.expectEqual(Class.player_burners, sound.effects.classes[sound.burner_voice.?]);
 }
 
+test "Sound.frame plays what the frame gathered" {
+    var mixer: mss.Mixer = .init(22050);
+    var sound: Sound = undefined;
+    try testing.open(mixer.driver(), &sound);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const bank = try fat.Bank.parse(&testing.bank_bytes);
+    sound.buffered[1] = .{ 0.5, 0.25 };
+    sound.frame(bank, testing.scene(&mission));
+    // The gathered sound is played and forgotten.
+    try std.testing.expectEqual([2]f32{ 0, 0 }, sound.buffered[1]);
+}
+
 test play {
     var mixer: mss.Mixer = .init(22050);
     const driver = mixer.driver();

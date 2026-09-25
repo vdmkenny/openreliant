@@ -809,6 +809,15 @@ pub const Sound = struct {
         driver.startStream(stream);
     }
 
+    /// The frame's sounds, as `mission_frame` and `mission_paused_frame` play them: the music
+    /// waiting its turn, the positional sounds gathered from `bank`, and the 3D sounds placed
+    /// again, heard from `scene`'s camera.
+    pub fn frame(sound: *Sound, bank: fat.Bank, scene: Scene) void {
+        sound.updateMusic();
+        sound.playBuffered(bank);
+        sound.update3D(scene);
+    }
+
     /// `music_update` (`0x00482C30`), once a frame: the queued piece starts once the music has
     /// stopped.
     pub fn updateMusic(sound: *Sound) void {
