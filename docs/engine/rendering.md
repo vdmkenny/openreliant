@@ -281,6 +281,12 @@ own class, so a component's damaged model is lit separately from its intact one.
 class that holds a light takes baked colours for all of its levels, which is what the part flag
 `has_static_light` marks (`static_lights_bake`, `0x004A4310`).
 
+`mesh_light` takes an object's own colours (flag `0x80000`) in place of its mesh's baked colours,
+so a model that can cloak, whose parts have colours of their own for the [cloak](cloak.md), never
+shows its static lights: of the shipped models, the Basilisk's red light at its tail.
+**Fix:** the port adds the mesh's baked colours to the object's own; their alpha is nothing, so the
+cloak's see-through hull stays as clear.
+
 Drawing a light is another matter. `node_mount_light` (`0x00499730`) makes up to two nodes of each
 light attachment, and `node_draw` (`0x0049A8C0`) draws them at the light's place on the part that
 carries it:

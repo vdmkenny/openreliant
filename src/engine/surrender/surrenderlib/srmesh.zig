@@ -342,6 +342,11 @@ fn blendedNormal(mesh: *const Mesh, morph: Morph, v: usize) Vector {
 /// when anything past the colour and the ambient lights was added. Null for an object neither lit
 /// nor baked. With `pixel_lit`, the lights the device adds to each pixel are left out
 /// (`srlight.Light.per_pixel`).
+///
+/// **Fix:** the game takes an object's own colours (`baked_object`) in place of the mesh's
+/// (`baked_mesh`), so a model that can cloak, whose parts have colours of their own for the cloak,
+/// never shows the static lights baked into its meshes. The port adds the mesh's too, whose alpha
+/// is nothing, so the cloak's see-through hull is as clear as the game has it.
 fn light(
     arena: Allocator,
     object: *const MeshObject,
@@ -368,14 +373,16 @@ fn light(
         }
     }
 
-    const baked: ?[]const [4]f32 = if (flags.baked_object) object.baked else if (flags.baked_mesh) mesh.baked else null;
+    const own: ?[]const [4]f32 = if (flags.baked_object) object.baked else null;
+    const meshes: ?[]const [4]f32 = if (flags.baked_mesh) mesh.baked else null;
     for (listed) |v| {
         colours[v] = base;
-        if (baked) |b| {
+        for ([_]?[]const [4]f32{ own, meshes }) |baked| {
+            const b = baked orelse continue;
             for (&colours[v], b[v]) |*c, add| c.* += add;
         }
     }
-    var clamp = baked != null;
+    var clamp = own != null or meshes != null;
 
     if (flags.lit and takes_lights) {
         for (lights) |l| {
@@ -562,6 +569,29 @@ test "the finer levels of detail reach further, the last one not" {
     try std.testing.expectEqual(0, object.level);
     object.position = .{ 0, 0, 11000 };
     try std.testing.expectEqual(null, try pipe(arena, &context, &object, &.{}, &budget));
+}
+
+test "an object's own colours and its mesh's baked ones add up" {
+    const gpa = std.testing.allocator;
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    var mesh = try testing.square(gpa);
+    defer mesh.deinit(gpa);
+    mesh.baked = try gpa.dupe([4]f32, &@as([4][4]f32, @splat(.{ 0.5, 0, 0, 0 })));
+    const levels = [_]srapiext.Level{.{ .mesh = &mesh, .until = std.math.inf(f32) }};
+    const own = [_][4]f32{ .{ 0, 0, 0, 0.75 }, @splat(0), @splat(0), @splat(0) };
+    const object: MeshObject = .{
+        .flags = .{ .baked_mesh = true, .baked_object = true },
+        .position = @splat(0),
+        .radius = mesh.radius,
+        .levels = &levels,
+        .baked = &own,
+    };
+    // The static light the mesh bakes shows through the object's own colours, and the alpha is
+    // the object's alone.
+    const colours = (try light(arena_state.allocator(), &object, &mesh, &.{}, &.{ 0, 1, 2, 3 }, .{}, false)).?;
+    try std.testing.expectEqual([4]f32{ 0.5, 0, 0, 0.75 }, colours[0]);
+    try std.testing.expectEqual([4]f32{ 0.5, 0, 0, 0 }, colours[1]);
 }
 
 test "pipe for a device that lights each pixel" {

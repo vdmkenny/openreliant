@@ -410,6 +410,9 @@ pub const MeshObject = struct {
     /// `+0xAC`: the portal that clips it, where its flags ask (`portal_clipped`); none clips
     /// nothing.
     portal: ?*const Portal = null,
+    /// The port's: its surfaces blended by alpha cast a shadow as strong as its colour's alpha, as
+    /// a cloaked part's see-through hull does (`srshadow`). Otherwise only its solid ones cast.
+    alpha_shadow: bool = false,
 
     /// The mesh of the level drawn, or of the coarsest where the level is past them; it has one
     /// at least.

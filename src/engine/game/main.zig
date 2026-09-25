@@ -518,8 +518,9 @@ pub const DrawBudget = enum {
 /// unless `lights_disabled`, its engine glows burning by the throttle of its last update times the
 /// share of its engines left, but none while it is among `splits`, and nothing at all while it is
 /// `hidden`, as the ship the camera sits in is. That ship, `seat`, still casts its shadow
-/// (`objects.Model.castShadows`). A cloaked object is drawn with neither lights nor glows, its
-/// parts as its cloak draws them (`cloak.Drawing`).
+/// (`objects.Model.castShadows`), cloaked as its hull stands (`cloak.shadeUnseen`). A cloaked
+/// object is drawn with neither lights nor glows, its parts as its cloak draws them
+/// (`cloak.Drawing`).
 ///
 /// Not ported yet: what else the pass draws for a few types, the protogate's power core
 /// pulsing, the Boridin breakaway's core and the Dark Reign's hat
@@ -534,7 +535,10 @@ pub fn drawObjects(gpa: Allocator, scene: *srcore.Scene, all: *create.Objects, a
         cloak.frame(slot, attachments.frame_start);
         const model = if (slot.model) |*model| model else continue;
         if (object.flags.hidden) {
-            if (index == seat) try model.castShadows(gpa, scene);
+            if (index == seat) {
+                if (object.flags.cloaked) if (slot.cloak) |on| cloak.shadeUnseen(model, on.hull);
+                try model.castShadows(gpa, scene);
+            }
             continue;
         }
         var view = attachments;

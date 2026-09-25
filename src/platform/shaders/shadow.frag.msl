@@ -1,9 +1,72 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+#pragma clang diagnostic ignored "-Wmissing-braces"
+
 #include <metal_stdlib>
 #include <simd/simd.h>
 
 using namespace metal;
 
-fragment void main0()
+template<typename T, size_t Num>
+struct spvUnsafeArray
 {
+    T elements[Num ? Num : 1];
+    
+    thread T& operator [] (size_t pos) thread
+    {
+        return elements[pos];
+    }
+    constexpr const thread T& operator [] (size_t pos) const thread
+    {
+        return elements[pos];
+    }
+    
+    device T& operator [] (size_t pos) device
+    {
+        return elements[pos];
+    }
+    constexpr const device T& operator [] (size_t pos) const device
+    {
+        return elements[pos];
+    }
+    
+    constexpr const constant T& operator [] (size_t pos) const constant
+    {
+        return elements[pos];
+    }
+    
+    threadgroup T& operator [] (size_t pos) threadgroup
+    {
+        return elements[pos];
+    }
+    constexpr const threadgroup T& operator [] (size_t pos) const threadgroup
+    {
+        return elements[pos];
+    }
+};
+
+constant spvUnsafeArray<float, 16> _50 = spvUnsafeArray<float, 16>({ 0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0 });
+
+struct main0_in
+{
+    float m_23 [[user(locn0), flat]];
+};
+
+fragment void main0(main0_in in [[stage_in]], float4 gl_FragCoord [[position]])
+{
+    int2 _20 = int2(gl_FragCoord.xy) & int2(3);
+    bool _26 = in.m_23 < 1.0;
+    bool _67;
+    if (_26)
+    {
+        _67 = (in.m_23 * 16.0) <= _50[(_20.y * 4) + _20.x];
+    }
+    else
+    {
+        _67 = _26;
+    }
+    if (_67)
+    {
+        discard_fragment();
+    }
 }
 

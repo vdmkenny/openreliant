@@ -10,12 +10,14 @@ struct _29
 
 struct main0_out
 {
+    float m_51 [[user(locn0)]];
     float4 gl_Position [[position]];
 };
 
 struct main0_in
 {
     float3 m_12 [[attribute(0)]];
+    float m_53 [[attribute(1)]];
 };
 
 vertex main0_out main0(main0_in in [[stage_in]], constant _29& _31 [[buffer(0)]])
@@ -23,6 +25,7 @@ vertex main0_out main0(main0_in in [[stage_in]], constant _29& _31 [[buffer(0)]]
     main0_out out = {};
     float4 _18 = float4(in.m_12, 1.0);
     out.gl_Position = float4(dot(_31._m0[0], _18), dot(_31._m0[1], _18), dot(_31._m0[2], _18), 1.0);
+    out.m_51 = in.m_53;
     return out;
 }
 

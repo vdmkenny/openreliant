@@ -1378,10 +1378,12 @@ pub const Model = struct {
                 },
             };
             // A part that can cloak is coloured by its own colours, clear until a hit shows it
-            // through the cloak (`mesh_object_create`).
+            // through the cloak (`mesh_object_create`). Seen through, it casts a shadow as solid as
+            // its hull (`cloak.Drawing`).
             if (part.cloaking) |cloaking| {
                 node.cloak = try .create(gpa, cloaking, part.levels, radius);
                 node.object.baked = node.cloak.?.hull_colours;
+                node.object.alpha_shadow = true;
             }
             parts_made += 1;
         }

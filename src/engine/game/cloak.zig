@@ -315,6 +315,18 @@ fn restore(model: *objects.Model) void {
     }.at);
 }
 
+/// The port's: each part that cloaks of `model`, which is not drawn, as the ship the camera sits in
+/// is not, as solid as its cloak's hull `hull`, which the part's shadow goes by (`srshadow`), as a
+/// drawn one's does (`Drawing.hull`).
+pub fn shadeUnseen(model: *objects.Model, hull: f32) void {
+    eachPart(model, hull, struct {
+        fn visit(solid: f32, part: *objects.Model.Part) void {
+            const effect = if (part.cloak) |*kept| kept else return;
+            if (effect.cloaks) part.object.colour[3] = solid;
+        }
+    }.visit);
+}
+
 /// Runs `visit` on every part of `model` and of the models it carries, however deep.
 fn eachPart(model: *objects.Model, context: anytype, comptime visit: fn (@TypeOf(context), *objects.Model.Part) void) void {
     for (model.parts) |*part| visit(context, part);
@@ -647,6 +659,19 @@ test shimmerColour {
     for (shimmerColour(1), shimmer_full) |channel, full| try std.testing.expectApproxEqAbs(full, channel, 1e-6);
     // Halfway to bright, it is halfway there.
     try std.testing.expectApproxEqAbs(shimmer_bright[0] / 2, shimmerColour(shimmer_turn / 2)[0], 1e-6);
+}
+
+test shadeUnseen {
+    const gpa = std.testing.allocator;
+    var stage: TestStage = undefined;
+    try stage.init(gpa);
+    defer stage.deinit(gpa);
+    const part = stage.part();
+    set(stage.mission.world(), stage.index, true);
+    // Its hull casts a shadow as solid as it stands, the part seen through.
+    try std.testing.expect(part.object.alpha_shadow);
+    shadeUnseen(&stage.slot().model.?, 0.75);
+    try std.testing.expectEqual(0.75, part.object.colour[3]);
 }
 
 test "PartCloak.swirl" {

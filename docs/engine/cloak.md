@@ -21,7 +21,8 @@ more sets of meshes and gives each part colours of its own
 
 The part's own colours (`+0x110`, flag `0x80000`) start cleared and stay so until a hit shows the
 hull through the cloak. The renderer takes them in place of the mesh's baked colours, so the static
-lights such a model carries never show ([Static lights](rendering.md#static-lights)).
+lights such a model carries never show, which the port fixes
+([Static lights](rendering.md#static-lights)).
 
 Beside the ships that cloak, the models of the guns and the missile pods have the flag, and cloak
 with the ship that carries them. On the Kafelnikof only seven parts cloak
@@ -147,6 +148,10 @@ cloak cloaks once that tick has come, and uncloaks while none is asked for. The 
   late.
 - **Improvement:** the shimmer's colour is worked out for its strength, not read from the table
   of 1024.
+- **Improvement:** the port's shadows ([Shadows](../port/renderer.md#shadows)) fade with the hull:
+  a cloaking part's see-through hull casts as strongly as it is solid, and none once it is clear.
+  The ship the camera sits in isn't drawn, so its parts take the hull's solidity for their shadow
+  alone (`cloak.shadeUnseen`).
 
 Not ported: the Cloaked and Decloaked events ([#37](https://github.com/vdmkenny/openreliant/issues/37));
 the mission's `Cloak_ship` ([#36](https://github.com/vdmkenny/openreliant/issues/36)); the Jump Out
