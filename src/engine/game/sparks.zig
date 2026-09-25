@@ -1,9 +1,9 @@
 //! `C:\lancer\game\sparks.cpp`: the sparks a hit throws, small bolts that fly off, slow and fade.
 //!
-//! Ported: the sparks, and those a shot striking a hull throws (`guns.hullHit`) or a component
-//! (`guns.componentHit`). **Not ported:** the callers of the rest: a shot striking a shield
-//! (`0x0049F1E0`, [#133](https://github.com/vdmkenny/openreliant/issues/133)); and `0x004B02A0`,
-//! which throws kind 3 ([#41](https://github.com/vdmkenny/openreliant/issues/41)).
+//! Ported: the sparks, and those a shot striking a hull throws (`guns.hullHit`), a component
+//! (`guns.componentHit`) or a shield (`shield.zig`). **Not ported:** those of the wall of a
+//! multiplayer mission's arena (`arena_wall_hit`, `0x004B02A0`), which is multiplayer's
+//! ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -28,7 +28,8 @@ pub const Kind = enum(u3) {
     component = 1,
     /// A shot striking a hull (`bullet_hull_hit`).
     hull = 2,
-    /// A shot striking a shield (`0x0049F1E0`), and `0x004B02A0`'s: blue.
+    /// A shot striking a shield (`0x0049F1E0`), and a shot or a ship meeting a multiplayer
+    /// arena's wall (`arena_wall_hit`): blue.
     shield = 3,
     /// A coalition Huge Gun's shot striking a component: a long beam fading from warm white to red.
     coalition_huge_gun = 4,

@@ -631,7 +631,7 @@ a last colour, a life in ticks and a drag, what is left of its speed after a tic
 | 0 | An allied Huge Gun's shot striking a component | 90 by 90, 500 long | White to dark blue | 300 | 0.9999 |
 | 1 | A shot striking a component | 30 by 30, 140 long | White to black | 100 | 0.995 |
 | 2 | A shot striking a hull | 30 by 30, 90 long | White to black | 100 | 0.995 |
-| 3 | A shot striking a shield, and `0x004B02A0` | 20 by 20, 90 long | Blue to black | 100 | 0.995 |
+| 3 | A shot striking a shield, and a shot or a ship meeting a multiplayer arena's wall (`arena_wall_hit`, `0x004B02A0`) | 20 by 20, 90 long | Blue to black | 100 | 0.995 |
 | 4 | A coalition Huge Gun's shot striking a component | 90 by 90, 500 long | Warm white to dark red | 300 | 0.9999 |
 
 `sparks_init` (`0x004A1AF0`), which `particles_init` runs, builds each kind's shape
@@ -678,5 +678,5 @@ A component's burst (kind 3, `shieldfx_create`, `0x004A0310`) is an emitter of t
 
 [`sparks.zig`](../../src/engine/game/sparks.zig) ports the sparks,
 [`guns.zig`](../../src/engine/game/guns.zig) the hull's, and [`shield.zig`](../../src/engine/game/shield.zig)
-a shield's ([Shields](#shields)), and [`guns.zig`](../../src/engine/game/guns.zig) a component's. Not ported: `0x004B02A0`
-([#41](https://github.com/vdmkenny/openreliant/issues/41)).
+a shield's ([Shields](#shields)), and [`guns.zig`](../../src/engine/game/guns.zig) a component's. Not ported: the multiplayer
+arena's wall's ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
