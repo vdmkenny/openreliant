@@ -176,7 +176,7 @@ pub const push_per_damage = 300;
 const push_most: f32 = 10000;
 
 /// A hit on the player's ship the pushes count this frame, and the side it struck.
-const Hit = struct { push: f32 = 0, side: u2 = 0 };
+const Hit = struct { push: f32 = 0, side: collision.Quadrant = .left };
 
 /// A push playing: when it started, and how strong it is, from 0 to 1.
 const Push = struct { started: i32, strength: f32 };
@@ -245,7 +245,7 @@ pub const Forces = struct {
     pub fn hit(forces: *Forces, side: collision.Quadrant, damage: f32) void {
         if (!forces.feedback) return;
         if (forces.next_hit >= frame_hits) forces.next_hit = 0;
-        forces.hits[forces.next_hit] = .{ .push = damage * push_per_damage, .side = @intFromEnum(side) };
+        forces.hits[forces.next_hit] = .{ .push = damage * push_per_damage, .side = side };
         forces.next_hit += 1;
         // The next hit ends the list, which the pushes read up to.
         if (forces.next_hit < frame_hits) forces.hits[forces.next_hit].push = 0;
@@ -263,15 +263,15 @@ pub const Forces = struct {
     /// 900 degrees, which DirectInput turns down (#244).
     pub fn pushFrame(forces: *Forces, now: i32) void {
         if (!forces.setting) return;
-        var sides: [4]f32 = @splat(0);
+        var sides: std.EnumArray(collision.Quadrant, f32) = .initFill(0);
         for (&forces.hits) |*each| {
             if (!(each.push > 0)) break;
-            sides[each.side] += each.push;
+            sides.getPtr(each.side).* += each.push;
             each.push = 0;
         }
         forces.next_hit = 0;
-        for ([_][2]u2{ .{ 0, 1 }, .{ 2, 3 } }) |pair| {
-            const across = sides[pair[0]] - sides[pair[1]];
+        for ([_][2]collision.Quadrant{ .{ .left, .right }, .{ .fore, .aft } }) |pair| {
+            const across = sides.get(pair[0]) - sides.get(pair[1]);
             if (across == 0) continue;
             if (forces.next_push >= push_slots) forces.next_push = 0;
             const slot = &forces.pushes[forces.next_push];
