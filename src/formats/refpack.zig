@@ -11,6 +11,21 @@ const Allocator = std.mem.Allocator;
 /// The second header byte. The first carries flags, so the pair is the format's signature.
 pub const signature: u8 = 0xFB;
 
+/// The first two bytes of the one form of stream the game expands, read big-endian: flags with
+/// only `magic` set, then the signature. `hog_read_file` (`0x004C7F60`), `hog_read_file_as_named`
+/// (`0x004C8110`) and `hog_file_size` (`0x004C81F0`) compare a member's first two bytes with it,
+/// and take any other member as it is stored.
+pub const game_magic: u16 = 0x10FB;
+
+/// The flags byte and the signature.
+const signature_len = 2;
+
+/// The shortest header: 3-byte sizes, and no compressed size.
+pub const min_header_len = signature_len + 3;
+
+/// The longest header: 4-byte sizes, and both of them.
+pub const max_header_len = signature_len + 2 * 4;
+
 pub const Header = struct {
     flags: Flags,
     /// Present only when `flags.compressed_size_present`.
@@ -28,10 +43,15 @@ pub const Header = struct {
         _unused2: u2,
         /// Sizes are 4 bytes rather than 3.
         wide_sizes: bool,
+
+        /// The bytes each size takes.
+        pub fn sizeWidth(flags: Flags) usize {
+            return if (flags.wide_sizes) 4 else 3;
+        }
     };
 
     pub fn sizeWidth(header: Header) usize {
-        return if (header.flags.wide_sizes) 4 else 3;
+        return header.flags.sizeWidth();
     }
 };
 
@@ -48,20 +68,20 @@ pub const Error = error{
 
 /// Reads the header at the start of `data`.
 pub fn readHeader(data: []const u8) Error!Header {
-    if (data.len < 2 or data[1] != signature) return error.BadSignature;
+    if (!looksCompressed(data)) return error.BadSignature;
     const flags: Header.Flags = @bitCast(data[0]);
 
-    const width: usize = if (flags.wide_sizes) 4 else 3;
-    var pos: usize = 2;
+    const width = flags.sizeWidth();
+    var pos: usize = signature_len;
 
     var compressed_size: ?u32 = null;
     if (flags.compressed_size_present) {
         if (data.len < pos + width) return error.UnexpectedEnd;
-        compressed_size = readBigEndian(data[pos..][0..width]);
+        compressed_size = std.mem.readVarInt(u32, data[pos..][0..width], .big);
         pos += width;
     }
     if (data.len < pos + width) return error.UnexpectedEnd;
-    const decompressed_size = readBigEndian(data[pos..][0..width]);
+    const decompressed_size = std.mem.readVarInt(u32, data[pos..][0..width], .big);
     pos += width;
 
     return .{
@@ -72,15 +92,14 @@ pub fn readHeader(data: []const u8) Error!Header {
     };
 }
 
-fn readBigEndian(bytes: []const u8) u32 {
-    var value: u32 = 0;
-    for (bytes) |b| value = (value << 8) | b;
-    return value;
+/// True when `data` begins with a RefPack header, whatever its flags.
+pub fn looksCompressed(data: []const u8) bool {
+    return data.len >= signature_len and data[1] == signature;
 }
 
-/// True when `data` begins with a RefPack header.
-pub fn looksCompressed(data: []const u8) bool {
-    return data.len >= 2 and data[1] == signature;
+/// True when `data` begins as the one form of stream the game expands (`game_magic`).
+pub fn gameExpands(data: []const u8) bool {
+    return data.len >= signature_len and std.mem.readInt(u16, data[0..signature_len], .big) == game_magic;
 }
 
 /// One decoded command: copy `literals` bytes straight through, then repeat `match_len` bytes
@@ -207,9 +226,20 @@ test readHeader {
     try std.testing.expectEqual(@as(?u32, 0x1000), with_both.compressed_size);
     try std.testing.expectEqual(@as(u32, 0x2000), with_both.decompressed_size);
     try std.testing.expectEqual(@as(usize, 10), with_both.len);
+    try std.testing.expectEqual(max_header_len, with_both.len);
+    try std.testing.expectEqual(min_header_len, header.len);
 
     try std.testing.expectError(error.BadSignature, readHeader(&.{ 0x10, 0x00, 0, 0, 0 }));
     try std.testing.expectError(error.BadSignature, readHeader(&.{0x10}));
+    try std.testing.expectError(error.UnexpectedEnd, readHeader(&.{ 0x81, 0xFB, 0, 0, 0x10, 0x00, 0, 0, 0x20 }));
+}
+
+test gameExpands {
+    try std.testing.expect(gameExpands(&.{ 0x10, 0xFB, 0x00, 0x00, 0x0C }));
+    // Other flags make RefPack all the same, but the game takes such a member as it is stored.
+    try std.testing.expect(looksCompressed(&.{ 0x11, 0xFB }) and !gameExpands(&.{ 0x11, 0xFB }));
+    try std.testing.expect(!gameExpands(&.{0x10}));
+    try std.testing.expect(!gameExpands("RIFF"));
 }
 
 test "literal run then end" {

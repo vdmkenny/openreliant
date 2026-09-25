@@ -5,7 +5,6 @@ const Io = std.Io;
 
 const openreliant = @import("openreliant");
 const hog = openreliant.hog;
-const refpack = openreliant.refpack;
 
 const Context = @import("main.zig").Context;
 
@@ -64,14 +63,9 @@ fn info(ctx: Context, archive: hog.Archive) !void {
 
     for (archive.entries) |entry| {
         stored_total += entry.size;
-        var head: [8]u8 = undefined;
-        const n = try archive.file.readPositionalAll(archive.io, &head, entry.offset);
-        if (n >= 5 and refpack.looksCompressed(head[0..n])) {
+        if (try archive.expandedSize(entry)) |size| {
             compressed += 1;
-            real_total += (refpack.readHeader(head[0..n]) catch {
-                real_total += entry.size;
-                continue;
-            }).decompressed_size;
+            real_total += size;
         } else {
             real_total += entry.size;
         }
@@ -109,15 +103,8 @@ fn info(ctx: Context, archive: hog.Archive) !void {
 
 fn list(ctx: Context, archive: hog.Archive) !void {
     for (archive.entries) |entry| {
-        var head: [8]u8 = undefined;
-        const n = try archive.file.readPositionalAll(archive.io, &head, entry.offset);
-        const header: ?refpack.Header = if (n >= 5 and refpack.looksCompressed(head[0..n]))
-            refpack.readHeader(head[0..n]) catch null
-        else
-            null;
-
-        if (header) |h| {
-            try ctx.stdout.print("{x:0>8}  {d:>9} {d:>10}  {s}\n", .{ entry.offset, entry.size, h.decompressed_size, entry.name });
+        if (try archive.expandedSize(entry)) |size| {
+            try ctx.stdout.print("{x:0>8}  {d:>9} {d:>10}  {s}\n", .{ entry.offset, entry.size, size, entry.name });
         } else {
             try ctx.stdout.print("{x:0>8}  {d:>9} {s:>10}  {s}\n", .{ entry.offset, entry.size, "-", entry.name });
         }

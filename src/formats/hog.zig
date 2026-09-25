@@ -141,6 +141,15 @@ pub const Archive = struct {
         }
     };
 
+    /// The size a RefPack member expands to, from its header alone; null for a member stored as it
+    /// is, or one too short for the header its flags describe.
+    pub fn expandedSize(archive: Archive, entry: Entry) !?u32 {
+        var head: [refpack.max_header_len]u8 = undefined;
+        const n = try archive.file.readPositionalAll(archive.io, head[0..@min(entry.size, head.len)], entry.offset);
+        const header = refpack.readHeader(head[0..n]) catch return null;
+        return header.decompressed_size;
+    }
+
     pub fn find(archive: Archive, name: []const u8) ?Entry {
         for (archive.entries) |entry| {
             if (std.ascii.eqlIgnoreCase(entry.name, name)) return entry;
@@ -198,6 +207,116 @@ test parseEntry {
     // Past the end of the archive, and the uninitialized filler both shipped archives end with.
     try std.testing.expectEqual(@as(?ParsedEntry, null), parseEntry(&directory, 0x100));
     try std.testing.expectEqual(@as(?ParsedEntry, null), parseEntry(&(@as([32]u8, @splat(0xCD))), 0x100000));
+}
+
+/// Builds archives in memory, for the tests of code that reads them.
+pub const testing = struct {
+    pub const Member = struct { name: []const u8, data: []const u8 };
+
+    /// An archive of `members`, stored as they are: its header, then a record and a NUL-terminated
+    /// name for each member, then their data. The caller owns the bytes.
+    pub fn build(gpa: Allocator, members: []const Member) ![]u8 {
+        var data_at: usize = @sizeOf(Header);
+        var data_size: usize = 0;
+        for (members) |member| {
+            data_at += @sizeOf(Record) + member.name.len + 1;
+            data_size += member.data.len;
+        }
+        const bytes = try gpa.alloc(u8, data_at + data_size);
+        errdefer gpa.free(bytes);
+        (try layout.viewMut(Header, bytes)).* = .{
+            .magic = magic.*,
+            .archive_size = .of(@intCast(bytes.len)),
+            .entry_count = .of(@intCast(members.len)),
+            .data_offset = .of(@intCast(data_at)),
+        };
+        var entry_at: usize = @sizeOf(Header);
+        var datum_at = data_at;
+        for (members) |member| {
+            (try layout.viewMut(Record, bytes[entry_at..])).* = .{ .offset = .of(@intCast(datum_at)), .size = .of(@intCast(member.data.len)) };
+            const name_at = entry_at + @sizeOf(Record);
+            @memcpy(bytes[name_at..][0..member.name.len], member.name);
+            bytes[name_at + member.name.len] = 0;
+            entry_at = name_at + member.name.len + 1;
+            @memcpy(bytes[datum_at..][0..member.data.len], member.data);
+            datum_at += member.data.len;
+        }
+        return bytes;
+    }
+
+    /// Writes an archive of `members`, as `build` makes it, to `path` in `dir`.
+    pub fn write(gpa: Allocator, io: Io, dir: Io.Dir, path: []const u8, members: []const Member) !void {
+        const bytes = try build(gpa, members);
+        defer gpa.free(bytes);
+        try dir.writeFile(io, .{ .sub_path = path, .data = bytes });
+    }
+};
+
+test Archive {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // `abcdabcdabcd`, RefPack-compressed as the game stores its members.
+    const compressed = [_]u8{ 0x10, 0xFB, 0x00, 0x00, 0x0C, 0xE0, 'a', 'b', 'c', 'd', 0x14, 0x03, 0xFC };
+    try testing.write(gpa, io, tmp.dir, "test.hog", &.{
+        .{ .name = "Ship.SHP", .data = "hello" },
+        .{ .name = "mission.dte", .data = &compressed },
+    });
+    var archive: Archive = try .open(gpa, io, tmp.dir, "test.hog");
+    defer archive.close(gpa);
+    try std.testing.expectEqual(2, archive.entries.len);
+    try std.testing.expectEqual(0, archive.phantom_entries);
+    try std.testing.expect(archive.isContiguous());
+
+    // Names match whatever their case.
+    const ship = archive.find("ship.shp").?;
+    try std.testing.expectEqual(null, archive.find("missing.shp"));
+    const stored = try archive.read(gpa, ship);
+    defer stored.deinit(gpa);
+    try std.testing.expectEqualStrings("hello", stored.bytes);
+    try std.testing.expect(!stored.compressed);
+    try std.testing.expectEqual(null, try archive.expandedSize(ship));
+
+    const mission = archive.find("MISSION.DTE").?;
+    const expanded = try archive.read(gpa, mission);
+    defer expanded.deinit(gpa);
+    try std.testing.expectEqualStrings("abcdabcdabcd", expanded.bytes);
+    try std.testing.expect(expanded.compressed);
+    try std.testing.expectEqual(12, (try archive.expandedSize(mission)).?);
+    const raw = try archive.readRaw(gpa, mission);
+    defer gpa.free(raw);
+    try std.testing.expectEqualSlices(u8, &compressed, raw);
+
+    // A member out of its place breaks the chain.
+    archive.entries[1].offset += 1;
+    try std.testing.expect(!archive.isContiguous());
+}
+
+test "a header counting entries the directory lacks" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const bytes = try testing.build(gpa, &.{.{ .name = "a.tga", .data = "x" }});
+    defer gpa.free(bytes);
+    const header = try layout.viewMut(Header, bytes);
+    header.entry_count = .of(header.entry_count.get() + 1);
+    try tmp.dir.writeFile(io, .{ .sub_path = "phantom.hog", .data = bytes });
+    var archive: Archive = try .open(gpa, io, tmp.dir, "phantom.hog");
+    defer archive.close(gpa);
+    try std.testing.expectEqual(1, archive.entries.len);
+    try std.testing.expectEqual(1, archive.phantom_entries);
+
+    // Not an archive, and one whose header disagrees with the file's size.
+    header.magic = "BIGH".*;
+    try tmp.dir.writeFile(io, .{ .sub_path = "other.hog", .data = bytes });
+    try std.testing.expectError(error.NotAHog, Archive.open(gpa, io, tmp.dir, "other.hog"));
+    header.magic = magic.*;
+    try tmp.dir.writeFile(io, .{ .sub_path = "short.hog", .data = bytes[0 .. bytes.len - 1] });
+    try std.testing.expectError(error.SizeMismatch, Archive.open(gpa, io, tmp.dir, "short.hog"));
 }
 
 test "header reads big-endian fields" {
