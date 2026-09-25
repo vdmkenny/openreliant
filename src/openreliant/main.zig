@@ -532,7 +532,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     // What `WinMain` opens at start-up, and the texture cache `renderer_start` opens.
     var resources: game.bigfile.Hog = try .open(arena, io, directory, game.bigfile.resource_name);
     defer resources.close(arena);
-    const cache_bytes = try readGameFile(io, arena, directory, install.texture_cache_name);
+    const cache_bytes = try readGameFile(io, arena, directory, tcache.hardware_name);
     const cache: tcache.Cache = try .parse(arena, cache_bytes);
     const palette = try tga.palette(try resources.readFile(arena, "palette.tga"));
     var textures: srtexture.Table = .init(arena, cache, palette);

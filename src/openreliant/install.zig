@@ -19,6 +19,7 @@ const openreliant = @import("openreliant");
 const cdimage = openreliant.cdimage;
 const iso9660 = openreliant.iso9660;
 const stats = openreliant.stats;
+const tcache = openreliant.tcache;
 const game = openreliant.engine.game;
 const c = @import("archive");
 const help = @import("help.zig");
@@ -72,10 +73,7 @@ pub const Options = struct {
 };
 
 /// The game's files the engine reads before anything else. It has none of its own.
-pub const game_files = [_][]const u8{ game.bigfile.resource_name, texture_cache_name, stats.Table.ships.fileName(), game.language.file_name };
-
-/// The texture cache of the hardware renderers, which `renderer_start` opens (`0x0050A800`).
-pub const texture_cache_name = "tcachehw.dat";
+pub const game_files = [_][]const u8{ game.bigfile.resource_name, tcache.hardware_name, stats.Table.ships.fileName(), game.language.file_name };
 
 /// The first of the game's files `dir` lacks, or null when it has them all. It asks with `statFile`:
 /// `access` fails for files that exist when the Windows build runs under Wine.

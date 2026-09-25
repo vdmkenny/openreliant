@@ -15,6 +15,9 @@ const tga = @import("tga.zig");
 
 pub const version = 102;
 
+/// The texture cache of the hardware renderers, which `renderer_start` opens (`0x0050A800`).
+pub const hardware_name = "tcachehw.dat";
+
 /// Entries the directory has room for.
 pub const capacity = 1000;
 
