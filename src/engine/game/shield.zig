@@ -58,6 +58,47 @@ pub const Grid = struct {
         return @intCast(1 + (band - 1) * grid.around + slice % grid.around);
     }
 
+    /// `values`, one for each vertex of `coarse`, a grid over the same sphere, at vertex `index` of
+    /// this grid: the four of `coarse`'s round it, each by how near it stands, as it lies between
+    /// their bands and slices, a pole's the same for every slice. On `coarse` itself, a vertex takes
+    /// its own.
+    pub fn sample(grid: Grid, coarse: Grid, values: []const [4]f32, index: usize) [4]f32 {
+        const band, const slice = grid.placeOn(coarse, index);
+        const top: usize = @intFromFloat(@floor(band));
+        const left: usize = @intFromFloat(@floor(slice));
+        const down = band - @floor(band);
+        const across = slice - @floor(slice);
+        const upper = mix(coarse.valueAt(values, top, left), coarse.valueAt(values, top, left + 1), across);
+        const lower = mix(coarse.valueAt(values, top + 1, left), coarse.valueAt(values, top + 1, left + 1), across);
+        return mix(upper, lower, down);
+    }
+
+    /// Where vertex `index` stands on `coarse`: its band from the pole on +Z and its slice, in
+    /// `coarse`'s, the poles at slice 0.
+    fn placeOn(grid: Grid, coarse: Grid, index: usize) [2]f32 {
+        if (index == 0) return .{ 0, 0 };
+        if (index == grid.vertices() - 1) return .{ @floatFromInt(coarse.down), 0 };
+        const band = 1 + (index - 1) / grid.around;
+        const slice = (index - 1) % grid.around;
+        return .{
+            @as(f32, @floatFromInt(band * coarse.down)) / @as(f32, @floatFromInt(grid.down)),
+            @as(f32, @floatFromInt(slice * coarse.around)) / @as(f32, @floatFromInt(grid.around)),
+        };
+    }
+
+    /// `values`' value at band `band` from the pole on +Z and slice `slice`, the poles holding one
+    /// for every slice.
+    fn valueAt(grid: Grid, values: []const [4]f32, band: usize, slice: usize) @Vector(4, f32) {
+        if (band == 0) return values[0];
+        if (band >= grid.down) return values[grid.vertices() - 1];
+        return values[grid.ring(band, slice)];
+    }
+
+    /// `share` of the way from `a` to `b`.
+    fn mix(a: @Vector(4, f32), b: @Vector(4, f32), share: f32) @Vector(4, f32) {
+        return (b - a) * @as(@Vector(4, f32), @splat(share)) + a;
+    }
+
     /// The triangles of the grid's first `bands` bands, three corners each, band by band as
     /// `0x0049E3D0` lays them: a fan round each pole, and two triangles to each slice of each band
     /// between.
@@ -127,6 +168,15 @@ const fine_reach: f32 = 0.5;
 
 /// Every level a bubble may be drawn at: the game's, then the finer one.
 const all_grids = grids ++ [1]Grid{fine_grid};
+
+/// The grid of the game's finest sphere, which a bubble's colours are laid out on.
+pub const game_grid = grids[0];
+
+/// A sphere a bubble is drawn on, and its grid.
+pub const Sphere = struct {
+    mesh: *const srapiext.Mesh,
+    grid: Grid,
+};
 
 /// How many hits a bubble keeps in the smooth style: more than a ripple lasts at any rate of fire,
 /// so none ends early.
@@ -313,6 +363,16 @@ pub const Shields = struct {
     }
 
     /// `0x0049EF60`: the meshes let go.
+    /// The sphere a bubble is drawn on at its finest in the shields' style: the game's finest
+    /// level, or in the smooth style the finer sphere.
+    pub fn finest(shields: *const Shields) Sphere {
+        const level: usize = switch (shields.style) {
+            .original => 0,
+            .smooth => fine_level,
+        };
+        return .{ .mesh = &shields.meshes[level], .grid = all_grids[level] };
+    }
+
     pub fn deinit(shields: *Shields, gpa: Allocator) void {
         for (shields.meshes) |mesh| mesh.deinit(gpa);
         shields.capital.deinit();
@@ -995,6 +1055,33 @@ pub const testing = struct {
         }
     };
 };
+
+test "Grid.sample" {
+    const coarse: Grid = .{ .around = 4, .down = 3 };
+    var values: [coarse.vertices()][4]f32 = undefined;
+    for (&values, 0..) |*value, n| value.* = @splat(@floatFromInt(n));
+    // On the grid itself, each vertex takes its own.
+    for (0..values.len) |n| try std.testing.expectEqual(values[n], coarse.sample(coarse, &values, n));
+    // On one three times as fine around and twice down, a vertex on one of the coarse grid's takes
+    // its; one between takes a share of each.
+    const fine: Grid = .{ .around = 12, .down = 6 };
+    try std.testing.expectEqual(values[coarse.ring(1, 0)], fine.sample(coarse, &values, fine.ring(2, 0)));
+    const first = values[coarse.ring(1, 0)][0];
+    const second = values[coarse.ring(1, 1)][0];
+    try std.testing.expectApproxEqAbs(first + (second - first) / 3, fine.sample(coarse, &values, fine.ring(2, 1))[0], 1e-5);
+    // Halfway between two bands, halfway between them.
+    const below = values[coarse.ring(2, 0)][0];
+    try std.testing.expectApproxEqAbs((first + below) / 2, fine.sample(coarse, &values, fine.ring(3, 0))[0], 1e-5);
+    // Round the last slice to the first, and the poles the coarse grid's.
+    const last = values[coarse.ring(1, 3)][0];
+    try std.testing.expectApproxEqAbs(last + (first - last) * 2 / 3, fine.sample(coarse, &values, fine.ring(2, 11))[0], 1e-5);
+    try std.testing.expectEqual(values[0], fine.sample(coarse, &values, 0));
+    try std.testing.expectEqual(values[values.len - 1], fine.sample(coarse, &values, fine.vertices() - 1));
+    // A grid that isn't a whole multiple of the coarse one, as the finer bubble's isn't the game's.
+    const odd: Grid = .{ .around = 10, .down = 7 };
+    const between = odd.sample(coarse, &values, odd.ring(1, 0))[0];
+    try std.testing.expectApproxEqAbs(values[0][0] + (first - values[0][0]) * 3.0 / 7.0, between, 1e-5);
+}
 
 test Grid {
     const gpa = std.testing.allocator;

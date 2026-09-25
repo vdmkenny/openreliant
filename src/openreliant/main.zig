@@ -862,7 +862,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             // otherwise.
             const shown = if (view.object) |seen| camera.Subject.of(&sandbox.objects.slots[seen]) else subject;
             const marker = if (explosions.marker) |left| left.position else null;
-            if (view.frame(.{ .object = shown, .player = subject, .ticks = ticks, .now = at, .marker = marker, .cockpit = cockpit_input, .random = &rand, .forces = &force_feedback })) |next| {
+            if (view.frame(.{ .object = shown, .player = subject, .ticks = ticks, .now = at, .ahead = game.objects.pastTick(&clock, options.smooth_motion), .marker = marker, .cockpit = cockpit_input, .random = &rand, .forces = &force_feedback })) |next| {
                 _ = view.setView(next, sandbox.objects.player, false, true, at);
             }
             // From its cockpit, the ship is not drawn, as `camera_set_view` sees to.

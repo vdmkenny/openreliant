@@ -111,6 +111,11 @@ the ticks since:
   not begun to explode the view's time holds at 0 (`camera_switched` moves on); then it pulls back
   by 20 a tick.
 
+**Improvement:** with smooth motion, views 7, 8, `0x1C` and `0x1D` go on by the share of a tick
+the frame is drawn past its tick as well (`objects.pastTick`), so they move every frame, as the
+objects they watch do; the game moves them a tick at a time, which a display's frames fall between
+unevenly. `--no-smooth-motion` and `--original` move them on ticks.
+
 **Improvement:** view `0x1C`'s quarter turn is exact; the game's is 0.785398.
 
 This page leaves out the cockpit's model and its motion, the shake from hits (`hit_shake`, `0x588724`) and the other cutaways.

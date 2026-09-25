@@ -276,7 +276,7 @@ pub const Blast = struct {
 
     /// The ball's flicker drawn afresh: each vertex of the game's ball red at a random number to
     /// the fifth, its green `ball_green` of its red; each of its own vertices taking the colours of
-    /// those round it (`flickerAt`).
+    /// those round it (`shield.Grid.sample`).
     fn flicker(blast: *Blast, random: *libcmt.Rand) void {
         // Two numbers the game draws and drops.
         _ = random.rand();
@@ -287,8 +287,7 @@ pub const Blast = struct {
             colour.* = .{ red, red * ball_green, 0, 1 };
         }
         const grid = blast.shape().ball;
-        const fine = blast.shape().fine;
-        for (blast.ball_colours[0..grid.vertices()], 0..) |*colour, index| colour.* = flickerAt(&blast.ball_flicker, grid, fine, index);
+        for (blast.ball_colours[0..grid.vertices()], 0..) |*colour, index| colour.* = grid.sample(game_ball, &blast.ball_flicker, index);
         blast.flickered = true;
     }
 
@@ -550,38 +549,6 @@ fn brightness(done: f32) f32 {
     return 1 - (done - opened) / (faded - opened);
 }
 
-/// The colour of vertex `index` of the ball on `grid`, `fine` times as fine as the game's: the
-/// flicker of the game's vertices round it, each by how near it stands, as it lies between their
-/// bands and slices. On the game's own grid, a vertex takes its own.
-fn flickerAt(flicker: *const [game_ball_vertices][4]f32, grid: shield.Grid, fine: u16, index: usize) [4]f32 {
-    const f: f32 = @floatFromInt(fine);
-    const last = grid.vertices() - 1;
-    const band: f32 = if (index == 0) 0 else if (index == last) game_ball.down else @as(f32, @floatFromInt(1 + (index - 1) / grid.around)) / f;
-    const slice: f32 = if (index == 0 or index == last) 0 else @as(f32, @floatFromInt((index - 1) % grid.around)) / f;
-    const top: usize = @intFromFloat(@floor(band));
-    const left: usize = @intFromFloat(@floor(slice));
-    const down = band - @floor(band);
-    const across = slice - @floor(slice);
-    const upper = mix(flickerOf(flicker, top, left), flickerOf(flicker, top, left + 1), across);
-    const lower = mix(flickerOf(flicker, top + 1, left), flickerOf(flicker, top + 1, left + 1), across);
-    return mix(upper, lower, down);
-}
-
-/// The flicker of the game's ball at band `band` from its first pole and slice `slice`, the poles
-/// taking one for every slice.
-fn flickerOf(flicker: *const [game_ball_vertices][4]f32, band: usize, slice: usize) Colour {
-    if (band == 0) return flicker[0];
-    if (band >= game_ball.down) return flicker[game_ball_vertices - 1];
-    return flicker[game_ball.ring(band, slice)];
-}
-
-const Colour = @Vector(4, f32);
-
-/// `share` of the way from `a` to `b`.
-fn mix(a: Colour, b: Colour, share: f32) Colour {
-    return (b - a) * @as(Colour, @splat(share)) + a;
-}
-
 /// `uber_hemisphere_open` (`0x00473EA0`): lays the hemisphere of `shape` out `share` of the way
 /// open, of a unit radius, its pole at the origin and its bowl toward -Z: each ring `share` of a
 /// band of its grid further round from the pole than the last. Shut, it is a point.
@@ -679,24 +646,6 @@ test "Shape.fade" {
     try std.testing.expectApproxEqAbs(2.0 / 3.0, fuller.fade(fuller.hemisphere.ring(fuller.rings - 2, 0)), 1e-6);
     try std.testing.expectApproxEqAbs(1.0 / 3.0, fuller.fade(fuller.hemisphere.ring(fuller.rings - 1, 0)), 1e-6);
     try std.testing.expectEqual(0, fuller.fade(fuller.hemisphere.ring(fuller.rings, 0)));
-}
-
-test flickerAt {
-    var flicker: [game_ball_vertices][4]f32 = undefined;
-    for (&flicker, 0..) |*colour, n| colour.* = @splat(@floatFromInt(n));
-    // On the game's own grid, each vertex takes its own.
-    for (0..game_ball_vertices) |n| try std.testing.expectEqual(flicker[n], flickerAt(&flicker, game_ball, 1, n));
-    // On the finer grid, a vertex on one of the game's takes its; one between takes a share of each.
-    const fine = Shape.of(.fuller);
-    const on = fine.ball.ring(fine.fine, 0);
-    try std.testing.expectEqual(flicker[game_ball.ring(1, 0)], flickerAt(&flicker, fine.ball, fine.fine, on));
-    const between = flickerAt(&flicker, fine.ball, fine.fine, fine.ball.ring(fine.fine, 1));
-    const first = flicker[game_ball.ring(1, 0)][0];
-    const second = flicker[game_ball.ring(1, 1)][0];
-    try std.testing.expectApproxEqAbs(first + (second - first) / 3, between[0], 1e-5);
-    // The poles are the game's.
-    try std.testing.expectEqual(flicker[0], flickerAt(&flicker, fine.ball, fine.fine, 0));
-    try std.testing.expectEqual(flicker[game_ball_vertices - 1], flickerAt(&flicker, fine.ball, fine.fine, fine.ball.vertices() - 1));
 }
 
 test brightness {

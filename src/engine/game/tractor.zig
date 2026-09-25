@@ -253,14 +253,25 @@ const crest: f32 = 0.05;
 /// The bubble round what a tractor holds (`shield_bubble_object`, `0x0049E370`, "Shield mesh"): the
 /// shields' finest sphere with colours of its own, its texture laid on by each vertex's `x` and `y`,
 /// never culled.
+///
+/// **Improvement:** in the smooth shield style it is drawn on the shields' finer sphere, as a
+/// shield's bubble is up close, so its outline is round. Its glow is worked out on the game's
+/// sphere's vertices, and the finer sphere's take their colours from between them
+/// (`shield.Grid.sample`), so its waves run as the game's do. The original style, which
+/// `--original` sets, keeps the game's sphere.
 pub const Bubble = struct {
     object: srapiext.MeshObject,
     level: [1]srapiext.Level,
+    /// The grid of the sphere it is drawn on.
+    grid: shield.Grid,
+    /// Its glow on the game's sphere's vertices.
+    waves: [shield.game_grid.vertices()][4]f32 = @splat(@splat(0)),
     colours: [][4]f32,
     uv: [][2]f32,
 
     fn create(gpa: Allocator, shields: *const shield.Shields, scale: f32) Allocator.Error!*Bubble {
-        const mesh = &shields.meshes[0];
+        const sphere = shields.finest();
+        const mesh = sphere.mesh;
         const colours = try gpa.alloc([4]f32, mesh.positions.len);
         errdefer gpa.free(colours);
         @memset(colours, @splat(0));
@@ -271,6 +282,7 @@ pub const Bubble = struct {
         bubble.* = .{
             .object = undefined,
             .level = .{.{ .mesh = mesh, .until = std.math.inf(f32) }},
+            .grid = sphere.grid,
             .colours = colours,
             .uv = uv,
         };
@@ -296,10 +308,11 @@ pub const Bubble = struct {
     /// crests `brightness` of `crest`, from nothing to whole.
     fn glow(bubble: *Bubble, brightness: f32, time: f32) void {
         const bright = std.math.clamp(brightness, 0, 1);
-        for (bubble.colours, 0..) |*colour, vertex| {
+        for (&bubble.waves, 0..) |*colour, vertex| {
             const wave = @sin(@as(f32, @floatFromInt(vertex)) * wave_step + time * wave_rate);
             colour.* = .{ 0, (wave + 1) * bright * crest, 0, 1 };
         }
+        for (bubble.colours, 0..) |*colour, index| colour.* = bubble.grid.sample(shield.game_grid, &bubble.waves, index);
     }
 };
 
@@ -454,6 +467,9 @@ const bubble_turn: f32 = 0.5;
 /// first; holds the pod still and draws it to `pull_out` off its door, then in; closes its doors,
 /// heard (`doorclos`), as the beams, no longer aimed, the bubble and the light go out; and after a while has the pod
 /// aboard, gone from the mission. Should the pod be gone first, it closes its doors and gives up.
+///
+/// The pod is placed a tick at a time, so it steps even with smooth motion
+/// ([#269](https://github.com/vdmkenny/openreliant/issues/269)).
 ///
 /// Not ported: the mission's Scooped event ([#37](https://github.com/vdmkenny/openreliant/issues/37));
 /// a multiplayer game's wait for every player, as the beams are made and before the pod is gone
@@ -739,6 +755,7 @@ test Bubble {
     defer shields.deinit(gpa);
     const bubble = try Bubble.create(gpa, &shields.shields, 300);
     defer bubble.destroy(gpa);
+    try std.testing.expectEqual(shield.game_grid.vertices(), bubble.colours.len);
     // The finest sphere, as wide as asked, its texture laid on by each vertex's x and y.
     try std.testing.expectEqual(300, bubble.object.scale);
     const vertex = shields.shields.meshes[0].positions[4];
@@ -752,6 +769,18 @@ test Bubble {
     }
     bubble.glow(-1, 0.5);
     for (bubble.colours) |colour| try std.testing.expectEqual(0, colour[1]);
+
+    // In the smooth style it is drawn on the finer sphere, its waves as the game's: its poles glow
+    // as the game's do.
+    var smooth: shield.Shields = try .create(gpa, &shields.textures.table, .high, true, .smooth);
+    defer smooth.deinit(gpa);
+    const round = try Bubble.create(gpa, &smooth, 300);
+    defer round.destroy(gpa);
+    try std.testing.expect(round.colours.len > bubble.colours.len);
+    bubble.glow(1, 0.5);
+    round.glow(1, 0.5);
+    try std.testing.expectEqual(bubble.colours[0], round.colours[0]);
+    try std.testing.expectEqual(bubble.colours[bubble.colours.len - 1], round.colours[round.colours.len - 1]);
 }
 
 test scoopUp {

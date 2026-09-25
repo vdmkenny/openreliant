@@ -172,6 +172,12 @@ too.
   engine glow.
 - The port adds the tractors' beams, bubble and light to the scene as it draws the frame, where the
   ship and the pod are drawn, rather than as Scoop Up runs; the beams are aimed there too.
+- **Improvement:** in the smooth shield style ([Shields](effects.md#shields)) the bubble is drawn
+  on the shields' finer sphere of 48 slices by 40 bands, so its outline is round. Its glow is worked
+  out on the game's sphere's vertices, and the finer sphere's take their colours from between them,
+  so its waves run as the game's do. `--original` keeps the game's sphere.
+- The pod is placed a tick at a time as it is drawn in, so it steps even with smooth motion
+  ([#269](https://github.com/vdmkenny/openreliant/issues/269)).
 - **Fix:** `tractor_create` returns -1 with all five tractors in use, which Scoop Up then reads past
   the five with; the port has the ship take the pod in without beams, bubble or light.
 - **Fix:** odds of nothing at all divide by zero in the game; the port has the pilot rescued.
