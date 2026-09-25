@@ -9,6 +9,7 @@ const assert = std.debug.assert;
 
 const cdimage = @import("cdimage.zig");
 const block_size = cdimage.block_size;
+const layout = @import("layout.zig");
 
 /// ISO 9660 records every multi-byte integer twice: little-endian, then big-endian.
 pub fn BothEndian(comptime T: type) type {
@@ -233,10 +234,12 @@ pub const Volume = struct {
                 pos = std.mem.alignForward(usize, pos + 1, block_size);
                 continue;
             }
-            if (record_len < @sizeOf(DirectoryRecord) or bytes.len - pos < record_len) return error.CorruptDirectory;
-            const record: *const DirectoryRecord = @ptrCast(bytes[pos..][0..@sizeOf(DirectoryRecord)]);
-            if (@sizeOf(DirectoryRecord) + @as(usize, record.identifier_length) > record_len) return error.CorruptDirectory;
-            const identifier = bytes[pos + @sizeOf(DirectoryRecord) ..][0..record.identifier_length];
+            if (bytes.len - pos < record_len) return error.CorruptDirectory;
+            const record_bytes = bytes[pos..][0..record_len];
+            const record = layout.view(DirectoryRecord, record_bytes) catch return error.CorruptDirectory;
+            const name_bytes = record_bytes[@sizeOf(DirectoryRecord)..];
+            if (record.identifier_length > name_bytes.len) return error.CorruptDirectory;
+            const identifier = name_bytes[0..record.identifier_length];
             pos += record_len;
 
             if (std.mem.eql(u8, identifier, DirectoryRecord.self_identifier) or
@@ -344,7 +347,58 @@ test "BothEndian stores both byte orders" {
     try std.testing.expectEqual(@as(u32, 0x11223344), both.get());
 }
 
-/// Minimal in-memory disc builder for the tests below.
+/// Builds discs in memory, for the tests of code that reads them.
+pub const testing = struct {
+    /// When every test record says it was recorded.
+    const recorded_at: RecordingTime = .{ .years_since_1900 = 100, .month = 3, .day = 31, .hour = 12, .minute = 0, .second = 0, .gmt_offset = 0 };
+
+    /// The fixed part of the record of a file or directory at `extent`, with a name of
+    /// `identifier_length` bytes.
+    fn fixedPart(identifier_length: usize, extent: Extent, kind: Entry.Kind) DirectoryRecord {
+        var flags: FileFlags = @bitCast(@as(u8, 0));
+        flags.directory = kind == .directory;
+        return .{
+            .length = @intCast(std.mem.alignForward(usize, @sizeOf(DirectoryRecord) + identifier_length, 2)),
+            .extended_attribute_length = 0,
+            .extent = .init(extent.lba),
+            .data_length = .init(extent.len),
+            .recorded_at = recorded_at,
+            .flags = flags,
+            .file_unit_size = 0,
+            .interleave_gap_size = 0,
+            .volume_sequence_number = .init(1),
+            .identifier_length = @intCast(identifier_length),
+        };
+    }
+
+    /// Writes the record of a file or directory named `identifier` at `extent` into `block` at
+    /// `pos.*`, and moves `pos` past it.
+    pub fn writeRecord(block: *[block_size]u8, pos: *usize, identifier: []const u8, extent: Extent, kind: Entry.Kind) void {
+        const record = fixedPart(identifier.len, extent, kind);
+        @as(*DirectoryRecord, @ptrCast(block[pos.*..][0..@sizeOf(DirectoryRecord)])).* = record;
+        @memcpy(block[pos.* + @sizeOf(DirectoryRecord) ..][0..identifier.len], identifier);
+        pos.* += record.length;
+    }
+
+    /// Writes the volume descriptors into `blocks` from `VolumeDescriptor.first_lba` on: a primary
+    /// one labelled `label`, whose root directory is at `root`, then the set's terminator.
+    pub fn writeDescriptors(blocks: [][block_size]u8, label: []const u8, root: Extent) void {
+        const primary: *VolumeDescriptor = @ptrCast(blocks[VolumeDescriptor.first_lba][0..@sizeOf(VolumeDescriptor)]);
+        primary.type = .primary;
+        primary.standard_identifier = VolumeDescriptor.magic.*;
+        primary.version = 1;
+        @memset(&primary.volume_identifier, ' ');
+        @memcpy(primary.volume_identifier[0..label.len], label);
+        primary.logical_block_size = .init(block_size);
+        primary.root_directory = fixedPart(DirectoryRecord.self_identifier.len, root, .directory);
+
+        const terminator = &blocks[VolumeDescriptor.first_lba + 1];
+        terminator[0] = @intFromEnum(VolumeDescriptor.Type.set_terminator);
+        terminator[1..][0..VolumeDescriptor.magic.len].* = VolumeDescriptor.magic.*;
+    }
+};
+
+/// Minimal in-memory disc for the tests below.
 const TestDisc = struct {
     blocks: [block_count][block_size]u8 = @splat(@splat(0)),
 
@@ -354,58 +408,24 @@ const TestDisc = struct {
     const file_lba = 22;
     const file_contents = "hello from the disc";
 
-    fn writeRecord(block: *[block_size]u8, pos: *usize, identifier: []const u8, extent: Extent, flags: FileFlags) void {
-        const len = std.mem.alignForward(usize, @sizeOf(DirectoryRecord) + identifier.len, 2);
-        const record: *DirectoryRecord = @ptrCast(block[pos.*..][0..@sizeOf(DirectoryRecord)]);
-        record.* = .{
-            .length = @intCast(len),
-            .extended_attribute_length = 0,
-            .extent = .init(extent.lba),
-            .data_length = .init(extent.len),
-            .recorded_at = .{ .years_since_1900 = 100, .month = 3, .day = 31, .hour = 12, .minute = 0, .second = 0, .gmt_offset = 0 },
-            .flags = flags,
-            .file_unit_size = 0,
-            .interleave_gap_size = 0,
-            .volume_sequence_number = .init(1),
-            .identifier_length = @intCast(identifier.len),
-        };
-        @memcpy(block[pos.* + @sizeOf(DirectoryRecord) ..][0..identifier.len], identifier);
-        pos.* += len;
-    }
-
     fn init() TestDisc {
-        const file_flags: FileFlags = @bitCast(@as(u8, 0));
-        var dir_flags = file_flags;
-        dir_flags.directory = true;
         const root_extent: Extent = .{ .lba = root_lba, .len = block_size };
         const sub_extent: Extent = .{ .lba = sub_lba, .len = block_size };
+        const file_extent: Extent = .{ .lba = file_lba, .len = file_contents.len };
 
         var disc: TestDisc = .{};
+        testing.writeDescriptors(&disc.blocks, "SL_TEST", root_extent);
 
-        const primary: *VolumeDescriptor = @ptrCast(disc.blocks[16][0..@sizeOf(VolumeDescriptor)]);
-        primary.type = .primary;
-        primary.standard_identifier = VolumeDescriptor.magic.*;
-        primary.version = 1;
-        primary.volume_identifier = ("SL_TEST" ++ " " ** 25).*;
-        primary.logical_block_size = .init(block_size);
         var pos: usize = 0;
-        var root_record: [block_size]u8 = @splat(0);
-        writeRecord(&root_record, &pos, DirectoryRecord.self_identifier, root_extent, dir_flags);
-        primary.root_directory = @as(*const DirectoryRecord, @ptrCast(root_record[0..@sizeOf(DirectoryRecord)])).*;
-
-        disc.blocks[17][0] = @intFromEnum(VolumeDescriptor.Type.set_terminator);
-        disc.blocks[17][1..6].* = VolumeDescriptor.magic.*;
+        testing.writeRecord(&disc.blocks[root_lba], &pos, DirectoryRecord.self_identifier, root_extent, .directory);
+        testing.writeRecord(&disc.blocks[root_lba], &pos, DirectoryRecord.parent_identifier, root_extent, .directory);
+        testing.writeRecord(&disc.blocks[root_lba], &pos, "DATA", sub_extent, .directory);
+        testing.writeRecord(&disc.blocks[root_lba], &pos, "README.;1", file_extent, .file);
 
         pos = 0;
-        writeRecord(&disc.blocks[root_lba], &pos, DirectoryRecord.self_identifier, root_extent, dir_flags);
-        writeRecord(&disc.blocks[root_lba], &pos, DirectoryRecord.parent_identifier, root_extent, dir_flags);
-        writeRecord(&disc.blocks[root_lba], &pos, "DATA", sub_extent, dir_flags);
-        writeRecord(&disc.blocks[root_lba], &pos, "README.;1", .{ .lba = file_lba, .len = file_contents.len }, file_flags);
-
-        pos = 0;
-        writeRecord(&disc.blocks[sub_lba], &pos, DirectoryRecord.self_identifier, sub_extent, dir_flags);
-        writeRecord(&disc.blocks[sub_lba], &pos, DirectoryRecord.parent_identifier, root_extent, dir_flags);
-        writeRecord(&disc.blocks[sub_lba], &pos, "LANCER.EXE;1", .{ .lba = file_lba, .len = file_contents.len }, file_flags);
+        testing.writeRecord(&disc.blocks[sub_lba], &pos, DirectoryRecord.self_identifier, sub_extent, .directory);
+        testing.writeRecord(&disc.blocks[sub_lba], &pos, DirectoryRecord.parent_identifier, root_extent, .directory);
+        testing.writeRecord(&disc.blocks[sub_lba], &pos, "LANCER.EXE;1", file_extent, .file);
 
         @memcpy(disc.blocks[file_lba][0..file_contents.len], file_contents);
         return disc;
@@ -440,6 +460,25 @@ test "walk a volume" {
     var writer: std.Io.Writer = .fixed(&contents);
     try image.streamExtent(TestDisc.file_lba, contents.len, &writer);
     try std.testing.expectEqualStrings(TestDisc.file_contents, &contents);
+}
+
+test "corrupt records are refused" {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The root's third record, `DATA`, after the two records of one-byte names every directory
+    // opens with.
+    const data_at = 2 * std.mem.alignForward(usize, @sizeOf(DirectoryRecord) + 1, 2);
+    var long_name: TestDisc = .init();
+    long_name.blocks[TestDisc.root_lba][data_at + @offsetOf(DirectoryRecord, "identifier_length")] = 200;
+    var short: TestDisc = .init();
+    short.blocks[TestDisc.root_lba][data_at] = @sizeOf(DirectoryRecord) - 1;
+    for ([_]*const TestDisc{ &long_name, &short }) |disc| {
+        const image: cdimage.Image = try .init(.{ .memory = std.mem.asBytes(&disc.blocks) });
+        const volume: Volume = try .open(image);
+        try std.testing.expectError(error.CorruptDirectory, volume.readDirectory(arena, volume.root()));
+    }
 }
 
 test "not a filesystem" {
