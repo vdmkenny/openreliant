@@ -21,6 +21,7 @@ SDL comes from the [castholm/SDL](https://github.com/castholm/SDL) package, whic
 ```bash
 make play                                      # optimized, for the host, on game/install
 zig build -Doptimize=ReleaseFast               # zig-out/bin/openreliant
+zig build -Doptimize=ReleaseFast -Dstrip       # without debug information, as released
 zig build -Dtarget=x86_64-windows              # openreliant.exe
 zig build -Dtarget=x86_64-linux-gnu
 zig build -Dtarget=aarch64-macos               # Apple silicon, from any Zig

@@ -3,6 +3,9 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    // The releases leave the debug information out of the game, which on Linux the executable
+    // would otherwise carry, several times the size of its code.
+    const strip = b.option(bool, "strip", "Leave the debug information out of the game") orelse false;
 
     // The library: readers for the game's files and the port of the game itself, shared by the
     // game and every tool.
@@ -77,6 +80,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/openreliant/main.zig"),
             .target = target,
             .optimize = optimize,
+            .strip = strip,
             .imports = &.{
                 .{ .name = "openreliant", .module = lib },
                 .{ .name = "platform", .module = platform },
