@@ -12,10 +12,11 @@
 //! `0x00458AB0`, which is the one routine the build keeps of every routine that only returns 1, so
 //! a hull's emitter shows nothing.
 //!
-//! The port keeps no nodes, as none shows anything once made: it sounds a hull's hit, bursts a
-//! component's, and sounds a rock's. The game hangs a part no more than a hundred nodes, so a hull's
-//! part struck a hundred times no longer sounds; the port's sounds every time. A component's are
-//! never that many: kind 3 first clears the nodes of earlier hits nearby, and the oldest past ten.
+//! OpenReliant keeps no nodes, as none shows anything once made: it sounds a hull's hit, bursts a
+//! component's, and sounds a rock's. The game hangs a part no more than a hundred nodes, so a
+//! hull's part struck a hundred times no longer sounds; OpenReliant's sounds every time. A
+//! component's are never that many: kind 3 first clears the nodes of earlier hits nearby, and the
+//! oldest past ten.
 //!
 //! A rock's also throws a chunk of rock from the point struck (`explode.rocks.throw`).
 
@@ -51,8 +52,8 @@ pub const Kind = enum(i32) {
 /// there, along the face's normal.
 ///
 /// **Fix:** the game throws the chunk along the normal in the part's own frame, taken for a
-/// direction in the world's, so a chunk from a tumbling rock flies off any way. The port turns the
-/// normal into the world's.
+/// direction in the world's, so a chunk from a tumbling rock flies off any way. OpenReliant turns
+/// the normal into the world's.
 pub fn componentHit(world: gameobj.World, index: u16, crossing: objects.Crossing, kind: Kind) void {
     switch (kind) {
         .component => {
@@ -90,8 +91,6 @@ const burst_spread: Vector = .{ 0.25, 0.25, 0 };
 /// `shieldfx_create`'s kind 3: an emitter of `orange` hanging from the part at the point struck,
 /// facing out along the face's normal, bursts `burst_count` puffs.
 fn burst(world: gameobj.World, crossing: objects.Crossing) void {
-    const pool = world.particles orelse return;
-    const sending = world.sending() orelse return;
     var emitter: particles.Emitter = .{
         .life = burst_life,
         .born = world.clock.frame_start,
@@ -102,7 +101,7 @@ fn burst(world: gameobj.World, crossing: objects.Crossing) void {
         .speed_range = burst_speed_range,
         .template = &orange,
     };
-    pool.burst(&emitter, crossing.part.part().drawn(), burst_count, sending);
+    explode.burstWithin(world, &emitter, crossing.part.part().drawn(), burst_count);
 }
 
 /// How long the emitter lives, which a burst doesn't read.
@@ -111,7 +110,7 @@ const burst_life = 1000;
 /// A frame whose forward axis is `normal` (`shieldfx_create`): across it, `X` crossed with the
 /// normal, and up, that crossed with the normal again.
 ///
-/// **Fix:** the game's frame is not a number for a normal along `X`; the port takes the frame
+/// **Fix:** the game's frame is not a number for a normal along `X`; OpenReliant takes the frame
 /// `math.lookAt` gives that normal.
 fn outFrom(normal: Vector) math.Matrix {
     const forward = math.normalize(normal);
@@ -119,11 +118,7 @@ fn outFrom(normal: Vector) math.Matrix {
     if (!(math.length(side) > 1e-6)) return math.lookAt(forward);
     const across = math.normalize(side);
     const up = math.normalize(math.cross(across, forward));
-    return .{
-        up[0], across[0], forward[0],
-        up[1], across[1], forward[1],
-        up[2], across[2], forward[2],
-    };
+    return math.fromAxes(up, across, forward);
 }
 
 /// How long after a shot last sounded on the player's hull another does (`0x00593794`).
@@ -134,8 +129,8 @@ const player_hit_pause = 30;
 /// no more than once in `player_hit_pause` ticks.
 ///
 /// **Improvement:** the game plays `ARMOUR01` at the point struck in the part's own frame, taken
-/// for one in the world, so it is heard from near the world's origin; the port plays it where the
-/// shot struck.
+/// for one in the world, so it is heard from near the world's origin; OpenReliant plays it where
+/// the shot struck.
 pub fn hullHit(world: gameobj.World, index: u16, at: Vector) void {
     const hearing = world.hearing orelse return;
     const all = world.objects;
@@ -205,25 +200,18 @@ test componentHit {
     const flags = &mission.slot(index).object.flags;
     flags.shield_generator = true;
     componentHit(world, index, crossing, .component);
-    try std.testing.expectEqual(0, sent(&pool));
+    try std.testing.expectEqual(0, particles.testing.sent(&pool));
     // Without one, the hit bursts into twenty orange puffs, heading out along the face's normal.
     flags.shield_generator = false;
     componentHit(world, index, crossing, .component);
-    try std.testing.expectEqual(burst_count, sent(&pool));
+    try std.testing.expectEqual(burst_count, particles.testing.sent(&pool));
     for (pool.particles[0..burst_count]) |particle| {
         try std.testing.expectEqual(&orange, particle.template.?);
         try std.testing.expect(particle.velocity[2] < 0);
     }
     // A rock's leaves no puffs.
     componentHit(world, index, crossing, .rock);
-    try std.testing.expectEqual(burst_count, sent(&pool));
-}
-
-/// How many of the pool's particles are in use.
-fn sent(pool: *const particles.Pool) usize {
-    var count: usize = 0;
-    for (pool.particles) |particle| count += @intFromBool(particle.template != null);
-    return count;
+    try std.testing.expectEqual(burst_count, particles.testing.sent(&pool));
 }
 
 test outFrom {

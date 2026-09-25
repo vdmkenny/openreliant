@@ -34,6 +34,7 @@ const Export = struct { []const u8, type };
 pub const exported = [_]Export{
     // Mission records, which the engine uses in place.
     .{ "SectionEntry", dte.DirectoryEntry },
+    .{ "SectionFormats", dte.DirectoryEntry.Formats },
     .{ "MissionGlobal", dte.Global },
     .{ "MissionShip", dte.Ship },
     .{ "MissionShipFlags", dte.Ship.Flags },
@@ -179,6 +180,7 @@ pub const exported = [_]Export{
     .{ "ObjectEnds", engine.game.gameobj.GameObject.Ends },
     .{ "ObjectSide", engine.game.gameobj.Side(i32) },
     .{ "ObjectSlot", engine.game.gameobj.Slot },
+    .{ "ObjectVoice", engine.game.gameobj.Voice },
     .{ "NetworkFlags", engine.game.gameobj.NetworkFlags },
     .{ "GunMode", engine.game.gameobj.GunMode },
     .{ "Invulnerability", engine.game.gameobj.Invulnerability },
@@ -188,6 +190,7 @@ pub const exported = [_]Export{
     .{ "GunGroupSide", engine.game.guns.GroupSide },
     .{ "ObjectRoutine", engine.game.gameobj.Routine },
     .{ "ModelNode", engine.game.objects.Node },
+    .{ "NodeKind", engine.game.objects.Node.Kind },
     .{ "NodeFlags", engine.game.objects.Node.Flags },
     .{ "NodePose", engine.game.objects.Node.Pose },
     .{ "SurrenderFrame", engine.surrender.surrenderlib.srapiext.Frame },

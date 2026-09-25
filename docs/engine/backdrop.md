@@ -77,9 +77,9 @@ The sun's direction comes from the sun marker's orientation, or is `(1, -0.5, 0.
 
 The six flares are drawn on the overlay layer on the line through the sun and the middle of the view, at a multiple of the sun's offset from the middle: `sunflare2` at 0.5, `sunflare1` at 0.33, `sunflare3` at 0.2, `sunflare2` at -0.2, `sunflare3` at -0.6 and `sunflare4` at -0.5, each at size 1 and grey `f`, while `f` is above 0. They show in every view but the cockpit's ahead, and in that one too while the cockpit mode is the chase view and any of the sun shows (`camera_view`, `0x00539A34`; `cockpit_mode`, `0x00539A9C`). Each sorts as if at the near plane.
 
-### The port's sun
+### OpenReliant's sun
 
-**Improvement:** the port draws each of the sun's and the flares' textures again, eight times finer each way, from the rings it is made of ([`backdrop/rings.zig`](../../src/engine/game/backdrop/rings.zig)), so that they stay round and crisp however large they are drawn. The sprites keep the size the game's textures give them.
+**Improvement:** OpenReliant draws each of the sun's and the flares' textures again, eight times finer each way, from the rings it is made of ([`backdrop/rings.zig`](../../src/engine/game/backdrop/rings.zig)), so that they stay round and crisp however large they are drawn. The sprites keep the size the game's textures give them.
 
 - It finds the middle the texture is roundest about: of the points a quarter of a texel apart within two texels of its centre, the one about which the texels stray least from the mean of their ring.
 - It measures the rings eight to a texel, by how far out each texel's centre lies. Where every texel in a ring has one colour, over half a texel or more, the ring is flat. Elsewhere a ring takes the mean of the texels within half a texel of it.

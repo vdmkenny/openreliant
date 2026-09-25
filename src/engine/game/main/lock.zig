@@ -88,7 +88,7 @@ pub const Lock = struct {
     /// **Fix:** the game means to play a sound as the rings close (`stdsmp` 2), keeping its voice
     /// at `0x0057DFC0`, and to end it once they have; but nothing sets that voice to none first, so
     /// the sound never plays and the game ends the first voice every frame instead, cutting what
-    /// plays there. The port leaves the first voice alone, and the sound unplayed.
+    /// plays there. OpenReliant leaves the first voice alone, and the sound unplayed.
     ///
     /// Not ported: in a multiplayer game, the power-up a lock needs.
     pub fn frame(lock: *Lock, world: gameobj.World, ring: *missile_display.Ring) void {
@@ -126,7 +126,7 @@ pub const Lock = struct {
             .lost => {
                 lock.count += elapsed;
                 lock.ticks -= elapsed;
-                if (lock.count > 99) lock.phase = .idle;
+                if (lock.count >= idle_count) lock.phase = .idle;
                 return;
             },
         }
@@ -176,7 +176,8 @@ pub const Lock = struct {
     }
 };
 
-/// The locked tone's sample of `bank_stdsmp`, and how often it plays.
+/// The locked tone's sample of `bank_stdsmp`, and how often it plays (`hud_draw`, `0x00484511` and
+/// `0x0048450D`).
 const tone_sample = 0x15;
 const tone_plays = 2;
 
@@ -193,7 +194,8 @@ pub fn possible(world: gameobj.World, ring: *missile_display.Ring, target: aigen
     if (!ai.targetValid(all, target, .{})) return false;
     const ship = &all.slots[all.player].object;
     if (ship.flags.missiles_disabled) return false;
-    if (all.slots[@intCast(target.index)].object.side != .hostile) return false;
+    const aimed = target.slot() orelse return false;
+    if (all.slots[aimed].object.side != .hostile) return false;
     if (armed.type == .screamer) return false;
     const stats = all.missile_stats.of(armed.type) orelse return false;
     return missiles.inLockReach(stats, ai.aimedAt(all, target).position - ship.nextPosition(), ship.nextHeading());
@@ -205,7 +207,7 @@ pub fn guiding(all: *create.Objects) bool {
     var walk = all.missiles.walk();
     while (walk.next()) |index| {
         const missile = all.missiles.get(index) orelse continue;
-        if (missile.launcher == all.player and missile.target.index != -1) return true;
+        if (missile.launcher == all.player and missile.target.slot() != null) return true;
     }
     return false;
 }
@@ -273,35 +275,60 @@ pub const Rings = struct {
     /// three a degree a tick. They are drawn at 1.33, 1.11 and 1 times 0.7 of their size, drawing
     /// together over the last half second before the lock; and dark red, whitening over that half
     /// second, at 0.65 of the colour.
+    ///
+    /// **Improvement:** the game turns degrees into radians by 0.0174533 (`0x004DC71C`);
+    /// OpenReliant by `std.math.degreesToRadians`.
     pub fn draw(rings: *Rings, gpa: Allocator, scene: *srcore.Scene, lock: *const Lock, place: camera.Place, projection: srapi.Projection) Allocator.Error!void {
         if (lock.phase == .idle) return;
         const ticks: f32 = @floatFromInt(lock.ticks);
-        const angle = ticks * std.math.pi / 180.0;
-        const angles: [ring_count]f32 = if (lock.locked()) @splat(angle) else .{ @sin(angle * 1.5), @sin(angle * 2.5) * 0.6, angle };
-        const reach = projection.scale[0] * close_reach / @as(f32, @floatFromInt(projection.screen[0])) * @as(f32, @floatFromInt(idle_count - lock.count)) * 0.01;
+        const angle = std.math.degreesToRadians(ticks);
+        const angles: [ring_count]f32 = if (lock.locked()) @splat(angle) else .{ @sin(angle * ring_rates[0]), @sin(angle * ring_rates[1]) * second_ring_swing, angle };
+        const reach = projection.scale[0] * close_reach / @as(f32, @floatFromInt(projection.screen[0])) * @as(f32, @floatFromInt(idle_count - lock.count)) * count_share;
         const at = place.position + math.normalize(lock.point - place.position) * @as(Vector, @splat(reach));
         const whitening: f32 = if (lock.ticks < -(whitening_ticks - 1)) 0 else @min((ticks + whitening_ticks) / whitening_ticks, 1);
-        const shade = [3]f32{ 0.5 * (1 - whitening) + whitening, whitening, whitening };
-        const turn = @as(f32, @floatFromInt(lock.turn)) * std.math.pi / 180.0;
+        const shade = dark_red * @as(Colour, @splat(1 - whitening)) + white * @as(Colour, @splat(whitening));
+        const turn = std.math.degreesToRadians(@as(f32, @floatFromInt(lock.turn)));
         for (&rings.objects, &rings.colours, angles, ring_scales) |*object, *colours, spin, first_scale| {
             object.position = at;
             object.orientation = math.product(place.orientation, math.rotation(.z, turn + spin));
             var scale = first_scale;
             if (lock.ticks > -whitening_ticks) scale = if (lock.locked()) 0 else ticks * scale / -whitening_ticks;
-            object.scale = (scale + 1) * 0.7;
-            for (colours) |*corner| corner[0..3].* = .{ shade[0] * ring_shade, shade[1] * ring_shade, shade[2] * ring_shade };
+            object.scale = (scale + 1) * ring_size_share;
+            for (colours) |*corner| corner[0..3].* = shade * @as(Colour, @splat(ring_shade));
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = object }, .overlay);
         }
     }
 };
 
 /// How far out the rings stand once closed, for the view's scale across over the screen's width
-/// (`0x004DC948`); over how many ticks before the lock they draw together and whiten; how much
-/// more than 0.7 of their size they start at; and how bright they are.
+/// (`0x004DC948`); over how many ticks before the lock they draw together and whiten, which
+/// OpenReliant divides by where the game multiplies by 0.02 (`0x004DC940`) and -0.02
+/// (`0x004DC944`), an **Improvement**; how much
+/// more than `ring_size_share` of their size they start at (`0x00491BDA`, `0x00491BCB`); and how
+/// bright they are.
 const close_reach: f32 = 2560;
 const whitening_ticks: f32 = 50;
 const ring_scales = [Rings.ring_count]f32{ 0.328125, 0.109375, 0 };
 const ring_shade: f32 = 0.65;
+
+/// The share of their size the rings are drawn at (`0x004DC484`), and how far each point the count
+/// has run down from `idle_count` takes them, as a share of as far as they go (`0x004DC518`): one
+/// over `idle_count`, as the game rounds it.
+const ring_size_share: f32 = 0.7;
+const count_share: f32 = 0.01;
+
+/// How fast the first two rings swing to and fro before the lock, against the ticks (`0x004DC4E0`,
+/// `0x004DC59C`), and how far the second swings, in radians (`0x004DC94C`).
+const ring_rates = [2]f32{ 1.5, 2.5 };
+const second_ring_swing: f32 = 0.6;
+
+/// A ring's colour: red, green and blue.
+const Colour = @Vector(3, f32);
+
+/// The rings' colour before they whiten, and once they have (`hud_missile_lock`, `0x00491C7D` and
+/// `0x00491C90`).
+const dark_red: Colour = .{ 0.5, 0, 0 };
+const white: Colour = @splat(1);
 
 const testing = struct {
     /// An armed mission whose player aims at a hostile ship `ahead` along its nose, with its
@@ -392,4 +419,77 @@ test guiding {
     try std.testing.expect(!guiding(all));
     missiles.launch(stage.armed.mission.world(), stage.player, 1, stage.target());
     try std.testing.expect(guiding(all));
+}
+
+test "Lock.sound" {
+    const mss = @import("../../mss.zig");
+    const fat = @import("../../../formats/fat.zig");
+    var mixer: mss.Mixer = .init(22050);
+    var player: hog_snd.Sound = undefined;
+    player.init(mixer.driver(), 2, null);
+    const bytes = comptime hog_snd.testing.bank(tone_sample + 1);
+    player.stdsmp = try fat.Bank.parse(&bytes);
+    var lock: Lock = .{};
+
+    // No tone before the lock, nor once locked in any view but the one ahead.
+    lock.sound(&player, .cockpit);
+    try std.testing.expectEqual(null, lock.tone);
+    lock.phase = .locked;
+    lock.sound(&player, .cockpit_left);
+    try std.testing.expectEqual(null, lock.tone);
+    // Locked, from the view ahead, it plays on a voice held for it, and only once.
+    lock.sound(&player, .cockpit);
+    const voice = lock.tone.?;
+    try std.testing.expectEqual(1, player.voices[voice].held);
+    lock.sound(&player, .cockpit);
+    try std.testing.expectEqual(voice, lock.tone.?);
+    // Out of that view, its voice is let go.
+    lock.sound(&player, .chase);
+    try std.testing.expectEqual(null, lock.tone);
+    try std.testing.expectEqual(0, player.voices[voice].held);
+    // And likewise once the lock is lost.
+    lock.sound(&player, .cockpit);
+    try std.testing.expect(lock.tone != null);
+    lock.phase = .lost;
+    lock.sound(&player, .cockpit);
+    try std.testing.expectEqual(null, lock.tone);
+}
+
+test "Rings.draw" {
+    const gpa = std.testing.allocator;
+    const textures = try srtexture.testing.Textures.init(gpa, &.{"tarring"});
+    defer textures.deinit(gpa);
+    const rings = try Rings.create(gpa, &textures.table);
+    defer rings.destroy(gpa);
+    var scene: srcore.Scene = .{};
+    defer scene.deinit(gpa);
+    const projection: srapi.Projection = .init(640, 480, srapi.full_screen, .{ 0.6, 0.8 });
+    const place: camera.Place = .{};
+
+    // With no lock building, nothing is drawn.
+    var lock: Lock = .{ .point = .{ 0, 0, 1000 } };
+    try rings.draw(gpa, &scene, &lock, place, projection);
+    try std.testing.expectEqual(0, scene.layers.get(.overlay).items.len);
+
+    // Just begun, far from the lock: at the camera, apart in size, and dark red.
+    lock.phase = .closing;
+    lock.ticks = -200;
+    try rings.draw(gpa, &scene, &lock, place, projection);
+    try std.testing.expectEqual(Rings.ring_count, scene.layers.get(.overlay).items.len);
+    try std.testing.expectEqual(Vector{ 0, 0, 0 }, rings.objects[0].position);
+    for (rings.objects, ring_scales) |object, first_scale| {
+        try std.testing.expectApproxEqAbs((first_scale + 1) * ring_size_share, object.scale, 1e-6);
+    }
+    try std.testing.expectEqual([3]f32{ 0.5 * ring_shade, 0, 0 }, rings.colours[0][0][0..3].*);
+
+    // Locked, closed in: together at their size, white, and as far out as they go.
+    scene.clear();
+    lock.phase = .locked;
+    lock.ticks = 0;
+    lock.count = 0;
+    try rings.draw(gpa, &scene, &lock, place, projection);
+    for (rings.objects) |object| try std.testing.expectApproxEqAbs(ring_size_share, object.scale, 1e-6);
+    try std.testing.expectEqual(@as([3]f32, @splat(ring_shade)), rings.colours[2][3][0..3].*);
+    const out = projection.scale[0] * close_reach / 640;
+    try std.testing.expectApproxEqRel(out, rings.objects[1].position[2], 1e-5);
 }

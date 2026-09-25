@@ -21,6 +21,7 @@ const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
 const orders = @import("ai/orders.zig");
 const matmanager = @import("matmanager.zig");
+const particles = @import("particles.zig");
 const table = @import("table.zig");
 const xtrabits = @import("xtrabits.zig");
 const Clock = @import("main.zig").Clock;
@@ -71,8 +72,8 @@ pub const Kind = enum(u4) {
     pub const blasts = [_]Kind{ .blast_02, .blast_03, .blast_04 };
 };
 
-/// How a shockwave is set off: how far it spreads, over how long, drifting how far a tick, and whose
-/// it is.
+/// How a shockwave is set off: how far it spreads, over how long, drifting how far a tick, and
+/// whose it is.
 pub const Spec = struct {
     kind: Kind,
     size: f32,
@@ -92,8 +93,8 @@ pub const Shockwave = struct {
     object: srapiext.MeshObject,
     colours: [Roundness.round.corners()][4]f32,
     /// Where it is, how far through its life and how far it has spread at the frame's tick. The
-    /// game keeps the last in the ring's scale; the port draws the ring from these, further along
-    /// between the ticks (`Shockwaves.draw`).
+    /// game keeps the last in the ring's scale; OpenReliant draws the ring from these, further
+    /// along between the ticks (`Shockwaves.draw`).
     at: Vector,
     done: f32 = 0,
     reach: f32 = 0,
@@ -182,24 +183,24 @@ pub const Shockwave = struct {
         slot.orders[0].data = .{ .disrupted = .{ .ticks = @intFromFloat(strength * ticks), .push = push } };
     }
 
-    /// A torpedo's or a split's shockwave passing the player's ship shakes the view and damages each
-    /// quadrant (`harm`), unless the ship lists
-    /// components, is a stand-in, exploding or disabled, or another shockwave harmed it less than
-    /// `harm_pause` ticks ago. A shield's reserve takes it first: while the reserve holds, the
-    /// shield is spared, and once the reserve runs out the shield takes what the reserve held.
-    ///
-    /// **Improvement:** the game damages the player as if the attacker were object 16, whatever a
-    /// loop left in a register; the port names the shockwave's owner.
     /// What each quadrant takes as the shockwave passes, with `left` of its life to go: a
     /// torpedo's `torpedo_harm` of its size times `left`, a split's by its owner's type times the
     /// cube of `left`.
     fn harm(wave: *const Shockwave, all: *const create.Objects, left: f32) f32 {
         if (wave.kind != .split) return left * wave.size * torpedo_harm;
-        const owner: u32 = @intFromEnum(all.slots[wave.owner].object.type);
-        const scale = if (std.mem.indexOfScalar(u32, &lighter_splits, owner) != null) lighter_split_harm else split_harm;
+        const owner = all.slots[wave.owner].object.type;
+        const scale = if (std.mem.indexOfScalar(gameobj.Type, &lighter_splits, owner) != null) lighter_split_harm else split_harm;
         return left * wave.size * left * left * scale;
     }
 
+    /// A torpedo's or a split's shockwave passing the player's ship shakes the view and damages
+    /// each quadrant (`harm`), unless the ship lists components, is a stand-in, exploding or
+    /// disabled, or another shockwave harmed it less than `harm_pause` ticks ago. A shield's
+    /// reserve takes it first: while the reserve holds, the shield is spared, and once the reserve
+    /// runs out the shield takes what the reserve held.
+    ///
+    /// **Improvement:** the game damages the player as if the attacker were object 16, whatever a
+    /// loop left in a register; OpenReliant names the shockwave's owner.
     fn harmPlayer(wave: *const Shockwave, world: gameobj.World, done: f32, reach: f32) void {
         const all = world.objects;
         const object = &all.slots[all.player].object;
@@ -270,7 +271,7 @@ const torpedo_harm: f32 = 0.05;
 /// heavier for any other (`0x004DC958`).
 const split_harm: f32 = 0.015;
 const lighter_split_harm: f32 = 0.0045;
-const lighter_splits = [_]u32{ 0x36, 0x44, 0x45, 0x9B, 0xA8 };
+const lighter_splits = [_]gameobj.Type{ @enumFromInt(0x36), .darkreign, .stalag, @enumFromInt(0x9B), .boridin_breakaway };
 
 /// A Havoc's shockwave's push: its strength is 1.5 times what is left of its life, up to 1, and
 /// the ticks it disrupts a player's ship and another for at full strength (`0x004DC4E0`,
@@ -349,7 +350,7 @@ pub const Shockwaves = struct {
         const clock = world.clock;
         for (&waves.waves) |*slot| {
             const wave = &(slot.* orelse continue);
-            const done = @as(f32, @floatFromInt(clock.frame_start - wave.born)) / @as(f32, @floatFromInt(wave.life));
+            const done = particles.through(clock.frame_start, wave.born, wave.life);
             if (!(done < 1)) {
                 slot.* = null;
                 continue;
@@ -436,13 +437,13 @@ fn ringMesh(gpa: Allocator, image: *srtexture.Image, roundness: Roundness) Alloc
 pub const testing = struct {
     /// The shockwaves built over a table holding nothing but the rings' textures.
     pub const Built = struct {
-        textures: *@import("backdrop.zig").testing.Textures,
+        textures: *@import("../surrender/surrenderlib/srtexture.zig").testing.Textures,
         waves: Shockwaves,
 
         pub fn init(gpa: Allocator) !Built {
             var names: [std.enums.values(Ring).len][]const u8 = undefined;
             for (&names, std.enums.values(Ring)) |*name, ring| name.* = @tagName(ring);
-            const textures = try @import("backdrop.zig").testing.Textures.initNames(gpa, &names);
+            const textures = try @import("../surrender/surrenderlib/srtexture.zig").testing.Textures.init(gpa, &names);
             errdefer textures.deinit(gpa);
             return .{ .textures = textures, .waves = try .create(gpa, &textures.table, .round) };
         }
@@ -590,7 +591,7 @@ test "a torpedo's shockwave" {
     try std.testing.expectEqual(1000, shields.at(.aft).*);
     try std.testing.expectEqual(0, mission.player.shield_reserves.fore);
     try std.testing.expectApproxEqAbs(760, mission.player.shield_reserves.aft, 1e-3);
-    try std.testing.expectEqual(torpedo, slot.object.last_attacker);
+    try std.testing.expectEqual(torpedo, slot.object.last_attacker.index());
     try std.testing.expectEqual(2, mission.shake);
     try std.testing.expectEqual(20 + harm_pause, slot.object.shockwave_until);
 

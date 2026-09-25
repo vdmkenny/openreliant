@@ -13,6 +13,7 @@ const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
 const layout = @import("layout.zig");
+const refpack = @import("refpack.zig");
 const commands = @import("../engine/game/executor/commands.zig");
 const conditions = @import("../engine/vm/conditions.zig");
 const opcodes = @import("../engine/vm/opcodes.zig");
@@ -23,19 +24,6 @@ pub const section_count = 27;
 pub const write = @import("dte/write.zig");
 pub const assemble = @import("dte/assemble.zig");
 
-/// Writes an enum's tag name, or its number when the file carries a value this enum does not name.
-///
-/// The branch per named tag is generated at compile time and the open `_` case is handled
-/// explicitly, so there is no runtime lookup that can fail. Formatting with `{t}` would instead
-/// panic on any value the format uses but the enum omits, which is a category of data this project
-/// meets constantly.
-pub fn formatTag(comptime T: type, value: T, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-    return switch (value) {
-        _ => writer.print("{d}", .{@intFromEnum(value)}),
-        inline else => |tag| writer.writeAll(@tagName(tag)),
-    };
-}
-
 /// What each directory slot holds. Sections the loader reads but this module does not interpret
 /// keep their index as a name.
 pub const Section = enum(u8) {
@@ -44,7 +32,7 @@ pub const Section = enum(u8) {
     operands_a = 1,
     /// `u16` name offset and a `u32` value, read and written by script.
     globals = 2,
-    /// The flight groups: every ship, station and nav point the mission places.
+    /// The ships: every ship, station and nav point the mission places.
     ships = 3,
     /// Flight groups, stride `0x14`. Each starts with its object ID.
     flight_groups = 4,
@@ -79,9 +67,9 @@ pub const Section = enum(u8) {
     script_b = 18,
     unused_19 = 19,
     unused_20 = 20,
-    /// **OpenReliant's own:** the mission's name, as `OpenReliantName` keeps it. The game binds this
-    /// section into a local variable of its binder and reads nothing of it, and no shipped mission
-    /// has one.
+    /// **OpenReliant's own:** the mission's name, as `OpenReliantName` keeps it. The game binds
+    /// this section into a local variable of its binder and reads nothing of it, and no shipped
+    /// mission has one.
     openreliant_name = 21,
     operands_b = 22,
     unknown_23 = 23,
@@ -122,15 +110,43 @@ pub const DirectoryEntry = extern struct {
     /// Records in use, not the capacity reserved for them.
     count: u16,
     _unused: u8,
-    /// Four flags, in the low bits, which binding the mission notes where any section has them
-    /// (`mission_bind_section`); nothing reads them. Every entry of a shipped mission holds the
-    /// same: 15 in most, 7 in `mission191` and `mission271`, 3 in `mission801` and 1 in
-    /// `mission88`.
-    formats: u8,
+    formats: Formats,
     offset: u32,
 
     /// Sections the template reserves but this mission does not use.
     pub const unused_offset: u32 = 0xFFFF;
+
+    /// Four flags, in the low bits, which binding the mission notes where any section has them
+    /// (`mission_bind_section`); nothing reads them. Every entry of a shipped mission holds the
+    /// same: all four in most, the first three in `mission191` and `mission271`, the first two in
+    /// `mission801` and the first alone in `mission88`.
+    pub const Formats = packed struct(u8) {
+        first: bool = false,
+        second: bool = false,
+        third: bool = false,
+        fourth: bool = false,
+        /// Kept as the file has them, though no shipped mission sets them.
+        _unused: u4 = 0,
+
+        pub const all: Formats = .{ .first = true, .second = true, .third = true, .fourth = true };
+
+        /// These flags, with each that `other` sets set too, as binding notes them section by
+        /// section. The bits past the four are left as they are.
+        pub fn noting(formats: Formats, other: Formats) Formats {
+            return .{
+                .first = formats.first or other.first,
+                .second = formats.second or other.second,
+                .third = formats.third or other.third,
+                .fourth = formats.fourth or other.fourth,
+                ._unused = formats._unused,
+            };
+        }
+
+        /// The flags as the file holds them, for a listing.
+        pub fn byte(formats: Formats) u8 {
+            return @bitCast(formats);
+        }
+    };
 
     pub fn isUsed(entry: DirectoryEntry) bool {
         return entry.offset != unused_offset;
@@ -190,6 +206,21 @@ pub const Ship = extern struct {
     /// The `kind` of a waypoint: a point a flight group's Patrol Route flies through, in the order
     /// the mission lists them.
     pub const waypoint_kind: u16 = 0x3E5;
+
+    /// Its flight group, where it is in one.
+    pub fn flightGroup(ship: Ship) ?u8 {
+        return if (ship.flight_group == no_flight_group) null else ship.flight_group;
+    }
+
+    /// Whether it is the player's own record.
+    pub fn isPlayer(ship: Ship) bool {
+        return ship.iff == player_iff;
+    }
+
+    /// Whether it is a waypoint (`waypoint_kind`).
+    pub fn isWaypoint(ship: Ship) bool {
+        return ship.kind == waypoint_kind;
+    }
 
     pub const Flags = packed struct(u8) {
         /// Set when the engine raises the ship's Destroyed event, which it then raises no more.
@@ -254,12 +285,12 @@ pub const Part = extern struct {
 
     /// Byte offset of the part's entry block within the script section.
     pub fn start(part: Part) usize {
-        return @as(usize, part.offset) * 2;
+        return halfwords(part.offset);
     }
 
     /// Bytes the part spans.
     pub fn size(part: Part) usize {
-        return @as(usize, part.length) * 2;
+        return halfwords(part.length);
     }
 
     comptime {
@@ -371,14 +402,19 @@ pub const Trigger = extern struct {
         _,
 
         pub fn format(repeat: Repeat, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            return formatTag(Repeat, repeat, writer);
+            return layout.formatTag(Repeat, repeat, writer);
         }
     };
+
+    /// The component its event is on, or null for the subject itself (`whole_object`).
+    pub fn component(trigger: Trigger) ?u8 {
+        return if (trigger.qualifier == whole_object) null else trigger.qualifier;
+    }
 
     /// The block this trigger runs, as a byte offset into the script.
     pub fn block(trigger: Trigger) ?usize {
         if (trigger.link == Part.no_block) return null;
-        return @as(usize, trigger.link) * 2;
+        return halfwords(trigger.link);
     }
 
     comptime {
@@ -471,7 +507,7 @@ pub const Object = extern struct {
         _,
 
         pub fn format(kind: Kind, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            return formatTag(Kind, kind, writer);
+            return layout.formatTag(Kind, kind, writer);
         }
     };
 
@@ -503,8 +539,8 @@ pub const Object = extern struct {
     }
 };
 
-/// **OpenReliant's own:** a mission's name, which the port keeps in section `openreliant_name`, a
-/// section the game binds but never reads. The section's count is its size in bytes: this header,
+/// **OpenReliant's own:** a mission's name, which OpenReliant keeps in section `openreliant_name`,
+/// a section the game binds but never reads. The section's count is its size in bytes: this header,
 /// then `length` bytes of the name in UTF-8, then a NUL. A mission is complete without it, and the
 /// game plays one with it as it plays any other.
 pub const OpenReliantName = extern struct {
@@ -517,7 +553,7 @@ pub const OpenReliantName = extern struct {
     pub const current_version: u16 = 1;
 
     /// The name `section` holds, where it starts with a header of this kind and the name fits;
-    /// null for anything else, which the port leaves alone.
+    /// null for anything else, which OpenReliant leaves alone.
     pub fn read(section: []const u8) ?[]const u8 {
         if (section.len < @sizeOf(OpenReliantName)) return null;
         const header: *align(1) const OpenReliantName = @ptrCast(section[0..@sizeOf(OpenReliantName)]);
@@ -551,6 +587,11 @@ pub const FlightGroup = extern struct {
     pub const no_wing: u8 = 0xFF;
     pub const no_ship: u32 = 0xFFFFFFFF;
 
+    /// Where its ships start in the flight groups' list, where it has any.
+    pub fn firstShip(group: FlightGroup) ?u32 {
+        return if (group.first_ship == no_ship) null else group.first_ship;
+    }
+
     comptime {
         assert(@offsetOf(FlightGroup, "wing") == 0x08);
         assert(@offsetOf(FlightGroup, "ship_count") == 0x09);
@@ -563,9 +604,17 @@ pub const FlightGroup = extern struct {
 pub const Squad = extern struct {
     object_id: u16,
     _unknown_02: [6]u8,
-    /// Index of its first record in `squad_members`, or `0xFFFF` for none.
+    /// Index of its first record in `squad_members`, or `no_member`.
     first_member: u16,
     _unknown_0a: u16,
+
+    /// The `first_member` of a squad with none.
+    pub const no_member: u16 = 0xFFFF;
+
+    /// Its first record in `squad_members`, where it has one.
+    pub fn firstMember(squad: Squad) ?u16 {
+        return if (squad.first_member == no_member) null else squad.first_member;
+    }
 
     comptime {
         assert(@sizeOf(Squad) == 0x0C);
@@ -654,7 +703,7 @@ pub const Condition = enum(u8) {
     }
 
     pub fn format(condition: Condition, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        return formatTag(Condition, condition, writer);
+        return layout.formatTag(Condition, condition, writer);
     }
 };
 
@@ -698,8 +747,9 @@ pub const Opcode = enum(u8) {
     logical_and = 0x1F,
     logical_or = 0x20,
 
-    /// Calls Executor command `n`, [`engine/game/executor/commands.zig`](../engine/game/executor/commands.zig),
-    /// with its arguments popped off the stack. Its result is kept for `push_result`.
+    /// Calls Executor command `n`,
+    /// [`engine/game/executor/commands.zig`](../engine/game/executor/commands.zig), with its
+    /// arguments popped off the stack. Its result is kept for `push_result`.
     command = 0x21,
     /// Calls part `n` through the part table.
     call_part = 0x22,
@@ -806,12 +856,11 @@ pub const Opcode = enum(u8) {
 
     /// Opcodes the payload's handler table implements.
     pub fn isImplemented(opcode: Opcode) bool {
-        const value = @intFromEnum(opcode);
-        return (value >= 0x02 and value <= 0x07) or (value >= 0x14 and value <= 0x55);
+        return opcodes.find(@intFromEnum(opcode)) != null;
     }
 
     pub fn format(opcode: Opcode, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        return formatTag(Opcode, opcode, writer);
+        return layout.formatTag(Opcode, opcode, writer);
     }
 };
 
@@ -885,6 +934,11 @@ pub const ArmIterator = struct {
         threshold: u8,
         _unknown_3: u8,
     };
+
+    comptime {
+        assert(@sizeOf(Header) == 3);
+        assert(@sizeOf(Arm) == 4);
+    }
 
     pub fn next(iterator: *ArmIterator) ?usize {
         const header = layout.view(Header, iterator.operands) catch return null;
@@ -989,9 +1043,9 @@ pub fn instructionSize(code: []const u8, pos: usize) ?usize {
             // The byte counts itself, so a run of 1 is the byte alone.
             break :blk @max(operands[0], 1);
         },
-        else => if (info.opcode == @intFromEnum(Opcode.random_branch)) blk: {
-            if (operands.len < 3) return null;
-            break :blk 3 + 4 * @as(usize, operands[0]);
+        else => if (@as(Opcode, @enumFromInt(info.opcode)) == .random_branch) blk: {
+            const header = layout.view(ArmIterator.Header, operands) catch return null;
+            break :blk @sizeOf(ArmIterator.Header) + @sizeOf(ArmIterator.Arm) * @as(usize, header.count);
         } else info.operands,
     };
     if (pos + 1 + length > code.len) return null;
@@ -1165,18 +1219,19 @@ pub const Error = error{
     Compressed,
 };
 
+/// The bytes of `count` halfwords, as the script's offsets and lengths count them.
+fn halfwords(count: u16) usize {
+    return @as(usize, count) * @sizeOf(u16);
+}
+
 pub const Mission = struct {
     image: []const u8,
     directory: []align(1) const DirectoryEntry,
 
     pub fn parse(image: []const u8) Error!Mission {
-        if (image.len >= 2 and image[0] == 0x10 and image[1] == 0xFB) return error.Compressed;
-        const bytes = section_count * @sizeOf(DirectoryEntry);
-        if (image.len < bytes) return error.NotAMission;
-        return .{
-            .image = image,
-            .directory = @alignCast(std.mem.bytesAsSlice(DirectoryEntry, image[0..bytes])),
-        };
+        if (refpack.gameExpands(image)) return error.Compressed;
+        const directory = layout.array(DirectoryEntry, image, section_count) catch return error.NotAMission;
+        return .{ .image = image, .directory = directory };
     }
 
     pub fn entry(mission: Mission, section: Section) DirectoryEntry {
@@ -1184,7 +1239,7 @@ pub const Mission = struct {
         return if (index < mission.directory.len) mission.directory[index] else .{
             .count = 0,
             ._unused = 0,
-            .formats = 0,
+            .formats = .{},
             .offset = DirectoryEntry.unused_offset,
         };
     }
@@ -1193,19 +1248,13 @@ pub const Mission = struct {
     pub fn records(mission: Mission, comptime T: type, section: Section) Error![]align(1) const T {
         const slot = mission.entry(section);
         if (!slot.isUsed() or slot.count == 0) return &.{};
-        const bytes = @as(usize, slot.count) * @sizeOf(T);
-        if (slot.offset + bytes > mission.image.len) return error.Truncated;
-        return @alignCast(std.mem.bytesAsSlice(T, mission.image[slot.offset..][0..bytes]));
+        if (slot.offset > mission.image.len) return error.Truncated;
+        return layout.array(T, mission.image[slot.offset..], slot.count);
     }
 
-    /// The bytecode of section `script`.
-    /// The script bytecode. The directory counts this section in halfwords.
+    /// The script bytecode, which the directory counts in halfwords.
     pub fn script(mission: Mission) Error![]const u8 {
-        const slot = mission.entry(.script);
-        if (!slot.isUsed() or slot.count == 0) return &.{};
-        const bytes = @as(usize, slot.count) * 2;
-        if (slot.offset + bytes > mission.image.len) return error.Truncated;
-        return mission.image[slot.offset..][0..bytes];
+        return std.mem.sliceAsBytes(try mission.records(u16, .script));
     }
 
     /// The mission's name as OpenReliant keeps it in section `openreliant_name`; null for a mission
@@ -1229,7 +1278,7 @@ pub const Mission = struct {
     /// The player's own record, the first whose `iff` is `Ship.player_iff`; null for none.
     pub fn player(mission: Mission) Error!?Ship {
         for (try mission.ships()) |ship| {
-            if (ship.iff == Ship.player_iff) return ship;
+            if (ship.isPlayer()) return ship;
         }
         return null;
     }
@@ -1361,7 +1410,7 @@ test "directory and records line up" {
     for (directory) |*slot| slot.* = .{
         .count = 0,
         ._unused = 0,
-        .formats = 0,
+        .formats = .{},
         .offset = DirectoryEntry.unused_offset,
     };
 
@@ -1369,7 +1418,7 @@ test "directory and records line up" {
     directory[@intFromEnum(Section.strings)] = .{
         .count = 2,
         ._unused = 0,
-        .formats = 0xF,
+        .formats = .all,
         .offset = pool_at,
     };
     @memcpy(image[pool_at..][0..12], "Player_Ship\x00");
@@ -1378,7 +1427,7 @@ test "directory and records line up" {
     directory[@intFromEnum(Section.ships)] = .{
         .count = 1,
         ._unused = 0,
-        .formats = 0xF,
+        .formats = .all,
         .offset = ships_at,
     };
     const ship: *align(1) Ship = @ptrCast(image[ships_at..][0..@sizeOf(Ship)]);
@@ -1399,10 +1448,10 @@ test "directory and records line up" {
 
     // The player's own record is the one of the player's side.
     try std.testing.expectEqual(@as(u32, 3), (try mission.player()).?.object_id);
-    // Without OpenReliant's section, the mission has no name of the port's.
+    // Without OpenReliant's section, the mission has no name of OpenReliant's.
     try std.testing.expectEqual(null, mission.openReliantName());
     const name_at = 0x300;
-    directory[@intFromEnum(Section.openreliant_name)] = .{ .count = 8 + 12, ._unused = 0, .formats = 0xF, .offset = name_at };
+    directory[@intFromEnum(Section.openreliant_name)] = .{ .count = 8 + 12, ._unused = 0, .formats = .all, .offset = name_at };
     @as(*align(1) OpenReliantName, @ptrCast(image[name_at..][0..8])).* = .{ .length = 11 };
     @memcpy(image[name_at + 8 ..][0..12], "The Sandbox\x00");
     try std.testing.expectEqualStrings("The Sandbox", (try Mission.parse(&image)).openReliantName().?);
@@ -1440,8 +1489,9 @@ test "condition names cover the scriptable range" {
 }
 
 test "decodes a block down to its alignment padding" {
-    // The opening block of mission1: call, command, read a global, push a constant, compare, branch, call,
-    // jump, call, command, push a byte, return, then two bytes that pad the block to a multiple of four.
+    // The opening block of mission1: call, command, read a global, push a constant, compare,
+    // branch, call, jump, call, command, push a byte, return, then two bytes that pad the block to
+    // a multiple of four.
     const section = [_]u8{
         0x1C, 0x00, 0x22, 0x01, 0x21, 0x17, 0x27, 0x00, 0x28, 0x00, 0x02, 0x24, 0x00, 0x07,
         0x22, 0x15, 0x42, 0x00, 0x04, 0x22, 0x18, 0x21, 0x17, 0x32, 0x01, 0x43, 0x32, 0x01,
@@ -1482,6 +1532,43 @@ test "decodes an inline string and steps over it" {
     try std.testing.expectEqual(Opcode.push_constant, reader.next().?.opcode);
 }
 
+test "the records' none values" {
+    var ship = std.mem.zeroes(Ship);
+    ship.flight_group = Ship.no_flight_group;
+    ship.kind = Ship.waypoint_kind;
+    try std.testing.expectEqual(null, ship.flightGroup());
+    try std.testing.expect(ship.isWaypoint());
+    try std.testing.expect(!ship.isPlayer());
+    ship.flight_group = 3;
+    ship.iff = Ship.player_iff;
+    try std.testing.expectEqual(3, ship.flightGroup());
+    try std.testing.expect(ship.isPlayer());
+
+    var group = std.mem.zeroes(FlightGroup);
+    group.first_ship = FlightGroup.no_ship;
+    try std.testing.expectEqual(null, group.firstShip());
+    group.first_ship = 4;
+    try std.testing.expectEqual(4, group.firstShip());
+
+    var squad = std.mem.zeroes(Squad);
+    squad.first_member = Squad.no_member;
+    try std.testing.expectEqual(null, squad.firstMember());
+
+    var trigger = std.mem.zeroes(Trigger);
+    trigger.qualifier = Trigger.whole_object;
+    try std.testing.expectEqual(null, trigger.component());
+    trigger.qualifier = 2;
+    try std.testing.expectEqual(2, trigger.component());
+}
+
+test "DirectoryEntry.Formats" {
+    const first: DirectoryEntry.Formats = .{ .first = true, ._unused = 5 };
+    const noted = first.noting(.{ .third = true, ._unused = 0xF });
+    // The four flags gather; the bits past them stay as they were.
+    try std.testing.expectEqual(DirectoryEntry.Formats{ .first = true, .third = true, ._unused = 5 }, noted);
+    try std.testing.expectEqual(0x0F, DirectoryEntry.Formats.all.byte());
+}
+
 test "the implemented opcode range matches the payload's handler table" {
     try std.testing.expect(Opcode.equal.isImplemented());
     try std.testing.expect(Opcode.spawn_part.isImplemented());
@@ -1490,6 +1577,8 @@ test "the implemented opcode range matches the payload's handler table" {
     try std.testing.expect(!@as(Opcode, @enumFromInt(0x00)).isImplemented());
     try std.testing.expect(!@as(Opcode, @enumFromInt(0x10)).isImplemented());
     try std.testing.expect(!@as(Opcode, @enumFromInt(0x56)).isImplemented());
+    // Between the second command table and the random branch, the table holds no handler.
+    try std.testing.expect(!@as(Opcode, @enumFromInt(0x50)).isImplemented());
 }
 
 test "an unnamed value formats as a number instead of panicking" {
@@ -1580,12 +1669,12 @@ test "maps the script into trigger blocks and parts, with their constants" {
     for (directory) |*slot| slot.* = .{
         .count = 0,
         ._unused = 0,
-        .formats = 0,
+        .formats = .{},
         .offset = DirectoryEntry.unused_offset,
     };
     const place = struct {
         fn at(dir: []align(1) DirectoryEntry, section: Section, count: u16, offset: u32) void {
-            dir[@intFromEnum(section)] = .{ .count = count, ._unused = 0, .formats = 0xF, .offset = offset };
+            dir[@intFromEnum(section)] = .{ .count = count, ._unused = 0, .formats = .all, .offset = offset };
         }
     }.at;
 

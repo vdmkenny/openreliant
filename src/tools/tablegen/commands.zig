@@ -61,6 +61,10 @@ const Call = extern struct {
     displacement: i32 align(1),
 
     const encoding = 0xE8;
+
+    comptime {
+        assert(@sizeOf(Call) == 5);
+    }
 };
 
 /// `PUSH imm32`.
@@ -69,6 +73,10 @@ const Push = extern struct {
     value: u32 align(1),
 
     const encoding = 0x68;
+
+    comptime {
+        assert(@sizeOf(Push) == 5);
+    }
 };
 
 pub const Param = struct {

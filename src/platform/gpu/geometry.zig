@@ -6,6 +6,7 @@ const std = @import("std");
 const c = @import("sdl");
 
 const gpu = @import("../gpu.zig");
+const sdl = @import("../sdl.zig");
 const Error = gpu.Error;
 
 pub const Geometry = struct {
@@ -27,7 +28,7 @@ pub const Geometry = struct {
             slot.* = try make(handle, needed);
         }
         const geometry = slot.*.?;
-        const mapped: [*]u8 = @ptrCast(c.SDL_MapGPUTransferBuffer(handle, geometry.transfer, true) orelse return gpu.fail("SDL_MapGPUTransferBuffer"));
+        const mapped: [*]u8 = @ptrCast(c.SDL_MapGPUTransferBuffer(handle, geometry.transfer, true) orelse return sdl.fail("SDL_MapGPUTransferBuffer"));
         @memcpy(mapped[0..vertex_bytes], vertices);
         @memcpy(mapped[geometry.size..][0..index_bytes], indices);
         c.SDL_UnmapGPUTransferBuffer(handle, geometry.transfer);
@@ -39,11 +40,11 @@ pub const Geometry = struct {
     fn make(handle: *c.SDL_GPUDevice, needed: u32) Error!Geometry {
         const size = std.math.ceilPowerOfTwo(u32, @max(needed, 64 * 1024)) catch return error.OutOfMemory;
         const transfer_size = std.math.mul(u32, size, 2) catch return error.OutOfMemory;
-        const vertices = c.SDL_CreateGPUBuffer(handle, &.{ .usage = c.SDL_GPU_BUFFERUSAGE_VERTEX, .size = size }) orelse return gpu.fail("SDL_CreateGPUBuffer");
+        const vertices = c.SDL_CreateGPUBuffer(handle, &.{ .usage = c.SDL_GPU_BUFFERUSAGE_VERTEX, .size = size }) orelse return sdl.fail("SDL_CreateGPUBuffer");
         errdefer c.SDL_ReleaseGPUBuffer(handle, vertices);
-        const indices = c.SDL_CreateGPUBuffer(handle, &.{ .usage = c.SDL_GPU_BUFFERUSAGE_INDEX, .size = size }) orelse return gpu.fail("SDL_CreateGPUBuffer");
+        const indices = c.SDL_CreateGPUBuffer(handle, &.{ .usage = c.SDL_GPU_BUFFERUSAGE_INDEX, .size = size }) orelse return sdl.fail("SDL_CreateGPUBuffer");
         errdefer c.SDL_ReleaseGPUBuffer(handle, indices);
-        const transfer = c.SDL_CreateGPUTransferBuffer(handle, &.{ .usage = c.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, .size = transfer_size }) orelse return gpu.fail("SDL_CreateGPUTransferBuffer");
+        const transfer = c.SDL_CreateGPUTransferBuffer(handle, &.{ .usage = c.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, .size = transfer_size }) orelse return sdl.fail("SDL_CreateGPUTransferBuffer");
         return .{ .vertices = vertices, .indices = indices, .transfer = transfer, .size = size };
     }
 

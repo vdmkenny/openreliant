@@ -4,8 +4,9 @@
 //!
 //! The final blasts' sound, their bursts of flame and sparkle ([`particles.zig`](particles.zig)),
 //! their fireballs, burning bits and shockwaves ([`shockwave.zig`](shockwave.zig)), the break-up
-//! that cuts a ship's parts into pieces that fly apart ([`explode/breakup.zig`](explode/breakup.zig)),
-//! the capital ships' splits ([`explode/split.zig`](explode/split.zig)), the chunks of rock
+//! that cuts a ship's parts into pieces that fly apart
+//! ([`explode/breakup.zig`](explode/breakup.zig)), the capital ships' splits
+//! ([`explode/split.zig`](explode/split.zig)), the chunks of rock
 //! ([`explode/chunks.zig`](explode/chunks.zig)), the Uber Explode
 //! ([`explode/uber.zig`](explode/uber.zig)), the burning wrecks, and the point the camera watches a
 //! break-up from.
@@ -65,8 +66,8 @@ pub const Explosions = struct {
     /// The fireballs going off (`explosion_fireballs`, `0x00553398`), in as many slots as the
     /// settings give them.
     fireballs: [Fireballs.fuller.slots()]?Fireball = @splat(null),
-    /// The point view `0x1B` watches (`0x0055AD0C`), which the player's ship's break-up leaves where
-    /// the ship blew up; null until it has.
+    /// The point view `0x1B` watches (`0x0055AD0C`), which the player's ship's break-up leaves
+    /// where the ship blew up; null until it has.
     marker: ?Marker = null,
     /// The burning wrecks' red lights (`0x0055AD24`) and their smoke (`0x0055AD60`).
     burn_lights: [max_burn_lights]?BurnLight = @splat(null),
@@ -152,7 +153,7 @@ pub const Explosions = struct {
     pub fn frame(explosions: *Explosions, world: gameobj.World) void {
         explosions.uber.frame(world);
         const clock = world.clock;
-        if (explosions.marker) |*marker| marker.position += marker.drift * @as(Vector, @splat(@floatFromInt(@max(clock.frame_duration, 0))));
+        if (explosions.marker) |*marker| marker.position += marker.drift * @as(Vector, @splat(@floatFromInt(clock.frameTicks())));
         const ticks: f32 = @floatFromInt(clock.frame_start - explosions.moved_at);
         const seconds = ticks * Bit.per_tick;
         for (&explosions.bits.slots) |*slot| {
@@ -224,29 +225,26 @@ pub const Explosions = struct {
     fn burnLights(explosions: *Explosions, on: objects.PartOf, data: shp.PartData) void {
         for (data.point_lists) |list| {
             if (list.kind != .light or list.points.len == 0) continue;
-            const slot = for (&explosions.burn_lights) |*slot| {
-                if (slot.* == null) break slot;
-            } else return;
+            const slot = table.firstFree(BurnLight, &explosions.burn_lights) orelse return;
             slot.* = .{
                 .on = on,
                 .at = gameobj.vector(list.points[0].position),
-                .light = .{ .mask = 0, .intensity = 8, .colour = burn_colour, .kind = .{ .point = .{ .position = @splat(0), .range = burn_reach } } },
+                .light = .{ .mask = 0, .intensity = burn_intensity, .colour = burn_colour, .kind = .{ .point = .{ .position = @splat(0), .range = burn_reach } } },
             };
         }
     }
 
-    /// `part_streams` (`0x004715D0`) with the wreck's smoke: a stream from each point of each of the
-    /// part's lists of them, hanging from the part and leaving along the normal of the vertex the
-    /// point stands on, for good or for `burn_life` ticks, in the first free slots while there are.
+    /// `part_streams` (`0x004715D0`) with the wreck's smoke: a stream from each point of each of
+    /// the part's lists of them, hanging from the part and leaving along the normal of the vertex
+    /// the point stands on, for good or for `burn_life` ticks, in the first free slots while there
+    /// are.
     fn smoke(explosions: *Explosions, world: gameobj.World, on: objects.PartOf, data: shp.PartData, forever: bool) void {
         const levels = on.part.part().object.levels;
         const mesh = if (levels.len > 0) levels[0].mesh else null;
         for (data.point_lists) |list| {
             if (list.kind != .streams) continue;
             for (list.points) |point| {
-                const slot = for (&explosions.streams) |*slot| {
-                    if (slot.* == null) break slot;
-                } else return;
+                const slot = table.firstFree(Stream, &explosions.streams) orelse return;
                 const normal: Vector = if (mesh) |from| if (point.vertex < from.normals.len) from.normals[point.vertex] else @splat(0) else @splat(0);
                 slot.* = .{ .on = on, .emitter = .{
                     .life = if (forever) forever_life else burn_life,
@@ -263,11 +261,11 @@ pub const Explosions = struct {
     }
 
     /// The burning wrecks' part of `explosions_update`, `ticks` since the bits last moved on: each
-    /// stream sends its smoke out (`particles.Pool.stream`) and goes once its life is over, and each
-    /// light fades and goes once it is spent, flickering meanwhile.
+    /// stream sends its smoke out (`particles.Pool.stream`) and goes once its life is over, and
+    /// each light fades and goes once it is spent, flickering meanwhile.
     ///
     /// **Fix:** the game keeps a light or a stream hanging from its part's frame after the wreck is
-    /// gone; the port lets it go with the wreck.
+    /// gone; OpenReliant lets it go with the wreck.
     fn burnFrame(explosions: *Explosions, world: gameobj.World, ticks: f32) void {
         const all = world.objects;
         for (&explosions.streams) |*slot| {
@@ -276,9 +274,7 @@ pub const Explosions = struct {
                 slot.* = null;
                 continue;
             };
-            const pool = world.particles orelse continue;
-            const sending = world.sending() orelse continue;
-            if (!pool.stream(&stream.emitter, part.drawn(), sending)) slot.* = null;
+            if (!streamWithin(world, &stream.emitter, part.drawn())) slot.* = null;
         }
         for (&explosions.burn_lights) |*slot| {
             const burning = &(slot.* orelse continue);
@@ -292,16 +288,16 @@ pub const Explosions = struct {
                 slot.* = null;
                 continue;
             }
-            burning.light.intensity = 1 - world.random.fraction() * 0.5;
-            burning.light.kind.point.position = math.transform(place.orientation, burning.at) + place.position;
+            burning.light.intensity = 1 - world.random.fraction() * burn_flicker;
+            burning.light.kind.point.position = place.point(burning.at);
         }
     }
 
     /// `0x00471B20`, a stream's spark (`particles.Emitter.spark`): a small piece of debris thrown
-    /// out of `at` at `velocity` a second, in the place of the oldest bit, turning a random way each
-    /// frame, for -1 to 3 seconds. One whose flight is over before it starts is let go before it is
-    /// drawn, having still taken the oldest bit's place. A piece the game has no model for is not
-    /// thrown.
+    /// out of `at` at `velocity` a second, in the place of the oldest bit, turning a random way
+    /// each frame, for -1 to 3 seconds. One whose flight is over before it starts is let go before
+    /// it is drawn, having still taken the oldest bit's place. A piece the game has no model for is
+    /// not thrown.
     pub fn throwSpark(explosions: *Explosions, at: Vector, velocity: Vector, clock: *const Clock, random: *libcmt.Rand) void {
         const piece = explosions.debris.pick(Bit.spark_size, random) orelse return;
         explosions.addBit(piece, at, velocity, Bit.spark_flight.draw(random), clock, random);
@@ -340,7 +336,7 @@ pub const Explosions = struct {
 
 /// How the explosions are shown, which a mission's restart keeps.
 pub const Settings = struct {
-    /// The options' detail (`0x005D54E0`), which the port starts at high.
+    /// The options' detail (`0x005D54E0`), which OpenReliant starts at high.
     detail: Detail = .high,
     debris_lights: DebrisLights = .like_ships,
     fireballs: Fireballs = .fuller,
@@ -532,13 +528,17 @@ pub const Debris = struct {
         return .{ .levels = levels, .scale = (random.fraction() + 0.5) * size };
     }
 
-    /// The piece for a draw of `r`: the first below a quarter, the last below a half, and one of
-    /// the rest above.
+    /// The piece for a draw of `r`: the first below a quarter, the last below a half, and above,
+    /// one of the rest from the second on, by how far past a half it is times `piece_spread`.
     fn piece(debris: *const Debris, r: f32) *const Levels {
         if (r < 0.25) return &debris.pieces[0];
         if (r < 0.5) return &debris.pieces[count - 1];
-        return &debris.pieces[1 + @as(usize, @intFromFloat((r - 0.5) * 16))];
+        return &debris.pieces[1 + @as(usize, @intFromFloat((r - 0.5) * piece_spread))];
     }
+
+    /// How far a draw past a half steps through the pieces from the second (`0x004DC840`, which
+    /// the game holds negative and subtracts).
+    const piece_spread: f32 = 16;
 };
 
 /// A bit an explosion throws out (0x28 bytes): a piece of debris, lit, flying off and tumbling for
@@ -634,6 +634,14 @@ pub const Fireball = struct {
         bang: bool,
         _: u29 = 0,
 
+        /// The look of a fireball of `kind`, mirrored by the two lowest bits of `drawn`, a draw
+        /// of `rand` (`explosion_fireball`).
+        fn of(kind: Kind, drawn: u15) Look {
+            var look: Look = @bitCast(@as(u32, @as(u2, @truncate(drawn))));
+            look.bang = kind == .bang;
+            return look;
+        }
+
         /// The sheet's cell `at` as a sprite's span of it, mirrored as the look says.
         fn cell(look: Look, at: u32) [4]f32 {
             const span = gridCell(at, sheet_step, sheet_cell);
@@ -702,7 +710,7 @@ pub const Fireball = struct {
             .sheet => images.sheet,
         };
         set.surface.textures = .{ .{ .image = image }, .none };
-        const mirrors: u2 = @truncate(random.rand());
+        const look: Look = .of(spec.kind, random.rand());
         const sprite: srapiext.Sprite = .{ .offset = at, .half_size = .{ spec.size, spec.size }, .bias = -spec.size };
         return .{
             .sprite = .{ sprite, sprite },
@@ -719,7 +727,7 @@ pub const Fireball = struct {
             .born = clock.frame_start,
             .life = spec.life,
             .delay = spec.delay,
-            .look = .{ .mirror_u = mirrors & 1 != 0, .mirror_v = mirrors & 2 != 0, .bang = spec.kind == .bang },
+            .look = look,
             .lit = spec.lit,
             .special = spec.special,
             .style = style,
@@ -793,8 +801,8 @@ pub const Fireball = struct {
 /// Within this far of the camera an explosion is sure of a voice (`0x004DC4BC`, its square).
 const close: f32 = 20000;
 
-/// The voice class an explosion at `at` is heard on: sure of a voice close to the camera, one of the
-/// explosions' own further off.
+/// The voice class an explosion at `at` is heard on: sure of a voice close to the camera, one of
+/// the explosions' own further off.
 pub fn soundClass(world: gameobj.World, at: Vector) ?sound3d.Class {
     const hearing = world.hearing orelse return null;
     const offset = at - hearing.camera.position;
@@ -852,8 +860,22 @@ const Flames = struct {
 
 /// Sends `count` particles out of `emitter` at once, as the camera sees them.
 pub fn burstFrom(world: gameobj.World, emitter: *particles.Emitter, count: i32) void {
+    burstWithin(world, emitter, null, count);
+}
+
+/// Sends `count` particles out of `emitter` at once, where `parent` puts it, or where it stands
+/// where null, as the camera sees them (`particles.Pool.burst`), where the world has particles.
+pub fn burstWithin(world: gameobj.World, emitter: *particles.Emitter, parent: ?math.Place, count: i32) void {
     const pool = world.particles orelse return;
-    pool.burst(emitter, null, count, world.sending() orelse return);
+    pool.burst(emitter, parent, count, world.sending() orelse return);
+}
+
+/// Sends out what `emitter` streams over the frame, where `parent` puts it, as the camera sees it
+/// (`particles.Pool.stream`): whether the emitter still lives. Where the world has no particles or
+/// no camera, nothing goes out and it lives on.
+pub fn streamWithin(world: gameobj.World, emitter: *particles.Emitter, parent: ?math.Place) bool {
+    const pool = world.particles orelse return true;
+    return pool.stream(emitter, parent, world.sending() orelse return true);
 }
 
 /// A burst of `flame` from a ship at `at`, moving at `velocity`, spreading out mostly across the
@@ -960,8 +982,17 @@ const blast_bits: Scatter = .{ .count = 25, .throw = .{ .size = 0.4, .speed = 0.
 const small_blast_bits: Scatter = .{ .count = 5, .throw = .{ .size = 0.2, .speed = 0.1 } };
 const burst_bits: Scatter = .{ .count = 25, .throw = .{ .size = 0.2, .speed = 0.2 } };
 /// The flame a burst sends out, and a destroyed component: slow, carrying a quarter of the ship's
-/// velocity.
+/// velocity (`explode_burst`, `explode_component_lost`).
 const burst_flames: Flames = .{ .speed = 20, .speed_range = 5, .carried = .{ .share = 0.25 }, .count = 200 };
+/// The flame a blast sends out: fast and wide, carrying a quarter of the ship's velocity and up to
+/// as much again (`explode_blast`, `0x004DC3D4`).
+const blast_flames: Flames = .{ .speed = 200, .speed_range = 300, .carried = .{ .share_or_more = 0.25 }, .count = 400 };
+
+/// How much of the ship's velocity, a step's, a blast's sparkle and fireball carry on with, a
+/// tick's, and a missile's (`explode_blast`, `missile_explode`); and a burst's, which carry twice
+/// that (`explode_burst`).
+const blast_carried: f32 = 0.25;
+const burst_carried: f32 = 0.5;
 
 /// A blast sets a shockwave off one time in `blast_shockwave_odds`: `blast_shockwave_size` times
 /// the ship's radius across (`0x004DC520`), over `blast_shockwave_life` ticks and up to
@@ -987,7 +1018,7 @@ pub fn blast(world: gameobj.World, index: u16) void {
     };
     breakup.breakUp(world, index, .blast);
     scatter(world, at, if (small) small_blast_bits else blast_bits);
-    const emitted = flames(world, at, velocity, .{ .speed = 200, .speed_range = 300, .carried = .{ .share_or_more = 0.25 }, .count = 400 });
+    const emitted = flames(world, at, velocity, blast_flames);
     const random = world.random;
     if (random.rand() % blast_shockwave_odds == 0) {
         const life = @as(i32, random.rand() % blast_shockwave_life_range) + blast_shockwave_life;
@@ -1000,9 +1031,8 @@ pub fn blast(world: gameobj.World, index: u16) void {
             .owner = index,
         });
     }
-    const carried = 0.25;
-    sparkles(world, at, velocity, carried, .{});
-    fireballAt(world, at, .{ .size = slot.object.radius, .light = true, .velocity = velocity * @as(Vector, @splat(carried)) });
+    sparkles(world, at, velocity, blast_carried, .{});
+    fireballAt(world, at, .{ .size = slot.object.radius, .light = true, .velocity = velocity * @as(Vector, @splat(blast_carried)) });
     sound(world, at, soundClass(world, at) orelse return);
 }
 
@@ -1014,14 +1044,13 @@ const missile_fireball_life = 100;
 /// fireball from the sheet, both drifting on at a quarter of its velocity, and the first
 /// explosion's sound, heard among the explosions.
 pub fn missileBlast(world: gameobj.World, at: Vector, velocity: Vector, radius: f32) void {
-    const carried = 0.25;
-    sparkles(world, at, velocity, carried, missile_sparkles);
+    sparkles(world, at, velocity, blast_carried, missile_sparkles);
     fireballAt(world, at, .{
         .kind = .sheet,
         .size = radius * missile_fireball_size,
         .life = missile_fireball_life,
         .light = true,
-        .velocity = velocity * @as(Vector, @splat(carried)),
+        .velocity = velocity * @as(Vector, @splat(blast_carried)),
     });
     sound(world, at, .explosions);
 }
@@ -1042,18 +1071,17 @@ pub fn burst(world: gameobj.World, index: u16) void {
     breakup.breakUp(world, index, .burst);
     scatter(world, at, burst_bits);
     if (index == world.objects.player) if (world.explosions) |explosions| {
-        explosions.marker = .{ .position = at, .drift = velocity * @as(Vector, @splat(0.25)) };
+        explosions.marker = .{ .position = at, .drift = velocity * @as(Vector, @splat(objects.tick_share)) };
     };
     _ = flames(world, at, velocity, burst_flames);
-    const carried = 0.5;
-    sparkles(world, at, velocity, carried, .{});
+    sparkles(world, at, velocity, burst_carried, .{});
     const random = world.random;
     for (0..burst_fireballs) |_| {
         const out: Vector = .{ random.fraction() * radius * burst_spread, 0, 0 };
         const turn = random.fractionVector(@splat(std.math.tau));
         const place = math.transform(math.fromAngleVector(turn), out) + at;
         const delay: i32 = @intFromFloat(random.fraction() * burst_delay);
-        fireballAt(world, place, .{ .size = radius * burst_size, .light = true, .delay = delay, .velocity = velocity * @as(Vector, @splat(carried)) });
+        fireballAt(world, place, .{ .size = radius * burst_size, .light = true, .delay = delay, .velocity = velocity * @as(Vector, @splat(burst_carried)) });
     }
     sound(world, at, .explosions);
 }
@@ -1144,7 +1172,7 @@ pub fn loseHull(ctx: aigeneric.Context, index: u16) void {
         .kurgan, .antanov, .gurevich => true,
         else => false,
     };
-    if (object.last_attacker == all.player and credited) deathmatch.addKills(world.player, all, all.player, 1);
+    if (object.last_attacker.index() == all.player and credited) deathmatch.addKills(world.player, all, all.player, 1);
     ai.hullLost(ctx, index);
 }
 
@@ -1180,11 +1208,14 @@ const burn_ray_colour: [3]f32 = .{ 0.6, 1, 1 };
 const burn_life = 5000;
 const forever_life = 9_999_999;
 
-/// A burn light's red, how far it reaches, and how fast it fades, a tick (`0x004DC688`): it goes
-/// after 10000 ticks. Each frame it flickers between half its brightness and all of it.
+/// A burn light's red, how bright it is and how far it reaches (`part_burn_lights`), and how fast
+/// it fades, a tick (`0x004DC688`): it goes after 10000 ticks. Each frame it flickers down by up
+/// to `burn_flicker` of its brightness (`0x004DC408`).
 const burn_colour: [3]f32 = .{ 1, 0, 0 };
+const burn_intensity: f32 = 8;
 const burn_reach: f32 = 20000;
 const burn_fade_per_tick: f32 = 1e-4;
+const burn_flicker: f32 = 0.5;
 
 /// How a wreck's smoke leaves a point: along its vertex's normal, straying up to a quarter either
 /// way across, at 3 to 3.5 a tick (`part_streams`).
@@ -1214,9 +1245,9 @@ pub const Stream = struct {
 /// (`part_streams`, `0x004715D0`). Each light and stream takes the first free slot; none is made
 /// once they are all taken.
 ///
-/// **Fix:** the game leaves out the last pair of points, and a part with a single pair has no
-/// ray; the port runs a ray between every pair. The game stops with an assertion where the object
-/// has no part of the name; the port burns nothing.
+/// **Fix:** the game leaves out the last pair of points, and a part with a single pair has no ray;
+/// OpenReliant runs a ray between every pair. The game stops with an assertion where the object has
+/// no part of the name; OpenReliant burns nothing.
 pub fn burnPart(world: gameobj.World, index: u16, name: []const u8, how: Burn) void {
     const model = if (world.objects.slots[index].model) |*live| live else return;
     const ref = model.partNamed(name) orelse return;
@@ -1245,6 +1276,39 @@ pub fn burnPart(world: gameobj.World, index: u16, name: []const u8, how: Burn) v
 }
 
 const Texture = srapiext.Texture;
+
+test "Fireball.Look.of" {
+    // The two lowest bits of the draw mirror it, and the bang's kind plays the bang's frames.
+    const sheet: Fireball.Look = .of(.sheet, 0b110);
+    try std.testing.expect(!sheet.mirror_u and sheet.mirror_v and !sheet.bang);
+    const bang: Fireball.Look = .of(.bang, 0b101);
+    try std.testing.expect(bang.mirror_u and !bang.mirror_v and bang.bang);
+    try std.testing.expectEqual(0b101, @as(u32, @bitCast(bang)));
+}
+
+test burstWithin {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    var image: srtexture.Image = undefined;
+    var pool: particles.Pool = try .init(std.testing.allocator, 8, &image, .add);
+    defer pool.deinit();
+    var watching: @import("camera.zig").Camera = .{};
+    var world = mission.world();
+    // A particle is free once its life is before the frame, so none is before the first tick.
+    mission.clock.frame_start = 10;
+    var emitter: particles.Emitter = .{ .born = 10, .template = &sparkle, .place = .{ .position = .{ 0, 0, 10 } } };
+
+    // Without particles, nothing goes out, and a stream lives on.
+    burstWithin(world, &emitter, null, 2);
+    try std.testing.expect(streamWithin(world, &emitter, null));
+    // With them and a camera, a burst goes out where its parent puts the emitter.
+    world.particles = &pool;
+    world.camera = &watching;
+    burstWithin(world, &emitter, .{ .position = .{ 100, 0, 0 } }, 2);
+    try std.testing.expectEqual(2, particles.testing.sent(&pool));
+    try std.testing.expectEqual(Vector{ 100, 0, 10 }, pool.particles[0].at);
+}
 
 test "a special fireball plays the flak's cells" {
     // Three across and three down, a third apart, unmirrored.
@@ -1276,13 +1340,6 @@ pub const testing = struct {
             .bodies = @splat(.of(&levels, Debris.body_stretch)),
             .rock_chunks = @splat(.of(&levels, 1)),
         };
-    }
-
-    /// How many of the pool's particles are in use.
-    fn sent(pool: *const particles.Pool) usize {
-        var count: usize = 0;
-        for (pool.particles) |particle| count += @intFromBool(particle.template != null);
-        return count;
     }
 
     pub fn flying(explosions: *const Explosions) usize {
@@ -1443,14 +1500,14 @@ test loseHull {
 
     // The player's taking a Kurgan's hull is a kill; any ship so ends, its orders cleared.
     const kurgan = try mission.add(.kurgan, .{ 0, 0, 1000 });
-    mission.slot(kurgan).object.last_attacker = player;
+    mission.slot(kurgan).object.last_attacker = .of(player);
     loseHull(ctx, kurgan);
     try std.testing.expectEqual(1, mission.player.kills.count);
     try std.testing.expect(mission.slot(kurgan).object.flags.exploding);
 
     // A Badanov's is not.
     const badanov = try mission.add(.badanov, .{ 0, 0, 2000 });
-    mission.slot(badanov).object.last_attacker = player;
+    mission.slot(badanov).object.last_attacker = .of(player);
     loseHull(ctx, badanov);
     try std.testing.expectEqual(1, mission.player.kills.count);
     try std.testing.expect(mission.slot(badanov).object.flags.exploding);
@@ -1620,7 +1677,7 @@ test blast {
 
     // In view 5000 off, all 400 of the flame and all 150 of the sparkle, and the cloak dropped.
     blast(world, ship);
-    try std.testing.expectEqual(400 + 150, testing.sent(&pool));
+    try std.testing.expectEqual(400 + 150, particles.testing.sent(&pool));
     try std.testing.expect(!mission.objects.slots[ship].object.flags.cloaked);
     try std.testing.expectEqual(null, mission.objects.slots[ship].cloak);
     // And one lit fireball of the ship's size.
@@ -1632,7 +1689,7 @@ test blast {
     pool.reset();
     pool.settings.distant = .thinned;
     blast(world, ship);
-    try std.testing.expectEqual(400 + 112, testing.sent(&pool));
+    try std.testing.expectEqual(400 + 112, particles.testing.sent(&pool));
 }
 
 test "a bit may be a body" {
@@ -1718,7 +1775,7 @@ test Bit {
     try std.testing.expectEqual(Detail.low.bits(), testing.flying(explosions));
     try std.testing.expectEqual(1, explosions.bits.next);
 
-    // The port's keeps room for 4000, whatever the detail.
+    // OpenReliant's keeps room for 4000, whatever the detail.
     explosions.settings.bit_pool = .lasting;
     explosions.reset();
     explosions.debris = testing.debris(&mesh);

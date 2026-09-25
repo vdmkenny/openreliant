@@ -1,6 +1,6 @@
 //! `C:\lancer\surrender\surrenderlib\srAPIext.cpp`: Surrender's frames, the transforms of its scene
 //! graph, its meshes' materials, and the scene objects: meshes, sprite sets. The extern structs lay
-//! out the game's memory; the rest are the port's.
+//! out the game's memory; the rest are OpenReliant's.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -11,6 +11,7 @@ const Pointer = engine.Pointer;
 const shp = @import("../../../formats/shp.zig");
 const tcache = @import("../../../formats/tcache.zig");
 const math = @import("../math.zig");
+const srlight = @import("srlight.zig");
 const srtexture = @import("srtexture.zig");
 const Vector = math.Vector;
 
@@ -115,7 +116,8 @@ pub const Group = extern struct {
     }
 };
 
-// --- The port's scene objects --------------------------------------------------------------------
+// --- OpenReliant's scene objects
+// --------------------------------------------------------------------
 
 /// A scene object's kind (`+0x00`), which picks its pipeline in `sr_draw_layers`.
 pub const Kind = enum(u32) {
@@ -140,8 +142,8 @@ pub const ObjectFlags = packed struct(u32) {
     /// Always its finest level of detail.
     finest: bool = false,
     _unknown_4: bool = false,
-    /// A star field takes this frame as its last, so it draws no streaks (`backdrop_reset_streaks`);
-    /// `stars_project` clears it.
+    /// A star field takes this frame as its last, so it draws no streaks
+    /// (`backdrop_reset_streaks`); `stars_project` clears it.
     fresh: bool = false,
     _unknown_6: u2 = 0,
     /// Lit: its colour, the ambient lights and the rest (`mesh_light`).
@@ -190,16 +192,36 @@ pub const Texture = union(enum) {
     none,
     highlight: u3,
     image: *srtexture.Image,
+
+    /// The image, or none where there is none.
+    pub fn of(found: ?*srtexture.Image) Texture {
+        return if (found) |image| .{ .image = image } else .none;
+    }
 };
 
-/// What a run of a mesh's polygons, a set of sprites or a star field is drawn with, as the port
+/// What a run of a mesh's polygons, a set of sprites or a star field is drawn with, as OpenReliant
 /// holds it: the material as the game lays it out, less its images, which `textures` holds.
 pub const Surface = struct {
     /// For a mesh's run, how many polygons.
     polygons: u32 = 0,
     material: Material,
     textures: [2]Texture = .{ .none, .none },
+
+    /// A glowing sprite's: `image` added over what is behind it, lit by the sprite's own colour, as
+    /// the sun's sprites, the lights and the glows of the explosions and the missiles' trails are.
+    pub fn glow(image: ?*srtexture.Image) Surface {
+        return .{
+            .material = .onePass(.{ .coordinates = .mesh, .lit = true, .blend = .add }),
+            .textures = .{ .of(image), .none },
+        };
+    }
 };
+
+test "Surface.glow" {
+    const glowing: Surface = .glow(null);
+    try std.testing.expectEqual(Texture.none, glowing.textures[0]);
+    try std.testing.expectEqual(Material.Blend.add, glowing.material.blend[0]);
+}
 
 /// A polygon of a mesh (`mesh+0x38`): a run of the mesh's indices.
 pub const Polygon = struct {
@@ -227,6 +249,12 @@ pub const PolygonKind = enum(u16) {
 pub const Plane = struct {
     normal: Vector,
     distance: f32,
+
+    /// Whether `viewpoint`, in the polygon's frame, lies on its front side, which is the side the
+    /// normal points to, or on the plane (`mesh_cull`, `0x004C6280`).
+    pub fn faces(plane: Plane, viewpoint: Vector) bool {
+        return plane.distance <= math.dot(viewpoint, plane.normal);
+    }
 };
 
 /// A mesh (`mesh_create`, `0x004C4440`), as `mesh_build` makes it.
@@ -393,9 +421,11 @@ pub const MeshObject = struct {
     scale: f32 = 1,
     /// `+0xD0`: the finest level's radius.
     radius: f32,
-    /// `+0xD4`: all ones when created.
-    face_mask: u8 = 0xFF,
-    /// `+0xDC`: which lights reach it; all ones for none.
+    /// `+0xD4`: which of the faces' flags it heeds (`srmesh.showing`); `default_face_mask` when
+    /// created.
+    face_mask: u8 = default_face_mask,
+    /// `+0xDC`: the lights that don't reach it (`srlight.Light.reaches`); `srlight.no_lights` for
+    /// none at all.
     light_mask: u32 = 0,
     /// Red, green, blue and alpha (`+0xC4`, `+0xC8`, `+0xCC`, `+0xC0`); zero when created.
     colour: [4]f32 = @splat(0),
@@ -410,8 +440,8 @@ pub const MeshObject = struct {
     /// `+0xAC`: the portal that clips it, where its flags ask (`portal_clipped`); none clips
     /// nothing.
     portal: ?*const Portal = null,
-    /// The port's: its surfaces blended by alpha cast a shadow as strong as its colour's alpha, as
-    /// a cloaked part's see-through hull does (`srshadow`). Otherwise only its solid ones cast.
+    /// OpenReliant's: its surfaces blended by alpha cast a shadow as strong as its colour's alpha,
+    /// as a cloaked part's see-through hull does (`srshadow`). Otherwise only its solid ones cast.
     alpha_shadow: bool = false,
 
     /// The mesh of the level drawn, or of the coarsest where the level is past them; it has one
@@ -419,7 +449,29 @@ pub const MeshObject = struct {
     pub fn shown(object: *const MeshObject) *const Mesh {
         return object.levels[@min(object.level, object.levels.len - 1)].mesh;
     }
+
+    /// Where it stands in the world and which way it faces.
+    pub fn place(object: *const MeshObject) math.Place {
+        return .{ .position = object.position, .orientation = object.orientation };
+    }
+
+    /// Whether any light may reach it: none reaches an object whose light mask is all ones.
+    pub fn takesLights(object: *const MeshObject) bool {
+        return object.light_mask != srlight.no_lights;
+    }
 };
+
+/// The face mask a mesh object starts with (`mesh_object_create`): every flag heeded.
+pub const default_face_mask: u8 = 0xFF;
+
+test MeshObject {
+    var object: MeshObject = .{ .flags = .{}, .position = .{ 1, 2, 3 }, .radius = 1, .levels = &.{} };
+    try std.testing.expectEqual(default_face_mask, object.face_mask);
+    try std.testing.expect(object.takesLights());
+    object.light_mask = srlight.no_lights;
+    try std.testing.expect(!object.takesLights());
+    try std.testing.expectEqual(Vector{ 1, 2, 3 }, object.place().position);
+}
 
 /// `portal_create` (`0x004C50D0`) for a portal of no corners, a single plane (flag `0x100`): a
 /// plane through its place, facing along `normal` in its own frame, that clips the mesh objects
@@ -453,7 +505,7 @@ pub const Portal = struct {
         const normal = math.transform(portal.orientation, portal.normal);
         portal.view = .{
             .normal = math.transformTransposed(camera.orientation, normal),
-            .point = math.transformTransposed(camera.orientation, portal.position - camera.position),
+            .point = camera.inverse(portal.position),
         };
     }
 };
@@ -488,7 +540,7 @@ pub const Sprite = struct {
     uv: [4]f32 = .{ 0, 1, 0, 1 },
     /// Left out (the set's flags at `+0xC8`).
     hidden: bool = false,
-    /// The port's: how much of it shows, its colour and its alpha both scaled, which a fireball
+    /// OpenReliant's: how much of it shows, its colour and its alpha both scaled, which a fireball
     /// fades from one frame of its animation into the next by.
     fade: f32 = 1,
 };

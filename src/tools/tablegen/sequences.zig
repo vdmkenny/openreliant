@@ -10,17 +10,25 @@ const Io = std.Io;
 
 const image = @import("image.zig");
 const testing = @import("testing.zig");
+const zig_text = @import("zig_text.zig");
 
 /// The sequence table, and the address its walk stops at.
 pub const table: u32 = 0x004FFB50;
 pub const table_end: u32 = 0x00500230;
+
+/// How a split runs, as `sequences.zig` names the modes.
+pub const Mode = enum(u16) {
+    sweep = 0,
+    bursts = 1,
+    _,
+};
 
 /// A record as the payload lays it out.
 const Stored = extern struct {
     type: u32,
     other_half: u32,
     _unknown_08: u32,
-    mode: u16,
+    mode: Mode,
     _padding_0e: u16,
     fireball: f32,
     big_fireball: f32,
@@ -39,7 +47,7 @@ pub const Record = struct {
     type: u32,
     other_half: ?u32,
     _unknown_08: ?u32,
-    mode: u16,
+    mode: Mode,
     fireball: f32,
     big_fireball: f32,
     bit_size: f32,
@@ -58,7 +66,7 @@ pub fn read(arena: std.mem.Allocator, reader: image.Reader) (Error || std.mem.Al
     const count = (table_end - table) / @sizeOf(Stored);
     const records = try arena.alloc(Record, count);
     for (records, 0..) |*record, index| {
-        record.* = parse(try reader.record(Stored, table + @as(u32, @intCast(index)) * @sizeOf(Stored)));
+        record.* = parse(try reader.recordAt(Stored, table, index));
     }
     return records;
 }
@@ -134,7 +142,7 @@ pub fn emit(w: *Io.Writer, records: []const Record) Io.Writer.Error!void {
         try w.writeAll(", ._unknown_08 = ");
         try optionalType(w, record._unknown_08);
         try w.writeAll(", .mode = ");
-        try modeName(w, record.mode);
+        try zig_text.enumValue(w, record.mode);
         try w.print(", .fireball = {d}, .big_fireball = {d}, .bit_size = {d}, .bits = {d}, .bodies = {d}, .duration = {d}, .variants = {d} }},\n", .{
             record.fireball,
             record.big_fireball,
@@ -151,14 +159,6 @@ pub fn emit(w: *Io.Writer, records: []const Record) Io.Writer.Error!void {
     );
 }
 
-fn modeName(w: *Io.Writer, mode: u16) Io.Writer.Error!void {
-    switch (mode) {
-        0 => try w.writeAll(".sweep"),
-        1 => try w.writeAll(".bursts"),
-        else => try w.print("@enumFromInt({d})", .{mode}),
-    }
-}
-
 fn optionalType(w: *Io.Writer, value: ?u32) Io.Writer.Error!void {
     if (value) |number| try w.print("0x{X:0>2}", .{number}) else try w.writeAll("null");
 }
@@ -168,7 +168,7 @@ test parse {
         .type = 0x37,
         .other_half = 0x75,
         ._unknown_08 = none,
-        .mode = 0,
+        .mode = .sweep,
         ._padding_0e = 0,
         .fireball = 2300,
         .big_fireball = -1,
@@ -193,8 +193,8 @@ test read {
     defer allocator.free(bytes);
     @memset(bytes, 0);
     const region: testing.Region = .{ .va = table, .bytes = bytes };
-    region.putRecord(table, Stored{ .type = 0x21, .other_half = 0x5D, ._unknown_08 = none, .mode = 1, ._padding_0e = 0, .fireball = 500, .big_fireball = 5000, .bit_size = 0.3, .bits = 3, .bodies = 0, .duration = 100, .variants = 1 });
-    region.putRecord(table + @sizeOf(Stored), Stored{ .type = 0x1E, .other_half = none, ._unknown_08 = none, .mode = 1, ._padding_0e = 0, .fireball = 500, .big_fireball = -1, .bit_size = 0.3, .bits = 2, .bodies = 0, .duration = 100, .variants = 1 });
+    region.putRecord(table, Stored{ .type = 0x21, .other_half = 0x5D, ._unknown_08 = none, .mode = .bursts, ._padding_0e = 0, .fireball = 500, .big_fireball = 5000, .bit_size = 0.3, .bits = 3, .bodies = 0, .duration = 100, .variants = 1 });
+    region.putRecord(table + @sizeOf(Stored), Stored{ .type = 0x1E, .other_half = none, ._unknown_08 = none, .mode = .bursts, ._padding_0e = 0, .fireball = 500, .big_fireball = -1, .bit_size = 0.3, .bits = 2, .bodies = 0, .duration = 100, .variants = 1 });
 
     const payload = try testing.reader(allocator, &.{region});
     defer testing.freeReader(allocator, payload);
@@ -207,4 +207,7 @@ test read {
     defer out.deinit();
     try emit(&out.writer, records);
     try testing.expectZig(out.written());
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), ".{ .type = 0x21, .other_half = 0x5D, ._unknown_08 = null, .mode = .bursts,") != null);
+    // The empty records past the two are sweeps of type 0.
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), ".{ .type = 0x00, .other_half = 0x00, ._unknown_08 = 0x00, .mode = .sweep,") != null);
 }

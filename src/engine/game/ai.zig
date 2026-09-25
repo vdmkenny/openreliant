@@ -98,9 +98,7 @@ pub fn aimedAt(all: *const create.Objects, target: aigeneric.Target) Aimed {
 pub fn targetPart(all: *const create.Objects, target: aigeneric.Target) ?*const objects.Model.Part {
     const slot = &all.slots[@intCast(target.index)];
     const model = if (slot.model) |*model| model else return null;
-    if (target.component >= 0 and target.component < slot.components.len) {
-        if (slot.components[@intCast(target.component)]) |part| return part;
-    }
+    if (target.part()) |component| if (slot.component(component)) |part| return part;
     const child = slot.object.type.aimedChild() orelse return null;
     return model.rootChild(child);
 }
@@ -124,7 +122,7 @@ const lead_range: f32 = 0.25;
 /// fires together to hit it, from its root (`leadAimWithGun`).
 ///
 /// **Fix:** the game reads each gun's turret kind as its type, which leads every ship's shots as
-/// a Laser Cannon's; the port leads by the fastest gun's own type.
+/// a Laser Cannon's; OpenReliant leads by the fastest gun's own type.
 pub fn leadAim(all: *const create.Objects, index: u16, target: aigeneric.Target, lead: f32) ?Vector {
     const slot = &all.slots[index];
     var fastest: guns.GunType = .laser_cannon;
@@ -149,7 +147,7 @@ pub fn leadAim(all: *const create.Objects, index: u16, target: aigeneric.Target,
 /// A Turret Flak's shot is led within three times its gun's lifetime.
 ///
 /// **Fix:** the game takes the Laser Cannon's lifetime there, the table's first gun's, which leads
-/// flak past the life of its own shells; the port the flak's own.
+/// flak past the life of its own shells; OpenReliant the flak's own.
 pub fn leadAimWithGun(all: *const create.Objects, from: Vector, target: aigeneric.Target, gun: guns.GunType, lead: f32) ?Vector {
     const record = gun.stats(&all.gun_stats);
     const lifetime = @as(f32, @floatFromInt(record.lifetime)) * @as(f32, if (gun == .turret_flak) flak_lead else 1);
@@ -169,6 +167,23 @@ pub fn alongNose(place: math.Place, point: Vector, radius: f32) bool {
     return math.lengthSquared(offset) - along * along < radius * radius;
 }
 
+/// The cosine of the angle between `toward` and `nose`, a unit direction: their dot product over
+/// the length of `toward`, as the Fight order and its maneuvers work it out
+/// (`fight_choose_by_position`, `maneuver_steer_to_point`).
+///
+/// `noseCosine` normalizes first, which rounds differently, and some callers compare the dot
+/// product with the length times a cosine instead; each keeps the original's way.
+pub fn cosineOff(toward: Vector, nose: Vector) f32 {
+    return math.dot(toward, nose) / math.length(toward);
+}
+
+/// The cosine of the angle between `toward` and the nose of something turned as `orientation`:
+/// `toward` normalized, dotted with the nose, as the ejection's Sabre and Scoop Up work it out
+/// (`order_eject_fighter_attack`, `order_scoop_up`).
+pub fn noseCosine(orientation: math.Matrix, toward: Vector) f32 {
+    return math.dot(math.normalize(toward), math.forward(orientation));
+}
+
 /// How near a box of a hull has to be for `escapeDirection` to push away from it (`0x004DC444`).
 const escape_reach: f32 = 20000;
 
@@ -184,7 +199,7 @@ pub fn escapeDirection(slot: *const create.Slot, from: Vector) Vector {
     for (model.parts[0..count], source.parts[0..count]) |part, data| {
         if (part.removed) continue;
         for (data.nodes) |node| {
-            const toward = math.transform(part.object.orientation, gameobj.vector(node.centre)) + part.object.position - from;
+            const toward = part.drawn().point(gameobj.vector(node.centre)) - from;
             const gap = math.length(toward) - math.length(gameobj.vector(node.half_size));
             if (gap < escape_reach and gap > 0) away += math.normalize(toward) * @as(Vector, @splat(gap - escape_reach));
         }
@@ -244,9 +259,9 @@ pub fn hullLost(ctx: aigeneric.Context, index: u16) void {
 }
 
 /// `object_destroyed` (`0x00401F30`): a ship's end. An AI ship's pilot ejects where the ship is in
-/// the player's wing and its roll says so, or where the ship is told to eject before exploding, and the ship
-/// spins on under Eject Spin. The player's ejects, unless it already has or the blow was too
-/// heavy, or it is flying the Kamov, and its ship blows up later (`aieject.playerInit`).
+/// the player's wing and its roll says so, or where the ship is told to eject before exploding, and
+/// the ship spins on under Eject Spin. The player's ejects, unless it already has or the blow was
+/// too heavy, or it is flying the Kamov, and its ship blows up later (`aieject.playerInit`).
 /// Otherwise the ship explodes (`aiexplode`), in place of whatever it was doing: the stack is
 /// overwritten whether or not its order gives way, and the order's state is left for Explode's
 /// `init` to fill in. `may_spin` goes into the order's data.
@@ -368,12 +383,20 @@ test setTargetable {
 /// engines left, and, unless the camera is in view 13 or the object is invulnerable, by
 /// `armor_speed_factor` as well. So losing engines or armor slows a ship.
 ///
-/// The port takes the flight stats and the view rather than reaching them through the object and a
-/// global, since `GameObject` holds the binary's own 32-bit pointers.
+/// OpenReliant takes the flight stats and the view rather than reaching them through the object and
+/// a global, since `GameObject` holds the binary's own 32-bit pointers.
 pub fn cruiseSpeed(object: *const gameobj.GameObject, flight: *const create.FlightModel, view: camera.View) f32 {
     var speed = flight.max_speed * object.speed_factor * object.engines_intact;
     if (view != ._unknown_13 and object.invulnerable == .none) speed *= object.armor_speed_factor;
     return speed;
+}
+
+/// `cruiseSpeed` of the object in `slot`, where it has flight stats. The game reads them through
+/// the object, and every ship its orders fly has them; each caller says what a slot without them
+/// does.
+pub fn slotCruise(slot: *const create.Slot, view: camera.View) ?f32 {
+    const flight = slot.flight orelse return null;
+    return cruiseSpeed(&slot.object, flight, view);
 }
 
 test cruiseSpeed {
@@ -387,6 +410,13 @@ test cruiseSpeed {
     try std.testing.expectEqual(160, cruiseSpeed(&object, &gameobj.testing.flight, ._unknown_13));
     object.invulnerable = .player_can_hit;
     try std.testing.expectEqual(160, cruiseSpeed(&object, &gameobj.testing.flight, .chase));
+}
+
+test slotCruise {
+    var slot: create.Slot = .{ .object = gameobj.testing.object(), .flight = &gameobj.testing.flight };
+    try std.testing.expectEqual(320, slotCruise(&slot, .chase));
+    slot.flight = null;
+    try std.testing.expectEqual(null, slotCruise(&slot, .chase));
 }
 
 /// What `ai_steer` does besides turning toward its point, as the orders and the maneuvers ask for
@@ -404,11 +434,17 @@ pub const Steering = packed struct(u32) {
     _unknown_4: u28 = 0,
 };
 
+/// The steering's turn limit at its full, and no ease on the turn, which `steer` takes where it
+/// goes round something and most orders give it; and the throttle at its full.
+pub const full_limit: f32 = 1;
+pub const no_ease: f32 = 0;
+pub const full_throttle: f32 = 1;
+
 /// The turn that fills a steering input: an input reaches 1 at five degrees off, the angle in
 /// degrees over five (`0x004DC3FC`).
 ///
 /// **Improvement:** the game holds this rounded to 11.459155, one place in the last digit below
-/// the figure the port computes.
+/// the figure OpenReliant computes.
 const input_per_radian: f32 = std.math.deg_per_rad / 5.0;
 
 /// How much of the turn rate the steering takes off its input at no ease, which damps the turn as
@@ -454,7 +490,7 @@ pub fn steer(world: gameobj.World, index: u16, at: Vector, limit: f32, ease: f32
 /// the last step, since the orders run once a frame.
 ///
 /// **Improvement:** the angles come from `std.math.atan2` rather than the engine's table
-/// (`sr_atan2`), as they do elsewhere in the port.
+/// (`sr_atan2`), as they do elsewhere in OpenReliant.
 pub fn turn(slot: *create.Slot, at: Vector, limit_given: f32, ease_given: f32, flags_given: Steering, frame_duration: i32, avoided: bool) void {
     const object = &slot.object;
     // A ship with no flight stats would follow a null pointer here, so it steers nowhere instead.
@@ -463,16 +499,14 @@ pub fn turn(slot: *create.Slot, at: Vector, limit_given: f32, ease_given: f32, f
     var ease = ease_given;
     var limit = limit_given;
     if (avoided) {
-        limit = 1;
-        ease = 0;
+        limit = full_limit;
+        ease = no_ease;
         flags.pitch_up = false;
     }
     const held = limit;
 
-    object.pitch_input = 0;
-    object.yaw_input = 0;
-    object.roll_input = 0;
-    const direction = math.transformTransposed(slot.drawn.orientation, at - slot.drawn.position);
+    object.holdTurns();
+    const direction = slot.drawn.inverse(at);
     if (@as(u16, @truncate(flight._unknown_24)) == 0) {
         steerAngles(object, direction, slot.motion == .backward, flags);
     } else {
@@ -526,7 +560,7 @@ pub fn avoidNear(world: gameobj.World, index: u16, point: *Vector) bool {
     var avoided = false;
     for (ship.avoid_near.list()) |listed| {
         const object = &all.slots[@intCast(listed)].object;
-        if (object.flags.stand_in or object.flags.exploding or object.flags.disabled) continue;
+        if (object.flags.outOfSearch()) continue;
         const apart = object.nextPosition() - from;
         if (math.dot(apart, heading) < -(object.radius + ship.radius)) continue;
         const closing = gameobj.vector(object.velocity) - gameobj.vector(ship.velocity);
@@ -534,17 +568,20 @@ pub fn avoidNear(world: gameobj.World, index: u16, point: *Vector) bool {
         const steps = (math.length(apart) - ship.radius - object.radius) / math.length(closing);
         if (!(steps <= near_steps)) continue;
 
-        const centre = object.nextPosition() + gameobj.vector(object.velocity) * @as(Vector, @splat(steps));
-        const turned = object.root.next_orientation;
+        // Where the object will be then, as it will then be turned.
+        const met: math.Place = .{
+            .position = object.nextPosition() + gameobj.vector(object.velocity) * @as(Vector, @splat(steps)),
+            .orientation = object.root.next_orientation,
+        };
         const scale: Vector = @splat(object.visibility);
         const widen: Vector = @splat(ship.radius);
         var box: [2]Vector = .{ gameobj.vector(object.bounds_min) - widen, gameobj.vector(object.bounds_max) + widen };
-        const start = math.transformTransposed(turned, from - centre) * scale;
-        const end = math.transformTransposed(turned, point.* - centre) * scale;
+        const start = met.inverse(from) * scale;
+        const end = met.inverse(point.*) * scale;
         const share = objects.boxEntry(start, end, box) orelse continue;
-        const entry = start + (end - start) * @as(Vector, @splat(share));
+        const entry = math.lerp(start, end, share);
         box = .{ box[0] - widen, box[1] + widen };
-        point.* = math.transform(turned, roundBox(box, entry, end) * scale) + centre;
+        point.* = met.point(roundBox(box, entry, end) * scale);
         avoided = true;
     }
     return avoided;
@@ -609,8 +646,8 @@ pub fn avoidAhead(world: gameobj.World, index: u16, point: *Vector) bool {
     const ship = &slot.object;
     if (ship.flags.components or ship.flags.no_avoidance) return false;
     const flight = slot.flight orelse return false;
-    const from = ship.nextPosition();
-    const orientation = ship.root.next_orientation;
+    const next = ship.placeAt(.next);
+    const from = next.position;
     var avoided = false;
     for (ship.avoid_ahead.list()) |listed| {
         const object = &all.slots[@intCast(listed)].object;
@@ -624,8 +661,8 @@ pub fn avoidAhead(world: gameobj.World, index: u16, point: *Vector) bool {
         const berth = ahead_berth[other_side];
         if (!(math.lengthSquared(toward * @as(Vector, @splat(share)) - to_ahead) < berth * berth)) continue;
         const rise = object.radius + ship.radius + ahead_rise[other_side];
-        const below = math.transformTransposed(orientation, from - ahead)[1] < 0;
-        point.* = math.transform(orientation, .{ 0, if (below) -rise else rise, math.distance(from, ahead) }) + from;
+        const below = math.transformTransposed(next.orientation, from - ahead)[1] < 0;
+        point.* = next.point(.{ 0, if (below) -rise else rise, math.distance(from, ahead) });
         avoided = true;
     }
     return avoided;
@@ -684,10 +721,7 @@ fn rollToward(object: *GameObject, at: Vector, axis: Vector) void {
 pub fn stop(object: *GameObject) void {
     object.velocity = .{ .x = 0, .y = 0, .z = 0 };
     object.rotation = math.identity;
-    object.throttle = 0;
-    object.yaw_input = 0;
-    object.pitch_input = 0;
-    object.roll_input = 0;
+    object.letGo();
     object.lateral_input = 0;
     object.speed = 0;
     object.yaw_rate = 0;
@@ -709,15 +743,15 @@ pub const target_barred: GameObject.Flags = .{
 /// must be one the object has and neither hidden nor spent (`objects.Model.Part.standing`).
 /// **Unverified:** it lies before this file's known code.
 pub fn targetValid(all: *const create.Objects, target: aigeneric.Target, allowed: GameObject.Flags) bool {
-    if (target.index < 0 or target.index >= all.slots.len) return false;
-    const slot = &all.slots[@intCast(target.index)];
+    // The game reads the index as a ship's slot, whatever the target's kind.
+    const index = target.slot() orelse return false;
+    if (index >= all.slots.len) return false;
+    const slot = &all.slots[index];
     const object = &slot.object;
     if (!object.flags.targetable) return false;
-    const barred = @as(u32, @bitCast(object.flags)) & ~@as(u32, @bitCast(allowed)) & @as(u32, @bitCast(target_barred));
-    if (barred != 0) return false;
-    if (target.component < 0) return true;
-    if (target.component >= object.component_count) return false;
-    const part = slot.components[@intCast(target.component)] orelse return false;
+    if (object.flags.without(allowed).within(target_barred).any()) return false;
+    const component = target.part() orelse return true;
+    const part = slot.component(component) orelse return false;
     return part.standing();
 }
 
@@ -826,6 +860,43 @@ test alongNose {
     try std.testing.expect(!alongNose(place, .{ 50, 0, 1000 }, 10));
 }
 
+test cosineOff {
+    // Dead ahead, square across and straight behind.
+    try std.testing.expectEqual(1, cosineOff(.{ 0, 0, 20 }, .{ 0, 0, 1 }));
+    try std.testing.expectEqual(0, cosineOff(.{ 20, 0, 0 }, .{ 0, 0, 1 }));
+    try std.testing.expectEqual(-1, cosineOff(.{ 0, 0, -5 }, .{ 0, 0, 1 }));
+    try std.testing.expectApproxEqAbs(0.6, cosineOff(.{ 4, 0, 3 }, .{ 0, 0, 1 }), 1e-6);
+}
+
+test noseCosine {
+    // Turned a quarter about Y, the nose points along X.
+    const turned = math.rotation(.y, std.math.pi / 2.0);
+    try std.testing.expectApproxEqAbs(1, noseCosine(turned, .{ 30, 0, 0 }), 1e-6);
+    try std.testing.expectApproxEqAbs(0.8, noseCosine(math.identity, .{ 3, 0, 4 }), 1e-6);
+}
+
+test escapeDirection {
+    const gpa = std.testing.allocator;
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(gpa);
+    defer mission.deinit();
+    var hull: create.testing.Model = undefined;
+    try hull.init(gpa);
+    defer hull.deinit(gpa);
+    hull.withHull();
+    const index = try create.createObject(mission.objects, &mission.tables, hull.types(), null, .reaper, 0, @splat(0), &mission.random);
+    const slot = mission.slot(index);
+    slot.model.?.place(slot.drawn.position, slot.drawn.orientation);
+
+    // Near the hull's box, the way out is straight away from it.
+    const out = escapeDirection(slot, .{ 0, 0, 5000 });
+    try std.testing.expectApproxEqAbs(1, out[2], 1e-6);
+    try std.testing.expectApproxEqAbs(0, out[0], 1e-6);
+    // Beyond `escape_reach` nothing pushes, and the way out is what `math.normalize` makes of
+    // nothing.
+    try std.testing.expectEqual(math.normalize(@splat(0)), escapeDirection(slot, .{ 0, 0, 2 * escape_reach }));
+}
+
 test "aiming at a target" {
     var mission: gameobj.testing.Mission = undefined;
     try mission.init(std.testing.allocator);
@@ -836,7 +907,7 @@ test "aiming at a target" {
     const struck = &all.slots[target];
     struck.drawn = .{ .position = .{ 0, 0, 1000 }, .orientation = math.rotation(.y, std.math.pi / 2.0) };
     struck.object.speed = 10;
-    const aimed: aigeneric.Target = .{ .kind = .ship, .index = @intCast(target), .component = -1 };
+    const aimed: aigeneric.Target = .at(target, null);
     try std.testing.expectEqual(Vector{ 0, 0, 1000 }, aimedAt(all, aimed).position);
 
     // With no gun fast enough to reach it in a quarter of its life, it isn't led.

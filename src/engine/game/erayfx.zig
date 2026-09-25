@@ -22,6 +22,7 @@ const Objects = @import("create.zig").Objects;
 const gameobj = @import("gameobj.zig");
 const matmanager = @import("matmanager.zig");
 const objects = @import("objects.zig");
+const table = @import("table.zig");
 const xtrabits = @import("xtrabits.zig");
 
 /// How many rays there is room for (`0x005531B0`).
@@ -125,7 +126,7 @@ pub const Ray = struct {
     /// When it last moved on (`+0x24`), or null before it first does.
     moved: ?i32 = null,
     /// When it last lit or went dark (`+0x28`), how long it stays lit (`+0x2C`) and dark (`+0x30`).
-    /// The game leaves the first two unset; the port starts them at nothing, so a flickering ray
+    /// The game leaves the first two unset; OpenReliant starts them at nothing, so a flickering ray
     /// goes dark on its first frame.
     changed: i32 = 0,
     lit_for: i32 = 0,
@@ -311,7 +312,7 @@ pub const Ray = struct {
             strand.object.portal = standing.portal;
             strand.object.flags.portal_clipped = standing.portal != null;
             try xtrabits.sceneAdd(gpa, scene, .{ .mesh = &strand.object }, .world);
-            if (index == 0) ray.light.kind.point.position = math.transform(place.orientation, at[light_segment]) + place.position;
+            if (index == 0) ray.light.kind.point.position = place.point(at[light_segment]);
         }
         ray.light.intensity = 1;
         try xtrabits.sceneAdd(gpa, scene, .{ .light = &ray.light }, .world);
@@ -331,7 +332,7 @@ fn shapeSegment(corners: *[segment_vertices]Vector, width: f32, frame: math.Plac
         .{ 0, -width, 0 },      .{ 0, -width, length }, .{ 0, width, length }, .{ 0, width, 0 },
         .{ -width, 0, 0 },      .{ -width, 0, length }, .{ width, 0, length }, .{ width, 0, 0 },
     };
-    for (corners, local) |*corner, point| corner.* = math.transform(frame.orientation, point) + frame.position;
+    for (corners, local) |*corner, point| corner.* = frame.point(point);
 }
 
 /// `0x0046AA70`: the point halfway between points `a` and `b` of `at`, strayed at random by up to
@@ -374,9 +375,7 @@ pub const Rays = struct {
     /// `eray_add` (`0x0046AC50`): a ray of `spec` in the first free slot, or in the first where
     /// all are taken, letting that ray go.
     pub fn add(rays: *Rays, spec: Spec, random: *libcmt.Rand) Allocator.Error!*Ray {
-        const slot = for (&rays.slots) |*slot| {
-            if (slot.* == null) break slot;
-        } else first: {
+        const slot = table.firstFree(*Ray, &rays.slots) orelse first: {
             rays.remove(rays.slots[0].?);
             break :first &rays.slots[0];
         };
@@ -420,11 +419,11 @@ test {
 pub const testing = struct {
     /// The rays over a table holding nothing but their texture.
     pub const Built = struct {
-        textures: *@import("backdrop.zig").testing.Textures,
+        textures: *@import("../surrender/surrenderlib/srtexture.zig").testing.Textures,
         rays: Rays,
 
         pub fn init(gpa: Allocator) !Built {
-            const textures = try @import("backdrop.zig").testing.Textures.initNames(gpa, &.{"laser2"});
+            const textures = try @import("../surrender/surrenderlib/srtexture.zig").testing.Textures.init(gpa, &.{"laser2"});
             errdefer textures.deinit(gpa);
             return .{ .textures = textures, .rays = try .init(gpa, &textures.table) };
         }

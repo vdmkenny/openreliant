@@ -9,6 +9,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
+const shp = @import("../../formats/shp.zig");
 const math = @import("../surrender/math.zig");
 const Vector = math.Vector;
 const ai = @import("ai.zig");
@@ -77,9 +78,10 @@ pub const Stage = enum(i32) {
 /// the first part at its root of that class, which leaves the ship as the pilot's pod
 /// (`separate`).
 ///
-/// Not ported: the mission's Destroyed event ([#37](https://github.com/vdmkenny/openreliant/issues/37));
-/// a wingman's call on the radio as the pilot ejects, and the rescue's word a thousand ticks
-/// later (`radio_wingman_ejected`, `0x00456D80`), which wait for the radio
+/// Not ported: the mission's Destroyed event
+/// ([#37](https://github.com/vdmkenny/openreliant/issues/37)); a wingman's call on the radio as the
+/// pilot ejects, and the rescue's word a thousand ticks later (`radio_wingman_ejected`,
+/// `0x00456D80`), which wait for the radio
 /// ([#48](https://github.com/vdmkenny/openreliant/issues/48)); and a multiplayer game, in which
 /// nobody ejects so.
 pub fn init(ctx: Context, index: u16) void {
@@ -132,9 +134,10 @@ const flash_speed_range: f32 = 5;
 /// (`srmesh.caps_hidden`), so the cockpit closes beneath into a pod, and the ship where it left. A
 /// flash goes off at the cockpit's eject point, and the pod shoots out along it.
 ///
-/// The game moves the parts' nodes from the one object to the other. The port gives the new object
-/// the ship's model, as it stands, and the pod a new one of the same type, and takes out of each the
-/// parts the other has (`objects.destroyPart`), which each then recentres on (`gameobj.recentreObject`).
+/// The game moves the parts' nodes from the one object to the other. OpenReliant gives the new
+/// object the ship's model, as it stands, and the pod a new one of the same type, and takes out of
+/// each the parts the other has (`objects.destroyPart`), which each then recentres on
+/// (`gameobj.recentreObject`).
 ///
 /// Not ported: the smoke trail from the eject point, a hit's effect of kind 4, which the game never
 /// draws either (`shieldfx.componentHit`).
@@ -148,12 +151,12 @@ fn separate(ctx: Context, index: u16, cockpit: usize) void {
     const spawn = world.spawn orelse return;
     const left = create.createObject(all, spawn.tables, spawn.types, null, pod.object.type, 0, @splat(0), world.random) catch return;
     const ship = &all.slots[left];
-    _ = aigeneric.pushShip(ctx, left, .eject_106, index, -1) catch false;
+    _ = aigeneric.pushShip(ctx, left, .eject_106, index, aigeneric.Target.whole) catch false;
     pod.smoke = null;
     pod.object.smoke_level = .none;
     ship.object.flags = .{ .ejected = true, ._unknown_24 = true };
     ship.object.side = .neutral;
-    ship.object.passes_through[0] = @enumFromInt(index);
+    ship.object.passes_through[0] = .of(index);
     ship.object.shield_factor = 0;
     ship.motion = .drift;
     // The ship has the model it flew with; the pod a new one of the same.
@@ -173,7 +176,7 @@ fn separate(ctx: Context, index: u16, cockpit: usize) void {
     const object = &pod.object;
     object.flags.unpowered = true;
     object.flags.ejected = true;
-    object.passes_through[0] = @enumFromInt(left);
+    object.passes_through[0] = .of(left);
     pod.orders[0].target.index = @intCast(left);
     object.rack_count = 0;
     object.shield_factor = 0;
@@ -219,9 +222,9 @@ fn ejectPoint(pod: *const create.Slot, cockpit: usize) ?math.Place {
     const loaded = pod.type orelse return null;
     const model = if (pod.model) |*live| live else return null;
     var found: ?math.Place = null;
-    for (loaded.model.parts[cockpit].attachments) |attachment| {
+    for (loaded.model.parts[cockpit].attachments) |*attachment| {
         if (attachment.kind != .eject_point) continue;
-        found = .{ .position = gameobj.vector(attachment.position), .orientation = attachment.orientation };
+        found = objects.attachmentPlace(attachment);
     }
     const local = found orelse return null;
     return local.within(model.partPlace(cockpit, .now).within(pod.object.placeAt(.now)));
@@ -272,11 +275,11 @@ pub const RescueOdds = struct {
     killed: u16 = 0,
 
     /// How a roll of the runtime's numbers falls (`order_eject`): taken over the three together,
-    /// below `rescued` the pilot is picked up by a nanny ship, below that and `captured` more by the
-    /// enemy, and past both killed.
+    /// below `rescued` the pilot is picked up by a nanny ship, below that and `captured` more by
+    /// the enemy, and past both killed.
     ///
     /// **Fix:** the game divides by the three together whatever they are, and stops on odds of
-    /// nothing at all; the port has the pilot picked up.
+    /// nothing at all; OpenReliant has the pilot picked up.
     pub fn fate(odds: RescueOdds, roll: u15) Ending {
         const all = @as(u32, odds.rescued) + odds.captured + odds.killed;
         if (all == 0) return .rescued;
@@ -351,7 +354,7 @@ fn pickUp(ctx: Context, index: u16) void {
     const ship = &all.slots[seen];
     objects.setPosition(&ship.object, &ship.drawn, scene.at);
     objects.setOrientation(&ship.object, &ship.drawn, scene.orientation);
-    _ = aigeneric.pushShip(ctx, seen, scene.order, index, -1) catch false;
+    _ = aigeneric.pushShip(ctx, seen, scene.order, index, aigeneric.Target.whole) catch false;
     if (world.camera) |watching| _ = watching.setCutaway(scene.view, seen, ctx.clock.viewTime(), .of(ship), .of(pod));
     if (scene.order == .eject_fighter_attack) pod.object.radius *= killed_target_scale;
 }
@@ -368,19 +371,16 @@ const spin_most: f32 = 0.2;
 /// `order_eject_spin_init` (`0x004160D0`): an AI ship whose pilot is about to eject spins,
 /// unpowered, for `spin_ticks`, its pilot marked ejected.
 ///
-/// Not ported: the mission's Destroyed event ([#37](https://github.com/vdmkenny/openreliant/issues/37)).
+/// Not ported: the mission's Destroyed event
+/// ([#37](https://github.com/vdmkenny/openreliant/issues/37)).
 pub fn spinInit(ctx: Context, index: u16) void {
     const slot = &ctx.world.objects.slots[index];
     const object = &slot.object;
     object.flags.unpowered = true;
     object.flags.ejected = true;
     slot.state.eject.until = ctx.clock.frame_start + spin_ticks;
-    const random = ctx.world.random;
     // The roll is drawn first and the pitch last, as the game draws them.
-    const roll = random.centred() * spin_most;
-    const yaw = random.centred() * spin_most;
-    const pitch = random.centred() * spin_most;
-    object.rotation = math.fromAngles(pitch, yaw, roll);
+    object.rotation = math.fromAngleVector(ctx.world.random.centredVector(@splat(spin_most)));
 }
 
 /// `order_eject_spin` (`0x00416190`): once the spin is over, the pilot ejects (Eject), the pod
@@ -415,40 +415,37 @@ const attack_aimed: f32 = 0.95;
 const attack_trigger_ticks = 100;
 
 /// `order_eject_fighter_attack` (`0x004161F0`): the Sabre that ends a pilot who was not picked up
-/// flies at the pod, its target, at full throttle, and within `attack_reach` fires, rolling where it
-/// points at the pod; once the pod is exploding it flies on.
+/// flies at the pod, its target, at full throttle, and within `attack_reach` fires, rolling where
+/// it points at the pod; once the pod is exploding it flies on.
 pub fn fighterAttack(ctx: Context, index: u16) void {
     const all = ctx.world.objects;
     const slot = &all.slots[index];
     const object = &slot.object;
     const pod = &all.slots[slot.orders[0].target.ship() orelse return];
     if (pod.object.flags.exploding) {
-        object.throttle = full_throttle;
+        object.throttle = ai.full_throttle;
         return;
     }
     slot.state.eject.until = ctx.clock.frame_start;
-    _ = ai.steer(ctx.world, index, gameobj.vector(pod.object.root.next_position), full_limit, no_ease, .{});
-    object.throttle = full_throttle;
+    _ = ai.steer(ctx.world, index, gameobj.vector(pod.object.root.next_position), ai.full_limit, ai.no_ease, .{});
+    object.throttle = ai.full_throttle;
     const to = pod.drawn.position - slot.drawn.position;
     if (!(math.length(to) < attack_reach)) return;
-    if (math.dot(math.normalize(to), math.forward(slot.drawn.orientation)) > attack_aimed) object.roll_input = full_roll;
+    if (ai.noseCosine(slot.drawn.orientation, to) > attack_aimed) object.roll_input = full_roll;
     guns.fire(object, slot.trigger(ctx.clock.frame_start), attack_trigger_ticks);
 }
 
-/// The throttle, the roll and the steering's turn limit at their full, and no ease on the turn.
-const full_throttle: f32 = 1;
+/// The roll at its full.
 const full_roll: f32 = 1;
-const full_limit: f32 = 1;
-const no_ease: f32 = 0;
 
 /// How long the player's ship drifts after the pilot ejects: this, and up to as long again as
 /// `blow_up_spread`, in ticks.
 const blow_up_after = 400;
 const blow_up_spread = 200;
 
-/// `order_eject_player_init` (`0x00416310`), as the player's ship's armour runs out: the ship drifts
-/// on unpowered for four to six seconds before it blows up, and the pilot has that long to eject
-/// (EJECT, `input.eject`). The display's eject marker flashes (`hud.State.ejected`), and the
+/// `order_eject_player_init` (`0x00416310`), as the player's ship's armour runs out: the ship
+/// drifts on unpowered for four to six seconds before it blows up, and the pilot has that long to
+/// eject (EJECT, `input.eject`). The display's eject marker flashes (`hud.State.ejected`), and the
 /// cockpit glows red (`main.cockpit.lightEmergency`).
 ///
 /// Not ported: Moose's call to eject on the radio (`ejt_001` to `ejt_008`), which waits for the
@@ -503,6 +500,97 @@ test player {
     try std.testing.expect(slot.object.flags.exploding);
     try std.testing.expect(!slot.orders[0].data.destroyed.may_spin);
     try std.testing.expectEqual(.destroyed, mission.player.ending);
+}
+
+/// A ship of two parts at its root, its hull and its cockpit, whose eject point stands on the
+/// cockpit facing along Z, for the tests of the ejection.
+const TestShip = struct {
+    parts: guns.turrets.testing.Parts(2),
+    point: [1]shp.Attachment,
+    type: create.Type,
+
+    const hull = 0;
+    const cockpit = 1;
+
+    fn init(ship: *TestShip, with_cockpit: bool) void {
+        ship.parts.init();
+        ship.point = .{std.mem.zeroes(shp.Attachment)};
+        ship.point[0].kind = .eject_point;
+        ship.point[0].orientation = math.identity;
+        if (with_cockpit) ship.parts.data[cockpit].part.class = .cockpit;
+        ship.parts.data[cockpit].attachments = &ship.point;
+        ship.type = .{ .model = &ship.parts.source, .loaded = &ship.parts.loaded };
+    }
+
+    /// Answers every ship type with the one model.
+    fn types(ship: *TestShip) create.Types {
+        return .{ .context = ship, .load = load };
+    }
+
+    fn load(context: *anyopaque, ship_type: u8) ?*const create.Type {
+        _ = ship_type;
+        const ship: *TestShip = @ptrCast(@alignCast(context));
+        return &ship.type;
+    }
+};
+
+test "a pilot ejects in the cockpit, which leaves the ship as the pod" {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    var fixture: TestShip = undefined;
+    fixture.init(true);
+    var ctx = mission.orders();
+    ctx.world.spawn = .{ .tables = &mission.tables, .types = fixture.types() };
+    _ = try mission.add(.predator, @splat(0));
+    const all = mission.objects;
+    const index = try create.createObject(all, &mission.tables, fixture.types(), null, .sabre, 0, .{ 0, 0, 5000 }, &mission.random);
+    const pod = mission.slot(index);
+    pod.object.invulnerable = .player_can_hit;
+    mission.clock.frame_start = 30;
+
+    init(ctx, index);
+    // The ship it leaves is an object of its own, with every part but the cockpit, which the pod
+    // passes through and which is destroyed soon after.
+    try std.testing.expectEqual(index + 2, all.count);
+    const left: u16 = index + 1;
+    const ship = mission.slot(left);
+    try std.testing.expectEqual(gameobj.Slot.of(left), pod.object.passes_through[0]);
+    try std.testing.expectEqual(gameobj.Slot.of(index), ship.object.passes_through[0]);
+    try std.testing.expectEqual(.eject_106, ship.orders[0].order);
+    try std.testing.expect(ship.object.flags.ejected);
+    try std.testing.expectEqual(.drift, ship.motion.?);
+    try std.testing.expect(ship.model.?.parts[TestShip.cockpit].removed);
+    try std.testing.expect(!ship.model.?.parts[TestShip.hull].removed);
+    // The pod keeps the slot and the cockpit alone, unpowered and harmed by nothing until it is
+    // clear, and shoots out along its eject point.
+    try std.testing.expect(pod.model.?.parts[TestShip.hull].removed);
+    try std.testing.expect(!pod.model.?.parts[TestShip.cockpit].removed);
+    try std.testing.expect(pod.object.flags.unpowered and pod.object.flags.ejected);
+    try std.testing.expectEqual(.full, pod.object.invulnerable);
+    try std.testing.expectEqual(.player_can_hit, pod.state.eject.invulnerable);
+    try std.testing.expectEqual(left, pod.orders[0].target.ship());
+    try std.testing.expectEqual(null, pod.motion);
+    try std.testing.expectEqual(kick, pod.object.velocity.z);
+    try std.testing.expectEqual(.clearing, pod.state.eject.stage);
+    try std.testing.expectEqual(30 + clearing_ticks, pod.state.eject.until);
+    try std.testing.expectEqual(math.identity, ejectPoint(pod, TestShip.cockpit).?.orientation);
+}
+
+test "a ship with no cockpit to leave in keeps its pilot" {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    var fixture: TestShip = undefined;
+    fixture.init(false);
+    var ctx = mission.orders();
+    ctx.world.spawn = .{ .tables = &mission.tables, .types = fixture.types() };
+    _ = try mission.add(.predator, @splat(0));
+    const index = try create.createObject(mission.objects, &mission.tables, fixture.types(), null, .sabre, 0, .{ 0, 0, 5000 }, &mission.random);
+    const count = mission.objects.count;
+    init(ctx, index);
+    try std.testing.expectEqual(count, mission.objects.count);
+    try std.testing.expect(!mission.slot(index).object.flags.ejected);
 }
 
 test "RescueOdds.fate" {
@@ -606,11 +694,11 @@ test fighterAttack {
     const pod = try mission.add(.predator, @splat(0));
     const sabre = try mission.addOther(.{ 0, 0, -30000 });
     const slot = mission.slot(sabre);
-    try std.testing.expect(try aigeneric.pushShip(ctx, sabre, .eject_fighter_attack, pod, -1));
+    try std.testing.expect(try aigeneric.pushShip(ctx, sabre, .eject_fighter_attack, pod, aigeneric.Target.whole));
 
     // Far off, it flies at the pod at full throttle, holding its fire.
     fighterAttack(ctx, sabre);
-    try std.testing.expectEqual(full_throttle, slot.object.throttle);
+    try std.testing.expectEqual(ai.full_throttle, slot.object.throttle);
     try std.testing.expectEqual(0, slot.object.roll_input);
     // Within reach and pointing at the pod, it rolls and fires.
     objects.setPosition(&slot.object, &slot.drawn, .{ 0, 0, -10000 });
@@ -620,5 +708,5 @@ test fighterAttack {
     mission.slot(pod).object.flags.exploding = true;
     slot.object.throttle = 0;
     fighterAttack(ctx, sabre);
-    try std.testing.expectEqual(full_throttle, slot.object.throttle);
+    try std.testing.expectEqual(ai.full_throttle, slot.object.throttle);
 }

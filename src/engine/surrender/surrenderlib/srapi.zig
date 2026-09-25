@@ -5,6 +5,7 @@ const std = @import("std");
 
 const math = @import("../math.zig");
 const srapiext = @import("srapiext.zig");
+const srclip = @import("srclip.zig");
 const srshadow = @import("srshadow.zig");
 const Vector = math.Vector;
 
@@ -15,7 +16,7 @@ pub const Projection = struct {
     /// The screen's width and height in pixels (`sr + 0x1666`, `sr + 0x166A`).
     screen: [2]u32,
     /// Pixels to a view unit, a point's position over its depth, across and down: the screen's
-    /// size less a tenth of a pixel, times the factor.
+    /// size less `edge_margin`, times the factor.
     scale: [2]f32,
     /// Where the view axis meets the screen, in pixels.
     centre: [2]f32,
@@ -29,14 +30,18 @@ pub const Projection = struct {
     /// The near plane's distance (`sr + 0x169E`).
     near: f32 = in_flight_near,
     /// A vertex's depth is `sqrt(1 / z)` times this (`sr + 0x16A6`). The driver's `begin_scene`
-    /// sets it each frame to `sqrt(near)` times 0.99999, so the near plane is just short of 1.
+    /// sets it each frame (`depthScale`), so that the near plane is just short of 1.
     depth_scale: f32 = depthScale(in_flight_near),
+
+    /// What `sr_set_projection` takes off the screen's size for its scale, in pixels
+    /// (`0x004DC420`).
+    const edge_margin: f32 = 0.1;
 
     pub fn init(width: u32, height: u32, viewport: [4]f32, factors: [2]f32) Projection {
         const size = [2]f32{ @floatFromInt(width), @floatFromInt(height) };
         var projection: Projection = .{ .screen = .{ width, height }, .scale = undefined, .centre = undefined, .bounds = undefined, .viewport = undefined, .sides = undefined };
         for (0..2) |axis| {
-            projection.scale[axis] = (size[axis] - 0.1) * factors[axis];
+            projection.scale[axis] = (size[axis] - edge_margin) * factors[axis];
             projection.centre[axis] = size[axis] * 0.5;
             for ([2]usize{ axis, axis + 2 }) |edge| {
                 projection.bounds[edge] = (viewport[edge] - 0.5) / factors[axis];
@@ -52,7 +57,17 @@ pub const Projection = struct {
         return projection;
     }
 
-    /// Where a point in the camera's frame, in front of it, falls on the screen.
+    /// Where a point in view units, a position over its depth, falls on the screen, in pixels.
+    pub fn toScreen(projection: Projection, view: [2]f32) [2]f32 {
+        return .{
+            projection.scale[0] * view[0] + projection.centre[0],
+            projection.scale[1] * view[1] + projection.centre[1],
+        };
+    }
+
+    /// Where a point in the camera's frame, in front of it, falls on the screen. It divides the
+    /// scaled position by the depth, where `transform` scales the position over the depth, which
+    /// rounds differently.
     pub fn project(projection: Projection, point: Vector) [2]f32 {
         return .{
             projection.centre[0] + projection.scale[0] * point[0] / point[2],
@@ -65,10 +80,7 @@ pub const Projection = struct {
     /// the near plane.
     pub fn transform(projection: Projection, point: Vector) Transformed {
         const w = 1 / point[2];
-        var screen: [2]f32 = .{
-            w * point[0] * projection.scale[0] + projection.centre[0],
-            w * point[1] * projection.scale[1] + projection.centre[1],
-        };
+        var screen = projection.toScreen(.{ w * point[0], w * point[1] });
         projection.clamp(&screen);
         return .{
             .x = screen[0],
@@ -86,31 +98,26 @@ pub const Projection = struct {
         }
     }
 
-    /// Which sides of the view volume a point in the camera's frame lies outside (`0x004C6710`):
-    /// in front of the near plane, only the near plane's.
+    /// Which sides of the view volume a point in the camera's frame lies outside
+    /// (`mesh_transform_clipped`, `0x004C6710`): in front of the near plane, only the near plane's,
+    /// and otherwise the sides, as the clipper tests them (`srclip.flags`).
     pub fn outcode(projection: Projection, point: Vector) Outcode {
         if (point[2] < projection.near) return .{ .near = true };
-        var code: Outcode = .{};
-        if (point[0] < projection.bounds[0] * point[2]) {
-            code.left = true;
-        } else if (projection.bounds[2] * point[2] < point[0]) {
-            code.right = true;
-        }
-        if (point[1] < projection.bounds[1] * point[2]) {
-            code.top = true;
-        } else if (projection.bounds[3] * point[2] < point[1]) {
-            code.bottom = true;
-        }
-        return code;
+        return srclip.flags(projection, point);
     }
 };
 
 /// The near plane in flight, which `renderer_start` (`0x004ACBE0`) sets.
 pub const in_flight_near: f32 = 100;
 
+/// What the driver's `begin_scene` (`0x100077A0`) scales the depth by for a near plane at `near`:
+/// its square root, times `near_depth`.
 pub fn depthScale(near: f32) f32 {
-    return @sqrt(near) * 0.99999;
+    return @sqrt(near) * near_depth;
 }
+
+/// Where the near plane falls in the depth buffer, just short of 1 (`srd3d.dll`, `0x10020420`).
+const near_depth: f32 = 0.99999;
 
 /// A vertex as the driver draws it: on the screen, with its depth and reciprocal depth.
 pub const Transformed = struct {
@@ -153,16 +160,16 @@ pub const full_screen = [4]f32{ 0, 0, 1, 1 };
 /// (`0x005E82F4`, `0x005E82F8` against 19999).
 pub const original_budget = 19999;
 
-/// Surrender's state, `sr` (`0x005E6B50`), as the port keeps it: the camera and its projection,
+/// Surrender's state, `sr` (`0x005E6B50`), as OpenReliant keeps it: the camera and its projection,
 /// the level-of-detail divisor, and the sun's point the driver checks triangles against.
 pub const Context = struct {
     /// The camera's frame (`sr + 0x30`): its orientation's columns are its right, down and
     /// forward axes in the world.
-    camera: struct { position: Vector, orientation: math.Matrix } = .{ .position = @splat(0), .orientation = math.identity },
+    camera: math.Place = .{},
     projection: Projection,
     /// Depths are divided by this before choosing a level of detail (`detail_divisor`,
-    /// `0x005E829A`). `mission_frame` moves it with the frame time, within bounds the detail setting
-    /// sets (`game.main.high_detail`).
+    /// `0x005E829A`). `mission_frame` moves it with the frame time, within bounds the detail
+    /// setting sets (`game.main.high_detail`).
     detail: f32 = 1,
     /// **Improvement:** how many times further than `detail` has them the finer levels of detail
     /// reach, so that an object keeps a finer mesh from further off; its last level still ends
@@ -177,24 +184,39 @@ pub const Context = struct {
     /// the driver lessens it for each triangle of an object flagged `sun_occluder` near the point.
     sun: [2]f32 = .{ 0, 0 },
     sun_visibility: f32 = 0,
-    /// The port's: set for a frame whose device lights each pixel with the directional and point
+    /// OpenReliant's: set for a frame whose device lights each pixel with the directional and point
     /// lights (`device.Device.lights`). The pipeline then leaves them out of the vertices' colours
     /// and hands the device the vertices' normals instead.
     pixel_lighting: bool = false,
-    /// The port's: how the device draws the frame's shadows, or null for none (`srshadow`). The
+    /// OpenReliant's: how the device draws the frame's shadows, or null for none (`srshadow`). The
     /// driver sets it with the lights.
     shadows: ?srshadow.Settings = null,
 
     /// A point of the world in the camera's frame.
     pub fn view(context: Context, point: Vector) Vector {
-        return math.transformTransposed(context.camera.orientation, point - context.camera.position);
+        return context.camera.inverse(point);
     }
 
     /// A direction in the world, in the camera's frame.
     pub fn turn(context: Context, direction: Vector) Vector {
         return math.transformTransposed(context.camera.orientation, direction);
     }
+
+    /// What turns the frame of an object at `orientation`, drawn `scale` times its size, into the
+    /// camera's (`SR_object_rotate`, `0x004C7D00`): the camera's orientation turned back, times the
+    /// object's, `scaled`.
+    pub fn objectMatrix(context: Context, orientation: math.Matrix, scale: f32) math.Matrix {
+        return scaled(math.product(math.transpose(context.camera.orientation), orientation), scale);
+    }
 };
+
+/// `matrix` times `scale`, which the pipelines leave as it is at a scale of 1.
+pub fn scaled(matrix: math.Matrix, scale: f32) math.Matrix {
+    if (scale == 1) return matrix;
+    var out = matrix;
+    for (&out) |*m| m.* *= scale;
+    return out;
+}
 
 /// The plane through three corners, facing the side `(b - a) x (c - a)` points to: its unit normal
 /// and the normal's dot product with `a`.
@@ -204,7 +226,8 @@ pub fn planeThrough(a: Vector, b: Vector, c: Vector) srapiext.Plane {
 }
 
 /// Each polygon's plane, from its first three corners (`SR_mesh_calc_poly_normals`,
-/// `0x004C3CA0`), with the last two swapped for an odd strip member. Lines keep theirs.
+/// `0x004C3CA0`), with the last two swapped for an odd strip member, which lists them the other way
+/// round: its front is the side `(v1 - v0) x (v2 - v0)` points to. Lines keep theirs.
 pub fn calcPolyNormals(mesh: *srapiext.Mesh) void {
     for (mesh.polygons, mesh.planes) |polygon, *plane| {
         if (polygon.count <= 2) continue;
@@ -264,6 +287,53 @@ test "vertices as the driver takes them" {
     try std.testing.expectApproxEqAbs(0.99999 / 2.0, projection.transform(.{ 0, 0, 400 }).depth, 1e-6);
     // Off the side, it is kept to the viewport's edge.
     try std.testing.expectEqual(1024, projection.transform(.{ 5000, 0, 100 }).x);
+}
+
+test "Projection.toScreen" {
+    const projection: Projection = .init(1024, 768, full_screen, .{ 0.6, 0.8 });
+    try std.testing.expectEqual(projection.centre, projection.toScreen(.{ 0, 0 }));
+    const off = projection.toScreen(.{ 0.5, -0.25 });
+    try std.testing.expectEqual(projection.scale[0] * 0.5 + projection.centre[0], off[0]);
+    try std.testing.expectEqual(projection.scale[1] * -0.25 + projection.centre[1], off[1]);
+}
+
+test "Context.objectMatrix" {
+    var context: Context = .{ .projection = .init(1024, 768, full_screen, .{ 0.6, 0.8 }) };
+    context.camera.orientation = math.rotation(.y, 0.5);
+    const object = math.rotation(.x, 0.25);
+    // Unscaled, the object's orientation as the camera sees it; scaled, each entry times the scale.
+    const turned = context.objectMatrix(object, 1);
+    try std.testing.expectEqual(math.product(math.transpose(context.camera.orientation), object), turned);
+    for (turned, context.objectMatrix(object, 2)) |one, two| try std.testing.expectEqual(one * 2, two);
+    // A point of the world in the camera's frame, and back.
+    context.camera.position = .{ 10, 20, 30 };
+    const seen = context.view(.{ 10, 20, 130 });
+    try std.testing.expect(math.length(context.camera.point(seen) - Vector{ 10, 20, 130 }) < 1e-4);
+}
+
+test scaled {
+    try std.testing.expectEqual(math.identity, scaled(math.identity, 1));
+    try std.testing.expectEqual(math.scaling(@splat(3)), scaled(math.identity, 3));
+}
+
+test calcPolyNormals {
+    const gpa = std.testing.allocator;
+    var mesh: srapiext.Mesh = try .create(gpa, .{ .polygons = 2, .vertices = 3, .indices = 6 });
+    defer mesh.deinit(gpa);
+    mesh.positions[0..3].* = .{ .{ 0, 0, 5 }, .{ 1, 0, 5 }, .{ 0, 1, 5 } };
+    mesh.numberPolygons(3);
+    mesh.indices[0..6].* = .{ 0, 1, 2, 0, 1, 2 };
+    mesh.polygons[1].kind = .strip_odd;
+    calcPolyNormals(&mesh);
+    // A triangle faces the side (v1 - v0) x (v2 - v0) points to; an odd strip member the other.
+    try std.testing.expectEqual(Vector{ 0, 0, 1 }, mesh.planes[0].normal);
+    try std.testing.expectEqual(5, mesh.planes[0].distance);
+    try std.testing.expectEqual(Vector{ 0, 0, -1 }, mesh.planes[1].normal);
+    try std.testing.expectEqual(-5, mesh.planes[1].distance);
+    // A viewpoint on a plane's front side faces it.
+    try std.testing.expect(mesh.planes[0].faces(.{ 0, 0, 10 }));
+    try std.testing.expect(!mesh.planes[0].faces(.{ 0, 0, 0 }));
+    try std.testing.expect(mesh.planes[1].faces(.{ 0, 0, 0 }));
 }
 
 test Outcode {

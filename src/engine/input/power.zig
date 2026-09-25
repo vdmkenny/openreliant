@@ -19,8 +19,8 @@ pub const System = enum { shields, guns, engines };
 /// The direction of each system's anchor from the middle of the ball (`0x00412560`): the three a
 /// third of a turn apart.
 ///
-/// **Improvement:** the game writes the guns' and engines' `x`, √3/2, as 0.866. The port uses √3/2
-/// itself, which sets those anchors 0.00002 further from the middle.
+/// **Improvement:** the game writes the guns' and engines' `x`, √3/2, as 0.866. OpenReliant uses
+/// √3/2 itself, which sets those anchors 0.00002 further from the middle.
 pub const anchors = std.EnumArray(System, [2]f32).init(.{
     .shields = .{ 0, 1 },
     .guns = .{ half_root_three, -0.5 },
@@ -50,11 +50,20 @@ pub fn shares(setting: [2]f32) std.EnumArray(System, f32) {
     return found;
 }
 
-/// The factor a share of the power gives its system: 1 for an even third, 1.5 for all of the power
-/// and 0.5 for none.
+/// The factor a share of the power gives its system (`0x00412560`): 1 for an even third, 1.5 for
+/// all of the power and `least_factor` for none, rising by `factor_rise` less `factor_ease` for
+/// each share.
 pub fn factor(share: f32) f32 {
-    return (1.75 - share * 0.75) * share + 0.5;
+    return (factor_rise - share * factor_ease) * share + least_factor;
 }
+
+/// How fast the factor rises from no share (`0x004DC54C`), and how much of that the share itself
+/// takes back (`0x004DC550`).
+const factor_rise: f32 = 1.75;
+const factor_ease: f32 = 0.75;
+
+/// The factor of no share of the power at all (`0x004DC408`).
+const least_factor: f32 = 0.5;
 
 /// The setting's `x` and `y`, the point on the ball.
 pub fn point(object: *const gameobj.GameObject) [2]f32 {
@@ -97,10 +106,9 @@ pub fn move(object: *gameobj.GameObject, x: f32, y: f32, frame_duration: i32) vo
     object.power_setting.x -= ticks * x;
     object.power_setting.z = 0;
     object.power_setting.y -= ticks * y;
-    const setting: math.Vector = .{ object.power_setting.x, object.power_setting.y, object.power_setting.z };
+    const setting = gameobj.vector(object.power_setting);
     if (math.lengthSquared(setting) > radius * radius) {
-        const edge = math.normalize(setting) * @as(math.Vector, @splat(radius));
-        object.power_setting = .{ .x = edge[0], .y = edge[1], .z = edge[2] };
+        object.power_setting = gameobj.vec3(math.normalize(setting) * @as(math.Vector, @splat(radius)));
     }
     distribute(object);
 }
@@ -111,16 +119,29 @@ pub fn move(object: *gameobj.GameObject, x: f32, y: f32, frame_duration: i32) vo
 /// the shield itself. The shield it goes to holds at most five times the shield power, and what
 /// goes beyond that is added to its reserve, which holds as much again.
 pub fn balanceShields(object: *gameobj.GameObject, reserves: *gameobj.ShieldReserves, combat: *const create.ShipCombat, y: f32) void {
-    const step: f32 = @floatFromInt(@divTrunc(combat.shield_power, 4));
-    const most: f32 = @floatFromInt(combat.shield_power * 5);
+    const step: f32 = @floatFromInt(@divTrunc(combat.shield_power, steps_per_power));
+    const most: f32 = @floatFromInt(combat.shield_power * shield_most);
     const fore = &object.shields.fore;
     const aft = &object.shields.aft;
     if (y >= 0) {
-        if (y > 0.5 and fore.* > 0) shift(fore, &reserves.fore, aft, &reserves.aft, step, most);
-    } else if (y < -0.5 and aft.* > 0) {
+        if (y > pushed_past and fore.* > 0) shift(fore, &reserves.fore, aft, &reserves.aft, step, most);
+    } else if (y < pulled_past and aft.* > 0) {
         shift(aft, &reserves.aft, fore, &reserves.fore, step, most);
     }
 }
+
+/// A step of the shield balance is the shield power over this, a quarter (`shield_balance`,
+/// `0x00412D40`).
+const steps_per_power = 4;
+
+/// A shield holds at most this many times the shield power, and its reserve as much again
+/// (`shield_balance`, `0x00412D40`).
+const shield_most = 5;
+
+/// How far past half-way the stick must be pushed forward (`0x004DC408`) or pulled back
+/// (`0x004DC41C`) to shift the shields.
+const pushed_past: f32 = 0.5;
+const pulled_past: f32 = -0.5;
 
 /// Moves `step` of shield from `from`, taking its reserve first, to `to`, keeping `to` at `most`
 /// and its reserve at `most` too.
@@ -197,7 +218,7 @@ test move {
     try std.testing.expectEqual(0, object.power_setting.z);
     // It stays in the disc, at its edge.
     move(&object, 1, 0, 100);
-    const setting: math.Vector = .{ object.power_setting.x, object.power_setting.y, object.power_setting.z };
+    const setting = gameobj.vector(object.power_setting);
     try std.testing.expectApproxEqAbs(radius, math.length(setting), 1e-4);
     try std.testing.expect(object.power_setting.x < 0);
     // Toward the engines' side, the ship flies faster.

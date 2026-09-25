@@ -19,8 +19,8 @@
 //! A ship's end credits the player with the kill where the player's ship struck it last
 //! (`killCredit`).
 //!
-//! Order 43, Huuuuuuuge Explosion, lies with Explode (`huge`): it sets the Uber Explode off where the
-//! object stands ([`explode/uber.zig`](explode/uber.zig)).
+//! Order 43, Huuuuuuuge Explosion, lies with Explode (`huge`): it sets the Uber Explode off where
+//! the object stands ([`explode/uber.zig`](explode/uber.zig)).
 //!
 //! **Not ported:** what a ship's end tells the mission, the pilots' records and the Destroyed event
 //! ([#37](https://github.com/vdmkenny/openreliant/issues/37)).
@@ -66,7 +66,7 @@ pub const Mode = enum(i16) {
                 .asteroid
             else if (!object.flags.components)
                 .ship
-            else if (target.component != -1)
+            else if (target.component != aigeneric.Target.whole)
                 .component
             else
                 .hull,
@@ -114,6 +114,11 @@ pub const Data = extern struct {
     /// Whether a ship may spin out: set by a blow to its armour, clear once its pilot has
     /// ejected.
     may_spin: bool,
+
+    comptime {
+        assert(@offsetOf(Data, "may_spin") == 0x0);
+        assert(@sizeOf(Data) == 1);
+    }
 };
 
 /// `order_explode_init` (`0x00408610`).
@@ -182,9 +187,7 @@ fn hullUpdate(ctx: Context, index: u16) void {
 fn componentInit(ctx: Context, index: u16) void {
     const slot = &ctx.world.objects.slots[index];
     const model = if (slot.model) |*live| live else return;
-    const component = std.math.cast(usize, slot.orders[0].target.component) orelse return;
-    if (component >= slot.components.len) return;
-    const part = slot.components[component] orelse return;
+    const part = slot.component(slot.orders[0].target.part() orelse return) orelse return;
     if (part.hidden) return;
     part.armor = spent_armor;
     if (model.holding(part)) |holder| holder.destroyed = true;
@@ -208,8 +211,8 @@ fn asteroidInit(ctx: Context, index: u16) void {
 /// last (`0x004DC4DC`), standing its radius times `fragment_reach` from where it was, a turn of
 /// `fragment_turn` apart about the X axis (`0x004DC3D8`, `0x004DC4D4`).
 ///
-/// **Improvement:** the game turns them by 1.88496, three fifths of a half turn rounded; the port
-/// computes it.
+/// **Improvement:** the game turns them by 1.88496, three fifths of a half turn rounded;
+/// OpenReliant computes it.
 const rock_fireball: f32 = 1.5;
 const least_breaking: f32 = 0.16;
 const fragment_share: f32 = 0.4;
@@ -261,14 +264,12 @@ fn shownModel(slot: *create.Slot) ?*objects.Model {
     return model;
 }
 
-/// The bits the limpet car's trail has left, and how fast it may turn about its X and Y axes and
-/// about its Z axis, either way (`0x004DC474`, `0x004DC4C0`).
+/// The bits the limpet car's trail has left.
 const limpet_trail = 50;
-const limpet_spin: Vector = .{ 0.05, 0.05, 0.3 };
 
 /// `explode_limpet_car_init` (`0x004094D0`): the car stops dead, unpowered, with a random turn
-/// and a trail to leave, which its update never reaches, and goes up in a fireball as wide as its
-/// radius.
+/// (`randomSpin`) and a trail to leave, which its update never reaches, and goes up in a fireball
+/// as wide as its radius.
 ///
 /// Not ported: the Destroyed event it queues (`event_destroyed`,
 /// [#37](https://github.com/vdmkenny/openreliant/issues/37)).
@@ -279,11 +280,9 @@ fn limpetCarInit(ctx: Context, index: u16) void {
     const state = &slot.state.explode;
     state.trail = limpet_trail;
     state.end = 0;
-    object.velocity = gameobj.vec3(@splat(0));
-    object.speed = 0;
-    object.throttle = 0;
+    stop(object);
     object.flags.unpowered = true;
-    state.spin = gameobj.vec3(world.random.centredVector(limpet_spin));
+    state.spin = randomSpin(world.random);
     explode.fireballAt(world, slot.drawn.position, .{ .size = object.radius });
 }
 
@@ -332,7 +331,7 @@ fn shipInit(ctx: Context, index: u16) void {
     const cutaway = world.player.showing != .everything;
     state.style = switch (object.type) {
         .torpedo, .russian_torpedo => .halt,
-        else => if (players and cutaway) .halt else @enumFromInt(xtrabits.objectRandom15(object) % 3),
+        else => if (players and cutaway) .halt else @enumFromInt(xtrabits.objectRandom15(object) % std.enums.values(Style).len),
     };
     killCredit(world, index);
 
@@ -366,7 +365,7 @@ pub fn killCredit(world: gameobj.World, index: u16) void {
     const all = world.objects;
     const slot = &all.slots[index];
     const object = &slot.object;
-    if (object.last_attacker != all.player or object.side != .hostile) return;
+    if (object.last_attacker.index() != all.player or object.side != .hostile) return;
     const fighter = if (slot.combat) |combat| combat.class == .fighter else false;
     const credited = fighter or switch (object.type) {
         .kamov, .kurgan, .gurevich => true,
@@ -417,7 +416,7 @@ const spin_ticks = 200;
 const spin_fade: f32 = 0.005;
 
 /// How far a spinning ship's turn a step ranges about its first two axes and about its third, half
-/// of it either way (`0x004DC474`, `0x004DC4C0`).
+/// of it either way (`0x004DC474`, `0x004DC4C0`); the limpet car's too.
 const spin_range: Vector = .{ 0.05, 0.05, 0.3 };
 
 /// `0x00408BC0`: a spinning ship drifts on unpowered for two to four seconds; a torpedo, or a ship
@@ -542,7 +541,7 @@ test Mode {
     try std.testing.expectEqual(Mode.ship, Mode.of(&object, whole));
     object.flags.components = true;
     try std.testing.expectEqual(Mode.hull, Mode.of(&object, whole));
-    try std.testing.expectEqual(Mode.component, Mode.of(&object, .{ .kind = .ship, .index = 3, .component = 2 }));
+    try std.testing.expectEqual(Mode.component, Mode.of(&object, .at(3, 2)));
     object.type = .troop_car;
     try std.testing.expectEqual(Mode.ship, Mode.of(&object, whole));
     object.type = @enumFromInt(0x7B);
@@ -670,7 +669,7 @@ test "a ship listing components loses its hull, or a component" {
     // Aimed at a component, that one does, and again the order is done.
     model.destroyed = false;
     model.parts[0].armor = 100;
-    _ = try aigeneric.push(ctx, ship, .explode, .{ .kind = .ship, .index = @intCast(ship), .component = 0 });
+    _ = try aigeneric.push(ctx, ship, .explode, .at(ship, 0));
     aigeneric.objectOrders(ctx, ship);
     try std.testing.expectEqual(spent_armor, model.parts[0].armor);
     try std.testing.expect(model.destroyed);
@@ -788,7 +787,7 @@ test killCredit {
     const credit = struct {
         fn of(m: *gameobj.testing.Mission, w: gameobj.World, ship_type: gameobj.Type, by: u16) !i32 {
             const index = try m.add(ship_type, .{ 0, 0, 1000 });
-            m.slot(index).object.last_attacker = by;
+            m.slot(index).object.last_attacker = .of(by);
             const before = m.player.kills.count;
             killCredit(w, index);
             return m.player.kills.count - before;

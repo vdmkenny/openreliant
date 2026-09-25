@@ -10,17 +10,15 @@ const std = @import("std");
 const c = @import("sdl");
 const openreliant = @import("openreliant");
 const input = openreliant.engine.input;
+const interface = openreliant.engine.game.interface;
+const Profile = openreliant.engine.profile.Profile;
 const Axis = input.Axis;
 const JoystickState = input.JoystickState;
 const GamepadButton = input.GamepadButton;
+const sdl = @import("sdl.zig");
 
-pub const Error = error{Sdl};
-
-/// SDL's last error, logged, as an error.
-fn fail(what: []const u8) Error {
-    std.log.scoped(.sdl).err("{s}: {s}", .{ what, c.SDL_GetError() });
-    return error.Sdl;
-}
+pub const Error = sdl.Error;
+const fail = sdl.fail;
 
 /// How the program uses SDL's joystick support.
 pub const Mode = enum {
@@ -133,9 +131,44 @@ pub fn choose(found: []const Found, preference: ?[]const u8) ?Found {
     return if (found.len > 0) found[0] else null;
 }
 
-/// The value of `ThrottleAxis` or `TwistAxis` in `JoyConfig` (settings added by the port): an SDL
-/// axis number, starting at 0 as `openreliant joysticks` shows it; -1 for none; or no entry, which
-/// keeps the automatic choice.
+/// Added by OpenReliant: an optional file in the game folder with extra gamepad mappings in SDL's
+/// format, for gamepads missing from SDL's database (`addMappings`).
+pub const mappings_name = "gamecontrollerdb.txt";
+
+/// What `JoyConfig` in `starlancer.ini` says of the controller the game uses, in settings added by
+/// OpenReliant: `Joystick`, part of the name of the controller to choose (`choose`);
+/// `ThrottleAxis` and `TwistAxis`, the axes of a joystick's throttle and twist; and
+/// `ThrottleInvert`, which reverses its throttle.
+pub const Setup = struct {
+    preference: ?[]const u8 = null,
+    throttle: Choice = .guess,
+    twist: Choice = .guess,
+    throttle_inverted: bool = false,
+
+    /// The setup `settings_file` gives, each setting it lacks left to the automatic choice.
+    pub fn read(settings_file: Profile) Setup {
+        const section = interface.joy_section;
+        return .{
+            .preference = settings_file.value(section, "Joystick"),
+            .throttle = .parse(settings_file.value(section, "ThrottleAxis")),
+            .twist = .parse(settings_file.value(section, "TwistAxis")),
+            .throttle_inverted = settings_file.int(section, "ThrottleInvert", 0) != 0,
+        };
+    }
+};
+
+test Setup {
+    try std.testing.expectEqual(Setup{}, Setup.read(.empty));
+    const given = Setup.read(.{ .text = "[JoyConfig]\nJoystick=T.16000M\nThrottleAxis=3\nTwistAxis=-1\nThrottleInvert=1\n" });
+    try std.testing.expectEqualStrings("T.16000M", given.preference.?);
+    try std.testing.expectEqual(Choice{ .axis = 3 }, given.throttle);
+    try std.testing.expectEqual(Choice.none, given.twist);
+    try std.testing.expect(given.throttle_inverted);
+}
+
+/// The value of `ThrottleAxis` or `TwistAxis` in `JoyConfig` (settings added by OpenReliant): an
+/// SDL axis number, starting at 0 as `openreliant joysticks` shows it; -1 for none; or no entry,
+/// which keeps the automatic choice.
 pub const Choice = union(enum) {
     guess,
     none,
@@ -156,7 +189,7 @@ pub const Layout = struct {
     y: ?u8 = null,
     throttle: ?u8 = null,
     twist: ?u8 = null,
-    /// Reverses the throttle axis (`ThrottleInvert` in `JoyConfig`, added by the port). The game
+    /// Reverses the throttle axis (`ThrottleInvert` in `JoyConfig`, added by OpenReliant). The game
     /// expects a throttle's lowest value to mean full throttle, which is what most levers report
     /// when pushed forward.
     throttle_inverted: bool = false,
@@ -315,6 +348,11 @@ const sources = std.EnumArray(GamepadButton, Source).init(.{
     .right_stick_right = .{ .stick = .{ .axis = c.SDL_GAMEPAD_AXIS_RIGHTX, .positive = true } },
 });
 
+comptime {
+    // A gamepad's buttons fill the joystick's, one for one.
+    std.debug.assert(std.enums.values(GamepadButton).len == JoystickState.max_buttons);
+}
+
 /// The gamepad axes the game reads: the left stick as X and Y, and the right stick's horizontal
 /// axis as the twist.
 const gamepad_axes = [_]struct { Axis, c.SDL_GamepadAxis }{
@@ -347,14 +385,9 @@ pub const Controller = struct {
         gamepad: *c.SDL_Gamepad,
     };
 
-    /// Opens `found`, applying the throttle and twist settings from `starlancer.ini` to a plain
+    /// Opens `found`, applying `setup`'s throttle and twist, and its reversed throttle, to a plain
     /// joystick.
-    pub fn open(found: Found, throttle: Choice, twist: Choice) Error!Controller {
-        return openInverted(found, throttle, twist, false);
-    }
-
-    /// Like `open`, and reverses the throttle axis when `throttle_inverted` is set.
-    pub fn openInverted(found: Found, throttle: Choice, twist: Choice, throttle_inverted: bool) Error!Controller {
+    pub fn open(found: Found, setup: Setup) Error!Controller {
         switch (found.kind) {
             .gamepad => {
                 const gamepad = c.SDL_OpenGamepad(found.id) orelse return fail("SDL_OpenGamepad");
@@ -362,9 +395,9 @@ pub const Controller = struct {
             },
             .joystick => {
                 const plain = c.SDL_OpenJoystick(found.id) orelse return fail("SDL_OpenJoystick");
-                const axes: u8 = @intCast(@min(axisCount(plain), 255));
-                var layout = Layout.guess(axes, found.sdl_type).with(axes, throttle, twist);
-                layout.throttle_inverted = throttle_inverted;
+                const axes: u8 = @intCast(@min(axisCount(plain), std.math.maxInt(u8)));
+                var layout = Layout.guess(axes, found.sdl_type).with(axes, setup.throttle, setup.twist);
+                layout.throttle_inverted = setup.throttle_inverted;
                 return .{ .handle = .{ .joystick = plain }, .layout = layout };
             },
         }
@@ -407,7 +440,7 @@ pub const Controller = struct {
         var found: input.JoystickDevice.Capabilities = .{
             .name = if (name != null) std.mem.span(name) else "",
             .axes = .initEmpty(),
-            .buttons = 32,
+            .buttons = JoystickState.max_buttons,
             .hats = 1,
             .kind = .gamepad,
             .rumbles = c.SDL_GetBooleanProperty(c.SDL_GetJoystickProperties(plain), c.SDL_PROP_JOYSTICK_CAP_RUMBLE_BOOLEAN, false),
@@ -418,8 +451,8 @@ pub const Controller = struct {
                 for (controller.layout.sources()) |source| {
                     if (source[1] != null) found.axes.insert(source[0]);
                 }
-                found.buttons = @intCast(@min(buttonCount(plain), 32));
-                found.hats = @intCast(@min(hatCount(plain), 4));
+                found.buttons = @intCast(@min(buttonCount(plain), JoystickState.max_buttons));
+                found.hats = @intCast(@min(hatCount(plain), JoystickState.max_hats));
                 found.kind = .joystick;
             },
         }
@@ -464,11 +497,11 @@ pub const Controller = struct {
                     if (source[0] == .z and controller.layout.throttle_inverted) raw = ~raw;
                     controller.setAxis(state, source[0], raw);
                 }
-                const buttons = @min(buttonCount(plain), 32);
+                const buttons = @min(buttonCount(plain), JoystickState.max_buttons);
                 for (state.buttons[0..buttons], 0..) |*button, index| {
-                    button.* = if (c.SDL_GetJoystickButton(plain, @intCast(index))) 0x80 else 0;
+                    button.* = if (c.SDL_GetJoystickButton(plain, @intCast(index))) JoystickState.pressed else 0;
                 }
-                const hats = @min(hatCount(plain), 4);
+                const hats = @min(hatCount(plain), JoystickState.max_hats);
                 for (state.pov[0..hats], 0..) |*angle, index| {
                     angle.* = pov(@bitCast(c.SDL_GetJoystickHat(plain, @intCast(index))));
                 }
@@ -485,7 +518,7 @@ pub const Controller = struct {
                             break :pushed if (stick.positive) value >= stick_press else value <= -stick_press;
                         },
                     };
-                    button.* = if (down) 0x80 else 0;
+                    button.* = if (down) JoystickState.pressed else 0;
                 }
                 state.pov[0] = pov(.{
                     .up = c.SDL_GetGamepadButton(gamepad, c.SDL_GAMEPAD_BUTTON_DPAD_UP),
@@ -615,7 +648,7 @@ test "reading a flight stick" {
     defer arena_state.deinit();
     const found = choose(try attached(arena_state.allocator()), "OpenReliant Test").?;
     try std.testing.expectEqual(input.JoystickDevice.Kind.joystick, found.kind);
-    var controller: Controller = try .open(found, .guess, .guess);
+    var controller: Controller = try .open(found, .{});
     defer controller.close();
     var joystick: input.Joystick = .{};
     joystick.open(controller.device(), input.default_dead_zone);
@@ -640,8 +673,8 @@ test "reading a flight stick" {
     // The twist is inside the dead zone; the throttle is pulled all the way back.
     try std.testing.expectEqual(0, state.rz);
     try std.testing.expectEqual(0, state.z);
-    try std.testing.expectEqual(0x80, state.buttons[0]);
-    try std.testing.expectEqual(0x80, state.buttons[11]);
+    try std.testing.expectEqual(JoystickState.pressed, state.buttons[0]);
+    try std.testing.expectEqual(JoystickState.pressed, state.buttons[11]);
     try std.testing.expectEqual(0, state.buttons[1]);
     try std.testing.expectEqual(27000, state.pov[0]);
     try std.testing.expectEqual(JoystickState.centred, state.pov[1]);
@@ -665,7 +698,7 @@ test "reading a gamepad" {
     defer arena_state.deinit();
     const found = choose(try attached(arena_state.allocator()), "OpenReliant Test").?;
     try std.testing.expectEqual(input.JoystickDevice.Kind.gamepad, found.kind);
-    var controller: Controller = try .open(found, .guess, .guess);
+    var controller: Controller = try .open(found, .{});
     defer controller.close();
     var joystick: input.Joystick = .{};
     joystick.open(controller.device(), input.default_dead_zone);
@@ -756,7 +789,7 @@ test "controllers of many kinds" {
             if (candidate.id == id) break candidate;
         } else return error.TestUnexpectedResult;
         try std.testing.expectEqual(model.kind, each.kind);
-        var controller: Controller = try .open(each, .guess, .guess);
+        var controller: Controller = try .open(each, .{});
         defer controller.close();
         var joystick: input.Joystick = .{};
         joystick.open(controller.device(), input.default_dead_zone);

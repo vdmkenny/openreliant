@@ -4,6 +4,7 @@
 //! each in a slot its part names (`shp.Part.turret_slot`).
 
 const std = @import("std");
+const assert = std.debug.assert;
 
 const shp = @import("../../../formats/shp.zig");
 const math = @import("../../surrender/math.zig");
@@ -43,7 +44,7 @@ pub const Aimed = struct {
     /// The yaw and pitch it has still to turn toward its aim (`+0x50`, `+0x54`).
     to_turn: Angles = .{},
     /// Its muzzle faces away from its aim of no yaw and no pitch (`facesBack`), as every fighter's
-    /// rear turret's does. **Fix:** the port turns such a turret in its parts' frames turned a
+    /// rear turret's does. **Fix:** OpenReliant turns such a turret in its parts' frames turned a
     /// half turn about their X axis, so it aims along its muzzle; the game's never fires
     /// ([#219](https://github.com/vdmkenny/openreliant/issues/219)).
     reversed: bool = false,
@@ -178,7 +179,7 @@ const slot_count = 5;
 
 /// The slot a part of a turret's assembly stands in, or null for none. The game writes a slot
 /// past the record's five, or a spinning or missile turret's slot of -1, into the words beside
-/// them; the port passes it over.
+/// them; OpenReliant passes it over.
 fn slotOf(part: *const objects.Model.Part) ?usize {
     const slot = std.math.cast(usize, part.turret_slot) orelse return null;
     return if (slot < slot_count) slot else null;
@@ -207,7 +208,7 @@ pub fn inAssembly(model: *const objects.Model, link: u32) bool {
 pub fn step(world: gameobj.World, index: u16) void {
     const slot = &world.objects.slots[index];
     if (slot.object.flags.exploding) return;
-    if (slot.object.order_count > 0 and slot.orders[0].order == .dock) return;
+    if (slot.current()) |entry| if (entry.order == .dock) return;
     for (slot.guns) |*gun| switch (gun.turret) {
         .aimed => |*aimed| aimedStep(world, index, gun, aimed),
         .spin => |*spin| spinStep(world, gun, spin),
@@ -233,7 +234,7 @@ const look_spread = 100;
 /// the frame before.
 fn aimedStep(world: gameobj.World, index: u16, gun: *guns.Fitted, aimed: *Aimed) void {
     const clock = world.clock;
-    if (aimed.target.index >= 0) {
+    if (aimed.target.slot() != null) {
         track(world, index, gun, aimed);
         const rate = @as(f32, @floatFromInt(clock.frame_duration)) * turn_rate;
         const model = aimed.model;
@@ -243,7 +244,7 @@ fn aimedStep(world: gameobj.World, index: u16, gun: *guns.Fitted, aimed: *Aimed)
         if (aimed.slots[0]) |part| turn(model, part, pitch);
     }
     if (aimed.looks_at < clock.frame_start) {
-        if (aimed.target.index < 0) pickTarget(world, index, aimed);
+        if (aimed.target.slot() == null) pickTarget(world, index, aimed);
         aimed.looks_at = clock.frame_start + look_least + @rem(world.random.rand(), look_spread);
     }
 }
@@ -273,8 +274,9 @@ const fire_speed: f32 = 2;
 /// **Quirk:** the muzzle points along its own nose, from where the base stands.
 fn track(world: gameobj.World, index: u16, gun: *guns.Fitted, aimed: *Aimed) void {
     const all = world.objects;
-    if (aimed.target.index < 0 or !ai.targetValid(all, aimed.target, .{})) return drop(aimed);
-    const struck = &all.slots[@intCast(aimed.target.index)];
+    const target = aimed.target.slot() orelse return drop(aimed);
+    if (!ai.targetValid(all, aimed.target, .{})) return drop(aimed);
+    const struck = &all.slots[target];
     const lead: f32 = if (struck.object.flags.ecm) world.random.fraction() * ecm_lead_spread + ecm_lead_least else 1;
     const model = aimed.model;
     const base = &model.parts[aimed.base];
@@ -300,11 +302,25 @@ fn track(world: gameobj.World, index: u16, gun: *guns.Fitted, aimed: *Aimed) voi
 }
 
 fn drop(aimed: *Aimed) void {
-    aimed.target.index = -1;
+    aimed.target = .none;
 }
 
 /// How far past a pitch limit a Huge Gun's aim is taken at the limit, in degrees (`0x004DC72C`).
 const huge_overshoot: f32 = 20;
+
+/// A firing arc's grid (`shp.FiringArc`) as `turret_aim_angles` reads it: its rows go a whole turn
+/// round the component's Y axis (`0x004DC894`), and its columns out from the axis are each half a
+/// row wide, twice as many a radian (`0x004DC890`). A direction's row and column are its angles, a
+/// turn on, in rows and in columns, less `arc_half_cell` (`0x004DC408`), rounded.
+const arc_rows = @typeInfo(@FieldType(shp.FiringArc, "rows")).array.len;
+const arc_rows_per_radian: f32 = @as(comptime_float, arc_rows) / std.math.tau;
+const arc_columns_per_radian: f32 = 2 * @as(comptime_float, arc_rows) / std.math.tau;
+const arc_half_cell: f32 = 0.5;
+
+comptime {
+    assert(arc_rows_per_radian == 16.0 / std.math.pi);
+    assert(arc_columns_per_radian == 32.0 / std.math.pi);
+}
 
 /// `turret_aim_angles` (`0x0047CB10`): the yaw and pitch that turn an aimed turret toward `aim`,
 /// as its model and its base stand drawn: in the model's root's frame and the base's part's own,
@@ -315,11 +331,11 @@ const huge_overshoot: f32 = 20;
 /// a half turn about X (`Aimed.reversed`).
 ///
 /// **Improvement:** the game turns radians to degrees and back by a rounded 57.2958 and 0.0174533,
-/// and a turn by 6.28319; the port by the exact values.
+/// and a turn by 6.28319; OpenReliant by the exact values.
 ///
 /// **Fix:** the game finds the angle from Y of the direction in the arc by dividing across by the
-/// sine of its angle about Y, which is nothing for a direction straight ahead or behind; the port
-/// takes the length across itself.
+/// sine of its angle about Y, which is nothing for a direction straight ahead or behind;
+/// OpenReliant takes the length across itself.
 ///
 /// Not ported: the Stalag's turrets fire anywhere while the byte at `0x005883F8` is set, which the
 /// hull's triggers set, perhaps with the player inside it
@@ -359,8 +375,8 @@ fn aimAngles(aimed: *const Aimed, aim: Vector) ?Angles {
         const w = math.transformTransposed(model.orientation, aim - pitching.object.position);
         const around = std.math.atan2(w[0], w[2]);
         const from = std.math.atan2(@sqrt(w[0] * w[0] + w[2] * w[2]), w[1]);
-        const row: u32 = @bitCast(math.round((around + std.math.tau) * (16.0 / std.math.pi) - 0.5));
-        const column: i32 = math.round((from + std.math.tau) * (32.0 / std.math.pi) - 0.5);
+        const row: u32 = @bitCast(math.round((around + std.math.tau) * arc_rows_per_radian - arc_half_cell));
+        const column: i32 = math.round((from + std.math.tau) * arc_columns_per_radian - arc_half_cell);
         const rows = [2]u5{ @truncate(row), @truncate(row +% 1) };
         const columns = [2]u4{ @truncate(@as(u32, @bitCast(-%column))), @truncate(@as(u32, @bitCast(1 -% column))) };
         for (rows) |r| for (columns) |c| if (!arc.open(r, c)) return null;
@@ -377,7 +393,7 @@ fn aimAngles(aimed: *const Aimed, aim: Vector) ?Angles {
 ///
 /// **Fix:** the game doesn't ask whether the object is valid to aim at, so an exploding, cloaked or
 /// untargetable one early in the slots is picked, dropped by the next track and picked again,
-/// keeping the turret from any other; the port passes over what the track would drop
+/// keeping the turret from any other; OpenReliant passes over what the track would drop
 /// (`ai.targetValid`).
 ///
 /// Not ported: in a multiplayer game, the player who last hurt the turret's object is passed over
@@ -392,18 +408,19 @@ fn pickTarget(world: gameobj.World, index: u16, aimed: *Aimed) void {
         .kurgan, .antanov, .nanny, .prowler => false,
         else => true,
     };
-    for (all.slots[0..all.count], 0..) |*slot, candidate| {
+    for (all.slots[0..all.count], 0..) |*slot, at| {
+        const candidate: u16 = @intCast(at);
         const object = &slot.object;
-        if (candidate == aimed.target.index or candidate == index) continue;
-        if (object.type.number() >= 0x100 or object.side == own.side or object.side == .neutral) continue;
+        if (aimed.target.slot() == candidate or candidate == index) continue;
+        if (!object.type.hasStats() or object.side == own.side or object.side == .neutral) continue;
         if (huge and !object.flags.components) continue;
-        aimed.target = .{ .kind = .ship, .index = @intCast(candidate), .component = -1 };
+        aimed.target = .at(candidate, null);
         if (object.component_count < 1 or huge) {
             if (reaches(all, aimed, from)) return;
         } else if (components_aimed) {
-            for (slot.components[0..@intCast(object.component_count)], 0..) |component, number| {
+            for (slot.listed(), 0..) |component, number| {
                 if (component == null) continue;
-                aimed.target.component = @intCast(number);
+                aimed.target = .at(candidate, @intCast(number));
                 if (reaches(all, aimed, from)) return;
             }
         }
@@ -516,21 +533,22 @@ fn missileStep(world: gameobj.World, index: u16, launcher: *Launcher) void {
             for (all.slots[0..all.count], 0..) |*slot, candidate| {
                 if (candidate == index) continue;
                 const flags = slot.object.flags;
-                if (flags.components or flags.stand_in or flags.exploding or flags.disabled or !flags.targetable) continue;
+                if (flags.components or flags.outOfSearch() or !flags.targetable) continue;
                 if (slot.object.side == own.side) continue;
                 const seen: Bearing = .of(from, slot.object.nextPosition());
                 if (seen.distance > reach or !seen.level()) continue;
                 if (seen.distance * best < seen.local[2]) {
                     best = seen.local[2] / seen.distance;
-                    launcher.target.index = @intCast(candidate);
+                    launcher.target = .at(@intCast(candidate), null);
                 }
             }
-            if (launcher.target.index >= 0) launcher.state = .tracking;
+            if (launcher.target.slot() != null) launcher.state = .tracking;
         },
         .tracking => {
             if (launcher.missiles == 0) return empty(launcher, now);
+            const target = launcher.target.slot() orelse return lose(launcher, now);
             if (!ai.targetValid(all, launcher.target, .{})) return lose(launcher, now);
-            const seen: Bearing = .of(from, all.slots[@intCast(launcher.target.index)].object.nextPosition());
+            const seen: Bearing = .of(from, all.slots[target].object.nextPosition());
             if (seen.distance > reach * keep_range or !seen.level()) return lose(launcher, now);
             if (seen.local[0] < seen.distance * -missile_band) turn(model, launcher.base, .{ 0, -missile_turn, 0 });
             if (seen.local[0] > seen.distance * missile_band) turn(model, launcher.base, .{ 0, missile_turn, 0 });
@@ -565,8 +583,7 @@ const Bearing = struct {
     local: Vector,
 
     fn of(from: math.Place, point: Vector) Bearing {
-        const toward = point - from.position;
-        return .{ .distance = math.length(toward), .local = math.transformTransposed(from.orientation, toward) };
+        return .{ .distance = math.length(point - from.position), .local = from.inverse(point) };
     }
 
     /// Whether it stands within `missile_cone` of the distance up or down.
@@ -687,7 +704,7 @@ test fit {
     try std.testing.expectEqual(3, aimed.barrel.muzzle.part);
     try std.testing.expectEqual(guns.GunType.turret_lasers, aimed.barrel.type);
     try std.testing.expect(model.parts[1].turret and !model.parts[2].turret);
-    try std.testing.expectEqual(-1, aimed.target.index);
+    try std.testing.expectEqual(null, aimed.target.ship());
     try std.testing.expectEqual(null, aimed.arc);
 
     const launcher = fitted[2].turret.missile;
@@ -734,7 +751,7 @@ const Stage = struct {
     fn init(stage: *Stage, gpa: std.mem.Allocator) !void {
         try stage.mission.init(gpa);
         stage.parts.init();
-        stage.events = .{.{ .time = 0, .kind = 0, ._unknown_08 = 0 }};
+        stage.events = .{.{ .time = 0, .kind = .muzzles, ._unknown_08 = 0 }};
         stage.tracks = .{
             .{ .clip = objects.testing.clip(10, .once, "fire"), .keyframes = &.{}, .events = &stage.events },
             .{ .clip = objects.testing.clip(10, .once, "reload"), .keyframes = &.{}, .events = &.{} },
@@ -866,7 +883,7 @@ test "an aimed turret passes over a ship the track would drop" {
     stage.mission.slot(later).drawn.position = .{ 0, 0, 2500 };
     stage.mission.slot(stage.target).object.flags.targetable = false;
     pickTarget(stage.mission.world(), stage.ship, aimed);
-    try std.testing.expectEqual(@as(i16, @intCast(later)), aimed.target.index);
+    try std.testing.expectEqual(later, aimed.target.ship());
 }
 
 test "an aimed turret fires where its muzzle points, and turns toward its target" {
@@ -886,7 +903,7 @@ test "an aimed turret fires where its muzzle points, and turns toward its target
     // With no target, it looks for one: the hostile ship, not its own side's.
     _ = try stage.mission.add(.predator, .{ 0, 0, 2000 });
     step(world, stage.ship);
-    try std.testing.expectEqual(@as(i16, @intCast(stage.target)), aimed.target.index);
+    try std.testing.expectEqual(stage.target, aimed.target.ship());
     try std.testing.expect(aimed.looks_at >= 1100 and aimed.looks_at < 1200);
 
     // Its muzzle points along Z at the target, so it fires: the trigger held for a tick, and the
@@ -905,7 +922,7 @@ test "an aimed turret fires where its muzzle points, and turns toward its target
     // A target that is no longer valid is dropped.
     stage.mission.slot(stage.target).object.flags.targetable = false;
     step(world, stage.ship);
-    try std.testing.expectEqual(-1, aimed.target.index);
+    try std.testing.expectEqual(null, aimed.target.ship());
 }
 
 test "a spinning gun spins up while its trigger is held" {
@@ -970,7 +987,7 @@ test "a missile turret reloads, then tracks and launches" {
     // It finds the hostile ship ahead, and tracks it.
     step(world, stage.ship);
     try std.testing.expectEqual(Launcher.State.tracking, launcher.state);
-    try std.testing.expectEqual(@as(i16, @intCast(stage.target)), launcher.target.index);
+    try std.testing.expectEqual(stage.target, launcher.target.ship());
     // Each time its wait is over it launches one time in five, then waits 2000 ticks, or 1000 in
     // mission 28. Where the ship can't build the Screamer, the missile is spent all the same.
     var tries: usize = 0;

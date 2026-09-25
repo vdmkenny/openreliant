@@ -18,6 +18,8 @@ const Allocator = std.mem.Allocator;
 const openreliant = @import("openreliant");
 const cdimage = openreliant.cdimage;
 const iso9660 = openreliant.iso9660;
+const stats = openreliant.stats;
+const tcache = openreliant.tcache;
 const game = openreliant.engine.game;
 const c = @import("archive");
 const help = @import("help.zig");
@@ -71,7 +73,7 @@ pub const Options = struct {
 };
 
 /// The game's files the engine reads before anything else. It has none of its own.
-pub const game_files = [_][]const u8{ game.bigfile.resource_name, "tcachehw.dat", "shipstats.bin", game.language.file_name };
+pub const game_files = [_][]const u8{ game.bigfile.resource_name, tcache.hardware_name, stats.Table.ships.fileName(), game.language.file_name };
 
 /// The first of the game's files `dir` lacks, or null when it has them all. It asks with `statFile`:
 /// `access` fails for files that exist when the Windows build runs under Wine.
@@ -916,6 +918,10 @@ const CabinetRecords = struct {
         data_offset: u32,
         blocks: u16,
         compression: u16 = 0,
+
+        comptime {
+            std.debug.assert(@sizeOf(Folder) == 8);
+        }
     };
 
     /// A file's record, which its name follows, up to a NUL.
@@ -927,12 +933,20 @@ const CabinetRecords = struct {
         date: u16 = 0x5421,
         time: u16 = 0,
         attributes: u16 = 0x20,
+
+        comptime {
+            std.debug.assert(@sizeOf(File) == 16);
+        }
     };
 
     const Data = extern struct {
         checksum: u32 = 0,
         size: u16,
         uncompressed_size: u16,
+
+        comptime {
+            std.debug.assert(@sizeOf(Data) == 8);
+        }
     };
 };
 
@@ -1001,43 +1015,13 @@ fn testImage(gpa: Allocator, label: []const u8, files: []const TestFile, layout:
     @memset(blocks, @splat(0));
 
     const Record = iso9660.DirectoryRecord;
-    const record = struct {
-        fn write(block: *[block_size]u8, pos: *usize, identifier: []const u8, lba: usize, len: usize, directory: bool) void {
-            var flags: iso9660.FileFlags = @bitCast(@as(u8, 0));
-            flags.directory = directory;
-            const size = std.mem.alignForward(usize, @sizeOf(Record) + identifier.len, 2);
-            const fixed: *Record = @ptrCast(block[pos.*..][0..@sizeOf(Record)]);
-            fixed.* = .{
-                .length = @intCast(size),
-                .extended_attribute_length = 0,
-                .extent = .init(@intCast(lba)),
-                .data_length = .init(@intCast(len)),
-                .recorded_at = .{ .years_since_1900 = 100, .month = 3, .day = 31, .hour = 12, .minute = 0, .second = 0, .gmt_offset = 0 },
-                .flags = flags,
-                .file_unit_size = 0,
-                .interleave_gap_size = 0,
-                .volume_sequence_number = .init(1),
-                .identifier_length = @intCast(identifier.len),
-            };
-            @memcpy(block[pos.* + @sizeOf(Record) ..][0..identifier.len], identifier);
-            pos.* += size;
+    const write = iso9660.testing.writeRecord;
+    const folder_extent = struct {
+        fn at(lba: usize) iso9660.Extent {
+            return .{ .lba = @intCast(lba), .len = block_size };
         }
-    };
-
-    const primary: *iso9660.VolumeDescriptor = @ptrCast(blocks[iso9660.VolumeDescriptor.first_lba][0..@sizeOf(iso9660.VolumeDescriptor)]);
-    primary.type = .primary;
-    primary.standard_identifier = iso9660.VolumeDescriptor.magic.*;
-    primary.version = 1;
-    @memset(&primary.volume_identifier, ' ');
-    @memcpy(primary.volume_identifier[0..label.len], label);
-    primary.logical_block_size = .init(block_size);
-    var root: [block_size]u8 = @splat(0);
-    var pos: usize = 0;
-    record.write(&root, &pos, Record.self_identifier, first_folder, block_size, true);
-    primary.root_directory = @as(*const Record, @ptrCast(root[0..@sizeOf(Record)])).*;
-    const terminator = &blocks[iso9660.VolumeDescriptor.first_lba + 1];
-    terminator[0] = @intFromEnum(iso9660.VolumeDescriptor.Type.set_terminator);
-    terminator[1..6].* = iso9660.VolumeDescriptor.magic.*;
+    }.at;
+    iso9660.testing.writeDescriptors(blocks, label, folder_extent(first_folder));
 
     for (folders.items, 0..) |folder, i| {
         const block = &blocks[first_folder + i];
@@ -1045,17 +1029,17 @@ fn testImage(gpa: Allocator, label: []const u8, files: []const TestFile, layout:
         const parent_index = for (folders.items, 0..) |known, j| {
             if (std.mem.eql(u8, known, parent)) break j;
         } else 0;
-        pos = 0;
-        record.write(block, &pos, Record.self_identifier, first_folder + i, block_size, true);
-        record.write(block, &pos, Record.parent_identifier, first_folder + parent_index, block_size, true);
+        var pos: usize = 0;
+        write(block, &pos, Record.self_identifier, folder_extent(first_folder + i), .directory);
+        write(block, &pos, Record.parent_identifier, folder_extent(first_folder + parent_index), .directory);
         for (folders.items[1..], 1..) |sub, j| {
             if (!std.mem.eql(u8, std.fs.path.dirnamePosix(sub) orelse "", folder)) continue;
-            record.write(block, &pos, std.fs.path.basenamePosix(sub), first_folder + j, block_size, true);
+            write(block, &pos, std.fs.path.basenamePosix(sub), folder_extent(first_folder + j), .directory);
         }
         for (files, places) |file, place| {
             if (!std.mem.eql(u8, std.fs.path.dirnamePosix(file.path) orelse "", folder)) continue;
             const identifier = try std.fmt.allocPrint(arena, "{s};1", .{std.fs.path.basenamePosix(file.path)});
-            record.write(block, &pos, identifier, place, file.data.len, false);
+            write(block, &pos, identifier, .{ .lba = place, .len = @intCast(file.data.len) }, .file);
         }
     }
     for (files, places) |file, place| @memcpy(std.mem.sliceAsBytes(blocks[place..])[0..file.data.len], file.data);
@@ -1063,14 +1047,9 @@ fn testImage(gpa: Allocator, label: []const u8, files: []const TestFile, layout:
     switch (layout) {
         .cooked => return gpa.dupe(u8, std.mem.sliceAsBytes(blocks)),
         .raw => {
-            const raw = try gpa.alloc(u8, blocks.len * cdimage.raw_sector_size);
-            for (blocks, 0..) |*block, lba| {
-                const sector = raw[lba * cdimage.raw_sector_size ..][0..cdimage.raw_sector_size];
-                @memset(sector, 0);
-                const header: *cdimage.Header = @ptrCast(sector[0..@sizeOf(cdimage.Header)]);
-                header.* = .{ .sync = cdimage.sync_pattern, .address = .fromLba(@intCast(lba)), .mode = .mode1 };
-                @memcpy(sector[@sizeOf(cdimage.Header)..][0..block_size], block);
-            }
+            const sector_size = cdimage.raw_sector_size;
+            const raw = try gpa.alloc(u8, blocks.len * sector_size);
+            for (blocks, 0..) |*block, lba| raw[lba * sector_size ..][0..sector_size].* = cdimage.testing.sector(@intCast(lba), block);
             return raw;
         },
     }

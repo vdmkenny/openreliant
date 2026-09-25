@@ -40,20 +40,25 @@ pub const Msf = extern struct {
     second: Bcd,
     frame: Bcd,
 
+    /// Sectors a second of a disc holds.
+    pub const frames_per_second = 75;
+    const seconds_per_minute = std.time.s_per_min;
+
     /// The data area starts after a two second pregap, so LBA 0 is at 00:02:00.
-    pub const pregap_frames = 150;
+    pub const pregap_frames = 2 * frames_per_second;
 
     pub fn toLba(msf: Msf) ?u32 {
-        const frames = (@as(u32, msf.minute.value()) * 60 + msf.second.value()) * 75 + msf.frame.value();
+        const seconds = @as(u32, msf.minute.value()) * seconds_per_minute + msf.second.value();
+        const frames = seconds * frames_per_second + msf.frame.value();
         return if (frames < pregap_frames) null else frames - pregap_frames;
     }
 
     pub fn fromLba(lba: u32) Msf {
         const frames = lba + pregap_frames;
         return .{
-            .minute = .from(@intCast(frames / (75 * 60))),
-            .second = .from(@intCast(frames / 75 % 60)),
-            .frame = .from(@intCast(frames % 75)),
+            .minute = .from(@intCast(frames / (frames_per_second * seconds_per_minute))),
+            .second = .from(@intCast(frames / frames_per_second % seconds_per_minute)),
+            .frame = .from(@intCast(frames % frames_per_second)),
         };
     }
 };
@@ -246,14 +251,17 @@ pub const Image = struct {
     }
 };
 
-/// Builds a raw Mode 1 sector around `data`. EDC/ECC are left zeroed; nothing here verifies them.
-fn testSector(lba: u32, data: *const [block_size]u8) [raw_sector_size]u8 {
-    var sector: [raw_sector_size]u8 = @splat(0);
-    const header: *Header = @ptrCast(sector[0..@sizeOf(Header)]);
-    header.* = .{ .sync = sync_pattern, .address = .fromLba(lba), .mode = .mode1 };
-    @memcpy(sector[@sizeOf(Header)..][0..block_size], data);
-    return sector;
-}
+/// Builds images in memory, for the tests of code that reads them.
+pub const testing = struct {
+    /// A raw Mode 1 sector around `data`. EDC/ECC are left zeroed; nothing here verifies them.
+    pub fn sector(lba: u32, data: *const [block_size]u8) [raw_sector_size]u8 {
+        var raw: [raw_sector_size]u8 = @splat(0);
+        const header: *Header = @ptrCast(raw[0..@sizeOf(Header)]);
+        header.* = .{ .sync = sync_pattern, .address = .fromLba(lba), .mode = .mode1 };
+        @memcpy(raw[@sizeOf(Header)..][0..block_size], data);
+        return raw;
+    }
+};
 
 test "Bcd and Msf round-trip" {
     try std.testing.expectEqual(@as(u8, 59), (Bcd{ .tens = 5, .ones = 9 }).value());
@@ -272,7 +280,7 @@ test "raw image exposes user data as logical blocks" {
     var raw: [3 * raw_sector_size]u8 = undefined;
     for (0..3) |i| {
         const data: [block_size]u8 = @splat(@intCast('a' + i));
-        raw[i * raw_sector_size ..][0..raw_sector_size].* = testSector(@intCast(i), &data);
+        raw[i * raw_sector_size ..][0..raw_sector_size].* = testing.sector(@intCast(i), &data);
     }
 
     const image: Image = try .init(.{ .memory = &raw });
@@ -303,7 +311,7 @@ test "cooked image is passed through" {
 
 test "sectors without a logical block are rejected" {
     const data: [block_size]u8 = @splat(0);
-    var sector = testSector(0, &data);
+    var sector = testing.sector(0, &data);
     sector[15] = @intFromEnum(Mode.mode0);
     try std.testing.expectError(error.NoLogicalBlock, userData(&sector));
     sector[0] = 0xAA;

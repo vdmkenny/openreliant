@@ -11,7 +11,6 @@ const controls = @import("../input/controls.zig");
 const libcmt = @import("../libcmt.zig");
 const create = @import("create.zig");
 const gameobj = @import("gameobj.zig");
-const shp = @import("../../formats/shp.zig");
 const missiles = @import("missiles.zig");
 const Vector = math.Vector;
 
@@ -24,27 +23,31 @@ pub const Place = math.Place;
 
 // --- Projection ---------------------------------------------------------------------------------
 
-/// The factors every view but `wide_view` projects with (`sr_set_projection`): the screen spans
+/// The factors every view but `View.wide` projects with (`sr_set_projection`): the screen spans
 /// 5/6 of a view unit either side of the middle across and 5/8 up and down, square on a 4:3 screen:
 /// about 80 degrees across and 64 down.
 pub const factors = [2]f32{ 0.6, 0.8 };
 
-/// View 0x20 projects wider, about 110 degrees across.
-pub const wide_view = 0x20;
+/// `View.wide` projects wider, about 110 degrees across.
 pub const wide_factors = [2]f32{ 0.35, 0.467 };
 
+/// The tenth of a pixel `sr_set_projection` takes off the screen's size before it scales it
+/// (`0x004DC420`, `srapi.Projection.init`), which `unstretched` takes off likewise so that its
+/// pixels come out square.
+const projection_trim: f32 = 0.1;
+
 /// The cinematic views' bars: the viewport leaves out this much of the screen at the top and the
-/// bottom once they have slid in.
+/// bottom once they have slid in (`camera_frame`, `0x004DC420`).
 pub const letterbox: f32 = 0.1;
 
-/// The port's factors for a screen of any shape: the game's down, and across whatever keeps pixels
-/// square. **Improvement:** the game uses its factors on every screen, which stretches the picture
-/// on any but a 4:3 one; the port shows more at the sides instead. On a 4:3 screen the factors are
-/// the game's to within a thousandth of a percent.
+/// OpenReliant's factors for a screen of any shape: the game's down, and across whatever keeps
+/// pixels square. **Improvement:** the game uses its factors on every screen, which stretches the
+/// picture on any but a 4:3 one; OpenReliant shows more at the sides instead. On a 4:3 screen the
+/// factors are the game's to within a thousandth of a percent.
 pub fn unstretched(width: u32, height: u32, base: [2]f32) [2]f32 {
     const w: f32 = @floatFromInt(width);
     const h: f32 = @floatFromInt(height);
-    return .{ base[1] * (h - 0.1) / (w - 0.1), base[1] };
+    return .{ base[1] * (h - projection_trim) / (w - projection_trim), base[1] };
 }
 
 // --- Views --------------------------------------------------------------------------------------
@@ -57,8 +60,12 @@ pub const View = enum(u8) {
     cockpit_left = 1,
     cockpit_right = 2,
     cockpit_rear = 3,
-    /// Behind and above an object, lagging its turns. View 0x1E is the same.
+    /// Behind and above an object, lagging its turns.
     chase = 4,
+    /// The chase view again, under a number of its own.
+    chase_too = 0x1E,
+    /// A view that projects wider than the rest (`wide_factors`). **Unknown:** what it shows.
+    wide = 0x20,
     /// Around the player's target, looking at it, steered from the keyboard.
     target = 6,
     /// Around the player's ship, likewise.
@@ -85,6 +92,13 @@ pub const View = enum(u8) {
     watch_marker = 0x1B,
     /// From a point the player flies past.
     flyby = 0x24,
+    /// **Unknown:** two views after the fly-by that share its name, which `hud_draw` leaves unnamed
+    /// with it.
+    _unknown_37 = 0x25,
+    _unknown_38 = 0x26,
+    /// **Unknown:** in which the player's own ship is heard flying past no more than from the
+    /// cockpit (`sound3d_engine_update`).
+    _unknown_15 = 0x0F,
     _,
 
     /// The view's record in the view table (`0x004F72A8`), or null for a number past it, which
@@ -109,6 +123,27 @@ pub const View = enum(u8) {
     /// in every view but the one ahead from the cockpit.
     pub fn name(view: View) ?u16 {
         return if (view.record()) |found| found.name else null;
+    }
+
+    /// Whether the player's missile lock builds and its rings show in the view: the cockpit's
+    /// views and the chase view, views 0 to 4 (`mission_frame`, `0x004933D7`), but not the chase
+    /// view under its second number.
+    pub fn showsLock(view: View) bool {
+        return switch (view) {
+            .cockpit, .cockpit_left, .cockpit_right, .cockpit_rear, .chase => true,
+            else => false,
+        };
+    }
+
+    /// How far the view turns from ahead, about the object's down axis, in degrees: the cockpit's
+    /// side and rear views, and no other (`camera_frame`'s table, `0x0045FC9B`).
+    pub fn cockpitTurn(view: View) f32 {
+        return switch (view) {
+            .cockpit_left => -90,
+            .cockpit_right => 90,
+            .cockpit_rear => 180,
+            else => 0,
+        };
     }
 };
 
@@ -211,11 +246,10 @@ pub const Subject = struct {
     /// of turn.
     pub fn of(slot: *const create.Slot) Subject {
         const live = &slot.object;
-        const eye = if (slot.type) |loaded| loaded.model.header.eye else std.mem.zeroes(shp.Vec3);
         return .{
             .position = slot.drawn.position,
             .orientation = slot.drawn.orientation,
-            .eye = .{ eye.x, eye.y, eye.z },
+            .eye = if (slot.type) |loaded| gameobj.vector(loaded.model.header.eye) else @splat(0),
             .radius = live.radius,
             // The chase view sits farther back the more throttle the ship carries and swings
             // against its rates of turn, so it lags a turn rather than riding rigidly behind the
@@ -306,7 +340,7 @@ pub const Camera = struct {
     missile: u8 = 0,
     missile_gone: bool = false,
 
-    /// Bars grow this share of the screen a tick, times their speed.
+    /// Bars grow this share of the screen a tick, times their speed (`camera_frame`, `0x004DC418`).
     pub const bar_rate: f32 = 0.001;
 
     /// Switches view (`camera_set_view`): `object` is the one the view shows, `lock` keeps the
@@ -337,7 +371,7 @@ pub const Camera = struct {
         camera.view = view;
         switch (view) {
             .cockpit => if (camera.cockpit_mode == .chase) camera.chase.resetTurns(),
-            .chase, chase_too => camera.chase.resetTurns(),
+            .chase, .chase_too => camera.chase.resetTurns(),
             .target, .external => camera.orbit = .{},
             else => {},
         }
@@ -345,8 +379,8 @@ pub const Camera = struct {
     }
 
     /// Switches to one of the ejection's views, `view`, of `object`, locked and forced
-    /// (`camera_set_view`), with what it stands off by taken from `seen`, the object, and `pod`, the
-    /// pilot's, as they stand now.
+    /// (`camera_set_view`), with what it stands off by taken from `seen`, the object, and `pod`,
+    /// the pilot's, as they stand now.
     pub fn setCutaway(camera: *Camera, view: View, object: u16, now: u32, seen: Subject, pod: Subject) bool {
         if (!camera.setView(view, object, true, true, now)) return false;
         camera.cutaway = switch (view) {
@@ -457,7 +491,7 @@ pub const Camera = struct {
             .cockpit => if (camera.cockpit_mode == .chase) {
                 camera.place = camera.chase.frame(world.object.motion, world.object.position, world.object.orientation);
             } else {
-                camera.place = cockpit(0, world.object.position, world.object.orientation, world.object.eye);
+                camera.place = cockpit(.cockpit, world.object.position, world.object.orientation, world.object.eye);
                 if (world.cockpit) |model| camera.cockpit_place = Cockpit.place(model, &camera.recoil, shake, world.random);
                 // The camera itself shakes with a hit, by what is left of it.
                 if (shake > 0) camera.place.orientation = math.product(
@@ -465,14 +499,13 @@ pub const Camera = struct {
                     camera.place.orientation,
                 );
             },
-            .cockpit_left, .cockpit_right, .cockpit_rear => {
-                const n: u2 = @truncate(@intFromEnum(camera.view));
-                camera.place = if (camera.view == .cockpit_rear and world.object.motion.ship_type == .kamov)
+            .cockpit_left, .cockpit_right, .cockpit_rear => |side| {
+                camera.place = if (side == .cockpit_rear and world.object.motion.ship_type == .kamov)
                     kamovRear(world.object.position, world.object.orientation)
                 else
-                    cockpit(n, world.object.position, world.object.orientation, world.object.eye);
+                    cockpit(side, world.object.position, world.object.orientation, world.object.eye);
             },
-            .chase, chase_too => {
+            .chase, .chase_too => {
                 if (!world.object.motion.ship_type.hasStats()) return .cockpit;
                 camera.place = camera.chase.frame(world.object.motion, world.object.position, world.object.orientation);
             },
@@ -519,16 +552,13 @@ pub const Camera = struct {
 
     /// The projection for the view and the bars on a screen of `width` by `height`, unstretched.
     pub fn projection(camera: Camera, width: u32, height: u32) srapi.Projection {
-        const base = if (camera.view == @as(View, @enumFromInt(wide_view))) wide_factors else factors;
+        const base = if (camera.view == .wide) wide_factors else factors;
         return .init(width, height, .{ 0, camera.bars, 1, 1 - camera.bars }, unstretched(width, height, base));
     }
 };
 
-/// View 0x1E, which is the chase view again.
-pub const chase_too: View = @enumFromInt(0x1E);
-
 /// How long the missile view holds still once its missile has ended, before it goes back to the
-/// cockpit.
+/// cockpit (`camera_frame`, `0x00460C90`).
 const missile_linger = 150;
 
 /// The next missile in flight after `from`, going round the records, that `launcher` launched
@@ -548,10 +578,8 @@ const shake_rumbles: f32 = 0.1;
 
 // --- Cockpit ------------------------------------------------------------------------------------
 
-/// How far each cockpit view turns from ahead, about the object's down axis, in degrees.
-pub const cockpit_turns = [4]f32{ 0, -90, 90, 180 };
-
-/// The Kamov's rear view is from this far along its back instead of from its eye.
+/// The Kamov's rear view is from this far along its back instead of from its eye (`camera_frame`,
+/// `0x00461307`).
 pub const kamov_rear_distance: f32 = 1500;
 
 fn kamovRear(position: Vector, orientation: Matrix) Place {
@@ -559,10 +587,10 @@ fn kamovRear(position: Vector, orientation: Matrix) Place {
     return .{ .position = position + math.transform(turned, .{ 0, 0, kamov_rear_distance }), .orientation = turned };
 }
 
-/// The camera in a cockpit view: turned from the object's orientation, and at its eye point, the
-/// model header's `eye`, turned likewise. `view` is 0 to 3.
-pub fn cockpit(view: u2, position: Vector, orientation: Matrix, eye: Vector) Place {
-    const turned = math.turned(orientation, .y, std.math.degreesToRadians(cockpit_turns[view]));
+/// The camera in a cockpit view: turned from the object's orientation by the view's turn
+/// (`View.cockpitTurn`), and at its eye point, the model header's `eye`, turned likewise.
+pub fn cockpit(view: View, position: Vector, orientation: Matrix, eye: Vector) Place {
+    const turned = math.turned(orientation, .y, std.math.degreesToRadians(view.cockpitTurn()));
     return .{ .position = position + math.transform(turned, eye), .orientation = turned };
 }
 
@@ -586,13 +614,15 @@ pub const Cockpit = struct {
     /// after.
     pub const recoil_kick: f32 = 30;
     pub const recoil_fade: f32 = 0.95;
-    /// The shake from a hit: `hit_shake` goes no higher than `shake_most` and dies away by
-    /// `shake_fade` a tick; the root jitters by a random share of `shake_share` of it, up to half
-    /// of that either way, and the camera by a share of `camera_shake` of what is left.
+    /// The shake from a hit: `hit_shake` goes no higher than `shake_most` (`0x004DC480`) and dies
+    /// away by `shake_fade` a tick (`0x004DC4AC`); the root jitters by a random share of
+    /// `root_jitter_share` (`0x004DC408`) of `shake_share` of it (`0x004DC420`), up to half of that
+    /// either way, and the camera by a share of `camera_shake` of what is left (`0x004DC754`).
     pub const shake_most: f32 = 2;
     pub const shake_share: f32 = 0.1;
     pub const shake_fade: f32 = 0.02;
     pub const camera_shake: f32 = 0.03;
+    pub const root_jitter_share: f32 = 0.5;
 
     /// What moves the cockpit, and where its model stands.
     pub const Input = struct {
@@ -623,7 +653,9 @@ pub const Cockpit = struct {
         const swayed = math.fromAngles(rates[0] * sway[0], rates[1] * sway[1], rates[2] * sway[2]);
         const root: Place = .{
             .position = Vector{ 0, 0, speed * slide } - model.eye,
-            .orientation = math.product(jitter(shake * 0.5, random), swayed),
+            // The game halves each of the jitter's angles rather than the shake, which comes to the
+            // same, since halving is exact.
+            .orientation = math.product(jitter(shake * root_jitter_share, random), swayed),
         };
 
         const turn = math.fromAngles(rates[0] * hands_pitch, 0, (rates[2] + rates[1]) * hands_roll);
@@ -636,18 +668,13 @@ pub const Cockpit = struct {
     }
 
     /// A turn of up to half of `amount` either way in yaw and in roll, as `camera_frame` draws two
-    /// of `rand`'s numbers, the first for the roll. Without a `rand` it draws none, and does not
-    /// turn.
+    /// of `rand`'s numbers (`libcmt.Rand.centred`), the first for the roll. Without a `rand` it
+    /// draws none, and does not turn.
     pub fn jitter(amount: f32, random: ?*libcmt.Rand) Matrix {
         const source = random orelse return math.identity;
-        const roll = share(source.rand()) * amount;
-        const yaw = share(source.rand()) * amount;
+        const roll = source.centred() * amount;
+        const yaw = source.centred() * amount;
         return math.fromAngles(0, yaw, roll);
-    }
-
-    /// One of `rand`'s numbers as a share between -0.5 and 0.5.
-    fn share(value: u15) f32 {
-        return @as(f32, @floatFromInt(value)) * (1.0 / @as(f32, libcmt.Rand.max)) - 0.5;
     }
 };
 
@@ -714,35 +741,46 @@ pub const Chase = struct {
     yaw: f32 = 0,
     roll: f32 = 0,
 
-    /// Where the camera starts on switching to the view, ahead of the object, to swing round.
+    /// Where the camera starts on switching to the view, ahead of the object, to swing round
+    /// (`chase_distance`, `0x004F72A4`, as the executable holds it).
     pub const start_distance: f32 = 1500;
 
     /// A ship type's height, negative for above, and distance behind at no throttle.
     pub const Offset = struct { height: f32, distance: f32 };
 
+    /// The type's offset (`camera_chase`): the heights are its immediates, and the distances
+    /// `0x004DC580`, `0x004DC438`, `0x004DC744` and `0x004DC740`.
     pub fn offset(ship_type: gameobj.Type) Offset {
-        return switch (ship_type.number()) {
-            0x02 => .{ .height = -650, .distance = 1800 },
-            0x08 => .{ .height = -850, .distance = 2000 },
-            0x09 => .{ .height = -800, .distance = 2400 },
-            0x2D => .{ .height = -1000, .distance = 3400 },
+        return switch (ship_type) {
+            .grendel => .{ .height = -650, .distance = 1800 },
+            .wolverine => .{ .height = -850, .distance = 2000 },
+            .reaper => .{ .height = -800, .distance = 2400 },
+            .kamov => .{ .height = -1000, .distance = 3400 },
             else => .{ .height = -750, .distance = 1800 },
         };
     }
 
-    /// Farther back for each unit of throttle; the afterburner counts as 1.5.
+    /// Farther back for each unit of throttle (`0x004DC5A8`); the afterburner counts as 1.5
+    /// (`0x004DC4E0`).
     pub const throttle_distance: f32 = 400;
     pub const afterburner_throttle: f32 = 1.5;
 
     /// How the camera turns against the object's rates of turn, in radians per update, and how
-    /// far it may: at most a sixteenth of a turn up or down and a tenth either way.
+    /// far it may: at most a sixteenth of a turn up or down and a tenth either way (`0x004F7288`
+    /// to `0x004F72A0`, the limits each way).
     pub const pitch_swing: f32 = 5.7;
     pub const yaw_swing: f32 = 5;
     pub const roll_swing: f32 = 3;
     pub const pitch_limit: f32 = std.math.pi / 8.0;
     pub const turn_limit: f32 = std.math.pi / 5.0;
 
-    /// The share of the way to its target the distance, and the turns, go each frame.
+    /// What the pitch's swing is scaled by as the nose goes down, and as it goes up (`0x004DC4E0`,
+    /// `0x004DC408`): nose up swings the camera a third as far as nose down.
+    pub const nose_down_swing: f32 = 1.5;
+    pub const nose_up_swing: f32 = 0.5;
+
+    /// The share of the way to its target the distance, and the turns, go each frame (`0x004DC420`,
+    /// `0x004DC474`).
     pub const distance_smoothing: f32 = 0.1;
     pub const turn_smoothing: f32 = 0.05;
 
@@ -767,13 +805,13 @@ pub const Chase = struct {
     pub fn frame(chase: *Chase, motion: Motion, position: Vector, orientation: Matrix) Place {
         const to = offset(motion.ship_type);
         const throttle = if (motion.afterburner) afterburner_throttle else motion.throttle;
-        chase.distance += (-(throttle * throttle_distance + to.distance) - chase.distance) * distance_smoothing;
+        chase.distance = math.lerp(chase.distance, -(throttle * throttle_distance + to.distance), distance_smoothing);
 
         var swing = swings(motion);
-        // Nose up swings the camera half as far as nose down.
-        swing.pitch *= if (swing.pitch < 0) 0.5 else 1.5;
-        chase.pitch += (swing.pitch - chase.pitch) * turn_smoothing;
-        chase.yaw += (swing.yaw - chase.yaw) * turn_smoothing;
+        swing.pitch *= if (swing.pitch < 0) nose_up_swing else nose_down_swing;
+        chase.pitch = math.lerp(chase.pitch, swing.pitch, turn_smoothing);
+        chase.yaw = math.lerp(chase.yaw, swing.yaw, turn_smoothing);
+        // The roll goes toward the roll's swing and the yaw's together, adding in the game's order.
         chase.roll += (swing.roll - chase.roll + swing.yaw) * turn_smoothing;
         return chase.placed(position, orientation, to.height);
     }
@@ -782,10 +820,10 @@ pub const Chase = struct {
     /// missile, 800 back and 400 more at full throttle, 300 above, swinging ten times slower, and
     /// rolling with a twentieth of its yaw.
     pub fn follow(chase: *Chase, motion: Motion, position: Vector, orientation: Matrix) Place {
-        chase.distance += (-(motion.throttle * throttle_distance + missile_distance) - chase.distance) * distance_smoothing;
+        chase.distance = math.lerp(chase.distance, -(motion.throttle * throttle_distance + missile_distance), distance_smoothing);
         const swing = swings(motion);
-        chase.pitch += (swing.pitch - chase.pitch) * missile_smoothing;
-        chase.yaw += (swing.yaw - chase.yaw) * missile_smoothing;
+        chase.pitch = math.lerp(chase.pitch, swing.pitch, missile_smoothing);
+        chase.yaw = math.lerp(chase.yaw, swing.yaw, missile_smoothing);
         chase.roll += swing.yaw * missile_roll + (swing.roll - chase.roll) * missile_smoothing;
         return chase.placed(position, orientation, missile_height);
     }
@@ -833,16 +871,26 @@ pub const Orbit = struct {
     /// Kept between `near` and the view's farthest, in the object's radii.
     distance: f32 = 0,
 
+    /// How fast the arrow keys speed its turns up and let them settle, in degrees a tick for each
+    /// tick, and how fast they turn it at most (`frame_controls`: `0x004DC420`, `0x004DC474`, and
+    /// immediates at `0x004140ED`); how far up or down it goes (`0x004DC558`); and a full turn
+    /// about `Y` (`0x004DC3E0`).
     pub const acceleration: f32 = 0.1;
     pub const deceleration: f32 = 0.05;
     pub const max_speed: f32 = 5;
     pub const max_pitch: f32 = 89.5;
-    /// Units a tick, with Shift held.
+    pub const full_turn: f32 = 360;
+    /// Units a tick, with Shift held (`0x004DC560`).
     pub const zoom_speed: f32 = 60;
 
+    /// The nearest it comes, and the farthest in the target view and in the external view, in the
+    /// object's radii (`camera_frame`: `0x004DC794`, `0x004DC790`, `0x004DC78C`).
     pub const near: f32 = 1.8;
+    pub const target_far: f32 = 5.8;
+    pub const external_far: f32 = 3.8;
+
     pub fn far(view: View) f32 {
-        return if (view == .target) 5.8 else 3.8;
+        return if (view == .target) target_far else external_far;
     }
 
     /// The keys that steer it, held this frame.
@@ -864,9 +912,9 @@ pub const Orbit = struct {
         orbit.yaw_speed = settle(std.math.clamp(orbit.yaw_speed, -max_speed, max_speed), ticks);
         orbit.yaw += ticks * orbit.yaw_speed;
         if (orbit.yaw >= 0) {
-            if (orbit.yaw > 360) orbit.yaw -= 360;
+            if (orbit.yaw > full_turn) orbit.yaw -= full_turn;
         } else {
-            orbit.yaw += 360;
+            orbit.yaw += full_turn;
         }
 
         if (keys.shift and keys.up) {
@@ -942,8 +990,9 @@ test pullBack {
 /// How far out to its object's right the eject view stands (`0x0045F479`).
 const eject_reach: f32 = 5000;
 
-/// View `eject` (`camera_frame`, view 7), `since` ticks after it was switched to: `cutaway` out from
-/// the pod at `position`, turned about the world's `Y` by `slow_turn` a tick, looking at the pod.
+/// View `eject` (`camera_frame`, view 7), `since` ticks after it was switched to: `cutaway` out
+/// from the pod at `position`, turned about the world's `Y` by `slow_turn` a tick, looking at the
+/// pod.
 pub fn ejected(cutaway: Vector, position: Vector, since: f32) Place {
     return lookingAt(math.transform(math.rotation(.y, since * slow_turn), cutaway) + position, position);
 }
@@ -962,8 +1011,8 @@ const pickup_closing: f32 = 2;
 const pickup_nearest: f32 = 1000;
 
 /// View `pickup` (view `0x1C`), `since` ticks after it was switched to: the picking ship's
-/// orientation turned about its own `Y`, `pickup_start` on and more by `pickup_turn` a tick, looking
-/// along it at `cutaway` from the ship at `position`, from `pickup_reach` off and closing.
+/// orientation turned about its own `Y`, `pickup_start` on and more by `pickup_turn` a tick,
+/// looking along it at `cutaway` from the ship at `position`, from `pickup_reach` off and closing.
 pub fn pickedUp(cutaway: Vector, position: Vector, orientation: Matrix, since: f32) Place {
     const off = @max(pickup_reach - since * pickup_closing, pickup_nearest);
     return behind(cutaway + position, orientation, since * pickup_turn + pickup_start, off);
@@ -975,8 +1024,8 @@ const pod_shot_reach: f32 = 1000;
 const pod_shot_pull: f32 = 20;
 
 /// View `pod_shot` (view `0x1D`), `since` ticks after the pod at `pod` began to burst:
-/// `pod_shot_reach` and more from it, the other way from `cutaway`, the way to the Sabre, looking at
-/// the Sabre at `sabre`.
+/// `pod_shot_reach` and more from it, the other way from `cutaway`, the way to the Sabre, looking
+/// at the Sabre at `sabre`.
 pub fn podShot(cutaway: Vector, pod: Vector, sabre: Vector, since: f32) Place {
     return lookingAt(pod - cutaway * @as(Vector, @splat(pod_shot_reach + since * pod_shot_pull)), sabre);
 }
@@ -1051,16 +1100,18 @@ test podShot {
 
 // --- Flyby --------------------------------------------------------------------------------------
 
-/// The flyby view stays where it is, looking at the player, until the player is farther than this;
-/// then it moves ahead of the player, a radius below and four ahead.
+/// The flyby view stays where it is, looking at the player, until the player is farther than this
+/// (`camera_frame`, `0x004DC778`); then it moves ahead of the player, a radius below and
+/// `flyby_ahead` radii ahead (`0x004DC424`).
 pub const flyby_range: f32 = 23000;
+pub const flyby_ahead: f32 = 4;
 
 /// Places the flyby camera, from where it was, for a ship at `position` with `orientation` and
 /// `radius`. It never comes nearer than a radius.
 pub fn flyby(from: Vector, position: Vector, orientation: Matrix, radius: f32) Place {
     var at = from;
     if (math.length(at - position) > flyby_range) {
-        at = position + math.transform(orientation, .{ 0, radius, radius * 4 });
+        at = position + math.transform(orientation, .{ 0, radius, radius * flyby_ahead });
     }
     if (math.length(at - position) < radius) {
         at = position + math.normalize(at - position) * @as(Vector, @splat(radius));
@@ -1081,7 +1132,7 @@ test unstretched {
     try std.testing.expectApproxEqAbs(sixteen_nine.scale[0], sixteen_nine.scale[1], 1e-3);
     try std.testing.expect(sixteen_nine.bounds[2] > 1.1);
     try std.testing.expectApproxEqAbs(0.625, sixteen_nine.bounds[3], 1e-4);
-    const wide: Camera = .{ .view = @enumFromInt(wide_view) };
+    const wide: Camera = .{ .view = .wide };
     try std.testing.expect(wide.projection(1024, 768).scale[1] < four_three[1] * 768);
 }
 
@@ -1144,6 +1195,11 @@ test View {
     try std.testing.expectEqual(170, View.cockpit.name().?);
     try std.testing.expectEqual(180, View.external.name().?);
     try std.testing.expectEqual(View.chase.name(), @as(View, @enumFromInt(0x0D)).name());
+    // The lock shows from the cockpit's views and the chase view, but not under its second number.
+    try std.testing.expect(View.cockpit_rear.showsLock() and View.chase.showsLock());
+    try std.testing.expect(!View.chase_too.showsLock() and !View.target.showsLock());
+    try std.testing.expectEqual(-90, View.cockpit_left.cockpitTurn());
+    try std.testing.expectEqual(0, View.chase.cockpitTurn());
     try std.testing.expectEqual(View.external, keyView(.external_camera).?);
     try std.testing.expectEqual(null, keyView(.fire_lasers));
     try std.testing.expectEqual(CockpitMode.open, CockpitMode.chase.next());
@@ -1155,14 +1211,14 @@ test View {
 
 test cockpit {
     const eye: Vector = .{ 0, -100, 300 };
-    const ahead = cockpit(0, .{ 10, 0, 0 }, math.identity, eye);
+    const ahead = cockpit(.cockpit, .{ 10, 0, 0 }, math.identity, eye);
     try expectVector(.{ 10, -100, 300 }, ahead.position);
     // Looking back, the eye point turns with the view.
-    const rear = cockpit(3, .{ 0, 0, 0 }, math.identity, eye);
+    const rear = cockpit(.cockpit_rear, .{ 0, 0, 0 }, math.identity, eye);
     try expectVector(.{ 0, -100, -300 }, rear.position);
     try expectVector(.{ 0, 0, -1 }, math.transform(rear.orientation, .{ 0, 0, 1 }));
     // Looking left: forward turns to -X.
-    try expectVector(.{ -1, 0, 0 }, math.transform(cockpit(1, @splat(0), math.identity, eye).orientation, .{ 0, 0, 1 }));
+    try expectVector(.{ -1, 0, 0 }, math.transform(cockpit(.cockpit_left, @splat(0), math.identity, eye).orientation, .{ 0, 0, 1 }));
 }
 
 test Chase {

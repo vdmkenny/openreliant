@@ -14,6 +14,7 @@ const guns = openreliant.engine.game.guns;
 
 const image = @import("image.zig");
 const testing = @import("testing.zig");
+const zig_text = @import("zig_text.zig");
 
 /// `gun_stats`.
 pub const table: u32 = 0x00500CA4;
@@ -130,7 +131,7 @@ pub fn emit(w: *Io.Writer, types: []const Static) Io.Writer.Error!void {
     , .{ table, sound_periods, atlas_starts, atlas_widths, flash_ticks, types.len });
     for (types, 0..) |gun_type, index| {
         try w.print("    // 0x{X:0>2}\n    .{{ .kind = ", .{index});
-        try enumValue(w, gun_type.kind);
+        try zig_text.enumValue(w, gun_type.kind);
         try w.print(", .bolt = .{{ {d}, {d}, {d} }}, .sound = {d} }},\n", .{
             gun_type.bolt[0],
             gun_type.bolt[1],
@@ -176,15 +177,6 @@ pub fn emit(w: *Io.Writer, types: []const Static) Io.Writer.Error!void {
         \\};
         \\
     );
-}
-
-/// A value of a non-exhaustive enum as Zig: its name, or the number where it has none.
-fn enumValue(w: *Io.Writer, value: anytype) Io.Writer.Error!void {
-    if (std.enums.tagName(@TypeOf(value), value)) |name| {
-        try w.print(".{s}", .{name});
-    } else {
-        try w.print("@enumFromInt({d})", .{@intFromEnum(value)});
-    }
 }
 
 test parse {

@@ -14,7 +14,7 @@ whatever the viewport; the viewport only bounds what is drawn. Every view but on
 
 The game runs in the display modes the device lists, which it keeps in `dmodes.bin`, and starts at 640x480.
 
-The port keeps the factor down and chooses the factor across that keeps pixels square, `0.8 * (height - 0.1) / (width - 0.1)`: on a 4:3 screen the game's 0.6, on a wider one a wider view.
+OpenReliant keeps the factor down and chooses the factor across that keeps pixels square, `0.8 * (height - 0.1) / (width - 0.1)`: on a 4:3 screen the game's 0.6, on a wider one a wider view.
 
 ## Views
 
@@ -48,7 +48,7 @@ The view table (`camera_view_table`, `0x4F72A8`) holds four bytes a view, for vi
 
 The options' cockpit setting (`cockpit_mode_setting`, `0x5D5A78`), which the game keeps in its ini as `[Device] View` and reads as 0 when the ini has none, picks the mode a mission's launch ends in: 0 for mode 1, 1 for mode 2 and any other for mode 0. The launch (`launch_run`, `0x0041B240`) shows one of three cutaways, views `0x20` to `0x22`, and at its last step sets the mode and switches from the cutaway to view 0. Resuming from the pause (`game_pause`, `0x00491E20`) switches to view 0 again when the setting changed while paused.
 
-The port starts a ship in view 0 in the mode `--view` sets, 0 by default, as a launch ends. A ship too large for the chase mode's distance starts in the external view instead: the port flies ships the game never gives the player.
+OpenReliant starts a ship in view 0 in the mode `--view` sets, 0 by default, as a launch ends. A ship too large for the chase mode's distance starts in the external view instead: OpenReliant flies ships the game never gives the player.
 
 ## Cockpit
 

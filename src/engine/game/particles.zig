@@ -1,6 +1,6 @@
 //! `C:\lancer\game\particles.cpp`: particles, sprites that fly off an emitter and change size and
-//! colour over their life. A template says how its particles live, and an emitter sends them out
-//! of it, all at once (`Pool.burst`) or over its own life (`Pool.stream`). A particle comes from its
+//! colour over their life. A template says how its particles live, and an emitter sends them out of
+//! it, all at once (`Pool.burst`) or over its own life (`Pool.stream`). A particle comes from its
 //! template's pool, drawn as one set of sprites over the pool's texture, coloured by each sprite's
 //! colour. A template of kind `sometimes_sparks` or `sparks` sends sparks as well, which are
 //! `explode.cpp`'s small bits of debris (`explode.Explosions.throwSpark`).
@@ -42,6 +42,13 @@ pub const Curve = extern struct {
     pub fn at(curve: Curve, t: f32) f32 {
         return curve.b * t + curve.a * t * t + curve.c;
     }
+
+    comptime {
+        assert(@offsetOf(Curve, "a") == 0x00);
+        assert(@offsetOf(Curve, "b") == 0x04);
+        assert(@offsetOf(Curve, "c") == 0x08);
+        assert(@sizeOf(Curve) == 0x0C);
+    }
 };
 
 /// How a template's particles live (`particle_template_create`, `0x0049C5D0`).
@@ -55,14 +62,14 @@ pub const Template = extern struct {
     /// A particle's half-size, and its red, green and blue, over its life.
     size: Curve,
     colour: [3]Curve,
-    /// The pool it draws from. The port hands a burst or a stream its pool instead.
+    /// The pool it draws from. OpenReliant hands a burst or a stream its pool instead.
     pool: Pointer(anyopaque) = .null,
     /// How much a burst thins with distance; none at zero.
     distance: f32 = 1,
 
     pub const Kind = enum(u32) {
         particles = 0,
-        /// Particles, and a spark one time in 200.
+        /// Particles, and a spark one time in `spark_odds`.
         sometimes_sparks = 1,
         sparks = 2,
 
@@ -71,9 +78,13 @@ pub const Template = extern struct {
             return switch (kind) {
                 .particles => .particle,
                 .sparks => .spark,
-                .sometimes_sparks => if (random.rand() % 200 != 0) .particle else .spark,
+                .sometimes_sparks => if (random.rand() % spark_odds != 0) .particle else .spark,
             };
         }
+
+        /// A template that sometimes sparks sends a spark one time in this many
+        /// (`particle_stream`).
+        const spark_odds = 200;
     };
 
     pub const Sent = enum { particle, spark };
@@ -108,7 +119,7 @@ pub const Template = extern struct {
 };
 
 /// Where `now` is in a life from `born`, `life` ticks long, as a share of it.
-fn through(now: i32, born: i32, life: i32) f32 {
+pub fn through(now: i32, born: i32, life: i32) f32 {
     return @as(f32, @floatFromInt(now - born)) / @as(f32, @floatFromInt(life));
 }
 
@@ -158,12 +169,9 @@ pub const Emitter = struct {
     /// `particle_spark` (`0x0049C340`): a spark from where it stands, as fast as a particle leaves
     /// but inheriting nothing, its velocity a second's.
     fn spark(emitter: *const Emitter, explosions: *explode.Explosions, clock: *const Clock, random: *libcmt.Rand) void {
-        const velocity_per_second = emitter.leaving(random) * @as(Vector, @splat(ticks_per_second));
+        const velocity_per_second = emitter.leaving(random) * @as(Vector, @splat(@import("main.zig").ticks_per_second));
         explosions.throwSpark(emitter.world.position, velocity_per_second, clock, random);
     }
-
-    /// A spark's velocity is a second's, which is 100 ticks.
-    const ticks_per_second: f32 = 100;
 };
 
 /// What a burst or a stream is sent out with: the camera's place, which thins it, the clock and the
@@ -183,10 +191,10 @@ pub const Particle = struct {
     /// How far it moves a tick.
     velocity: Vector = @splat(0),
     template: ?*const Template = null,
-    /// Where it is at the frame's tick. The game keeps it in the particle's sprite; the port draws
-    /// the sprite from it, further along between the ticks (`Pool.draw`).
+    /// Where it is at the frame's tick. The game keeps it in the particle's sprite; OpenReliant
+    /// draws the sprite from it, further along between the ticks (`Pool.draw`).
     at: Vector = @splat(0),
-    /// The port's: its size and its shade, as shares of its template's (`Pool.Variety`).
+    /// OpenReliant's: its size and its shade, as shares of its template's (`Pool.Variety`).
     scale: f32 = 1,
     shade: f32 = 1,
 
@@ -213,7 +221,7 @@ pub const Pool = struct {
     /// One past the last particle alive at the last frame (`+0x0C`), up to which the frame looks.
     used: u32 = 0,
 
-    /// How a pool sends and draws its particles where the port does more than the game.
+    /// How a pool sends and draws its particles where OpenReliant does more than the game.
     pub const Settings = struct {
         /// Whether what goes out far from the camera is thinned.
         distant: Distant = .whole,
@@ -431,6 +439,12 @@ pub const Pool = struct {
     }
 };
 
+test through {
+    // A quarter of a life of 100 ticks from tick 10, and past its end.
+    try std.testing.expectEqual(0.25, through(35, 10, 100));
+    try std.testing.expectEqual(1.5, through(160, 10, 100));
+}
+
 test Curve {
     const curve: Curve = .through(1, 0.25, 0);
     try std.testing.expectApproxEqAbs(1, curve.at(0), 1e-6);
@@ -449,7 +463,7 @@ test "Template.Kind.roll" {
     try std.testing.expectEqual(Template.Sent.particle, Template.Kind.particles.roll(&random));
 }
 
-const testing = struct {
+pub const testing = struct {
     const template: Template = .{
         .life = 100,
         .size = .through(10, 20, 30),
@@ -460,6 +474,13 @@ const testing = struct {
     fn pool() !Pool {
         var image: srtexture.Image = undefined;
         return .init(std.testing.allocator, 8, &image, .add);
+    }
+
+    /// How many of the pool's particles are in use.
+    pub fn sent(from: *const Pool) usize {
+        var count: usize = 0;
+        for (from.particles) |particle| count += @intFromBool(particle.template != null);
+        return count;
     }
 };
 
@@ -483,6 +504,7 @@ test "Pool.burst" {
     // speed plus what it inherits.
     pool.burst(&emitter, null, 3, sending);
     try std.testing.expectEqual(3, pool.used);
+    try std.testing.expectEqual(3, testing.sent(&pool));
     try std.testing.expectEqual(Vector{ 0, 0, 1000 }, pool.particles[0].at);
     const own = pool.particles[0].velocity - emitter.inherited;
     try std.testing.expectApproxEqAbs(5, math.length(own), 1e-4);

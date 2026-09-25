@@ -212,18 +212,77 @@ fn parseOperand(text: []const u8) Operand {
     return .other;
 }
 
+/// A line of an `ExportProgram.java` disassembly listing.
+pub const Line = union(enum) {
+    /// `; ==== <name> @ <address> ====`, which starts a function.
+    banner: Banner,
+    /// `<address> <bytes> <mnemonic> <operands>`: an instruction.
+    instruction: Encoded,
+    /// Anything else, such as a blank line.
+    other,
+
+    pub const Banner = struct { name: []const u8, address: u32 };
+
+    pub const Encoded = struct {
+        address: u32,
+        /// Its encoding, in hex.
+        bytes: []const u8,
+        /// Its mnemonic and its operands.
+        text: []const u8,
+    };
+
+    const banner_start = "; ==== ";
+    const banner_address = " @ ";
+
+    /// What `line`, without its line end, is. A banner without a name and an address is an error.
+    pub fn parse(line: []const u8) error{BadBanner}!Line {
+        if (std.mem.startsWith(u8, line, banner_start)) {
+            const body = line[banner_start.len..];
+            const at = std.mem.lastIndexOf(u8, body, banner_address) orelse return error.BadBanner;
+            const start = at + banner_address.len;
+            const end = std.mem.indexOfScalarPos(u8, body, start, ' ') orelse body.len;
+            const address = std.fmt.parseInt(u32, body[start..end], 16) catch return error.BadBanner;
+            return .{ .banner = .{ .name = body[0..at], .address = address } };
+        }
+        const address_digits = 8;
+        if (line.len < address_digits) return .other;
+        const address = std.fmt.parseInt(u32, line[0..address_digits], 16) catch return .other;
+        var fields = std.mem.tokenizeAny(u8, line[address_digits..], " \t");
+        const bytes = fields.next() orelse return .other;
+        return .{ .instruction = .{ .address = address, .bytes = bytes, .text = fields.rest() } };
+    }
+};
+
+/// Walks a listing a line at a time.
+pub const Lines = struct {
+    lines: std.mem.SplitIterator(u8, .scalar),
+
+    pub fn init(listing: []const u8) Lines {
+        return .{ .lines = std.mem.splitScalar(u8, listing, '\n') };
+    }
+
+    pub fn next(lines: *Lines) error{BadBanner}!?Line {
+        const raw = lines.lines.next() orelse return null;
+        return try Line.parse(std.mem.trimEnd(u8, raw, "\r"));
+    }
+};
+
 /// Parses one `<address> <bytes> <mnemonic> <operands>` line, or null when the line is not one.
 pub fn parseLine(line: []const u8) ?Instruction {
-    if (line.len < 8) return null;
-    const address = std.fmt.parseInt(u32, line[0..8], 16) catch return null;
+    return switch (Line.parse(line) catch return null) {
+        .instruction => |encoded| decode(encoded),
+        .banner, .other => null,
+    };
+}
 
-    var fields = std.mem.tokenizeAny(u8, line[8..], " \t");
-    _ = fields.next() orelse return null; // encoded bytes
-    const mnemonic_text = fields.next() orelse return .{ .address = address, .mnemonic = .ret };
+/// The instruction an instruction line holds.
+fn decode(encoded: Line.Encoded) Instruction {
+    var fields = std.mem.tokenizeAny(u8, encoded.text, " \t");
+    const mnemonic_text = fields.next() orelse return .{ .address = encoded.address, .mnemonic = .ret };
     const rest = std.mem.trim(u8, fields.rest(), " \t\r");
 
     const mnemonic = mnemonicOf(mnemonic_text);
-    var instruction: Instruction = .{ .address = address, .mnemonic = mnemonic };
+    var instruction: Instruction = .{ .address = encoded.address, .mnemonic = mnemonic };
     switch (mnemonic) {
         .jmp, .jcc, .call => instruction.target = blk: {
             const value = parseNumber(rest) orelse break :blk null;
@@ -245,34 +304,43 @@ pub fn parseLine(line: []const u8) ?Instruction {
 pub fn parse(arena: std.mem.Allocator, listing: []const u8) ![]const Function {
     var functions: std.ArrayList(Function) = .empty;
     var instructions: std.ArrayList(Instruction) = .empty;
-    var name: ?[]const u8 = null;
-    var address: u32 = 0;
+    var current: ?Line.Banner = null;
 
-    var lines = std.mem.splitScalar(u8, listing, '\n');
-    while (lines.next()) |raw| {
-        const line = std.mem.trimEnd(u8, raw, "\r");
-        if (std.mem.startsWith(u8, line, "; ==== ")) {
-            if (name) |previous| try functions.append(arena, .{
-                .name = previous,
-                .address = address,
+    var lines: Lines = .init(listing);
+    while (try lines.next()) |line| switch (line) {
+        .banner => |banner| {
+            if (current) |previous| try functions.append(arena, .{
+                .name = previous.name,
+                .address = previous.address,
                 .instructions = try instructions.toOwnedSlice(arena),
             });
-            const body = line["; ==== ".len..];
-            const at = std.mem.lastIndexOf(u8, body, " @ ") orelse continue;
-            const end = std.mem.indexOfPos(u8, body, at + 3, " ") orelse body.len;
-            name = body[0..at];
-            address = std.fmt.parseInt(u32, body[at + 3 .. end], 16) catch 0;
-            continue;
-        }
-        if (name == null) continue;
-        if (parseLine(line)) |instruction| try instructions.append(arena, instruction);
-    }
-    if (name) |previous| try functions.append(arena, .{
-        .name = previous,
-        .address = address,
+            current = banner;
+        },
+        .instruction => |encoded| if (current != null) try instructions.append(arena, decode(encoded)),
+        .other => {},
+    };
+    if (current) |previous| try functions.append(arena, .{
+        .name = previous.name,
+        .address = previous.address,
         .instructions = try instructions.toOwnedSlice(arena),
     });
     return functions.toOwnedSlice(arena);
+}
+
+test Line {
+    const banner = (try Line.parse("; ==== vm_op_42 @ 0045c2b0 ====")).banner;
+    try std.testing.expectEqualStrings("vm_op_42", banner.name);
+    try std.testing.expectEqual(0x0045c2b0, banner.address);
+
+    const move = (try Line.parse("0045bea6  8a02   MOV AL,byte ptr [EDX]")).instruction;
+    try std.testing.expectEqual(0x0045bea6, move.address);
+    try std.testing.expectEqualStrings("8a02", move.bytes);
+    try std.testing.expectEqualStrings("MOV AL,byte ptr [EDX]", move.text);
+
+    try std.testing.expectEqual(Line.other, try Line.parse(""));
+    try std.testing.expectEqual(Line.other, try Line.parse("; a comment"));
+    try std.testing.expectError(error.BadBanner, Line.parse("; ==== nameless ===="));
+    try std.testing.expectError(error.BadBanner, Line.parse("; ==== f @ nowhere ===="));
 }
 
 test parseLine {

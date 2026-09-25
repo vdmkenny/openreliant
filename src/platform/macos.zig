@@ -39,10 +39,16 @@ pub fn ignoreSavedState() void {
     send.register(defaults, send.pair(send.yes(), send.string("ApplePersistenceIgnoreState")));
 }
 
+/// Core Audio's `AudioObjectPropertyAddress`.
 const AudioObjectPropertyAddress = extern struct {
     selector: u32,
     scope: u32,
     element: u32,
+
+    comptime {
+        std.debug.assert(@offsetOf(AudioObjectPropertyAddress, "element") == 8);
+        std.debug.assert(@sizeOf(AudioObjectPropertyAddress) == 12);
+    }
 };
 
 extern "c" fn AudioObjectGetPropertyData(object: u32, address: *const AudioObjectPropertyAddress, qualifier_size: u32, qualifier: ?*const anyopaque, size: *u32, data: *anyopaque) i32;

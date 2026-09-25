@@ -5,12 +5,25 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
+
+const files = @import("files.zig");
+
+/// The game's settings file, in its folder, which it names in lower case (`settings_path`,
+/// `0x005D5644`, from `%sstarlancer.ini` at `0x005099B0`).
+pub const settings_name = "starlancer.ini";
 
 pub const Profile = struct {
     text: []const u8,
 
     /// An empty profile, used when the file is missing: every read returns its default.
     pub const empty: Profile = .{ .text = "" };
+
+    /// The settings file in the game's folder `dir`, read into `arena`; empty where it is missing
+    /// or can't be read, so that every setting keeps its default.
+    pub fn read(io: Io, arena: Allocator, dir: Io.Dir) Profile {
+        return .{ .text = dir.readFileAlloc(io, settings_name, arena, .limited(files.max_file_size)) catch "" };
+    }
 
     /// The value of `key` in `section`, or null if there is none.
     pub fn value(profile: Profile, section: []const u8, key: []const u8) ?[]const u8 {
@@ -167,6 +180,18 @@ test Profile {
     try std.testing.expectEqualStrings("JOY", profile.string("JoyConfig", "Fire Lasers", "", 4));
     try std.testing.expectEqualStrings("57", profile.string("JoyConfig", "Missing", "57", 0x80));
     try std.testing.expectEqual(null, Profile.empty.value("KeyConfig", "Controller"));
+}
+
+test "Profile.read" {
+    const io = std.testing.io;
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // Without the file, every setting keeps its default.
+    try std.testing.expectEqualStrings("", Profile.read(io, arena_state.allocator(), tmp.dir).text);
+    try tmp.dir.writeFile(io, .{ .sub_path = settings_name, .data = "[Device]\r\nView=1\r\n" });
+    try std.testing.expectEqual(1, Profile.read(io, arena_state.allocator(), tmp.dir).int("Device", "View", 0));
 }
 
 test "Profile.write" {

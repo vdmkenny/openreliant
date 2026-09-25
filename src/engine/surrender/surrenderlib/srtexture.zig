@@ -1,7 +1,7 @@
 //! `C:\lancer\surrender\surrenderlib\srTexture.cpp`: the texture table. `texture_find`
 //! (`0x004C9E20`) looks a name up in the texture cache and reads the pixels on first use; the
 //! driver makes its device texture when it first draws with it (`texture_upload`, `0x004C9C90`).
-//! The port keeps each image as 8-bit RGBA mip levels.
+//! OpenReliant keeps each image as 8-bit RGBA mip levels.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -16,7 +16,7 @@ pub const Level = struct {
     rgba: []const u8,
 };
 
-/// An image as the port holds it, the counterpart of `TextureImage`.
+/// An image as OpenReliant holds it, the counterpart of `TextureImage`.
 pub const Image = struct {
     /// The full-size level first.
     levels: []const Level,
@@ -26,6 +26,14 @@ pub const Image = struct {
     /// display's power ball, which is drawn afresh every frame. The driver sends the pixels up
     /// again and clears it.
     changed: bool = false,
+
+    /// An image of one level, `across` by `down` pixels of `rgba`, which it takes: `deinit` frees
+    /// them with the level.
+    pub fn single(gpa: Allocator, across: u32, down: u32, rgba: []const u8) Allocator.Error!Image {
+        const levels = try gpa.alloc(Level, 1);
+        levels[0] = .{ .width = across, .height = down, .rgba = rgba };
+        return .{ .levels = levels };
+    }
 
     pub fn width(image: Image) u32 {
         return image.levels[0].width;
@@ -94,17 +102,7 @@ pub const Table = struct {
 
     /// The image the engine finds for `name` (`texture_find`), or null when the cache has none.
     pub fn find(table: *Table, name: []const u8) Allocator.Error!?*Image {
-        return table.lookUp("", name);
-    }
-
-    /// The light map a part flagged `lightmap` binds for the material `name`: the texture named
-    /// `l` and the material's name (`mesh_build`).
-    pub fn findLightMap(table: *Table, name: []const u8) Allocator.Error!?*Image {
-        return table.lookUp("l", name);
-    }
-
-    fn lookUp(table: *Table, prefix: []const u8, name: []const u8) Allocator.Error!?*Image {
-        const key = try std.mem.concat(table.gpa, u8, &.{ prefix, tcache.fileName(name) });
+        const key = try table.gpa.dupe(u8, tcache.fileName(name));
         for (key) |*c| c.* = std.ascii.toLower(c.*);
         const entry = table.images.getOrPut(table.gpa, key) catch |err| {
             table.gpa.free(key);
@@ -139,6 +137,16 @@ fn decode(gpa: Allocator, texture: tcache.Texture, palette: *const tga.Palette) 
     return .{ .levels = try levels.toOwnedSlice(gpa) };
 }
 
+test "Image.single" {
+    const gpa = std.testing.allocator;
+    const rgba = try gpa.dupe(u8, &.{ 1, 2, 3, 4, 5, 6, 7, 8 });
+    const image: Image = try .single(gpa, 2, 1, rgba);
+    defer image.deinit(gpa);
+    try std.testing.expectEqual(1, image.levels.len);
+    try std.testing.expectEqual(2, image.width());
+    try std.testing.expectEqual(1, image.height());
+}
+
 test "images sample bilinearly and wrap" {
     const rgba = [_]u8{ 0, 0, 0, 255, 255, 255, 255, 255 };
     const levels = [_]Level{.{ .width = 2, .height = 1, .rgba = &rgba }};
@@ -169,6 +177,44 @@ test Table {
     // The same image again, none for a name the cache lacks, and the light map apart.
     try std.testing.expectEqual(kiev, (try table.find("kiev_1")).?);
     try std.testing.expectEqual(null, try table.find("missing"));
-    try std.testing.expect((try table.findLightMap("KIEV_1")).? != kiev);
-    try std.testing.expectEqual(null, try table.findLightMap("lKiev_1"));
+    try std.testing.expect((try table.find("lkiev_1")).? != kiev);
+}
+
+/// Fixtures for the tests here and in the modules that draw with textures.
+pub const testing = struct {
+    /// A table of small textures, one under each name it is made with.
+    pub const Textures = struct {
+        bytes: []u8,
+        cache: tcache.Cache,
+        table: Table,
+
+        /// A table holding an eight-by-four texture under each of `names`.
+        pub fn init(gpa: Allocator, names: []const []const u8) !*Textures {
+            const specs = try gpa.alloc(tcache.testing.Spec, names.len);
+            defer gpa.free(specs);
+            for (specs, names) |*spec, name| spec.* = .{ .name = name, .encoding = .index8, .width = 8, .height = 4 };
+            const textures = try gpa.create(Textures);
+            errdefer gpa.destroy(textures);
+            textures.bytes = try tcache.testing.build(gpa, specs);
+            errdefer gpa.free(textures.bytes);
+            textures.cache = try .parse(gpa, textures.bytes);
+            textures.table = .init(gpa, textures.cache, std.mem.zeroes(tga.Palette));
+            return textures;
+        }
+
+        pub fn deinit(textures: *Textures, gpa: Allocator) void {
+            textures.table.deinit();
+            textures.cache.deinit(gpa);
+            gpa.free(textures.bytes);
+            gpa.destroy(textures);
+        }
+    };
+};
+
+test "testing.Textures" {
+    const gpa = std.testing.allocator;
+    const textures = try testing.Textures.init(gpa, &.{ "hull", "lhull" });
+    defer textures.deinit(gpa);
+    try std.testing.expect((try textures.table.find("hull")) != null);
+    try std.testing.expect((try textures.table.find("lhull")) != null);
 }

@@ -65,7 +65,8 @@ pub const Pools = struct {
 
 /// A Huge Gun's shot's trail (`bullet_build`): an emitter hung from the shot's frame for
 /// `trail_life` ticks, which the explosions' pool streams from once a frame, then stands afresh
-/// `behind` the shot and up to half of `stray` off it each way across (`bullets_frame`). It points
+/// `behind` the shot and up to half of `stray` off it each way across (`bullets_frame`, which
+/// holds `behind` in its code and `stray` at `0x004DC5A8` and `0x004DC87C`). It points
 /// back along the shot at a speed below nothing, so its particles leave forward, at `speed` less up
 /// to `trail_speed_range`, strayed up to half of `spread` each way across.
 pub const Trail = struct {
@@ -258,7 +259,7 @@ pub fn throwCases(world: gameobj.World, owner: u16, model: *const objects.Model,
     const sending = world.sending() orelse return;
     const shown = model.partPlace(part, .next).within(world.objects.slots[owner].object.placeAt(.next));
     const carried = gameobj.vector(world.objects.slots[owner].object.velocity) * @as(Vector, @splat(case_carried));
-    for (model.parts[part].attachments) |attachment| {
+    for (model.parts[part].attachments) |*attachment| {
         if (attachment.kind != .case_ejector) continue;
         const random = world.random;
         const across: f32 = @floatFromInt(random.rand() & (case_cells[0] - 1));
@@ -267,7 +268,7 @@ pub fn throwCases(world: gameobj.World, owner: u16, model: *const objects.Model,
         const height = 1 / @as(f32, @floatFromInt(case_cells[1]));
         var case: particles.Emitter = .{
             .born = world.clock.frame_start,
-            .place = .{ .position = gameobj.vector(attachment.position), .orientation = attachment.orientation },
+            .place = objects.attachmentPlace(attachment),
             .direction = .{ 0, 0, -1 },
             .spread = case_spread,
             .speed = case_speed,

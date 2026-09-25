@@ -74,7 +74,7 @@ pub const Pilot = extern struct {
             pilot.turn_limit = preset[0];
             pilot.turn_ease = preset[1];
             pilot.aim_interval = @bitCast(preset[2]);
-            if (level == 2) pilot.timings.countermeasures = @bitCast(stats.tier_c_level_2_override);
+            if (record.tier_c == .level_2) pilot.timings.countermeasures = @bitCast(stats.tier_c_level_2_override);
         }
         return pilot;
     }
@@ -156,7 +156,7 @@ test Table {
 
 /// `object_set_pilot` (`0x0049CCE0`): gives the object pilot `pilot`, a record of `pilot_stats`.
 /// The game points the object at the record and at the pilot's entry of a table at `0x005048D8`
-/// as well (`GameObject.pilot_stats`, `pilot_record`); the port looks the pilot up by number.
+/// as well (`GameObject.pilot_stats`, `pilot_record`); OpenReliant looks the pilot up by number.
 pub fn setPilot(object: *GameObject, pilot: i32) void {
     object.pilot = pilot;
 }

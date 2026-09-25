@@ -162,7 +162,8 @@ pub const Fitted = struct {
 };
 
 /// What a gun stands on: no turret, or one of the turrets a turret part makes of its assembly by
-/// its turret kind (`shp.Part.TurretKind`), with what it keeps ([`guns/turrets.zig`](guns/turrets.zig)).
+/// its turret kind (`shp.Part.TurretKind`), with what it keeps
+/// ([`guns/turrets.zig`](guns/turrets.zig)).
 pub const Turret = union(enum) {
     /// A gun that does not move, which fires by its object's trigger (kind 0).
     fixed: Barrel,
@@ -216,7 +217,7 @@ pub const Muzzle = struct {
     }
 
     fn onPart(muzzle: Muzzle) math.Place {
-        return .{ .position = gameobj.vector(muzzle.attachment.position), .orientation = muzzle.attachment.orientation };
+        return objects.attachmentPlace(muzzle.attachment);
     }
 
     /// Its flash, where its model carries one (`node_mount_muzzle`).
@@ -636,7 +637,7 @@ pub const held_ticks: i32 = 1;
 /// (`nova.charges`, `nova.charge`).
 ///
 /// **Fix:** the game reads a missile turret's gun type, of a muzzle it has none of, and a
-/// destroyed turret's; the port passes over a gun with no barrel.
+/// destroyed turret's; OpenReliant passes over a gun with no barrel.
 ///
 /// Not ported: `0x004BA780`, which the player's trigger runs last.
 pub fn fire(object: *gameobj.GameObject, trigger: Trigger, ticks: i32) void {
@@ -655,14 +656,13 @@ pub fn fire(object: *gameobj.GameObject, trigger: Trigger, ticks: i32) void {
 /// The guns a ship fires together (`GameObject.gun_mode`): its chosen group's two, or all of them.
 pub const Chosen = struct {
     fitted: []Fitted,
-    /// The group's two, or null for all of them.
-    pair: ?[2]i16,
+    /// The places of the group's two (`Group.members`), or null for all of them.
+    pair: ?[2]?usize,
     at: usize = 0,
 
     pub fn of(object: *const gameobj.GameObject, fitted: []Fitted, groups: *const [max_groups]Group) Chosen {
         if (object.gun_mode.all) return .{ .fitted = fitted, .pair = null };
-        const group = groups[object.gun_mode.group];
-        return .{ .fitted = fitted, .pair = .{ group.first, group.second } };
+        return .{ .fitted = fitted, .pair = groups[object.gun_mode.group].members() };
     }
 
     pub fn next(chosen: *Chosen) ?*Fitted {
@@ -672,9 +672,9 @@ pub const Chosen = struct {
             return &chosen.fitted[chosen.at];
         };
         while (chosen.at < pair.len) {
-            const index = pair[chosen.at];
+            const place = pair[chosen.at];
             chosen.at += 1;
-            if (index >= 0 and index < chosen.fitted.len) return &chosen.fitted[@intCast(index)];
+            if (gunAt(chosen.fitted, place)) |gun| return gun;
         }
         return null;
     }
@@ -799,7 +799,7 @@ fn takesTurn(object: *const gameobj.GameObject, groups: *const [max_groups]Group
 /// only as often as its condition allows.
 fn fires(world: gameobj.World, object: *const gameobj.GameObject) bool {
     if (object.gun_condition >= steady_condition) return true;
-    return draw(world.random) <= object.gun_condition + condition_margin;
+    return world.random.fraction() <= object.gun_condition + condition_margin;
 }
 
 /// The ticks between a gun's shots: a ship aiming blind fires a third again as slowly.
@@ -1122,8 +1122,8 @@ test heard {
 // --- Bullets -----------------------------------------------------------------------------------
 
 /// The shots in flight (`0x00563148`): the game keeps 200 records of `0xC4` bytes and links the
-/// live ones into a list, newest first; the port keeps the same 200 and walks them in order, which
-/// tells only in which order two shots that land on one object in a frame are dealt with.
+/// live ones into a list, newest first; OpenReliant keeps the same 200 and walks them in order,
+/// which tells only in which order two shots that land on one object in a frame are dealt with.
 pub const max_bullets = 200;
 
 /// The objects one shot is tested against (`bullet_place`).
@@ -1183,6 +1183,11 @@ pub const Bullet = struct {
     pub fn stats(bullet: Bullet, table: *const Stats) Gun {
         return bullet.kind.stats(table);
     }
+
+    /// Whether its record is free.
+    fn dead(bullet: *const Bullet) bool {
+        return !bullet.live;
+    }
 };
 
 /// The pool of shots (`0x00563148`).
@@ -1200,36 +1205,31 @@ pub const Bullets = struct {
     player_lights: Ring = .{},
     other_lights: Ring = .{},
 
-    /// The shots of one ring that cast a light, as indices into the pool.
-    pub const Ring = struct {
-        held: [lights_kept]?u8 = @splat(null),
-        next: u1 = 0,
+    /// The shots of one ring that cast a light, as indices into the pool: each new one takes the
+    /// place after the last, round the two.
+    pub const Ring = @import("table.zig").Ring(u8, lights_kept);
 
-        /// Gives the shot at `index` the ring's next light, putting out the light of the shot that
-        /// held it.
-        fn take(ring: *Ring, pool: *[max_bullets]Bullet, index: u8) void {
-            if (ring.held[ring.next]) |old| pool[old].light = null;
-            ring.held[ring.next] = index;
-            ring.next +%= 1;
-        }
-
-        fn drop(ring: *Ring, index: u8) void {
-            for (&ring.held) |*held| {
-                if (held.* == index) held.* = null;
-            }
-        }
-    };
+    /// Gives the shot at `index`, the player's or another's, its ring's next light, putting out
+    /// the light of the shot that held it.
+    fn light(bullets: *Bullets, player: bool, index: u8) void {
+        const ring = if (player) &bullets.player_lights else &bullets.other_lights;
+        const held = ring.take(lights_kept);
+        if (held.*) |old| bullets.pool[old].light = null;
+        held.* = index;
+    }
 
     /// The first free record, as `bullet_fire` takes it, or null while every one is in flight.
     fn free(bullets: *Bullets) ?u8 {
-        for (&bullets.pool, 0..) |bullet, index| if (!bullet.live) return @intCast(index);
-        return null;
+        return @intCast(firstFreeBy(Bullet, &bullets.pool, Bullet.dead) orelse return null);
     }
 
     /// Lets the shot at `index` go, and its light with it (`bullet_free`, `0x0047A3D0`).
     fn release(bullets: *Bullets, index: u8) void {
-        bullets.player_lights.drop(index);
-        bullets.other_lights.drop(index);
+        for ([_]*Ring{ &bullets.player_lights, &bullets.other_lights }) |ring| {
+            for (&ring.slots) |*held| {
+                if (held.* == index) held.* = null;
+            }
+        }
         bullets.pool[index] = .{};
     }
 };
@@ -1270,7 +1270,7 @@ fn shotColour(player: bool, side: gameobj.Side(i32)) [3]f32 {
 /// far it could travel meanwhile, the shot's path comes within. The frame pass tests only those
 /// (`bulletHit`).
 ///
-/// The shot is drawn with its type's bolt where the port has one (`Bolts`).
+/// The shot is drawn with its type's bolt where OpenReliant has one (`Bolts`).
 ///
 /// It casts a light while it is one of the latest two of its ring (`Bullets.Ring`), or for its
 /// whole flight under `ShotLights.every_shot`.
@@ -1299,7 +1299,7 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, barrel: Barr
     // The shot's own type, which is its gun's but for a Turret Flak's two times in five
     // (`bullet_fire`); its figures follow it.
     var kind = barrel.type;
-    if (kind == .turret_flak and @rem(world.random.rand(), 5) < 2) kind = .turret_lasers;
+    if (kind == .turret_flak and @rem(world.random.rand(), flak_lasers.in) < flak_lasers.times) kind = .turret_lasers;
     const record = kind.stats(&all.gun_stats);
 
     // The muzzle stands where the step is taking the ship, on the part that carries it. A shot
@@ -1325,7 +1325,7 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, barrel: Barr
     // The light it casts, which the oldest shot of its ring gives up.
     const player = owner == all.player;
     switch (all.bullets.shot_lights) {
-        .latest_two => (if (player) &all.bullets.player_lights else &all.bullets.other_lights).take(&all.bullets.pool, index),
+        .latest_two => all.bullets.light(player, index),
         .every_shot => {},
     }
     bullet.light = .{
@@ -1337,7 +1337,7 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, barrel: Barr
 
     var lifetime = record.lifetime;
     if (kind == .turret_flak) {
-        const share = draw(world.random) * flak_life_share + flak_life_least;
+        const share = world.random.fraction() * flak_life_share + flak_life_least;
         lifetime = std.math.lossyCast(i32, share * @as(f32, @floatFromInt(lifetime)));
     }
     bullet.dies_at = clock.mission_ticks + lifetime;
@@ -1345,10 +1345,8 @@ pub fn shoot(world: gameobj.World, clock: *const Clock, owner: u16, barrel: Barr
     bullet.velocity = math.transform(turn, .{ 0, 0, record.speed });
     if (kind == .turret_flak) {
         // Drawn roll, yaw and pitch in that order, each a share of `flak_scatter` either way.
-        const roll = (draw(world.random) - 0.5) * flak_scatter;
-        const yaw = (draw(world.random) - 0.5) * flak_scatter;
-        const pitch = (draw(world.random) - 0.5) * flak_scatter;
-        bullet.velocity = math.transform(math.fromAngles(pitch, yaw, roll), bullet.velocity);
+        const scatter = math.fromAngleVector(world.random.centredVector(@splat(flak_scatter)));
+        bullet.velocity = math.transform(scatter, bullet.velocity);
     }
     if (is_heard) shotSound(world, @intCast(index), kind, record.sound, owner == all.player);
     if (player) if (world.forces) |forces| forces.start(forceEffect(kind), clock.frame_start);
@@ -1380,7 +1378,7 @@ pub fn clipEvents(world: *gameobj.World, owner: u16) gameobj.Events {
     return .{ .context = world, .owner = owner, .fire = clipEvent };
 }
 
-fn clipEvent(context: *anyopaque, owner: u16, model: *objects.Model, part: usize, kind: gameobj.EventKind) void {
+fn clipEvent(context: *anyopaque, owner: u16, model: *objects.Model, part: usize, kind: shp.ClipEvent.Kind) void {
     const world: *const gameobj.World = @ptrCast(@alignCast(context));
     switch (kind) {
         .muzzles => clipEventMuzzles(world.*, owner, model, part),
@@ -1409,8 +1407,14 @@ pub fn clipEventMuzzles(world: gameobj.World, owner: u16, model: *const objects.
 /// **Fix:** the game's switch has no case for the Proton Cannon, which then plays the Laser
 /// Cannon's effect, and its own, `prc.frc`, which the game reads, never plays.
 fn forceEffect(kind: GunType) input.force.Effect {
-    comptime assert(@intFromEnum(input.force.Effect.nc) == @intFromEnum(GunType.nova_cannon));
-    if (@intFromEnum(kind) > @intFromEnum(GunType.nova_cannon)) return .lc;
+    comptime {
+        assert(@intFromEnum(input.force.Effect.nc) == @intFromEnum(GunType.nova_cannon));
+        // The turrets' guns come after the Nova Cannon, and so past the effects.
+        for (std.enums.values(GunType)) |gun_type| {
+            assert(gun_type.onTurrets() == (@intFromEnum(gun_type) > @intFromEnum(GunType.nova_cannon)));
+        }
+    }
+    if (kind.onTurrets()) return .lc;
     return @enumFromInt(@intFromEnum(kind));
 }
 
@@ -1455,7 +1459,7 @@ fn candidates(world: gameobj.World, bullet: *Bullet, record: Gun, lifetime: i32)
         const to = object.nextPosition() - bullet.at;
         const when = std.math.clamp(math.dot(to, bullet.velocity) * along, 0, life);
         const nearest = bullet.velocity * @as(Vector, @splat(when));
-        const moving = if (slot.flight) |flight| ai.cruiseSpeed(object, flight, world.view) else 0;
+        const moving = ai.slotCruise(slot, world.view) orelse 0;
         const reach = moving * when + object.radius + hugeReach(bullet.kind);
         if (math.lengthSquared(nearest - to) >= reach * reach) continue;
         if (componentModel(slot)) |model| {
@@ -1510,6 +1514,23 @@ fn hurtsPlayersMore(kind: GunType) bool {
     return kind == .turret_flak or kind == .turret_lasers;
 }
 
+/// What a shot of `kind` does of `value` to the object in slot `index`: a turret's shot does more
+/// to a player's ship (`bullet_hit`, `bullet_hull_hit`).
+fn dealt(all: *const Objects, index: u16, kind: GunType, value: f32) f32 {
+    return if (index < all.players and hurtsPlayersMore(kind)) value * turret_damage_to_players else value;
+}
+
+test dealt {
+    var random: libcmt.Rand = .{};
+    const all = try create.Objects.create(std.testing.allocator, &random);
+    defer all.destroy();
+    all.players = 1;
+    try std.testing.expectEqual(25, dealt(all, 0, .turret_flak, 10));
+    try std.testing.expectEqual(10, dealt(all, 0, .laser_cannon, 10));
+    try std.testing.expectEqual(10, dealt(all, 0, .allied_huge_gun, 10));
+    try std.testing.expectEqual(10, dealt(all, 1, .turret_lasers, 10));
+}
+
 /// How much farther a Huge Gun's shot reaches than the objects it may hit stand
 /// (`0x004DC758`, `0x004DC508`, and written into `bullet_hit`).
 fn hugeReach(kind: GunType) f32 {
@@ -1529,10 +1550,12 @@ const flak_life_share: f32 = 0.8;
 /// way to half the other (`0x004DC880`).
 const flak_scatter: f32 = 0.12;
 
-/// A number from the runtime's, over its largest.
-fn draw(random: *libcmt.Rand) f32 {
-    return @as(f32, @floatFromInt(random.rand())) * (1.0 / @as(f32, libcmt.Rand.max));
-}
+/// How often a Turret Flak shot is a Turret Lasers' instead: `times` in `in`, where the runtime's
+/// number over `in` leaves less than `times` (`bullet_fire`, which holds both in its code).
+const flak_lasers = struct {
+    const in: u15 = 5;
+    const times: u15 = 2;
+};
 
 /// `0x0047A4E0`, which `simulation_step` runs after the objects move: every shot flies on by its
 /// velocity.
@@ -1559,7 +1582,7 @@ pub fn bulletsFrame(world: gameobj.World, clock: *const Clock, fraction: f32) vo
         if (!bullet.live) continue;
         // It is drawn as far through the step as the frame is, between its last place and its
         // next, after its type's own work on its pieces.
-        bullet.place = bullet.last + (bullet.at - bullet.last) * @as(Vector, @splat(fraction));
+        bullet.place = math.lerp(bullet.last, bullet.at, fraction);
         if (bullet.piece_count > 0) {
             animate(bullet, clock, bullet.stats(&world.objects.gun_stats), world.random);
             placePieces(bullet);
@@ -1633,7 +1656,7 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
         }
         // Where the segment first crosses the object's sphere.
         const point = segment.point(segment.sphereEntry(slot.drawn.position, reach));
-        const struck = collision.quadrant(object, math.transformTransposed(slot.drawn.orientation, point - slot.drawn.position));
+        const struck = collision.quadrant(object, slot.drawn.inverse(point));
 
         if (!bullet.kind.huge() and (object.shields.get(struck) <= 0 or object.invulnerable == ._unknown_4 or object.invulnerable == ._unknown_5)) {
             hullHit(world, bullet, candidate.object, struck);
@@ -1642,15 +1665,14 @@ fn bulletHit(world: gameobj.World, bullet: *Bullet) void {
         cloak.reveal(world, candidate.object, point);
         defer if (!object.flags.cloaked) shield.flare(world, candidate.object, point);
         if (!object.flags.spectral_shields and record.damage.shield > 0) {
-            var value = record.damage.shield;
+            const value = record.damage.shield;
             // What the player has shifted fore or aft takes the hit before the quadrant does, and
             // a hit it swallows whole leaves the shields alone.
             if (candidate.object == all.player and world.player.shield_reserves.spare(struck, value)) {
                 bullet.dies_at = spent;
                 return;
             }
-            if (candidate.object < all.players and hurtsPlayersMore(bullet.kind)) value *= turret_damage_to_players;
-            collision.damage(world, candidate.object, struck, value, record.damage.hullShare(), bullet.owner, .bullet);
+            collision.damage(world, candidate.object, struck, dealt(all, candidate.object, bullet.kind, value), record.damage.hullShare(), bullet.owner, .bullet);
         }
         bullet.dies_at = spent;
         return;
@@ -1737,10 +1759,8 @@ fn hullHit(world: gameobj.World, bullet: *Bullet, index: u16, struck: collision.
     const model = if (slot.model) |*live| live else return;
     const along = objects.partEntry(model, bullet.last, bullet.at, .last_shown) orelse return;
     const record = bullet.stats(&world.objects.gun_stats);
-    var value = record.damage.hull;
-    if (index < all.players and hurtsPlayersMore(bullet.kind)) value *= turret_damage_to_players;
-    collision.armorDamage(world, index, struck, value, bullet.owner, .bullet);
-    const at = bullet.last + (bullet.at - bullet.last) * @as(Vector, @splat(along));
+    collision.armorDamage(world, index, struck, dealt(all, index, bullet.kind, record.damage.hull), bullet.owner, .bullet);
+    const at = math.lerp(bullet.last, bullet.at, along);
     shieldfx.hullHit(world, index, at);
     const inside = if (world.camera) |watching| watching.inside(index) else false;
     if (!inside) {
@@ -2127,12 +2147,12 @@ test "only the latest two shots of a ring cast a light" {
 
     // A shot let go leaves its ring's place empty, and the record free for the next shot.
     bullets.release(2);
-    try std.testing.expectEqual(null, bullets.player_lights.held[0]);
-    try std.testing.expectEqual(1, bullets.player_lights.held[1]);
+    try std.testing.expectEqual(null, bullets.player_lights.slots[0]);
+    try std.testing.expectEqual(1, bullets.player_lights.slots[1]);
     try std.testing.expect(!bullets.pool[2].live);
 }
 
-test "every shot casts a light where the port lets them" {
+test "every shot casts a light where OpenReliant lets them" {
     const gpa = std.testing.allocator;
     var ship: testing.Ship = undefined;
     try ship.init(gpa);
@@ -2142,7 +2162,7 @@ test "every shot casts a light where the port lets them" {
     for (0..3) |_| shoot(world, &ship.mission.clock, ship.index, ship.guns()[0].turret.fixed, false);
     for (world.objects.bullets.pool[0..3]) |bullet| try std.testing.expect(bullet.light != null);
     // The rings are left alone.
-    try std.testing.expectEqual(null, world.objects.bullets.player_lights.held[0]);
+    try std.testing.expectEqual(null, world.objects.bullets.player_lights.slots[0]);
 }
 
 test "a Turret Flak shot bursts at a random range, scatters, and is at times a laser's" {
@@ -2246,9 +2266,9 @@ pub const Image = enum {
 /// The meshes the shots are drawn with, which `guns_init` builds once.
 ///
 /// The game builds each twice, one set for the player's side and one for the rest, and the two are
-/// the same but for the Turret Lasers' rings, so the port builds the rest once. It also builds four
-/// Messon Blaster bolts where the shots use three, and four Vulcan Battery bolts that are the same,
-/// which the port builds once.
+/// the same but for the Turret Lasers' rings, so OpenReliant builds the rest once. It also builds
+/// four Messon Blaster bolts where the shots use three, and four Vulcan Battery bolts that are the
+/// same, which OpenReliant builds once.
 pub const Shape = enum {
     laser,
     messon_0,
@@ -2300,8 +2320,11 @@ const Bolt = struct {
     until: [2]f32 = .{ 15000, 100000 },
 };
 
-/// The far end of the second diamond on a ringed bolt, of its length (`0x004DC8AC`).
+/// The far end of the second diamond on a ringed bolt, of its length (`0x004DC8AC`), and how wide
+/// and high the diamonds are, of the bolt's width and height (`bolt_build_turret_lasers`, which
+/// holds it in its code).
 const far_ring: f32 = 0.85;
+const diamond_size: f32 = 0.6;
 
 /// How far off the Tachyon Cannon's pieces are drawn (`0x0047F600`).
 const tachyon_until: f32 = 1_000_000;
@@ -2510,8 +2533,8 @@ fn buildBolt(built: *Built, gpa: Allocator, image: *srtexture.Image, bolt: Bolt,
     };
     var count: usize = 8;
     if (ring) |first| {
-        const x = across * 0.6;
-        const y = up * 0.6;
+        const x = across * diamond_size;
+        const y = up * diamond_size;
         for ([_]f32{ first * long, far_ring * long }) |z| {
             corners[count..][0..4].* = .{ .{ -x, 0, z }, .{ 0, -y, z }, .{ x, 0, z }, .{ 0, y, z } };
             count += 4;
@@ -2550,7 +2573,7 @@ pub fn meshMaterial(lit: bool) srapiext.Material {
 /// nothing reads them here: every shot is never culled and lit by nothing but its own colours.
 ///
 /// `mesh_create` gives the mesh's one run of polygons as many as it has vertices, so the game walks
-/// empty polygons after the real ones, which draw nothing; the port's run holds the real ones.
+/// empty polygons after the real ones, which draw nothing; OpenReliant's run holds the real ones.
 pub fn meshOf(
     comptime n: u16,
     gpa: Allocator,
@@ -2624,8 +2647,96 @@ fn flarePiece(looks: *const Looks, image: Image, half: f32, offset: Vector) Piec
     };
 }
 
-/// `bullet_build` (`0x0047D9A0`): what a new shot of its type is drawn with. `turn` is the muzzle's,
-/// which the first piece takes.
+/// How the shots of the gun types that are drawn with more than a bolt look: the sizes and places
+/// `bullet_build` gives their pieces, which it holds in its code but where an address is given,
+/// and how `bullets_frame` wheels and shades them, a tick.
+///
+/// The Pulse Cannon's: a flare `half` across either way, and a smaller one, `second_half`,
+/// `second_offset` off it at a random turn, which wheels round it about X, Y and Z
+/// (`0x004DC880`, `0x004DC4AC`, `0x004DC420`).
+const pulse_look = struct {
+    const half: f32 = 60;
+    const second_half: f32 = 30;
+    const second_offset: Vector = .{ 55, 0, 0 };
+    const wheel: Vector = .{ 0.12, 0.02, 0.1 };
+};
+
+/// The Messon Blaster's: each bolt `off` the axis and up to `along` along it (`0x004DC544`).
+const messon_look = struct {
+    const off: f32 = 20;
+    const along: f32 = 300;
+};
+
+/// The Gattling Lasers': each bolt `off` the axis.
+const gattling_look = struct {
+    const off: f32 = 30;
+};
+
+/// The Tachyon Cannon's: its square `square_offset` along its star.
+const tachyon_look = struct {
+    const square_offset: Vector = .{ 0, 0, 100 };
+};
+
+/// The Neutron Particle Gun's: its bolt as bright as `shade` of what its colour has left
+/// (`0x004DC4C0`).
+const neutron_look = struct {
+    const shade: f32 = 0.3;
+};
+
+/// The Collapser Guns': two flares `half` across either way, `off` either side of the frame, which
+/// spins by `spin` (`0x004DC3F8`).
+const collapser_look = struct {
+    const half: f32 = 48;
+    const off: f32 = 30;
+    const spin: f32 = 0.2;
+};
+
+/// The Gattling Plasma Cannon's: each bolt up to `along` along the axis (`0x004DC468`), and
+/// `off_least` off it and up to `off_range` more (`0x004DC520`, `0x004DC72C`).
+const plasma_look = struct {
+    const along: f32 = 200;
+    const off_least: f32 = 10;
+    const off_range: f32 = 20;
+};
+
+/// The Vulcan Battery's: its four bolts `across` and `up` off the axis either way, the pairs
+/// wheeling about it `wheel` and the other way (`0x004DC420`, `0x004DC4E8`).
+const vulcan_look = struct {
+    const across: f32 = 50;
+    const up: f32 = 12;
+    const wheel: f32 = 0.1;
+    const wheel_back: f32 = -0.1;
+};
+
+/// The Turret Lasers': its rings take the shot texture's corner, the columns of `ring_columns`, the
+/// rows of `friendly_ring_rows` for a friendly shot's (`0x004DC8A0`, `0x004DC408`), and of
+/// `hostile_ring_rows` for a hostile one's (`0x004DC89C`, `0x004DC404`).
+const lasers_look = struct {
+    const ring_columns: [2]f32 = .{ 0.875, 1 };
+    const friendly_ring_rows: [2]f32 = .{ 0.375, 0.5 };
+    const hostile_ring_rows: [2]f32 = .{ 0.875, 1 };
+};
+
+/// The Huge Guns': the Allied's and the Coalition's light, as bright as `intensity` and of
+/// `colour`; their glow over `sunlayer3`, `glow_half` across either way and of `glow_colour`, as
+/// bright as `glow_shade` of what their colour has left (`0x004DC450`); and their shell's turn,
+/// `spin` about X, Y and Z for each tick the mission has run (`0x004DC410`, `0x004DC4C0`,
+/// `0x004DC420`).
+const huge_look = struct {
+    const Look = struct {
+        intensity: f32,
+        colour: [3]f32,
+        glow_half: f32,
+        glow_colour: [3]f32,
+    };
+    const allied: Look = .{ .intensity = 1, .colour = .{ 0.8, 0.8, 1 }, .glow_half = 5000, .glow_colour = .{ 0.2, 0.3, 0.3 } };
+    const coalition: Look = .{ .intensity = 2, .colour = .{ 1, 0.5, 0.3 }, .glow_half = 7500, .glow_colour = .{ 0.6, 0.4, 0.1 } };
+    const glow_shade: f32 = 0.15;
+    const spin: Vector = .{ 0.8, 0.3, 0.1 };
+};
+
+/// `bullet_build` (`0x0047D9A0`): what a new shot of its type is drawn with. `turn` is the
+/// muzzle's, which the first piece takes.
 fn dress(bullet: *Bullet, looks: *const Looks, random: *libcmt.Rand, turn: math.Matrix) void {
     // Which set of shapes and textures a shot takes, and which half of the shot texture. The game
     // tests the side for the one and whether it is hostile for the other.
@@ -2643,36 +2754,36 @@ fn dress(bullet: *Bullet, looks: *const Looks, random: *libcmt.Rand, turn: math.
         .laser_cannon => one(&pieces, meshPiece(looks, .laser, shot_flags)),
         .pulse_cannon => pulse: {
             const image: Image = if (other) .pulse_other else .pulse;
-            pieces[0] = flarePiece(looks, image, 60, @splat(0));
-            pieces[1] = flarePiece(looks, image, 30, .{ 55, 0, 0 });
+            pieces[0] = flarePiece(looks, image, pulse_look.half, @splat(0));
+            pieces[1] = flarePiece(looks, image, pulse_look.second_half, pulse_look.second_offset);
             // Thrown round the first at random: drawn roll, yaw, then pitch.
-            const roll = draw(random) * std.math.tau;
-            const yaw = draw(random) * std.math.tau;
-            const pitch = draw(random) * std.math.tau;
-            pieces[1].offset = math.transform(math.fromAngles(pitch, yaw, roll), pieces[1].offset);
+            const thrown = math.fromAngleVector(random.fractionVector(@splat(std.math.tau)));
+            pieces[1].offset = math.transform(thrown, pieces[1].offset);
             break :pulse 2;
         },
         .messon_blaster => messon: {
-            // Three bolts of different lengths, each 20 off the axis and up to 300 along it, at a
+            // Three bolts of different lengths, each off the axis and some way along it, at a
             // random turn about it.
             for ([_]Shape{ .messon_0, .messon_1, .messon_2 }, 1..) |shape, at| {
-                const along = draw(random) * 300;
-                const angle = draw(random) * std.math.tau;
+                const along = random.fraction() * messon_look.along;
+                const angle = random.fraction() * std.math.tau;
                 pieces[at] = .{
                     .drawn = meshPiece(looks, shape, shot_flags),
-                    .offset = math.transform(math.fromAngles(0, 0, angle), .{ 20, 0, along }),
+                    .offset = math.transform(math.fromAngles(0, 0, angle), .{ messon_look.off, 0, along }),
                 };
             }
             break :messon 4;
         },
         .proton_cannon => one(&pieces, meshPiece(looks, .proton, faded_flags)),
         .gattling_lasers => gattling: {
-            // Three Laser Cannon bolts 30 off the axis, a third of a turn apart (`0x004DC8A4`).
+            // Three Laser Cannon bolts off the axis, a third of a turn apart. **Improvement:** a
+            // third of `std.math.tau`, where the game multiplies by its rounded third of a turn
+            // (`0x004DC8A4`).
             for (1..4) |at| {
                 const angle = @as(f32, @floatFromInt(at - 1)) * std.math.tau / 3;
                 pieces[at] = .{
                     .drawn = meshPiece(looks, .laser, shot_flags),
-                    .offset = math.transform(math.fromAngles(0, 0, angle), .{ 30, 0, 0 }),
+                    .offset = math.transform(math.fromAngles(0, 0, angle), .{ gattling_look.off, 0, 0 }),
                 };
             }
             break :gattling 4;
@@ -2680,22 +2791,22 @@ fn dress(bullet: *Bullet, looks: *const Looks, random: *libcmt.Rand, turn: math.
         .tachyon_cannon => tachyon: {
             const flags: srapiext.ObjectFlags = .{ .not_culled = true, .baked_object = true };
             pieces[0] = .{ .drawn = meshPiece(looks, .tachyon_star, flags) };
-            pieces[1] = .{ .drawn = meshPiece(looks, .tachyon_square, flags), .offset = .{ 0, 0, 100 } };
+            pieces[1] = .{ .drawn = meshPiece(looks, .tachyon_square, flags), .offset = tachyon_look.square_offset };
             break :tachyon 2;
         },
         .neutron_particle_gun => one(&pieces, meshPiece(looks, .neutron, faded_flags)),
         .collapser_guns => collapser: {
             const image: Image = if (other) .collapser_other else .collapser;
-            for ([_]f32{ -30, 30 }, 1..) |x, at| pieces[at] = flarePiece(looks, image, 48, .{ x, 0, 0 });
+            for ([_]f32{ -collapser_look.off, collapser_look.off }, 1..) |x, at| pieces[at] = flarePiece(looks, image, collapser_look.half, .{ x, 0, 0 });
             break :collapser 3;
         },
         .gattling_plasma_cannon => plasma: {
-            // Four bolts of different lengths, up to 200 along the axis and 10 to 30 off it, at a
-            // random turn about it.
+            // Four bolts of different lengths, some way along the axis and off it, at a random turn
+            // about it.
             for ([_]Shape{ .gattling_plasma_0, .gattling_plasma_1, .gattling_plasma_2, .gattling_plasma_3 }, 1..) |shape, at| {
-                const along = draw(random) * 200;
-                const off = draw(random) * 20 + 10;
-                const angle = draw(random) * std.math.tau;
+                const along = random.fraction() * plasma_look.along;
+                const off = random.fraction() * plasma_look.off_range + plasma_look.off_least;
+                const angle = random.fraction() * std.math.tau;
                 pieces[at] = .{
                     .drawn = meshPiece(looks, shape, shot_flags),
                     .offset = math.transform(math.fromAngles(0, 0, angle), .{ off, 0, along }),
@@ -2704,7 +2815,9 @@ fn dress(bullet: *Bullet, looks: *const Looks, random: *libcmt.Rand, turn: math.
             break :plasma 5;
         },
         .vulcan_battery => vulcan: {
-            for ([_]Vector{ .{ -50, -12, 0 }, .{ 50, -12, 0 }, .{ -50, 12, 0 }, .{ 50, 12, 0 } }, 1..) |offset, at| {
+            const x = vulcan_look.across;
+            const y = vulcan_look.up;
+            for ([_]Vector{ .{ -x, -y, 0 }, .{ x, -y, 0 }, .{ -x, y, 0 }, .{ x, y, 0 } }, 1..) |offset, at| {
                 pieces[at] = .{ .drawn = meshPiece(looks, .vulcan, shot_flags), .offset = offset };
             }
             break :vulcan 5;
@@ -2724,25 +2837,27 @@ fn dress(bullet: *Bullet, looks: *const Looks, random: *libcmt.Rand, turn: math.
         },
         .turret_lasers => lasers: {
             // Its rings take the shot texture's corner, a friendly shot's or a hostile one's.
-            const ring_rows: [2]f32 = if (hostile) .{ 0.875, 1 } else .{ 0.375, 0.5 };
-            const ring = [4][2]f32{ .{ 0.875, ring_rows[1] }, .{ 1, ring_rows[1] }, .{ 1, ring_rows[0] }, .{ 0.875, ring_rows[0] } };
+            const columns = lasers_look.ring_columns;
+            const ring_rows = if (hostile) lasers_look.hostile_ring_rows else lasers_look.friendly_ring_rows;
+            const ring = [4][2]f32{ .{ columns[0], ring_rows[1] }, .{ columns[1], ring_rows[1] }, .{ columns[1], ring_rows[0] }, .{ columns[0], ring_rows[0] } };
             bullet.uv[8..12].* = ring;
             bullet.uv[12..16].* = ring;
             break :lasers one(&pieces, meshPiece(looks, if (other) .turret_lasers_other else .turret_lasers, faded_flags));
         },
         .allied_huge_gun, .coalition_huge_gun => huge: {
             const allied = bullet.kind == .allied_huge_gun;
+            const look = if (allied) huge_look.allied else huge_look.coalition;
             // Each of its squares takes the whole texture.
             for (0..3) |at| bullet.uv[at * 4 ..][0..4].* = .{ .{ 0, 1 }, .{ 1, 1 }, .{ 1, 0 }, .{ 0, 0 } };
             pieces[1] = .{ .drawn = meshPiece(looks, if (allied) .allied_huge else .coalition_huge, faded_flags) };
             pieces[2] = .{ .drawn = .{ .light = .{
                 .mask = 0,
-                .intensity = if (allied) 1 else 2,
-                .colour = if (allied) .{ 0.8, 0.8, 1 } else .{ 1, 0.5, 0.3 },
+                .intensity = look.intensity,
+                .colour = look.colour,
                 .kind = .{ .point = .{ .position = @splat(0), .range = huge_light_range } },
             } } };
-            pieces[3] = flarePiece(looks, .sun, if (allied) 5000 else 7500, @splat(0));
-            pieces[3].sprite[0].colour = if (allied) .{ 0.2, 0.3, 0.3 } else .{ 0.6, 0.4, 0.1 };
+            pieces[3] = flarePiece(looks, .sun, look.glow_half, @splat(0));
+            pieces[3].sprite[0].colour = look.glow_colour;
             break :huge 4;
         },
     };
@@ -2772,7 +2887,8 @@ fn animate(bullet: *Bullet, clock: *const Clock, record: Gun, random: *libcmt.Ra
         .pulse_cannon => {
             pieces[0].sprite[0].colour = if (friendly) .{ 0.5, left, 1 } else @splat(left);
             pieces[1].sprite[0].colour = if (friendly) .{ 0, left, 1 } else @splat(left);
-            pieces[1].offset = math.transform(math.fromAngles(ticks * 0.12, ticks * 0.02, ticks * 0.1), pieces[1].offset);
+            const wheel = pulse_look.wheel;
+            pieces[1].offset = math.transform(math.fromAngles(ticks * wheel[0], ticks * wheel[1], ticks * wheel[2]), pieces[1].offset);
         },
         .proton_cannon => paint(&pieces[0], if (friendly) .{ left, left, 1 } else @splat(left)),
         .tachyon_cannon => {
@@ -2786,28 +2902,29 @@ fn animate(bullet: *Bullet, clock: *const Clock, record: Gun, random: *libcmt.Ra
         },
         .gattling_lasers => pieces[0].turn = math.turned(pieces[0].turn, .z, ticks * spin_rate),
         .neutron_particle_gun => {
-            paint(&pieces[0], @splat(left * 0.3));
-            pieces[0].turn = math.turned(pieces[0].turn, .z, draw(random));
+            paint(&pieces[0], @splat(left * neutron_look.shade));
+            pieces[0].turn = math.turned(pieces[0].turn, .z, random.fraction());
         },
         .collapser_guns => {
             for (pieces[1..3]) |*piece| piece.sprite[0].colour = @splat(left);
-            pieces[0].turn = math.turned(pieces[0].turn, .z, ticks * 0.2);
+            pieces[0].turn = math.turned(pieces[0].turn, .z, ticks * collapser_look.spin);
         },
         .vulcan_battery => {
             // The two pairs wheel about the flight in opposite ways.
-            for (pieces[1..5], [_]f32{ 0.1, 0.1, -0.1, -0.1 }) |*piece, rate| {
+            for (pieces[1..5], [_]f32{ vulcan_look.wheel, vulcan_look.wheel, vulcan_look.wheel_back, vulcan_look.wheel_back }) |*piece, rate| {
                 piece.offset = math.transform(math.fromAngles(0, 0, ticks * rate), piece.offset);
             }
         },
         .allied_huge_gun, .coalition_huge_gun => {
             const since: f32 = @floatFromInt(clock.frame_start);
-            pieces[1].turn = math.fromAngles(since * 0.8, since * 0.3, since * 0.1);
+            const spin = huge_look.spin;
+            pieces[1].turn = math.fromAngles(since * spin[0], since * spin[1], since * spin[2]);
             paint(&pieces[1], @splat(left));
             switch (pieces[2].drawn) {
                 .light => |*light| light.colour = @splat(left),
                 else => {},
             }
-            pieces[3].sprite[0].colour = @splat(left * 0.15);
+            pieces[3].sprite[0].colour = @splat(left * huge_look.glow_shade);
         },
         .laser_cannon, .messon_blaster, .gattling_plasma_cannon, .nova_cannon, .turret_flak, .turret_lasers => {},
     }
@@ -2824,10 +2941,10 @@ fn paint(piece: *Piece, colour: [3]f32) void {
 
 /// Places each of a shot's pieces: the first where the shot is drawn, the rest on it.
 fn placePieces(bullet: *Bullet) void {
-    const first = bullet.pieces[0].turn;
+    const first: math.Place = .{ .position = bullet.place, .orientation = bullet.pieces[0].turn };
     for (bullet.pieces[0..bullet.piece_count], 0..) |*piece, at| {
-        const position = if (at == 0) bullet.place else math.transform(first, piece.offset) + bullet.place;
-        const turn = if (at == 0) first else math.product(first, piece.turn);
+        const position = if (at == 0) first.position else first.point(piece.offset);
+        const turn = if (at == 0) first.orientation else math.product(first.orientation, piece.turn);
         switch (piece.drawn) {
             .frame => {},
             .mesh => |*mesh| {
@@ -2851,15 +2968,14 @@ const hostile_rows: [2]f32 = .{ 0.5, 255.0 / atlas_size };
 
 /// What a shot's colour has left: all of it as it leaves the muzzle, none at the end of its life.
 fn fade(bullet: *const Bullet, clock: *const Clock, record: Gun) f32 {
-    const flown: f32 = @floatFromInt(clock.frame_start - bullet.fired_at);
-    return @max(1 - flown / @as(f32, @floatFromInt(record.lifetime)), 0);
+    return @max(1 - particles.through(clock.frame_start, bullet.fired_at, record.lifetime), 0);
 }
 
 /// The shots in flight, added to the world's layer as `bullets_frame` adds them once it has placed
 /// them, with the lights they cast where the renderer is a hardware one.
 ///
-/// The game gives a shot no light at all on its software renderer (`sr + 0x1AC`); the port gives it
-/// one and leaves it out here, which shows the same.
+/// The game gives a shot no light at all on its software renderer (`sr + 0x1AC`); OpenReliant gives
+/// it one and leaves it out here, which shows the same.
 pub fn drawBullets(gpa: Allocator, scene: *srcore.Scene, bullets: *Bullets, lights: bool) Allocator.Error!void {
     for (&bullets.pool) |*bullet| {
         if (!bullet.live) continue;
@@ -2892,7 +3008,7 @@ pub fn drawBullets(gpa: Allocator, scene: *srcore.Scene, bullets: *Bullets, ligh
 /// the tests that draw shots.
 const test_looks = struct {
     const Fixture = struct {
-        textures: *@import("backdrop.zig").testing.Textures,
+        textures: *@import("../surrender/surrenderlib/srtexture.zig").testing.Textures,
         looks: *Looks,
 
         fn init(gpa: Allocator) !Fixture {
@@ -2901,7 +3017,7 @@ const test_looks = struct {
             var names: [shots.len + nova.images.len][]const u8 = undefined;
             for (names[0..shots.len], shots) |*name, image| name.* = std.fs.path.basenameWindows(image.name());
             names[shots.len..].* = nova.images;
-            const textures = try @import("backdrop.zig").testing.Textures.initNames(gpa, &names);
+            const textures = try @import("../surrender/surrenderlib/srtexture.zig").testing.Textures.init(gpa, &names);
             errdefer textures.deinit(gpa);
             return .{ .textures = textures, .looks = try .create(gpa, &textures.table) };
         }
@@ -3099,10 +3215,12 @@ const libcmt = @import("../libcmt.zig");
 const matmanager = @import("matmanager.zig");
 const input = @import("../input.zig");
 const objects = @import("objects.zig");
+const particles = @import("particles.zig");
 const math = @import("../surrender/math.zig");
 const Vector = math.Vector;
 const shp = @import("../../formats/shp.zig");
 const sound3d = @import("sound3d.zig");
+const firstFreeBy = @import("table.zig").firstFreeBy;
 const srapi = @import("../surrender/surrenderlib/srapi.zig");
 const srapiext = @import("../surrender/surrenderlib/srapiext.zig");
 const srcore = @import("../surrender/surrenderlib/srcore.zig");

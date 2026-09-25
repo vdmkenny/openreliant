@@ -1,6 +1,6 @@
 //! `C:\lancer\surrender\surrenderlib\srCore.cpp`: drawing a frame. `sr_render` (`0x004C78A0`) runs
-//! `sr_draw_layers` (`0x004C7960`): the driver begins the scene; each layer's objects go through the
-//! pipeline for their kind and to the driver, which draws what is opaque and puts the blended
+//! `sr_draw_layers` (`0x004C7960`): the driver begins the scene; each layer's objects go through
+//! the pipeline for their kind and to the driver, which draws what is opaque and puts the blended
 //! aside; `depth_sort` (`0x004C7B30`) sorts what was put aside, farthest first, and the driver
 //! draws it; the driver ends the scene.
 
@@ -65,11 +65,12 @@ pub fn depthSort(deferred: []Deferred) void {
 }
 
 /// The scene, `sr`'s lists (`sr + 0x04` on): each layer's objects and the lights, in the order they
-/// were added. `scene_add` puts each at the head of its list, so they are drawn from the last added.
+/// were added. `scene_add` puts each at the head of its list, so they are drawn from the last
+/// added.
 pub const Scene = struct {
     layers: std.EnumArray(Layer, std.ArrayList(Object)) = .initFill(.empty),
     lights: std.ArrayList(srlight.Light) = .empty,
-    /// The port's: what casts shadows without being drawn, such as the ship the camera sits in
+    /// OpenReliant's: what casts shadows without being drawn, such as the ship the camera sits in
     /// (`srshadow`).
     casters: std.ArrayList(*srapiext.MeshObject) = .empty,
     /// The portals in the scene (list 4), which `render` puts in the camera's frame first.
@@ -99,12 +100,12 @@ pub const Driver = struct {
     pub const VTable = struct {
         /// `begin_scene`: clears, and sets the depth scale for the frame.
         begin: *const fn (*anyopaque, *srapi.Context) void,
-        /// The port's: the frame's lights, for a device that lights each pixel. The driver marks
+        /// OpenReliant's: the frame's lights, for a device that lights each pixel. The driver marks
         /// the lights the device adds to each pixel (`srlight.Light.per_pixel`), and sets
         /// `srapi.Context.pixel_lighting` if there are any, and `shadows` for a device that draws
         /// them.
         lights: *const fn (*anyopaque, []srlight.Light) Allocator.Error!void,
-        /// The port's: the frame's shadows, after the lights, for a device that draws them.
+        /// OpenReliant's: the frame's shadows, after the lights, for a device that draws them.
         shadows: ?*const fn (*anyopaque, *const srshadow.Frame) void = null,
         /// Draws what is opaque now and puts the rest in `blended`.
         mesh: *const fn (*anyopaque, *const srmesh.Drawn, Layer, *Blended) Allocator.Error!void,
@@ -130,8 +131,6 @@ pub const Blended = struct {
     }
 };
 
-/// Draws a frame (`sr_render`, `sr_draw_layers`). Everything a frame needs is taken from `arena`,
-/// which must last until the driver is done with the frame.
 /// What the engine draws over the finished scene, which Surrender reaches through `sr + 0x88`:
 /// `mission_run` puts `hud_draw` there and the renderer calls it after the layers, before the scene
 /// ends. Nothing calls it outright.
@@ -140,11 +139,12 @@ pub const Overlay = struct {
     draw: *const fn (context: *anyopaque) Allocator.Error!void,
 };
 
-/// `sr_draw_layers`: puts the scene's portals in the camera's frame (`portal_transform`), then
-/// draws the layers, the overlay after them.
+/// Draws a frame (`sr_render`, `sr_draw_layers`): puts the scene's portals in the camera's frame
+/// (`portal_transform`), then draws the layers, the overlay after them. Everything a frame needs is
+/// taken from `arena`, which must last until the driver is done with the frame.
 pub fn render(arena: Allocator, context: *srapi.Context, scene: *Scene, driver: Driver, overlay: ?Overlay) Allocator.Error!void {
     driver.vtable.begin(driver.ptr, context);
-    for (scene.portals.items) |portal| portal.transform(.{ .position = context.camera.position, .orientation = context.camera.orientation });
+    for (scene.portals.items) |portal| portal.transform(context.camera);
     // `mesh_light` walks the lights' list, which runs from the last added.
     const lights = try arena.dupe(srlight.Light, scene.lights.items);
     std.mem.reverse(srlight.Light, lights);
@@ -188,7 +188,7 @@ pub fn render(arena: Allocator, context: *srapi.Context, scene: *Scene, driver: 
     driver.vtable.end(driver.ptr);
 }
 
-/// The port's: hands the driver the frame's shadows, where its device draws them (`srshadow`).
+/// OpenReliant's: hands the driver the frame's shadows, where its device draws them (`srshadow`).
 fn castShadows(arena: Allocator, context: srapi.Context, scene: *const Scene, lights: []const srlight.Light, driver: Driver) Allocator.Error!void {
     const take = driver.vtable.shadows orelse return;
     const settings = context.shadows orelse return;

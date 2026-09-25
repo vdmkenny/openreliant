@@ -6,7 +6,8 @@ const Io = std.Io;
 const openreliant = @import("openreliant");
 const dte = openreliant.dte;
 
-const Context = @import("main.zig").Context;
+const sltool = @import("main.zig");
+const Context = sltool.Context;
 const Library = @import("library.zig").Library;
 
 pub const Command = union(enum) {
@@ -37,17 +38,9 @@ pub const Command = union(enum) {
     ;
 
     pub fn parse(args: []const [:0]const u8) error{Usage}!Command {
-        if (args.len != 2) return error.Usage;
-        const verb = std.meta.stringToEnum(std.meta.Tag(Command), args[0]) orelse return error.Usage;
+        const verb, const operands = try sltool.verbOf(Command, args);
         return switch (verb) {
-            .info => .{ .info = .{ .mission = args[1] } },
-            .sections => .{ .sections = .{ .mission = args[1] } },
-            .ships => .{ .ships = .{ .mission = args[1] } },
-            .triggers => .{ .triggers = .{ .mission = args[1] } },
-            .strings => .{ .strings = .{ .mission = args[1] } },
-            .parts => .{ .parts = .{ .mission = args[1] } },
-            .script => .{ .script = .{ .mission = args[1] } },
-            .check => .{ .check = .{ .mission = args[1] } },
+            inline else => |tag| sltool.positional(Command, tag, operands),
         };
     }
 
@@ -55,7 +48,7 @@ pub const Command = union(enum) {
         const path = switch (command) {
             inline else => |operands| operands.mission,
         };
-        const image = try Io.Dir.cwd().readFileAlloc(ctx.io, path, ctx.arena, .limited(16 << 20));
+        const image = try ctx.readInput(path);
         const mission: dte.Mission = try .parse(image);
         // Models, for naming components, are looked for beside the mission.
         var library: ?Library = Library.beside(ctx, path) catch null;
@@ -78,11 +71,10 @@ pub const Command = union(enum) {
 fn info(ctx: Context, mission: dte.Mission) !void {
     const ship_list = try mission.ships();
     var named: usize = 0;
-    var player: ?[]const u8 = null;
     for (ship_list) |ship| {
         if (mission.name(ship.name).len > 0) named += 1;
-        if (ship.iff == 255 and player == null) player = mission.name(ship.name);
     }
+    const player: ?[]const u8 = if (try mission.player()) |ship| mission.name(ship.name) else null;
 
     try ctx.stdout.print(
         \\image:     {Bi:.1}
@@ -113,10 +105,10 @@ fn sections(ctx: Context, mission: dte.Mission) !void {
             try ctx.stdout.print("{d:>3}  {s:>5}  {s:>5}  {s:>8}  ", .{ i, "-", "-", "unused" });
         } else {
             try ctx.stdout.print("{d:>3}  {d:>5}   0x{x:0>2}  {x:0>8}  ", .{
-                i, entry.count, entry.formats, entry.offset,
+                i, entry.count, entry.formats.byte(), entry.offset,
             });
         }
-        try dte.formatTag(dte.Section, section, ctx.stdout);
+        try openreliant.layout.formatTag(dte.Section, section, ctx.stdout);
         try ctx.stdout.writeByte('\n');
     }
 }
@@ -128,10 +120,10 @@ fn ships(ctx: Context, mission: dte.Mission) !void {
         try ctx.stdout.print("{d:>5}  {d:>6}  {s:>5}  {d:>4}  {d:>4}  {s:<30} ({d:>12.0}, {d:>12.0}, {d:>12.0})  {d:>4}  {d:>5}  {d:>4}{s}\n", .{
             i,
             ship.object_id,
-            if (ship.flight_group == dte.Ship.no_flight_group)
-                "-"
+            if (ship.flightGroup()) |in_group|
+                std.fmt.bufPrint(&group, "{d}", .{in_group}) catch "?"
             else
-                std.fmt.bufPrint(&group, "{d}", .{ship.flight_group}) catch "?",
+                "-",
             ship.iff,
             ship.kind,
             mission.name(ship.name),
@@ -160,10 +152,10 @@ fn triggers(ctx: Context, mission: dte.Mission, models: ?*Library) !void {
         try ctx.stdout.print("{d:>5}  {s:<26}  {s:>9}  {s:<7}  {s:<5}  {s:>5}  ", .{
             i,
             std.fmt.bufPrint(&condition, "{f}", .{trigger.condition}) catch "?",
-            if (trigger.qualifier == dte.Trigger.whole_object)
-                "-"
+            if (trigger.component()) |component|
+                std.fmt.bufPrint(&qualifier, "{d}", .{component}) catch "?"
             else
-                std.fmt.bufPrint(&qualifier, "{d}", .{trigger.qualifier}) catch "?",
+                "-",
             std.fmt.bufPrint(&repeat, "{f}", .{trigger.repeat}) catch "?",
             if (trigger.deferred == 0) "now" else "later",
             if (trigger.block()) |at| std.fmt.bufPrint(&block, "{d}", .{at}) catch "?" else "-",
@@ -178,9 +170,9 @@ fn triggers(ctx: Context, mission: dte.Mission, models: ?*Library) !void {
             for (all_ships) |ship| {
                 if (ship.object_id == id) {
                     try ctx.stdout.print("  {s}", .{mission.name(ship.name)});
-                    if (trigger.qualifier != dte.Trigger.whole_object) {
+                    if (trigger.component()) |component| {
                         try ctx.stdout.writeAll(", component");
-                        try printComponent(ctx, models, ship, trigger.qualifier);
+                        try printComponent(ctx, models, ship, component);
                     }
                     break;
                 }
@@ -327,7 +319,7 @@ fn printListing(
             at += (std.fmt.bufPrint(bytes[at..], " {x:0>2}", .{b}) catch break).len;
         }
         try ctx.stdout.print("  {d:>6}  {s:<11} ", .{ instruction.address, bytes[0..@min(at, bytes.len)] });
-        try dte.formatTag(dte.Opcode, instruction.opcode, ctx.stdout);
+        try openreliant.layout.formatTag(dte.Opcode, instruction.opcode, ctx.stdout);
 
         switch (instruction.flow) {
             .call => try printIndex(ctx, mission, models, instruction),

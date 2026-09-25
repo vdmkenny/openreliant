@@ -27,7 +27,8 @@ const per_tick: f32 = 0.012;
 /// (`0x004DC56C`).
 const near_radii: f32 = 5;
 
-/// How far beyond the near plane the sprite stands.
+/// How far beyond the near plane the sprite stands, as the mission's start makes it
+/// (`0x004DC404`, at `0x00493C97`).
 const beyond_near: f32 = 1;
 
 /// The flash: how many ticks it has left (`0x00587CC8`), and the sprite that covers the view

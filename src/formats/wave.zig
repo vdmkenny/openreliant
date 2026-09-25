@@ -1,5 +1,5 @@
 //! RIFF/WAVE sounds: the `.fat` banks' entries and the music in `music\`. The game hands them to
-//! Miles whole, which plays them as they are; `Decoder` reads their frames for the port's mixer.
+//! Miles whole, which plays them as they are; `Decoder` reads their frames for OpenReliant's mixer.
 //!
 //! The game's sounds are IMA ADPCM (format `0x11`) or PCM. An IMA ADPCM block starts with a
 //! header for each channel, the block's first sample and the step index, then holds four bits a
@@ -9,6 +9,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const layout = @import("layout.zig");
+const riff = @import("riff.zig");
 
 /// What a sound's WAVE header says.
 pub const Wave = struct {
@@ -39,19 +40,8 @@ pub const Wave = struct {
     /// The chunks this module reads.
     const Chunk = enum { fmt, fact, data };
 
-    /// The file's header: `RIFF`, the length of what follows, and the form, `WAVE`.
-    pub const Riff = extern struct {
-        id: [4]u8,
-        size: u32,
-        form: [4]u8,
-    };
-
-    /// What starts each chunk: its id and its length, which leaves out the padding to an even
-    /// length.
-    pub const ChunkHeader = extern struct {
-        id: [4]u8,
-        size: u32,
-    };
+    /// The RIFF form of a sound.
+    pub const form = "WAVE";
 
     /// The `fmt ` chunk's fields, as far as every format has them.
     pub const FormatChunk = extern struct {
@@ -72,6 +62,22 @@ pub const Wave = struct {
     pub const AdpcmExtension = extern struct {
         size: u16,
         frames_per_block: u16,
+
+        comptime {
+            assert(@sizeOf(AdpcmExtension) == 4);
+        }
+    };
+
+    /// What an IMA ADPCM block starts with for each channel: the block's first sample, and the
+    /// step index the samples after it start from.
+    pub const AdpcmHeader = extern struct {
+        sample: i16,
+        step_index: u8,
+        _reserved: u8,
+
+        comptime {
+            assert(@sizeOf(AdpcmHeader) == 4);
+        }
     };
 
     fn chunkOf(id: *const [4]u8) ?Chunk {
@@ -84,8 +90,7 @@ pub const Wave = struct {
     }
 
     pub fn parse(bytes: []const u8) error{NotAWave}!Wave {
-        const riff = layout.view(Riff, bytes) catch return error.NotAWave;
-        if (!std.mem.eql(u8, &riff.id, "RIFF") or !std.mem.eql(u8, &riff.form, "WAVE")) return error.NotAWave;
+        _ = riff.header(bytes, form) orelse return error.NotAWave;
         var wave: Wave = .{
             .format = @enumFromInt(0),
             .channels = 0,
@@ -98,14 +103,11 @@ pub const Wave = struct {
         };
         var seen_format = false;
 
-        var rest = bytes[@sizeOf(Riff)..];
-        while (layout.view(ChunkHeader, rest)) |chunk| {
-            const after = rest[@sizeOf(ChunkHeader)..];
-            if (chunk.size > after.len) return error.NotAWave;
-            const body = after[0..chunk.size];
-            // Chunks are padded to an even length.
-            rest = after[@min(after.len, chunk.size + (chunk.size & 1))..];
-
+        var chunks: riff.Chunks = .{ .rest = bytes[@sizeOf(riff.Header)..] };
+        // A tail too short for a chunk's header ends the chunks.
+        while (chunks.rest.len >= @sizeOf(riff.ChunkHeader)) {
+            const chunk = (chunks.next() catch return error.NotAWave) orelse break;
+            const body = chunk.body;
             switch (chunkOf(&chunk.id) orelse continue) {
                 .fmt => {
                     const fmt = layout.view(FormatChunk, body) catch return error.NotAWave;
@@ -124,7 +126,7 @@ pub const Wave = struct {
                 } else |_| {},
                 .data => wave.data = body,
             }
-        } else |_| {}
+        }
         if (!seen_format) return error.NotAWave;
         if (wave.frames == null and wave.format == .pcm and wave.block_align != 0) {
             wave.frames = @intCast(wave.data.len / wave.block_align);
@@ -140,19 +142,27 @@ pub const Wave = struct {
     }
 
     /// The frames the data holds: for IMA ADPCM, whole blocks and the part of the last, as far as
-    /// the `fact` chunk allows.
+    /// the `fact` chunk allows. None where the header gives no block size.
     pub fn frameCount(wave: Wave) u32 {
+        if (wave.block_align == 0) return 0;
         const held: u32 = switch (wave.format) {
             .ima_adpcm => blocks: {
                 const whole: u32 = @intCast(wave.data.len / wave.block_align);
-                const left = wave.data.len % wave.block_align;
-                const header = 4 * @as(usize, wave.channels);
-                const partial: u32 = if (left > header) @intCast(1 + (left - header) * 2 / wave.channels) else 0;
+                const partial: u32 = @intCast(wave.adpcmFrames(wave.data.len % wave.block_align));
                 break :blocks whole * wave.frames_per_block + partial;
             },
             else => @intCast(wave.data.len / wave.block_align),
         };
         return if (wave.frames) |stated| @min(stated, held) else held;
+    }
+
+    /// The frames the first `len` bytes of an IMA ADPCM block hold: the sample of each channel's
+    /// header, then two a byte of the rest, which the channels share. None where they do not reach
+    /// past the headers, or the header gives no channels.
+    fn adpcmFrames(wave: Wave, len: usize) usize {
+        const headers = @sizeOf(AdpcmHeader) * @as(usize, wave.channels);
+        if (wave.channels == 0 or len <= headers) return 0;
+        return 1 + (len - headers) * 2 / wave.channels;
     }
 
     /// The frame at a byte offset into the data, for a stream's loop block and position: a whole
@@ -186,10 +196,9 @@ pub const Decoder = struct {
         switch (wave.format) {
             .pcm => if (wave.bits != 8 and wave.bits != 16 or wave.block_align != wave.channels * wave.bits / 8) return error.Unsupported,
             .ima_adpcm => {
-                if (wave.bits != 4 or wave.block_align <= 4 * wave.channels) return error.Unsupported;
-                // A block holds its header's sample and two a byte of the rest.
-                const holds = (wave.block_align - 4 * wave.channels) * 2 / wave.channels + 1;
-                if (wave.frames_per_block != holds) return error.Unsupported;
+                // None where a block is no longer than its headers.
+                const holds = wave.adpcmFrames(wave.block_align);
+                if (wave.bits != 4 or holds == 0 or wave.frames_per_block != holds) return error.Unsupported;
             },
             _ => return error.Unsupported,
         }
@@ -213,17 +222,19 @@ pub const Decoder = struct {
             .ima_adpcm => {
                 const in_block = decoder.frame % wave.frames_per_block;
                 const block = wave.data[@as(usize, decoder.frame / wave.frames_per_block) * wave.block_align ..];
+                const header_size = @sizeOf(Wave.AdpcmHeader);
                 for (0..channels) |c| {
                     if (in_block == 0) {
-                        const header = block[4 * c ..][0..4];
-                        decoder.predictor[c] = std.mem.readInt(i16, header[0..2], .little);
-                        decoder.step_index[c] = @min(header[2], max_step_index);
+                        const header = std.mem.bytesToValue(Wave.AdpcmHeader, block[header_size * c ..][0..header_size]);
+                        decoder.predictor[c] = header.sample;
+                        decoder.step_index[c] = @min(header.step_index, max_step_index);
                     } else {
                         // Eight samples of each channel in turn, four bytes each, low nibble first.
                         const n = in_block - 1;
-                        const byte = block[4 * channels + (n / 8) * 4 * channels + 4 * c + (n % 8) / 2];
+                        const group = header_size * channels + (n / group_samples) * group_size * channels + group_size * c;
+                        const byte = block[group + (n % group_samples) / 2];
                         const nibble: u4 = @truncate(if (n % 2 == 0) byte else byte >> 4);
-                        decoder.decodeNibble(c, nibble);
+                        decoder.decodeNibble(c, @bitCast(nibble));
                     }
                     out[c] = @intCast(decoder.predictor[c]);
                 }
@@ -247,17 +258,33 @@ pub const Decoder = struct {
         }
     }
 
-    /// IMA ADPCM's step for one sample: the difference the nibble's three bits add up to, of the
-    /// step and its halves, signed by its fourth.
-    fn decodeNibble(decoder: *Decoder, channel: usize, nibble: u4) void {
+    /// Samples of a channel an IMA ADPCM block keeps together after its headers, four bits each.
+    const group_samples = 8;
+    const group_size = group_samples / 2;
+
+    /// One IMA ADPCM sample: the parts of the step it adds up, and whether it takes them away.
+    const Nibble = packed struct(u4) {
+        magnitude: Magnitude,
+        negative: bool,
+
+        const Magnitude = packed struct(u3) {
+            quarter: bool,
+            half: bool,
+            whole: bool,
+        };
+    };
+
+    /// IMA ADPCM's step for one sample: the difference the nibble's magnitude adds up to, of the
+    /// step and its halves, signed by its sign.
+    fn decodeNibble(decoder: *Decoder, channel: usize, nibble: Nibble) void {
         const step: i32 = steps[decoder.step_index[channel]];
         var difference = step >> 3;
-        if (nibble & 4 != 0) difference += step;
-        if (nibble & 2 != 0) difference += step >> 1;
-        if (nibble & 1 != 0) difference += step >> 2;
-        if (nibble & 8 != 0) difference = -difference;
+        if (nibble.magnitude.whole) difference += step;
+        if (nibble.magnitude.half) difference += step >> 1;
+        if (nibble.magnitude.quarter) difference += step >> 2;
+        if (nibble.negative) difference = -difference;
         decoder.predictor[channel] = std.math.clamp(decoder.predictor[channel] + difference, std.math.minInt(i16), std.math.maxInt(i16));
-        const moved = @as(i32, decoder.step_index[channel]) + index_moves[nibble & 7];
+        const moved = @as(i32, decoder.step_index[channel]) + index_moves[@as(u3, @bitCast(nibble.magnitude))];
         decoder.step_index[channel] = @intCast(std.math.clamp(moved, 0, max_step_index));
     }
 
@@ -282,16 +309,14 @@ pub const Decoder = struct {
 
 /// Builds WAVE files for tests.
 pub const testing = struct {
-    /// A chunk of `body`, with its header.
-    pub fn chunk(comptime id: *const [4]u8, comptime body: []const u8) []const u8 {
-        return std.mem.toBytes(Wave.ChunkHeader{ .id = id.*, .size = body.len }) ++ body;
-    }
+    /// A chunk of `body`, with its header and its padding.
+    pub const chunk = riff.testing.chunk;
 
     /// A WAVE file of `format`, its format chunk `fmt` (and `extension`), then `extra` chunks
     /// before the data.
     pub fn file(comptime fmt: Wave.FormatChunk, comptime extension: []const u8, comptime extra: []const u8, comptime data: []const u8) []const u8 {
-        const body = "WAVE" ++ chunk("fmt ", &std.mem.toBytes(fmt) ++ extension) ++ extra ++ chunk("data", data);
-        return "RIFF" ++ std.mem.toBytes(@as(u32, body.len)) ++ body;
+        const body = Wave.form ++ chunk("fmt ", &std.mem.toBytes(fmt) ++ extension) ++ extra ++ chunk("data", data);
+        return chunk(riff.Header.riff_id, body);
     }
 
     /// Mono 16-bit PCM at 22,050 Hz.
@@ -361,6 +386,22 @@ test "Decoder reads IMA ADPCM" {
     // A block too short for its frames is refused.
     const short = comptime testing.file(fmt, &std.mem.toBytes(Wave.AdpcmExtension{ .size = 2, .frames_per_block = 505 }), "", &block);
     try std.testing.expectError(error.Unsupported, Decoder.init(try Wave.parse(short)));
+
+    // A last block cut short holds its header's frame and two for each byte after it.
+    const longer = comptime testing.file(fmt, &std.mem.toBytes(Wave.AdpcmExtension{ .size = 2, .frames_per_block = 9 }), "", &(block ++ block[0..6].*));
+    try std.testing.expectEqual(9 + 5, (try Wave.parse(longer)).frameCount());
+}
+
+test "a header without a block size or channels holds no frames" {
+    var wave = try Wave.parse(comptime testing.pcm("\x00\x00"));
+    wave.block_align = 0;
+    try std.testing.expectEqual(0, wave.frameCount());
+    try std.testing.expectEqual(0, wave.frameAt(2));
+    wave.format = .ima_adpcm;
+    try std.testing.expectEqual(0, wave.frameCount());
+    wave.block_align = 8;
+    wave.channels = 0;
+    try std.testing.expectEqual(0, wave.frameCount());
 }
 
 test "Decoder takes the channels of IMA ADPCM in turn" {

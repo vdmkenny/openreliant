@@ -266,8 +266,12 @@ pub const Missile = extern struct {
 
     /// Locking time in seconds, as the loadout screen shows it.
     pub fn lockSeconds(missile: Missile) f32 {
-        return missile.lock_time * 0.01;
+        return missile.lock_time * seconds_per_lock_unit;
     }
+
+    /// What the loadout screen multiplies the locking time by for its seconds
+    /// (`loadout_missile_bars_init`, `0x0044B680`, reads it at `0x004DC518`).
+    pub const seconds_per_lock_unit: f32 = 0.01;
 
     comptime {
         assert(@offsetOf(Missile, "speed") == 0x40);

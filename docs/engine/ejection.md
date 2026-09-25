@@ -164,14 +164,14 @@ the pod began to explode (`0x004926AD`), the view holding its time until then.
 **Unverified:** that the code before it from `tractors_init`, Scoop Up's among it, is the file's
 too.
 
-## In the port
+## In OpenReliant
 
-- The port moves the parts between the objects its own way: the new object takes the ship's model as
-  it stands, the pod a new model of the type, and each has the other's parts taken out of it
+- OpenReliant moves the parts between the objects its own way: the new object takes the ship's model
+  as it stands, the pod a new model of the type, and each has the other's parts taken out of it
   (`objects.destroyPart`). A part taken out counts toward neither its object's size nor its smoke's
   engine glow.
-- The port adds the tractors' beams, bubble and light to the scene as it draws the frame, where the
-  ship and the pod are drawn, rather than as Scoop Up runs; the beams are aimed there too.
+- OpenReliant adds the tractors' beams, bubble and light to the scene as it draws the frame, where
+  the ship and the pod are drawn, rather than as Scoop Up runs; the beams are aimed there too.
 - **Improvement:** in the smooth shield style ([Shields](effects.md#shields)) the bubble is drawn
   on the shields' finer sphere of 48 slices by 40 bands, so its outline is round. Its glow is worked
   out on the game's sphere's vertices, and the finer sphere's take their colours from between them,
@@ -180,8 +180,8 @@ too.
   what flies does (`create.Slot.glide`); the game places it a tick at a time. Scoop Up measures from
   where it placed the pod, which the game's frame has it at.
 - **Fix:** `tractor_create` returns -1 with all five tractors in use, which Scoop Up then reads past
-  the five with; the port has the ship take the pod in without beams, bubble or light.
-- **Fix:** odds of nothing at all divide by zero in the game; the port has the pilot rescued.
+  the five with; OpenReliant has the ship take the pod in without beams, bubble or light.
+- **Fix:** odds of nothing at all divide by zero in the game; OpenReliant has the pilot rescued.
 - The sandbox gives the three fates even odds, and starts again once the mission is over.
 
 Not ported: the radio's words ([#48](https://github.com/vdmkenny/openreliant/issues/48)); the

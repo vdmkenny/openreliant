@@ -6,7 +6,8 @@ const Io = std.Io;
 const openreliant = @import("openreliant");
 const shp = openreliant.shp;
 
-const Context = @import("main.zig").Context;
+const sltool = @import("main.zig");
+const Context = sltool.Context;
 const Library = @import("library.zig").Library;
 
 pub const Command = union(enum) {
@@ -32,14 +33,9 @@ pub const Command = union(enum) {
     ;
 
     pub fn parse(args: []const [:0]const u8) error{Usage}!Command {
-        if (args.len == 0) return error.Usage;
-        const verb = std.meta.stringToEnum(std.meta.Tag(Command), args[0]) orelse return error.Usage;
-        const operands = args[1..];
+        const verb, const operands = try sltool.verbOf(Command, args);
         switch (verb) {
-            .info => return if (operands.len == 1) .{ .info = .{ .model = operands[0] } } else error.Usage,
-            .check => return if (operands.len == 1) .{ .check = .{ .model = operands[0] } } else error.Usage,
-            .chunks => return if (operands.len == 1) .{ .chunks = .{ .model = operands[0] } } else error.Usage,
-            .components => return if (operands.len == 1) .{ .components = .{ .model = operands[0] } } else error.Usage,
+            inline .info, .check, .chunks, .components => |tag| return sltool.positional(Command, tag, operands),
             .obj => {
                 if (operands.len < 2) return error.Usage;
                 var command: Command = .{ .obj = .{ .model = operands[0], .out = operands[1] } };
@@ -62,7 +58,7 @@ pub const Command = union(enum) {
         const path = switch (command) {
             inline else => |operands| operands.model,
         };
-        const data = try Io.Dir.cwd().readFileAlloc(ctx.io, path, ctx.arena, .limited(64 << 20));
+        const data = try ctx.readInput(path);
 
         switch (command) {
             .chunks => try chunks(ctx, data),
@@ -114,8 +110,8 @@ fn chunks(ctx: Context, data: []const u8) !void {
     var reader: shp.Reader = .init(data);
     try ctx.stdout.writeAll("  offset   tag  record  count  name\n");
     while (try reader.next()) |chunk| {
-        const offset = reader.pos - chunk.data.len - 6;
-        try ctx.stdout.print("{x:0>8}  {x:0>4} {d:>7} {d:>6}  {t}\n", .{
+        const offset = reader.pos - chunk.data.len - @sizeOf(shp.ChunkHeader);
+        try ctx.stdout.print("{x:0>8}  {x:0>4} {d:>7} {d:>6}  {f}\n", .{
             offset, @intFromEnum(chunk.tag), chunk.record_size, chunk.count, chunk.tag,
         });
     }
@@ -303,11 +299,15 @@ fn check(ctx: Context, model: shp.Model) !void {
 
     for (model.parts, 0..) |entry, index| {
         const part = entry.part;
-        if (part.parent >= @as(i32, @intCast(model.parts.len)) or part.parent < -1) {
+        if (part.parentIndex()) |parent| {
+            if (parent >= model.parts.len) {
+                try report.fail(ctx, &problems, "part {d}: parent {d} out of range", .{ index, part.parent });
+            }
+            if (parent == index) {
+                try report.fail(ctx, &problems, "part {d}: is its own parent", .{index});
+            }
+        } else if (part.parent != shp.no_index) {
             try report.fail(ctx, &problems, "part {d}: parent {d} out of range", .{ index, part.parent });
-        }
-        if (part.parent == @as(i32, @intCast(index))) {
-            try report.fail(ctx, &problems, "part {d}: is its own parent", .{index});
         }
 
         for (entry.meshes, 0..) |mesh, level| {
@@ -329,9 +329,9 @@ fn check(ctx: Context, model: shp.Model) !void {
             // The next-level counterpart index must point into the following level.
             if (level + 1 < entry.meshes.len) {
                 const next = entry.meshes[level + 1];
-                for (mesh.vertices, 0..) |vertex, vertex_index| {
-                    if (vertex.next_lod_vertex == -1) continue;
-                    if (vertex.next_lod_vertex < -1 or vertex.next_lod_vertex >= @as(i32, @intCast(next.vertices.len))) {
+                for (mesh.vertices, 0..) |*vertex, vertex_index| {
+                    const in_range = if (vertex.nextLod()) |target| target < next.vertices.len else vertex.next_lod_vertex == shp.no_index;
+                    if (!in_range) {
                         try report.fail(ctx, &problems, "part {d} lod {d} vertex {d}: geomorph target {d} of {d}", .{
                             index, level, vertex_index, vertex.next_lod_vertex, next.vertices.len,
                         });
@@ -351,8 +351,9 @@ fn check(ctx: Context, model: shp.Model) !void {
                 }
             }
             if (faces.len == 0) {
-                for (node.children) |child| {
-                    if (child < 0 or child >= @as(i32, @intCast(entry.nodes.len))) {
+                for (node.children, 0..) |child, which| {
+                    const in_range = if (node.child(@intCast(which))) |target| target < entry.nodes.len else false;
+                    if (!in_range) {
                         try report.fail(ctx, &problems, "part {d} node {d}: child {d} of {d}", .{ index, node_index, child, entry.nodes.len });
                     }
                 }
@@ -459,11 +460,7 @@ fn writeObj(ctx: Context, model: shp.Model, out_path: []const u8, lod: u32, mode
 
         try out.print("\no {s}\n", .{if (entry.part.name().len > 0) entry.part.name() else "part"});
         for (mesh.vertices) |vertex| {
-            const p = place.at(.{
-                .x = vertex.position.x + offset.x,
-                .y = vertex.position.y + offset.y,
-                .z = vertex.position.z + offset.z,
-            }, model_space);
+            const p = place.at(vertex.position.add(offset), model_space);
             try out.print("v {d} {d} {d}\n", .{ p.x, p.y, p.z });
         }
         for (mesh.vertices) |vertex| {

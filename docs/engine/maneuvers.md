@@ -146,9 +146,9 @@ maneuver's time is up.
     the pilot's skill, times the target's speed over its top speed but at least a quarter:
     "attack pursue". The table holds three; for any other skill the game reads past it, far enough
     that the ship never pursues.
-  - With the target behind the ship, one time in ten, "run to ship" toward the nearest friendly ship with
-    components and combat class 2 or 3, unless the ship is already within 50000 units of one, its
-    radius aside (`fight_find_ship_to_run_to`, `0x00409F00`).
+  - With the target behind the ship, one time in ten, "run to ship" toward the nearest friendly ship
+    with components and combat class 2 or 3, unless the ship is already within 50000 units of one,
+    its radius aside (`fight_find_ship_to_run_to`, `0x00409F00`).
   - Within 10000 units of the target: "defend runaway".
   - Otherwise a random maneuver from `maneuver_choices` (`0x4E1918`), by where the target is from
     the ship's nose (ahead within 60 degrees, behind more than 120 degrees off it, or abeam
@@ -171,17 +171,17 @@ ends at.
 Fight's update (`order_fight`, `0x0040A5E0`) pops the order when its target is no longer valid,
 chooses a new maneuver when the last one's time is up and starts one chosen, and then:
 
-1. **Aims** (`fight_aim`, `0x00409BE0`). Every pilot's `aim_interval` ticks it aims afresh: ahead
-   of the target where `ai_lead_aim` (`0x00401280`) can lead it with the fastest of the guns it
-   fires together, and otherwise at the target, or at its part for a component.
-   `ai_lead_aim_with_gun` (`0x00401180`) leads it along its heading by its speed times the time
-   the gun's shot takes to reach it, where that is within a quarter of the gun's lifetime, three
-   times its lifetime for a Turret Flak. **Fix:** the game reads each gun's turret kind as its
-   type, so it leads every ship's shots as a Laser Cannon's; the port leads by the fastest gun's
-   own type. **Fix:** for the Turret Flak the game takes the Laser Cannon's lifetime, the table's
-   first gun's, which leads flak past the life of its own shells; the port the flak's own. The aim point's
-   velocity is a quarter of the target's, turned by the target's per-update turn half
-   `aim_interval` times. Each update the aim point moves by that velocity times `frame_duration`.
+1. **Aims** (`fight_aim`, `0x00409BE0`). Every pilot's `aim_interval` ticks it aims afresh: ahead of
+   the target where `ai_lead_aim` (`0x00401280`) can lead it with the fastest of the guns it fires
+   together, and otherwise at the target, or at its part for a component. `ai_lead_aim_with_gun`
+   (`0x00401180`) leads it along its heading by its speed times the time the gun's shot takes to
+   reach it, where that is within a quarter of the gun's lifetime, three times its lifetime for a
+   Turret Flak. **Fix:** the game reads each gun's turret kind as its type, so it leads every ship's
+   shots as a Laser Cannon's; OpenReliant leads by the fastest gun's own type. **Fix:** for the
+   Turret Flak the game takes the Laser Cannon's lifetime, the table's first gun's, which leads flak
+   past the life of its own shells; OpenReliant the flak's own. The aim point's velocity is a
+   quarter of the target's, turned by the target's per-update turn half `aim_interval` times. Each
+   update the aim point moves by that velocity times `frame_duration`.
 2. **Fires** (`fight_fire`, `0x004096B0`), unless the ship is cloaked. Once the pilot's `pause`
    has passed since it last looked, it looks again: where the aim point is within `fire_spread`
    times the target's radius (or its part's) of the line along the ship's nose, and the part is
@@ -216,13 +216,13 @@ The Fight order and its maneuvers read the ship's pilot, a record of `pilot_stat
 
 **Unknown:** what the game calls these.
 
-## In the port
+## In OpenReliant
 
 The Fight order and every command run as described, with these left out: the points a model
 gives its components ([#239](https://github.com/vdmkenny/openreliant/issues/239)), multiplayer,
 where the host chooses the maneuvers ([#55](https://github.com/vdmkenny/openreliant/issues/55)),
 and the mission's `SetActionCentre` ([#36](https://github.com/vdmkenny/openreliant/issues/36)).
 
-Where the game would stop or hang, the port goes on: a script that runs off its end ends the
+Where the game would stop or hang, OpenReliant goes on: a script that runs off its end ends the
 maneuver, a loop that starts 256 lines in one update without one waiting is left for the next
 update, and a range with no span gives its least rather than divide by zero.

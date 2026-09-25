@@ -8,7 +8,8 @@ const png = openreliant.png;
 const tcache = openreliant.tcache;
 const tga = openreliant.tga;
 
-const Context = @import("main.zig").Context;
+const sltool = @import("main.zig");
+const Context = sltool.Context;
 
 pub const Command = union(enum) {
     info: struct { cache: []const u8 },
@@ -30,18 +31,15 @@ pub const Command = union(enum) {
     ;
 
     pub fn parse(args: []const [:0]const u8) error{Usage}!Command {
-        if (args.len == 0) return error.Usage;
-        const verb = std.meta.stringToEnum(std.meta.Tag(Command), args[0]) orelse return error.Usage;
-        const operands = args[1..];
+        const verb, const operands = try sltool.verbOf(Command, args);
         switch (verb) {
-            .info => return if (operands.len == 1) .{ .info = .{ .cache = operands[0] } } else error.Usage,
-            .ls => return if (operands.len == 1) .{ .ls = .{ .cache = operands[0] } } else error.Usage,
             .extract => return if (operands.len >= 3) .{ .extract = .{
                 .cache = operands[0],
                 .palette = operands[1],
                 .out_dir = operands[2],
                 .names = operands[3..],
             } } else error.Usage,
+            inline else => |tag| return sltool.positional(Command, tag, operands),
         }
     }
 
@@ -49,8 +47,7 @@ pub const Command = union(enum) {
         const path = switch (command) {
             inline else => |operands| operands.cache,
         };
-        const data = try Io.Dir.cwd().readFileAlloc(ctx.io, path, ctx.arena, .limited(256 << 20));
-        const cache: tcache.Cache = try .parse(ctx.arena, data);
+        const cache: tcache.Cache = try .parse(ctx.arena, try ctx.readInput(path));
 
         switch (command) {
             .info => try info(ctx, cache),
@@ -111,8 +108,7 @@ fn extract(
     names: []const [:0]const u8,
 ) !void {
     const io = ctx.io;
-    const palette_file = try Io.Dir.cwd().readFileAlloc(io, palette_path, ctx.arena, .limited(16 << 20));
-    const palette = try tga.palette(palette_file);
+    const palette = try tga.palette(try ctx.readInput(palette_path));
 
     var chosen: std.ArrayList(tcache.Texture) = .empty;
     if (names.len == 0) {
@@ -125,8 +121,7 @@ fn extract(
         try chosen.append(ctx.arena, texture);
     }
 
-    try Io.Dir.cwd().createDirPath(io, out_path);
-    var out_dir = try Io.Dir.cwd().openDir(io, out_path, .{});
+    var out_dir = try ctx.outputDir(out_path);
     defer out_dir.close(io);
 
     for (chosen.items) |texture| {
@@ -169,11 +164,21 @@ test "extracts a texture" {
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "tcachehw.dat", .data = cache_bytes });
 
     // A colour-mapped TGA with a 256-entry map and no image to speak of.
-    var palette_file: [tga.header_size + 256 * 3 + 1]u8 = @splat(0);
-    palette_file[1] = 1;
-    palette_file[2] = 1;
-    palette_file[6] = 1; // 256 entries
-    palette_file[7] = 24;
+    var palette_file: [tga.header_size + @sizeOf(tga.Palette) + 1]u8 = @splat(0);
+    (try openreliant.layout.viewMut(tga.Header, &palette_file)).* = .{
+        .id_length = 0,
+        .color_map_type = .present,
+        .image_type = .color_mapped,
+        .color_map_first = 0,
+        .color_map_length = tga.palette_length,
+        .color_map_entry_bits = 24,
+        .x_origin = 0,
+        .y_origin = 0,
+        .width = 0,
+        .height = 0,
+        .pixel_bits = 0,
+        .descriptor = @bitCast(@as(u8, 0)),
+    };
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "palette.tga", .data = &palette_file });
 
     const base = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}", .{tmp.sub_path});

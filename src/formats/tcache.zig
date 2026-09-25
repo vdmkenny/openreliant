@@ -15,6 +15,9 @@ const tga = @import("tga.zig");
 
 pub const version = 102;
 
+/// The texture cache of the hardware renderers, which `renderer_start` opens (`0x0050A800`).
+pub const hardware_name = "tcachehw.dat";
+
 /// Entries the directory has room for.
 pub const capacity = 1000;
 
@@ -26,6 +29,10 @@ pub const data_start = header_size + capacity * entry_size;
 
 /// Largest side this reader accepts. Not a limit of the engine's.
 pub const max_side = std.math.maxInt(u16);
+
+/// Most mipmap levels a texture can have: a side of `max_side` halves this many times, less one,
+/// before it reaches 1.
+pub const max_levels = std.math.log2_int(u32, max_side) + 1;
 
 pub const Error = error{ Truncated, NotACache, TooManyEntries, BadEntry, UnsupportedFormat };
 
@@ -235,7 +242,8 @@ pub const Level = struct {
                 },
                 .rgb565 => blk: {
                     const pixel = std.mem.readInt(u16, level.pixels[i * 2 ..][0..2], .little);
-                    break :blk .{ widen(5, pixel >> 11), widen(6, pixel >> 5), widen(5, pixel), 0xFF };
+                    const layout_565 = comptime Encoding.rgb565.format();
+                    break :blk .{ widen(layout_565.red, pixel), widen(layout_565.green, pixel), widen(layout_565.blue, pixel), 0xFF };
                 },
             };
             out[i * 4 ..][0..4].* = colour;
@@ -248,10 +256,10 @@ fn opaqueColour(rgb: [3]u8) [4]u8 {
     return .{ rgb[0], rgb[1], rgb[2], 0xFF };
 }
 
-/// The low `bits` bits of `value`, scaled from `0 .. 2^bits - 1` to `0 .. 255`.
-fn widen(comptime bits: u4, value: u16) u8 {
-    const max = (1 << bits) - 1;
-    const v: u32 = value & max;
+/// The component `channel` describes of `pixel`, scaled from its own bits to 8, to the nearest.
+fn widen(comptime channel: Channel, pixel: u16) u8 {
+    const max = (1 << (8 - channel.loss)) - 1;
+    const v: u32 = (pixel & channel.mask) >> channel.shift;
     return @intCast((v * 255 + max / 2) / max);
 }
 
@@ -334,7 +342,7 @@ fn textureOf(entry: *align(1) const Entry, bytes: []const u8) Error!Texture {
     const height = entry.stored_height;
     if (width == 0 or height == 0 or width > max_side or height > max_side) return error.BadEntry;
     const levels: u32 = if (entry.image.flags.mipmaps) entry.image.levels else 1;
-    if (levels == 0 or levels > 16 or width >> @intCast(levels - 1) == 0 or height >> @intCast(levels - 1) == 0) {
+    if (levels == 0 or levels > max_levels or width >> @intCast(levels - 1) == 0 or height >> @intCast(levels - 1) == 0) {
         return error.BadEntry;
     }
     const size = pixelCount(width, height, levels) * encoding.bytesPerPixel();
@@ -428,12 +436,21 @@ test fileName {
 }
 
 test widen {
-    try std.testing.expectEqual(0, widen(5, 0));
-    try std.testing.expectEqual(255, widen(5, 0x1F));
-    try std.testing.expectEqual(255, widen(6, 0x3F));
-    try std.testing.expectEqual(132, widen(5, 16));
-    // Only the low bits count.
-    try std.testing.expectEqual(255, widen(5, 0xFFFF));
+    const format = comptime Encoding.rgb565.format();
+    try std.testing.expectEqual(0, widen(format.blue, 0));
+    try std.testing.expectEqual(255, widen(format.blue, 0x1F));
+    try std.testing.expectEqual(255, widen(format.green, 0x3F << 5));
+    try std.testing.expectEqual(132, widen(format.blue, 16));
+    try std.testing.expectEqual(132, widen(format.red, 16 << 11));
+    // Only the channel's own bits count.
+    try std.testing.expectEqual(255, widen(format.blue, 0xFFFF));
+    try std.testing.expectEqual(0, widen(format.green, 0xF81F));
+}
+
+test max_levels {
+    // The largest side halves 15 times to reach 1.
+    try std.testing.expectEqual(16, max_levels);
+    try std.testing.expectEqual(1, max_side >> (max_levels - 1));
 }
 
 test Cache {

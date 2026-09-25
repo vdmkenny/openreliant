@@ -1,12 +1,12 @@
 //! `C:\lancer\game\main.cpp`: a mission's loop. `mission_run` (`0x00494040`) runs a game tick for
-//! each tick of the timer and draws a frame with `mission_frame` (`0x004924B0`). **Unverified:** the
-//! two lie after `language.cpp`'s code, where `main.cpp`'s begins; by what they do they are this
-//! file's.
+//! each tick of the timer and draws a frame with `mission_frame` (`0x004924B0`). **Unverified:**
+//! the two lie after `language.cpp`'s code, where `main.cpp`'s begins; by what they do they are
+//! this file's.
 //!
 //! Ported so far: the clocks and the pacing, how `mission_frame` frames the objects and puts the
 //! scene together and draws it, the damaged ships' smoke (`smoke`), what the mission's start
-//! (`0x004934F0`) fits the player's ship with, the armour's conditions (`0x00492370`), and the pause
-//! (`game_pause`). Not yet: the rest of the effects and of what it adds to the scene, and
+//! (`0x004934F0`) fits the player's ship with, the armour's conditions (`0x00492370`), and the
+//! pause (`game_pause`). Not yet: the rest of the effects and of what it adds to the scene, and
 //! `mission_paused_frame`, which `openreliant`'s loop stands in for.
 
 const std = @import("std");
@@ -97,13 +97,16 @@ pub const Showing = enum(u8) {
     _,
 };
 
+/// The game's ticks a second: `tick_timer` (`0x004827C0`) runs every hundredth of a second.
+pub const ticks_per_second = 100;
+
 /// A mission's clocks, and the pacing they drive: the timer ticks 100 times a second, the loop
 /// runs one game tick for each tick of the timer, and the simulation steps on every fourth.
 ///
-/// **Improvement:** the port has no periodic timer. The platform's monotonic counter of hundredths
-/// of a second stands in for the multimedia timer `timer_start` (`0x004A70F0`) sets up, so the
-/// clocks advance at the same rate without a thread of their own and without the drift a timer
-/// whose period the device rounds would bring.
+/// **Improvement:** OpenReliant has no periodic timer. The platform's monotonic counter of
+/// hundredths of a second stands in for the multimedia timer `timer_start` (`0x004A70F0`) sets up,
+/// so the clocks advance at the same rate without a thread of their own and without the drift a
+/// timer whose period the device rounds would bring.
 pub const Clock = struct {
     /// `timer_ticks` (`0x005DB8E8`): every tick of the timer, the paused ones included.
     timer_ticks: u32 = 0,
@@ -129,7 +132,7 @@ pub const Clock = struct {
     ran_to: u32 = 0,
     /// Where the platform's count of hundredths stood at the last tick, in place of the timer.
     timer_at: u64 = 0,
-    /// The port's: how far the platform's time has run past the last tick, as a share of a tick,
+    /// OpenReliant's: how far the platform's time has run past the last tick, as a share of a tick,
     /// which `stepFraction` draws between the ticks by.
     past_tick: f32 = 0,
 
@@ -205,6 +208,11 @@ pub const Clock = struct {
     pub fn frameReset(clock: *Clock) void {
         clock.frame_start = clock.mission_ticks;
         clock.frame_duration = 0;
+    }
+
+    /// The ticks the current frame covers (`frame_duration`), none where the clock ran back.
+    pub fn frameTicks(clock: *const Clock) u32 {
+        return @intCast(@max(clock.frame_duration, 0));
     }
 };
 
@@ -357,8 +365,7 @@ pub fn missionFrame(orders: aigeneric.Context, timing: objects.Timing) bool {
     if (orders.world.countermeasures) |dropped| dropped.frame(orders.world);
     if (orders.world.shockwaves) |waves| waves.frame(orders.world);
     if (orders.world.display) |display| {
-        // Only from the cockpit's views and the chase view.
-        if (@intFromEnum(orders.world.view) < @intFromEnum(camera.View.chase) + 1) display.lock.frame(orders.world, &display.missiles);
+        if (orders.world.view.showsLock()) display.lock.frame(orders.world, &display.missiles);
     }
     return over;
 }
@@ -406,7 +413,7 @@ fn objectsPass(orders: aigeneric.Context) void {
         if (slot.object.flags.outOfFrame()) continue;
         if (slot.object.order_count > 0) {
             const order = slot.orders[0];
-            if (order.order == .fight and order.target.index == all.player and slot.state.fight.missile_ready) enemy_lock = true;
+            if (order.order == .fight and order.target.slot() == all.player and slot.state.fight.missile_ready) enemy_lock = true;
         }
         objects.loseComponents(orders, index);
         avoidanceScan(world, index);
@@ -421,13 +428,13 @@ const avoid_widening: f32 = 10000;
 const avoid_steps: f32 = 50;
 const avoid_margin: f32 = 2000;
 
-/// `avoidance_scan` (`0x00492190`): for a ship whose current order avoids (`orders.Flags.avoidance`)
-/// and that has no `no_avoidance`, the objects it could hit, for the avoidance code
-/// (`ai.avoidNear`, `ai.avoidAhead`), up to ten of each: those that list components whose spheres,
-/// 10000 wider, overlap its own where the step takes them both; and, where the ship lists none
-/// itself, the rest it is on course to hit within 50 steps by 2000. It passes over stand-ins,
-/// disabled and jumping objects, planets, the ship itself, what it fights, and what either passes
-/// through the other.
+/// `avoidance_scan` (`0x00492190`): for a ship whose current order avoids
+/// (`orders.Flags.avoidance`) and that has no `no_avoidance`, the objects it could hit, for the
+/// avoidance code (`ai.avoidNear`, `ai.avoidAhead`), up to ten of each: those that list components
+/// whose spheres, 10000 wider, overlap its own where the step takes them both; and, where the ship
+/// lists none itself, the rest it is on course to hit within 50 steps by 2000. It passes over
+/// stand-ins, disabled and jumping objects, planets, the ship itself, what it fights, and what
+/// either passes through the other.
 ///
 /// Not ported: in a multiplayer game, the other players' ships a ship passes by.
 fn avoidanceScan(world: gameobj.World, index: u16) void {
@@ -442,13 +449,12 @@ fn avoidanceScan(world: gameobj.World, index: u16) void {
     for (all.slots[0..all.count], 0..) |*other_slot, other_index| {
         const other: u16 = @intCast(other_index);
         const object = &other_slot.object;
-        if (object.flags.stand_in or object.flags.disabled or object.flags.jumping or other == index) continue;
+        if (object.flags.outOfFrame() or other == index) continue;
         if (other_slot.combat) |combat| if (combat.class == .planet) continue;
-        if (@intFromEnum(ship.passes_through[0]) == other or ship.fighting == other) continue;
-        if (@intFromEnum(object.passes_through[0]) == index) continue;
+        if (ship.passes_through[0].index() == other or ship.fighting.index() == other) continue;
+        if (object.passes_through[0].index() == index) continue;
         if (object.flags.components) {
-            const reach = object.radius + ship.radius + avoid_widening;
-            if (math.lengthSquared(ship.nextPosition() - object.nextPosition()) < reach * reach) ship.avoid_near.add(other);
+            if (ship.overlaps(object, avoid_widening)) ship.avoid_near.add(other);
         } else if (!ship.flags.components and ai.collisionCourse(world, index, other, avoid_steps, avoid_margin)) {
             ship.avoid_ahead.add(other);
         }
@@ -494,7 +500,7 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     try missiles.draw(frame.objects, gpa, scene, attachments);
     if (frame.trails) |trails| try trails.draw(gpa, scene);
     if (frame.countermeasures) |dropped| try dropped.draw(gpa, scene, attachments);
-    if (frame.lock_rings) |rings| if (frame.lock) |held| if (@intFromEnum(frame.view) <= @intFromEnum(camera.View.chase)) {
+    if (frame.lock_rings) |rings| if (frame.lock) |held| if (frame.view.showsLock()) {
         try rings.draw(gpa, scene, held, .{ .position = context.camera.position, .orientation = context.camera.orientation }, context.projection);
     };
     if (frame.chase) |seen_behind| if (frame.display) |display| if (frame.view == .cockpit and frame.cockpit_mode == .chase) {
@@ -540,10 +546,10 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
     try srcore.render(arena, context, scene, driver, frame.overlay);
 }
 
-/// Where `mission_frame` holds `detail_divisor` (`srapi.Context.detail`) at the high detail
-/// setting on a machine that keeps up: it raises it by 0.05 each frame whose timed sections take
-/// under 1/60 s, up to 3, and lowers it by 0.5 each frame over 1/40 s, down to 1.5. The port holds
-/// it at the top.
+/// Where `mission_frame` holds `detail_divisor` (`srapi.Context.detail`) at the high detail setting
+/// on a machine that keeps up: it raises it by 0.05 each frame whose timed sections take under 1/60
+/// s, up to 3, and lowers it by 0.5 each frame over 1/40 s, down to 1.5. OpenReliant holds it at
+/// the top.
 pub const high_detail: f32 = 3;
 
 /// How far the finer levels of detail reach (`srapi.Context.finer`).
@@ -566,7 +572,7 @@ pub const DetailReach = enum {
 /// How much a frame may draw (`srapi.Context.budget`).
 pub const DrawBudget = enum {
     /// **Improvement:** ten times the original's, 200000 vertices and as many polygons, which
-    /// a current computer draws with ease. The port keeps up to 4000 burning bits where the
+    /// a current computer draws with ease. OpenReliant keeps up to 4000 burning bits where the
     /// original keeps 500 (`explode.BitPool`), and a view full of them and of a split's bodies
     /// takes the original's budget; since the layers are drawn from what went in last, the bits
     /// then crowd out the ships' parts, which vanish while the view is full.
@@ -691,6 +697,132 @@ test "an object the orders place is drawn on by its glide, for the time past the
     try std.testing.expectEqual(math.Vector{ 0, 0, 102 }, slot.drawn.position);
 }
 
+/// A driver that draws nothing and counts the frames it is handed, for the tests of what goes into
+/// a frame.
+const IdleDriver = struct {
+    frames: usize = 0,
+
+    const srmesh = @import("../surrender/surrenderlib/srmesh.zig");
+    const srbmo = @import("../surrender/surrenderlib/srbmo.zig");
+    const srstars = @import("../surrender/surrenderlib/srstars.zig");
+    const srlight = @import("../surrender/surrenderlib/srlight.zig");
+
+    fn driver(idle: *IdleDriver) srcore.Driver {
+        return .{ .ptr = idle, .vtable = &.{
+            .begin = begin,
+            .lights = lights,
+            .mesh = mesh,
+            .sprites = sprites,
+            .stars = stars,
+            .overlay = mark,
+            .flush = flush,
+            .end = mark,
+        } };
+    }
+
+    fn begin(ptr: *anyopaque, _: *srapi.Context) void {
+        const idle: *IdleDriver = @ptrCast(@alignCast(ptr));
+        idle.frames += 1;
+    }
+
+    fn lights(_: *anyopaque, _: []srlight.Light) Allocator.Error!void {}
+    fn mesh(_: *anyopaque, _: *const srmesh.Drawn, _: srcore.Layer, _: *srcore.Blended) Allocator.Error!void {}
+    fn sprites(_: *anyopaque, _: *const srbmo.Drawn, _: srcore.Layer, _: *srcore.Blended) Allocator.Error!void {}
+    fn stars(_: *anyopaque, _: *const srstars.Drawn, _: srcore.Layer, _: *srcore.Blended) Allocator.Error!void {}
+    fn mark(_: *anyopaque) void {}
+    fn flush(_: *anyopaque, _: []const srcore.Deferred, _: srcore.Layer) void {}
+};
+
+test drawFrame {
+    const gpa = std.testing.allocator;
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(gpa);
+    defer mission.deinit();
+    var model: create.testing.Model = undefined;
+    try model.init(gpa);
+    defer model.deinit(gpa);
+    const ship = try create.createObject(mission.objects, &mission.tables, model.types(), null, .predator, 0, .{ 0, 0, 1000 }, &mission.random);
+    frameObjects(mission.objects, .{}, 0);
+
+    // The backdrop, the sky, and the radar's backing, from textures of their own names.
+    var names: std.ArrayList([]const u8) = .empty;
+    defer names.deinit(gpa);
+    try names.appendSlice(gpa, backdrop.testing.names);
+    try names.append(gpa, RadarBacking.texture_name);
+    const textures = try srtexture.testing.Textures.init(gpa, names.items);
+    defer textures.deinit(gpa);
+    const map = try gpa.alloc(u8, backdrop.star_map_size * backdrop.star_map_size * 3);
+    defer gpa.free(map);
+    @memset(map, 0);
+    const space = try backdrop.Backdrop.create(gpa, &textures.table, .{ .width = backdrop.star_map_size, .height = backdrop.star_map_size, .rgb = map }, &mission.random, 100, .original);
+    defer space.destroy(gpa);
+    const dome = try gpa.alloc(u8, nebula.dome_image_size * nebula.dome_image_size * 3);
+    defer gpa.free(dome);
+    @memset(dome, 0);
+    const sky = try nebula.Sky.create(gpa, &textures.table, .{ .width = nebula.dome_image_size, .height = nebula.dome_image_size, .rgb = dome });
+    defer sky.destroy(gpa);
+    const backing = try RadarBacking.create(gpa, &textures.table);
+    defer gpa.destroy(backing);
+    var cockpit_model = try cockpit.create(arena, &model.source, &model.loaded);
+
+    var context: srapi.Context = .{ .projection = .init(640, 480, srapi.full_screen, camera.factors) };
+    backing.place(context.projection, .{}, 1);
+    var idle: IdleDriver = .{};
+    var scene: srcore.Scene = .{};
+    defer scene.deinit(gpa);
+    var frame: Frame = .{
+        .objects = mission.objects,
+        .space = space,
+        .sky = sky,
+        .view = .chase,
+        .cockpit_mode = .open,
+        .last_view = .chase,
+        .cockpit = &cockpit_model,
+        .backing = backing,
+    };
+
+    // Behind the ship: the ship in the world, the backdrop's stars first in the background and the
+    // sky's dome and nebula last, and the frame handed to the driver.
+    try drawFrame(gpa, arena, &scene, &context, frame, idle.driver());
+    try std.testing.expectEqual(1, idle.frames);
+    const world = scene.layers.get(.world).items;
+    try std.testing.expectEqual(1, world.len);
+    try std.testing.expectEqual(&mission.slot(ship).model.?.parts[0].object, world[0].mesh);
+    const background = scene.layers.get(.background).items;
+    try std.testing.expectEqual(&space.fields[0], background[0].stars);
+    try std.testing.expectEqual(&sky.dome, background[background.len - 2].mesh);
+    try std.testing.expectEqual(&sky.patches[sky.shown], background[background.len - 1].mesh);
+
+    // From the cockpit with its model, the radar's backing and then the cockpit go over it all:
+    // this cockpit has no hands.
+    frame.view = .cockpit;
+    frame.cockpit_mode = .cockpit;
+    try drawFrame(gpa, arena, &scene, &context, frame, idle.driver());
+    var overlay = scene.layers.get(.overlay).items;
+    try std.testing.expectEqual(2, overlay.len);
+    try std.testing.expectEqual(&backing.object, overlay[0].mesh);
+    try std.testing.expectEqual(&cockpit_model.parts[cockpit.frame].object, overlay[1].mesh);
+    // DISPLAY KILLS held, the backing is left out.
+    frame.kills_shown = true;
+    try drawFrame(gpa, arena, &scene, &context, frame, idle.driver());
+    overlay = scene.layers.get(.overlay).items;
+    try std.testing.expectEqual(1, overlay.len);
+    try std.testing.expectEqual(&cockpit_model.parts[cockpit.frame].object, overlay[0].mesh);
+
+    // The software renderer draws neither the sky nor the cockpit.
+    context.hardware = false;
+    frame.kills_shown = false;
+    try drawFrame(gpa, arena, &scene, &context, frame, idle.driver());
+    try std.testing.expectEqual(4, idle.frames);
+    try std.testing.expectEqual(0, scene.layers.get(.overlay).items.len);
+    for (scene.layers.get(.background).items) |item| {
+        if (item == .mesh) try std.testing.expect(item.mesh != &sky.dome);
+    }
+}
+
 test "the passes draw a cloaked object through its cloak" {
     const gpa = std.testing.allocator;
     var stage: cloak.testing.Cloaked = undefined;
@@ -728,7 +860,7 @@ test "the passes draw a cloaked object through its cloak" {
 /// start unprojects its corners to 1000 in front of the camera, and the object stands in the
 /// camera's frame, so it keeps its place on the screen.
 ///
-/// **Improvement.** The port keeps it on the radar as the display is scaled: its corners are
+/// **Improvement.** OpenReliant keeps it on the radar as the display is scaled: its corners are
 /// measured in the display's pixels from where the radar stands, and worked out again each frame
 /// for the window's size.
 pub const RadarBacking = struct {
@@ -870,20 +1002,29 @@ pub fn armorConditions(object: *gameobj.GameObject, combat: *const create.ShipCo
     const full = combat.startingArmor();
     const fore = object.armor.fore / full;
     const aft = object.armor.aft / full;
-    const sides = (object.armor.left / full) * 0.25 + (object.armor.right / full) * 0.25;
-    object.gun_condition = fore * 0.5 + sides;
-    object.armor_speed_factor = aft * 0.75 + 0.25;
-    object.shield_condition = fore * 0.25 + aft * 0.25 + sides;
+    const sides = (object.armor.left / full) * quadrant_share + (object.armor.right / full) * quadrant_share;
+    object.gun_condition = fore * fore_gun_share + sides;
+    object.armor_speed_factor = aft * aft_speed_share + least_speed_share;
+    object.shield_condition = fore * quadrant_share + aft * quadrant_share + sides;
 }
 
+/// What `armorConditions` weighs each quadrant's share of its armour by: a quarter of each toward
+/// the shields, and of each side toward the guns (`0x004DC3D4`); half the fore's toward the guns
+/// (`0x004DC408`); and three quarters of the aft's toward the cruise speed (`0x004DC550`), over the
+/// quarter it keeps with no aft armour at all (`0x004DC3D4`).
+const quadrant_share: f32 = 0.25;
+const fore_gun_share: f32 = 0.5;
+const aft_speed_share: f32 = 0.75;
+const least_speed_share: f32 = 0.25;
+
 /// The rest of `object_armor_conditions` (`0x00492370`), for the player's ship: once a quadrant has
-/// lost its shield and half its armour, the cockpit's warning, sound 1 of `betty.fat`, no more than
-/// once in 500 ticks.
+/// lost its shield and `armor_warning_share` of its armour, the cockpit's warning, sound 1 of
+/// `betty.fat`, no more than once in `armor_warning_interval` ticks.
 pub fn armorWarning(hearing: hog_snd.Hearing, object: *const gameobj.GameObject, combat: *const create.ShipCombat) void {
     const sound = hearing.sound;
     const frame_start = hearing.clock.frame_start;
-    if (frame_start - sound.armor_warned_at <= 500) return;
-    const half = combat.startingArmor() * 0.5;
+    if (frame_start - sound.armor_warned_at <= armor_warning_interval) return;
+    const half = combat.startingArmor() * armor_warning_share;
     for (object.shields.values(), object.armor.values()) |held, armor| {
         if (held > 0 or armor >= half) continue;
         _ = betty.say(sound, .armor_failing);
@@ -891,6 +1032,11 @@ pub fn armorWarning(hearing: hog_snd.Hearing, object: *const gameobj.GameObject,
         return;
     }
 }
+
+/// How long the armour's warning keeps quiet once given, in ticks (`0x00492432`), and the share of
+/// a quadrant's armour below which it is given (`0x004DC408`).
+const armor_warning_interval = 500;
+const armor_warning_share: f32 = 0.5;
 
 test armorWarning {
     const mss = @import("../mss.zig");
@@ -976,13 +1122,10 @@ pub const player_ships = [_]PlayerShip{
     .{ .cockpit = "phe2_frm.shp", .wire_frame = 0x112, .wing_icon = 0x104, .blind_fire = true },
 };
 
-/// Where the second set of the player's ship types starts: types `0xF4` to `0xFF`, whose models
-/// are the first twelve's `t_` twins, are the same twelve ships to the start.
-pub const player_twins_first = 0xF4;
-
-/// The player's ship of `ship_type`, or null for a type the start has none for.
-pub fn playerShip(ship_type: u32) ?PlayerShip {
-    const index = if (ship_type >= player_twins_first) ship_type - player_twins_first else ship_type;
+/// The player's ship of `ship_type`, a twin as the ship it twins (`gameobj.Type.untwinned`), or null
+/// for a type the start has none for.
+pub fn playerShip(ship_type: gameobj.Type) ?PlayerShip {
+    const index = ship_type.untwinned().number();
     return if (index < player_ships.len) player_ships[index] else null;
 }
 
@@ -994,7 +1137,7 @@ pub fn startWing(all: *create.Objects) void {
     for (all.wing) |listed| {
         const index = listed orelse continue;
         const object = &all.slots[index].object;
-        object.wing_icon = if (playerShip(object.type.number())) |ship| ship.wing_icon else 0;
+        object.wing_icon = if (playerShip(object.type)) |ship| ship.wing_icon else 0;
     }
 }
 
@@ -1022,7 +1165,7 @@ test startWing {
 /// the display up: every ship carries an ECM, the ships of `player_ships` that say so spectral
 /// shields and blind fire, and a ship whose model can cloak (`shp.Header.Flags.cloak`) a cloak.
 /// Blind fire starts on where it is carried; elsewhere it is left as it was.
-pub fn fitDevices(display: *hud.State, ship_type: u32, can_cloak: bool) void {
+pub fn fitDevices(display: *hud.State, ship_type: gameobj.Type, can_cloak: bool) void {
     const ship = playerShip(ship_type);
     display.devices.getPtr(.ecm).setting = .off;
     const spectral = if (ship) |known| known.spectral_shields else false;
@@ -1035,21 +1178,22 @@ pub fn fitDevices(display: *hud.State, ship_type: u32, can_cloak: bool) void {
 
 test fitDevices {
     // The Shroud carries all three, and a cloak where its model has one.
+    const shroud: gameobj.Type = @enumFromInt(10);
     var display: hud.State = .{ .blind_fire = false };
-    fitDevices(&display, 10, true);
+    fitDevices(&display, shroud, true);
     try std.testing.expectEqual(.off, display.devices.get(.spectral_shields).setting);
     try std.testing.expectEqual(.off, display.devices.get(.cloak).setting);
     try std.testing.expect(display.blind_fire_fitted and display.blind_fire);
     // Its twin is the same ship.
-    try std.testing.expectEqual(playerShip(10), playerShip(0xFE));
+    try std.testing.expectEqual(playerShip(shroud), playerShip(@enumFromInt(0xFE)));
     // The Grendel carries only the ECM.
-    fitDevices(&display, 2, false);
+    fitDevices(&display, .grendel, false);
     try std.testing.expectEqual(.off, display.devices.get(.ecm).setting);
     try std.testing.expectEqual(.absent, display.devices.get(.spectral_shields).setting);
     try std.testing.expectEqual(.absent, display.devices.get(.cloak).setting);
     try std.testing.expect(!display.blind_fire_fitted);
     // A capital ship is none of the player's.
-    try std.testing.expectEqual(null, playerShip(0x0D));
+    try std.testing.expectEqual(null, playerShip(@enumFromInt(0x0D)));
 }
 
 test missionFrame {
@@ -1153,6 +1297,7 @@ test "a frame measures the ticks since the last one" {
     _ = clock.runTicks(&devices, mission.world());
     clock.frameBegin();
     try std.testing.expectEqual(10, clock.frame_duration);
+    try std.testing.expectEqual(10, clock.frameTicks());
     try std.testing.expectEqual(10, clock.frame_start);
     // A frame with no tick between takes no time.
     clock.frameBegin();

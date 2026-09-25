@@ -21,17 +21,30 @@ pub const JoystickState = extern struct {
     ry: i32,
     rz: i32,
     sliders: [2]i32,
-    pov: [4]u32,
+    pov: [max_hats]u32,
     /// Nonzero while the button is down.
-    buttons: [32]u8,
+    buttons: [max_buttons]u8,
+
+    /// The most hats and buttons it holds.
+    pub const max_hats = 4;
+    pub const max_buttons = 32;
 
     /// The value DirectInput reports for a centered hat.
     pub const centred: u32 = 0xFFFF_FFFF;
+
+    /// The value DirectInput reports for a button down: its high bit.
+    pub const pressed: u8 = 0x80;
 
     comptime {
         assert(@offsetOf(JoystickState, "rz") == 0x14);
         assert(@offsetOf(JoystickState, "buttons") == 0x30);
         assert(@sizeOf(JoystickState) == 0x50);
+    }
+
+    /// Where hat `n` points, in hundredths of a degree clockwise from forward, or null while it is
+    /// centred.
+    pub fn hat(state: JoystickState, n: usize) ?u32 {
+        return if (state.pov[n] == centred) null else state.pov[n];
     }
 
     /// Where `axis`'s value lies.
@@ -76,11 +89,11 @@ pub const Axis = enum(u3) {
 };
 
 /// The dead zone `joystick_object_found` sets for the whole device, in hundredths of a percent of
-/// each axis's travel from the center: 10%. The port reads `DeadZone` from `starlancer.ini` to
+/// each axis's travel from the center: 10%. OpenReliant reads `DeadZone` from `starlancer.ini` to
 /// change it.
 pub const default_dead_zone: u16 = 1000;
 
-/// A joystick device: the port's replacement for `joystick_device` (`0x005DDD24`), the game's
+/// A joystick device: OpenReliant's replacement for `joystick_device` (`0x005DDD24`), the game's
 /// `IDirectInputDevice7`, with the calls the game makes on it. The platform implements it for each
 /// connected controller, including gamepads.
 pub const JoystickDevice = struct {
@@ -92,7 +105,7 @@ pub const JoystickDevice = struct {
         setRange: *const fn (context: *anyopaque, axis: Axis, min: i32, max: i32) void,
         setDeadZone: *const fn (context: *anyopaque, zone: u16) void,
         poll: *const fn (context: *anyopaque, state: *JoystickState) error{Unplugged}!void,
-        /// The port's: turns the motors of a controller that rumbles.
+        /// OpenReliant's: turns the motors of a controller that rumbles.
         rumble: *const fn (context: *anyopaque, motors: force.Motors) void,
     };
 
@@ -105,11 +118,11 @@ pub const JoystickDevice = struct {
         buttons: u8,
         /// `DIDEVCAPS.dwPOVs`, at most 4.
         hats: u8,
-        /// Added by the port: whether the controller is a gamepad. A gamepad's buttons are
+        /// Added by OpenReliant: whether the controller is a gamepad. A gamepad's buttons are
         /// numbered as in `GamepadButton`, and it has its own default bindings.
         kind: Kind = .joystick,
-        /// Added by the port: whether it rumbles, which is how the port plays the force feedback
-        /// (`force`), in place of DirectInput's force feedback (`DIDC_FORCEFEEDBACK`).
+        /// Added by OpenReliant: whether it rumbles, which is how OpenReliant plays the force
+        /// feedback (`force`), in place of DirectInput's force feedback (`DIDC_FORCEFEEDBACK`).
         rumbles: bool = false,
     };
 
@@ -153,9 +166,9 @@ pub const Joystick = struct {
     hats: u8 = 0,
     name: []const u8 = "",
     kind: JoystickDevice.Kind = .joystick,
-    /// Whether the device rumbles (`force_feedback`, `0x0050E1A4`, for the port's rumble).
+    /// Whether the device rumbles (`force_feedback`, `0x0050E1A4`, for OpenReliant's rumble).
     rumbles: bool = false,
-    latched: [32]bool = @splat(false),
+    latched: [JoystickState.max_buttons]bool = @splat(false),
 
     /// The state when there is no device: all zero, as `read_joystick` leaves it.
     const idle = std.mem.zeroes(JoystickState);
@@ -168,8 +181,8 @@ pub const Joystick = struct {
         const found = device.capabilities();
         joystick.* = .{
             .device = device,
-            .buttons = @min(found.buttons, 32),
-            .hats = @min(found.hats, 4),
+            .buttons = @min(found.buttons, JoystickState.max_buttons),
+            .hats = @min(found.hats, JoystickState.max_hats),
             .name = found.name,
             .kind = found.kind,
             .rumbles = found.rumbles,
@@ -258,8 +271,9 @@ pub const MouseState = extern struct {
     }
 };
 
-/// One action's bindings, an entry of `control_bindings`; [`input/controls.zig`](input/controls.zig) lists the
-/// actions and the bindings the game starts with.
+/// One action's bindings, an entry of `control_bindings`;
+/// [`input/controls.zig`](input/controls.zig) lists the actions and the bindings the game starts
+/// with.
 pub const ControlBinding = extern struct {
     /// A DirectInput scan code (`DIK_*`), an index into `keyboard`.
     key: u16,
@@ -276,6 +290,13 @@ pub const ControlBinding = extern struct {
         control = 2,
         alt = 3,
         _,
+
+        pub fn format(modifier: Modifier, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            return switch (modifier) {
+                _ => writer.print("modifier {d}", .{@intFromEnum(modifier)}),
+                inline else => |named| writer.writeAll(@tagName(named)),
+            };
+        }
     };
 
     comptime {
@@ -294,22 +315,149 @@ pub const ControlMode = enum(u32) {
     /// The mouse's movement, gathered into a stick position.
     mouse = 2,
     _,
+
+    pub fn format(mode: ControlMode, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        return switch (mode) {
+            _ => writer.print("controller {d}", .{@intFromEnum(mode)}),
+            inline else => |named| writer.writeAll(@tagName(named)),
+        };
+    }
 };
 
-/// DirectInput scan codes (`DIK_*`) the input code names: those of the modifiers, and the keys
+/// A key, by its DirectInput scan code (`DIK_*`): its place on the keyboard, whatever it types.
+/// The codes follow the IBM PC's set 1, with the extended keys from `0x80` up. The bindings and
+/// `starlancer.ini` hold them, and `Keyboard` is indexed by them.
+pub const Key = enum(u8) {
+    escape = 0x01,
+    one = 0x02,
+    two = 0x03,
+    three = 0x04,
+    four = 0x05,
+    five = 0x06,
+    six = 0x07,
+    seven = 0x08,
+    eight = 0x09,
+    nine = 0x0A,
+    zero = 0x0B,
+    minus = 0x0C,
+    equals = 0x0D,
+    backspace = 0x0E,
+    tab = 0x0F,
+    q = 0x10,
+    w = 0x11,
+    e = 0x12,
+    r = 0x13,
+    t = 0x14,
+    y = 0x15,
+    u = 0x16,
+    i = 0x17,
+    o = 0x18,
+    p = 0x19,
+    left_bracket = 0x1A,
+    right_bracket = 0x1B,
+    enter = 0x1C,
+    left_control = 0x1D,
+    a = 0x1E,
+    s = 0x1F,
+    d = 0x20,
+    f = 0x21,
+    g = 0x22,
+    h = 0x23,
+    j = 0x24,
+    k = 0x25,
+    l = 0x26,
+    semicolon = 0x27,
+    apostrophe = 0x28,
+    grave = 0x29,
+    left_shift = 0x2A,
+    backslash = 0x2B,
+    z = 0x2C,
+    x = 0x2D,
+    c = 0x2E,
+    v = 0x2F,
+    b = 0x30,
+    n = 0x31,
+    m = 0x32,
+    comma = 0x33,
+    period = 0x34,
+    slash = 0x35,
+    right_shift = 0x36,
+    keypad_multiply = 0x37,
+    left_alt = 0x38,
+    space = 0x39,
+    caps_lock = 0x3A,
+    f1 = 0x3B,
+    f2 = 0x3C,
+    f3 = 0x3D,
+    f4 = 0x3E,
+    f5 = 0x3F,
+    f6 = 0x40,
+    f7 = 0x41,
+    f8 = 0x42,
+    f9 = 0x43,
+    f10 = 0x44,
+    num_lock = 0x45,
+    scroll_lock = 0x46,
+    keypad_7 = 0x47,
+    keypad_8 = 0x48,
+    keypad_9 = 0x49,
+    keypad_minus = 0x4A,
+    keypad_4 = 0x4B,
+    keypad_5 = 0x4C,
+    keypad_6 = 0x4D,
+    keypad_plus = 0x4E,
+    keypad_1 = 0x4F,
+    keypad_2 = 0x50,
+    keypad_3 = 0x51,
+    keypad_0 = 0x52,
+    keypad_period = 0x53,
+    /// The key between the left Shift and Z on a European keyboard (`DIK_OEM_102`).
+    non_us_backslash = 0x56,
+    f11 = 0x57,
+    f12 = 0x58,
+    keypad_enter = 0x9C,
+    right_control = 0x9D,
+    keypad_divide = 0xB5,
+    print_screen = 0xB7,
+    right_alt = 0xB8,
+    pause = 0xC5,
+    home = 0xC7,
+    up = 0xC8,
+    page_up = 0xC9,
+    left = 0xCB,
+    right = 0xCD,
+    end = 0xCF,
+    down = 0xD0,
+    page_down = 0xD1,
+    insert = 0xD2,
+    delete = 0xD3,
+    left_windows = 0xDB,
+    right_windows = 0xDC,
+    menu = 0xDD,
+    _,
+
+    pub fn format(key: Key, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        return switch (key) {
+            _ => writer.print("key 0x{X:0>2}", .{@intFromEnum(key)}),
+            inline else => |named| writer.writeAll(@tagName(named)),
+        };
+    }
+};
+
+/// The keys the input code names, as indices into `Keyboard`: the modifiers, and the keys
 /// `frame_controls` steers the orbiting views with.
 pub const scan = struct {
-    pub const escape = 0x01;
-    pub const left_control = 0x1D;
-    pub const left_shift = 0x2A;
-    pub const right_shift = 0x36;
-    pub const left_alt = 0x38;
-    pub const right_control = 0x9D;
-    pub const right_alt = 0xB8;
-    pub const up = 0xC8;
-    pub const left = 0xCB;
-    pub const right = 0xCD;
-    pub const down = 0xD0;
+    pub const escape = @intFromEnum(Key.escape);
+    pub const left_control = @intFromEnum(Key.left_control);
+    pub const left_shift = @intFromEnum(Key.left_shift);
+    pub const right_shift = @intFromEnum(Key.right_shift);
+    pub const left_alt = @intFromEnum(Key.left_alt);
+    pub const right_control = @intFromEnum(Key.right_control);
+    pub const right_alt = @intFromEnum(Key.right_alt);
+    pub const up = @intFromEnum(Key.up);
+    pub const left = @intFromEnum(Key.left);
+    pub const right = @intFromEnum(Key.right);
+    pub const down = @intFromEnum(Key.down);
 };
 
 /// The keyboard as the game reads it (`keyboard`, `0x00595C68`): each key down or up, by scan
@@ -323,7 +471,7 @@ pub const Keyboard = struct {
     alt_latched: bool = false,
     /// Whether the keys 1 to 8 are the radio menu's, so that no action bound to them counts: while
     /// the display's communications window is open, which `control_active` tests at `0x00501EE8`,
-    /// that window's phase. The port sets it as each frame starts.
+    /// that window's phase. OpenReliant sets it as each frame starts.
     numbers_taken: bool = false,
 
     /// What `read_keyboard` (`0x004BD490`) does once it has the keys: frees the latch of each key
@@ -406,7 +554,7 @@ pub const Settings = struct {
     twist_enabled: bool = false,
     /// `Controller` (`control_mode`, `0x0057E064`).
     control_mode: ControlMode = .joystick,
-    /// Added by the port: `DeadZone` in the `JoyConfig` section, the joystick's dead zone in
+    /// Added by OpenReliant: `DeadZone` in the `JoyConfig` section, the joystick's dead zone in
     /// hundredths of a percent.
     dead_zone: u16 = default_dead_zone,
 };
@@ -416,7 +564,7 @@ pub const Settings = struct {
 pub const Bindings = std.EnumArray(controls.Action, controls.Binding);
 
 /// The default bindings for a controller of `kind`: the game's own for a joystick, and for a
-/// gamepad (added by the port) the same keys with `gamepad_buttons` as the buttons.
+/// gamepad (added by OpenReliant) the same keys with `gamepad_buttons` as the buttons.
 pub fn defaultBindings(kind: JoystickDevice.Kind) Bindings {
     var bindings: Bindings = undefined;
     for (std.enums.values(controls.Action)) |action| bindings.set(action, controls.binding(action));
@@ -427,11 +575,11 @@ pub fn defaultBindings(kind: JoystickDevice.Kind) Bindings {
     return bindings;
 }
 
-/// How the port numbers a gamepad's buttons when it presents the gamepad to the game as a joystick.
-/// These are the numbers `JOY BUTTON` uses in `JoyConfig`. Face buttons are named by position, not
-/// by label. The triggers and the four directions of the right stick are buttons too. The left
-/// stick is the X and Y axes, the right stick's horizontal axis is the twist, and the D-pad is the
-/// hat.
+/// How OpenReliant numbers a gamepad's buttons when it presents the gamepad to the game as a
+/// joystick. These are the numbers `JOY BUTTON` uses in `JoyConfig`. Face buttons are named by
+/// position, not by label. The triggers and the four directions of the right stick are buttons too.
+/// The left stick is the X and Y axes, the right stick's horizontal axis is the twist, and the
+/// D-pad is the hat.
 pub const GamepadButton = enum(u5) {
     south,
     east,
@@ -467,7 +615,7 @@ pub const GamepadButton = enum(u5) {
     right_stick_right,
 };
 
-/// The default gamepad bindings, added by the port. Gamepads have no throttle axis, so the right
+/// The default gamepad bindings, added by OpenReliant. Gamepads have no throttle axis, so the right
 /// stick's up and down directions change the throttle, like the throttle keys.
 pub const gamepad_buttons = [_]struct { controls.Action, GamepadButton }{
     .{ .fire_lasers, .right_trigger },
@@ -561,7 +709,8 @@ pub const Devices = struct {
                 }
             }
         }
-        if (keyboard.numbers_taken and binding.key > 1 and binding.key < 10) return false;
+        const number = binding.key >= @intFromEnum(Key.one) and binding.key <= @intFromEnum(Key.eight);
+        if (keyboard.numbers_taken and number) return false;
         const key = std.math.lossyCast(u8, binding.key);
         if (once) return keyboard.pressed(key, binding.modifier, true);
         return switch (binding.modifier) {
@@ -609,6 +758,44 @@ test "Devices.active with the keyboard" {
     try std.testing.expect(!devices.active(.smart_target, false));
     keyboard.down[scan.left_control] = true;
     try std.testing.expect(devices.active(.smart_target, false));
+}
+
+test "the keys 1 to 8 while the radio's menu has them" {
+    var devices: Devices = .{};
+    devices.keyboard.numbers_taken = true;
+    // The cockpit camera's 1 and the missile camera's 8 are the menu's; 9, 0 and the rest are not.
+    try std.testing.expectEqual(@intFromEnum(Key.one), controls.binding(.cockpit_camera).key);
+    try std.testing.expectEqual(@intFromEnum(Key.eight), controls.binding(.missile_camera).key);
+    devices.keyboard.down[@intFromEnum(Key.eight)] = true;
+    try std.testing.expect(!devices.active(.missile_camera, false));
+    devices.bindings.getPtr(.missile_camera).key = @intFromEnum(Key.nine);
+    devices.keyboard.down[@intFromEnum(Key.nine)] = true;
+    try std.testing.expect(devices.active(.missile_camera, false));
+}
+
+test "Key.format" {
+    var buffer: [16]u8 = undefined;
+    try std.testing.expectEqualStrings("f2", try std.fmt.bufPrint(&buffer, "{f}", .{Key.f2}));
+    try std.testing.expectEqualStrings("key 0xFF", try std.fmt.bufPrint(&buffer, "{f}", .{@as(Key, @enumFromInt(0xFF))}));
+    try std.testing.expectEqual(0xCB, scan.left);
+}
+
+test "ControlBinding.Modifier.format and ControlMode.format" {
+    var buffer: [16]u8 = undefined;
+    try std.testing.expectEqualStrings("alt", try std.fmt.bufPrint(&buffer, "{f}", .{ControlBinding.Modifier.alt}));
+    try std.testing.expectEqualStrings("modifier 9", try std.fmt.bufPrint(&buffer, "{f}", .{@as(ControlBinding.Modifier, @enumFromInt(9))}));
+    try std.testing.expectEqualStrings("mouse", try std.fmt.bufPrint(&buffer, "{f}", .{ControlMode.mouse}));
+    try std.testing.expectEqualStrings("controller 7", try std.fmt.bufPrint(&buffer, "{f}", .{@as(ControlMode, @enumFromInt(7))}));
+}
+
+test "JoystickState.hat" {
+    var state = std.mem.zeroes(JoystickState);
+    state.pov = @splat(JoystickState.centred);
+    state.pov[1] = 9000;
+    try std.testing.expectEqual(null, state.hat(0));
+    try std.testing.expectEqual(9000, state.hat(1).?);
+    state.pov[0] = 0;
+    try std.testing.expectEqual(0, state.hat(0).?);
 }
 
 /// A joystick device for the tests: it reports `state` and records the settings the game makes.
@@ -682,7 +869,7 @@ test Joystick {
 
     // Reading copies the device's state and clears the latches of released buttons.
     stick.state.x = 250;
-    stick.state.buttons[3] = 0x80;
+    stick.state.buttons[3] = JoystickState.pressed;
     joystick.latched[3] = true;
     joystick.latched[4] = true;
     joystick.read();
@@ -714,7 +901,7 @@ test "Devices.active with the joystick's buttons" {
     const fire = controls.binding(.fire_lasers).button.?;
 
     // A held button counts every time; with `once`, only once per press.
-    stick.state.buttons[fire] = 0x80;
+    stick.state.buttons[fire] = JoystickState.pressed;
     devices.read();
     try std.testing.expect(devices.active(.fire_lasers, false));
     try std.testing.expect(devices.active(.fire_lasers, true));
@@ -724,7 +911,7 @@ test "Devices.active with the joystick's buttons" {
     try std.testing.expect(!devices.active(.fire_lasers, true));
     stick.state.buttons[fire] = 0;
     devices.read();
-    stick.state.buttons[fire] = 0x80;
+    stick.state.buttons[fire] = JoystickState.pressed;
     devices.read();
     try std.testing.expect(devices.active(.fire_lasers, true));
 
@@ -967,7 +1154,7 @@ fn steer(player: *Player, devices: *Devices, object: *gameobj.GameObject, stick:
             //
             // **Fix:** the game adds the movement of the last read each time the order runs, once
             // a frame as well as once a step, so the faster the frames the further the mouse
-            // steers. The port adds each read's once.
+            // steers. OpenReliant adds each read's once.
             const mouse = &devices.mouse;
             if (!mouse.gathered) {
                 for (stick, mouse.state.moved) |*position, moved| {
@@ -1104,17 +1291,16 @@ pub fn setPlayerTarget(display: *hud.State, all: *create.Objects, index: i16, co
 
 /// FIRE LASERS, LAUNCH MISSILE, CLOAK SHIP, EJECT and COUNTERMEASURES, which `player_controls`
 /// reads after the steering and the throttle (`0x00413BB5`, `0x00413BE7`, `0x00413CB2`,
-/// `0x00413D88`, `0x00413E80`).
-/// FIRE LASERS, held, while the ship isn't jumping, opens the gunnery display and holds the guns'
-/// trigger for the frame (`guns.fire`), which charges a Phoenix's Nova Cannon, unless the ship is
-/// cloaked, when it uncloaks instead (`setCloak`) and fires only once the cloak has gone; let go,
-/// the Phoenix, not jumping, lets its charge go (`guns.nova.release`). The others each act once a
-/// press: the one launches the armed missile (`launchMissile`); CLOAK SHIP, outside view 13, on a
-/// ship that can cloak, uncloaks it where it is cloaked and cloaks it where it isn't, with the
-/// display's sound and Betty's word unless the cloak is still coming on or going; EJECT ejects the
-/// pilot (`eject`); the last, outside a mission's ending, drops a countermeasure, Betty warning as they run out: at 6, 4 and
-/// 2 left, and with none. `aigeneric.playerControl` runs it after `matchSpeed`, since nothing
-/// between reads what it does.
+/// `0x00413D88`, `0x00413E80`). FIRE LASERS, held, while the ship isn't jumping, opens the gunnery
+/// display and holds the guns' trigger for the frame (`guns.fire`), which charges a Phoenix's Nova
+/// Cannon, unless the ship is cloaked, when it uncloaks instead (`setCloak`) and fires only once
+/// the cloak has gone; let go, the Phoenix, not jumping, lets its charge go (`guns.nova.release`).
+/// The others each act once a press: the one launches the armed missile (`launchMissile`); CLOAK
+/// SHIP, outside view 13, on a ship that can cloak, uncloaks it where it is cloaked and cloaks it
+/// where it isn't, with the display's sound and Betty's word unless the cloak is still coming on or
+/// going; EJECT ejects the pilot (`eject`); the last, outside a mission's ending, drops a
+/// countermeasure, Betty warning as they run out: at 6, 4 and 2 left, and with none.
+/// `aigeneric.playerControl` runs it after `matchSpeed`, since nothing between reads what it does.
 ///
 /// In the mouse's mode the left button fires as FIRE LASERS does, and the right launches as LAUNCH
 /// MISSILE does, once a press (`Player.mouse_launched`).
@@ -1282,8 +1468,8 @@ pub fn matchTargetSpeed(player: *Player, all: *create.Objects, view: camera.View
     if (!player.matching_speed) return;
     const entry = ai.playerControlEntry(all) orelse return;
     const ship = &all.slots[all.player];
-    if (entry.target.index >= 0) {
-        const target = &all.slots[@intCast(entry.target.index)];
+    if (entry.target.slot()) |index| {
+        const target = &all.slots[index];
         if (target.object.flags.cloaked) return;
         const within = math.distance(ship.drawn.position, target.drawn.position) <= hud.pick_range;
         if (within and !target.object.flags.exploding) {
@@ -1360,17 +1546,16 @@ pub fn seekTarget(all: *const create.Objects, target: *aigeneric.Target, step: S
     return false;
 }
 
-/// `0x00414F90`: steps the player's target's component round its components to the next the
-/// player can aim at, targetable and neither hidden nor spent, or to none when it finds none. It first gives
-/// both forms of the target display their full time again, and does nothing more for a target
+/// `0x00414F90`: steps the player's target's component round its components to the next the player
+/// can aim at, targetable and neither hidden nor spent, or to none when it finds none. It first
+/// gives both forms of the target display their full time again, and does nothing more for a target
 /// that lists no components, or a friendly one; otherwise it opens the target's form of the
 /// display, if that is shut. The display follows the new component on its next frame. Not yet
 /// ported: what it tells a multiplayer game.
 pub fn cycleSubtarget(display: *hud.State, all: *create.Objects, step: Step, multiplayer: bool) void {
     const entry = ai.playerControlEntry(all) orelse return;
     for ([_]hud.windows.Window{ .big_target, .target }) |window| display.windows.renew(window);
-    if (entry.target.index < 0) return;
-    const slot = &all.slots[@intCast(entry.target.index)];
+    const slot = &all.slots[entry.target.slot() orelse return];
     if (!slot.object.flags.components or slot.object.side == .friendly) return;
     const window = hud.targetWindow(slot);
     if (display.windows.status.get(window).phase == .shut) _ = display.windows.open(window, multiplayer);
@@ -1574,8 +1759,8 @@ const cloak_said: Said = .{ .on = .cloak_on, .off = .cloak_off };
 /// A device's key is read whether or not the ship carries the device. COMMS WINDOW is read only
 /// while the player's order is Player Control, as it always is in the sandbox.
 ///
-/// **Fix:** the game sounds a power key every frame it is held, a new sound each frame, which the
-/// port's frame rates make a din; the port sounds it as it is pressed.
+/// **Fix:** the game sounds a power key every frame it is held, a new sound each frame, which
+/// OpenReliant's frame rates make a din; OpenReliant sounds it as it is pressed.
 ///
 /// Not yet ported: the radio's menu COMMS WINDOW starts; OBJECTIVES WINDOW paging through the
 /// objectives once they are open; PRIMARY TARGET and the orders to the wingmen.

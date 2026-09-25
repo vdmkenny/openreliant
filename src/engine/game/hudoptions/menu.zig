@@ -1,12 +1,13 @@
 //! The pause menu's items and how they are drawn: `menu_draw` (`0x0048DB00`) and the pieces the
 //! screens are made of. A screen is a list of `Item`s and what choosing each does; the widgets here
 //! (`buttons`, `Slider`, `Selector`) make the items the screens share and read what the pointer
-//! does to them. [`pause-menu.md`](../../../../docs/engine/pause-menu.md#menu-items) describes them.
+//! does to them. [`pause-menu.md`](../../../../docs/engine/pause-menu.md#menu-items) describes
+//! them.
 //!
 //! **Improvement.** The game lays a menu out in pixels about fractions of the screen, at the size
-//! of its art whatever the screen's. The port multiplies the pixels by `hud.scaleFor`, as it does
-//! the display's, so the menu keeps its proportions on a larger screen; at a scale of 1 it is the
-//! game's own layout.
+//! of its art whatever the screen's. OpenReliant multiplies the pixels by `hud.scaleFor`, as it
+//! does the display's, so the menu keeps its proportions on a larger screen; at a scale of 1 it is
+//! the game's own layout.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -108,16 +109,7 @@ pub const Fonts = struct {
 };
 
 /// Where a line of an item's text stands from where it is written, as `hud_text` takes it.
-pub const Alignment = enum(u3) {
-    left = 0,
-    centre = 1,
-    right = 2,
-    _,
-
-    fn ofText(alignment: Alignment) hud.Align {
-        return @enumFromInt(@intFromEnum(alignment));
-    }
-};
+pub const Alignment = hud.Align;
 
 /// Something a menu shows (`MenuItem`, 0x30 bytes): a shape placed about a point of the screen,
 /// another in its place while the pointer is on it, and a line of text. The screens' tables in
@@ -267,9 +259,9 @@ pub const Ui = struct {
         return round(@as(f32, @floatFromInt(ui.screen[1])) * fraction);
     }
 
-    /// `pixels` of the menu's in the screen's.
+    /// `pixels` of the menu's in the screen's (`hud.pixels`).
     pub fn scaled(ui: Ui, pixels: i32) i32 {
-        return round(@as(f32, @floatFromInt(pixels)) * ui.scale);
+        return hud.pixels(pixels, ui.scale);
     }
 
     /// The screen's pixels in the menu's.
@@ -292,7 +284,7 @@ pub const Ui = struct {
 
     pub fn writeText(ui: Ui, font: Font, at: [2]i32, text: []const u8, colour: [4]f32, alignment: Alignment) Allocator.Error!void {
         const opened = ui.fonts.get(font) orelse return;
-        _ = try hud.drawText(opened, ui.gpa, ui.target, at, text, colour, alignment.ofText(), ui.scale);
+        _ = try hud.drawText(opened, ui.gpa, ui.target, at, text, colour, alignment, ui.scale);
     }
 
     /// Draws `shape` with its anchor at `at`.
@@ -475,6 +467,13 @@ pub const Selector = struct {
         };
     }
 };
+
+test "Selector.step" {
+    try std.testing.expectEqual(-1, Selector.step(.back));
+    try std.testing.expectEqual(1, Selector.step(.forward));
+    try std.testing.expectEqual(0, Selector.step(.box));
+    try std.testing.expectEqual(0, Selector.step(.value));
+}
 
 test rgb {
     try std.testing.expectEqual([3]f32{ 254.0 / 255.0, 133.0 / 255.0, 26.0 / 255.0 }, orange);

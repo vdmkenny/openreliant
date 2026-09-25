@@ -14,7 +14,7 @@
 //!
 //! **Improvement.** The game keeps one picture for both forms, and draws it again as a form
 //! starts closing: for the target it last showed, but with whatever target the display now has
-//! for the range, the name and the rest. The port keeps what each form last showed and closes it
+//! for the range, the name and the rest. OpenReliant keeps what each form last showed and closes it
 //! with that.
 //!
 //! Not ported: the pilot's name under the type's, for a named pilot (`GameObject.pilot_record`),
@@ -212,7 +212,7 @@ pub const armor_bar: BarShapes = .{ .lit = 0xDE, .dark = 0xDB, .at = .{ -0xC6, -
 pub const hull_bar: BarShapes = .{ .lit = 0xDC, .dark = 0xDB, .at = .{ -6, -0x7E }, .rows = 98, .pane = .{ -7, -0x7F }, .dark_top = -0x75 };
 
 /// The hull as the large form's bar shows it: how many of its rows are dark, and the top row of
-/// the dark shape's pane, 3 higher for a torpedo's.
+/// the dark shape's pane, `torpedo_rise` higher for a torpedo's.
 pub const Bar = struct {
     unlit: i32,
     top: i32,
@@ -227,10 +227,11 @@ pub const Bar = struct {
 /// target lists, whose part's class has a name and an icon.
 fn subtarget(all: *const create.Objects) ?Subtarget {
     const current = all.slots[all.player].orders[0].target;
-    if (current.index < 0 or current.component < 0) return null;
+    const component = current.part() orelse return null;
+    if (current.index < 0) return null;
     const holder = &all.slots[@intCast(current.index)];
-    if (holder.object.component_count == 0 or current.component >= holder.components.len) return null;
-    const part = holder.components[@intCast(current.component)] orelse return null;
+    if (holder.object.component_count == 0 or component >= holder.components.len) return null;
+    const part = holder.components[component] orelse return null;
     const found = named(part.class) orelse return null;
     const unlit: ?i32 = if (part.component_armor > 0)
         windows.unlitRows(part.armor / @as(f32, @floatFromInt(part.component_armor)), armor_bar.rows)
@@ -239,17 +240,17 @@ fn subtarget(all: *const create.Objects) ?Subtarget {
     return .{ .named = found, .unlit = unlit };
 }
 
-/// The hull as the large form's bar shows it. For a torpedo, its weakest armour quadrant against
-/// six times its armour class; for the rest, the armour of the first of its model's parts, in its
-/// root's child list, that is hull and has armour; for one with neither, no bar.
+/// The hull as the large form's bar shows it. For a torpedo, its weakest armour quadrant, no more
+/// than `weakest_seed`, against six times its armour class; for the rest, the armour of the first
+/// of its model's parts, in its root's child list, that is hull and has armour; for one with
+/// neither, no bar.
 fn hull(slot: *const create.Slot) ?Bar {
     const combat = slot.combat orelse return null;
     if (combat.class == .torpedo) {
-        var weakest: f32 = 1e6;
-        for (slot.object.armor.values()) |left| weakest = @min(weakest, left);
+        const weakest = @min(weakest_seed, slot.object.armor.weakest());
         const full = combat.fullArmor();
         const share = if (full > 0) weakest / full else 0;
-        return .{ .unlit = windows.unlitRows(share, hull_bar.rows), .top = hull_bar.dark_top - 3 };
+        return .{ .unlit = windows.unlitRows(share, hull_bar.rows), .top = hull_bar.dark_top - torpedo_rise };
     }
     const model = if (slot.model) |*model| model else return null;
     for (model.parts) |part| {
@@ -259,6 +260,11 @@ fn hull(slot: *const create.Slot) ?Bar {
     }
     return null;
 }
+
+/// What the large form starts a torpedo's search for its weakest quadrant from (`0x004DC4F8`), and
+/// how many rows higher it starts the dark part of a torpedo's bar (a number in its case's code).
+const weakest_seed: f32 = 1_000_000;
+const torpedo_rise = 3;
 
 /// The icon the large form draws for a subtarget of a part's class, and the string that names
 /// the class (`hud_window_draw`'s two tables of them).
@@ -295,7 +301,6 @@ pub const Pictures = struct {
     large: ?Large = null,
 };
 
-/// What a form draws with.
 /// What a form of the display is drawn with: the window's canvas, and the text both forms show.
 const Context = struct {
     canvas: windows.Canvas,

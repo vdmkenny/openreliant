@@ -3,7 +3,7 @@
 //!
 //! `create_object` (`0x00466C10`) fills a slot of `game_objects`, which it calls the GO array: 400
 //! pointers to objects, a mission ship's slot being its index among the mission's ship records.
-//! [`create.Objects`](create.zig) is the port's. Each object embeds the root of a hierarchy of
+//! [`create.Objects`](create.zig) is OpenReliant's. Each object embeds the root of a hierarchy of
 //! nodes, one for each part of its model.
 
 const std = @import("std");
@@ -37,11 +37,37 @@ pub const Slot = enum(i32) {
         return @enumFromInt(slot);
     }
 
+    /// The slot `index` names, or none.
+    pub fn from(found: ?u16) Slot {
+        return if (found) |slot| of(slot) else .none;
+    }
+
     /// The slot it names, or null for none.
     pub fn index(slot: Slot) ?u16 {
         return if (slot == .none) null else @intCast(@intFromEnum(slot));
     }
 };
+
+/// One of the positional voices (`hog_snd.Sound.voices3d`) as an object names the one following
+/// it, or `none`, which the game holds as `0xFFFF`.
+pub const Voice = enum(u16) {
+    none = 0xFFFF,
+    _,
+
+    pub fn of(voice: u8) Voice {
+        return @enumFromInt(voice);
+    }
+
+    /// The voice it names, or null for none.
+    pub fn index(voice: Voice) ?u8 {
+        return if (voice == .none) null else @intCast(@intFromEnum(voice));
+    }
+};
+
+test Voice {
+    try std.testing.expectEqual(null, Voice.none.index());
+    try std.testing.expectEqual(3, Voice.of(3).index());
+}
 
 /// Code that acts for the object in a slot: its `motion`, which moves it for one update, such as
 /// `motion_forward` (`0x004744C0`), which flies it forward by the flight model, and the routines
@@ -52,8 +78,9 @@ pub const Routine = engine.Code("void __fastcall (int slot)");
 pub const max_objects = 400;
 
 /// Whose side something is on: an object's (`GameObject.side`, four bytes) and a ship type's
-/// (`create.ShipCombat.side`, two). The Alliance's types start friendly and the Coalition's hostile;
-/// `SetHostile` makes an object one or the other. Two objects on different sides are enemies.
+/// (`create.ShipCombat.side`, two). The Alliance's types start friendly and the Coalition's
+/// hostile; `SetHostile` makes an object one or the other. Two objects on different sides are
+/// enemies.
 pub fn Side(comptime Tag: type) type {
     return enum(Tag) {
         /// On the player's side.
@@ -69,7 +96,8 @@ pub fn Side(comptime Tag: type) type {
 /// keeps its armour whole (`collision.armorDamage`).
 pub const Invulnerability = enum(u8) {
     none = 0,
-    /// Only a player's ship can harm it: an ejected pilot, until it is picked up (`order_eject_spin`).
+    /// Only a player's ship can harm it: an ejected pilot, until it is picked up
+    /// (`order_eject_spin`).
     player_can_hit = 1,
     /// Nothing harms it: what the Ripper has grabbed, and some types as they are created.
     full = 2,
@@ -82,7 +110,24 @@ pub const Invulnerability = enum(u8) {
     /// hull, and a shield generator does not soften a component's hits.
     _unknown_5 = 5,
     _,
+
+    /// Whether it keeps off a hit: always under `full`, and under `player_can_hit` where a player's
+    /// ship did not deal it.
+    pub fn protects(invulnerable: Invulnerability, by_player: bool) bool {
+        return switch (invulnerable) {
+            .full => true,
+            .player_can_hit => !by_player,
+            else => false,
+        };
+    }
 };
+
+test "Invulnerability.protects" {
+    try std.testing.expect(Invulnerability.full.protects(true));
+    try std.testing.expect(Invulnerability.player_can_hit.protects(false));
+    try std.testing.expect(!Invulnerability.player_can_hit.protects(true));
+    try std.testing.expect(!Invulnerability.none.protects(false));
+}
 
 /// A deathmatch power-up (`GameObject.power_up`): its record of 0x28 bytes in the table at
 /// `0x0050C510`, which gives how long it lasts and the routines that start and end it. `0x004B1C00`
@@ -149,6 +194,7 @@ pub const Quadrants = extern struct {
             assert(std.mem.eql(u8, @tagName(quadrant), field.name));
             assert(@offsetOf(Quadrants, field.name) == @as(usize, @intFromEnum(quadrant)) * @sizeOf(f32));
         }
+        assert(@sizeOf(Quadrants) == 0x10);
     }
 };
 
@@ -218,7 +264,7 @@ pub const Wing = enum(u16) {
 
 /// An object's type (`GameObject.type`): for a ship, missile, mine or asteroid its record in
 /// `shipstats.bin`, and past those what else the game places, markers and nav points among them,
-/// which have no stats. The names are the port's, for the types the game's code singles out.
+/// which have no stats. The names are OpenReliant's, for the types the game's code singles out.
 pub const Type = enum(u32) {
     predator = 0x00,
     /// The Grendel, the Wolverine and the Reaper, whose guns fire rounds, which the gunnery display
@@ -399,6 +445,17 @@ pub const Type = enum(u32) {
         return object_type.number() < create.ship_type_count;
     }
 
+    /// Where the second set of the player's ship types starts: types `0xF4` to `0xFF`, whose models
+    /// are the first twelve's `t_` twins, are the same twelve ships to the start.
+    pub const player_twins_first = 0xF4;
+
+    /// The type it stands for among the player's ships: one of the second set, from
+    /// `player_twins_first`, stands for the first set's in the same place, and any other for itself.
+    pub fn untwinned(object_type: Type) Type {
+        const at = object_type.number();
+        return @enumFromInt(if (at >= player_twins_first) at - player_twins_first else at);
+    }
+
     /// Whether it is a Phoenix, the ship that carries the Nova Cannon, or its twin.
     pub fn carriesNova(object_type: Type) bool {
         return object_type == .phoenix or object_type == .t_phoenix;
@@ -522,8 +579,8 @@ pub const GameObject = extern struct {
     /// The parts of its model whose flags mark them as components, in the order `0x00468760`
     /// finds them: each node's marked children, then each child's in turn.
     components: [max_components]Component,
-    /// For an object that lists components, its part nodes by their numbers (`object_number_parts`),
-    /// which a shot's candidates name its parts by; null for any other.
+    /// For an object that lists components, its part nodes by their numbers
+    /// (`object_number_parts`), which a shot's candidates name its parts by; null for any other.
     part_nodes: Pointer(Pointer(objects.Node)),
     /// How many knocks, from collisions and explosions, the object has taken since its last move
     /// (`knock`). The next `object_move` applies them in place of the object's own motion
@@ -540,7 +597,7 @@ pub const GameObject = extern struct {
     angular_impulse: shp.Vec3,
     /// The inverse of the object's inertia tensor, which `object_recentre` builds from its parts
     /// (`object_bounds`) and inverts (`0x004AD9F0`). `applyKnocks` turns the angular impulse by it.
-    /// Not filled in by the port yet (#87).
+    /// Not filled in by OpenReliant yet (#87).
     angular_response: [9]f32,
     /// The turn applied to its orientation each update, which `object_steer` builds from the
     /// angular rates.
@@ -592,16 +649,15 @@ pub const GameObject = extern struct {
     /// What the explosions' routines note of it as it comes apart.
     ends: Ends,
     /// The routine in `explode.cpp` that `create_object` gives most capital ships, bases and
-    /// stations, which `node_draw` runs as one of the object's components is destroyed. The port
+    /// stations, which `node_draw` runs as one of the object's components is destroyed. OpenReliant
     /// leaves it null and picks the routine by type as it needs it (`explode.ComponentLoss`).
     component_loss: Pointer(Routine),
     /// The slots of two objects it passes through: the collision sweep of `objects_update` tests
     /// no pair where either names the other. Both are `none` when created.
     passes_through: [2]Slot,
-    /// The slot of the ship Fight has it attack, or -1: Fight sets it as it starts
-    /// (`order_fight_init`), an attack run leaves it clear until it is done, and a new order clears
-    /// it. -1 when created.
-    fighting: i32,
+    /// The slot of the ship Fight has it attack: Fight sets it as it starts (`order_fight_init`),
+    /// an attack run leaves it clear until it is done, and a new order clears it. None when created.
+    fighting: Slot,
     _unknown_624: u8,
     _unknown_625: [3]u8,
     _unknown_628: shp.Vec3,
@@ -633,7 +689,7 @@ pub const GameObject = extern struct {
     /// (`shockwave.Shockwave.harmPlayer`).
     shockwave_until: i32,
     /// Its smoke's template, which its level picks (`0x00494400`), and its smoke's emitter, or
-    /// null for none. The port keeps its smoke in its slot (`create.Slot.smoke`).
+    /// null for none. OpenReliant keeps its smoke in its slot (`create.Slot.smoke`).
     smoke_template: Pointer(@import("particles.zig").Template),
     smoke: Pointer(anyopaque),
     /// How damaged it shows itself to be, by its smoke (`smoke.Level.of`).
@@ -676,8 +732,8 @@ pub const GameObject = extern struct {
     /// Damage of kinds 0, 1 and 5 taken since `orders_update` last zeroed it, which it does every
     /// 500 ticks.
     recent_damage: f32,
-    /// The slot of the object that last damaged it, or -1.
-    last_attacker: i32,
+    /// The slot of the object that last damaged it.
+    last_attacker: Slot,
     _unknown_698: u32,
     /// Fight's timers: until when it holds its fire, until when it holds its missiles, and until
     /// when it holds its countermeasures, each from the pilot's `timings`.
@@ -700,8 +756,8 @@ pub const GameObject = extern struct {
     _unknown_710: [4]u32,
     /// The object of the nav point the display points to, set by the mission's `SetNavPoint` and
     /// `nav_point_next` (`0x004152A0`), which passes on to the next the player's ship has not
-    /// reached; -1 for none, as when created.
-    nav_point: i32,
+    /// reached; none when created.
+    nav_point: Slot,
     /// **Unknown.** -1 when created.
     _unknown_724: i32,
     /// Where the power distribution stands on the power ball (`input.power`): a point within a disc
@@ -746,9 +802,9 @@ pub const GameObject = extern struct {
     created: bool,
     /// How far harm reaches it (`SetInvulnerability`).
     invulnerable: Invulnerability,
-    /// The 3D voice following it, `0xFFFF` for none: `sound_3d_voice_end` sets it back, and the
-    /// missiles' code reads it (`0x00495CF0`).
-    sound_voice: u16,
+    /// The 3D voice following it: `sound_3d_voice_end` sets it back to none, and the missiles'
+    /// code reads it (`0x00495CF0`).
+    sound_voice: Voice,
 
     /// The names of the script commands that set a bit are the developers' own.
     /// What the explosions' routines note of an object as it comes apart (`+0x610`).
@@ -761,9 +817,9 @@ pub const GameObject = extern struct {
     };
 
     pub const Flags = packed struct(u32) {
-        /// Not drawn: `camera_set_view` sets it on the object whose cockpit the camera is in, and the
-        /// warp orders while it warps. `mission_frame` hands `node_draw` flag `0x10` for it, which
-        /// adds none of its parts to the scene.
+        /// Not drawn: `camera_set_view` sets it on the object whose cockpit the camera is in, and
+        /// the warp orders while it warps. `mission_frame` hands `node_draw` flag `0x10` for it,
+        /// which adds none of its parts to the scene.
         hidden: bool = false,
         /// Its components are listed, as its model's header asks. The collision code treats such
         /// objects apart.
@@ -799,7 +855,8 @@ pub const GameObject = extern struct {
         tractored: bool = false,
         /// `DisableLights`.
         lights_disabled: bool = false,
-        /// It has a shield generator, a part of subsystem class 6, which destroying the part clears.
+        /// It has a shield generator, a part of subsystem class 6, which destroying the part
+        /// clears.
         shield_generator: bool = false,
         /// `DisableGuns`. `orders_update` skips `0x0047C950` for it.
         guns_disabled: bool = false,
@@ -853,12 +910,62 @@ pub const GameObject = extern struct {
         pub fn outOfFrame(flags: Flags) bool {
             return flags.stand_in or flags.disabled or flags.jumping;
         }
+
+        /// Whether the AI's searches pass it over: a stand-in, or an exploding or disabled object.
+        pub fn outOfSearch(flags: Flags) bool {
+            return flags.stand_in or flags.exploding or flags.disabled;
+        }
+
+        /// The flags set in either.
+        pub fn with(flags: Flags, more: Flags) Flags {
+            return @bitCast(word(flags) | word(more));
+        }
+
+        /// The flags set in both.
+        pub fn within(flags: Flags, other: Flags) Flags {
+            return @bitCast(word(flags) & word(other));
+        }
+
+        /// The flags set here but not in `other`.
+        pub fn without(flags: Flags, other: Flags) Flags {
+            return @bitCast(word(flags) & ~word(other));
+        }
+
+        /// Whether any flag is set.
+        pub fn any(flags: Flags) bool {
+            return word(flags) != 0;
+        }
+
+        fn word(flags: Flags) u32 {
+            return @bitCast(flags);
+        }
     };
 
     /// Where it will stand at the next step (`root.next_position`), which the AI, the collisions
     /// and the sounds go by.
     pub fn nextPosition(object: *const GameObject) Vector {
         return vector(object.root.next_position);
+    }
+
+    /// Lets go of the turns: no roll, pitch or yaw.
+    pub fn holdTurns(object: *GameObject) void {
+        object.roll_input = 0;
+        object.pitch_input = 0;
+        object.yaw_input = 0;
+    }
+
+    /// Lets go of the controls: no throttle and no turns.
+    pub fn letGo(object: *GameObject) void {
+        object.throttle = 0;
+        object.holdTurns();
+    }
+
+    /// Whether its sphere and `other`'s, their radii together `widen` wider, overlap where the
+    /// next step has them: the collision sweep's test (`objects_update`, `objects_collide`), and
+    /// `avoidance_scan`'s for an object that lists components.
+    pub fn overlaps(object: *const GameObject, other: *const GameObject, widen: f32) bool {
+        const reach = object.radius + other.radius + widen;
+        return math.lengthSquared(object.nextPosition() - other.nextPosition()) < reach * reach;
     }
 
     /// Where its root stands at `step`: its committed place, or its next.
@@ -992,6 +1099,52 @@ pub const GunMode = packed struct(u16) {
         return .{ .group = 0, ._unknown_3 = false, .all = groups != 1, .synchronised = true, ._unknown_6 = 0 };
     }
 };
+
+test "Type.untwinned" {
+    try std.testing.expectEqual(.predator, Type.untwinned(@enumFromInt(0xF4)));
+    try std.testing.expectEqual(.grendel, Type.untwinned(@enumFromInt(0xF6)));
+    try std.testing.expectEqual(.grendel, Type.grendel.untwinned());
+    try std.testing.expectEqual(@as(Type, @enumFromInt(0xF3)), Type.untwinned(@enumFromInt(0xF3)));
+}
+
+test "GameObject.Flags" {
+    const flags: GameObject.Flags = .{ .stand_in = true, .targetable = true };
+    try std.testing.expectEqual(GameObject.Flags{ .stand_in = true, .targetable = true, .frozen = true }, flags.with(.{ .frozen = true }));
+    try std.testing.expectEqual(GameObject.Flags{ .targetable = true }, flags.without(.{ .stand_in = true }));
+    try std.testing.expectEqual(GameObject.Flags{ .stand_in = true }, flags.within(.{ .stand_in = true, .frozen = true }));
+    try std.testing.expect(flags.any());
+    try std.testing.expect(!flags.within(.{ .frozen = true }).any());
+    try std.testing.expect(flags.outOfSearch());
+}
+
+test "GameObject.overlaps" {
+    var object = testing.object();
+    var other = testing.object();
+    object.radius = 100;
+    other.radius = 50;
+    other.root.next_position = .{ .x = 0, .y = 0, .z = 149 };
+    try std.testing.expect(object.overlaps(&other, 0));
+    // Touching is not overlapping; widened, they overlap again.
+    other.root.next_position.z = 150;
+    try std.testing.expect(!object.overlaps(&other, 0));
+    try std.testing.expect(object.overlaps(&other, 1));
+    // Only where the next step has them counts, not where they stand now.
+    other.root.position = .{ .x = 0, .y = 0, .z = 10 };
+    try std.testing.expect(!other.overlaps(&object, 0));
+}
+
+test "GameObject.letGo" {
+    var object = testing.object();
+    object.throttle = 1;
+    object.yaw_input = 0.5;
+    object.pitch_input = -0.5;
+    object.roll_input = 0.25;
+    object.letGo();
+    try std.testing.expectEqual(0, object.throttle);
+    try std.testing.expectEqual(0, object.yaw_input);
+    try std.testing.expectEqual(0, object.pitch_input);
+    try std.testing.expectEqual(0, object.roll_input);
+}
 
 test "Type.rock" {
     try std.testing.expectEqual(.asteroid, Type.rock(@enumFromInt(0x7F)));
@@ -1155,11 +1308,13 @@ pub fn rechargeShields(object: *GameObject, combat: *const create.ShipCombat, re
 const recharge_steps: f32 = 25;
 
 /// A new object's `blink_offset` (`object_alloc`, `0x00475DD0`): C's `rand()` over its largest
-/// value, times 100, truncated.
+/// value (`libcmt.Rand.fraction`), times `blink_range`, truncated.
 pub fn blinkOffset(random: *libcmt.Rand) i16 {
-    const share = @as(f32, @floatFromInt(random.rand())) * (1.0 / @as(f32, libcmt.Rand.max));
-    return @intFromFloat(share * 100);
+    return @intFromFloat(random.fraction() * blink_range);
 }
+
+/// The ticks a new object's lights may stand into their blinks, at most (`0x004DC440`).
+const blink_range: f32 = 100;
 
 /// `object_alloc` (`0x00475DD0`): a new object of `object_type`. `SR_MEM_allocate` clears what
 /// it hands out, so everything the allocation doesn't set starts at zero: the object is at rest,
@@ -1172,7 +1327,7 @@ pub fn objectAlloc(object_type: Type, random: *libcmt.Rand) GameObject {
     object.power_up = .none;
     object._unknown_764 = -1;
     object.root.flags.component = true;
-    object.sound_voice = 0xFFFF;
+    object.sound_voice = .none;
     object.blink_offset = blinkOffset(random);
     object.visibility = 1;
     return object;
@@ -1340,7 +1495,7 @@ pub fn gameTick(clock: *Clock, devices: *input.Devices, world: World) bool {
 /// update: orthonormalizes the root's next orientation (`mat3_orthonormalize`), so that rounding
 /// doesn't build up in the matrix from one step to the next. The game does the same to the
 /// orientation at `GameObject + 0x7A4`, which a multiplayer game draws other players' ships by;
-/// the port doesn't keep that one yet (#55).
+/// OpenReliant doesn't keep that one yet (#55).
 pub fn orthonormalizeTurn(root: *objects.Node) void {
     root.next_orientation = math.orthonormalize(root.next_orientation);
 }
@@ -1452,8 +1607,8 @@ pub fn recentre(model: *objects.Model, source: *const shp.Model) void {
     tensor[1] = tensor[3];
     tensor[2] = tensor[6];
     tensor[5] = tensor[7];
-    // A model whose parts have no volume, as a few do, leaves a tensor that cannot be inverted:
-    // the game divides by its determinant whatever it is, and the port leaves nothing to turn by.
+    // A model whose parts have no volume, as a few do, leaves a tensor that cannot be inverted: the
+    // game divides by its determinant whatever it is, and OpenReliant leaves nothing to turn by.
     model.angular_response = math.inverse(tensor) orelse @splat(0);
 }
 
@@ -1486,8 +1641,8 @@ fn partInertia(at: math.Vector, part: *const shp.Part) math.Matrix {
 /// worked out, and until the next step its `position` stays one step behind `next_position`, which
 /// is what the rest of the game reads as its place.
 ///
-/// The root has no part, so it plays no track of its own: it stays marked as animating while a
-/// part standing at it does. The port keeps the part nodes in the object's `Model`, which goes on
+/// The root has no part, so it plays no track of its own: it stays marked as animating while a part
+/// standing at it does. OpenReliant keeps the part nodes in the object's `Model`, which goes on
 /// with the walk (`walk`).
 pub fn updateTree(root: *Node, model: ?*objects.Model, events: ?Events) void {
     root.commitNext();
@@ -1495,7 +1650,7 @@ pub fn updateTree(root: *Node, model: ?*objects.Model, events: ?Events) void {
 }
 
 /// The nodes `node_tree_update` can hold on its stack at once, which is as far into a model as
-/// the port's walks go.
+/// OpenReliant's walks go.
 pub const walk_room = 500;
 
 /// The spans of a track's time whose events `node_tree_update` sets off as a node passes
@@ -1522,7 +1677,7 @@ const Windows = struct {
 /// which keeps the root marked.
 ///
 /// The game marks a node animating and every node it hangs from, up through a model's root to the
-/// part carrying it (`node_mark_animating`); the port marks up to a model's root
+/// part carrying it (`node_mark_animating`); OpenReliant marks up to a model's root
 /// (`objects.Model.markAnimating`), and takes a part as animating, or a model's root, while it
 /// carries a model that has an animating part.
 fn walk(model: *objects.Model, events: ?Events) bool {
@@ -1672,30 +1827,19 @@ fn visit(model: *objects.Model, index: usize, windows: *Windows, events: ?Events
     const sink = events orelse return;
     for (track.events) |event| {
         if (!windows.passes(event.time)) continue;
-        const kind: EventKind = @enumFromInt(event.kind);
-        switch (kind) {
-            .muzzles, .puff => sink.fire(sink.context, sink.owner, model, index, kind),
+        switch (event.kind) {
+            .muzzles, .puff => sink.fire(sink.context, sink.owner, model, index, event.kind),
             _ => {},
         }
     }
 }
-
-/// What a track's event sets off as a node passes it (`node_tree_update`).
-pub const EventKind = enum(i32) {
-    /// Fires a shot from each of the part's muzzles (`clip_event_muzzles`, `0x0047C7B0`).
-    muzzles = 0,
-    /// Puffs particles from each of the part's attachments of kind 7 (`clip_event_particles`,
-    /// `0x0047C800`).
-    puff = 2,
-    _,
-};
 
 /// Whoever sets off the effects of the events the tracks of the model of the object in slot
 /// `owner` pass: the game's own (`guns.clipEvents`), or a test's.
 pub const Events = struct {
     context: *anyopaque,
     owner: u16 = 0,
-    fire: *const fn (context: *anyopaque, owner: u16, model: *objects.Model, part: usize, kind: EventKind) void,
+    fire: *const fn (context: *anyopaque, owner: u16, model: *objects.Model, part: usize, kind: shp.ClipEvent.Kind) void,
 };
 
 /// Fixtures for the tests here and in the modules that move objects.

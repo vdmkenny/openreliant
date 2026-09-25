@@ -50,7 +50,7 @@ A ship executing a jump fires nothing, though its weapons continue recharging. S
 
 ## Shots
 
-`bullet_fire` (`0x0047C5F0`) allocates the first available of 200 projectile records at `0x00563148` (`0xC4` bytes each), and `bullet_place` (`0x0047BDB0`) populates it. The projectile spawns at the muzzle node and travels along that node's forward vector at the gun type's velocity for its defined lifetime in ticks, which determines range. A ship aiming blind (`blind_fire_aim`) fires a shot of the types 1 to 10, the fighters' guns but the Nova Cannon, at a point instead, turned to face it with no roll: the player's at the lead cursor's point (`hud_lead_point`, [Display](hud.md#the-targeting-cluster)); another player's ship in a multiplayer game, the only other ship aiming blind, at its order's target, led as the AI leads it (`ai_lead_aim`), or along the muzzle where that target can't be aimed at. The port aims the player's. Gun type 12 scatters. The player's shot plays its gun type's force-feedback effect ([Controls](controls.md#force-feedback)).
+`bullet_fire` (`0x0047C5F0`) allocates the first available of 200 projectile records at `0x00563148` (`0xC4` bytes each), and `bullet_place` (`0x0047BDB0`) populates it. The projectile spawns at the muzzle node and travels along that node's forward vector at the gun type's velocity for its defined lifetime in ticks, which determines range. A ship aiming blind (`blind_fire_aim`) fires a shot of the types 1 to 10, the fighters' guns but the Nova Cannon, at a point instead, turned to face it with no roll: the player's at the lead cursor's point (`hud_lead_point`, [Display](hud.md#the-targeting-cluster)); another player's ship in a multiplayer game, the only other ship aiming blind, at its order's target, led as the AI leads it (`ai_lead_aim`), or along the muzzle where that target can't be aimed at. OpenReliant aims the player's. Gun type 12 scatters. The player's shot plays its gun type's force-feedback effect ([Controls](controls.md#force-feedback)).
 
 Special gun rules:
 - Two in five Turret Flak shots spawn as Turret Lasers shots instead (`bullet_fire`). Turret Flak shots have randomized lifetimes between 20% and 100% of their base duration, scattering up to 0.06 radians on each axis.
@@ -99,9 +99,12 @@ Expired shots are freed on the next frame. A shot striking a shield triggers a s
 
 The Nova Cannon bolt rotates 1/8 turn during construction and takes the muzzle orientation, rendering unrotated.
 
+**Improvement:** the Gattling Lasers' three bolts stand an exact third of a turn apart, where the game
+multiplies by its rounded third of a turn (`0x004DC8A4`).
+
 On hardware renderers (`sr + 0x1AC`), shots cast dynamic point lights: blue `(0, 0.5, 1)` or orange `(1, 0.5, 0)` for hostile ships unless fired by the player, reaching 1000 units radius. In the original game, only the latest two shots from the player (`0x0056317C`) and latest two from other ships (`0x00563168`) cast lights, with new shots extinguishing older ones.
 
-**Improvement:** the port allows all shots to cast light (`ShotLights.every_shot`) so sustained fire illuminates passing hulls; `--original` and `--few-shot-lights` restore the original two-shot limit ([Renderer](../port/renderer.md#improvements)).
+**Improvement:** OpenReliant allows all shots to cast light (`ShotLights.every_shot`) so sustained fire illuminates passing hulls; `--original` and `--few-shot-lights` restore the original two-shot limit ([Renderer](../port/renderer.md#improvements)).
 
 ### Muzzle flashes
 
@@ -117,7 +120,7 @@ Every gun muzzle a model carries has a flash, hung from the muzzle's part and st
 
 A type whose flash lasts no time shows none: the game divides by its ticks and takes what it gets for a share of 0.
 
-`guns_init` builds a flash mesh for each gun type (`muzzle_flash_mesh_build`, `0x004786E0`), all the same shape: a plume, as an engine glow's ([Effects](effects.md)), twice as wide and as high as the Laser Cannon's bolt and half as long, 120 across and 600 long. The quad across the muzzle draws `matflarea3` and the three down the flare `matflareb3`, added and unlit, with the flash's own texture coordinates, a texel in from each edge (`muzzle_flash_create`, `0x0047B150`). The Gattling Plasma Cannon's draws `gunflare\sfxalpha1` for both, a sheet of three frames 32 texels apart, one a tick: the quad across the muzzle takes a frame 30 texels square from a quarter of the way down, the others 30 across and 62 high from the top. The port builds the two meshes that differ.
+`guns_init` builds a flash mesh for each gun type (`muzzle_flash_mesh_build`, `0x004786E0`), all the same shape: a plume, as an engine glow's ([Effects](effects.md)), twice as wide and as high as the Laser Cannon's bolt and half as long, 120 across and 600 long. The quad across the muzzle draws `matflarea3` and the three down the flare `matflareb3`, added and unlit, with the flash's own texture coordinates, a texel in from each edge (`muzzle_flash_create`, `0x0047B150`). The Gattling Plasma Cannon's draws `gunflare\sfxalpha1` for both, a sheet of three frames 32 texels apart, one a tick: the quad across the muzzle takes a frame 30 texels square from a quarter of the way down, the others 30 across and 62 high from the top. OpenReliant builds the two meshes that differ.
 
 **Improvement:** a flash casts a point light while it lasts, reaching two and a half times the flare's length at its brightest and dimming and drawing in as the flare shrinks, so that each shot lights the hull round the gun (`flash.Lights.cast`). Its colour is its flares' own: what their textures add where the flash draws from them, brought up to full brightness.
 
@@ -160,7 +163,7 @@ The Phoenix's Nova Cannon charges while the trigger is held and strikes when it 
 
 Each frame `bullets_frame` places the beams (`nova_beams_frame`, `0x00480690`). The beam is four blades on `ionc`, 150 wide either side narrowed by the square of the charge and 40000 long, standing 50 above and 20680 ahead of the ship, turned with it. Each blade's texture runs along it at 0.01 a tick more than the blade before's, and the blades are lit at the ship's end, dark at the far one, fading out over the last fifth of the beam's time. After a full charge 30 strands follow a helix along it (`nova_helix`), each two blades on `laser2` from one point of the helix to the next, radius 100, six turns a unit and 15000 long a unit from 600 ahead, the points 0.03 apart from 0.3 behind how far through its time the beam is. The strands rise and fall in brightness over the beam's time (`ease_rise_fall`); the game lights their first blades alone.
 
-**Fix:** the game takes where the beam enters an object's box, which is in the object's frame, for a point in the world's, so the quadrant struck and the flare land wherever that puts them; the port takes the point where it enters. The game also keeps drawing a beam from a ship that has gone.
+**Fix:** the game takes where the beam enters an object's box, which is in the object's frame, for a point in the world's, so the quadrant struck and the flare land wherever that puts them; OpenReliant takes the point where it enters. The game also keeps drawing a beam from a ship that has gone.
 
 **Improvement:** the helix turns six times a unit exactly, where the game rounds its angle.
 
@@ -186,15 +189,28 @@ Aimed turrets fire according to their parts' `fire` tracks: event 0 fires from e
 
 `turret_aimed_track` (`0x0047CFA0`): invalid targets (`order_target_valid`) are dropped. Otherwise, the turret computes lead aim from its base (`ai_lead_aim_with_gun`), scaling lead randomly between 0.5 to 0.8 when the target has active ECM, and calculates required yaw and pitch angles (`turret_aim_angles`). If aiming or leading fails, the target is dropped. Remaining yaw and pitch deltas are stored at `+0x50` and `+0x54` via the shortest rotational path. When the muzzle forward axis passes within twice the target radius of the aim point ahead (`turret_in_line`, `0x0047CF10`), it holds the trigger for one tick and plays the `fire` track at speed 2 on idle parts, firing the muzzles.
 
-`turret_aim_angles` (`0x0047CB10`) computes aim angles relative to the base part: yaw is `atan2(y, -z)` and pitch is `-atan2(x, -z')`, where `z'` is `z` rotated by yaw. Angles outside mechanical limits fail; Huge Guns aimed up to 20 degrees past a pitch limit clamp to the limit. If firing arcs are defined, the direction in root space indexes a 32-row by 16-column bitmask table requiring four adjacent bits set. The original game calculated angle from Y by dividing X by `sin(yaw)`, which divides by zero when pointing straight forward or backward.
-**Fix:** the port calculates the transverse length directly.
-Not ported: Stalag turrets firing in all directions while `0x005883F8` is set ([#220](https://github.com/vdmkenny/openreliant/issues/220)).
-**Improvement:** the port converts angles using exact mathematical constants rather than approximations (`57.2958`, `0.0174533`, `3.14159`, `6.28319`).
+`turret_aim_angles` (`0x0047CB10`) computes aim angles relative to the base part: yaw is
+`atan2(y, -z)` and pitch is `-atan2(x, -z')`, where `z'` is `z` rotated by yaw. Angles outside
+mechanical limits fail; Huge Guns aimed up to 20 degrees past a pitch limit clamp to the limit. If
+firing arcs are defined, the direction in root space indexes a 32-row by 16-column bitmask table
+requiring four adjacent bits set. The original game calculated angle from Y by dividing X by
+`sin(yaw)`, which divides by zero when pointing straight forward or backward. **Fix:** OpenReliant
+calculates the transverse length directly. Not ported: Stalag turrets firing in all directions while
+`0x005883F8` is set ([#220](https://github.com/vdmkenny/openreliant/issues/220)). **Improvement:**
+OpenReliant converts angles using exact mathematical constants rather than approximations
+(`57.2958`, `0.0174533`, `3.14159`, `6.28319`).
 
-`turret_pick_target` (`0x0047D1F0`) acquires the first valid object in slot order that it can lead and aim at: type under `0x100`, not itself, and hostile (neither friendly nor neutral). Huge Guns only target entities with component lists. Entities without components (or any entity for Huge Guns) are targeted as a whole; otherwise, turrets on ships with components target individual sub-components (excluding Kurgan, Antanov, Nanny, and Prowler). The original game did not check target validity during selection, causing cloaked, exploding, or untargetable entities to monopolize targeting queues.
-**Fix:** the port skips entities that tracking would drop. In multiplayer, it skips the player who last damaged the object (`+0x10`), which the port omits ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
+`turret_pick_target` (`0x0047D1F0`) acquires the first valid object in slot order that it can lead
+and aim at: type under `0x100`, not itself, and hostile (neither friendly nor neutral). Huge Guns
+only target entities with component lists. Entities without components (or any entity for Huge Guns)
+are targeted as a whole; otherwise, turrets on ships with components target individual
+sub-components (excluding Kurgan, Antanov, Nanny, and Prowler). The original game did not check
+target validity during selection, causing cloaked, exploding, or untargetable entities to monopolize
+targeting queues. **Fix:** OpenReliant skips entities that tracking would drop. In multiplayer, it
+skips the player who last damaged the object (`+0x10`), which OpenReliant omits
+([#55](https://github.com/vdmkenny/openreliant/issues/55)).
 
-**Fix:** in the original game, rear fighter turrets (including the Predator tail gun) have rear-facing muzzles but base reference frames pointing forward with zero yaw and pitch, preventing them from aligning with targets or firing. The port rotates the reference frame 180 degrees around X for rear-facing muzzles, allowing them to aim and fire backwards properly ([#219](https://github.com/vdmkenny/openreliant/issues/219)).
+**Fix:** in the original game, rear fighter turrets (including the Predator tail gun) have rear-facing muzzles but base reference frames pointing forward with zero yaw and pitch, preventing them from aligning with targets or firing. OpenReliant rotates the reference frame 180 degrees around X for rear-facing muzzles, allowing them to aim and fire backwards properly ([#219](https://github.com/vdmkenny/openreliant/issues/219)).
 
 **Spinning, `turret_spin_step` (`0x0047C9B0`).** Barrels loop their `fire` track. While the trigger is held, barrels accelerate by 0.1 per tick up to a speed of 4, the gun track loops at matching speed, and protective flaps open at speed 4. When released, barrels decelerate by 0.02 per tick, the gun track stops at start, and flaps close. Weapons fire during the step regardless of spin speed.
 
@@ -214,9 +230,9 @@ Destroying a turret base disables the weapon permanently: `node_forget` (`0x0049
 
 Not ported: script `TurretSetTarget` targeting commands ([#36](https://github.com/vdmkenny/openreliant/issues/36)), and multiplayer damage-induced re-targeting ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
 
-Gun groups exclude kinds 1 and 3, and `FULL GUNS` excludes kind 1 ([The trigger](#the-trigger)). The original game read into adjacent memory when assemblies lacked expected parts; the port checks for missing base, muzzle, or launcher parts, skipping invalid slots and trigger calls (**Fix**).
+Gun groups exclude kinds 1 and 3, and `FULL GUNS` excludes kind 1 ([The trigger](#the-trigger)). The original game read into adjacent memory when assemblies lacked expected parts; OpenReliant checks for missing base, muzzle, or launcher parts, skipping invalid slots and trigger calls (**Fix**).
 
-## The port
+## OpenReliant
 
 [`guns.zig`](../../src/engine/game/guns.zig) implements weapon fitting (`fit`), grouping (`buildGroups`), trigger evaluation (`fire`), simulation steps (`step`), projectile handling (`shoot`, `moveBullets`, `bulletsFrame`), and visual rendering (`Looks`, `dress`, `animate`, `drawBullets`). Procedural geometries use compile-time recipe tables replacing the original eleven shape builders. Shapes are built once, keeping Turret Lasers variations distinct. `simulationStep` updates steps and moves projectiles; `missionFrame` executes per-frame updates; `drawFrame` queues render objects; and `playerControls` maps `FIRE LASERS`. `gun_stats` and active projectiles reside in `create.Objects`, and static binary records are defined in [`guns/stats.zig`](../../src/engine/game/guns/stats.zig), generated via `make gun-tables`.
 

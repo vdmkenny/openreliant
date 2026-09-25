@@ -84,7 +84,7 @@ fn check(io: Io, gpa: Allocator, directory: Io.Dir, resources: *const game.bigfi
         (try mission.flightGroups()).len,
         (try mission.file.triggers()).len,
         (try mission.file.script()).len,
-        @as(u4, @bitCast(mission.formats)),
+        mission.formats.byte(),
     });
     // The player's own record: its ship type and its name, as the file holds them.
     if (try mission.file.player()) |player| {
@@ -102,7 +102,7 @@ fn listed(io: Io, gpa: Allocator, directory: Io.Dir, resources: game.bigfile.Hog
     var numbers: std.ArrayList(u16) = .empty;
     errdefer numbers.deinit(gpa);
     for (resources.archive.entries) |entry| {
-        if (missionNumber(entry.name)) |number| try numbers.append(gpa, number);
+        if (game.winmain.missionNumber(entry.name)) |number| try numbers.append(gpa, number);
     }
     var folder_name: [files.max_path]u8 = undefined;
     if (files.find(io, directory, "missions", &folder_name)) |name| {
@@ -110,7 +110,7 @@ fn listed(io: Io, gpa: Allocator, directory: Io.Dir, resources: game.bigfile.Hog
         defer folder.close(io);
         var entries = folder.iterate();
         while (try entries.next(io)) |entry| {
-            if (missionNumber(entry.name)) |number| try numbers.append(gpa, number);
+            if (game.winmain.missionNumber(entry.name)) |number| try numbers.append(gpa, number);
         }
     }
     std.mem.sort(u16, numbers.items, {}, std.sort.asc(u16));
@@ -122,22 +122,4 @@ fn listed(io: Io, gpa: Allocator, directory: Io.Dir, resources: game.bigfile.Hog
     }
     numbers.shrinkRetainingCapacity(kept);
     return numbers.toOwnedSlice(gpa);
-}
-
-/// The number in a mission file's name, `mission<number>.dte` whatever its case; null for any
-/// other name.
-fn missionNumber(name: []const u8) ?u16 {
-    const start = "mission";
-    const end = ".dte";
-    if (name.len <= start.len + end.len) return null;
-    if (!std.ascii.startsWithIgnoreCase(name, start) or !std.ascii.endsWithIgnoreCase(name, end)) return null;
-    return std.fmt.parseInt(u16, name[start.len .. name.len - end.len], 10) catch null;
-}
-
-test missionNumber {
-    try std.testing.expectEqual(1, missionNumber("mission1.dte"));
-    try std.testing.expectEqual(251, missionNumber("MISSION251.DTE"));
-    try std.testing.expectEqual(null, missionNumber("mission.dte"));
-    try std.testing.expectEqual(null, missionNumber("missionx.dte"));
-    try std.testing.expectEqual(null, missionNumber("mission1.shp"));
 }

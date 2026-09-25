@@ -35,7 +35,7 @@ Every change beyond a trivial one has an issue, and its pull request closes it.
 
 ## Following the original
 
-The port does what the original does, step by step and in the same order. Where the decompiled C
+OpenReliant does what the original does, step by step and in the same order. Where the decompiled C
 is unclear, the assembly decides.
 
 **Each function lives in the module of its original source file.** The engine mirrors the
@@ -66,7 +66,7 @@ failed.
 
 ### Improvements and fixes
 
-The port is faithful by default, and every difference is marked where it is made.
+OpenReliant is faithful by default, and every difference is marked where it is made.
 
 - An **Improvement** is a deliberate change, such as widescreen, per-pixel lighting or a smoother
   effect. `--original` brings back the original's behaviour.
@@ -79,14 +79,14 @@ Both appear in the doc comment and in the docs where the behaviour is described:
 ```zig
 /// **Fix:** the game takes where the beam enters the box, in the object's own frame, for a point in
 /// the world's, for the quadrant struck and the flare alike, which then land wherever that puts
-/// them. The port takes the point where it enters.
+/// them. OpenReliant takes the point where it enters.
 ```
 
 A few kinds of improvement recur:
 
-- **Exact maths.** The port computes with `std.math` and `@Vector` where the original uses a lookup
-  table or a rounded constant, so `3.14159` becomes `std.math.pi`. Design values such as `0.25` or
-  200 ticks stay as the game has them.
+- **Exact maths.** OpenReliant computes with `std.math` and `@Vector` where the original uses a
+  lookup table or a rounded constant, so `3.14159` becomes `std.math.pi`. Design values such as
+  `0.25` or 200 ticks stay as the game has them.
 - **Modern randomness.** Random numbers come from `std.Random` rather than the MSVC runtime's
   `rand`; [#234](https://github.com/vdmkenny/openreliant/issues/234) moves the remaining code
   over.
@@ -103,15 +103,15 @@ files stay the standard format:
   them. Accept every file the original accepts, and keep fields that are not understood yet, rather
   than rely on anything the shipped missions happen to share. A command or order that is not yet
   ported never stops a mission from loading or running.
-- **No mission-specific code.** Nothing in the port singles out a mission by its number, name or
+- **No mission-specific code.** Nothing in OpenReliant singles out a mission by its number, name or
   file: a mission does what its file says, through the engine every mission goes through. What the
   original executable itself does by mission number, such as mission 25's second part, is ported as
   the engine's own behaviour.
-- **No format of the port's own.** The port's own missions, such as the sandbox, are standard
-  `.DTE` files. Anything the port adds stays outside the file format, so that the files work in the
-  original too. The one exception is a mission's name, which the port keeps in a section the game
-  never reads ([OpenReliant's mission name](docs/formats/dte.md#openreliants-mission-name)): it is
-  optional, the port never depends on it, and the game ignores it.
+- **No format of OpenReliant's own.** OpenReliant's own missions, such as the sandbox, are standard
+  `.DTE` files. Anything OpenReliant adds stays outside the file format, so that the files work in
+  the original too. The one exception is a mission's name, which OpenReliant keeps in a section the
+  game never reads ([OpenReliant's mission name](docs/formats/dte.md#openreliants-mission-name)): it
+  is optional, OpenReliant never depends on it, and the game ignores it.
 
 `openreliant missions` binds every mission a game's folder holds; run `make check-missions` after a
 change to how missions load or run.
@@ -292,6 +292,8 @@ Document each finding under [`docs/`](docs/README.md), by topic, in the same cha
 - **Structural numbers.** Keep the numbers that define the format or the engine: offsets, sizes,
   capacities, magic values. State verification as a property, such as "in every shipped file".
   Tallies and timings go out of date as tools and readings change.
+- **Its name.** Call the project OpenReliant, and the game it reimplements the original;
+  `openreliant` is the executable.
 - **Plain English.** Use ordinary technical English in normal sentence order: "the key bindings",
   "is presented to the game as a joystick device".
 - **Punctuation.** Use colons, commas, parentheses or a second sentence. The project's text keeps

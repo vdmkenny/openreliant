@@ -1,6 +1,6 @@
-//! `C:\lancer\surrender\srD3D\srD3D.cpp`: Surrender's Direct3D 7 driver, `srd3d.dll`. It draws
-//! what the payload's pipelines hand it: it turns materials into render states, draws what is opaque
-//! at once, puts what is blended aside for the payload to sort, and clips. The port's driver draws
+//! `C:\lancer\surrender\srD3D\srD3D.cpp`: Surrender's Direct3D 7 driver, `srd3d.dll`. It draws what
+//! the payload's pipelines hand it: it turns materials into render states, draws what is opaque at
+//! once, puts what is blended aside for the payload to sort, and clips. OpenReliant's driver draws
 //! on a `device.Device`, the parts of Direct3D 7 it uses.
 
 const std = @import("std");
@@ -99,12 +99,27 @@ pub const Highlight = [highlight_size][highlight_size][4]u8;
 /// Sharpness of the highlights, by index modulo 4.
 const highlight_exponents = [4]f32{ 1.01, 2.01, 5.01, 10.01 };
 
-/// The brightness a highlight falls to at its rim and keeps outside it.
+/// The brightness a highlight falls to at its rim and keeps outside it (`0x100223AC`).
 const highlight_floor: f32 = 0.4;
 
-/// Texel `(x, y)` of highlight texture `index` as red, green, blue and alpha: grey, brightest at the
-/// centre (`0x10001620`). Indices 4 to 7 repeat 0 to 3 at seven tenths the brightness. The driver
-/// makes the eight at start-up; a material whose image is below 8 names one.
+/// The level `make_highlight` scales a texel's brightness to, the floor coming to a little over a
+/// third of it (`0x10020400`).
+const highlight_scale: f32 = 200;
+
+/// How `make_highlight` makes a texel of its level, in whole numbers, by numbers in its code:
+/// indices 4 to 7 take `dimmed_tenths` tenths of the level; the grey is what the level runs past
+/// `grey_from`, over `grey_over`; and the alpha is the level times `alpha_times`, over
+/// `alpha_over`.
+const dimmed_tenths = 7;
+const grey_from = 200;
+const grey_over = 3;
+const alpha_times = 3;
+const alpha_over = 2;
+
+/// Texel `(x, y)` of highlight texture `index` as red, green, blue and alpha: grey, brightest at
+/// the centre (`make_highlight`, `0x10001620`). Indices 4 to 7 repeat 0 to 3 at seven tenths the
+/// brightness. The driver makes the eight at start-up; a material whose image is below 8 names
+/// one.
 pub fn highlightTexel(index: u3, x: u6, y: u6) [4]u8 {
     const e: f32 = highlight_exponents[index & 3];
     const peak: f32 = @floatCast(std.math.pow(f64, @as(f64, e) + 1, 1 / @as(f64, e)));
@@ -116,11 +131,11 @@ pub fn highlightTexel(index: u3, x: u6, y: u6) [4]u8 {
         std.math.pow(f64, (1 - @as(f64, @sqrt(d2))) * peak, e) + highlight_floor
     else
         highlight_floor;
-    const scaled: f32 = @floatCast(intensity / (highlight_floor + 1) * 200);
+    const scaled: f32 = @floatCast(intensity / (highlight_floor + 1) * highlight_scale);
     var level: i32 = std.math.lossyCast(i32, @round(scaled));
-    if (index > 3) level = @divTrunc(level * 7, 10);
-    const grey = std.math.lossyCast(u8, @divTrunc(level - 200, 3));
-    const alpha = std.math.lossyCast(u8, @divTrunc(level * 3, 2));
+    if (index > 3) level = @divTrunc(level * dimmed_tenths, 10);
+    const grey = std.math.lossyCast(u8, @divTrunc(level - grey_from, grey_over));
+    const alpha = std.math.lossyCast(u8, @divTrunc(level * alpha_times, alpha_over));
     return .{ grey, grey, grey, alpha };
 }
 
@@ -140,7 +155,7 @@ pub fn highlight(index: u3) Highlight {
 
 // --- The driver ---------------------------------------------------------------------------------
 
-/// The driver (`SR_driver_init`, `0x100056B0`, fills `sr`'s table with these). The port draws a
+/// The driver (`SR_driver_init`, `0x100056B0`, fills `sr`'s table with these). OpenReliant draws a
 /// material's two passes one after the other, as the driver does on a device that cannot draw both
 /// at once, to the same effect.
 pub const Driver = struct {
@@ -163,9 +178,7 @@ pub const Driver = struct {
             const texels = highlight(@intCast(index));
             const rgba = try gpa.dupe(u8, std.mem.asBytes(&texels));
             errdefer gpa.free(rgba);
-            const levels = try gpa.alloc(srtexture.Level, 1);
-            levels[0] = .{ .width = highlight_size, .height = highlight_size, .rgba = rgba };
-            h.* = .{ .levels = levels };
+            h.* = try .single(gpa, highlight_size, highlight_size, rgba);
             made += 1;
         }
         return driver;
@@ -178,13 +191,13 @@ pub const Driver = struct {
         driver.single.deinit(driver.gpa);
     }
 
-    /// The driver as `srcore.render` takes it.
     /// Hands the mark to the device, which keeps what follows out of anything it adds to the
     /// frame of its own.
     fn overlayMark(ptr: *anyopaque) void {
         from(ptr).target.overlay();
     }
 
+    /// The driver as `srcore.render` takes it.
     pub fn interface(driver: *Driver) srcore.Driver {
         return .{ .ptr = driver, .vtable = &vtable };
     }
@@ -201,7 +214,7 @@ pub const Driver = struct {
         .shadows = shadows,
     };
 
-    /// The port's: hands the device the frame's shadows.
+    /// OpenReliant's: hands the device the frame's shadows.
     fn shadows(ptr: *anyopaque, frame: *const srshadow.Frame) void {
         from(ptr).target.shadows(frame);
     }
@@ -222,7 +235,7 @@ pub const Driver = struct {
         from(ptr).target.end();
     }
 
-    /// The port's: hands the device the frame's directional and point lights in the camera's
+    /// OpenReliant's: hands the device the frame's directional and point lights in the camera's
     /// frame, the directional lights first and then the point lights nearest the camera, and
     /// marks those it adds to each pixel. The pipeline adds the rest to each vertex.
     fn lights(ptr: *anyopaque, list: []srlight.Light) Allocator.Error!void {
@@ -252,7 +265,7 @@ pub const Driver = struct {
                 } },
                 .point => |point| .{ .point = .{
                     .position = context.view(point.position),
-                    .reach = l.intensity * point.range,
+                    .reach = l.reach(point),
                     .colour = l.colour,
                     .intensity = l.intensity,
                 } },
@@ -384,9 +397,9 @@ pub const Driver = struct {
         return .{ 0, 0 };
     }
 
-    /// `draw_pass` (`0x10002920`): a surface's visible polygons for one pass. A polygon runs on into
-    /// the records of its strip or fan after it, while they are visible and unclipped; the lot is
-    /// drawn as one list of triangles. Clipped polygons are drawn on their own as they come.
+    /// `draw_pass` (`0x10002920`): a surface's visible polygons for one pass. A polygon runs on
+    /// into the records of its strip or fan after it, while they are visible and unclipped; the lot
+    /// is drawn as one list of triangles. Clipped polygons are drawn on their own as they come.
     fn drawPass(driver: *Driver, drawn: *const srmesh.Drawn, visible: []const srmesh.Visible, surface: *const srapiext.Surface, pass: u1, layer: Layer) Allocator.Error!void {
         const gpa = driver.gpa;
         const mesh = drawn.mesh;
@@ -477,7 +490,7 @@ pub const Driver = struct {
 
     /// `draw_polygon` (`0x10006F90`): one polygon as a fan, or its lines. **Improvement:** the
     /// driver tests a sorted polygon's triangles against the sun with indices left over from the
-    /// last list it drew; the port tests the polygon's own, where it is solid (`hidesSun`).
+    /// last list it drew; OpenReliant tests the polygon's own, where it is solid (`hidesSun`).
     fn drawPolygon(driver: *Driver, drawn: *const srmesh.Drawn, v: srmesh.Visible, material: Material, pass: u1, st: device.State) Allocator.Error!void {
         const p = drawn.mesh.polygons[v.polygon];
         driver.single.clearRetainingCapacity();
@@ -485,10 +498,7 @@ pub const Driver = struct {
         const vertices = driver.single.items;
         if (p.kind == .lines) return driver.target.draw(st, .lines, vertices, null);
         driver.target.draw(st, .fan, vertices, null);
-        if (hidesSun(drawn, material, pass)) {
-            var i: usize = 2;
-            while (i < vertices.len and driver.context.sun_visibility > 0) : (i += 1) driver.sunTest(vertices[0], vertices[i - 1], vertices[i]);
-        }
+        if (hidesSun(drawn, material, pass)) driver.sunTestFan(vertices);
     }
 
     /// `draw_clipped` (`0x10003100`): a polygon clipped triangle by triangle, each piece drawn as a
@@ -528,10 +538,7 @@ pub const Driver = struct {
                 continue;
             }
             driver.target.draw(st, .fan, vertices, null);
-            if (hidesSun(drawn, material, pass)) {
-                var i: usize = 2;
-                while (i < vertices.len and driver.context.sun_visibility > 0) : (i += 1) driver.sunTest(vertices[0], vertices[i - 1], vertices[i]);
-            }
+            if (hidesSun(drawn, material, pass)) driver.sunTestFan(vertices);
         }
     }
 
@@ -581,23 +588,28 @@ pub const Driver = struct {
         const p = drawn.sprites[index];
         const sprite = drawn.set.sprites[p.index];
         const rect, const uv = srbmo.cut(p.rect, sprite.uv, projection.bounds);
-        const left = projection.scale[0] * rect[0] + projection.centre[0];
-        const right = projection.scale[0] * rect[2] + projection.centre[0];
-        const top = projection.scale[1] * rect[1] + projection.centre[1];
-        const bottom = projection.scale[1] * rect[3] + projection.centre[1];
+        const left, const top = projection.toScreen(.{ rect[0], rect[1] });
+        const right, const bottom = projection.toScreen(.{ rect[2], rect[3] });
         const z = @sqrt(p.reciprocal) * projection.depth_scale;
         const f = sprite.fade;
         var colour = device.pack(.{ f, f, f, f });
         if (material.lit[0]) colour = device.pack(.{ sprite.colour[0] * f, sprite.colour[1] * f, sprite.colour[2] * f, 0 });
         if (!material.lit[pass]) colour = device.pack(.{ f, f, f, f });
         const vertices = [4]Vertex{
-            .{ .x = left, .y = top, .z = z, .rhw = 0.5, .diffuse = colour, .u = uv[0], .v = uv[2] },
-            .{ .x = right, .y = top, .z = z, .rhw = 0.5, .diffuse = colour, .u = uv[1], .v = uv[2] },
-            .{ .x = left, .y = bottom, .z = z, .rhw = 0.5, .diffuse = colour, .u = uv[0], .v = uv[3] },
-            .{ .x = right, .y = bottom, .z = z, .rhw = 0.5, .diffuse = colour, .u = uv[1], .v = uv[3] },
+            .{ .x = left, .y = top, .z = z, .rhw = sprite_rhw, .diffuse = colour, .u = uv[0], .v = uv[2] },
+            .{ .x = right, .y = top, .z = z, .rhw = sprite_rhw, .diffuse = colour, .u = uv[1], .v = uv[2] },
+            .{ .x = left, .y = bottom, .z = z, .rhw = sprite_rhw, .diffuse = colour, .u = uv[0], .v = uv[3] },
+            .{ .x = right, .y = bottom, .z = z, .rhw = sprite_rhw, .diffuse = colour, .u = uv[1], .v = uv[3] },
         };
         driver.target.draw(st, .strip, &vertices, null);
     }
+
+    /// The reciprocal depth `draw_sprite` (`0x10007220`) gives every corner of a sprite, which
+    /// faces the camera flat: a number in its code.
+    const sprite_rhw: f32 = 0.5;
+
+    /// How bright `draw_star_points` draws a star's tail against its head (`0x1002041C`).
+    const tail_brightness: f32 = 0.5;
 
     /// `draw_stars` (`0x10006C80`): with a blended material, the whole field put aside with key 0;
     /// else drawn now.
@@ -618,14 +630,15 @@ pub const Driver = struct {
             const colour = drawn.field.stars[star.index].colour;
             var lit: [3]f32 = undefined;
             for (&lit, colour) |*c, x| c.* = x * star.brightness;
-            const now = [2]f32{ projection.scale[0] * star.now[0] + projection.centre[0], projection.scale[1] * star.now[1] + projection.centre[1] };
-            const before = [2]f32{ projection.scale[0] * star.before[0] + projection.centre[0], projection.scale[1] * star.before[1] + projection.centre[1] };
+            const now = projection.toScreen(star.now);
+            const before = projection.toScreen(star.before);
             var head: Vertex = .{ .x = now[0], .y = now[1], .z = 0, .rhw = 0, .diffuse = device.pack(.{ lit[0], lit[1], lit[2], 0 }) };
             if (!material.lit[pass]) head.diffuse = device.white;
             const dx = now[0] - before[0];
             const dy = now[1] - before[1];
             if (dx * dx + dy * dy > 1) {
-                var tail: Vertex = .{ .x = before[0], .y = before[1], .z = 0, .rhw = 0, .diffuse = device.pack(.{ lit[0] * 0.5, lit[1] * 0.5, lit[2] * 0.5, 0 }) };
+                const dim = tail_brightness;
+                var tail: Vertex = .{ .x = before[0], .y = before[1], .z = 0, .rhw = 0, .diffuse = device.pack(.{ lit[0] * dim, lit[1] * dim, lit[2] * dim, 0 }) };
                 if (!material.lit[pass]) tail.diffuse = device.white;
                 driver.target.draw(st, .lines, &.{ head, tail }, null);
             } else {
@@ -636,14 +649,21 @@ pub const Driver = struct {
 
     /// Whether a polygon's first pass, drawn with `material`, is tested against the sun: an object
     /// flagged `sun_occluder` has its polygons tested. **Improvement:** only a solid one, which
-    /// blends with nothing; the port lets the sun through what is blended, such as a canopy's glass.
+    /// blends with nothing; OpenReliant lets the sun through what is blended, such as a canopy's
+    /// glass.
     fn hidesSun(drawn: *const srmesh.Drawn, material: Material, pass: u1) bool {
         return pass == 0 and drawn.object.flags.sun_occluder and material.blend[0] == .off;
     }
 
-    /// `sun_test` (`0x10001FD0`): lessens the sun's visibility to a triangle's nearest edge, measured
-    /// across plus down, or to 0 when the triangle covers the sun's point. It stops at the first edge
-    /// no nearer than the visibility.
+    /// Each triangle of the fan of `vertices` against the sun (`sunTest`), until the sun is hidden.
+    fn sunTestFan(driver: *Driver, vertices: []const Vertex) void {
+        var i: usize = 2;
+        while (i < vertices.len and driver.context.sun_visibility > 0) : (i += 1) driver.sunTest(vertices[0], vertices[i - 1], vertices[i]);
+    }
+
+    /// `sun_test` (`0x10001FD0`): lessens the sun's visibility to a triangle's nearest edge,
+    /// measured across plus down, or to 0 when the triangle covers the sun's point. It stops at the
+    /// first edge no nearer than the visibility.
     fn sunTest(driver: *Driver, a: Vertex, b: Vertex, c: Vertex) void {
         const sun = driver.context.sun;
         const visibility = &driver.context.sun_visibility;
@@ -785,34 +805,10 @@ test "a device that lights each pixel" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // Takes as many of the frame's lights as it has room for, and keeps the vertices of the last
-    // draw.
-    const Recorder = struct {
-        room: usize = 4,
-        lights: [4]device.Light = undefined,
-        given: usize = 0,
-        vertices: [16]Vertex = undefined,
-        drawn: usize = 0,
-
-        const vtable: device.Device.VTable = .{ .begin = nothing, .end = nothing, .draw = draw, .overlay = nothing, .lights = take };
-
-        fn nothing(_: *anyopaque) void {}
-
-        fn draw(ptr: *anyopaque, _: device.State, _: device.Primitive, vertices: []const Vertex, _: ?[]const u16) void {
-            const recorder: *@This() = @ptrCast(@alignCast(ptr));
-            @memcpy(recorder.vertices[0..vertices.len], vertices);
-            recorder.drawn = vertices.len;
-        }
-
-        fn take(ptr: *anyopaque, list: []const device.Light) usize {
-            const recorder: *@This() = @ptrCast(@alignCast(ptr));
-            @memcpy(recorder.lights[0..list.len], list);
-            recorder.given = list.len;
-            return @min(list.len, recorder.room);
-        }
-    };
-    var recorder: Recorder = .{};
-    var driver: Driver = try .init(gpa, .{ .ptr = &recorder, .vtable = &Recorder.vtable });
+    // Takes as many of the frame's lights as it has room for, and keeps what it draws.
+    var recorder: device.testing.Recorder = .{ .gpa = gpa, .room = 4 };
+    defer recorder.deinit();
+    var driver: Driver = try .init(gpa, recorder.interface());
     defer driver.deinit();
 
     const mesh = try srmesh.testing.square(gpa);
@@ -833,17 +829,18 @@ test "a device that lights each pixel" {
     try std.testing.expect(context.pixel_lighting);
     // The directional light first, then the point light, in the camera's frame: the direction
     // made as long as the intensity, the point's reach scaled by it.
-    try std.testing.expectEqual(2, recorder.given);
-    try std.testing.expectEqual(0x01, recorder.lights[0].mask);
-    try std.testing.expectEqual([3]f32{ 0, 0, -0.5 }, recorder.lights[0].kind.directional.toward);
-    try std.testing.expectEqual(0x08, recorder.lights[1].mask);
-    try std.testing.expectEqual(math.Vector{ -10, 0, 900 }, recorder.lights[1].kind.point.position);
-    try std.testing.expectEqual(200, recorder.lights[1].kind.point.reach);
-    try std.testing.expectEqual([3]f32{ 1, 0.5, 0 }, recorder.lights[1].kind.point.colour);
-    try std.testing.expectEqual(2, recorder.lights[1].kind.point.intensity);
+    const lights = recorder.lights.items;
+    try std.testing.expectEqual(2, lights.len);
+    try std.testing.expectEqual(0x01, lights[0].mask);
+    try std.testing.expectEqual([3]f32{ 0, 0, -0.5 }, lights[0].kind.directional.toward);
+    try std.testing.expectEqual(0x08, lights[1].mask);
+    try std.testing.expectEqual(math.Vector{ -10, 0, 900 }, lights[1].kind.point.position);
+    try std.testing.expectEqual(200, lights[1].kind.point.reach);
+    try std.testing.expectEqual([3]f32{ 1, 0.5, 0 }, lights[1].kind.point.colour);
+    try std.testing.expectEqual(2, lights[1].kind.point.intensity);
     // The vertices come with the ambient light alone, their normals and their object's mask.
-    try std.testing.expect(recorder.drawn > 0);
-    for (recorder.vertices[0..recorder.drawn]) |v| {
+    try std.testing.expect(recorder.last().len > 0);
+    for (recorder.last()) |v| {
         try std.testing.expectEqual(device.pack(.{ 0.25, 0.25, 0.25, 0 }), v.diffuse);
         try std.testing.expectEqual([3]f32{ 0, 0, -1 }, v.normal);
         try std.testing.expectEqual(0x02, v.light_mask);
@@ -854,27 +851,26 @@ test "a device that lights each pixel" {
     // each vertex: a corner within its reach and facing it is redder than the ambient light.
     recorder.room = 1;
     try srcore.render(arena, &context, &scene, driver.interface(), null);
-    try std.testing.expectEqual(2, recorder.given);
+    try std.testing.expectEqual(2, recorder.lights.items.len);
     var reddened: usize = 0;
-    for (recorder.vertices[0..recorder.drawn]) |v| {
+    for (recorder.last()) |v| {
         try std.testing.expectEqual(0x02, v.light_mask);
-        const red: u8 = @truncate(v.diffuse >> 16);
-        const blue: u8 = @truncate(v.diffuse);
-        try std.testing.expectEqual(64, blue);
-        reddened += @intFromBool(red > 64);
+        const colour: device.Diffuse = @bitCast(v.diffuse);
+        try std.testing.expectEqual(64, colour.blue);
+        reddened += @intFromBool(colour.red > 64);
     }
     try std.testing.expect(reddened > 0);
     // With no room, every light goes to the vertices.
     recorder.room = 0;
     try srcore.render(arena, &context, &scene, driver.interface(), null);
     try std.testing.expect(!context.pixel_lighting);
-    for (recorder.vertices[0..recorder.drawn]) |v| try std.testing.expectEqual(device.no_lights, v.light_mask);
+    for (recorder.last()) |v| try std.testing.expectEqual(device.no_lights, v.light_mask);
     recorder.room = 4;
 
     // A pass that is not lit takes no lights.
     mesh.surfaces[0].material.lit[0] = false;
     try srcore.render(arena, &context, &scene, driver.interface(), null);
-    for (recorder.vertices[0..recorder.drawn]) |v| {
+    for (recorder.last()) |v| {
         try std.testing.expectEqual(device.white, v.diffuse);
         try std.testing.expectEqual(device.no_lights, v.light_mask);
     }

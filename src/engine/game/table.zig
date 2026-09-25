@@ -1,4 +1,4 @@
-//! The fixed tables the game keeps its effects in, as the port holds them. Not from any file of
+//! The fixed tables the game keeps its effects in, as OpenReliant holds them. Not from any file of
 //! the original: its tables find a slot for a new record in one of two ways, which these share.
 
 const std = @import("std");
@@ -37,6 +37,25 @@ pub fn firstFree(comptime T: type, slots: []?T) ?*?T {
 pub fn firstFreeIndex(comptime T: type, slots: []const ?T) ?usize {
     for (slots, 0..) |slot, index| if (slot == null) return index;
     return null;
+}
+
+/// Where the first slot of `slots` that `free` finds free is, or null where every one is taken: the
+/// tables whose records mark their slot taken themselves, with a flag of their own.
+pub fn firstFreeBy(comptime T: type, slots: []const T, comptime free: fn (*const T) bool) ?usize {
+    for (slots, 0..) |*slot, index| if (free(slot)) return index;
+    return null;
+}
+
+test firstFreeBy {
+    const Record = struct {
+        live: bool,
+        fn dead(record: *const @This()) bool {
+            return !record.live;
+        }
+    };
+    const records = [_]Record{ .{ .live = true }, .{ .live = false }, .{ .live = false } };
+    try std.testing.expectEqual(1, firstFreeBy(Record, &records, Record.dead));
+    try std.testing.expectEqual(null, firstFreeBy(Record, records[0..1], Record.dead));
 }
 
 /// A table of `capacity` records, each new one in the first free slot, whose live records are also

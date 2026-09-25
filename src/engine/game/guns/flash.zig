@@ -17,9 +17,10 @@ const srtexture = @import("../../surrender/surrenderlib/srtexture.zig");
 const environfx = @import("../environfx.zig");
 const guns = @import("../guns.zig");
 const matmanager = @import("../matmanager.zig");
+const objects = @import("../objects.zig");
 const stats = @import("stats.zig");
 
-/// How the flashes are drawn where the port does more than the game.
+/// How the flashes are drawn where OpenReliant does more than the game.
 pub const Settings = struct {
     lights: Lights = .cast,
     guns: Guns = .turrets_too,
@@ -66,13 +67,14 @@ pub const Look = enum {
     /// The Gattling Plasma Cannon's: `gunflare\sfxalpha1` for both, a sheet of frames the flash
     /// plays through (`animate`).
     sheet,
-    /// The port's, for the turrets' guns (`Guns.turrets_too`): the white flares, `matflarea7` and
-    /// `matflareb7`, coloured by the flash's own colours (`Flash.colours`), paler across the
+    /// OpenReliant's, for the turrets' guns (`Guns.turrets_too`): the white flares, `matflarea7`
+    /// and `matflareb7`, coloured by the flash's own colours (`Flash.colours`), paler across the
     /// muzzle, and twice as wide and as high as the Turret Lasers' bolt and half as long.
     turret,
 
     /// The look of a flash of `gun_type`, where `which` guns flash. `guns_init` builds a mesh for
-    /// each type, all alike but the Gattling Plasma Cannon's; the port builds the ones that differ.
+    /// each type, all alike but the Gattling Plasma Cannon's; OpenReliant builds the ones that
+    /// differ.
     pub fn of(gun_type: guns.GunType, which: Guns) Look {
         if (which == .turrets_too and gun_type.onTurrets()) return .turret;
         return if (gun_type == .gattling_plasma_cannon) .sheet else .flare;
@@ -160,8 +162,9 @@ const Region = struct {
     high: [2]f32 = .{ 1, 1 },
 };
 
-/// The port's: the colour of a flash's light, what its flare adds over `regions` brought up to full
-/// brightness, so that the light is the flare's own colour. White, for a flare that adds nothing.
+/// OpenReliant's: the colour of a flash's light, what its flare adds over `regions` brought up to
+/// full brightness, so that the light is the flare's own colour. White, for a flare that adds
+/// nothing.
 fn flareColour(regions: []const Region) [3]f32 {
     var sum: Vector = @splat(0);
     for (regions) |region| {
@@ -290,7 +293,7 @@ pub const Flash = struct {
         flash.until = now + flash.guns.ticks(kind);
         if (flash.look != .turret) return;
         const full: Vector = colour;
-        const pale = full + (@as(Vector, @splat(1)) - full) * @as(Vector, @splat(turret_core_paling));
+        const pale = math.lerp(full, @as(Vector, @splat(1)), turret_core_paling);
         for (&flash.colours, 0..) |*corner, at| {
             const shade = if (at < 4) pale else full;
             corner.* = .{ shade[0], shade[1], shade[2], 1 };
@@ -312,8 +315,7 @@ pub const Flash = struct {
             return false;
         }
         const share: f32 = if (flash.ticks > 0) @min(@as(f32, @floatFromInt(until - now)) / @as(f32, @floatFromInt(flash.ticks)), 1) else 0;
-        const at = flash.attachment.position;
-        const place = (math.Place{ .position = .{ at.x, at.y, at.z }, .orientation = flash.attachment.orientation }).within(carrier);
+        const place = objects.attachmentPlace(flash.attachment).within(carrier);
         flash.object.position = place.position;
         flash.object.orientation = place.orientation;
         flash.object.scale = share;
@@ -329,12 +331,12 @@ pub const Flash = struct {
 pub const testing = struct {
     /// The flashes' looks built over a table holding nothing but their textures.
     pub const Built = struct {
-        textures: *@import("../backdrop.zig").testing.Textures,
+        textures: *@import("../../surrender/surrenderlib/srtexture.zig").testing.Textures,
         looks: Looks,
 
         pub fn init(gpa: Allocator, settings: Settings) !Built {
             // The texture cache keeps each file's name, without the directory the game names it by.
-            const textures = try @import("../backdrop.zig").testing.Textures.initNames(gpa, &.{ "matflarea3", "matflareb3", "sfxalpha1", "matflarea7", "matflareb7" });
+            const textures = try @import("../../surrender/surrenderlib/srtexture.zig").testing.Textures.init(gpa, &.{ "matflarea3", "matflareb3", "sfxalpha1", "matflarea7", "matflareb7" });
             errdefer textures.deinit(gpa);
             return .{ .textures = textures, .looks = try .create(gpa, &textures.table, settings) };
         }
@@ -380,7 +382,7 @@ test Look {
 }
 
 test Guns {
-    // The turrets' guns flash where the port lets them; the Nova Cannon's never does.
+    // The turrets' guns flash where OpenReliant lets them; the Nova Cannon's never does.
     try std.testing.expectEqual(turret_ticks, Guns.turrets_too.ticks(.turret_flak));
     try std.testing.expectEqual(0, Guns.original.ticks(.turret_flak));
     try std.testing.expectEqual(0, Guns.turrets_too.ticks(.nova_cannon));

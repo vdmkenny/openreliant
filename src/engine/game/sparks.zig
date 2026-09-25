@@ -16,6 +16,7 @@ const srcore = @import("../surrender/surrenderlib/srcore.zig");
 const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
 const gameobj = @import("gameobj.zig");
 const matmanager = @import("matmanager.zig");
+const particles = @import("particles.zig");
 const table = @import("table.zig");
 const xtrabits = @import("xtrabits.zig");
 const Clock = @import("main.zig").Clock;
@@ -236,7 +237,8 @@ pub const Sparks = struct {
 
     /// `0x004A1BB0`, which `particles_frame` runs first: each spark flies on by its velocity and
     /// what it carries times the ticks since they last moved, slows by its drag for each of them,
-    /// and fades from its first colour to its last over its life, after which it is gone.
+    /// and fades from its first colour to its last over its life (`vec3_lerp`, `0x004C1070`), after
+    /// which it is gone.
     pub fn frame(all: *Sparks, clock: *const Clock) void {
         const ticks: f32 = @floatFromInt(clock.frame_start - all.moved_at);
         for (&all.sparks.slots) |*slot| {
@@ -249,8 +251,8 @@ pub const Sparks = struct {
             }
             spark.at += (spark.velocity + spark.carried) * @as(Vector, @splat(ticks));
             spark.velocity *= @splat(std.math.pow(f32, look.drag, ticks));
-            const done = @as(f32, @floatFromInt(age)) / @as(f32, @floatFromInt(look.life));
-            const colour = std.math.lerp(@as(Vector, look.colours[0]), @as(Vector, look.colours[1]), @as(Vector, @splat(done)));
+            const done = particles.through(clock.frame_start, spark.born, look.life);
+            const colour = math.lerp(@as(Vector, look.colours[0]), @as(Vector, look.colours[1]), done);
             spark.colours = @splat(.{ colour[0], colour[1], colour[2], 1 });
         }
         all.moved_at = clock.frame_start;
@@ -292,11 +294,11 @@ pub fn spray(world: gameobj.World, kind: Kind, at: Vector, direction: Vector, ca
 pub const testing = struct {
     /// The sparks built over a table holding nothing but their textures.
     pub const Built = struct {
-        textures: *@import("backdrop.zig").testing.Textures,
+        textures: *@import("../surrender/surrenderlib/srtexture.zig").testing.Textures,
         sparks: Sparks,
 
         pub fn init(gpa: Allocator) !Built {
-            const textures = try @import("backdrop.zig").testing.Textures.initNames(gpa, &.{ texture, beam_texture });
+            const textures = try @import("../surrender/surrenderlib/srtexture.zig").testing.Textures.init(gpa, &.{ texture, beam_texture });
             errdefer textures.deinit(gpa);
             return .{ .textures = textures, .sparks = try .create(gpa, &textures.table) };
         }

@@ -12,6 +12,7 @@ const c = @import("sdl");
 const openreliant = @import("openreliant");
 const srshadow = openreliant.engine.surrender.surrenderlib.srshadow;
 const gpu = @import("../gpu.zig");
+const sdl = @import("../sdl.zig");
 const Geometry = @import("geometry.zig").Geometry;
 
 /// How the shadows are drawn, or not at all.
@@ -139,7 +140,7 @@ pub const Shadows = struct {
         sampler_info.enable_compare = true;
         // Lit where the pixel lies no farther from the sun than what the map holds.
         sampler_info.compare_op = c.SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
-        const sampler = c.SDL_CreateGPUSampler(handle, &sampler_info) orelse return gpu.fail("SDL_CreateGPUSampler");
+        const sampler = c.SDL_CreateGPUSampler(handle, &sampler_info) orelse return sdl.fail("SDL_CreateGPUSampler");
         errdefer c.SDL_ReleaseGPUSampler(handle, sampler);
         var shadows: Shadows = .{ .quality = quality, .maps = maps, .sampler = sampler };
         if (quality != .off) {
@@ -174,7 +175,7 @@ pub const Shadows = struct {
         return if (wide) c.SDL_GPU_TEXTUREFORMAT_D32_FLOAT else c.SDL_GPU_TEXTUREFORMAT_D16_UNORM;
     }
 
-    fn mapsTexture(handle: *c.SDL_GPUDevice, format: c.SDL_GPUTextureFormat, across: u32) error{Sdl}!*c.SDL_GPUTexture {
+    fn mapsTexture(handle: *c.SDL_GPUDevice, format: c.SDL_GPUTextureFormat, across: u32) sdl.Error!*c.SDL_GPUTexture {
         var info = std.mem.zeroes(c.SDL_GPUTextureCreateInfo);
         info.type = c.SDL_GPU_TEXTURETYPE_2D_ARRAY;
         info.format = format;
@@ -183,14 +184,14 @@ pub const Shadows = struct {
         info.height = across;
         info.layer_count_or_depth = srshadow.map_count;
         info.num_levels = 1;
-        return c.SDL_CreateGPUTexture(handle, &info) orelse gpu.fail("SDL_CreateGPUTexture");
+        return c.SDL_CreateGPUTexture(handle, &info) orelse sdl.fail("SDL_CreateGPUTexture");
     }
 
     /// Draws the casters' depth alone, both faces, with the bias against self-shadowing, a faint
     /// caster's into a share of the texels as its strength (`shaders/shadow.glsl`). What lies
     /// nearer the sun than the box is held at its near side rather than cut off, so that it still
     /// casts.
-    fn depthPipeline(shadows: Shadows, handle: *c.SDL_GPUDevice, format: c.SDL_GPUTextureFormat) error{Sdl}!*c.SDL_GPUGraphicsPipeline {
+    fn depthPipeline(shadows: Shadows, handle: *c.SDL_GPUDevice, format: c.SDL_GPUTextureFormat) sdl.Error!*c.SDL_GPUGraphicsPipeline {
         const attributes = [_]c.SDL_GPUVertexAttribute{
             .{ .location = 0, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, .offset = @offsetOf(Vertex, "position") },
             .{ .location = 1, .buffer_slot = 0, .format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT, .offset = @offsetOf(Vertex, "strength") },
@@ -211,7 +212,7 @@ pub const Shadows = struct {
         info.depth_stencil_state.enable_depth_write = true;
         info.depth_stencil_state.compare_op = c.SDL_GPU_COMPAREOP_LESS;
         info.target_info = .{ .num_color_targets = 0, .depth_stencil_format = format, .has_depth_stencil_target = true };
-        return c.SDL_CreateGPUGraphicsPipeline(handle, &info) orelse gpu.fail("SDL_CreateGPUGraphicsPipeline");
+        return c.SDL_CreateGPUGraphicsPipeline(handle, &info) orelse sdl.fail("SDL_CreateGPUGraphicsPipeline");
     }
 
     /// Takes the frame's shadows, which last until it is drawn.
@@ -235,7 +236,7 @@ pub const Shadows = struct {
 
     /// Draws the casters into each map the frame has, each run into the maps it reaches, before
     /// the frame is drawn. A map with no caster is cleared all the same.
-    pub fn draw(shadows: *Shadows, commands: *c.SDL_GPUCommandBuffer) error{Sdl}!void {
+    pub fn draw(shadows: *Shadows, commands: *c.SDL_GPUCommandBuffer) sdl.Error!void {
         const frame = shadows.frame orelse return;
         const pipeline = shadows.pipeline orelse return;
         for (0..srshadow.map_count) |map| {
@@ -248,7 +249,7 @@ pub const Shadows = struct {
             depth.store_op = c.SDL_GPU_STOREOP_STORE;
             depth.stencil_load_op = c.SDL_GPU_LOADOP_DONT_CARE;
             depth.stencil_store_op = c.SDL_GPU_STOREOP_DONT_CARE;
-            const pass = c.SDL_BeginGPURenderPass(commands, null, 0, &depth) orelse return gpu.fail("SDL_BeginGPURenderPass");
+            const pass = c.SDL_BeginGPURenderPass(commands, null, 0, &depth) orelse return sdl.fail("SDL_BeginGPURenderPass");
             defer c.SDL_EndGPURenderPass(pass);
             const geometry = shadows.geometry orelse continue;
             c.SDL_BindGPUGraphicsPipeline(pass, pipeline);

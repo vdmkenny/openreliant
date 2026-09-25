@@ -43,8 +43,9 @@ const fly_ahead: f32 = 20000;
 /// How far past the target Run Away puts the point it steers away by.
 const run_away_ahead: f32 = 100000;
 
-/// The throttle Run Away flies at.
+/// The throttle Run Away flies at, and the ease it steers with (`order_run_away`).
 const run_away_throttle: f32 = 0.5;
+const run_away_ease: f32 = 0.1;
 
 /// What Fly and Run Away leave of the throttle while the ship is going round something
 /// (`0x004DC408`).
@@ -63,11 +64,7 @@ pub const backwards_throttle: f32 = -0.5;
 
 /// `order_do_nothing` (`0x0040A880`): the update of Do Nothing (0), which lets the ship coast.
 pub fn doNothing(ctx: Context, index: u16) void {
-    const object = &ctx.world.objects.slots[index].object;
-    object.throttle = 0;
-    object.yaw_input = 0;
-    object.pitch_input = 0;
-    object.roll_input = 0;
+    ctx.world.objects.slots[index].object.letGo();
 }
 
 /// `order_fly_init` (`0x0040AC00`): the init of Fly (6), which keeps the heading the ship starts
@@ -89,9 +86,9 @@ pub fn fly(ctx: Context, index: u16) void {
     const heading = gameobj.vector(slot.state.fly.heading);
     const speed: f32 = @floatFromInt(slot.orders[0].data.fly);
     if (speed == 0) {
-        object.throttle = 1;
-    } else if (slot.flight) |flight| {
-        object.throttle = speed / ai.cruiseSpeed(object, flight, ctx.world.view);
+        object.throttle = ai.full_throttle;
+    } else if (ai.slotCruise(slot, ctx.world.view)) |cruise| {
+        object.throttle = speed / cruise;
     } else {
         const ticks: f32 = @floatFromInt(ctx.clock.frame_duration);
         const per_tick = heading * @as(Vector, @splat(speed * drift_per_tick));
@@ -101,23 +98,20 @@ pub fn fly(ctx: Context, index: u16) void {
         return;
     }
 
-    const target = slot.orders[0].target.index;
+    // The game reads the target's index as a ship's slot, whatever its kind.
     const flags: ai.Steering = .{ .avoid_near = true, .avoid_ahead = true, .roll_upright = true };
-    const avoided = if (target < 0) steer: {
-        const at = object.nextPosition() + heading * @as(Vector, @splat(fly_ahead));
-        break :steer ai.steer(ctx.world, index, at, 1, 0, flags);
-    } else steer: {
-        const to = all.slots[@intCast(target)].object.nextPosition();
+    const avoided = if (slot.orders[0].target.slot()) |target| steer: {
+        const to = all.slots[target].object.nextPosition();
         if (math.lengthSquared(to - object.nextPosition()) < fly_reach * fly_reach) {
-            object.throttle = 0;
-            object.yaw_input = 0;
-            object.pitch_input = 0;
-            object.roll_input = 0;
+            object.letGo();
             _ = aigeneric.pop(ctx, index);
             return;
         }
         if (slot.flight == null) return;
-        break :steer ai.steer(ctx.world, index, to, 1, 0, flags);
+        break :steer ai.steer(ctx.world, index, to, ai.full_limit, ai.no_ease, flags);
+    } else steer: {
+        const at = object.nextPosition() + heading * @as(Vector, @splat(fly_ahead));
+        break :steer ai.steer(ctx.world, index, at, ai.full_limit, ai.no_ease, flags);
     };
     if (avoided) object.throttle *= avoided_throttle;
 }
@@ -128,15 +122,19 @@ pub fn fly(ctx: Context, index: u16) void {
 pub fn runAway(ctx: Context, index: u16) void {
     const all = ctx.world.objects;
     const slot = &all.slots[index];
-    const target = slot.orders[0].target.index;
-    if (target < 0 or all.slots[@intCast(target)].object.type == .stand_in) {
+    // The game reads the target's index as a ship's slot, whatever its kind.
+    const other = find: {
+        const target = slot.orders[0].target.slot() orelse break :find null;
+        const object = &all.slots[target].object;
+        break :find if (object.type == .stand_in) null else object;
+    } orelse {
         _ = aigeneric.pop(ctx, index);
         return;
-    }
+    };
     const from = slot.object.nextPosition();
-    const away = from - all.slots[@intCast(target)].object.nextPosition();
+    const away = from - other.nextPosition();
     const at = from + away * @as(Vector, @splat(run_away_ahead));
-    _ = ai.steer(ctx.world, index, at, 1, 0.1, .{ .avoid_near = true, .avoid_ahead = true });
+    _ = ai.steer(ctx.world, index, at, ai.full_limit, run_away_ease, .{ .avoid_near = true, .avoid_ahead = true });
     slot.object.throttle = run_away_throttle;
 }
 
@@ -144,9 +142,7 @@ pub fn runAway(ctx: Context, index: u16) void {
 /// spot.
 pub fn slowRotate(ctx: Context, index: u16) void {
     const object = &ctx.world.objects.slots[index].object;
-    object.throttle = 0;
-    object.pitch_input = 0;
-    object.roll_input = 0;
+    object.letGo();
     object.yaw_input = spin_input;
 }
 
@@ -188,9 +184,8 @@ pub fn matchSpeed(ctx: Context, index: u16) void {
         _ = aigeneric.pop(ctx, index);
         return;
     }
-    const flight = slot.flight orelse return;
-    const speed = all.slots[@intCast(target.index)].object.speed;
-    slot.object.throttle = speed / ai.cruiseSpeed(&slot.object, flight, ctx.world.view);
+    const cruise = ai.slotCruise(slot, ctx.world.view) orelse return;
+    slot.object.throttle = all.slots[@intCast(target.index)].object.speed / cruise;
 }
 
 /// `order_launch_missile` (`0x0040B940`): the update of Launch Missile (2), which runs once over
@@ -345,7 +340,7 @@ test fly {
 
     const index = try mission.addOther(@splat(0));
     const other = try mission.addOther(.{ 0, 0, 30000 });
-    try std.testing.expect(try aigeneric.pushShip(ctx, index, .fly, other, -1));
+    try std.testing.expect(try aigeneric.pushShip(ctx, index, .fly, other, aigeneric.Target.whole));
 
     // Starting it keeps the heading, and with no speed of its own it flies at full throttle.
     aigeneric.objectOrders(ctx, index);
@@ -376,7 +371,7 @@ test "Fly without a target holds the heading it started on" {
     const index = try mission.addOther(@splat(0));
     const slot = &all.slots[index];
     objects.setOrientation(&slot.object, &slot.drawn, math.rotation(.y, std.math.pi / 2.0));
-    try std.testing.expect(try aigeneric.push(ctx, index, .fly, .{ .kind = .ship, .index = -1, .component = -1 }));
+    try std.testing.expect(try aigeneric.push(ctx, index, .fly, .none));
     aigeneric.objectOrders(ctx, index);
     try std.testing.expectApproxEqAbs(1, slot.state.fly.heading.x, 1e-6);
     // The heading is where it points, so it steers straight on.
@@ -394,7 +389,7 @@ test "Fly moves an object with no flight stats, and glides it between the ticks"
     const index = try mission.addOther(@splat(0));
     const slot = &all.slots[index];
     slot.flight = null;
-    try std.testing.expect(try aigeneric.push(ctx, index, .fly, .{ .kind = .ship, .index = -1, .component = -1 }));
+    try std.testing.expect(try aigeneric.push(ctx, index, .fly, .none));
     slot.orders[0].data.fly = 100;
     // Placed on by its speed for the ticks the frame spans, and gliding that much a tick.
     mission.clock.frame_duration = 2;
@@ -413,7 +408,7 @@ test "a ship under a Fly order closes on its target and stops there" {
 
     const index = try mission.addOther(@splat(0));
     const target = try mission.addOther(.{ 8000, 0, 30000 });
-    try std.testing.expect(try aigeneric.pushShip(ctx, index, .fly, target, -1));
+    try std.testing.expect(try aigeneric.pushShip(ctx, index, .fly, target, aigeneric.Target.whole));
     const slot = &all.slots[index];
     const to = all.slots[target].object.nextPosition();
     const start = math.distance(gameobj.vector(slot.object.root.position), to);
@@ -449,7 +444,7 @@ test matchSpeed {
     const other = try mission.addOther(.{ 0, 0, 5000 });
     all.slots[other].object.flags.targetable = true;
     all.slots[other].object.speed = 160;
-    try std.testing.expect(try aigeneric.pushShip(ctx, index, .match_speed, other, -1));
+    try std.testing.expect(try aigeneric.pushShip(ctx, index, .match_speed, other, aigeneric.Target.whole));
 
     aigeneric.objectOrders(ctx, index);
     try std.testing.expectApproxEqAbs(0.5, all.slots[index].object.throttle, 1e-6);
@@ -489,7 +484,7 @@ test runAway {
 
     const index = try mission.addOther(@splat(0));
     const other = try mission.addOther(.{ 0, 0, 5000 });
-    try std.testing.expect(try aigeneric.pushShip(ctx, index, .run_away, other, -1));
+    try std.testing.expect(try aigeneric.pushShip(ctx, index, .run_away, other, aigeneric.Target.whole));
 
     // The target lies ahead, so it turns away from it and flies at half throttle.
     aigeneric.objectOrders(ctx, index);
@@ -508,7 +503,7 @@ test launchMissile {
     defer armed.deinit();
     const ship = try armed.add(.hostile, @splat(0));
     const target = try armed.add(.friendly, .{ 0, 0, 20000 });
-    armed.mission.slot(ship).orders[0] = .{ .order = .launch_missile, .target = .{ .kind = .ship, .index = @intCast(target), .component = -1 }, .sequence = 0, .data = .{ .words = @splat(0) } };
+    armed.mission.slot(ship).orders[0] = .{ .order = .launch_missile, .target = .at(target, null), .sequence = 0, .data = .{ .words = @splat(0) } };
     const ctx = armed.mission.orders();
     // The first rack with missiles, the Raptor pod, at the order's target.
     launchMissile(ctx, ship);

@@ -4,20 +4,25 @@
 //! (`force_hit_pushes`, `0x004BE060`).
 //!
 //! The game hands each file to the SideWinder Force Feedback SDK (`force_effects_read`,
-//! `0x004BDB10`, the SDK's `SWFF_CreateDIEffectFromFileEx`), whose Visual Force Effects server makes DirectInput effects of
-//! it, and starts them on the joystick. The port plays them itself instead, as rumble: each frame
-//! `Forces.motors` works out how hard every effect playing pushes at that moment, and the platform
-//! drives the controller's two motors by it. A waveform slower than `buzz_frequency` shakes the low
-//! motor as it swings; a faster one buzzes the high motor at its strength. The way an effect
-//! pushes, which a force-feedback joystick shows, rumble cannot
+//! `0x004BDB10`, the SDK's `SWFF_CreateDIEffectFromFileEx`), whose Visual Force Effects server
+//! makes DirectInput effects of it, and starts them on the joystick. OpenReliant plays them itself
+//! instead, as rumble: each frame `Forces.motors` works out how hard every effect playing pushes at
+//! that moment, and the platform drives the controller's two motors by it. A waveform slower than
+//! `buzz_frequency` shakes the low motor as it swings; a faster one buzzes the high motor at its
+//! strength. The way an effect pushes, which a force-feedback joystick shows, rumble cannot
 //! ([#244](https://github.com/vdmkenny/openreliant/issues/244)).
 //!
 //! **Improvement:** any controller that rumbles plays the effects, gamepads among them, where the
 //! game plays them on a DirectInput joystick with force feedback alone.
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const frc = @import("../../formats/frc.zig");
+const files = @import("../files.zig");
+const collision = @import("../game/collision.zig");
+const main = @import("../game/main.zig");
 
 /// The effects, each read from its own file.
 pub const Effect = enum {
@@ -37,7 +42,7 @@ pub const Effect = enum {
     nc,
     missile,
     shake,
-    // The port's, from files the game ships but never reads (`Unread`).
+    // OpenReliant's, from files the game ships but never reads (`Unread`).
     shield,
     hullshock,
     hullshock1,
@@ -90,7 +95,7 @@ pub const HitShake = enum {
     with_force_feedback,
 };
 
-/// How the port plays the force feedback where it does more than the game.
+/// How OpenReliant plays the force feedback where it does more than the game.
 pub const Settings = struct {
     unread: Unread = .played,
     hit_shake: HitShake = .always,
@@ -102,6 +107,34 @@ pub const Settings = struct {
 pub const Library = struct {
     files: std.EnumArray(Effect, ?frc.File) = .initFill(null),
 };
+
+/// The effects `load` read, and those the game lacks.
+pub const Found = struct {
+    library: Library = .{},
+    /// The effects whose files are missing, can't be read or aren't effect files, which play
+    /// nothing.
+    lacking: std.EnumSet(Effect) = .initFull(),
+};
+
+/// The folder the effects' files are in (`0x0050E1D8`).
+const folder = "forces\\";
+
+/// `load_force_effects` (`0x004BD800`): each effect's file in `folder` under the game's folder
+/// `directory`, into `arena`, the folder and the files found whatever the case of their names, as
+/// Windows finds them. OpenReliant reads the files the game never reads with its own (`Unread`),
+/// and reads them all whatever the controller.
+pub fn load(io: Io, arena: Allocator, directory: Io.Dir) Found {
+    var found: Found = .{};
+    for (std.enums.values(Effect)) |effect| {
+        var path: [files.max_path]u8 = undefined;
+        const name = std.fmt.bufPrint(&path, folder ++ "{s}", .{effect.fileName()}) catch continue;
+        const bytes = (files.readFile(io, arena, directory, name, .limited(files.max_file_size)) catch continue) orelse continue;
+        const file = frc.File.parse(arena, bytes) catch continue;
+        found.library.files.set(effect, file);
+        found.lacking.remove(effect);
+    }
+    return found;
+}
 
 /// How hard the controller's two motors turn, from 0 to 1: the low-frequency one, a heavy rumble,
 /// and the high-frequency one, a light buzz.
@@ -143,7 +176,7 @@ pub const push_per_damage = 300;
 const push_most: f32 = 10000;
 
 /// A hit on the player's ship the pushes count this frame, and the side it struck.
-const Hit = struct { push: f32 = 0, side: u2 = 0 };
+const Hit = struct { push: f32 = 0, side: collision.Quadrant = .left };
 
 /// A push playing: when it started, and how strong it is, from 0 to 1.
 const Push = struct { started: i32, strength: f32 };
@@ -199,8 +232,8 @@ pub const Forces = struct {
         if (!forces.playing(effect, now)) forces.start(effect, now);
     }
 
-    /// The port's, each frame the player's orders run (`Unread.played`): `Afterburn` plays as the
-    /// afterburner lights, and stops as it goes out.
+    /// OpenReliant's, each frame the player's orders run (`Unread.played`): `Afterburn` plays as
+    /// the afterburner lights, and stops as it goes out.
     pub fn afterburner(forces: *Forces, burning: bool, now: i32) void {
         defer forces.afterburning = burning;
         if (burning == forces.afterburning) return;
@@ -209,7 +242,7 @@ pub const Forces = struct {
 
     /// A hit's push on `side` of the player's ship (`damage_feedback`), `damage` strong, which the
     /// frame's pushes then count. The game keeps the latest `frame_hits`, from the first again.
-    pub fn hit(forces: *Forces, side: u2, damage: f32) void {
+    pub fn hit(forces: *Forces, side: collision.Quadrant, damage: f32) void {
         if (!forces.feedback) return;
         if (forces.next_hit >= frame_hits) forces.next_hit = 0;
         forces.hits[forces.next_hit] = .{ .push = damage * push_per_damage, .side = side };
@@ -230,15 +263,15 @@ pub const Forces = struct {
     /// 900 degrees, which DirectInput turns down (#244).
     pub fn pushFrame(forces: *Forces, now: i32) void {
         if (!forces.setting) return;
-        var sides: [4]f32 = @splat(0);
+        var sides: std.EnumArray(collision.Quadrant, f32) = .initFill(0);
         for (&forces.hits) |*each| {
             if (!(each.push > 0)) break;
-            sides[each.side] += each.push;
+            sides.getPtr(each.side).* += each.push;
             each.push = 0;
         }
         forces.next_hit = 0;
-        for ([_][2]u2{ .{ 0, 1 }, .{ 2, 3 } }) |pair| {
-            const across = sides[pair[0]] - sides[pair[1]];
+        for ([_][2]collision.Quadrant{ .{ .left, .right }, .{ .fore, .aft } }) |pair| {
+            const across = sides.get(pair[0]) - sides.get(pair[1]);
             if (across == 0) continue;
             if (forces.next_push >= push_slots) forces.next_push = 0;
             const slot = &forces.pushes[forces.next_push];
@@ -276,7 +309,14 @@ pub const Forces = struct {
 
 /// Ticks as milliseconds.
 fn millis(ticks: i32) f32 {
-    return @as(f32, @floatFromInt(ticks)) * 10;
+    return @as(f32, @floatFromInt(ticks)) * ms_per_tick;
+}
+
+/// The milliseconds in each of the game's ticks.
+const ms_per_tick = std.time.ms_per_s / main.ticks_per_second;
+
+comptime {
+    std.debug.assert(ms_per_tick * main.ticks_per_second == std.time.ms_per_s);
 }
 
 /// How deep groups may hold groups; one deeper plays nothing, as a group that holds itself would.
@@ -420,6 +460,36 @@ pub const testing = struct {
     };
 };
 
+test load {
+    const io = std.testing.io;
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+
+    // Without the folder, nothing plays.
+    try std.testing.expect(load(io, arena, tmp.dir).lacking.contains(.lc));
+
+    // The folder and its files are found whatever the case of their names; a file that isn't one
+    // is left out.
+    try tmp.dir.createDirPath(io, "Forces");
+    const bytes = try frc.testing.file(arena, &.{.{ .id = 0, .name = "Sine1", .kind = 2, .type = 102, .duration = 305, .rest = &.{ 4, 30, @bitCast(@as(i32, -30)) } }});
+    try tmp.dir.writeFile(io, .{ .sub_path = "Forces/Lc.FRC", .data = bytes });
+    try tmp.dir.writeFile(io, .{ .sub_path = "Forces/SHAKE.frc", .data = "not an effect" });
+    const found = load(io, arena, tmp.dir);
+    try std.testing.expectEqual(305, found.library.files.get(.lc).?.effects[0].duration);
+    try std.testing.expect(!found.lacking.contains(.lc));
+    try std.testing.expectEqual(null, found.library.files.get(.shake));
+    try std.testing.expect(found.lacking.contains(.shake) and found.lacking.contains(.missile));
+}
+
+test millis {
+    // A tick is a hundredth of a second.
+    try std.testing.expectEqual(10, millis(1));
+    try std.testing.expectEqual(1000, millis(main.ticks_per_second));
+}
+
 test "Effect.fileName" {
     try std.testing.expectEqualStrings("lc.frc", Effect.lc.fileName());
     try std.testing.expectEqualStrings("Missile.frc", Effect.missile.fileName());
@@ -478,7 +548,7 @@ test Forces {
     try std.testing.expectEqual(100, forces.started.get(.shake));
     try std.testing.expectEqual(Motors{ .high = 0.3 }, forces.motors(150));
 
-    // An effect the game never reads plays only where the port lets it.
+    // An effect the game never reads plays only where OpenReliant lets it.
     forces.settings = .original;
     forces.start(.shield, 200);
     try std.testing.expect(!forces.playing(.shield, 200));
@@ -534,9 +604,9 @@ test "the frame's hits push the ship" {
     var forces: Forces = .{ .library = &made.library, .feedback = true };
 
     // Two hits on the left, one on the right: across by the difference, along not at all.
-    forces.hit(0, 10);
-    forces.hit(0, 10);
-    forces.hit(1, 5);
+    forces.hit(.left, 10);
+    forces.hit(.left, 10);
+    forces.hit(.right, 5);
     forces.pushFrame(0);
     try std.testing.expectEqual(Push{ .started = 0, .strength = 0.45 }, forces.pushes[0].?);
     try std.testing.expectEqual(null, forces.pushes[1]);
@@ -545,10 +615,10 @@ test "the frame's hits push the ship" {
     try std.testing.expectEqual(Motors{}, forces.motors(100));
 
     // The pushes take their slots in turn, and one of 1 or less empties the slot it takes.
-    forces.hit(2, 100);
+    forces.hit(.fore, 100);
     forces.pushFrame(10);
     try std.testing.expectEqual(1, forces.pushes[1].?.strength);
-    forces.hit(3, 0.001);
+    forces.hit(.aft, 0.001);
     forces.pushFrame(20);
     try std.testing.expectEqual(null, forces.pushes[2]);
     try std.testing.expectEqual(3, forces.next_push);

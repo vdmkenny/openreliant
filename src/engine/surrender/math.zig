@@ -29,14 +29,19 @@ pub const Place = struct {
     /// (`SR_object_concate_parents`, `0x004C3570`, one level up).
     pub fn within(place: Place, parent: Place) Place {
         return .{
-            .position = transform(parent.orientation, place.position) + parent.position,
+            .position = parent.point(place.position),
             .orientation = product(parent.orientation, place.orientation),
         };
     }
 
-    /// `point`, given in the world, in this place's own frame.
-    pub fn inverse(place: Place, point: Vector) Vector {
-        return transformTransposed(place.orientation, point - place.position);
+    /// `local`, given in this place's own frame, in the world.
+    pub fn point(place: Place, local: Vector) Vector {
+        return transform(place.orientation, local) + place.position;
+    }
+
+    /// `at`, given in the world, in this place's own frame: the reverse of `point`.
+    pub fn inverse(place: Place, at: Vector) Vector {
+        return transformTransposed(place.orientation, at - place.position);
     }
 };
 
@@ -68,9 +73,12 @@ pub fn distance(a: Vector, b: Vector) f32 {
     return @sqrt(d[1] * d[1] + d[2] * d[2] + d[0] * d[0]);
 }
 
-/// The value `t` of the way from `a` to `b` (`lerp`, `0x004C1050`).
-pub fn lerp(a: f32, b: f32, t: f32) f32 {
-    return (b - a) * t + a;
+/// The value `t` of the way from `a` to `b` (`lerp`, `0x004C1050`), or for vectors the point `t` of
+/// the way, each component alike (`vec3_lerp`, `0x004C1070`).
+pub fn lerp(a: anytype, b: anytype, t: f32) @TypeOf(a, b) {
+    const T = @TypeOf(a, b);
+    const share: T = if (@typeInfo(T) == .vector) @splat(t) else t;
+    return (b - a) * share + a;
 }
 
 /// `angle` brought round to within a half turn either way: a turn less past a half turn, a turn
@@ -181,22 +189,60 @@ pub fn transpose(m: Matrix) Matrix {
     return .{ m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8] };
 }
 
+/// The matrix whose columns are `x`, `y` and `z`: for an orientation, its right, down and forward
+/// axes, as `mat3_from_axes` (`0x004C2610`) lays out the axes it works out.
+pub fn fromAxes(x: Vector, y: Vector, z: Vector) Matrix {
+    return .{ x[0], y[0], z[0], x[1], y[1], z[1], x[2], y[2], z[2] };
+}
+
 /// `mat3_orthonormalize` (`0x004C2690`): `m` with its axes, the columns, made unit length and
 /// perpendicular again. The Z axis keeps its direction, the Y axis becomes Z × X normalized, and
 /// the X axis Y × Z (`mat3_from_axes`, `0x004C2610`).
 pub fn orthonormalize(m: Matrix) Matrix {
-    const x: Vector = .{ m[0], m[3], m[6] };
-    const z = normalize(.{ m[2], m[5], m[8] });
-    const y = normalize(cross(z, x));
-    const new_x = cross(y, z);
-    return .{ new_x[0], y[0], z[0], new_x[1], y[1], z[1], new_x[2], y[2], z[2] };
+    const z = normalize(forward(m));
+    const y = normalize(cross(z, xAxis(m)));
+    return fromAxes(cross(y, z), y, z);
+}
+
+/// A corner of a box given by its two ends, low and high: which end it takes on each axis. Taken as
+/// a number from 0 to 7, bit 0 picks the end across, bit 1 down and bit 2 forward.
+pub const Corner = packed struct(u3) {
+    x: u1,
+    y: u1,
+    z: u1,
+
+    /// The corner numbered `n`.
+    pub fn of(n: usize) Corner {
+        return @bitCast(@as(u3, @intCast(n)));
+    }
+
+    /// Where the corner of the box from `ends[0]` to `ends[1]` stands.
+    pub fn in(corner: Corner, ends: [2]Vector) Vector {
+        return .{ ends[corner.x][0], ends[corner.y][1], ends[corner.z][2] };
+    }
+};
+
+test fromAxes {
+    const m = fromAxes(.{ 1, 2, 3 }, .{ 4, 5, 6 }, .{ 7, 8, 9 });
+    try std.testing.expectEqual(Vector{ 1, 2, 3 }, xAxis(m));
+    try std.testing.expectEqual(Vector{ 4, 5, 6 }, yAxis(m));
+    try std.testing.expectEqual(Vector{ 7, 8, 9 }, forward(m));
+}
+
+test Corner {
+    const ends = [2]Vector{ .{ -1, -2, -3 }, .{ 1, 2, 3 } };
+    try std.testing.expectEqual(Vector{ -1, -2, -3 }, Corner.of(0).in(ends));
+    try std.testing.expectEqual(Vector{ 1, -2, -3 }, Corner.of(1).in(ends));
+    try std.testing.expectEqual(Vector{ -1, 2, -3 }, Corner.of(2).in(ends));
+    try std.testing.expectEqual(Vector{ 1, 2, 3 }, Corner.of(7).in(ends));
 }
 
 /// `mat3_angles` (`0x004C2740`): the angles about X, Y and Z that make up `m`, in radians. When
 /// the Y angle is close to a right angle, the X angle takes all of the turn and Z is 0.
 ///
 /// **Improvement:** the engine looks the angles up in a table of arctangents in steps of 1/4096
-/// (`sr_atan2`, `0x004C3200`). The port computes them, which is more precise by up to half a step.
+/// (`sr_atan2`, `0x004C3200`). OpenReliant computes them, which is more precise by up to half a
+/// step.
 pub fn angles(m: Matrix) Vector {
     const across = @sqrt(m[1] * m[1] + m[0] * m[0]);
     const y = std.math.atan2(m[2], across);
@@ -225,6 +271,15 @@ pub fn round(x: f32) i32 {
     return @intFromFloat(r);
 }
 
+/// `__ftol` (`0x004CF28C`), which the compiler calls to turn a float into an integer: `x` with its
+/// fraction dropped, as a 64-bit integer whose low half an `int` keeps. A value no `i64` holds, or
+/// no number at all, gives the x87's indefinite integer, whose low half is zero.
+pub fn ftol(x: f32) i32 {
+    const t = @trunc(x);
+    if (!(t >= -0x1p63 and t < 0x1p63)) return 0;
+    return @truncate(@as(i64, @intFromFloat(t)));
+}
+
 pub const Axis = enum { x, y, z };
 
 /// A right-handed turn by `angle` radians about `axis`.
@@ -244,8 +299,8 @@ pub fn turned(m: Matrix, axis: Axis, angle: f32) Matrix {
     return product(m, rotation(axis, angle));
 }
 
-/// The rotation `mat3_from_angles` (`0x004C2410`) builds from a pitch, a yaw and a roll: turns about
-/// `X`, then `Y`, then `Z`.
+/// The rotation `mat3_from_angles` (`0x004C2410`) builds from a pitch, a yaw and a roll: turns
+/// about `X`, then `Y`, then `Z`.
 pub fn fromAngles(pitch: f32, yaw: f32, roll: f32) Matrix {
     const sp = @sin(pitch);
     const cp = @cos(pitch);
@@ -268,8 +323,8 @@ pub fn fromAngleVector(v: Vector) Matrix {
 /// An orientation whose forward axis, its third column, points along `direction`: turned about `Y`,
 /// then about `X`, with no roll (`mat3_look_at`, `0x004C1940`).
 ///
-/// **Improvement:** the engine takes the angles from `sr_atan2`'s table, as `angles` does. The port
-/// computes them.
+/// **Improvement:** the engine takes the angles from `sr_atan2`'s table, as `angles` does.
+/// OpenReliant computes them.
 pub fn lookAt(direction: Vector) Matrix {
     const yaw = std.math.atan2(direction[0], direction[2]);
     const cy = @cos(yaw);
@@ -322,11 +377,33 @@ test distance {
     try std.testing.expectEqual(0, distance(.{ 7, 7, 7 }, .{ 7, 7, 7 }));
 }
 
+test ftol {
+    try std.testing.expectEqual(3, ftol(3.7));
+    try std.testing.expectEqual(-3, ftol(-3.7));
+    // Past an `int`, the low half of the 64-bit integer.
+    try std.testing.expectEqual(-1294967296, ftol(3e9));
+    try std.testing.expectEqual(0, ftol(0x1p32));
+    try std.testing.expectEqual(0, ftol(std.math.nan(f32)));
+    try std.testing.expectEqual(0, ftol(0x1p70));
+}
+
 test lerp {
-    try std.testing.expectEqual(1, lerp(1, 0.1, 0));
-    try std.testing.expectEqual(3, lerp(2, 6, 0.25));
-    // In single precision the far end can miss `b` by the rounding of `b - a`, as the engine's does.
-    try std.testing.expectEqual(0.100000024, lerp(1, 0.1, 1));
+    const one: f32 = 1;
+    try std.testing.expectEqual(1, lerp(one, 0.1, 0));
+    try std.testing.expectEqual(3, lerp(@as(f32, 2), 6, 0.25));
+    // In single precision the far end can miss `b` by the rounding of `b - a`, as the engine's
+    // does.
+    try std.testing.expectEqual(0.100000024, lerp(one, 0.1, 1));
+    // A vector goes the same share of the way in each component.
+    try std.testing.expectEqual(Vector{ 3, 1, -1 }, lerp(Vector{ 2, 0, 0 }, Vector{ 6, 4, -4 }, 0.25));
+}
+
+test Place {
+    const place: Place = .{ .position = .{ 1, 2, 3 }, .orientation = .{ 0, -1, 0, 1, 0, 0, 0, 0, 1 } };
+    const local: Vector = .{ 5, 0, 0 };
+    const world = place.point(local);
+    try std.testing.expectEqual(Vector{ 1, 7, 3 }, world);
+    try std.testing.expectEqual(local, place.inverse(world));
 }
 
 test halfTurn {

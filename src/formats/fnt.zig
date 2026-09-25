@@ -11,11 +11,13 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const layout = @import("layout.zig");
+const spr = @import("spr.zig");
 
 pub const header_size = 0x10;
 
-/// Bytes of the palette some fonts carry after their last glyph: 256 RGB triples of 6-bit levels.
-pub const palette_size = 0x300;
+/// Bytes of the palette some fonts carry after their last glyph: 256 RGB triples of 6-bit levels,
+/// as a sprite set's.
+pub const palette_size = spr.palette_size;
 
 /// Coverage of a fully inked pixel.
 pub const full_coverage = 16;

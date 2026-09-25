@@ -31,11 +31,11 @@ pub const Level = enum(u8) {
     /// Dark smoke with sparks in it, and now and then a small fireball.
     burning = 3,
 
-    /// `mission_frame`'s rule for `object`'s level, from the weakest quadrant of its armour over six
-    /// times its type's `armor_class`: below 0.9 of it `light`, below 0.7 `heavy` and below half
-    /// `burning`. While the weakest of its shields' quadrants holds more than 0.9 of six times its
-    /// type's `shield_power`, smoke already showing thins to `light` and none starts. The game reads
-    /// the shields' aft quadrant twice and their right one not at all.
+    /// `mission_frame`'s rule for `object`'s level, from the weakest quadrant of its armour over
+    /// six times its type's `armor_class`: below 0.9 of it `light`, below 0.7 `heavy` and below
+    /// half `burning`. While the weakest of its shields' quadrants holds more than 0.9 of six times
+    /// its type's `shield_power`, smoke already showing thins to `light` and none starts. The game
+    /// reads the shields' aft quadrant twice and their right one not at all.
     pub fn of(object: *const gameobj.GameObject, combat: *const create.ShipCombat) Level {
         const shields = object.shields;
         if (@min(shields.aft, shields.fore, shields.left) / combat.fullShields() > shielded) {
@@ -174,10 +174,10 @@ pub const Stream = struct {
         }
     };
 
-    /// `0x00494400`: the smoke for `level` from `point`, or none at `none`. Its emitter stands where
-    /// the engine glow does, turned as it is, its Z axis turned back where the glow's plume burns
-    /// the other way (a negative length, `size[2]`), and streams along that axis at 30 to 36 a
-    /// tick for longer than any mission lasts, its particles straying by its plume's spread.
+    /// `0x00494400`: the smoke for `level` from `point`, or none at `none`. Its emitter stands
+    /// where the engine glow does, turned as it is, its Z axis turned back where the glow's plume
+    /// burns the other way (a negative length, `size[2]`), and streams along that axis at 30 to 36
+    /// a tick for longer than any mission lasts, its particles straying by its plume's spread.
     fn start(level: Level, point: Point) ?Stream {
         const made = level.plume() orelse return null;
         var orientation = point.attachment.orientation;
@@ -215,19 +215,22 @@ pub const Stream = struct {
         stream.emitter.inherited = carried;
         _ = pool.stream(&stream.emitter, .{ .position = carrier.position, .orientation = carrier.orientation }, sending);
         if (slot.object.smoke_level != .burning or sending.random.rand() % fireball_odds != 0) return;
-        const at = math.transform(slot.drawn.orientation, stream.emitter.place.position) + slot.drawn.position;
+        const at = slot.drawn.point(stream.emitter.place.position);
         const size = (sending.random.fraction() * fireball_size_range + fireball_size) * slot.object.radius;
         explode.fireballAt(world, at, .{ .size = size, .life = fireball_life, .velocity = carried });
     }
 
-    /// How long a stream lives, in ticks.
+    /// How long a stream lives, in ticks, and how fast its particles leave, a tick, and up to how
+    /// much faster (`smoke_start`: `0x00494699`, `0x00494679` and `0x00494689`).
     const endless = 999999;
-    /// The share of the ship's velocity, a step's, that its smoke carries on with, a tick's.
-    const carried_share: f32 = 0.25;
     const speed: f32 = 30;
     const speed_range: f32 = 6;
-    /// A fireball one frame in this many, this share of the ship's radius and up to
-    /// `fireball_size_range` more across (`0x004DC420`, `0x004DC3F8`), for this many ticks.
+    /// The share of the ship's velocity, a step's, that its smoke carries on with, a tick's
+    /// (`mission_frame`, `0x00492E97`).
+    const carried_share: f32 = 0.25;
+    /// A fireball one frame in this many (`0x00492ED0`), this share of the ship's radius and up to
+    /// `fireball_size_range` more across (`0x004DC420`, `0x004DC3F8`), for this many ticks
+    /// (`0x00492F27`).
     const fireball_odds = 10;
     const fireball_size: f32 = 0.1;
     const fireball_size_range: f32 = 0.2;
@@ -241,7 +244,7 @@ pub const Stream = struct {
 /// its smoke starts again for the new level from its model's first engine glow, and a model without
 /// one keeps what smoke it has.
 ///
-/// The port reckons which particles are behind the camera by the camera's last frame, which it
+/// OpenReliant reckons which particles are behind the camera by the camera's last frame, which it
 /// frames after this; the game frames the camera first.
 pub fn frame(world: gameobj.World) void {
     const all = world.objects;

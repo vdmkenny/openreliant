@@ -14,6 +14,7 @@
 const std = @import("std");
 
 const maneuvers = @import("../aidefend.zig");
+const profile = @import("../../profile.zig");
 pub const Opcode = maneuvers.Opcode;
 pub const Condition = maneuvers.Condition;
 
@@ -162,20 +163,10 @@ fn firstWord(text: []const u8) []const u8 {
     return cursor.word();
 }
 
-/// C's `atoi`: an optional sign and the digits after it, or 0; kept to the low 16 bits, as the
-/// payload stores it.
+/// C's `atoi`, which reads as `atol` does (`profile.atol`): an optional sign and the digits after
+/// it, or 0; kept to the low 16 bits, as the payload stores it.
 fn atoi(text: []const u8) u16 {
-    var value: i32 = 0;
-    var negative = false;
-    var at: usize = 0;
-    if (at < text.len and (text[at] == '-' or text[at] == '+')) {
-        negative = text[at] == '-';
-        at += 1;
-    }
-    while (at < text.len and std.ascii.isDigit(text[at])) : (at += 1) {
-        value = value *% 10 +% (text[at] - '0');
-    }
-    return @truncate(@as(u32, @bitCast(if (negative) -%value else value)));
+    return @truncate(@as(u32, @bitCast(profile.atol(text))));
 }
 
 /// C's `atof`, for the numbers words can hold: an optional sign, digits and a point, or 0.

@@ -1,4 +1,4 @@
-//! The parts of Direct3D 7 the driver uses (`IDirect3DDevice7`), as the port provides them: a
+//! The parts of Direct3D 7 the driver uses (`IDirect3DDevice7`), as OpenReliant provides them: a
 //! device that draws transformed, lit vertices with the states `set_material` and `set_depth`
 //! choose. `software.zig` draws them as Direct3D 7 rasterizes; the executable's device draws them
 //! with SDL's GPU interface.
@@ -7,12 +7,13 @@ const std = @import("std");
 
 const math = @import("../math.zig");
 const srd3d = @import("srd3d.zig");
+const srlight = @import("../surrenderlib/srlight.zig");
 const srshadow = @import("../surrenderlib/srshadow.zig");
 const srtexture = @import("../surrenderlib/srtexture.zig");
 
 /// A vertex as the driver hands it over (`D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_SPECULAR |
 /// D3DFVF_TEX1`, `0x1C4`): on the screen, with pixel centres at whole numbers, as Direct3D 7 has
-/// them. The fields after `v` are the port's, for a device that lights each pixel (`lights`).
+/// them. The fields after `v` are OpenReliant's, for a device that lights each pixel (`lights`).
 pub const Vertex = extern struct {
     x: f32,
     y: f32,
@@ -20,7 +21,7 @@ pub const Vertex = extern struct {
     z: f32,
     /// One over the depth, scaled; texture coordinates and colours are interpolated by it.
     rhw: f32,
-    /// Alpha, red, green and blue, from the top byte down.
+    /// Alpha, red, green and blue, from the top byte down (`Diffuse`).
     diffuse: u32,
     specular: u32 = 0,
     u: f32 = 0,
@@ -34,12 +35,46 @@ pub const Vertex = extern struct {
     light_mask: u32 = no_lights,
 
     comptime {
+        // The flexible vertex format's fields, in its order, and OpenReliant's after them.
+        std.debug.assert(@offsetOf(Vertex, "rhw") == 12);
+        std.debug.assert(@offsetOf(Vertex, "diffuse") == 16);
+        std.debug.assert(@offsetOf(Vertex, "specular") == 20);
+        std.debug.assert(@offsetOf(Vertex, "u") == 24);
+        std.debug.assert(@offsetOf(Vertex, "view") == 32);
+        std.debug.assert(@offsetOf(Vertex, "light_mask") == 56);
         std.debug.assert(@sizeOf(Vertex) == 60);
     }
 };
 
 /// A vertex's light mask when no light reaches it.
-pub const no_lights: u32 = std.math.maxInt(u32);
+pub const no_lights = srlight.no_lights;
+
+/// A vertex's colour as the device takes it: a byte a channel, blue in the lowest and alpha in the
+/// highest (`D3DCOLOR`).
+pub const Diffuse = packed struct(u32) {
+    blue: u8,
+    green: u8,
+    red: u8,
+    alpha: u8,
+
+    /// `channels`, red, green, blue and alpha, as the driver packs them: each times 255, rounded.
+    pub fn of(channels: [4]f32) Diffuse {
+        return .{ .red = channel(channels[0]), .green = channel(channels[1]), .blue = channel(channels[2]), .alpha = channel(channels[3]) };
+    }
+
+    /// The colour, red, green, blue and alpha, each from 0 to 1.
+    pub fn colour(diffuse: Diffuse) [4]f32 {
+        return .{ level(diffuse.red), level(diffuse.green), level(diffuse.blue), level(diffuse.alpha) };
+    }
+
+    fn channel(c: f32) u8 {
+        return std.math.lossyCast(u8, math.roundEven(c * 255));
+    }
+
+    fn level(byte: u8) f32 {
+        return @as(f32, @floatFromInt(byte)) / 255;
+    }
+};
 
 /// A directional or point light as a device that lights each pixel takes it (`Device.lights`), in
 /// the camera's frame. It reaches a vertex whose light mask shares no bit with `mask`, and adds to
@@ -60,14 +95,15 @@ pub const Light = struct {
     };
 };
 
-/// Packs a colour as the driver does: each channel times 255, rounded, alpha at the top.
+/// Packs a colour, red, green, blue and alpha, into a vertex's `diffuse` as the driver does
+/// (`Diffuse.of`).
 pub fn pack(colour: [4]f32) u32 {
-    return (@as(u32, channel(colour[3])) << 24) | (@as(u32, channel(colour[0])) << 16) |
-        (@as(u32, channel(colour[1])) << 8) | channel(colour[2]);
+    return @bitCast(Diffuse.of(colour));
 }
 
-fn channel(c: f32) u8 {
-    return std.math.lossyCast(u8, math.roundEven(c * 255));
+/// A vertex's `diffuse` as red, green, blue and alpha, each from 0 to 1.
+pub fn unpack(diffuse: u32) [4]f32 {
+    return @as(Diffuse, @bitCast(diffuse)).colour();
 }
 
 pub const white: u32 = 0xFFFF_FFFF;
@@ -81,13 +117,14 @@ pub const Primitive = enum {
     fan,
 };
 
-/// The render states for a draw: the texture, modulated by the diffuse colour, or the diffuse colour
-/// alone without one; the depth test and writes; and the blend factors, or none for blending off.
+/// The render states for a draw: the texture, modulated by the diffuse colour, or the diffuse
+/// colour alone without one; the depth test and writes; and the blend factors, or none for blending
+/// off.
 pub const State = struct {
     texture: ?*srtexture.Image,
     depth: srd3d.Depth,
     blend: ?srd3d.Factors,
-    /// The port's: the shadows the draw's lit pixels are looked up in, for a device that draws
+    /// OpenReliant's: the shadows the draw's lit pixels are looked up in, for a device that draws
     /// them.
     receives: Receives = .nothing,
 };
@@ -115,15 +152,15 @@ pub const Device = struct {
         /// straight over the finished frame, so a device that adds anything to the frame of its
         /// own, as the GPU's bloom does, leaves out what follows this.
         overlay: *const fn (*anyopaque) void,
-        /// The port's: takes the frame's directional and point lights, most wanted first, and
+        /// OpenReliant's: takes the frame's directional and point lights, most wanted first, and
         /// returns how many of them, from the first, it adds to each pixel. The driver lights
         /// the vertices with the rest. A device without it lights nothing itself, and the
         /// driver's vertices come lit, as Direct3D 7's did.
         lights: ?*const fn (*anyopaque, []const Light) usize = null,
-        /// The port's: how it draws shadows, or null where it draws none. A device without it
+        /// OpenReliant's: how it draws shadows, or null where it draws none. A device without it
         /// draws none.
         shadow_settings: ?*const fn (*anyopaque) ?srshadow.Settings = null,
-        /// The port's: the frame's shadows, after its lights, which last until the scene ends.
+        /// OpenReliant's: the frame's shadows, after its lights, which last until the scene ends.
         shadows: ?*const fn (*anyopaque, *const srshadow.Frame) void = null,
     };
 
@@ -166,4 +203,99 @@ pub const Device = struct {
 test pack {
     try std.testing.expectEqual(0xFF804000, pack(.{ 0.5, 0.25, 0, 1 }));
     try std.testing.expectEqual(white, pack(.{ 1, 1, 1, 1 }));
+    const diffuse: Diffuse = @bitCast(pack(.{ 0.5, 0.25, 0, 1 }));
+    try std.testing.expectEqual(0x80, diffuse.red);
+    try std.testing.expectEqual(0x40, diffuse.green);
+}
+
+test unpack {
+    try std.testing.expectEqual([4]f32{ 1, 0, 0, 1 }, unpack(0xFFFF0000));
+    try std.testing.expectEqual([4]f32{ 128.0 / 255.0, 64.0 / 255.0, 0, 1 }, unpack(pack(.{ 0.5, 0.25, 0, 1 })));
+}
+
+/// Devices for the tests of what draws with one.
+pub const testing = struct {
+    /// A device that keeps what it is asked to draw, and hands the lights it is given room for.
+    pub const Recorder = struct {
+        gpa: std.mem.Allocator,
+        draws: std.ArrayList(Draw) = .empty,
+        vertices: std.ArrayList(Vertex) = .empty,
+        /// How many of the frame's lights it adds to each pixel, and the lights it was last handed.
+        room: usize = 0,
+        lights: std.ArrayList(Light) = .empty,
+
+        /// A draw: its states, and its vertices in `vertices`, as the indices pick them.
+        pub const Draw = struct { state: State, primitive: Primitive, first: usize, count: usize };
+
+        pub fn deinit(recorder: *Recorder) void {
+            recorder.draws.deinit(recorder.gpa);
+            recorder.vertices.deinit(recorder.gpa);
+            recorder.lights.deinit(recorder.gpa);
+        }
+
+        pub fn interface(recorder: *Recorder) Device {
+            return .{ .ptr = recorder, .vtable = &vtable };
+        }
+
+        /// Forgets what it was asked to draw.
+        pub fn clear(recorder: *Recorder) void {
+            recorder.draws.clearRetainingCapacity();
+            recorder.vertices.clearRetainingCapacity();
+        }
+
+        /// The vertices of draw `n`.
+        pub fn drawn(recorder: *const Recorder, n: usize) []const Vertex {
+            const made = recorder.draws.items[n];
+            return recorder.vertices.items[made.first..][0..made.count];
+        }
+
+        /// The vertices of the last draw, or none.
+        pub fn last(recorder: *const Recorder) []const Vertex {
+            if (recorder.draws.items.len == 0) return &.{};
+            return recorder.drawn(recorder.draws.items.len - 1);
+        }
+
+        const vtable: Device.VTable = .{ .begin = nothing, .end = nothing, .draw = draw, .overlay = nothing, .lights = take };
+
+        fn from(ptr: *anyopaque) *Recorder {
+            return @ptrCast(@alignCast(ptr));
+        }
+
+        fn nothing(_: *anyopaque) void {}
+
+        fn draw(ptr: *anyopaque, state: State, primitive: Primitive, vertices: []const Vertex, indices: ?[]const u16) void {
+            const recorder = from(ptr);
+            const first = recorder.vertices.items.len;
+            if (indices) |picked| {
+                for (picked) |index| recorder.vertices.append(recorder.gpa, vertices[index]) catch @panic("out of memory");
+            } else {
+                recorder.vertices.appendSlice(recorder.gpa, vertices) catch @panic("out of memory");
+            }
+            const made: Draw = .{ .state = state, .primitive = primitive, .first = first, .count = recorder.vertices.items.len - first };
+            recorder.draws.append(recorder.gpa, made) catch @panic("out of memory");
+        }
+
+        fn take(ptr: *anyopaque, list: []const Light) usize {
+            const recorder = from(ptr);
+            recorder.lights.clearRetainingCapacity();
+            recorder.lights.appendSlice(recorder.gpa, list) catch @panic("out of memory");
+            return @min(list.len, recorder.room);
+        }
+    };
+};
+
+test "testing.Recorder" {
+    var recorder: testing.Recorder = .{ .gpa = std.testing.allocator };
+    defer recorder.deinit();
+    const target = recorder.interface();
+    const state: State = .{ .texture = null, .depth = .{ .testing = false, .writing = false }, .blend = null };
+    const corners = [3]Vertex{ .{ .x = 0, .y = 0, .z = 0, .rhw = 1, .diffuse = white }, .{ .x = 1, .y = 0, .z = 0, .rhw = 1, .diffuse = white }, .{ .x = 0, .y = 1, .z = 0, .rhw = 1, .diffuse = white } };
+    target.draw(state, .fan, &corners, null);
+    target.draw(state, .triangles, &corners, &.{ 2, 1 });
+    try std.testing.expectEqual(2, recorder.draws.items.len);
+    try std.testing.expectEqual(3, recorder.drawn(0).len);
+    try std.testing.expectEqual(1, recorder.last()[1].x);
+    recorder.room = 1;
+    try std.testing.expectEqual(1, target.lights(&.{ .{ .mask = 1, .kind = .{ .directional = .{ .toward = .{ 0, 0, 1 }, .colour = .{ 1, 1, 1 } } } }, .{ .mask = 2, .kind = .{ .directional = .{ .toward = .{ 0, 1, 0 }, .colour = .{ 1, 1, 1 } } } } }));
+    try std.testing.expectEqual(2, recorder.lights.items.len);
 }

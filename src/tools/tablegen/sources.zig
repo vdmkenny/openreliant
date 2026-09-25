@@ -19,6 +19,7 @@ const openreliant = @import("openreliant");
 
 const image = @import("image.zig");
 const testing = @import("testing.zig");
+const x86 = @import("x86.zig");
 
 /// A function of the listing: its entry, the end of its last instruction, and the addresses its
 /// operands name.
@@ -48,34 +49,29 @@ pub fn functions(arena: std.mem.Allocator, listing: []const u8) (Error || std.me
     var references: std.ArrayList(u32) = .empty;
     var current: ?Function = null;
 
-    var lines = std.mem.splitScalar(u8, listing, '\n');
-    while (lines.next()) |raw| {
-        const line = std.mem.trimEnd(u8, raw, "\r");
-        if (std.mem.startsWith(u8, line, "; ==== ")) {
+    var lines: x86.Lines = .init(listing);
+    while (lines.next() catch return error.BadListing) |line| switch (line) {
+        .banner => |banner| {
             if (current) |*function| try finish(arena, &all, function, &references);
-            const at = std.mem.lastIndexOf(u8, line, " @ ") orelse return error.BadListing;
-            const address = std.fmt.parseInt(u32, line[at + 3 ..][0..8], 16) catch return error.BadListing;
-            current = .{ .address = address, .end = address, .references = &.{} };
-            continue;
-        }
-        const function = &(current orelse continue);
-        if (line.len < 8) continue;
-        const address = std.fmt.parseInt(u32, line[0..8], 16) catch continue;
-        var fields = std.mem.tokenizeScalar(u8, line[8..], ' ');
-        const bytes = fields.next() orelse continue;
-        function.end = @max(function.end, address + @as(u32, @intCast(bytes.len / 2)));
-        // Every number the operands spell, whatever it is: only those that are strings matter.
-        const operands = fields.rest();
-        var i: usize = 0;
-        while (std.mem.indexOfPos(u8, operands, i, "0x")) |start| {
-            var end = start + 2;
-            while (end < operands.len and std.ascii.isHex(operands[end])) end += 1;
-            if (std.fmt.parseInt(u32, operands[start + 2 .. end], 16)) |value| {
-                try references.append(arena, value);
-            } else |_| {}
-            i = end;
-        }
-    }
+            current = .{ .address = banner.address, .end = banner.address, .references = &.{} };
+        },
+        .instruction => |encoded| {
+            const function = &(current orelse continue);
+            function.end = @max(function.end, encoded.address + @as(u32, @intCast(encoded.bytes.len / 2)));
+            // Every number the operands spell, whatever it is: only those that are strings matter.
+            const operands = encoded.text;
+            var i: usize = 0;
+            while (std.mem.indexOfPos(u8, operands, i, "0x")) |start| {
+                var end = start + 2;
+                while (end < operands.len and std.ascii.isHex(operands[end])) end += 1;
+                if (std.fmt.parseInt(u32, operands[start + 2 .. end], 16)) |value| {
+                    try references.append(arena, value);
+                } else |_| {}
+                i = end;
+            }
+        },
+        .other => {},
+    };
     if (current) |*function| try finish(arena, &all, function, &references);
     std.mem.sort(Function, all.items, {}, struct {
         fn lessThan(_: void, a: Function, b: Function) bool {
@@ -129,6 +125,31 @@ const Position = u16;
 
 const Anchor = struct { address: u32, position: Position };
 
+/// A function of the listing, by index, that uses the string at `string`.
+const Use = struct { string: u32, function: u32 };
+
+/// Walks uses sorted by string, the users of one string at a time.
+const Runs = struct {
+    rest: []const Use,
+
+    fn next(runs: *Runs) ?[]const Use {
+        if (runs.rest.len == 0) return null;
+        const string = runs.rest[0].string;
+        var end: usize = 1;
+        while (end < runs.rest.len and runs.rest[end].string == string) end += 1;
+        defer runs.rest = runs.rest[end..];
+        return runs.rest[0..end];
+    }
+};
+
+/// The one function that uses a string, where the string is its alone: no other function uses
+/// it, no word of the data points at it, and it is not a path.
+fn privateUser(users: []const Use, pointed: []const u32, paths: []const Anchor) ?u32 {
+    const string = users[0].string;
+    if (users.len != 1 or contains(pointed, string) or positionOf(paths, string) != null) return null;
+    return users[0].function;
+}
+
 /// Maps `code` to the source files whose paths the strings at `strings` hold.
 pub fn read(
     arena: std.mem.Allocator,
@@ -162,7 +183,6 @@ pub fn read(
     const last: Position = @intCast(2 * files.items.len);
 
     // Who uses each string: functions, and pointers in the data.
-    const Use = struct { string: u32, function: u32 };
     var uses: std.ArrayList(Use) = .empty;
     for (code, 0..) |function, index| {
         for (function.references) |address| {
@@ -185,13 +205,9 @@ pub fn read(
     while (true) {
         @memset(lo, 0);
         @memset(hi, last);
-        var i: usize = 0;
-        while (i < uses.items.len) {
-            const string = uses.items[i].string;
-            var end = i;
-            while (end < uses.items.len and uses.items[end].string == string) end += 1;
-            const users = uses.items[i..end];
-            i = end;
+        var strings_used: Runs = .{ .rest = uses.items };
+        while (strings_used.next()) |users| {
+            const string = users[0].string;
             if (positionOf(paths.items, string)) |position| {
                 for (users) |use| {
                     lo[use.function] = @max(lo[use.function], position);
@@ -210,16 +226,10 @@ pub fn read(
 
         // A string's only user is in the file whose data holds it, unless that contradicts the
         // other strings: then it is shared after all, with a user the listing does not show.
-        i = 0;
-        while (i < uses.items.len) {
-            const string = uses.items[i].string;
-            var end = i;
-            while (end < uses.items.len and uses.items[end].string == string) end += 1;
-            const private = end - i == 1 and !contains(pointed, string) and positionOf(paths.items, string) == null;
-            const user = uses.items[i].function;
-            i = end;
-            if (!private) continue;
-            _, const above = around(known.items, string, last);
+        strings_used = .{ .rest = uses.items };
+        while (strings_used.next()) |users| {
+            const user = privateUser(users, pointed, paths.items) orelse continue;
+            _, const above = around(known.items, users[0].string, last);
             if (above >= lo[user]) hi[user] = @min(hi[user], above);
         }
         var ceiling: Position = last;
@@ -233,15 +243,10 @@ pub fn read(
         // The strings of the functions now placed place others in turn.
         var next: std.ArrayList(Anchor) = .empty;
         try next.appendSlice(arena, paths.items);
-        i = 0;
-        while (i < uses.items.len) {
-            const string = uses.items[i].string;
-            var end = i;
-            while (end < uses.items.len and uses.items[end].string == string) end += 1;
-            const user = uses.items[i].function;
-            const private = end - i == 1 and !contains(pointed, string) and positionOf(paths.items, string) == null;
-            i = end;
-            if (private and lo[user] == hi[user]) try next.append(arena, .{ .address = string, .position = lo[user] });
+        strings_used = .{ .rest = uses.items };
+        while (strings_used.next()) |users| {
+            const user = privateUser(users, pointed, paths.items) orelse continue;
+            if (lo[user] == hi[user]) try next.append(arena, .{ .address = users[0].string, .position = lo[user] });
         }
         sortAnchors(next.items);
         keepOrdered(paths.items, &next);

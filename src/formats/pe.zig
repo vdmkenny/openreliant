@@ -61,6 +61,17 @@ pub const FileHeader = extern struct {
     }
 };
 
+/// What the DOS header's `nt_offset` points at: the PE signature, then the file header.
+pub const NtHeaders = extern struct {
+    signature: [nt_signature.len]u8,
+    file_header: FileHeader,
+
+    comptime {
+        assert(@offsetOf(NtHeaders, "file_header") == nt_signature.len);
+        assert(@sizeOf(NtHeaders) == 24);
+    }
+};
+
 pub const OptionalHeaderMagic = enum(u16) {
     pe32 = 0x010B,
     pe32plus = 0x020B,
@@ -106,9 +117,17 @@ pub const OptionalHeader32 = extern struct {
     }
 };
 
+/// The data directories a PE32 optional header has room for (`IMAGE_NUMBEROF_DIRECTORY_ENTRIES`).
+/// A header may say it has more; the rest are not read.
+pub const directory_entries = 16;
+
 pub const DataDirectory = extern struct {
     rva: u32,
     size: u32,
+
+    comptime {
+        assert(@sizeOf(DataDirectory) == 8);
+    }
 };
 
 pub const DirectoryIndex = enum(u32) {
@@ -145,8 +164,7 @@ pub const SectionHeader = extern struct {
 
     /// Section names are 8 bytes, NUL-padded rather than NUL-terminated.
     pub fn name(header: *align(1) const SectionHeader) []const u8 {
-        const end = std.mem.indexOfScalar(u8, &header.name_bytes, 0) orelse header.name_bytes.len;
-        return header.name_bytes[0..end];
+        return std.mem.sliceTo(&header.name_bytes, 0);
     }
 
     pub const Characteristics = packed struct(u32) {
@@ -221,37 +239,31 @@ pub const Image = struct {
     sections: []align(1) SectionHeader,
 
     pub fn parse(bytes: []u8) ParseError!Image {
-        if (bytes.len < @sizeOf(DosHeader)) return error.NotPe;
-        const dos: *align(1) const DosHeader = @ptrCast(bytes[0..@sizeOf(DosHeader)]);
+        const dos = layout.view(DosHeader, bytes) catch return error.NotPe;
         if (!std.mem.eql(u8, &dos.magic, dos_magic)) return error.NotPe;
 
-        const nt = dos.nt_offset;
-        const file_header_offset = nt + nt_signature.len;
-        if (bytes.len < file_header_offset + @sizeOf(FileHeader)) return error.Truncated;
-        if (!std.mem.eql(u8, bytes[nt..][0..nt_signature.len], nt_signature)) return error.NotPe;
+        if (dos.nt_offset > bytes.len) return error.Truncated;
+        const nt = try layout.viewMut(NtHeaders, bytes[dos.nt_offset..]);
+        if (!std.mem.eql(u8, &nt.signature, nt_signature)) return error.NotPe;
 
-        const file_header: *align(1) FileHeader = @ptrCast(bytes[file_header_offset..][0..@sizeOf(FileHeader)]);
-        const optional_offset = file_header_offset + @sizeOf(FileHeader);
+        const file_header = &nt.file_header;
+        const optional_offset = @as(usize, dos.nt_offset) + @sizeOf(NtHeaders);
         if (file_header.optional_header_size < @sizeOf(OptionalHeader32)) return error.UnsupportedFormat;
         if (bytes.len < optional_offset + file_header.optional_header_size) return error.Truncated;
 
-        const optional_header: *align(1) OptionalHeader32 =
-            @ptrCast(bytes[optional_offset..][0..@sizeOf(OptionalHeader32)]);
+        const optional_header = try layout.viewMut(OptionalHeader32, bytes[optional_offset..]);
         if (optional_header.magic != .pe32) return error.UnsupportedFormat;
 
-        // `@min` against a literal narrows the result type, so name the type the arithmetic needs.
-        const directory_count: usize = @min(optional_header.directory_count, 16);
-        const directories_offset = optional_offset + @sizeOf(OptionalHeader32);
-        const directories_size = directory_count * @sizeOf(DataDirectory);
-        if (bytes.len < directories_offset + directories_size) return error.Truncated;
-        const directories: []align(1) DataDirectory =
-            @alignCast(std.mem.bytesAsSlice(DataDirectory, bytes[directories_offset..][0..directories_size]));
-
-        const sections_offset = optional_offset + file_header.optional_header_size;
-        const sections_size = @as(usize, file_header.section_count) * @sizeOf(SectionHeader);
-        if (bytes.len < sections_offset + sections_size) return error.Truncated;
-        const sections: []align(1) SectionHeader =
-            @alignCast(std.mem.bytesAsSlice(SectionHeader, bytes[sections_offset..][0..sections_size]));
+        const directories = try layout.arrayMut(
+            DataDirectory,
+            bytes[optional_offset + @sizeOf(OptionalHeader32) ..],
+            @min(optional_header.directory_count, directory_entries),
+        );
+        const sections = try layout.arrayMut(
+            SectionHeader,
+            bytes[optional_offset + file_header.optional_header_size ..],
+            file_header.section_count,
+        );
 
         return .{
             .bytes = bytes,
@@ -260,6 +272,12 @@ pub const Image = struct {
             .directories = directories,
             .sections = sections,
         };
+    }
+
+    /// The record of type `T` at `offset` into the file, or null where it runs past the end.
+    fn recordAt(image: Image, comptime T: type, offset: usize) ?*align(1) const T {
+        if (offset > image.bytes.len) return null;
+        return layout.view(T, image.bytes[offset..]) catch null;
     }
 
     pub fn directory(image: Image, index: DirectoryIndex) ?DataDirectory {
@@ -326,8 +344,7 @@ pub const Image = struct {
         const language = image.resourceEntries(root, languages) orelse return null;
         if (language.len == 0 or language[0].below() != null) return null;
         const at = std.math.add(u32, root, language[0].offset) catch return null;
-        if (at + @sizeOf(ResourceData) > image.bytes.len) return null;
-        const data: *align(1) const ResourceData = @ptrCast(image.bytes[at..][0..@sizeOf(ResourceData)]);
+        const data = image.recordAt(ResourceData, at) orelse return null;
         const offset = image.fileOffset(data.rva) orelse return null;
         const end = std.math.add(u32, offset, data.size) catch return null;
         if (end > image.bytes.len) return null;
@@ -338,17 +355,14 @@ pub const Image = struct {
     /// block `id / 16 + 1` holds strings `id` rounded down to a multiple of 16 on, each a length
     /// and that many UTF-16 units. Null when there is no such string; an empty one is empty.
     pub fn string(image: Image, id: u16) ?[]align(1) const u16 {
-        const block = image.resource(.string, (id >> 4) + 1) orelse return null;
+        const block = image.resource(.string, id / strings_per_block + 1) orelse return null;
         var at: usize = 0;
         for (0..strings_per_block) |index| {
             const length = (layout.view(u16, block[at..]) catch return null).*;
             at += @sizeOf(u16);
-            const size = @as(usize, length) * @sizeOf(u16);
-            if (at + size > block.len) return null;
-            if (index == id & (strings_per_block - 1)) {
-                return std.mem.bytesAsSlice(u16, block[at..][0..size]);
-            }
-            at += size;
+            const units = layout.array(u16, block[at..], length) catch return null;
+            if (index == id % strings_per_block) return units;
+            at += units.len * @sizeOf(u16);
         }
         return null;
     }
@@ -356,12 +370,9 @@ pub const Image = struct {
     /// The entries of the resource directory `offset` past `root`, or null past the file.
     fn resourceEntries(image: Image, root: u32, offset: u32) ?[]align(1) const ResourceEntry {
         const at = std.math.add(u32, root, offset) catch return null;
-        if (at + @sizeOf(ResourceDirectory) > image.bytes.len) return null;
-        const directory_header: *align(1) const ResourceDirectory = @ptrCast(image.bytes[at..][0..@sizeOf(ResourceDirectory)]);
+        const directory_header = image.recordAt(ResourceDirectory, at) orelse return null;
         const count = @as(usize, directory_header.named_count) + directory_header.id_count;
-        const first = at + @sizeOf(ResourceDirectory);
-        if (first + count * @sizeOf(ResourceEntry) > image.bytes.len) return null;
-        return std.mem.bytesAsSlice(ResourceEntry, image.bytes[first..][0 .. count * @sizeOf(ResourceEntry)]);
+        return layout.array(ResourceEntry, image.bytes[at + @sizeOf(ResourceDirectory) ..], count) catch null;
     }
 
     /// The entry of `id` in the resource directory `offset` past `root`.
@@ -445,12 +456,9 @@ pub const ImportIterator = struct {
     };
 
     pub fn next(iterator: *ImportIterator) ?Entry {
-        const end = iterator.offset + @sizeOf(ImportDescriptor);
-        if (end > iterator.image.bytes.len) return null;
-        const descriptor: *align(1) const ImportDescriptor =
-            @ptrCast(iterator.image.bytes[iterator.offset..][0..@sizeOf(ImportDescriptor)]);
+        const descriptor = iterator.image.recordAt(ImportDescriptor, iterator.offset) orelse return null;
         if (descriptor.isTerminator()) return null;
-        iterator.offset = end;
+        iterator.offset += @sizeOf(ImportDescriptor);
         return .{
             .descriptor = descriptor,
             .name = iterator.image.stringAt(descriptor.name_rva) orelse "",
@@ -468,7 +476,6 @@ pub const testing = struct {
     };
 
     const nt_offset = 0x80;
-    const directory_count = 16;
     const headers_size = 0x400;
     const file_alignment = 0x200;
 
@@ -492,47 +499,45 @@ pub const testing = struct {
         sections: []const Section,
         directories: []const Directory,
     ) ![]u8 {
-        const optional_offset = nt_offset + nt_signature.len + @sizeOf(FileHeader);
-        const optional_size = @sizeOf(OptionalHeader32) + directory_count * @sizeOf(DataDirectory);
+        const optional_offset = nt_offset + @sizeOf(NtHeaders);
+        const optional_size = @sizeOf(OptionalHeader32) + directory_entries * @sizeOf(DataDirectory);
         const sections_offset = optional_offset + optional_size;
         if (sections_offset + sections.len * @sizeOf(SectionHeader) > headers_size) return error.TooManySections;
 
         var size: usize = headers_size;
         for (sections) |section| size += std.mem.alignForward(usize, section.data.len, file_alignment);
         const bytes = try allocator.alloc(u8, size);
+        errdefer allocator.free(bytes);
         @memset(bytes, 0);
 
-        const dos: *align(1) DosHeader = @ptrCast(bytes[0..@sizeOf(DosHeader)]);
+        const dos = try layout.viewMut(DosHeader, bytes);
         dos.magic = dos_magic.*;
         dos.nt_offset = nt_offset;
-        bytes[nt_offset..][0..nt_signature.len].* = nt_signature.*;
 
-        const file_header: *align(1) FileHeader = @ptrCast(bytes[nt_offset + nt_signature.len ..][0..@sizeOf(FileHeader)]);
-        file_header.* = .{
-            .machine = .i386,
-            .section_count = @intCast(sections.len),
-            .timestamp = 0,
-            .symbol_table_offset = 0,
-            .symbol_count = 0,
-            .optional_header_size = optional_size,
-            .characteristics = @bitCast(@as(u16, 0x010E)),
+        (try layout.viewMut(NtHeaders, bytes[nt_offset..])).* = .{
+            .signature = nt_signature.*,
+            .file_header = .{
+                .machine = .i386,
+                .section_count = @intCast(sections.len),
+                .timestamp = 0,
+                .symbol_table_offset = 0,
+                .symbol_count = 0,
+                .optional_header_size = optional_size,
+                .characteristics = @bitCast(@as(u16, 0x010E)),
+            },
         };
-        const optional: *align(1) OptionalHeader32 = @ptrCast(bytes[optional_offset..][0..@sizeOf(OptionalHeader32)]);
+        const optional = try layout.viewMut(OptionalHeader32, bytes[optional_offset..]);
         optional.magic = .pe32;
         optional.image_base = image_base;
         optional.file_alignment = file_alignment;
         optional.headers_size = headers_size;
-        optional.directory_count = directory_count;
-        const table: []align(1) DataDirectory = @alignCast(std.mem.bytesAsSlice(
-            DataDirectory,
-            bytes[optional_offset + @sizeOf(OptionalHeader32) ..][0 .. directory_count * @sizeOf(DataDirectory)],
-        ));
+        optional.directory_count = directory_entries;
+        const table = try layout.arrayMut(DataDirectory, bytes[optional_offset + @sizeOf(OptionalHeader32) ..], directory_entries);
         for (directories) |entry| table[@intFromEnum(entry.index)] = .{ .rva = entry.rva, .size = entry.size };
 
+        const headers = try layout.arrayMut(SectionHeader, bytes[sections_offset..], sections.len);
         var raw_offset: u32 = headers_size;
-        for (sections, 0..) |section, index| {
-            const at = sections_offset + index * @sizeOf(SectionHeader);
-            const header: *align(1) SectionHeader = @ptrCast(bytes[at..][0..@sizeOf(SectionHeader)]);
+        for (sections, headers) |section, *header| {
             header.* = std.mem.zeroes(SectionHeader);
             const name_len = @min(section.name.len, header.name_bytes.len);
             @memcpy(header.name_bytes[0..name_len], section.name[0..name_len]);
@@ -628,6 +633,35 @@ test "parses a minimal image" {
     try std.testing.expectEqualStrings("hello", image.stringAt(0x1000).?);
     try std.testing.expectEqual(@as(?*align(1) SectionHeader, null), image.sectionContaining(0x9999));
     try std.testing.expectEqual(@as(?DataDirectory, null), image.directory(.import));
+    try std.testing.expectEqual(null, image.imports());
+}
+
+test "lists the libraries an image imports from" {
+    const allocator = std.testing.allocator;
+    const rva = 0x2000;
+    const address_table = rva + 0x40;
+    // A descriptor, the zeroed one that ends the list, then the library's name.
+    var idata: [0x60]u8 = @splat(0);
+    const name_at = 2 * @sizeOf(ImportDescriptor);
+    (try layout.viewMut(ImportDescriptor, &idata)).* = .{
+        .lookup_table_rva = address_table,
+        .timestamp = 0,
+        .forwarder_chain = 0,
+        .name_rva = rva + name_at,
+        .address_table_rva = address_table,
+    };
+    @memcpy(idata[name_at..][0.."KERNEL32.dll".len], "KERNEL32.dll");
+    const bytes = try testing.buildWith(allocator, 0x400000, &.{
+        .{ .name = ".idata", .rva = rva, .data = &idata },
+    }, &.{.{ .index = .import, .rva = rva, .size = idata.len }});
+    defer allocator.free(bytes);
+    const image: Image = try .parse(bytes);
+
+    var imports = image.imports().?;
+    const kernel = imports.next().?;
+    try std.testing.expectEqualStrings("KERNEL32.dll", kernel.name);
+    try std.testing.expectEqual(address_table, kernel.descriptor.address_table_rva);
+    try std.testing.expectEqual(null, imports.next());
 }
 
 test "maps each section to its own file offset" {
@@ -684,4 +718,9 @@ test "rejects non-PE input" {
     var bytes: [64]u8 = @splat(0);
     try std.testing.expectError(error.NotPe, Image.parse(&bytes));
     try std.testing.expectError(error.NotPe, Image.parse(bytes[0..8]));
+
+    // A DOS header whose PE signature lies past the end of the file.
+    bytes[0..2].* = dos_magic.*;
+    std.mem.writeInt(u32, bytes[60..64], 0xFFFF_FFF0, .little);
+    try std.testing.expectError(error.Truncated, Image.parse(&bytes));
 }

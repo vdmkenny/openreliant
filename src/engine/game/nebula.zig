@@ -1,7 +1,7 @@
 //! `C:\lancer\game\nebula.cpp`: the sky dome and the nebula. `nebula_create` (`0x00498B30`) builds
 //! both at start-up, `nebula_select` (`0x00498D00`) applies the script's choice of nebula and
 //! `nebula_frame` (`0x00498E10`) centres both on the camera and adds them to the background layer.
-//! The port builds the hardware renderers' dome (`nebula_dome`, `0x00498810`); the software
+//! OpenReliant builds the hardware renderers' dome (`nebula_dome`, `0x00498810`); the software
 //! renderer's (`nebula_dome_software`, `0x00498450`) is not ported.
 
 const std = @import("std");
@@ -52,34 +52,51 @@ pub const dome_vertices = dome_columns * dome_rows;
 pub const dome_polygons = (dome_columns - 1) * (dome_rows - 1) * 2;
 pub const dome_radius: f32 = 5000;
 
+/// The side of `starref12.tga`, in pixels: `nebula_dome` scales each coordinate to the last pixel
+/// (`0x004DC6CC`) and reads the pixel by the low byte of each, so no other size can colour it.
+pub const dome_image_size = 256;
+
+/// How far up and down the dome's rows reach against its radius before they are brought to the
+/// sphere (`0x004DC56C`), which crowds them toward its top and bottom.
+const dome_stretch: f32 = 5;
+
+/// The triangles of one row of the dome's quads, which make one strip.
+const row_polygons = (dome_columns - 1) * 2;
+
+/// What each of a pixel's bytes is worth in the dome's colours (`0x004DC818`): a 256th, so that a
+/// full byte falls just short of 1.
+const pixel_share: f32 = 1.0 / 256.0;
+
 /// The dome's mesh (`nebula_dome`), and the colours its object takes from `image`. Each row of
 /// quads is one strip of triangles, its records counting down, split along the diagonal from each
 /// quad's first corner to the one below its next. The mesh holds no texture coordinates, normals or
 /// planes, and no bounds: its object is neither culled nor tested against the view.
 pub fn domeMesh(gpa: Allocator, image: tga.Image, colours: *[dome_vertices][4]f32) (Allocator.Error || error{WrongSize})!srapiext.Mesh {
-    if (image.width != 256 or image.height != 256) return error.WrongSize;
+    if (image.width != dome_image_size or image.height != dome_image_size) return error.WrongSize;
     const mesh: srapiext.Mesh = try .create(gpa, .{ .polygons = dome_polygons, .vertices = dome_vertices, .indices = dome_polygons * 3 });
     mesh.surfaces[0] = .{ .polygons = dome_polygons, .material = .onePass(.{ .coordinates = .none, .lit = true, .blend = .off }) };
 
-    const across: f32 = 2.0 / 14.0;
-    const down: f32 = 2.0 / 7.0;
+    // The steps across the columns and down the rows, from -1 to 1 (`0x004DC99C`, `0x004DC998`).
+    const across: f32 = 2.0 / @as(comptime_float, dome_columns - 1);
+    const down: f32 = 2.0 / @as(comptime_float, dome_rows - 1);
+    const last_pixel: f32 = dome_image_size - 1;
     for (mesh.positions, colours, 0..) |*position, *colour, i| {
         // `u` and `v` from 0 to 1 across the columns and down the rows, as the game works them out.
         const u = ((@as(f32, @floatFromInt(i % dome_columns)) * across - 1) + 1) * 0.5;
         const v = ((@as(f32, @floatFromInt(i / dome_columns)) * down - 1) + 1) * 0.5;
-        const pixel = image.pixel(@intFromFloat(u * 255), @intFromFloat(v * 255));
+        const pixel = image.pixel(@intFromFloat(u * last_pixel), @intFromFloat(v * last_pixel));
         colour.* = .{
-            @as(f32, @floatFromInt(pixel[0])) * (1.0 / 256.0),
-            @as(f32, @floatFromInt(pixel[1])) * (1.0 / 256.0),
-            @as(f32, @floatFromInt(pixel[2])) * (1.0 / 256.0),
+            @as(f32, @floatFromInt(pixel[0])) * pixel_share,
+            @as(f32, @floatFromInt(pixel[1])) * pixel_share,
+            @as(f32, @floatFromInt(pixel[2])) * pixel_share,
             1,
         };
         const angle = u * std.math.tau;
-        const direction = math.normalize(.{ @sin(angle), (v - 0.5) * 5, @cos(angle) });
+        const direction = math.normalize(.{ @sin(angle), (v - 0.5) * dome_stretch, @cos(angle) });
         position.* = direction * @as(Vector, @splat(dome_radius));
     }
     for (mesh.polygons, 0..) |*polygon, i| {
-        polygon.* = .{ .kind = .strip_even, .continues = @intCast(27 - i % 28), .first = @intCast(i * 3), .count = 3 };
+        polygon.* = .{ .kind = .strip_even, .continues = @intCast(row_polygons - 1 - i % row_polygons), .first = @intCast(i * 3), .count = 3 };
         const row = i / 2 / (dome_columns - 1);
         const column = i / 2 % (dome_columns - 1);
         const at = column + dome_columns * row;
@@ -300,7 +317,7 @@ test patchMesh {
 
 test Sky {
     const gpa = std.testing.allocator;
-    const textures = try backdrop.testing.Textures.init(gpa);
+    const textures = try srtexture.testing.Textures.init(gpa, backdrop.testing.names);
     defer textures.deinit(gpa);
     const rgb = try gpa.alloc(u8, 256 * 256 * 3);
     defer gpa.free(rgb);

@@ -100,7 +100,7 @@ pub fn set(world: gameobj.World, index: u16, on: bool) void {
     for (0..all.count) |at| {
         const other: u16 = @intCast(at);
         const entry = aigeneric.current(all, other) orelse continue;
-        if (entry.order == .launch and entry.target.index == index) set(world, other, on);
+        if (entry.order == .launch and entry.target.slot() == index) set(world, other, on);
     }
 }
 
@@ -149,7 +149,7 @@ fn soundClass(all: *const create.Objects, index: u16) sound3d.Class {
 
 /// `cloak_drop` (`0x00463420`): the object in `slot` has no cloak from now on, if it had one,
 /// whatever its parts were showing, their callbacks let go (`cloak_node_free`, `0x00463470`),
-/// which the port's parts have none of. An explosion's blast drops it so.
+/// which OpenReliant's parts have none of. An explosion's blast drops it so.
 pub fn drop(slot: *create.Slot) void {
     slot.object.flags.cloaked = false;
     slot.cloak = null;
@@ -197,9 +197,9 @@ const shear_rates = [3]f32{ 20, 26, 14 };
 const shear_starts = [3]f32{ 0, 2.8, 0.9 };
 
 /// `cloak_wobble` (`0x004639B0`), in `mission_frame`'s pass before the camera's frame, for the
-/// object in `slot`, where it is cloaked and not the Kafelnikof, at tick `now`: while its cloak changes, its frame,
-/// as drawn, shears a little and back, three ways at their own rates, swelling and dying away over
-/// the change.
+/// object in `slot`, where it is cloaked and not the Kafelnikof, at tick `now`: while its cloak
+/// changes, its frame, as drawn, shears a little and back, three ways at their own rates, swelling
+/// and dying away over the change.
 pub fn wobble(slot: *create.Slot, now: i32) void {
     if (slot.object.type == .kafelnikof) return;
     const cloak = slot.cloak orelse return;
@@ -245,8 +245,9 @@ pub fn reveal(world: gameobj.World, index: u16, at: Vector) void {
                 break :blk @min(@min(extent[0], extent[1]), extent[2]);
             } else struck.radius;
             const reach = size * struck_reach;
+            const placed: math.Place = .{ .position = part.object.position, .orientation = part.object.orientation };
             for (shown.positions, effect.hull_colours[0..shown.positions.len]) |position, *colour| {
-                const distance = math.distance(struck.at, math.transform(part.object.orientation, position) + part.object.position);
+                const distance = math.distance(struck.at, placed.point(position));
                 if (distance > reach) continue;
                 colour[3] = @min(colour[3] + @min((reach - distance) / (size * struck_falloff), 1), 1);
             }
@@ -308,9 +309,9 @@ fn restore(model: *objects.Model) void {
     }.visit);
 }
 
-/// The port's: each part that cloaks of `model`, which is not drawn, as the ship the camera sits in
-/// is not, as solid as its cloak's hull `hull`, which the part's shadow goes by (`srshadow`), as a
-/// drawn one's does (`Drawing.hull`).
+/// OpenReliant's: each part that cloaks of `model`, which is not drawn, as the ship the camera sits
+/// in is not, as solid as its cloak's hull `hull`, which the part's shadow goes by (`srshadow`), as
+/// a drawn one's does (`Drawing.hull`).
 pub fn shadeUnseen(model: *objects.Model, hull: f32) void {
     eachCloaking(model, hull, struct {
         fn visit(solid: f32, part: *objects.Model.Part, effect: *PartCloak) void {
@@ -449,7 +450,7 @@ pub fn shimmerColour(strength: f32) [3]f32 {
 /// see-through and faded (`cloak_hull_callback`, `0x00463B90`), only on a hardware renderer.
 /// Nothing changes while the game is paused.
 ///
-/// The game updates each as the pipeline draws it, once it is in sight; the port updates it as
+/// The game updates each as the pipeline draws it, once it is in sight; OpenReliant updates it as
 /// it is added to the scene, in sight or not.
 pub const Drawing = struct {
     cloak: *Cloak,
@@ -724,9 +725,11 @@ pub const smoke: particles.Template = .{
     .colour = @splat(.through(0.25, 0.15, 0)),
 };
 
-/// How long a countermeasure lasts; how fast it drops away along its dropper's Y axis and back,
-/// a tick, beside a quarter of its dropper's velocity (`0x004DC56C`); how far it turns about its Y
-/// axis a tick; and its end's fireball, from the sheet: how far across and for how long.
+/// How long a countermeasure lasts (`object_spend_countermeasure`, `0x004625E2`); how fast it drops
+/// away along its dropper's Y axis and back, a tick (`0x004DC56C`), beside a quarter of its
+/// dropper's velocity (`0x0046267F`); how far it turns about its Y axis a tick (`decoys_update`,
+/// `0x0046290C`); and its end's fireball, from the sheet: how far across and for how long
+/// (`countermeasure_end`, `0x0046249B` and `0x00462499`).
 const life = 1000;
 const drop_away: f32 = 5;
 const carried: f32 = 0.25;
@@ -734,11 +737,15 @@ const spin: f32 = 0.01;
 const end_size: f32 = 200;
 const end_life = 50;
 
-/// A countermeasure's smoke: how fast it leaves, a tick, and up to how much faster, and how far
-/// it strays across either way; each stream lasts as long as the countermeasure.
+/// A countermeasure's smoke: how fast it leaves, a tick (`0x0046275B`), and up to how much faster
+/// (`0x00462726`), and how far it strays across either way (`0x00462743`); each stream lasts as
+/// long as the countermeasure.
 const smoke_speed: f32 = 5;
 const smoke_speed_range: f32 = 1;
 const smoke_spread: Vector = .{ 0.25, 0.25, 0 };
+
+/// What the chance a countermeasure draws a missile away is out of (`0x00462895`).
+const percent = 100;
 
 /// How much more likely a countermeasure is to draw a missile away from a player's ship, and from
 /// an AI whose pilot holds its countermeasures for 50 ticks at least (level 2 of `tier_c`), in
@@ -800,8 +807,9 @@ pub const Countermeasures = struct {
 
         var model: objects.Model = objects.Model.create(countermeasures.gpa, mounted.model, mounted.loaded, .{}) catch return;
         gameobj.linkParts(&model, mounted.model);
-        const orientation = object.root.next_orientation;
-        model.place(math.transform(orientation, .{ 0, 0, object.bounds_min.z }) + object.nextPosition(), orientation);
+        const tail = object.placeAt(.next);
+        const orientation = tail.orientation;
+        model.place(tail.point(.{ 0, 0, object.bounds_min.z }), orientation);
         const velocity = gameobj.vector(object.velocity) * @as(Vector, @splat(carried)) + (math.yAxis(orientation) - math.forward(orientation)) * @as(Vector, @splat(drop_away));
         const bounds = if (model.parts.len > 0 and model.parts[0].object.levels.len > 0) model.parts[0].object.levels[0].mesh.bounds else [2]Vector{ @splat(0), @splat(0) };
         countermeasures.records[at] = .{
@@ -814,14 +822,14 @@ pub const Countermeasures = struct {
 
         for (&all.missiles.records) |*record| {
             const missile = &(record.* orelse continue);
-            if (missile.decoy != null or missile.target.index != slot) continue;
+            if (missile.decoy != null or missile.target.slot() != slot) continue;
             var chance = missile.stats(&all.missile_stats).decoy_chance;
             if (slot < all.players) {
                 chance += player_bonus;
             } else if (all.pilots.get(object.pilot).timings.countermeasures.least == sharp_pilot_least) {
                 chance += sharp_pilot_bonus;
             }
-            if (@mod(@as(i32, world.random.rand()), 100) < chance) {
+            if (@mod(@as(i32, world.random.rand()), percent) < chance) {
                 missile.decoy = at;
                 break;
             }

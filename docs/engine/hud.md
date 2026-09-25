@@ -2,7 +2,7 @@
 
 `C:\lancer\game\hud.cpp` holds the display drawn over the view: the panels, the gauges, the target display and the text. Its code lies between `hog_SND.CPP`'s and `hudmovie.cpp`'s, about 40KB of it; only `hud_init` asserts, so the source map places that stretch alone.
 
-The port draws the readouts, the clock, the status lights with the devices' charges, the jump prompt, the player's target, the eject marker, the scanner, the ship status indicator, the targeting cluster, the radar's rings, the windows' frames and what the power distribution and the target display show ([`engine/game/hud.zig`](../../src/engine/game/hud.zig), [`engine/game/hud/windows.zig`](../../src/engine/game/hud/windows.zig)), reaching them as the engine does, through the overlay `srcore.render` runs after a frame's layers and before the scene ends.
+OpenReliant draws the readouts, the clock, the status lights with the devices' charges, the jump prompt, the player's target, the eject marker, the scanner, the ship status indicator, the targeting cluster, the radar's rings, the windows' frames and what the power distribution and the target display show ([`engine/game/hud.zig`](../../src/engine/game/hud.zig), [`engine/game/hud/windows.zig`](../../src/engine/game/hud/windows.zig)), reaching them as the engine does, through the overlay `srcore.render` runs after a frame's layers and before the scene ends.
 
 ## The elements
 
@@ -49,11 +49,15 @@ with the screen's size at `sr + 0x1666` and `sr + 0x166A`. Half of the way acros
 
 The places move with the screen, but the shapes and the glyphs do not: the game draws them at their own size whatever the resolution, and the window it makes is 640 by 480 (`0x004A85BC`).
 
-**Improvement:** the port draws the display as large against the window as it stood against a 1024 by 768 screen, a mode the hardware renderers run in and the size of the retail game's own screenshots, by whichever side has room for less, so it keeps its shape. What the display measures in its own pixels, the inset and the margin and an element's offset, is scaled with it; the fraction of the window is not, so the display still reaches the edges of a window of any shape.
-At a scale of 1 the arithmetic is the game's own. Half of the way across then falls within a pixel
-or so of the middle rather than exactly on it, the inset having grown. Since the offsets are fixed
-in pixels, the screen chosen sets how far in the elements stand: at 640 by 480 the clock, 130
-above the foot, stands near two thirds of the way down, and at 1024 by 768 near four fifths.
+**Improvement:** OpenReliant draws the display as large against the window as it stood against a
+1024 by 768 screen, a mode the hardware renderers run in and the size of the retail game's own
+screenshots, by whichever side has room for less, so it keeps its shape. What the display measures
+in its own pixels, the inset and the margin and an element's offset, is scaled with it; the fraction
+of the window is not, so the display still reaches the edges of a window of any shape. At a scale of
+1 the arithmetic is the game's own. Half of the way across then falls within a pixel or so of the
+middle rather than exactly on it, the inset having grown. Since the offsets are fixed in pixels, the
+screen chosen sets how far in the elements stand: at 640 by 480 the clock, 130 above the foot,
+stands near two thirds of the way down, and at 1024 by 768 near four fifths.
 
 ## Text
 
@@ -85,18 +89,17 @@ through. `0x004A2AF0` builds them once, with the fonts it opens: most are each i
 index 0, which is `0xFF`, and a few change an index or a range of them.
 
 **Improvement:** the display is drawn over the finished frame, after the bloom, rather than into
-it, so that nothing of it blooms. The game has no bloom to keep it out of; the port's is an
+it, so that nothing of it blooms. The game has no bloom to keep it out of; OpenReliant's is an
 improvement over the scene alone. The device is told where the scene ends
 (`device.Device.overlay`), and the GPU one draws what follows into the composed frame with
 pipelines of a single sample. The software device adds nothing of its own and ignores the mark.
 
-**Improvement:** the port draws a glyph as a textured rectangle through the device rather than
-blitting it (`VFX_character_draw`), so on the GPU the display costs the processor nothing and
-scales without blurring. What it draws is the same: the font's palette looked up for each byte,
-index 0 left clear, over the scene with the engine's own overlay-layer depth and alpha blend. The
-software device draws the rectangles too, and `--original` draws the display the same way, since
-the port draws the display larger on a larger window (`scaleFor`), where the game blitted it at its
-own size.
+**Improvement:** OpenReliant draws a glyph as a textured rectangle through the device rather than
+blitting it (`VFX_character_draw`), so on the GPU the display costs the processor nothing and scales
+without blurring. What it draws is the same: the font's palette looked up for each byte, index 0
+left clear, over the scene with the engine's own overlay-layer depth and alpha blend. The software
+device draws the rectangles too, and `--original` draws the display the same way, since OpenReliant
+draws the display larger on a larger window (`scaleFor`), where the game blitted it at its own size.
 
 ## Which views have it
 
@@ -124,8 +127,8 @@ The view's name is one of the strings `language_init` (`0x00490DC0`) reads out o
 Camera, External Camera, Missile Camera and the like, or a single space for the chase views and
 most cutaways. Its place is measured from the screen's edge rather than with `hud_place`.
 
-The port draws the view's name, and in view 0 all it has ported of the rest. A mission's launch
-ends in view 0 ([`camera.md`](camera.md)), and so does the port's start.
+OpenReliant draws the view's name, and in view 0 all it has ported of the rest. A mission's launch
+ends in view 0 ([`camera.md`](camera.md)), and so does OpenReliant's start.
 
 ### The interference
 
@@ -156,9 +159,9 @@ way:
 The rest, the bars, rules, brackets, markers and text among them, stand still.
 
 **Fix:** while shaken, `hud_ship_status` draws the player's own schematic two pixels left and
-two down of where it draws it still, apart from its hits. The port keeps it in place.
+two down of where it draws it still, apart from its hits. OpenReliant keeps it in place.
 
-The port draws a shaken shape a row at a time (`hud.Shake`), a random number of the C runtime's
+OpenReliant draws a shaken shape a row at a time (`hud.Shake`), a random number of the C runtime's
 for each row, as the game does.
 
 ## The readouts
@@ -173,7 +176,7 @@ the shape. All three stand half of the way across, at offsets of `0x39`, `0x5F` 
 | `0x5F` | `0xD0`, a skull and crossbones, drawn 4 left | `0x0B` right | `skull_count` (`0x00562DF4`), the pilot's kills over the campaign, which `kills_add` (`0x004B14F0`) counts as `explode_kill_credit` credits a kill: a hostile fighter, Kamov, Kurgan or Gurevich the player's ship struck last. The end of a mission the player comes through keeps it and promotes the pilot by it, at 0, 35, 72, 115, 150, 200, 255, 275 and 300 kills (`mission_end_record`, `0x00475A90`); the start of the next puts back what was kept, which undoes a failed attempt's kills. The end keeps them unless the player's ship was destroyed or the ejected pilot killed or captured (`mission_ending` 1 or 3). The kills of each mission are kept apart (`mission_kills`, `0x00562E64`). Each sandbox attempt ends and starts as a mission would |
 | `0x98` | `0xCF`, a coil, drawn `0x1A` left | 9 left | the object's countermeasures left (`+0x5EC`), 29 when it is created, which `object_spend_countermeasure` (`0x00462550`) takes one at a time. It is drawn unless `ShowHudIcon` flashes icon 3 and the flash is dark |
 
-The port draws all three ([`engine/game/hud.zig`](../../src/engine/game/hud.zig)).
+OpenReliant draws all three ([`engine/game/hud.zig`](../../src/engine/game/hud.zig)).
 
 ## The targeting cluster
 
@@ -218,7 +221,7 @@ rests within 2 of it, bright while the lead cursor stands within `0x10` of the m
 object's `blind_fire_aim` (`+0x674`) says whether blind fire aims, and the player's guns then aim
 at the lead cursor's point (`hud_lead_point`, `0x0057C260`).
 
-The port draws all of it, and aims the player's shots at the lead cursor's point
+OpenReliant draws all of it, and aims the player's shots at the lead cursor's point
 ([Guns](guns.md#shots)).
 
 ### The chase view
@@ -249,7 +252,7 @@ way's angle from straight up, going round to the right, and half a turn more (`c
 `0x00566788`, worked out a quadrant at a time with `sr_atan`), with `chasepointat2` for a hostile
 target and `chasepointat3` for the rest.
 
-The port draws them (`hud.chase`). **Improvement:** it computes the pointer's angle with
+OpenReliant draws them (`hud.chase`). **Improvement:** it computes the pointer's angle with
 `atan2`. Not ported: the nav point's pointer, which needs the nav points
 ([#36](https://github.com/vdmkenny/openreliant/issues/36)).
 
@@ -345,7 +348,7 @@ the brackets is the font's own orange for every side; `smlfont.fnt`'s glyphs are
 **Improvement:** the game clips the line that places the marker at the screen's edge from the
 arrow's tip across, but from the tip of one of the arrow's wings across again for down: a slip
 that starts the line as far down the screen as its middle is across, so the marker stands lower
-on the side edges than the target lies, and the more the wider the window. The port starts the
+on the side edges than the target lies, and the more the wider the window. OpenReliant starts the
 line at the arrow's tip. `--original` starts it where the game does.
 
 Not ported: the corners `hud_comms_marker` (`0x0048B0F0`) marks on the object the radio's window
@@ -420,7 +423,7 @@ As a form closes, `hud_window_close` draws what it shows once more into `hud_win
 `hud_display_component`, `0x0056992C`), and the window closes with that.
 
 **Improvement:** the game keeps one picture for both forms and draws it as the form starts closing,
-with the display's new target for the range, the name and the rest. The port keeps what each form
+with the display's new target for the range, the name and the rest. OpenReliant keeps what each form
 last showed and closes it with that.
 
 **Not ported:** the pilot's name, which a mission gives (`GameObject.pilot_record`); and in a
@@ -457,7 +460,7 @@ then the contacts above it. The clock stands 79 above the radar's point.
 
 The game draws the nav point's cross before or after the rings by what an earlier frame left in
 its entry of the list (`radar_contacts`, `0x005667B8`), which it does not fill for the nav point;
-the port draws it after them.
+OpenReliant draws it after them.
 
 `hud_init` starts the radar on range 2. RADAR RANGES (`frame_controls`, `0x00414060`), in the view
 ahead from the cockpit with the rings still, moves it to the next range, round from 2 to 0, and
@@ -471,7 +474,7 @@ ticks.
 In the cockpit's view the radar stands on a dark backing, which `mission_frame` draws with the
 cockpit's model rather than `hud_radar` ([`rendering.md`](rendering.md#the-cockpit)).
 
-The port draws the rings, the contacts and changes the range. Not yet ported: the radio's
+OpenReliant draws the rings, the contacts and changes the range. Not yet ported: the radio's
 object, which the radio's window names.
 
 ## The status lights
@@ -504,15 +507,15 @@ display reads icons 0 to 5: 3 is the countermeasures readout, 5 the eject marker
 
 `enemy_lock` is set by `mission_frame` each frame, in its pass that draws the objects, when a ship
 whose order is Fight, against the player, has its missile ready (byte `0x2F` of its fight state,
-which `fight_fire` sets once its lock on its target is complete: [Missiles](missiles.md#the-ais-missiles)).
-`missile_homing` is zeroed on every object by `mission_frame` and set by `missiles_update`
-(`0x004960F0`) on the object a live missile homes on.
+which `fight_fire` sets once its lock on its target is complete:
+[Missiles](missiles.md#the-ais-missiles)). `missile_homing` is zeroed on every object by
+`mission_frame` and set by `missiles_update` (`0x004960F0`) on the object a live missile homes on.
 
 A bar is a line of `hud_colour(0xE7, 0x68, 0x00)` drawn with `VFX_line_draw` from one pixel right of
 the light's point to the charge times a scale further: `1/62` for the ECM, `1/312` for the cloak and
 `1/187` for the spectral shields, so a full bar is about 32 pixels, rounded as `0x004C3330` rounds.
 
-The port draws all nine by these conditions.
+OpenReliant draws all nine by these conditions.
 
 ## The devices
 
@@ -525,13 +528,14 @@ tick while off, up to full, and draining while on. One that runs dry is turned o
 | Cloak | `cloak_state` (`0x00566638`) | `cloak_charge` (`0x0056663C`) | 10000 | 1, outside a multiplayer game |
 | Spectral shields | `spectral_shields_state` (`0x0057BF20`) | `spectral_shields_charge` (`0x00566620`) | 6000 | 6 |
 
-A state is -1 for a ship that does not carry the device, 0 for off and 1 for on. `hud_init` sets
-all three to 0 and full, and turns blind fire on. The mission's start (`0x004934F0`) then fits the
+A state is -1 for a ship that does not carry the device, 0 for off and 1 for on. `hud_init` sets all
+three to 0 and full, and turns blind fire on. The mission's start (`0x004934F0`) then fits the
 player's ship by its type: every ship carries an ECM; the Nagi, the Crusader, the Tempest and the
 Shroud carry spectral shields; the Predator, the Coyote, the Patriot, the Reaper, the Shroud and the
 Phoenix carry blind fire, which starts on; a ship whose model can cloak (header flag 2) carries a
 cloak. Ship types `0xF4` to `0xFF`, whose models are the first twelve's `t_` twins, count as the
-same twelve. The same switch picks the cockpit's frame model ([`main.zig`](../../src/engine/game/main.zig)).
+same twelve. The same switch picks the cockpit's frame model
+([`main.zig`](../../src/engine/game/main.zig)).
 
 `frame_controls` reads the device keys after the camera's and the targeting keys
 (`hud_target_keys`, `0x0048B6B0`, where SMART TARGET flips `smart_targeting`):
@@ -549,9 +553,9 @@ same twelve. The same switch picks the cockpit's frame model ([`main.zig`](../..
   ([The cloak](cloak.md#who-cloaks)). The cloak running dry uncloaks the ship the same way.
 
 Ported: the charges, the fitting, SMART TARGET, TOGGLE BLINDFIRE, ECM, SPECTRAL SHIELDS and CLOAK
-SHIP ([`input.zig`](../../src/engine/input.zig)), with their sounds
-([The display's sounds](#the-displays-sounds)). The port uncloaks the ship a frame after the
-cloak runs dry ([In the port](cloak.md#in-the-port)). Not yet: the tuning of the spectral shields.
+SHIP ([`input.zig`](../../src/engine/input.zig)), with their sounds ([The display's
+sounds](#the-displays-sounds)). OpenReliant uncloaks the ship a frame after the cloak runs dry ([In
+OpenReliant](cloak.md#in-openreliant)). Not yet: the tuning of the spectral shields.
 
 ## The display's sounds
 
@@ -576,14 +580,14 @@ of 60, looped, and plays it again whenever voice 1 has finished or was stopped; 
 at `enemy_lock_voice` (`0x0057BF50`). Once the light is out and no missile homes on the ship, it
 ends the voice if it is still playing.
 
-The port queues the windows' sounds as they open and close, and plays them later in the same
+OpenReliant queues the windows' sounds as they open and close, and plays them later in the same
 frame (`hud.Beeps`).
 
 **Fix:** the game plays a power key's sound every frame the key is held, a new sound each frame;
-the port plays it as the key is pressed.
+OpenReliant plays it as the key is pressed.
 
 **Fix:** the game runs the enemy lock's warning only in the view ahead, as it draws the lights, so
-a warning playing as the view changes loops until the player looks ahead again. The port runs it
+a warning playing as the view changes loops until the player looks ahead again. OpenReliant runs it
 in every view, the light counting as out in the others.
 
 Not yet ported: PRIMARY TARGET ([#98](https://github.com/vdmkenny/openreliant/issues/98)) and the
@@ -601,28 +605,28 @@ half of the way across and down:
   every 100. JUMP DRIVE (`player_jump`, `0x00412B20`) clears it and posts `player_ready_to_jump`
   or `player_ready_to_warp`.
 - `hud_eject_marker` (`0x004830B0`), at `(-16, -100)` and `0x26` lower: once the player has ejected
-  (`player_ejected`, `0x00579986`, which `order_eject_player_init` sets) or while icon 5 is lit, shape
-  `0xC2`, the pilot rising out of the ship, flashes for 50 ticks of every 100.
+  (`player_ejected`, `0x00579986`, which `order_eject_player_init` sets) or while icon 5 is lit,
+  shape `0xC2`, the pilot rising out of the ship, flashes for 50 ticks of every 100.
 - `hud_scanner` (`0x00489250`), at `(-16, -100)`: while the `Scanner` mission command
-  (`cmd_Scanner`) has `scanner_object` (`0x0057E060`) name an object, shapes `0xD1` to `0xD5`, a hand
-  and the rings it sends out, in turn, moving on once `game_ticks` is past a tick 25 on from the
-  last move. `mission_frame` beeps meanwhile at an interval of 10 to 200 ticks that it works out
+  (`cmd_Scanner`) has `scanner_object` (`0x0057E060`) name an object, shapes `0xD1` to `0xD5`, a
+  hand and the rings it sends out, in turn, moving on once `game_ticks` is past a tick 25 on from
+  the last move. `mission_frame` beeps meanwhile at an interval of 10 to 200 ticks that it works out
   from the object's distance and bearing.
 
-The port draws all three; the sandbox runs no mission, so none of them shows there.
+OpenReliant draws all three; the sandbox runs no mission, so none of them shows there.
 
 ## Art
 
 `hud_init` loads the display's shapes into `hud_shapes` (`0x005656A8`): `hudhard.spr` under the
 hardware renderers and `hudsoft.spr` under the software one, which `sr + 0x1AC` picks, and
-`dmicons.spr` or `soft_dmicons.spr` into `0x0057BC3C`. `HUDHARD.SPR` holds 388 shapes, 2 palettes and
-21 remap tables: radar rings, bar gauges, arcs, target boxes, ammunition, and the silhouettes the
-target display shows. `hud_init` hands `VFX_shape_multilookaside` 29 tables of 256 bytes from the
-start of block 0, where the remap tables begin, though the set holds 21. In a multiplayer game
+`dmicons.spr` or `soft_dmicons.spr` into `0x0057BC3C`. `HUDHARD.SPR` holds 388 shapes, 2 palettes
+and 21 remap tables: radar rings, bar gauges, arcs, target boxes, ammunition, and the silhouettes
+the target display shows. `hud_init` hands `VFX_shape_multilookaside` 29 tables of 256 bytes from
+the start of block 0, where the remap tables begin, though the set holds 21. In a multiplayer game
 `hud_draw` draws a shape of `dmicons.spr` at the middle of the screen for the deathmatch power-up
 the player holds (`power_up`, `+0x754`), flashing for the first 100 ticks after it was handed out
-(`power_up_since`, `+0x760`) and gone once `frame_start` passes when it runs out
-(`power_up_until`, `+0x75C`).
+(`power_up_since`, `+0x760`) and gone once `frame_start` passes when it runs out (`power_up_until`,
+`+0x75C`).
 
 A shape's entry in its set names a palette or none (`VFX_shape_draw` in `winvfx16.dll`); one with
 none is drawn with VFX's global palette. Under the hardware renderers `hud_draw` makes that of
@@ -631,7 +635,7 @@ block `0x77` of the display's set, its first palette, every frame (`palette_to_v
 No entry of a shipped set names a palette ([`spr.md`](../formats/spr.md)), so every shape of the
 display is drawn with block `0x77`'s palette, those after the set's second palette, block 247,
 included, and the ships' schematics, whose sets carry none, too. Nothing in the display makes
-another block the global palette. The port does the same.
+another block the global palette. OpenReliant does the same.
 
 The element names `hud_init` copies come from `0x00515D70`, which the decrypted dump holds as
 zeroes, so they are not readable from it.
@@ -676,10 +680,10 @@ The phases are 0 shut, 1 opening, 2 closing and 3 open.
 2. An opening or closing window is drawn, in the view ahead only, into a pane of 225 by 170
    (`0x0057998C`), its place a pixel in from the pane's edge its place is at, from the table at
    `0x00501F88`. `VFX_buffer_transform` then draws the pane onto the display scaled about that
-   place, `2 - t` times its size with `t` the ticks it has opened over 60, and with the place `2 - t`
-   times as far from the middle of the screen as its own. A window therefore opens shrinking from
-   twice its size into place from twice as far out, and closes the other way; what falls outside
-   the pane is cut off meanwhile.
+   place, `2 - t` times its size with `t` the ticks it has opened over 60, and with the place
+   `2 - t` times as far from the middle of the screen as its own. A window therefore opens shrinking
+   from twice its size into place from twice as far out, and closes the other way; what falls
+   outside the pane is cut off meanwhile.
 3. An open window counts its time down by the frame's ticks, and once its time has run out and
    nothing holds it, starts closing. It is drawn in its place (`hud_window_draw`, `0x00486830`)
    that frame whichever it did.
@@ -711,11 +715,11 @@ The keys, which `frame_controls` and `hud_target_keys` read:
 | ROTATE MISSILES CLOCKWISE, ANTICLOCKWISE | outside a multiplayer game, open window 2 held and turn the ring |
 
 The rest of the game opens windows too: firing the guns and launching a missile, the targeting keys
-and a change of target the target display ([The target](#the-target)), and the radio its own. A mission's script opens and closes any window by its
-number, `OpenInstrument` and `CloseInstrument` (`0x0045D9D0`, `0x0045DA30`): a window it opens is
-held, window 11 starts the radio's menu too, and window 10 closes window 13 first; one it closes is
-let go of. The display sounds as a window opens and as it closes
-([The display's sounds](#the-displays-sounds)).
+and a change of target the target display ([The target](#the-target)), and the radio its own. A
+mission's script opens and closes any window by its number, `OpenInstrument` and `CloseInstrument`
+(`0x0045D9D0`, `0x0045DA30`): a window it opens is held, window 11 starts the radio's menu too, and
+window 10 closes window 13 first; one it closes is let go of. The display sounds as a window opens
+and as it closes ([The display's sounds](#the-displays-sounds)).
 
 ## The gunnery display
 
@@ -795,10 +799,10 @@ bars stand at `(x - 135, y - 54)`, `(x - 88, y - 54)`, `(x - 41, y - 54)`, `(x -
 3. Its slot's number, from 1, at 6 across and 2 up from the bar.
 
 **Fix:** a ship starts with one less than `6 * armor_class` in each quadrant, so an undamaged
-Predator's bar shows a row lost. The port counts from what a ship starts with.
+Predator's bar shows a row lost. OpenReliant counts from what a ship starts with.
 
 **Fix:** listing a wing sets only the slot after the last to -1, and the slots past it keep the
-ships of the mission before, which the window shows again where they are in the wing. The port
+ships of the mission before, which the window shows again where they are in the wing. OpenReliant
 empties every slot first.
 
 The sandbox lists the player and three wingmen in the player's wing.
@@ -853,7 +857,7 @@ pixel's colour is picked by its light and by the texture at its `power_ball_sphe
 colour, while `hit_shake` is above zero, each row moves right by a random share of
 `10 * hit_shake` pixels, rounded, a number of `rand` a row, so the ball shakes with the camera.
 
-**Improvement:** the port writes the ball's pixels into an image each frame, in the same way, and
+**Improvement:** OpenReliant writes the ball's pixels into an image each frame, in the same way, and
 draws the image with the rest of the display, so it scales with it.
 
 ## Turning it off

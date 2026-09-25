@@ -1,5 +1,5 @@
 //! The Miles Sound System (`MSS32.DLL`), as far as the game calls it: a digital driver that mixes
-//! samples, 3D samples and streams of WAVE sounds. The port's own stand-in, in software: the
+//! samples, 3D samples and streams of WAVE sounds. OpenReliant's own stand-in, in software: the
 //! library is not the game's, and nothing of it is carried over but the calls' meanings. Each
 //! function stands for the `AIL_` call it names; the game's code in
 //! [`game/hog_snd.zig`](game/hog_snd.zig) makes them as it made Miles's.
@@ -12,9 +12,10 @@
 //! sample's room: they serve OpenAL's improvements, and the software mixer, the reference, leaves
 //! them out.
 //!
-//! Volumes and pans run from 0 to 127, a pan of 64 in the middle, as Miles's do. How Miles turned
-//! them into gains is not known here: the port takes a volume's share of 127 as its gain, and a pan
-//! as a balance that keeps the middle at full volume in both ears.
+//! Volumes and pans run from 0 to 127 (`max_level`), a pan of 64 in the middle (`centre_pan`), as
+//! Miles's do. How Miles turned them into gains is not known here: OpenReliant takes a volume's
+//! share of 127 as its gain (`gain`), and a pan as a balance that keeps the middle at full volume
+//! in both ears.
 
 const std = @import("std");
 
@@ -35,7 +36,7 @@ pub const Sample3D = enum(u32) { _ };
 /// does, from a file of its own.
 pub const Stream = enum(u32) { _ };
 
-/// Not Miles's: where a sample is heard, for the reverbs the port adds.
+/// Not Miles's: where a sample is heard, for the reverbs OpenReliant adds.
 pub const Room = enum {
     /// Nowhere in particular, with no reverb.
     none,
@@ -63,7 +64,7 @@ pub const Lock = struct {
     }
 };
 
-/// The one 3D provider the port offers.
+/// The one 3D provider OpenReliant offers.
 pub const provider_name = "Miles Fast 2D Positional Audio";
 
 /// `AIL_3D_provider_attribute`'s "Maximum supported samples" for it.
@@ -71,6 +72,45 @@ pub const max_3d_samples = 32;
 
 pub const max_samples = 32;
 pub const max_streams = 4;
+
+/// The top of Miles's volumes and pans, which run from 0: full volume, and a pan full right.
+pub const max_level = 127;
+
+/// A pan in the middle.
+pub const centre_pan = 64;
+
+/// A volume or a pan held within Miles's range, 0 to `max_level`.
+pub fn clampLevel(level: i32) i32 {
+    return std.math.clamp(level, 0, max_level);
+}
+
+/// The gain OpenReliant plays a volume at: its share of `max_level`.
+pub fn gain(volume: i32) f32 {
+    return @as(f32, @floatFromInt(volume)) / max_level;
+}
+
+/// The bytes a sound of `frames` frames of `channels` channels takes as 16-bit PCM, which is what
+/// `AIL_3D_sample_length` counts.
+pub fn pcmLength(frames: u32, channels: u32) u32 {
+    return frames * channels * @sizeOf(i16);
+}
+
+test clampLevel {
+    try std.testing.expectEqual(0, clampLevel(-5));
+    try std.testing.expectEqual(80, clampLevel(80));
+    try std.testing.expectEqual(max_level, clampLevel(300));
+}
+
+test gain {
+    try std.testing.expectEqual(1, gain(max_level));
+    try std.testing.expectEqual(0, gain(0));
+    try std.testing.expectApproxEqAbs(0.5, gain(centre_pan), 0.01);
+}
+
+test pcmLength {
+    try std.testing.expectEqual(4096, pcmLength(1024, 2));
+    try std.testing.expectEqual(8, pcmLength(4, 1));
+}
 
 /// A digital driver (`HDIGDRIVER`, `AIL_waveOutOpen`) and its 3D provider: the calls the game makes
 /// of Miles, each named for the `AIL_` function it stands for.
@@ -136,7 +176,8 @@ pub const Driver = struct {
         return .{ .context = implementation, .vtable = &holder.vtable };
     }
 
-    /// `T`'s method `name`, called through a pointer of type `F` that takes the `T` as `*anyopaque`.
+    /// `T`'s method `name`, called through a pointer of type `F` that takes the `T` as
+    /// `*anyopaque`.
     fn thunk(comptime T: type, comptime name: []const u8, comptime F: type) F {
         const params = @typeInfo(@typeInfo(F).pointer.child).@"fn".params;
         const R = @typeInfo(@typeInfo(F).pointer.child).@"fn".return_type.?;
@@ -304,7 +345,7 @@ pub const Driver = struct {
     }
 };
 
-/// The port's own digital driver, in software: the handles and their mix, as plain as Miles's
+/// OpenReliant's own digital driver, in software: the handles and their mix, as plain as Miles's
 /// own mixer is taken to have been. The reference the OpenAL renderer is measured against, and what
 /// `--original` plays through.
 pub const Mixer = struct {
@@ -324,19 +365,19 @@ pub const Mixer = struct {
 
     const SampleState = struct {
         playing: ?voice.Voice = null,
-        volume: i32 = 127,
-        pan: i32 = 64,
+        volume: i32 = max_level,
+        pan: i32 = centre_pan,
     };
 
     const Sample3DState = struct {
         playing: ?voice.Voice = null,
-        volume: i32 = 127,
+        volume: i32 = max_level,
         placing: positional.Placing = .{},
     };
 
     const StreamState = struct {
         playing: ?voice.Voice = null,
-        volume: i32 = 127,
+        volume: i32 = max_level,
         /// The frame it starts from.
         position: u32 = 0,
     };
@@ -411,7 +452,7 @@ pub const Mixer = struct {
     pub fn setSampleVolume(mixer: *Mixer, handle: Sample, volume: i32) void {
         mixer.lock.acquire();
         defer mixer.lock.release();
-        mixer.sample(handle).volume = std.math.clamp(volume, 0, 127);
+        mixer.sample(handle).volume = clampLevel(volume);
     }
 
     pub fn sampleVolume(mixer: *Mixer, handle: Sample) i32 {
@@ -423,7 +464,7 @@ pub const Mixer = struct {
     pub fn setSamplePan(mixer: *Mixer, handle: Sample, pan: i32) void {
         mixer.lock.acquire();
         defer mixer.lock.release();
-        mixer.sample(handle).pan = std.math.clamp(pan, 0, 127);
+        mixer.sample(handle).pan = clampLevel(pan);
     }
 
     /// `AIL_set_sample_playback_rate`: frames a second.
@@ -450,17 +491,13 @@ pub const Mixer = struct {
     pub fn stopSample(mixer: *Mixer, handle: Sample) void {
         mixer.lock.acquire();
         defer mixer.lock.release();
-        if (mixer.sample(handle).playing) |*held| if (held.status == .playing) {
-            held.status = .stopped;
-        };
+        if (mixer.sample(handle).playing) |*held| held.stop();
     }
 
     pub fn resumeSample(mixer: *Mixer, handle: Sample) void {
         mixer.lock.acquire();
         defer mixer.lock.release();
-        if (mixer.sample(handle).playing) |*held| if (held.status == .stopped) {
-            held.status = .playing;
-        };
+        if (mixer.sample(handle).playing) |*held| held.resumePlaying();
     }
 
     /// `AIL_end_sample`: stops it for good.
@@ -497,8 +534,8 @@ pub const Mixer = struct {
     }
 
     /// `AIL_set_3D_sample_file`: its sound, which must outlive it. Miles's 3D samples play PCM
-    /// only, which is why the game decompresses its ADPCM first (`AIL_decompress_ADPCM`); the
-    /// port's play either.
+    /// only, which is why the game decompresses its ADPCM first (`AIL_decompress_ADPCM`);
+    /// OpenReliant's play either.
     pub fn set3DSampleFile(mixer: *Mixer, handle: Sample3D, file: []const u8) bool {
         mixer.lock.acquire();
         defer mixer.lock.release();
@@ -510,7 +547,7 @@ pub const Mixer = struct {
     pub fn set3DSampleVolume(mixer: *Mixer, handle: Sample3D, volume: i32) void {
         mixer.lock.acquire();
         defer mixer.lock.release();
-        mixer.sample3D(handle).volume = std.math.clamp(volume, 0, 127);
+        mixer.sample3D(handle).volume = clampLevel(volume);
     }
 
     pub fn set3DSamplePlaybackRate(mixer: *Mixer, handle: Sample3D, rate: u32) void {
@@ -563,7 +600,7 @@ pub const Mixer = struct {
         const placing = &mixer.sample3D(handle).placing;
         placing.inner_angle = inner;
         placing.outer_angle = outer;
-        placing.outer_volume = @floatFromInt(std.math.clamp(outer_volume, 0, 127));
+        placing.outer_volume = @floatFromInt(clampLevel(outer_volume));
     }
 
     /// Not Miles's: how far a 3D sample's sound spreads around where it is, in the same units as
@@ -590,17 +627,13 @@ pub const Mixer = struct {
     pub fn stop3DSample(mixer: *Mixer, handle: Sample3D) void {
         mixer.lock.acquire();
         defer mixer.lock.release();
-        if (mixer.sample3D(handle).playing) |*held| if (held.status == .playing) {
-            held.status = .stopped;
-        };
+        if (mixer.sample3D(handle).playing) |*held| held.stop();
     }
 
     pub fn resume3DSample(mixer: *Mixer, handle: Sample3D) void {
         mixer.lock.acquire();
         defer mixer.lock.release();
-        if (mixer.sample3D(handle).playing) |*held| if (held.status == .stopped) {
-            held.status = .playing;
-        };
+        if (mixer.sample3D(handle).playing) |*held| held.resumePlaying();
     }
 
     pub fn end3DSample(mixer: *Mixer, handle: Sample3D) void {
@@ -621,7 +654,7 @@ pub const Mixer = struct {
         mixer.lock.acquire();
         defer mixer.lock.release();
         const held = mixer.sample3D(handle).playing orelse return 0;
-        return held.decoder.frames * held.decoder.wave.channels * 2;
+        return pcmLength(held.decoder.frames, held.decoder.wave.channels);
     }
 
     // --- Streams ---------------------------------------------------------------------------------
@@ -660,8 +693,7 @@ pub const Mixer = struct {
         mixer.lock.acquire();
         defer mixer.lock.release();
         if (mixer.stream(handle).playing) |*held| {
-            if (paused and held.status == .playing) held.status = .stopped;
-            if (!paused and held.status == .stopped) held.status = .playing;
+            if (paused) held.stop() else held.resumePlaying();
         }
     }
 
@@ -674,7 +706,7 @@ pub const Mixer = struct {
     pub fn setStreamVolume(mixer: *Mixer, handle: Stream, volume: i32) void {
         mixer.lock.acquire();
         defer mixer.lock.release();
-        mixer.stream(handle).volume = std.math.clamp(volume, 0, 127);
+        mixer.stream(handle).volume = clampLevel(volume);
     }
 
     pub fn setStreamLoopCount(mixer: *Mixer, handle: Stream, count: u32) void {
@@ -714,9 +746,10 @@ pub const Mixer = struct {
             if (!slot.allocated) continue;
             const state = &slot.state;
             const held = &(state.playing orelse continue);
-            const gain = @as(f32, @floatFromInt(state.volume)) / 127;
+            const volume = gain(state.volume);
             const pan = @as(f32, @floatFromInt(state.pan));
-            const gains: [2]f32 = .{ gain * @min(1, (127 - pan) / 63), gain * @min(1, pan / 64) };
+            // Full in the left ear up to the middle, and in the right from it.
+            const gains: [2]f32 = .{ volume * @min(1, (max_level - pan) / (max_level - centre_pan)), volume * @min(1, pan / centre_pan) };
             held.mix(out, mixer.rate, gains, 1);
         }
         for (&mixer.samples_3d) |*slot| {
@@ -730,8 +763,8 @@ pub const Mixer = struct {
             if (!slot.allocated) continue;
             const state = &slot.state;
             const held = &(state.playing orelse continue);
-            const gain = @as(f32, @floatFromInt(state.volume)) / 127;
-            held.mix(out, mixer.rate, .{ gain, gain }, 1);
+            const volume = gain(state.volume);
+            held.mix(out, mixer.rate, .{ volume, volume }, 1);
         }
         for (out) |*frame| {
             for (frame) |*channel| channel.* = std.math.clamp(channel.*, -1, 1);

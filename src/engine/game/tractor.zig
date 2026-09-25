@@ -1,9 +1,9 @@
 //! `C:\lancer\game\tractor.cpp`: the tractors by which a ship takes another aboard (`tractors`,
 //! `0x0051D10C`): two beams from the ship to what it takes, a bubble glowing round it and a green
 //! light on it. The file's asserting code is `tractor_create` (`0x0041D090`). **Unverified:** that
-//! the code before it from `tractors_init` (`0x0041BB90`), after `launch.cpp`'s, is the file's
-//! too: the tractors' other routines, and Scoop Up (order 107), by which a nanny ship or the
-//! enemy's Antanov picks up an ejected pilot's pod. [`ejection.md`](../../../docs/engine/ejection.md)
+//! the code before it from `tractors_init` (`0x0041BB90`), after `launch.cpp`'s, is the file's too:
+//! the tractors' other routines, and Scoop Up (order 107), by which a nanny ship or the enemy's
+//! Antanov picks up an ejected pilot's pod. [`ejection.md`](../../../docs/engine/ejection.md)
 //! describes the pickup.
 
 const std = @import("std");
@@ -25,8 +25,10 @@ const gameobj = @import("gameobj.zig");
 const guns = @import("guns.zig");
 const matmanager = @import("matmanager.zig");
 const objects = @import("objects.zig");
+const particles = @import("particles.zig");
 const shield = @import("shield.zig");
 const sound3d = @import("sound3d.zig");
+const table = @import("table.zig");
 const xtrabits = @import("xtrabits.zig");
 
 // --- The tractors -------------------------------------------------------------------------------
@@ -57,14 +59,11 @@ pub const Tractors = struct {
     /// `tractor_create` (`0x0041D090`): the first tractor free, for a ship to take in the object in
     /// slot `pod`, with its light; null where all are in use or it can't be made.
     fn take(tractors: *Tractors, pod: u16) ?usize {
-        for (&tractors.slots, 0..) |*slot, index| {
-            if (slot.* != null) continue;
-            const tractor = tractors.gpa.create(Tractor) catch return null;
-            tractor.* = .{ .pod = pod };
-            slot.* = tractor;
-            return index;
-        }
-        return null;
+        const index = table.firstFreeIndex(*Tractor, &tractors.slots) orelse return null;
+        const tractor = tractors.gpa.create(Tractor) catch return null;
+        tractor.* = .{ .pod = pod };
+        tractors.slots[index] = tractor;
+        return index;
     }
 
     /// `tractor_free` (`0x0041D1A0`): tractor `index` let go, with its beams and its bubble.
@@ -76,7 +75,7 @@ pub const Tractors = struct {
         tractors.slots[index] = null;
     }
 
-    /// The port's: what each tractor shows this frame goes into `scene`, where its ship and its
+    /// OpenReliant's: what each tractor shows this frame goes into `scene`, where its ship and its
     /// pod are drawn: its beams, aimed at the pod (`tractor_beam_aim`) where Scoop Up aims them and
     /// otherwise hanging from their part as they were last aimed, its light on the pod, and its
     /// bubble round it. The game adds them to the scene as Scoop Up runs.
@@ -118,8 +117,8 @@ pub const Tractor = struct {
         .kind = .{ .point = .{ .position = @splat(0), .range = light_reach } },
     },
     pod: u16,
-    /// The port's: whether Scoop Up showed it this frame, which the game does by adding its beams,
-    /// its light and its bubble to the scene, and whether it aimed the beams.
+    /// OpenReliant's: whether Scoop Up showed it this frame, which the game does by adding its
+    /// beams, its light and its bubble to the scene, and whether it aimed the beams.
     shown: bool = false,
     aimed: bool = false,
 
@@ -163,7 +162,7 @@ pub const Beam = struct {
     turn: math.Matrix = math.identity,
 
     /// The game draws the square in one group of polygons and the ribbons in another, of the same
-    /// material; the port draws them in one.
+    /// material; OpenReliant draws them in one.
     fn create(gpa: Allocator, image: *srtexture.Image, ship: u16, part: usize, point: Vector) Allocator.Error!*Beam {
         var corners: [beam_corners]Vector = undefined;
         corners[0..guns.blade_corners].* = .{
@@ -206,8 +205,8 @@ pub const Beam = struct {
         gpa.destroy(beam);
     }
 
-    /// `tractor_beam_fade` (`0x0041CED0`): the beam as solid as `alpha`, from nothing to whole: each
-    /// quad clear at its near corners and green, that solid, at its far ones.
+    /// `tractor_beam_fade` (`0x0041CED0`): the beam as solid as `alpha`, from nothing to whole:
+    /// each quad clear at its near corners and green, that solid, at its far ones.
     fn fade(beam: *Beam, alpha: f32) void {
         const solid = std.math.clamp(alpha, 0, 1);
         for (&beam.colours, 0..) |*colour, corner| switch (corner % guns.blade_corners) {
@@ -251,8 +250,8 @@ const wave_rate: f32 = 3;
 const crest: f32 = 0.05;
 
 /// The bubble round what a tractor holds (`shield_bubble_object`, `0x0049E370`, "Shield mesh"): the
-/// shields' finest sphere with colours of its own, its texture laid on by each vertex's `x` and `y`,
-/// never culled.
+/// shields' finest sphere with colours of its own, its texture laid on by each vertex's `x` and
+/// `y`, never culled.
 ///
 /// **Improvement:** in the smooth shield style it is drawn on the shields' finer sphere, as a
 /// shield's bubble is up close, so its outline is round. Its glow is worked out on the game's
@@ -349,7 +348,7 @@ pub const State = extern struct {
 
     /// How far through its stage it is at tick `now`, for a stage that lasts a while.
     fn through(state: State, now: i32) f32 {
-        return @as(f32, @floatFromInt(now - state.since)) / @as(f32, @floatFromInt(state.stage.ticks()));
+        return particles.through(now, state.since, state.stage.ticks());
     }
 };
 
@@ -384,13 +383,19 @@ pub const Stage = enum(i32) {
             else => 0,
         };
     }
+
+    /// Whether the ship steers at the pod through it: until the pod is held still, which the game
+    /// tells by the stage's number.
+    fn steers(stage: Stage) bool {
+        return @intFromEnum(stage) < @intFromEnum(Stage.pulling);
+    }
 };
 
 /// `order_scoop_up_init` (`0x0041BBF0`): the ship takes a tractor for the pod, its target, and
 /// neither collides with the other from now on.
 ///
 /// **Fix:** the game takes a tractor without checking one is free, and reads past the five where
-/// none is; the port has the ship pick the pod up without beams, bubble or light.
+/// none is; OpenReliant has the ship pick the pod up without beams, bubble or light.
 pub fn scoopUpInit(ctx: Context, index: u16) void {
     const all = ctx.world.objects;
     const slot = &all.slots[index];
@@ -423,17 +428,12 @@ const facing: f32 = 0.7;
 /// it stops (`0x004DC444`, `0x004DC43C`, `0x0041BECA`).
 const full_beyond: f32 = 20000;
 const slow_beyond: f32 = 10000;
-const full_throttle: f32 = 1;
 const slow_throttle: f32 = 0.4;
 
 /// How still the ship must be to begin: its inputs and its throttle, and its rates of turn
 /// (`0x004DC53C`, `0x004DC4AC`).
 const still_inputs: f32 = 0.025;
 const still_rates: f32 = 0.02;
-
-/// The steering's turn at its full, and no ease on it.
-const full_limit: f32 = 1;
-const no_ease: f32 = 0;
 
 /// The most the second beam lags the first coming on, as a share of the time (`0x004DC3F8`).
 const lag_most: f32 = 0.2;
@@ -463,13 +463,15 @@ const bubble_turn: f32 = 0.5;
 /// `order_scoop_up` (`0x0041BCC0`): a nanny ship or the enemy's Antanov takes in the pod, its
 /// target. It claims the pod, flies to it and comes to rest; makes its beams from the tractor
 /// points of its hull and its bubble round the pod, opens its doors, heard (`dooropen`), and brings
-/// the beams, the bubble and the light on over a second, the second beam a little behind the
-/// first; holds the pod still and draws it to `pull_out` off its door, then in; closes its doors,
-/// heard (`doorclos`), as the beams, no longer aimed, the bubble and the light go out; and after a while has the pod
-/// aboard, gone from the mission. Should the pod be gone first, it closes its doors and gives up.
+/// the beams, the bubble and the light on over a second, the second beam a little behind the first;
+/// holds the pod still and draws it to `pull_out` off its door, then in; closes its doors, heard
+/// (`doorclos`), as the beams, no longer aimed, the bubble and the light go out; and after a while
+/// has the pod aboard, gone from the mission. Should the pod be gone first, it closes its doors and
+/// gives up.
 ///
-/// Not ported: the mission's Scooped event ([#37](https://github.com/vdmkenny/openreliant/issues/37));
-/// a multiplayer game's wait for every player, as the beams are made and before the pod is gone
+/// Not ported: the mission's Scooped event
+/// ([#37](https://github.com/vdmkenny/openreliant/issues/37)); a multiplayer game's wait for every
+/// player, as the beams are made and before the pod is gone
 /// ([#55](https://github.com/vdmkenny/openreliant/issues/55)).
 pub fn scoopUp(ctx: Context, index: u16) void {
     const world = ctx.world;
@@ -488,7 +490,7 @@ pub fn scoopUp(ctx: Context, index: u16) void {
         _ = aigeneric.pop(ctx, index);
         return;
     }
-    if (@intFromEnum(state.stage) < @intFromEnum(Stage.pulling)) _ = ai.steer(world, index, pod.drawn.position, full_limit, no_ease, .{});
+    if (state.stage.steers()) _ = ai.steer(world, index, pod.drawn.position, ai.full_limit, ai.no_ease, .{});
     switch (state.stage) {
         .claiming => {
             if (pod.object.flags.tractored) {
@@ -500,10 +502,7 @@ pub fn scoopUp(ctx: Context, index: u16) void {
         },
         .approaching => approach(slot, pod.drawn.position, state),
         .opening => {
-            object.yaw_input = 0;
-            object.pitch_input = 0;
-            object.roll_input = 0;
-            object.throttle = 0;
+            object.letGo();
             if (tractor) |held| makeBeams(world, index, pod_index, held);
             playDoors(slot, .open);
             doorSound(world, slot, .dooropen);
@@ -533,7 +532,7 @@ pub fn scoopUp(ctx: Context, index: u16) void {
             const pulling = state.stage == .pulling;
             const out = if (pulling) pull_out else if (object.type == .nanny) stow_nanny else stow_antanov;
             const to = door.position + math.forward(door.orientation) * @as(Vector, @splat(out));
-            // Where the pod was placed, which the game's frame has it at; the port draws it on
+            // Where the pod was placed, which the game's frame has it at; OpenReliant draws it on
             // between the ticks (`create.Slot.glide`).
             const was = gameobj.vector(pod.object.root.position);
             const reach = math.distance(to, was);
@@ -586,11 +585,11 @@ fn approach(slot: *create.Slot, pod: Vector, state: *State) void {
     const flight = slot.flight orelse return;
     const to = pod - slot.drawn.position;
     const reach = math.length(to);
-    if (reach < flight.speed_per_pitch_rate * turning_room and math.dot(math.forward(slot.drawn.orientation), math.normalize(to)) < facing) {
+    if (reach < flight.speed_per_pitch_rate * turning_room and ai.noseCosine(slot.drawn.orientation, to) < facing) {
         object.throttle = 0;
         return;
     }
-    object.throttle = if (reach > full_beyond) full_throttle else if (reach > slow_beyond) slow_throttle else 0;
+    object.throttle = if (reach > full_beyond) ai.full_throttle else if (reach > slow_beyond) slow_throttle else 0;
     const inputs = [_]f32{ object.yaw_input, object.pitch_input, object.roll_input, object.throttle };
     const rates = [_]f32{ object.yaw_rate, object.pitch_rate, object.roll_rate };
     for (inputs) |input| if (@abs(input) > still_inputs) return;
@@ -600,8 +599,7 @@ fn approach(slot: *create.Slot, pod: Vector, state: *State) void {
 
 /// The ship its order in `slot` aims at, where it names one.
 fn targetOf(slot: *const create.Slot) ?u16 {
-    if (slot.object.order_count == 0) return null;
-    return slot.orders[0].target.ship();
+    return (slot.current() orelse return null).target.ship();
 }
 
 /// The part a nanny ship's or an Antanov's beams come from, and the part its door point is on.
@@ -629,8 +627,8 @@ fn makeBeams(world: gameobj.World, index: u16, pod: u16, tractor: *Tractor) void
     tractor.bubble = Bubble.create(tractors.gpa, shields, all.slots[pod].object.radius * bubble_scale) catch null;
 }
 
-/// Where the ship in `slot` takes the pod in, as last drawn: its door point, in the world, turned as
-/// the part it is on.
+/// Where the ship in `slot` takes the pod in, as last drawn: its door point, in the world, turned
+/// as the part it is on.
 fn doorPlace(slot: *create.Slot) ?math.Place {
     const model = if (slot.model) |*live| live else return null;
     const part = model.partNamed(doorName(slot.object.type)) orelse return null;
@@ -685,11 +683,11 @@ test {
 pub const testing = struct {
     /// The tractors over a table holding nothing but their texture.
     pub const Built = struct {
-        textures: *@import("backdrop.zig").testing.Textures,
+        textures: *@import("../surrender/surrenderlib/srtexture.zig").testing.Textures,
         tractors: Tractors,
 
         pub fn init(gpa: Allocator) !Built {
-            const textures = try @import("backdrop.zig").testing.Textures.initNames(gpa, &.{"laser2"});
+            const textures = try @import("../surrender/surrenderlib/srtexture.zig").testing.Textures.init(gpa, &.{"laser2"});
             errdefer textures.deinit(gpa);
             return .{ .textures = textures, .tractors = try .init(gpa, &textures.table) };
         }
@@ -716,6 +714,36 @@ test Tractors {
     try std.testing.expectEqual(2, tractors.take(7).?);
     tractors.reset();
     for (tractors.slots) |slot| try std.testing.expectEqual(null, slot);
+}
+
+test "Tractors.draw" {
+    const gpa = std.testing.allocator;
+    var built: testing.Built = try .init(gpa);
+    defer built.deinit(gpa);
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(gpa);
+    defer mission.deinit();
+    const pod = try mission.add(.predator, .{ 0, 0, 300 });
+    const tractors = &built.tractors;
+    const tractor = tractors.slots[tractors.take(pod).?].?;
+    // A beam from a ship with no model to hang it from, which is left out.
+    tractor.beams[0] = try Beam.create(gpa, tractors.image, pod, 0, @splat(0));
+    var scene: srcore.Scene = .{};
+    defer scene.deinit(gpa);
+
+    // Not shown this frame, it draws nothing.
+    try tractors.draw(gpa, &scene, mission.objects);
+    try std.testing.expectEqual(0, scene.lights.items.len);
+    // Shown, its light stands on the pod, for the one frame.
+    tractor.show(light_reach, .held);
+    try tractors.draw(gpa, &scene, mission.objects);
+    try std.testing.expectEqual(1, scene.lights.items.len);
+    try std.testing.expectEqual([3]f32{ 0, 0, 300 }, scene.lights.items[0].kind.point.position);
+    try std.testing.expectEqual(0, scene.layers.get(.world).items.len);
+    try std.testing.expect(!tractor.shown);
+    scene.clear();
+    try tractors.draw(gpa, &scene, mission.objects);
+    try std.testing.expectEqual(0, scene.lights.items.len);
 }
 
 test Beam {
@@ -799,7 +827,7 @@ test scoopUp {
     const state = &slot.state.scoop_up;
 
     // It takes a tractor, and neither it nor the pod collides with the other.
-    try std.testing.expect(try aigeneric.pushShip(ctx, nanny, .scoop_up, pod, -1));
+    try std.testing.expect(try aigeneric.pushShip(ctx, nanny, .scoop_up, pod, aigeneric.Target.whole));
     aigeneric.objectOrders(ctx, nanny);
     try std.testing.expectEqual(0, state.held().?);
     try std.testing.expectEqual(gameobj.Slot.of(nanny), mission.slot(pod).object.passes_through[0]);
@@ -808,11 +836,11 @@ test scoopUp {
     try std.testing.expect(mission.slot(pod).object.flags.tractored);
     try std.testing.expectEqual(.approaching, state.stage);
     scoopUp(ctx, nanny);
-    try std.testing.expectEqual(full_throttle, slot.object.throttle);
+    try std.testing.expectEqual(ai.full_throttle, slot.object.throttle);
 
     // Another ship finds the pod claimed, and gives up.
     const other = try mission.addOther(.{ 0, 0, 30000 });
-    try std.testing.expect(try aigeneric.pushShip(ctx, other, .scoop_up, pod, -1));
+    try std.testing.expect(try aigeneric.pushShip(ctx, other, .scoop_up, pod, aigeneric.Target.whole));
     aigeneric.objectOrders(ctx, other);
     try std.testing.expectEqual(0, mission.slot(other).object.order_count);
 
@@ -863,7 +891,7 @@ test "Scoop Up gives up on a pod gone first" {
     const nanny = try mission.addOther(.{ 0, 0, -30000 });
     var ctx = mission.orders();
     ctx.world.tractors = &built.tractors;
-    try std.testing.expect(try aigeneric.pushShip(ctx, nanny, .scoop_up, pod, -1));
+    try std.testing.expect(try aigeneric.pushShip(ctx, nanny, .scoop_up, pod, aigeneric.Target.whole));
     aigeneric.objectOrders(ctx, nanny);
     mission.slot(pod).object.flags.exploding = true;
     scoopUp(ctx, nanny);

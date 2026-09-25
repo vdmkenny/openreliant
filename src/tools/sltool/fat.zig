@@ -1,13 +1,13 @@
 //! `sltool fat ...`: read `.fat` sound banks and save their sounds as WAV files.
 
 const std = @import("std");
-const Io = std.Io;
 
 const openreliant = @import("openreliant");
 const fat = openreliant.fat;
 const Wave = openreliant.wave.Wave;
 
-const Context = @import("main.zig").Context;
+const sltool = @import("main.zig");
+const Context = sltool.Context;
 
 pub const Command = union(enum) {
     ls: struct { bank: []const u8 },
@@ -21,15 +21,9 @@ pub const Command = union(enum) {
     ;
 
     pub fn parse(args: []const [:0]const u8) error{Usage}!Command {
-        if (args.len == 0) return error.Usage;
-        const verb = std.meta.stringToEnum(std.meta.Tag(Command), args[0]) orelse return error.Usage;
-        const operands = args[1..];
+        const verb, const operands = try sltool.verbOf(Command, args);
         return switch (verb) {
-            .ls => if (operands.len == 1) .{ .ls = .{ .bank = operands[0] } } else error.Usage,
-            .extract => if (operands.len == 2)
-                .{ .extract = .{ .bank = operands[0], .out_dir = operands[1] } }
-            else
-                error.Usage,
+            inline else => |tag| sltool.positional(Command, tag, operands),
         };
     }
 
@@ -37,8 +31,7 @@ pub const Command = union(enum) {
         const path = switch (command) {
             inline else => |operands| operands.bank,
         };
-        const bytes = try Io.Dir.cwd().readFileAlloc(ctx.io, path, ctx.arena, .limited(64 << 20));
-        const bank: fat.Bank = try .parse(bytes);
+        const bank: fat.Bank = try .parse(try ctx.readInput(path));
         switch (command) {
             .ls => try ls(ctx, bank),
             .extract => |operands| try extract(ctx, bank, path, operands.out_dir),
@@ -69,8 +62,7 @@ fn ls(ctx: Context, bank: fat.Bank) !void {
 
 fn extract(ctx: Context, bank: fat.Bank, source: []const u8, out_path: []const u8) !void {
     const io = ctx.io;
-    try Io.Dir.cwd().createDirPath(io, out_path);
-    var out_dir = try Io.Dir.cwd().openDir(io, out_path, .{});
+    var out_dir = try ctx.outputDir(out_path);
     defer out_dir.close(io);
 
     const stem = std.fs.path.stem(std.fs.path.basename(source));

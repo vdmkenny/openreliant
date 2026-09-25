@@ -21,6 +21,10 @@ const Stored = extern struct {
     name: u16,
     bars: u8,
     cockpit: u8,
+
+    comptime {
+        std.debug.assert(@sizeOf(Stored) == 4);
+    }
 };
 
 /// Views a table this size could hold, as a bound on the scan.
@@ -37,7 +41,7 @@ pub const Error = image.Error || error{Empty};
 pub fn read(arena: std.mem.Allocator, reader: image.Reader) (Error || std.mem.Allocator.Error)![]const Record {
     var records: std.ArrayList(Record) = .empty;
     for (0..max_views) |index| {
-        const stored = reader.record(Stored, table + @as(u32, @intCast(index)) * @sizeOf(Stored)) catch break;
+        const stored = reader.recordAt(Stored, table, index) catch break;
         const record = parse(stored) orelse break;
         try records.append(arena, record);
     }

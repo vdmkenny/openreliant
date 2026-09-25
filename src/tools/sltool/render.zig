@@ -76,7 +76,7 @@ pub const Command = struct {
                     const x = std.mem.indexOfScalar(u8, value, 'x') orelse return error.Usage;
                     command.width = std.fmt.parseInt(u32, value[0..x], 10) catch return error.Usage;
                     command.height = std.fmt.parseInt(u32, value[x + 1 ..], 10) catch return error.Usage;
-                    if (command.width == 0 or command.height == 0 or command.width > 16384 or command.height > 16384) return error.Usage;
+                    if (command.width == 0 or command.height == 0 or command.width > max_side or command.height > max_side) return error.Usage;
                 },
                 .@"--toward" => command.toward = try direction(value),
                 .@"--heading" => command.heading = try direction(value),
@@ -88,6 +88,12 @@ pub const Command = struct {
 
     /// The options that take a value.
     const Option = enum { @"--model", @"--nebula", @"--size", @"--toward", @"--heading", @"--distance" };
+
+    /// The widest and tallest picture `--size` asks for.
+    const max_side = 16384;
+
+    /// The share of the picture's height the model's radius takes at the default distance.
+    const fill = 0.35;
 
     pub fn run(command: Command, ctx: Context) !void {
         try draw(ctx, command);
@@ -108,7 +114,7 @@ fn draw(ctx: Context, command: Command) !void {
     var resources: Library = try .open(ctx, command.resources);
     defer resources.deinit();
 
-    const cache: tcache.Cache = try .parse(gpa, try Io.Dir.cwd().readFileAlloc(ctx.io, command.cache, gpa, .limited(256 << 20)));
+    const cache: tcache.Cache = try .parse(gpa, try ctx.readInput(command.cache));
     const palette = try tga.palette(try need(&resources, "palette.tga"));
     var textures: srtexture.Table = .init(gpa, cache, palette);
     defer textures.deinit();
@@ -138,7 +144,7 @@ fn draw(ctx: Context, command: Command) !void {
         const loaded = try srofiles.modelLoad(gpa, &textures, model, .{}, false);
         var placed: objects.Model = try .create(gpa, model, &loaded, .{ .light_sprites = try .load(&textures) });
         engine.game.gameobj.linkParts(&placed, model);
-        const distance = command.distance orelse @max(placed.radius, 1) * context.projection.scale[1] / (0.35 * @as(f32, @floatFromInt(command.height)));
+        const distance = command.distance orelse @max(placed.radius, 1) * context.projection.scale[1] / (Command.fill * @as(f32, @floatFromInt(command.height)));
         placed.place(math.normalize(command.toward) * @as(math.Vector, @splat(distance)), math.lookAt(math.normalize(command.heading)));
         for (loaded.parts) |part| polygons += part.meshes[0].polygons.len;
         object = placed;

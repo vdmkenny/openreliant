@@ -1,13 +1,12 @@
 //! `sltool hog ...`: read the game's `.HOG` asset archives.
 
 const std = @import("std");
-const Io = std.Io;
 
 const openreliant = @import("openreliant");
 const hog = openreliant.hog;
-const refpack = openreliant.refpack;
 
-const Context = @import("main.zig").Context;
+const sltool = @import("main.zig");
+const Context = sltool.Context;
 
 pub const Command = union(enum) {
     info: struct { archive: []const u8 },
@@ -24,12 +23,8 @@ pub const Command = union(enum) {
     ;
 
     pub fn parse(args: []const [:0]const u8) error{Usage}!Command {
-        if (args.len == 0) return error.Usage;
-        const verb = std.meta.stringToEnum(std.meta.Tag(Command), args[0]) orelse return error.Usage;
-        const operands = args[1..];
+        const verb, const operands = try sltool.verbOf(Command, args);
         switch (verb) {
-            .info => return if (operands.len == 1) .{ .info = .{ .archive = operands[0] } } else error.Usage,
-            .ls => return if (operands.len == 1) .{ .ls = .{ .archive = operands[0] } } else error.Usage,
             .extract => {
                 if (operands.len != 2 and operands.len != 3) return error.Usage;
                 var command: Command = .{ .extract = .{ .archive = operands[0], .out_dir = operands[1] } };
@@ -39,6 +34,7 @@ pub const Command = union(enum) {
                 }
                 return command;
             },
+            inline else => |tag| return sltool.positional(Command, tag, operands),
         }
     }
 
@@ -64,14 +60,9 @@ fn info(ctx: Context, archive: hog.Archive) !void {
 
     for (archive.entries) |entry| {
         stored_total += entry.size;
-        var head: [8]u8 = undefined;
-        const n = try archive.file.readPositionalAll(archive.io, &head, entry.offset);
-        if (n >= 5 and refpack.looksCompressed(head[0..n])) {
+        if (try archive.expandedSize(entry)) |size| {
             compressed += 1;
-            real_total += (refpack.readHeader(head[0..n]) catch {
-                real_total += entry.size;
-                continue;
-            }).decompressed_size;
+            real_total += size;
         } else {
             real_total += entry.size;
         }
@@ -109,15 +100,8 @@ fn info(ctx: Context, archive: hog.Archive) !void {
 
 fn list(ctx: Context, archive: hog.Archive) !void {
     for (archive.entries) |entry| {
-        var head: [8]u8 = undefined;
-        const n = try archive.file.readPositionalAll(archive.io, &head, entry.offset);
-        const header: ?refpack.Header = if (n >= 5 and refpack.looksCompressed(head[0..n]))
-            refpack.readHeader(head[0..n]) catch null
-        else
-            null;
-
-        if (header) |h| {
-            try ctx.stdout.print("{x:0>8}  {d:>9} {d:>10}  {s}\n", .{ entry.offset, entry.size, h.decompressed_size, entry.name });
+        if (try archive.expandedSize(entry)) |size| {
+            try ctx.stdout.print("{x:0>8}  {d:>9} {d:>10}  {s}\n", .{ entry.offset, entry.size, size, entry.name });
         } else {
             try ctx.stdout.print("{x:0>8}  {d:>9} {s:>10}  {s}\n", .{ entry.offset, entry.size, "-", entry.name });
         }
@@ -126,8 +110,7 @@ fn list(ctx: Context, archive: hog.Archive) !void {
 
 fn extract(ctx: Context, archive: hog.Archive, out_path: []const u8, raw: bool) !void {
     const io = ctx.io;
-    try Io.Dir.cwd().createDirPath(io, out_path);
-    var out_dir = try Io.Dir.cwd().openDir(io, out_path, .{});
+    var out_dir = try ctx.outputDir(out_path);
     defer out_dir.close(io);
 
     // Member names are not unique, and several duplicates hold different data, so a later member
@@ -147,7 +130,7 @@ fn extract(ctx: Context, archive: hog.Archive, out_path: []const u8, raw: bool) 
 
         var name = entry.name;
         var attempt: usize = 2;
-        while (try taken.fetchPut(ctx.arena, try lowered(ctx.arena, name), {}) != null) : (attempt += 1) {
+        while (try taken.fetchPut(ctx.arena, try std.ascii.allocLowerString(ctx.arena, name), {}) != null) : (attempt += 1) {
             name = try disambiguate(ctx.arena, entry.name, attempt);
             if (attempt == 2) renamed += 1;
         }
@@ -168,11 +151,6 @@ fn extract(ctx: Context, archive: hog.Archive, out_path: []const u8, raw: bool) 
             .{ renamed, if (renamed == 1) "" else "s" },
         );
     }
-}
-
-fn lowered(gpa: std.mem.Allocator, name: []const u8) ![]const u8 {
-    const copy = try gpa.dupe(u8, name);
-    return std.ascii.lowerString(copy, name);
 }
 
 /// `dest.SHP` becomes `dest~2.SHP`, keeping the extension so the file still opens as its type.
@@ -202,11 +180,4 @@ test disambiguate {
     const bare = try disambiguate(gpa, "README", 3);
     defer gpa.free(bare);
     try std.testing.expectEqualStrings("README~3", bare);
-}
-
-test lowered {
-    const gpa = std.testing.allocator;
-    const name = try lowered(gpa, "Dest.SHP");
-    defer gpa.free(name);
-    try std.testing.expectEqualStrings("dest.shp", name);
 }

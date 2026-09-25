@@ -16,6 +16,7 @@ const EventValue = vm.EventValue;
 
 const image = @import("image.zig");
 const testing = @import("testing.zig");
+const zig_text = @import("zig_text.zig");
 
 /// Where `mission_script_start` installs the catalogue: `MOV dword ptr [condition_table], imm32`,
 /// then `MOV word ptr [condition_count], imm16`.
@@ -33,6 +34,10 @@ const StoreDword = extern struct {
     value: u32 align(1),
 
     const encoding: [2]u8 = .{ 0xC7, 0x05 };
+
+    comptime {
+        std.debug.assert(@sizeOf(StoreDword) == 10);
+    }
 };
 
 /// `MOV word ptr [address], value`, which installs its length.
@@ -42,7 +47,14 @@ const StoreWord = extern struct {
     value: u16 align(1),
 
     const encoding: [3]u8 = .{ 0x66, 0xC7, 0x05 };
+
+    comptime {
+        std.debug.assert(@sizeOf(StoreWord) == 9);
+    }
 };
+
+/// What a descriptor's `slot` and `veto_exempt` hold for none.
+const none: u8 = 0xFF;
 
 pub const Value = struct {
     label: []const u8,
@@ -62,8 +74,8 @@ pub const Condition = struct {
     unknown_04: u16,
     subjects: u16,
     values: []const Value,
-    slot: u8,
-    veto_exempt: u8,
+    slot: ?u8,
+    veto_exempt: ?Repeat,
     handlers: ?Handlers,
 };
 
@@ -119,8 +131,8 @@ pub fn read(arena: std.mem.Allocator, reader: image.Reader) (Error || std.mem.Al
             .unknown_04 = descriptor._unknown_04,
             .subjects = @bitCast(descriptor.subjects),
             .values = try values.toOwnedSlice(arena),
-            .slot = descriptor.slot,
-            .veto_exempt = @intFromEnum(descriptor.veto_exempt),
+            .slot = if (descriptor.slot == none) null else descriptor.slot,
+            .veto_exempt = if (@intFromEnum(descriptor.veto_exempt) == none) null else descriptor.veto_exempt,
             .handlers = if (all) handlers else null,
         };
     }
@@ -197,17 +209,17 @@ pub fn emit(w: *Io.Writer, catalogue: Catalogue) !void {
             }
             try w.writeAll("        },\n");
         }
-        if (condition.slot == 0xFF) {
+        if (condition.slot) |slot| {
+            try w.print("        .slot = {d},\n", .{slot});
+        } else {
             try w.writeAll("        .slot = null,\n");
-        } else {
-            try w.print("        .slot = {d},\n", .{condition.slot});
         }
-        if (condition.veto_exempt == 0xFF) {
-            try w.writeAll("        .veto_exempt = null,\n");
-        } else if (std.enums.tagName(Repeat, @enumFromInt(condition.veto_exempt))) |name| {
-            try w.print("        .veto_exempt = .{s},\n", .{name});
+        if (condition.veto_exempt) |repeat| {
+            try w.writeAll("        .veto_exempt = ");
+            try zig_text.enumValue(w, repeat);
+            try w.writeAll(",\n");
         } else {
-            try w.print("        .veto_exempt = @enumFromInt({d}),\n", .{condition.veto_exempt});
+            try w.writeAll("        .veto_exempt = null,\n");
         }
         if (condition.handlers) |handlers| {
             try w.print(
@@ -269,8 +281,8 @@ const TestPayload = struct {
         payload.table().putString(name_at, name);
         var record = std.mem.zeroes(Descriptor);
         record.name = @enumFromInt(name_at);
-        record.slot = 0xFF;
-        record.veto_exempt = @enumFromInt(0xFF);
+        record.slot = none;
+        record.veto_exempt = @enumFromInt(none);
         change.apply(&record);
         payload.table().putRecord(table_va + index * @sizeOf(Descriptor), record);
     }
@@ -348,6 +360,8 @@ test read {
     try std.testing.expectEqualStrings("MissionStart", start.name);
     try std.testing.expectEqual(0, start.values.len);
     try std.testing.expectEqual(null, start.handlers);
+    try std.testing.expectEqual(null, start.slot);
+    try std.testing.expectEqual(null, start.veto_exempt);
 }
 
 test "read wants the install instructions" {
@@ -393,14 +407,16 @@ test "an event carries at most five values" {
 test "emit writes Zig that parses" {
     const values_listed = [_]Value{.{ .label = "Ship", .kinds = 0x400, .extra = 2, .checked = true }};
     const listed = [_]Condition{
-        .{ .name = "ShipDestroyed", .unknown_04 = 0, .subjects = 0b011, .values = &values_listed, .slot = 3, .veto_exempt = 0, .handlers = .{ .begin = 1, .add_member = 2, .verdict = 3 } },
-        .{ .name = "MissionStart", .unknown_04 = 0x10, .subjects = 0, .values = &.{}, .slot = 0xFF, .veto_exempt = 0xFF, .handlers = null },
-        .{ .name = "Odd", .unknown_04 = 0, .subjects = 0, .values = &.{}, .slot = 0xFF, .veto_exempt = 0x7F, .handlers = null },
+        .{ .name = "ShipDestroyed", .unknown_04 = 0, .subjects = 0b011, .values = &values_listed, .slot = 3, .veto_exempt = .once, .handlers = .{ .begin = 1, .add_member = 2, .verdict = 3 } },
+        .{ .name = "MissionStart", .unknown_04 = 0x10, .subjects = 0, .values = &.{}, .slot = null, .veto_exempt = null, .handlers = null },
+        .{ .name = "Odd", .unknown_04 = 0, .subjects = 0, .values = &.{}, .slot = null, .veto_exempt = @enumFromInt(0x7F), .handlers = null },
     };
     var out: Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
     try emit(&out.writer, .{ .address = 0x004F2000, .conditions = &listed });
     try testing.expectZig(out.written());
     try std.testing.expect(std.mem.indexOf(u8, out.written(), ".slot = null,") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), ".slot = 3,\n        .veto_exempt = .once,") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), ".veto_exempt = null,") != null);
     try std.testing.expect(std.mem.indexOf(u8, out.written(), ".veto_exempt = @enumFromInt(127),") != null);
 }

@@ -1,10 +1,11 @@
-//! `C:\lancer\surrender\surrenderlib\srClip.cpp`: the clipper, which the driver links in; the port
-//! follows `srd3d.dll`'s copy. `clip_triangle` (`0x1000BEB0`) cuts a polygon in the camera's frame
-//! by the planes of the view volume it crosses, the near plane, then left, right, top and bottom.
-//! A vertex a cut makes gets clip flags of its own (`SR_clip_vertex_set_clip_flags`,
-//! `0x1000C700`), against the sides as well as the near plane, and each plane they name joins
-//! those still to cut by: a cut through the near plane that lands off the screen is cut again by
-//! the sides it lies beyond. An object's portal cuts last (`portal_clip`, `0x004CCF30`).
+//! `C:\lancer\surrender\surrenderlib\srClip.cpp`: the clipper, which the driver links in;
+//! OpenReliant follows `srd3d.dll`'s copy. `clip_triangle` (`0x1000BEB0`) cuts a polygon in the
+//! camera's frame by the planes of the view volume it crosses, the near plane, then left, right,
+//! top and bottom. A vertex a cut makes gets clip flags of its own
+//! (`SR_clip_vertex_set_clip_flags`, `0x1000C700`), against the sides as well as the near plane,
+//! and each plane they name joins those still to cut by: a cut through the near plane that lands
+//! off the screen is cut again by the sides it lies beyond. An object's portal cuts last
+//! (`portal_clip`, `0x004CCF30`).
 
 const std = @import("std");
 
@@ -26,25 +27,47 @@ pub const Vertex = struct {
     colour: [4]f32,
     mesh_uv: [2][2]f32,
     generated: [2][2]f32,
-    /// The port's: its normal in the camera's frame, for a device that lights each pixel.
+    /// OpenReliant's: its normal in the camera's frame, for a device that lights each pixel.
     normal: Vector = @splat(0),
 
     /// `clip_vertex_between` (`0x1000C5E0`): the vertex `t` of the way from `a` to `b`, each
     /// attribute alike.
     fn between(a: Vertex, b: Vertex, t: f32) Vertex {
         var c = a;
-        c.view = a.view + (b.view - a.view) * @as(Vector, @splat(t));
-        c.normal = a.normal + (b.normal - a.normal) * @as(Vector, @splat(t));
-        for (&c.colour, a.colour, b.colour) |*x, p, q| x.* = p + (q - p) * t;
+        c.view = math.lerp(a.view, b.view, t);
+        c.normal = math.lerp(a.normal, b.normal, t);
+        for (&c.colour, a.colour, b.colour) |*x, p, q| x.* = math.lerp(p, q, t);
         for (0..2) |pass| {
             for (0..2) |axis| {
-                c.mesh_uv[pass][axis] = a.mesh_uv[pass][axis] + (b.mesh_uv[pass][axis] - a.mesh_uv[pass][axis]) * t;
-                c.generated[pass][axis] = a.generated[pass][axis] + (b.generated[pass][axis] - a.generated[pass][axis]) * t;
+                c.mesh_uv[pass][axis] = math.lerp(a.mesh_uv[pass][axis], b.mesh_uv[pass][axis], t);
+                c.generated[pass][axis] = math.lerp(a.generated[pass][axis], b.generated[pass][axis], t);
             }
         }
         return c;
     }
 };
+
+/// One plane's cut of `clip_triangle`: each vertex of `polygon` that lies inside the plane, and
+/// where each edge crosses it, into `out`, as many as it holds; returns how many. `side` says how
+/// far inside a vertex lies, `side.inside(v)`, negative outside, and makes the vertex `t` of the
+/// way along an edge, `side.between(a, b, t)`, where `t` is `d_a / (d_a - d_b)`.
+pub fn cut(comptime V: type, polygon: []const V, out: []V, side: anytype) usize {
+    var m: usize = 0;
+    for (polygon, 0..) |a, i| {
+        const b = polygon[(i + 1) % polygon.len];
+        const da = side.inside(a);
+        const db = side.inside(b);
+        if (da >= 0 and m < out.len) {
+            out[m] = a;
+            m += 1;
+        }
+        if ((da >= 0) != (db >= 0) and m < out.len) {
+            out[m] = side.between(a, b, da / (da - db));
+            m += 1;
+        }
+    }
+    return m;
+}
 
 /// The planes of the view volume and the object's portal, in the order the clipper cuts by them.
 pub const Plane = enum {
@@ -110,27 +133,31 @@ pub fn clip(projection: Projection, planes: Outcode, portal: ?Portal.View, polyg
     for (std.enums.values(Plane)) |plane| {
         if (!plane.in(crossed) or n == 0) continue;
         var out: [capacity]Vertex = undefined;
-        var m: usize = 0;
-        for (0..n) |i| {
-            const a = polygon[i];
-            const b = polygon[(i + 1) % n];
-            const da = plane.inside(projection, portal, a.view);
-            const db = plane.inside(projection, portal, b.view);
-            if (da >= 0 and m < out.len) {
-                out[m] = a;
-                m += 1;
-            }
-            if ((da >= 0) != (db >= 0) and m < out.len) {
-                out[m] = a.between(b, da / (da - db));
-                crossed = crossed.either(flags(projection, out[m].view));
-                m += 1;
-            }
-        }
+        const side: Side = .{ .plane = plane, .projection = projection, .portal = portal, .crossed = &crossed };
+        n = cut(Vertex, polygon[0..n], &out, side);
         polygon.* = out;
-        n = m;
     }
     return n;
 }
+
+/// A plane as `clip` cuts by it: a vertex it makes notes the planes it lies outside among those
+/// still to cut by.
+const Side = struct {
+    plane: Plane,
+    projection: Projection,
+    portal: ?Portal.View,
+    crossed: *Outcode,
+
+    fn inside(side: Side, v: Vertex) f32 {
+        return side.plane.inside(side.projection, side.portal, v.view);
+    }
+
+    fn between(side: Side, a: Vertex, b: Vertex, t: f32) Vertex {
+        const made = a.between(b, t);
+        side.crossed.* = side.crossed.either(flags(side.projection, made.view));
+        return made;
+    }
+};
 
 fn corner(view: Vector) Vertex {
     return .{ .view = view, .colour = @splat(0), .mesh_uv = @splat(.{ 0, 0 }), .generated = @splat(.{ 0, 0 }) };
@@ -192,10 +219,30 @@ test clip {
     for (polygon[0..4]) |v| try std.testing.expect(v.view[0] <= 100 + 1e-3);
 }
 
+test cut {
+    // Keeping what lies left of x = 1: a triangle with one corner past it becomes four corners, the
+    // two new ones on the plane, in order round the polygon.
+    const LeftOf = struct {
+        fn inside(_: @This(), v: Vector) f32 {
+            return 1 - v[0];
+        }
+        fn between(_: @This(), a: Vector, b: Vector, t: f32) Vector {
+            return math.lerp(a, b, t);
+        }
+    };
+    const triangle = [_]Vector{ .{ 0, 0, 0 }, .{ 2, 0, 0 }, .{ 0, 2, 0 } };
+    var out: [4]Vector = undefined;
+    try std.testing.expectEqual(4, cut(Vector, &triangle, &out, LeftOf{}));
+    try std.testing.expectEqualSlices(Vector, &.{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 1, 1, 0 }, .{ 0, 2, 0 } }, &out);
+    // No more than `out` holds.
+    var short: [2]Vector = undefined;
+    try std.testing.expectEqual(2, cut(Vector, &triangle, &short, LeftOf{}));
+}
+
 test "Vertex.between" {
     const a: Vertex = .{ .view = .{ 0, 0, 100 }, .colour = .{ 0, 0.5, 1, 1 }, .mesh_uv = @splat(.{ 0, 0 }), .generated = @splat(.{ 0, 0 }), .normal = .{ 0, 0, -1 } };
     const b: Vertex = .{ .view = .{ 40, 0, 200 }, .colour = .{ 1, 0.5, 0, 1 }, .mesh_uv = @splat(.{ 1, 2 }), .generated = @splat(.{ 0, 0 }), .normal = .{ 1, 0, 0 } };
-    // A quarter of the way along, each attribute alike, the port's normal among them.
+    // A quarter of the way along, each attribute alike, OpenReliant's normal among them.
     const c = a.between(b, 0.25);
     try std.testing.expectEqual(Vector{ 10, 0, 125 }, c.view);
     try std.testing.expectEqual([4]f32{ 0.25, 0.5, 0.75, 1 }, c.colour);

@@ -1,6 +1,6 @@
 # Sound
 
-How the game plays its sounds through the Miles Sound System (`MSS32.DLL`): the banks' sounds on voices of their own, the effects placed in 3D around the camera, and the music. The port's code is [`game/hog_snd.zig`](../../src/engine/game/hog_snd.zig) and [`game/sound3d.zig`](../../src/engine/game/sound3d.zig); what stands in for Miles is in [Sound in the port](../port/sound.md). The banks are [`.fat` files](../formats/fat.md).
+How the game plays its sounds through the Miles Sound System (`MSS32.DLL`): the banks' sounds on voices of their own, the effects placed in 3D around the camera, and the music. OpenReliant's code is [`game/hog_snd.zig`](../../src/engine/game/hog_snd.zig) and [`game/sound3d.zig`](../../src/engine/game/sound3d.zig); what stands in for Miles is in [Sound in OpenReliant](../port/sound.md). The banks are [`.fat` files](../formats/fat.md).
 
 ## Start-up
 
@@ -45,6 +45,11 @@ hands Miles the WAVE file at the entry's offset in the bank, at its own rate tim
 pitch of `n` quarter tones (`0x00481400`, clamped to 96 each way), and at the volume
 `round(((Fxvolume × volume) / 128) × Mastervolume / 127)`.
 
+**Improvement:** OpenReliant divides by 127 where the game multiplies by a rounded reciprocal, for
+the master volume's share (`0x004DC6B0`) and the engine's volume (`0x004DC9C8`), and divides a 3D
+sound's length by the bytes a tick plays where the game multiplies by their reciprocal
+(`0x004DC8B8`).
+
 Every five ticks `tick_timer` steps the fades: a fading voice loses its step of volume and ends at
 nothing. `sound_voice_fade` (`0x004824C0`) and `sound_fade_all` (`0x00482510`) start them;
 `sound_pause_all` (`0x004825D0`) and `sound_resume_all` (`0x00482630`) stop the playing voices and
@@ -54,8 +59,8 @@ start them again.
 
 `sound_buffer_at` (`0x00482160`) gathers a sound of the first 18 slots at a place in the world: its
 level in each ear from its distance and which side of the camera it lies. Once a frame
-`sound_buffers_play` (`0x004822F0`) plays each slot gathered as sound `n` of `bank_stdsmp`, panned by
-its two levels and as loud as the louder, then clears them.
+`sound_buffers_play` (`0x004822F0`) plays each slot gathered as sound `n` of `bank_stdsmp`, panned
+by its two levels and as loud as the louder, then clears them.
 
 ## 3D sounds
 
@@ -178,7 +183,7 @@ the start. The stream's volume is `round(((Musicvolume × level) / 127) × Maste
 - A shot through to a hull plays `ARMOUR01` where it struck, facing the camera, or `PLAYERHIT` on
   the player's ship, following it, at most every 30 ticks (`shieldfx_create`, `0x004A0310`). The
   game plays `ARMOUR01` at the point in the part's own frame, taken for one in the world.
-  **Improvement:** the port plays it where the shot struck.
+  **Improvement:** OpenReliant plays it where the shot struck.
 - A shield generator whose part `node_draw` finds destroyed plays `SHLDDOWN` at the part, facing
   its way, and its object loses flag `0x4000`.
 - Turning the missile ring plays `MISSILESELECT` at the player's ship (`hud_target_keys`).

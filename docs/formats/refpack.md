@@ -24,7 +24,10 @@ Sizes are big-endian. The flag bits that matter:
 | `0x80` | Sizes are 4 bytes rather than 3 |
 
 Every stream in this game uses `10 FB`: neither bit set, so the header is five bytes and carries
-only the decompressed size.
+only the decompressed size. It is also the one form the game expands: `hog_read_file`
+(`0x004C7F60`) reads a member's first two bytes big-endian and compares them with `0x10FB`, and
+takes any other member as it is stored. `refpack.gameExpands` makes the same test. The longest
+header, with both bits set, is ten bytes.
 
 ## Commands
 

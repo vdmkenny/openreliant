@@ -75,7 +75,7 @@ the count of section 6: one entry per script byte.
 ## OpenReliant's mission name
 
 **This is OpenReliant's convention, not the game's.** OpenReliant keeps a name for a mission in
-section 21, which the game binds but never reads and no shipped mission uses. The port shows it
+section 21, which the game binds but never reads and no shipped mission uses. OpenReliant shows it
 (`openreliant missions`); the game plays a mission with it as it plays any other, and a mission is
 complete without it.
 
@@ -88,9 +88,9 @@ The section's count is its size in bytes. It holds an 8-byte header, then the na
 | `0x06` | u16 | The name's length in bytes |
 | `0x08` | | The name, in UTF-8, then a NUL |
 
-The port reads a name only where the tag is `ORMN`, the version 1, and the name fits in the section;
-anything else in section 21 it leaves alone. Other mission tools may not keep the section when they
-write a mission out.
+OpenReliant reads a name only where the tag is `ORMN`, the version 1, and the name fits in the
+section; anything else in section 21 it leaves alone. Other mission tools may not keep the section
+when they write a mission out.
 
 ## String pool
 
@@ -521,8 +521,8 @@ three routines with bytes nothing reaches (see [Open](#open)).
 
 ## Prior art
 
-The container, directory, record strides and condition list are from
-[Starlancer-OSS `docs/dte-format.md`](https://github.com/LordBlacksun/Starlancer-OSS/blob/main/docs/dte-format.md)
+The container, directory, record strides and condition list are from [Starlancer-OSS
+`docs/dte-format.md`](https://github.com/LordBlacksun/Starlancer-OSS/blob/main/docs/dte-format.md)
 and its scripting reference, which build on Captain Foster's Starlancer ME work. Everything above
 was re-checked against the 44 shipped missions and the engine's own code. Where the two differ,
 this document follows the code: the trigger's condition is at `0x00` and its subject implicit,

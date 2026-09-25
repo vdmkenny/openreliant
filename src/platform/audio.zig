@@ -1,7 +1,7 @@
 //! The game's sound output, with SDL3: in place of the wave-out device Miles opened
 //! (`AIL_waveOutOpen`). A stream on the default playback device pulls the mix on SDL's audio
 //! thread, at the device's own rate, from one of two players of Miles's calls: OpenAL Soft
-//! ([`openal.zig`](openal.zig)), in as many channels as the device has, or the port's software
+//! ([`openal.zig`](openal.zig)), in as many channels as the device has, or OpenReliant's software
 //! Miles (`engine.mss.Mixer`), in stereo. The master bus (`engine.mss.master`) comes last.
 
 const std = @import("std");
@@ -11,15 +11,12 @@ const Allocator = std.mem.Allocator;
 const c = @import("sdl");
 const mss = @import("openreliant").engine.mss;
 const macos = @import("macos.zig");
+const sdl = @import("sdl.zig");
 
 pub const openal = @import("openal.zig");
 
-pub const Error = error{Sdl} || Allocator.Error;
-
-fn fail(what: []const u8) error{Sdl} {
-    log.err("{s}: {s}", .{ what, c.SDL_GetError() });
-    return error.Sdl;
-}
+pub const Error = sdl.Error || Allocator.Error;
+const fail = sdl.fail;
 
 const log = std.log.scoped(.sdl);
 
@@ -30,7 +27,7 @@ const chunk = 512;
 pub const Player = union(enum) {
     /// OpenAL Soft, with these settings.
     openal: openal.Settings,
-    /// The port's software Miles, as `--original` has it.
+    /// OpenReliant's software Miles, as `--original` has it.
     software,
 };
 
@@ -69,7 +66,7 @@ pub const Output = struct {
         errdefer gpa.destroy(output);
         output.* = .{ .gpa = gpa, .stream = undefined, .rate = rate, .channels = 2, .source = .{ .software = .init(rate) }, .master = null };
         switch (options.player) {
-            .openal => |settings| if (openal.Renderer.create(gpa, rate, @intCast(std.math.clamp(device.channels, 1, 8)), settings, headphones())) |renderer| {
+            .openal => |settings| if (openal.Renderer.create(gpa, rate, @intCast(std.math.clamp(device.channels, 1, mss.master.max_channels)), settings, headphones())) |renderer| {
                 output.source = .{ .openal = renderer };
                 output.channels = renderer.channels;
             } else |err| log.warn("OpenAL Soft cannot start ({s}); the software mixer plays instead", .{@errorName(err)}),

@@ -44,7 +44,7 @@ pub const Hog = struct {
             return error.FileMissing;
         };
         const raw = try archive.archive.readRaw(gpa, entry);
-        if (!refPacked(raw)) return raw;
+        if (!refpack.gameExpands(raw)) return raw;
         defer gpa.free(raw);
         return refpack.decompressAlloc(gpa, raw);
     }
@@ -61,11 +61,6 @@ pub fn memberName(buffer: *[128]u8, name: []const u8) []const u8 {
     }
     if (std.mem.lastIndexOfScalar(u8, copy, '\\')) |slash| copy = copy[slash + 1 ..];
     return copy;
-}
-
-/// Whether a member starts as RefPack does, `10 FB`, the one form the game expands.
-fn refPacked(raw: []const u8) bool {
-    return raw.len >= 2 and raw[0] == 0x10 and raw[1] == 0xFB;
 }
 
 test memberName {
@@ -91,37 +86,4 @@ test Hog {
     try std.testing.expectEqualStrings("hello", contents);
 }
 
-pub const testing = struct {
-    pub const Member = struct { name: []const u8, data: []const u8 };
-
-    /// Writes an archive of `members`, stored as they are, to `path` in `dir`: its header, then
-    /// a record and a NUL-terminated name for each member, then their data.
-    pub fn write(gpa: Allocator, io: Io, dir: Io.Dir, path: []const u8, members: []const Member) !void {
-        var data_at: usize = @sizeOf(hog.Header);
-        var data_size: usize = 0;
-        for (members) |member| {
-            data_at += @sizeOf(hog.Record) + member.name.len + 1;
-            data_size += member.data.len;
-        }
-        const bytes = try gpa.alloc(u8, data_at + data_size);
-        defer gpa.free(bytes);
-        (try layout.viewMut(hog.Header, bytes)).* = .{
-            .magic = hog.magic.*,
-            .archive_size = .of(@intCast(bytes.len)),
-            .entry_count = .of(@intCast(members.len)),
-            .data_offset = .of(@intCast(data_at)),
-        };
-        var entry_at: usize = @sizeOf(hog.Header);
-        var datum_at = data_at;
-        for (members) |member| {
-            (try layout.viewMut(hog.Record, bytes[entry_at..])).* = .{ .offset = .of(@intCast(datum_at)), .size = .of(@intCast(member.data.len)) };
-            const name_at = entry_at + @sizeOf(hog.Record);
-            @memcpy(bytes[name_at..][0..member.name.len], member.name);
-            bytes[name_at + member.name.len] = 0;
-            entry_at = name_at + member.name.len + 1;
-            @memcpy(bytes[datum_at..][0..member.data.len], member.data);
-            datum_at += member.data.len;
-        }
-        try dir.writeFile(io, .{ .sub_path = path, .data = bytes });
-    }
-};
+pub const testing = hog.testing;

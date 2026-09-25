@@ -1,7 +1,7 @@
-//! The trails in `C:\lancer\game\missiles.cpp`: what a missile, or a torpedo, leaves behind it as it
-//! flies, by its type's look (`missile_looks`): a ribbon, a helix of thinner ribbons round it, an
-//! exhaust plume and a glow. A trail outlives its missile, fading out once the missile has ended.
-//! [`missiles.md`](../../../../docs/engine/missiles.md#trails) describes them.
+//! The trails in `C:\lancer\game\missiles.cpp`: what a missile, or a torpedo, leaves behind it as
+//! it flies, by its type's look (`missile_looks`): a ribbon, a helix of thinner ribbons round it,
+//! an exhaust plume and a glow. A trail outlives its missile, fading out once the missile has
+//! ended. [`missiles.md`](../../../../docs/engine/missiles.md#trails) describes them.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -148,7 +148,7 @@ pub const Trail = struct {
             .object, .nothing => return,
         };
         const slot = &(world.objects.missiles.get(at) orelse return).slot;
-        plume.object.position = math.transform(slot.drawn.orientation, .{ 0, 0, slot.object.bounds_min.z }) + slot.drawn.position;
+        plume.object.position = slot.drawn.point(.{ 0, 0, slot.object.bounds_min.z });
         // The game draws the tilt up before the one across.
         const up = world.random.centred() * plume_wobble;
         const across = world.random.centred() * plume_wobble;
@@ -166,19 +166,15 @@ pub const Trail = struct {
     fn glowFrame(trail: *Trail, world: gameobj.World) void {
         const glow = trail.glow.?;
         glow.shown = false;
-        const all = world.objects;
-        const slot: *const Slot = switch (trail.follows) {
-            .missile => |at| &(all.missiles.get(at) orelse return).slot,
-            .object => |at| if (all.slots[at].object.type == .russian_torpedo) &all.slots[at] else return,
-            .nothing => return,
-        };
+        const slot = followed(trail, world.objects) orelse return;
+        if (trail.follows == .object and slot.object.type != .russian_torpedo) return;
         const width = slot.object.bounds_max.x * 2;
         const flickered = (world.random.fraction() * glow_flicker + 1) * width;
         glow.sprites[0].half_size = .{ flickered, flickered };
         glow.sprites[0].bias = -flickered;
         glow.sprites[1].half_size = @splat(width * 0.5);
         glow.sprites[1].bias = -width * 0.5;
-        glow.set.position = math.transform(slot.drawn.orientation, .{ 0, 0, slot.object.bounds_min.z - glow_behind }) + slot.drawn.position;
+        glow.set.position = slot.drawn.point(.{ 0, 0, slot.object.bounds_min.z - glow_behind });
         glow.shown = true;
     }
 
@@ -241,7 +237,7 @@ pub const Trails = struct {
     /// ribbons start at full strength, black, and its ribbon at nothing.
     ///
     /// **Fix:** with every trail taken, the game takes the record past the last, and writes past
-    /// its pool; the port leaves the missile without a trail.
+    /// its pool; OpenReliant leaves the missile without a trail.
     pub fn start(trails: *Trails, world: gameobj.World, follows: Follows, missile_type: missiles.Type) Allocator.Error!?u8 {
         const style = &looks[missile_type.index() orelse return null];
         const at = trails.list.add(.{ .type = missile_type, .follows = follows, .scrolled = world.clock.frame_start }) orelse return null;
@@ -250,7 +246,7 @@ pub const Trails = struct {
 
         const slot = followed(trail, world.objects) orelse return at;
         const tail = tailCorners(&slot.object);
-        const start_at = math.transform(slot.drawn.orientation, tail[0]) + slot.drawn.position;
+        const start_at = slot.drawn.point(tail[0]);
         if (style.pieces.sides) {
             for (trail.sides[0..sideCount(style)]) |*side| {
                 side.* = try .create(trails.gpa, @intCast(style.side_segments), trails.images.ribbon, start_at, 1);
@@ -302,7 +298,7 @@ pub const Trails = struct {
         };
         const object = &slot.object;
         var corners = tailCorners(object);
-        const turning = object.yaw_rate + object.pitch_rate + object.roll_rate;
+        const turning = turningOf(object);
         if (style.pieces.twist) {
             const turn = math.fromAngles(0, 0, @as(f32, @floatFromInt(world.clock.frame_start)) * turning * spin_rate);
             for (&corners) |*corner| {
@@ -336,7 +332,7 @@ pub const Trails = struct {
             faded = ribbon.fade(world.clock.frame_duration, style.side_segments, style.side_colour);
             const slot = followed(trail, world.objects) orelse continue;
             const object = &slot.object;
-            const turning = object.yaw_rate + object.pitch_rate + object.roll_rate;
+            const turning = turningOf(object);
             const share = @as(f32, @floatFromInt(strand)) * std.math.tau / @as(f32, @floatFromInt(count));
             const turn = math.fromAngles(0, 0, share + turning * @as(f32, @floatFromInt(world.clock.frame_start)) * spin_rate);
             var corners = tailCorners(object);
@@ -394,6 +390,8 @@ const fade_rings: f32 = 0.04;
 /// A ribbon moves on to its next ring once its newest stands this many tail widths from the one
 /// before (`0x004DC3D8`).
 const ring_spacing: f32 = 3;
+/// The least a ring laid is lit, however low the throttle (`0x004DC408`).
+const least_brightness: f32 = 0.5;
 /// A hostile torpedo's ribbon's colour.
 const hostile_torpedo: [3]f32 = .{ 227.0 / 255.0, 199.0 / 255.0, 139.0 / 255.0 };
 
@@ -405,6 +403,12 @@ fn followed(trail: *const Trail, all: *Objects) ?*const Slot {
         .object => |slot| if (all.slots[slot].object.type == .stand_in) null else &all.slots[slot],
         .nothing => null,
     };
+}
+
+/// How fast an object turns, which winds the trails' rings round: its yaw, pitch and roll rates
+/// together.
+fn turningOf(object: *const GameObject) f32 {
+    return object.yaw_rate + object.pitch_rate + object.roll_rate;
 }
 
 /// The corners of an object's tail, in its own frame: its bounds' far face behind it.
@@ -518,17 +522,17 @@ const Ribbon = struct {
     }
 
     /// Lays the ring at `cursor` at `slot`'s tail, its corners `corners` in its frame, at full
-    /// strength and as bright as its throttle, at least half; hides the quads from it to the next,
-    /// the oldest, and shows those to it from the one before. Where `moves` it moves the cursor on
-    /// once the ring stands `ring_spacing` tail widths from the one before.
+    /// strength and as bright as its throttle, at least `least_brightness`; hides the quads from it
+    /// to the next, the oldest, and shows those to it from the one before. Where `moves` it moves
+    /// the cursor on once the ring stands `ring_spacing` tail widths from the one before.
     fn lay(ribbon: *Ribbon, cursor: *u16, slot: *const Slot, corners: [4]Vector, colour: [3]f32, moves: bool) void {
         const object = &slot.object;
         const rings = ribbon.ringCount();
         const first = @as(usize, cursor.*) * 4;
         const before = (first + ribbon.mesh.positions.len - 4) % ribbon.mesh.positions.len;
-        const bright = @max(object.throttle, 0.5);
+        const bright = @max(object.throttle, least_brightness);
         for (corners, first..) |corner, vertex| {
-            ribbon.mesh.positions[vertex] = math.transform(slot.drawn.orientation, corner) + slot.drawn.position;
+            ribbon.mesh.positions[vertex] = slot.drawn.point(corner);
             ribbon.colours[vertex] = .{ bright * colour[0], bright * colour[1], bright * colour[2], 1 };
         }
         const faces = ribbon.mesh.face_flags.?;
@@ -557,21 +561,20 @@ const Plume = struct {
     const rings = 6;
     const spokes = 9;
     const material: srapiext.Material = .onePass(.{ .coordinates = .mesh, .lit = true, .blend = .add_alpha });
-    /// How far apart the rings stand, and where the last does; how wide they grow; and how far a
-    /// texture coordinate runs along it and round it (`0x004DC97C`, `0x004DC96C`, `0x004DC584`,
+    /// How far apart the rings stand, and where the last does; how wide they grow, by the sine of
+    /// `widen_step` of a quarter turn a ring (`0x004DC588`, `0x004DC3F0`); and how far a texture
+    /// coordinate runs along it and round it (`0x004DC97C`, `0x004DC96C`, `0x004DC584`,
     /// `0x004DC974`, `0x004DC970`).
     const spacing: f32 = 90;
     const last_behind: f32 = 630;
+    const widen_step: f32 = 0.2;
     const widening: f32 = 180;
     const least_width: f32 = 30;
     const along_scale: f32 = 1.0 / 1500.0;
     const round_scale: f32 = 1.0 / (4 * std.math.pi);
 
-    /// **Improvement:** the rings' widths are worked out from pi, where the game rounds half of it
-    /// to 1.5708.
-    ///
     /// **Fix:** the mouth's corners all stand at its centre, and the game works their texture
-    /// coordinates round it out as a nought over a nought, which is not a number; the port gives
+    /// coordinates round it out as a nought over a nought, which is not a number; OpenReliant gives
     /// them 0.
     fn create(gpa: Allocator, image: *srtexture.Image) Allocator.Error!*Plume {
         const plume = try gpa.create(Plume);
@@ -584,7 +587,7 @@ const Plume = struct {
         plume.mesh.positions[0] = @splat(0);
         for (0..rings) |ring| {
             const k: f32 = @floatFromInt(ring);
-            const width: f32 = if (ring == 0) 0 else @sin(k * 0.2 * std.math.pi / 2.0) * widening + least_width;
+            const width: f32 = if (ring == 0) 0 else @sin(k * widen_step * (std.math.pi / 2.0)) * widening + least_width;
             const behind: f32 = if (ring == rings - 1) -last_behind else -k * spacing;
             for (0..spokes) |spoke| {
                 const angle = @as(f32, @floatFromInt(spoke)) * std.math.tau / spokes;
@@ -625,6 +628,9 @@ const Plume = struct {
         return plume;
     }
 
+    /// How much less of its colour each nine of the plume's corners takes (`0x004DC420`).
+    const fade_step: f32 = 0.1;
+
     fn destroy(plume: *Plume, gpa: Allocator) void {
         gpa.free(plume.colours);
         plume.mesh.deinit(gpa);
@@ -632,12 +638,12 @@ const Plume = struct {
     }
 
     /// `missile_plume_colour` (`0x00497D60`): its corners coloured, a nine at a time from the
-    /// first, at half of `colour` times `brightness` down to nothing, a tenth less each nine.
+    /// first, at half of `colour` times `brightness` down to nothing, `fade_step` less each nine.
     /// **Quirk:** the corners go by nines from the centre of the mouth, not from its ring, so each
     /// ring's last corner takes the next ring's colour, and the last corner none.
     fn colour(plume: *Plume, tint: [3]f32, brightness: f32) void {
         for (plume.colours[0 .. rings * spokes], 0..) |*corner, vertex| {
-            const share = @as(f32, @floatFromInt(rings - 1 - vertex / spokes)) * brightness * 0.1;
+            const share = @as(f32, @floatFromInt(rings - 1 - vertex / spokes)) * brightness * fade_step;
             corner.* = .{ share * tint[0], share * tint[1], share * tint[2], 1 };
         }
     }
@@ -658,7 +664,7 @@ const Glow = struct {
     fn init(glow: *Glow, image: *srtexture.Image, tint: [3]f32) void {
         glow.sprites = .{ .{ .colour = tint }, .{ .colour = .{ 1, 1, 1 } } };
         glow.set = .{
-            .surface = .{ .material = .onePass(.{ .coordinates = .mesh, .lit = true, .blend = .add }), .textures = .{ .{ .image = image }, .none } },
+            .surface = .glow(image),
             .sprites = &glow.sprites,
         };
         glow.shown = false;
@@ -674,14 +680,14 @@ const testing = struct {
     /// Trails over small textures of their own names, in an armed mission.
     const Stage = struct {
         armed: missiles.testing.Armed,
-        textures: *@import("../backdrop.zig").testing.Textures,
+        textures: *@import("../../surrender/surrenderlib/srtexture.zig").testing.Textures,
         trails: Trails,
 
         fn init(stage: *Stage) !void {
             const gpa = std.testing.allocator;
             try stage.armed.init(gpa);
             errdefer stage.armed.deinit();
-            stage.textures = try .initNames(gpa, &.{ "mtrail2", "shield128", "partic6" });
+            stage.textures = try .init(gpa, &.{ "mtrail2", "shield128", "partic6" });
             stage.trails = .init(gpa, try .load(&stage.textures.table));
             stage.armed.mission.clock.frame_duration = 1;
         }
@@ -787,4 +793,12 @@ test Look {
     try std.testing.expectEqual(@as(u32, 0x31), @as(u32, @bitCast(looks[5].pieces)));
     try std.testing.expectEqual(70, looks[9].segments);
     try std.testing.expectEqual(0, @as(u32, @bitCast(looks[10].pieces)));
+}
+
+test turningOf {
+    var object = gameobj.testing.object();
+    object.yaw_rate = 0.25;
+    object.pitch_rate = -0.5;
+    object.roll_rate = 1;
+    try std.testing.expectEqual(0.75, turningOf(&object));
 }

@@ -29,6 +29,33 @@ pub const ImageType = enum(u8) {
     rle_true_color = 10,
     rle_grayscale = 11,
     _,
+
+    /// Whether its pixels are indices into the colour map, run-length encoded or not.
+    pub fn colorMapped(image_type: ImageType) bool {
+        return switch (image_type) {
+            .color_mapped, .rle_color_mapped => true,
+            else => false,
+        };
+    }
+};
+
+/// Whether a colour map follows the image ID.
+pub const ColorMapType = enum(u8) {
+    none = 0,
+    present = 1,
+    _,
+};
+
+/// The byte that starts each packet of a run-length encoded image: a count, less one, of pixels
+/// that follow as they are, or of one pixel repeated.
+pub const Packet = packed struct(u8) {
+    count: u7,
+    repeat: bool,
+
+    /// The pixels the packet stands for.
+    pub fn run(packet: Packet) usize {
+        return @as(usize, packet.count) + 1;
+    }
 };
 
 pub const Descriptor = packed struct(u8) {
@@ -41,8 +68,7 @@ pub const Descriptor = packed struct(u8) {
 /// The file's header, whose 16-bit fields lie on odd offsets.
 pub const Header = extern struct {
     id_length: u8,
-    /// `1` when a colour map follows the image ID.
-    color_map_type: u8,
+    color_map_type: ColorMapType,
     image_type: ImageType,
     color_map_first: u16 align(1),
     color_map_length: u16 align(1),
@@ -73,11 +99,8 @@ pub const Error = error{ Truncated, NotColorMapped, UnsupportedColorMap, Unsuppo
 /// its colour map, stored blue, green, red.
 pub fn palette(bytes: []const u8) Error!Palette {
     const header = (try layout.view(Header, bytes)).*;
-    switch (header.image_type) {
-        .color_mapped, .rle_color_mapped => {},
-        else => return error.NotColorMapped,
-    }
-    if (header.color_map_type != 1) return error.NotColorMapped;
+    if (!header.image_type.colorMapped()) return error.NotColorMapped;
+    if (header.color_map_type != .present) return error.NotColorMapped;
     if (header.color_map_entry_bits != 24 or header.color_map_first != 0 or
         header.color_map_length < palette_length) return error.UnsupportedColorMap;
 
@@ -113,7 +136,7 @@ pub fn decode(gpa: Allocator, bytes: []const u8) (Error || Allocator.Error)!Imag
         .rle_color_mapped, .rle_true_color => true,
         else => return error.UnsupportedImage,
     };
-    const colour_mapped = header.image_type == .color_mapped or header.image_type == .rle_color_mapped;
+    const colour_mapped = header.image_type.colorMapped();
     const map: ?Palette = if (colour_mapped) try palette(bytes) else null;
     const bytes_per_pixel: usize = switch (header.pixel_bits) {
         8 => if (colour_mapped) 1 else return error.UnsupportedImage,
@@ -124,7 +147,7 @@ pub fn decode(gpa: Allocator, bytes: []const u8) (Error || Allocator.Error)!Imag
     if (header.descriptor.right_to_left) return error.UnsupportedImage;
 
     var at = header.colorMapOffset();
-    if (header.color_map_type == 1) at += @as(usize, header.color_map_length) * ((@as(usize, header.color_map_entry_bits) + 7) / 8);
+    if (header.color_map_type == .present) at += @as(usize, header.color_map_length) * ((@as(usize, header.color_map_entry_bits) + 7) / 8);
     const count = @as(usize, header.width) * header.height;
     const rgb = try gpa.alloc(u8, count * 3);
     errdefer gpa.free(rgb);
@@ -136,9 +159,10 @@ pub fn decode(gpa: Allocator, bytes: []const u8) (Error || Allocator.Error)!Imag
         var repeat = false;
         if (encoded) {
             if (at >= bytes.len) return error.Truncated;
-            run = (bytes[at] & 0x7F) + 1;
-            repeat = bytes[at] & 0x80 != 0;
-            at += 1;
+            const packet: Packet = @bitCast(bytes[at]);
+            run = packet.run();
+            repeat = packet.repeat;
+            at += @sizeOf(Packet);
         }
         if (written + run > count) return error.Truncated;
         for (0..run) |i| {
@@ -161,7 +185,7 @@ pub fn decode(gpa: Allocator, bytes: []const u8) (Error || Allocator.Error)!Imag
 fn testImage(buffer: []u8, id: []const u8) layout.Error![]u8 {
     (try layout.viewMut(Header, buffer)).* = .{
         .id_length = @intCast(id.len),
-        .color_map_type = 1,
+        .color_map_type = .present,
         .image_type = .color_mapped,
         .color_map_first = 0,
         .color_map_length = palette_length,
@@ -174,13 +198,13 @@ fn testImage(buffer: []u8, id: []const u8) layout.Error![]u8 {
         .descriptor = .{ .alpha_bits = 0, .right_to_left = false, .top_to_bottom = true, ._reserved = 0 },
     };
     @memcpy(buffer[header_size..][0..id.len], id);
-    const map = buffer[header_size + id.len ..][0 .. palette_length * 3];
+    const map = buffer[header_size + id.len ..][0..@sizeOf(Palette)];
     for (0..palette_length) |i| {
         map[i * 3 + 0] = @truncate(i + 2); // blue
         map[i * 3 + 1] = @truncate(i + 1); // green
         map[i * 3 + 2] = @truncate(i); // red
     }
-    const end = header_size + id.len + palette_length * 3;
+    const end = header_size + id.len + @sizeOf(Palette);
     buffer[end] = 0;
     return buffer[0 .. end + 1];
 }
@@ -213,6 +237,23 @@ test palette {
     var small_entries = buffer;
     small_entries[7] = 16;
     try std.testing.expectError(error.UnsupportedColorMap, palette(&small_entries));
+}
+
+test Packet {
+    // Two of one pixel, then one pixel as it is.
+    const repeated: Packet = @bitCast(@as(u8, 0x81));
+    try std.testing.expect(repeated.repeat);
+    try std.testing.expectEqual(2, repeated.run());
+    const raw: Packet = @bitCast(@as(u8, 0x00));
+    try std.testing.expect(!raw.repeat);
+    try std.testing.expectEqual(1, raw.run());
+}
+
+test "ImageType.colorMapped" {
+    try std.testing.expect(ImageType.color_mapped.colorMapped());
+    try std.testing.expect(ImageType.rle_color_mapped.colorMapped());
+    try std.testing.expect(!ImageType.true_color.colorMapped());
+    try std.testing.expect(!@as(ImageType, @enumFromInt(33)).colorMapped());
 }
 
 test decode {

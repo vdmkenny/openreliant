@@ -14,6 +14,7 @@ const srapi = @import("../surrender/surrenderlib/srapi.zig");
 const srapiext = @import("../surrender/surrenderlib/srapiext.zig");
 const srtexture = @import("../surrender/surrenderlib/srtexture.zig");
 const bigfile = @import("bigfile.zig");
+const gameobj = @import("gameobj.zig");
 const matmanager = @import("matmanager.zig");
 const Material = srapiext.Material;
 const Vector = math.Vector;
@@ -54,6 +55,18 @@ pub const Look = struct {
     lines: bool = false,
 };
 
+/// Mode 10, which `mesh_build` takes for `lit_additive` and `shp.Face.Shading.Mode` does not name.
+const lit_additive_again: shp.Face.Shading.Mode = @enumFromInt(10);
+
+/// Whether a face of shading `mode` shows its material's texture, so that `mesh_build` looks the
+/// texture up: every mode past the untextured ones.
+fn showsTexture(mode: shp.Face.Shading.Mode) bool {
+    return switch (mode) {
+        .untextured, .wire, .untextured_additive => false,
+        else => true,
+    };
+}
+
 /// The look `mesh_build` gives a face. A sub-mode above 7 on `lit_highlight` does not occur; the
 /// driver would take it for an address, and this takes its low three bits.
 pub fn look(shading: shp.Face.Shading, conditions: Conditions) Look {
@@ -80,20 +93,34 @@ pub fn look(shading: shp.Face.Shading, conditions: Conditions) Look {
             else
                 null,
         },
-        .lit_additive => .{ .first = .{ .texture = .material, .lit = true, .blend = .add } },
-        // Mode 10 is `lit_additive` again; the rest leave the material zero.
-        _ => if (@intFromEnum(shading.mode) == 10)
-            .{ .first = .{ .texture = .material, .lit = true, .blend = .add } }
-        else
-            .{ .first = .{ .texture = .none, .lit = false, .blend = .off } },
+        .lit_additive, lit_additive_again => .{ .first = .{ .texture = .material, .lit = true, .blend = .add } },
+        // The rest leave the material zero.
+        _ => .{ .first = .{ .texture = .none, .lit = false, .blend = .off } },
+    };
+}
+
+/// A level's material's two textures, each a `T` that is `none` where it has none: its own, and
+/// its light map.
+fn MaterialImages(comptime T: type, comptime none: T) type {
+    return struct {
+        material: T = none,
+        light_map: T = none,
+
+        /// What a pass that shows `texture` draws with: nothing, one of the two, or the highlight
+        /// texture `highlight` makes of its index.
+        fn pass(images: @This(), texture: Texture, comptime highlight: fn (u3) T) T {
+            return switch (texture) {
+                .none => none,
+                .material => images.material,
+                .light_map => images.light_map,
+                .highlight => |index| highlight(index),
+            };
+        }
     };
 }
 
 /// The textures `mesh_build` puts in a material.
-pub const Images = struct {
-    material: Pointer(tcache.Image) = .null,
-    light_map: Pointer(tcache.Image) = .null,
-};
+pub const Images = MaterialImages(Pointer(tcache.Image), .null);
 
 /// A look as the mesh's material record holds it. The first image is the face's material whatever
 /// the look.
@@ -110,14 +137,14 @@ pub fn material(face_look: Look, images: Images) Material {
         record.coordinates[1] = coordinates(second.texture);
         record.lit[1] = second.lit;
         record.blend[1] = second.blend;
-        record.image[1] = switch (second.texture) {
-            .none => .null,
-            .material => images.material,
-            .light_map => images.light_map,
-            .highlight => |index| @enumFromInt(index),
-        };
+        record.image[1] = images.pass(second.texture, highlightIndex);
     }
     return record;
+}
+
+/// A highlight texture as the material record holds it, by its index in place of an image.
+fn highlightIndex(index: u3) Pointer(tcache.Image) {
+    return @enumFromInt(index);
 }
 
 fn coordinates(texture: Texture) Material.Coordinates {
@@ -174,11 +201,12 @@ pub const Error = matmanager.Error || error{
     CornerOutOfRange,
 };
 
-/// The textures of a level's material: its own, and its light map.
-const Found = struct {
-    texture: ?*srtexture.Image = null,
-    light_map: ?*srtexture.Image = null,
-};
+/// The textures of a level's material that the texture table found.
+const Found = MaterialImages(?*srtexture.Image, null);
+
+/// A third of a face's `sort_bias` is added to the depth its polygon is sorted by
+/// (`0x004DC7D4`).
+const sort_bias_share: f32 = 1.0 / 3.0;
 
 /// A part's mesh for one level of detail (`mesh_build`), its textures required from `textures`,
 /// or null for a level without faces. Adds to `flags` what the part's object needs: always lit and
@@ -188,11 +216,11 @@ const Found = struct {
 ///
 /// A fan's records become one polygon where `fanMerges` says so; a wire face becomes a polygon of
 /// two corners for each edge it draws. `mesh_texel_areas` (`0x004C4090`) then finds each textured
-/// polygon's area in texels, which only the software driver reads; the port leaves it out.
+/// polygon's area in texels, which only the software driver reads; OpenReliant leaves it out.
 ///
 /// **Improvement:** a vertex without a counterpart in the next level (`-1`, in a few coarser
 /// levels of capital ships and a station) makes the game read whatever lies before that level's
-/// vertices; the port morphs it toward itself.
+/// vertices; OpenReliant morphs it toward itself.
 pub fn build(
     gpa: Allocator,
     textures: *srtexture.Table,
@@ -229,8 +257,8 @@ pub fn build(
         var walk: Polygons = .{ .faces = faces };
         while (walk.next()) |step| {
             const face = faces[step.face];
-            const mode = @intFromEnum(face.shading.mode);
-            if ((mode == 7 or mode == 8) and settings.light_maps) flags.normals_second = true;
+            const mode = face.shading.mode;
+            if ((mode == .lit_highlight or mode == .lit_additive) and settings.light_maps) flags.normals_second = true;
             if (face.flags.cap or face.flags.two_sided) any_face_flags = true;
             const wire = face.shading.mode == .wire;
             polygon_count += step.count + @intFromBool(wire);
@@ -276,50 +304,48 @@ pub fn build(
     defer gpa.free(found);
     for (source.materials, found, 0..) |*m, *images, i| {
         images.* = .{};
-        const textured = for (faces) |face| {
-            if (face.material == i and @intFromEnum(face.shading.mode) > 2) break true;
+        const shown = for (faces) |face| {
+            if (face.material == i and showsTexture(face.shading.mode)) break true;
         } else false;
-        if (!textured) continue;
+        if (!shown) continue;
         var buffer: [1 + @sizeOf(shp.Material)]u8 = undefined;
-        images.texture = try matmanager.textureRequire(textures, prefixed(&buffer, settings.prefix.letter(), m.name()));
+        images.material = try matmanager.textureRequire(textures, prefixed(&buffer, settings.prefix.letter(), m.name()));
         if (light_mapped) images.light_map = try matmanager.textureRequire(textures, prefixed(&buffer, 'l', m.name()));
     }
 
     for (source.vertices, 0..) |vertex, i| {
-        positions[i] = vector(vertex.position);
-        normals[i] = vector(vertex.normal);
+        positions[i] = gameobj.vector(vertex.position);
+        normals[i] = gameobj.vector(vertex.normal);
         const next = coarser orelse continue;
-        const counterpart = if (vertex.next_lod_vertex >= 0 and vertex.next_lod_vertex < next.vertices.len)
-            next.vertices[@intCast(vertex.next_lod_vertex)]
-        else
-            vertex;
-        if (morph_normals) |m| m[i] = vector(counterpart.normal);
-        if (morph_positions) |m| m[i] = vector(counterpart.position);
+        const at = vertex.nextLod() orelse next.vertices.len;
+        const counterpart = if (at < next.vertices.len) next.vertices[at] else vertex;
+        if (morph_normals) |m| m[i] = gameobj.vector(counterpart.normal);
+        if (morph_positions) |m| m[i] = gameobj.vector(counterpart.position);
     }
 
     const conditions: Conditions = .{ .light_maps = settings.light_maps, .part_lightmap = part_flags.lightmap, .hardware = settings.hardware };
     var polygon: usize = 0;
     var index: usize = 0;
-    var last: ?struct { shading: u8, material: u32 } = null;
+    // The face that began the run of faces the current surface draws.
+    var run: ?shp.Face = null;
     var walk: Polygons = .{ .faces = faces };
     while (walk.next()) |step| {
         assert(step.polygon == polygon);
         const f = step.face;
         const face = faces[f];
-        const shading: u8 = @truncate(@as(u32, @bitCast(face.shading)));
-        if (last == null or last.?.shading != shading or last.?.material != face.material) {
+        if (run == null or !sameRun(run.?, face)) {
             if (surfaces.items.len == max_surfaces) return error.TooManySurfaces;
             const images = if (face.material < found.len) found[face.material] else Found{};
             try surfaces.append(gpa, surface(look(face.shading, conditions), images));
-            last = .{ .shading = shading, .material = face.material };
+            run = face;
         }
         const current = &surfaces.items[surfaces.items.len - 1];
-        const bias = face.sort_bias * @as(f32, 1.0 / 3.0);
+        const bias = face.sort_bias * sort_bias_share;
         if (face.shading.mode == .wire) {
             const plane = srapi.planeThrough(positions[face.vertices[0]], positions[face.vertices[1]], positions[face.vertices[2]]);
-            for (0..3) |edge| {
+            for (0..face.vertices.len) |edge| {
                 if (!edgeDrawn(face, edge)) continue;
-                const ends = [2]usize{ edge, (edge + 1) % 3 };
+                const ends = [2]usize{ edge, (edge + 1) % face.vertices.len };
                 polygons[polygon] = .{ .kind = .lines, .continues = 0, .first = @truncate(index), .count = 2 };
                 for (ends, 0..) |corner, k| {
                     indices[index + k] = @truncate(face.vertices[corner]);
@@ -591,19 +617,11 @@ fn isStaticLight(attachment: shp.Attachment) bool {
 
 /// The light an attachment of a part holds, in the model's frame.
 fn staticLight(part: *const shp.PartData, attachment: shp.Attachment) StaticLight {
-    const origin = part.part.position;
     return .{
-        .position = .{
-            attachment.position.x + origin.x,
-            attachment.position.y + origin.y,
-            attachment.position.z + origin.z,
-        },
-        // The id stands for the colour, and for nothing the engine knows past red.
-        .colour = switch (attachment.id) {
-            0 => .{ 0, 0, 1 },
-            1 => .{ 0, 1, 0 },
-            2 => .{ 1, 1, 0 },
-            3 => .{ 1, 0, 0 },
+        .position = gameobj.vector(attachment.position.add(part.part.position)),
+        // The bake knows no colour past red.
+        .colour = switch (attachment.light()) {
+            .blue, .green, .yellow, .red => |light| @import("objects.zig").lightColour(light),
             else => .{ 0, 0, 0 },
         },
         .brightness = attachment.light_brightness,
@@ -646,7 +664,7 @@ pub fn staticLightsBake(model: *const shp.Model, parts: []LoadedPart) void {
 pub fn staticLightBake(light: StaticLight, origin: shp.Vec3, mesh: *srapiext.Mesh) void {
     const baked = mesh.baked orelse return;
     // The light in the part's own frame, where its vertices stand.
-    const at = light.position - Vector{ origin.x, origin.y, origin.z };
+    const at = light.position - gameobj.vector(origin);
     const radius = light.radius;
     if (!(radius > 0)) return;
     for (mesh.positions, mesh.normals, baked) |position, normal, *colour| {
@@ -677,25 +695,44 @@ pub const empty: srapiext.Mesh = .{
     .radius = 0,
 };
 
+/// The least dot product of a fan's first record's normal with each later record's for
+/// `fanMerges` to merge them, about 2.6 degrees apart (`0x004DCA04`).
+const fan_tolerance: f32 = 0.999;
+
 /// Whether a fan's records become one polygon (`fan_merges`, `0x004A2FD0`): a fan's first record,
-/// whose normal lies within a dot product of 0.999, about 2.6 degrees, of each later record's. A
-/// fan whose records would run past the level's end is not merged.
+/// whose normal lies within `fan_tolerance` of each later record's. A fan whose records would run
+/// past the level's end is not merged.
 pub fn fanMerges(faces: []const shp.Face, f: usize) bool {
     const face = faces[f];
     if (face.polygon != .fan) return false;
     if (f > 0 and faces[f - 1].remaining != 0) return false;
     if (face.remaining >= faces.len - f) return false;
-    const normal = vector(face.normal);
+    const normal = gameobj.vector(face.normal);
     for (faces[f + 1 ..][0..face.remaining]) |record| {
-        if (!(math.dot(normal, vector(record.normal)) >= 0.999)) return false;
+        if (!(math.dot(normal, gameobj.vector(record.normal)) >= fan_tolerance)) return false;
     }
     return true;
 }
 
 /// Whether a wire face draws its edge from corner `edge` to the next: its edge mask leaves the
-/// edge's bit unset.
+/// edge's bit unset. `mesh_build` reads the mask's low three bits, one for each corner.
 fn edgeDrawn(face: shp.Face, edge: usize) bool {
     return face.edge_mask & (@as(u32, 1) << @intCast(edge)) == 0;
+}
+
+/// How many edges a wire face draws (`edgeDrawn`).
+fn edgesDrawn(face: shp.Face) usize {
+    var count: usize = 0;
+    for (0..face.vertices.len) |edge| count += @intFromBool(edgeDrawn(face, edge));
+    return count;
+}
+
+/// Whether a face falls in the same run of faces as `first`, the run's first, and so on its
+/// surface: the same material, and the same shading as the game compares it, its mode and its
+/// sub-mode, the shading's low byte.
+fn sameRun(first: shp.Face, face: shp.Face) bool {
+    return first.shading.mode == face.shading.mode and first.shading.sub_mode == face.shading.sub_mode and
+        first.material == face.material;
 }
 
 /// The polygons `build` makes of a level's faces, face by face: a wire face makes one for each
@@ -720,8 +757,7 @@ pub const Polygons = struct {
         const face = walk.faces[walk.face];
         const wire = face.shading.mode == .wire;
         const merged = !wire and fanMerges(walk.faces, walk.face);
-        // A wire face draws each edge its mask's low three bits leave unset (`edgeDrawn`).
-        const count: usize = if (wire) @popCount(~face.edge_mask & 0b111) else 1;
+        const count: usize = if (wire) edgesDrawn(face) else 1;
         const step: Step = .{ .face = walk.face, .merged = merged, .extra = if (merged) face.remaining else 0, .polygon = walk.polygon, .count = count };
         walk.face += 1 + step.extra;
         walk.polygon += count;
@@ -757,20 +793,17 @@ fn renumber(face_lists: []const []u32, polygon: u32, extra: u32) void {
 
 /// A run's surface: its look, with the textures its material found.
 fn surface(face_look: Look, images: Found) srapiext.Surface {
-    var textures: [2]srapiext.Texture = .{ image(images.texture), .none };
-    if (face_look.second) |second| textures[1] = switch (second.texture) {
-        .none => .none,
-        .material => image(images.texture),
-        .light_map => image(images.light_map),
-        .highlight => |index| .{ .highlight = index },
-    };
+    const found: MaterialImages(srapiext.Texture, .none) = .{ .material = .of(images.material), .light_map = .of(images.light_map) };
+    var textures: [2]srapiext.Texture = .{ found.material, .none };
+    if (face_look.second) |second| textures[1] = found.pass(second.texture, highlightTexture);
     var record = material(face_look, .{});
     record.image = .{ .null, .null };
     return .{ .material = record, .textures = textures };
 }
 
-fn image(found: ?*srtexture.Image) srapiext.Texture {
-    return if (found) |i| .{ .image = i } else .none;
+/// A highlight texture as a surface draws it.
+fn highlightTexture(index: u3) srapiext.Texture {
+    return .{ .highlight = index };
 }
 
 /// A texture's `name` after a letter, if any, in `buffer`.
@@ -781,10 +814,6 @@ fn prefixed(buffer: []u8, letter: ?u8, name: []const u8) []const u8 {
     } else 0;
     @memcpy(buffer[start..][0..name.len], name);
     return buffer[0 .. start + name.len];
-}
-
-fn vector(v: shp.Vec3) Vector {
-    return .{ v.x, v.y, v.z };
 }
 
 fn testShading(mode: u4, sub_mode: u4) shp.Face.Shading {
@@ -814,6 +843,26 @@ test look {
     try std.testing.expectEqual(Material.Blend.alpha, look(testShading(5, 0), .{}).first.blend);
     try std.testing.expect(!look(testShading(4, 2), .{}).first.lit);
     try std.testing.expectEqual(look(testShading(8, 1), .{}), look(testShading(10, 1), .{}));
+}
+
+test showsTexture {
+    try std.testing.expect(!showsTexture(.untextured_additive));
+    try std.testing.expect(showsTexture(.unlit));
+    try std.testing.expect(showsTexture(lit_additive_again));
+}
+
+test MaterialImages {
+    const images: Images = .{ .material = @enumFromInt(0x0060_0000), .light_map = @enumFromInt(0x0060_1000) };
+    try std.testing.expectEqual(images.light_map, images.pass(.light_map, highlightIndex));
+    try std.testing.expectEqual(images.material, images.pass(.material, highlightIndex));
+    try std.testing.expectEqual(.null, images.pass(.none, highlightIndex));
+    try std.testing.expectEqual(4, @intFromEnum(images.pass(.{ .highlight = 4 }, highlightIndex)));
+    // Found, a level's material's textures give a surface's; one not found, none.
+    var texture: srtexture.Image = .{ .levels = &.{} };
+    const found: MaterialImages(srapiext.Texture, .none) = .{ .material = .of(&texture), .light_map = .of(null) };
+    try std.testing.expectEqual(&texture, found.pass(.material, highlightTexture).image);
+    try std.testing.expect(found.pass(.light_map, highlightTexture) == .none);
+    try std.testing.expectEqual(srapiext.Texture{ .highlight = 2 }, found.pass(.{ .highlight = 2 }, highlightTexture));
 }
 
 test material {
@@ -855,42 +904,6 @@ fn testMaterial(name: []const u8) shp.Material {
     return m;
 }
 
-pub const testing = struct {
-    /// A texture table of small textures, for the tests.
-    pub const Textures = TestTextures;
-};
-
-/// A texture table holding `hull` and its light map, or the textures `names` names.
-const TestTextures = struct {
-    bytes: []u8,
-    cache: tcache.Cache,
-    table: srtexture.Table,
-
-    fn init(gpa: Allocator) !*TestTextures {
-        return initNamed(gpa, &.{ "hull", "lhull" });
-    }
-
-    /// A table of a two-by-two texture for each of `names`, at most eight.
-    pub fn initNamed(gpa: Allocator, names: []const []const u8) !*TestTextures {
-        var specs: [8]tcache.testing.Spec = undefined;
-        for (specs[0..names.len], names) |*spec, name| spec.* = .{ .name = name, .encoding = .index8, .width = 2, .height = 2 };
-        const t = try gpa.create(TestTextures);
-        errdefer gpa.destroy(t);
-        t.bytes = try tcache.testing.build(gpa, specs[0..names.len]);
-        errdefer gpa.free(t.bytes);
-        t.cache = try .parse(gpa, t.bytes);
-        t.table = .init(gpa, t.cache, std.mem.zeroes(@import("../../formats/tga.zig").Palette));
-        return t;
-    }
-
-    pub fn deinit(t: *TestTextures, gpa: Allocator) void {
-        t.table.deinit();
-        t.cache.deinit(gpa);
-        gpa.free(t.bytes);
-        gpa.destroy(t);
-    }
-};
-
 fn testPart(meshes: []shp.Mesh, flags: shp.Part.Flags) shp.PartData {
     var part = std.mem.zeroes(shp.Part);
     part.flags = flags;
@@ -899,7 +912,7 @@ fn testPart(meshes: []shp.Mesh, flags: shp.Part.Flags) shp.PartData {
 
 test "build: surfaces, planes and a wire face's edges" {
     const gpa = std.testing.allocator;
-    const textures = try TestTextures.init(gpa);
+    const textures = try srtexture.testing.Textures.init(gpa, &.{ "hull", "lhull" });
     defer textures.deinit(gpa);
 
     var vertices = [_]shp.Vertex{ testVertex(-100, -100, -1), testVertex(100, -100, -1), testVertex(100, 100, -1), testVertex(-100, 100, -1) };
@@ -946,7 +959,7 @@ test "build: surfaces, planes and a wire face's edges" {
 
 test "build: fans merge when flat, and the part's face lists follow" {
     const gpa = std.testing.allocator;
-    const textures = try TestTextures.init(gpa);
+    const textures = try srtexture.testing.Textures.init(gpa, &.{ "hull", "lhull" });
     defer textures.deinit(gpa);
 
     var vertices = [_]shp.Vertex{ testVertex(0, 0, -1), testVertex(100, 0, -1), testVertex(100, 100, -1), testVertex(0, 100, -1), testVertex(-50, 50, -1) };
@@ -982,7 +995,7 @@ test "build: fans merge when flat, and the part's face lists follow" {
 
 test "build: light maps, baked colours and geomorphing" {
     const gpa = std.testing.allocator;
-    const textures = try TestTextures.init(gpa);
+    const textures = try srtexture.testing.Textures.init(gpa, &.{ "hull", "lhull" });
     defer textures.deinit(gpa);
 
     // The third vertex has no counterpart in the coarser level.
@@ -1028,7 +1041,7 @@ test "build: light maps, baked colours and geomorphing" {
 
 test "build: faults the game stops on or does not check" {
     const gpa = std.testing.allocator;
-    const textures = try TestTextures.init(gpa);
+    const textures = try srtexture.testing.Textures.init(gpa, &.{ "hull", "lhull" });
     defer textures.deinit(gpa);
 
     var vertices = [_]shp.Vertex{ testVertex(0, 0, -1), testVertex(100, 0, -1), testVertex(0, 100, -1) };
@@ -1042,6 +1055,30 @@ test "build: faults the game stops on or does not check" {
 
     faces[0].vertices[2] = 3;
     try std.testing.expectError(error.CornerOutOfRange, build(gpa, &textures.table, &part, 0, .{}, &flags, &.{}));
+}
+
+test sameRun {
+    const first = testFace(0, 7, .{ 0, 1, 2 });
+    // The shading's bits past the mode and the sub-mode are not compared.
+    var face = first;
+    face.shading._unused = 1;
+    try std.testing.expect(sameRun(first, face));
+    face.shading.sub_mode = 3;
+    try std.testing.expect(!sameRun(first, face));
+    face = first;
+    face.material = 1;
+    try std.testing.expect(!sameRun(first, face));
+}
+
+test edgesDrawn {
+    var face = testFace(0, 1, .{ 0, 1, 2 });
+    try std.testing.expectEqual(3, edgesDrawn(face));
+    face.edge_mask = 0b010;
+    try std.testing.expectEqual(2, edgesDrawn(face));
+    try std.testing.expect(!edgeDrawn(face, 1));
+    // The bits past the third are not read.
+    face.edge_mask = 0b1111_1000;
+    try std.testing.expectEqual(3, edgesDrawn(face));
 }
 
 test fanMerges {
@@ -1090,6 +1127,41 @@ test staticLightsMark {
     try std.testing.expectEqual([2]bool{ false, false }, staticLightsMark(&model));
 }
 
+test staticLightsBake {
+    // An intact part holding a red light, and a damaged one, each with a vertex halfway out to
+    // the light, facing it.
+    var meshes = [_]shp.Mesh{};
+    var lights = [_]shp.Attachment{testLight(@intFromEnum(shp.Attachment.Light.red), 100, 1, 100)};
+    var intact = testPart(&meshes, std.mem.zeroes(shp.Part.Flags));
+    intact.attachments = &lights;
+    var damaged_flags = std.mem.zeroes(shp.Part.Flags);
+    damaged_flags.damaged = true;
+    var parts = [_]shp.PartData{ intact, testPart(&meshes, damaged_flags) };
+    const model: shp.Model = .{ .header = std.mem.zeroes(shp.Header), .parts = &parts, .trailing_bytes = 0 };
+    var positions = [_]Vector{.{ 50, 0, 0 }};
+    var normals = [_]Vector{.{ 1, 0, 0 }};
+    var colours: [2][1][4]f32 = @splat(@splat(@splat(0)));
+    var built: [2]srapiext.Mesh = @splat(empty);
+    var loaded: [2]LoadedPart = undefined;
+    for (&built, &colours, &loaded) |*mesh, *baked, *part| {
+        mesh.positions = &positions;
+        mesh.normals = &normals;
+        mesh.baked = baked;
+        part.* = .{ .flags = .{}, .meshes = mesh[0..1], .levels = &.{} };
+    }
+
+    // The light shines on the parts of its own class alone.
+    staticLightsBake(&model, &loaded);
+    try std.testing.expectApproxEqAbs(0.25, colours[0][0][0], 1e-5);
+    try std.testing.expectEqual(0, colours[1][0][0]);
+    // A light past red adds no colour.
+    lights[0].id = @intFromEnum(shp.Attachment.Light.cyan);
+    staticLightsBake(&model, &loaded);
+    try std.testing.expectApproxEqAbs(0.25, colours[0][0][0], 1e-5);
+    try std.testing.expectEqual(0, colours[0][0][1]);
+    try std.testing.expectEqual(0, colours[0][0][2]);
+}
+
 test staticLightBake {
     const gpa = std.testing.allocator;
     // Three vertices facing a light 100 along X: at its foot, halfway out, and past its reach.
@@ -1134,7 +1206,7 @@ test readModel {
     try bigfile.testing.write(gpa, io, tmp.dir, bigfile.resource_name, &.{.{ .name = "Ship.SHP", .data = shp.testing.buildModel(&buffer) }});
     var resources: bigfile.Hog = try .open(gpa, io, tmp.dir, bigfile.resource_name);
     defer resources.close(gpa);
-    const textures = try TestTextures.initNamed(gpa, &.{ "yank_1", "lyank_1", "cloak64" });
+    const textures = try srtexture.testing.Textures.init(gpa, &.{ "yank_1", "lyank_1", "cloak64" });
     defer textures.deinit(gpa);
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
