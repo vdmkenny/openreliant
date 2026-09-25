@@ -139,10 +139,9 @@ pub const Audio = struct {
         cancel_changes,
     };
 
-    /// The sound `stdsmp.fat` plays, once, in the middle, to try the effects' volume.
+    /// The sound `stdsmp.fat` plays, once, in the middle, at its own pitch, to try the effects'
+    /// volume.
     const test_sound = 14;
-    const once = 1;
-    const middle = 64;
 
     /// `pause_audio_enter` (`0x0048EC20`).
     pub fn enter(audio: *Audio, settings: Settings) void {
@@ -159,7 +158,7 @@ pub const Audio = struct {
             audio.held = null;
             // **Fix.** The game tries it at what the pointer's place works out to, which is past
             // the range with the pointer past the track's end; OpenReliant at the volume set.
-            if (audio.held_effects) _ = sound.play(context.settings.stdsmp, test_sound, volumes.effects, once, middle, 0);
+            if (audio.held_effects) _ = sound.play(context.settings.stdsmp, test_sound, volumes.effects, hog_snd.once, hog_snd.centre, hog_snd.own_pitch);
         } else if (audio.held) |volume| {
             level(volumes, volume).* = menu.round(sliders.get(volume).valueAt(context.ui, context.pointer.at[0]));
             sound.applyVolumes();
@@ -292,8 +291,8 @@ pub const Video = struct {
                 .reset_defaults => set(settings, .cockpit, 1),
                 .cancel_changes => set(settings, video.kept_view, video.kept_brightness),
                 .brightness_knob => video.held = true,
-                .view_back => set(settings, stepped(settings.view.*, -1), settings.brightness.*),
-                .view_forward => set(settings, stepped(settings.view.*, 1), settings.brightness.*),
+                .view_back => set(settings, stepped(settings.view.*, Selector.step(.back)), settings.brightness.*),
+                .view_forward => set(settings, stepped(settings.view.*, Selector.step(.forward)), settings.brightness.*),
                 else => {},
             }
         }

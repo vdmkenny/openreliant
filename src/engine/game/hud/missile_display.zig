@@ -20,8 +20,8 @@ pub const max_entries = 10;
 
 /// An entry of the ring (five halfwords).
 pub const Entry = extern struct {
-    /// Missiles left, or -1 for no entry.
-    count: i16 = -1,
+    /// Missiles left, or `no_entry`.
+    count: i16 = no_entry,
     /// Where it stands round the ring, from 0, the armed one at six o'clock.
     place: i16 = 0,
     /// The first of its type's ten shapes in the display's set, one a place: the shape drawn is
@@ -31,10 +31,24 @@ pub const Entry = extern struct {
     name: i16 = 0,
     type: Type = .none,
 
+    /// The count of an entry the ring doesn't hold.
+    pub const no_entry: i16 = -1;
+
+    /// The missiles it has left, where the ring holds it.
+    pub fn left(entry: Entry) ?i16 {
+        return if (entry.count == no_entry) null else entry.count;
+    }
+
     comptime {
         assert(@sizeOf(Entry) == 10);
     }
 };
+
+test "Entry.left" {
+    try std.testing.expectEqual(null, (Entry{}).left());
+    try std.testing.expectEqual(0, (Entry{ .count = 0 }).left());
+    try std.testing.expectEqual(12, (Entry{ .count = 12 }).left());
+}
 
 /// Each type's first shape and name, for the Screamer to the Hawk (`hud_missile_ring_build`'s own
 /// tables); the rest have none.
@@ -84,9 +98,7 @@ pub const Ring = struct {
         ring.armed = @intCast(count / 2);
         for (ring.entries[0..count]) |*entry| entry.place = @intCast(@mod(@as(i16, @intCast(ring.armed)) - entry.place, max_entries));
         ring.left = 0;
-        for (ring.entries) |entry| {
-            if (entry.count != -1) ring.left += entry.count;
-        }
+        for (ring.entries) |entry| ring.left += entry.left() orelse continue;
     }
 
     pub fn armedEntry(ring: *Ring) *Entry {
@@ -100,12 +112,12 @@ pub const Ring = struct {
     /// from the first entry to the last. Whether it turned.
     pub fn turn(ring: *Ring, way: Turn) bool {
         switch (way) {
-            .clockwise => if (ring.entries[(ring.armed + 1) % max_entries].count == -1) return false,
+            .clockwise => if (ring.entries[(ring.armed + 1) % max_entries].left() == null) return false,
             .anticlockwise => if (ring.armed == 0) return false,
         }
         var turned = false;
         for (&ring.entries, 0..) |*entry, index| {
-            if (entry.count == -1) continue;
+            if (entry.left() == null) continue;
             const place = entry.place + @as(i16, if (way == .clockwise) 1 else -1);
             entry.place = @intCast(@mod(place, max_entries));
             if (entry.place == 0 and place == @as(i16, if (way == .clockwise) max_entries else 0)) {
@@ -120,7 +132,7 @@ pub const Ring = struct {
     /// last (`missile_name_voice`, `0x00566660`).
     pub fn sayName(ring: *Ring, sound: *hog_snd.Sound) void {
         const armed = ring.armedEntry();
-        if (armed.count == -1) return;
+        if (armed.left() == null) return;
         const name = bettyName(armed.type) orelse return;
         if (ring.name_voice) |voice| sound.endVoice(voice);
         ring.name_voice = betty.say(sound, name);
@@ -153,9 +165,9 @@ const ring_at = [2]i32{ 0, 0x47 };
 /// shapes standing round the ring by their own offsets.
 pub fn draw(shown: Shown, canvas: hud.windows.Canvas) hud.windows.Canvas.Error!void {
     for (shown.ring.entries) |entry| {
-        if (entry.count == -1) continue;
+        const count = entry.left() orelse continue;
         if (entry.place == 0) {
-            try canvas.print("{d}", .{entry.count}, count_at, .centre);
+            try canvas.print("{d}", .{count}, count_at, .centre);
             try canvas.string(@intCast(entry.name), name_at, .centre);
         }
         try canvas.shaky(@intCast(entry.shape + entry.place), ring_at);

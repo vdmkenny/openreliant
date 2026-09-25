@@ -319,32 +319,23 @@ pub const Inside = struct {
 
     /// The point `offset` of the display's own pixels from the window's place.
     pub fn place(inside: Inside, offset: [2]i32) [2]i32 {
-        var point: [2]i32 = undefined;
-        for (&point, inside.at, offset) |*out, from, by| out.* = from + math.round(@as(f32, @floatFromInt(by)) * inside.size);
-        return point;
+        return hud.scaled(inside.at, offset, inside.size);
     }
 
     /// A VFX pane from the window's place, its left, top, right and bottom edges in the display's
     /// own pixels and inclusive, as the part of the screen it covers, cut to the window's own.
     pub fn pane(inside: Inside, edges: [4]i32) hud.Clip {
-        const edge = struct {
-            fn of(from: i32, pixels: i32, by: f32) f32 {
-                return @as(f32, @floatFromInt(from)) + @as(f32, @floatFromInt(pixels)) * by;
-            }
-        }.of;
+        const edge = hud.Clip.edge;
+        const x: f32 = @floatFromInt(inside.at[0]);
+        const y: f32 = @floatFromInt(inside.at[1]);
         const own: hud.Clip = .{
-            .left = edge(inside.at[0], edges[0], inside.size),
-            .top = edge(inside.at[1], edges[1], inside.size),
-            .right = edge(inside.at[0], edges[2] + 1, inside.size),
-            .bottom = edge(inside.at[1], edges[3] + 1, inside.size),
+            .left = edge(x, edges[0], inside.size),
+            .top = edge(y, edges[1], inside.size),
+            .right = edge(x, edges[2] + 1, inside.size),
+            .bottom = edge(y, edges[3] + 1, inside.size),
         };
         const outer = inside.clip orelse return own;
-        return .{
-            .left = @max(own.left, outer.left),
-            .top = @max(own.top, outer.top),
-            .right = @min(own.right, outer.right),
-            .bottom = @min(own.bottom, outer.bottom),
-        };
+        return own.intersect(outer);
     }
 };
 

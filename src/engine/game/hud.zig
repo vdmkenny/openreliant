@@ -49,7 +49,8 @@ const objects = @import("objects.zig");
 const libcmt = @import("../libcmt.zig");
 const collision = @import("collision.zig");
 const sound3d = @import("sound3d.zig");
-const Clock = @import("main.zig").Clock;
+const main = @import("main.zig");
+const Clock = main.Clock;
 const Vector = math.Vector;
 
 pub const windows = @import("hud/windows.zig");
@@ -173,9 +174,31 @@ pub fn place(screen: [2]u32, offset: [2]i32, across: f32, down: f32, scale: f32)
     var at: [2]i32 = undefined;
     for (&at, screen, offset, [2]f32{ across, down }) |*out, size, from, fraction| {
         const span = @as(f32, @floatFromInt(size)) - @as(f32, inset) * scale;
-        out.* = round(span * fraction) + round(@as(f32, @floatFromInt(margin + from)) * scale);
+        out.* = round(span * fraction) + pixels(margin + from, scale);
     }
     return at;
+}
+
+/// `n` of the display's own pixels in the screen's, for a display drawn `scale` times its size,
+/// rounded as `sr_round` rounds. At a scale of 1 they are as many.
+pub fn pixels(n: i32, scale: f32) i32 {
+    return round(@as(f32, @floatFromInt(n)) * scale);
+}
+
+/// `point` moved by an offset the display measures in its own pixels (`pixels`).
+pub fn scaled(point: [2]i32, offset: [2]i32, scale: f32) [2]i32 {
+    var at: [2]i32 = undefined;
+    for (&at, point, offset) |*out, from, by| out.* = from + pixels(by, scale);
+    return at;
+}
+
+test pixels {
+    try std.testing.expectEqual(7, pixels(7, 1));
+    try std.testing.expectEqual(-14, pixels(-7, 2));
+    // Halves round to the even neighbour.
+    try std.testing.expectEqual(4, pixels(3, 1.5));
+    try std.testing.expectEqual(8, pixels(5, 1.5));
+    try std.testing.expectEqual([2]i32{ 100 - 8, 20 }, scaled(.{ 100, 20 }, .{ -4, 0 }, 2));
 }
 
 /// How far apart the items of the display's grid stand, and where its first one does
@@ -188,8 +211,8 @@ pub const grid_offset: [2]i32 = .{ -156, 0 };
 /// The grid is measured in the display's own pixels, so `scale` carries it too.
 pub fn gridPlace(screen: [2]u32, index: i32, scale: f32) [2]i32 {
     var at = place(screen, grid_offset, 0.5, 0, scale);
-    at[0] += round(@as(f32, @floatFromInt(@rem(index, 2) * grid_across)) * scale);
-    at[1] += round(@as(f32, @floatFromInt(@divTrunc(index, 2) * grid_down)) * scale);
+    at[0] += pixels(@rem(index, 2) * grid_across, scale);
+    at[1] += pixels(@divTrunc(index, 2) * grid_down, scale);
     return at;
 }
 
@@ -261,8 +284,7 @@ pub const Opened = struct {
     /// Frees the glyphs the GPU was given.
     pub fn deinit(opened: *Opened, gpa: Allocator) void {
         for (&opened.images) |*image| if (image.*) |made| {
-            gpa.free(made.levels[0].rgba);
-            gpa.free(made.levels);
+            made.deinit(gpa);
             image.* = null;
         };
     }
@@ -278,8 +300,9 @@ pub const Opened = struct {
     }
 };
 
-/// Where a line of text stands from the place it is drawn at (`hud_text`, `0x00480E40`).
-pub const Align = enum(u32) {
+/// Where a line of text stands from the place it is drawn at (`hud_text`, `0x00480E40`), as the
+/// pause menu's items give it too (`hudoptions.menu.Item.Style`, three bits).
+pub const Align = enum(u3) {
     left = 0,
     centre = 1,
     right = 2,
@@ -310,6 +333,35 @@ pub fn globalPalette(set: spr.Sprite) ?*const [spr.palette_size]u8 {
     };
 }
 
+test globalPalette {
+    // A set whose every entry but the last is empty, the last a palette of 6-bit levels.
+    const count = global_palette_block + 1;
+    const palette_at = @sizeOf(spr.Header) + count * @sizeOf(spr.DirectoryEntry);
+    var bytes: [palette_at + spr.palette_size]u8 = undefined;
+    const header: spr.Header = .{ .version = spr.magic.*, .shape_count = count };
+    @memcpy(bytes[0..@sizeOf(spr.Header)], std.mem.asBytes(&header));
+    for (0..count) |i| {
+        const entry: spr.DirectoryEntry = .{ .offset = palette_at, .reserved = 0 };
+        @memcpy(bytes[@sizeOf(spr.Header) + i * @sizeOf(spr.DirectoryEntry) ..][0..@sizeOf(spr.DirectoryEntry)], std.mem.asBytes(&entry));
+    }
+    for (bytes[palette_at..], 0..) |*level, i| level.* = @intCast(i % 64);
+    const global = globalPalette(try .parse(&bytes)).?;
+    try std.testing.expectEqual(@intFromPtr(&bytes[palette_at]), @intFromPtr(global));
+
+    // Every line is drawn in its entry's colour, 6-bit levels widened; white without a palette.
+    const art: Art = .{ .set = undefined, .images = &.{}, .global = global };
+    const entry = art.paletteColour(1);
+    try std.testing.expectEqual(@as(f32, @floatFromInt(spr.expandLevel(3))) / 255, entry[0]);
+    try std.testing.expectEqual(@as(f32, @floatFromInt(spr.expandLevel(5))) / 255, entry[2]);
+    try std.testing.expectEqual(1, entry[3]);
+    const bare: Art = .{ .set = undefined, .images = &.{} };
+    try std.testing.expectEqual([4]f32{ 1, 1, 1, 1 }, bare.paletteColour(1));
+
+    // A set too short to hold the block has none.
+    const empty = comptime std.mem.toBytes(spr.Header{ .version = spr.magic.*, .shape_count = 0 });
+    try std.testing.expectEqual(null, globalPalette(try .parse(&empty)));
+}
+
 /// A set of the display's shapes, with an image made of each as it is first drawn. Every entry of
 /// a shipped set names no palette, so VFX draws each shape with its global palette, which
 /// `hud_draw` makes of the display's own set; a set given none takes the nearest palette at or
@@ -327,10 +379,7 @@ pub const Art = struct {
     }
 
     pub fn deinit(art: *Art, gpa: Allocator) void {
-        for (art.images) |held| if (held) |made| {
-            gpa.free(made.levels[0].rgba);
-            gpa.free(made.levels);
-        };
+        for (art.images) |held| if (held) |made| made.deinit(gpa);
         gpa.free(art.images);
     }
 
@@ -372,10 +421,7 @@ pub const Art = struct {
             for (0..3) |channel| rgba[pixel * 4 + channel] = entry[channel];
             rgba[pixel * 4 + 3] = if (at == 0) 0 else 255;
         }
-        const levels = try gpa.alloc(srtexture.Level, 1);
-        errdefer gpa.free(levels);
-        levels[0] = .{ .width = found.width(), .height = found.height(), .rgba = rgba };
-        art.images[index] = .{ .levels = levels };
+        art.images[index] = try srtexture.Image.single(gpa, found.width(), found.height(), rgba);
         return &art.images[index].?;
     }
 };
@@ -426,8 +472,7 @@ pub const Shake = struct {
 pub fn rowShift(amount: f32, random: ?*libcmt.Rand) i32 {
     if (!(amount > 0)) return 0;
     const source = random orelse return 0;
-    const share = @as(f32, @floatFromInt(source.rand())) * (1.0 / @as(f32, libcmt.Rand.max));
-    return math.round(share * row_reach * amount);
+    return math.round(source.fraction() * row_reach * amount);
 }
 
 /// How far a shake of 1 moves a row at most (`0x004DC520`).
@@ -502,7 +547,37 @@ pub const Clip = struct {
     top: f32,
     right: f32,
     bottom: f32,
+
+    /// What lies inside both.
+    pub fn intersect(a: Clip, b: Clip) Clip {
+        return .{
+            .left = @max(a.left, b.left),
+            .top = @max(a.top, b.top),
+            .right = @min(a.right, b.right),
+            .bottom = @min(a.bottom, b.bottom),
+        };
+    }
+
+    /// Whether it holds no pixel at all.
+    pub fn empty(clip: Clip) bool {
+        return clip.left >= clip.right or clip.top >= clip.bottom;
+    }
+
+    /// Where an edge `n` of the display's own pixels past `from` falls on the screen, for a display
+    /// drawn `scale` times its size, unrounded.
+    pub fn edge(from: f32, n: i32, scale: f32) f32 {
+        return from + @as(f32, @floatFromInt(n)) * scale;
+    }
 };
+
+test Clip {
+    const a: Clip = .{ .left = 0, .top = 10, .right = 100, .bottom = 50 };
+    const b: Clip = .{ .left = 20, .top = 0, .right = 200, .bottom = 40 };
+    try std.testing.expectEqual(Clip{ .left = 20, .top = 10, .right = 100, .bottom = 40 }, a.intersect(b));
+    try std.testing.expect(!a.intersect(b).empty());
+    try std.testing.expect(a.intersect(.{ .left = 100, .top = 0, .right = 200, .bottom = 40 }).empty());
+    try std.testing.expectEqual(16, Clip.edge(10, 3, 2));
+}
 
 /// Draws the shape at `index` as `drawShape` does, mirrored or clipped as `how` says.
 pub fn drawShapeWith(
@@ -534,7 +609,7 @@ pub fn drawImage(target: device.Device, image: *srtexture.Image, corner: [2]f32,
     const v: [2]f32 = if (how.mirror.down) .{ 1, 0 } else .{ 0, 1 };
     const tint = device.pack(colour);
     const shake = how.shake orelse {
-        drawPart(target, image, .{ corner[0], corner[1], corner[0] + width, corner[1] + height }, u, v, tint, how.clip);
+        drawPart(target, image, .{ .left = corner[0], .top = corner[1], .right = corner[0] + width, .bottom = corner[1] + height }, u, v, tint, how.clip);
         return;
     };
     const rows = image.height();
@@ -544,41 +619,42 @@ pub fn drawImage(target: device.Device, image: *srtexture.Image, corner: [2]f32,
         const left = corner[0] + @as(f32, @floatFromInt(shake.row(how.mirror))) * scale;
         const top = corner[1] + down * scale;
         const along: [2]f32 = .{ v[0] + per_row * down, v[0] + per_row * (down + 1) };
-        drawPart(target, image, .{ left, top, left + width, top + scale }, u, along, tint, how.clip);
+        drawPart(target, image, .{ .left = left, .top = top, .right = left + width, .bottom = top + scale }, u, along, tint, how.clip);
     }
 }
 
+/// The states the display draws with: over the scene, blended by what it covers, textured by
+/// `texture` where there is one.
+fn overlayState(texture: ?*srtexture.Image) device.State {
+    return .{
+        .texture = texture,
+        .depth = srd3d.depth(.overlay, .alpha),
+        .blend = srd3d.factors(.alpha),
+    };
+}
+
 /// Draws the part of `image` between texture coordinates `u` and `v` over the rectangle `edges`
-/// of the screen (left, top, right, bottom), cut to `clip`.
-fn drawPart(target: device.Device, image: *srtexture.Image, edges: [4]f32, u_in: [2]f32, v_in: [2]f32, tint: u32, clip: ?Clip) void {
-    const left, const top, const right, const bottom = edges;
-    var x: [2]f32 = .{ left, right };
-    var y: [2]f32 = .{ top, bottom };
+/// of the screen, cut to `clip`.
+fn drawPart(target: device.Device, image: *srtexture.Image, edges: Clip, u_in: [2]f32, v_in: [2]f32, tint: u32, clip: ?Clip) void {
+    var kept = edges;
     var u = u_in;
     var v = v_in;
     if (clip) |cut| {
-        const kept_x: [2]f32 = .{ @max(left, cut.left), @min(right, cut.right) };
-        const kept_y: [2]f32 = .{ @max(top, cut.top), @min(bottom, cut.bottom) };
-        if (kept_x[0] >= kept_x[1] or kept_y[0] >= kept_y[1]) return;
+        kept = edges.intersect(cut);
+        if (kept.empty()) return;
         // Each texture coordinate follows its edge in, in the image's own proportion.
-        for (0..2) |edge| {
-            u[edge] = u_in[0] + (u_in[1] - u_in[0]) * (kept_x[edge] - left) / (right - left);
-            v[edge] = v_in[0] + (v_in[1] - v_in[0]) * (kept_y[edge] - top) / (bottom - top);
+        for ([2]f32{ kept.left, kept.right }, [2]f32{ kept.top, kept.bottom }, 0..) |x, y, end| {
+            u[end] = u_in[0] + (u_in[1] - u_in[0]) * (x - edges.left) / (edges.right - edges.left);
+            v[end] = v_in[0] + (v_in[1] - v_in[0]) * (y - edges.top) / (edges.bottom - edges.top);
         }
-        x = kept_x;
-        y = kept_y;
     }
     const corners = [4]device.Vertex{
-        .{ .x = x[0], .y = y[0], .z = 1, .rhw = 1, .diffuse = tint, .u = u[0], .v = v[0] },
-        .{ .x = x[1], .y = y[0], .z = 1, .rhw = 1, .diffuse = tint, .u = u[1], .v = v[0] },
-        .{ .x = x[1], .y = y[1], .z = 1, .rhw = 1, .diffuse = tint, .u = u[1], .v = v[1] },
-        .{ .x = x[0], .y = y[1], .z = 1, .rhw = 1, .diffuse = tint, .u = u[0], .v = v[1] },
+        .{ .x = kept.left, .y = kept.top, .z = 1, .rhw = 1, .diffuse = tint, .u = u[0], .v = v[0] },
+        .{ .x = kept.right, .y = kept.top, .z = 1, .rhw = 1, .diffuse = tint, .u = u[1], .v = v[0] },
+        .{ .x = kept.right, .y = kept.bottom, .z = 1, .rhw = 1, .diffuse = tint, .u = u[1], .v = v[1] },
+        .{ .x = kept.left, .y = kept.bottom, .z = 1, .rhw = 1, .diffuse = tint, .u = u[0], .v = v[1] },
     };
-    target.draw(.{
-        .texture = image,
-        .depth = srd3d.depth(.overlay, .alpha),
-        .blend = srd3d.factors(.alpha),
-    }, .fan, &corners, null);
+    target.draw(overlayState(image), .fan, &corners, null);
 }
 
 /// A glyph as the GPU draws it: the font's palette, or the global one, looked up for each of its
@@ -605,10 +681,7 @@ fn glyphImage(opened: *Opened, gpa: Allocator, code: u8) Allocator.Error!?*srtex
         }
         pixel[3] = if (index == 0) 0 else 255;
     }
-    const levels = try gpa.alloc(srtexture.Level, 1);
-    errdefer gpa.free(levels);
-    levels[0] = .{ .width = glyph.width, .height = opened.font.header.height, .rgba = rgba };
-    opened.images[code] = .{ .levels = levels };
+    opened.images[code] = try srtexture.Image.single(gpa, glyph.width, opened.font.header.height, rgba);
     return &opened.images[code].?;
 }
 
@@ -638,25 +711,11 @@ pub fn drawText(
     const top: f32 = @floatFromInt(at[1]);
     const height = @as(f32, @floatFromInt(opened.font.header.height)) * scale;
     const tint = device.pack(colour);
-    // The display stands over the scene, blended by what it covers.
-    const state: device.State = .{
-        .texture = null,
-        .depth = srd3d.depth(.overlay, .alpha),
-        .blend = srd3d.factors(.alpha),
-    };
     for (text) |code| {
         const width = @as(f32, @floatFromInt(opened.widths[code])) * scale;
         defer x += width;
         const image = try glyphImage(opened, gpa, code) orelse continue;
-        var drawn = state;
-        drawn.texture = image;
-        const corners = [4]device.Vertex{
-            .{ .x = x, .y = top, .z = 1, .rhw = 1, .diffuse = tint, .u = 0, .v = 0 },
-            .{ .x = x + width, .y = top, .z = 1, .rhw = 1, .diffuse = tint, .u = 1, .v = 0 },
-            .{ .x = x + width, .y = top + height, .z = 1, .rhw = 1, .diffuse = tint, .u = 1, .v = 1 },
-            .{ .x = x, .y = top + height, .z = 1, .rhw = 1, .diffuse = tint, .u = 0, .v = 1 },
-        };
-        target.draw(drawn, .fan, &corners, null);
+        drawPart(target, image, .{ .left = x, .top = top, .right = x + width, .bottom = top + height }, .{ 0, 1 }, .{ 0, 1 }, tint, null);
     }
     return @intFromFloat(x);
 }
@@ -671,7 +730,7 @@ pub fn textLeft(opened: Opened, x: i32, text: []const u8, alignment: Align, scal
         .right => width,
         else => return x,
     };
-    return x - round(@as(f32, @floatFromInt(shift)) * scale);
+    return x - pixels(shift, scale);
 }
 
 test place {
@@ -790,54 +849,41 @@ test drawText {
     defer opened.deinit(gpa);
 
     // A device that keeps what it was asked to draw.
-    const Recorder = struct {
-        drawn: std.ArrayList([4]device.Vertex) = .empty,
-        states: std.ArrayList(device.State) = .empty,
-        gpa: Allocator,
-
-        fn begin(_: *anyopaque) void {}
-        fn end(_: *anyopaque) void {}
-        fn mark(_: *anyopaque) void {}
-        fn record(context: *anyopaque, state: device.State, primitive: device.Primitive, vertices: []const device.Vertex, indices: ?[]const u16) void {
-            const self: *@This() = @ptrCast(@alignCast(context));
-            std.debug.assert(primitive == .fan and indices == null and vertices.len == 4);
-            self.drawn.append(self.gpa, vertices[0..4].*) catch unreachable;
-            self.states.append(self.gpa, state) catch unreachable;
-        }
-        fn interface(self: *@This()) device.Device {
-            return .{ .ptr = self, .vtable = &.{ .begin = begin, .end = end, .draw = record, .overlay = mark } };
-        }
-    };
-    var recorder: Recorder = .{ .gpa = gpa };
-    defer recorder.drawn.deinit(gpa);
-    defer recorder.states.deinit(gpa);
+    var recorder: device.testing.Recorder = .{ .gpa = gpa };
+    defer recorder.deinit();
 
     // The fixture's code 1 is the only one with a glyph; code 0 has none and draws nothing.
     const text = [_]u8{ 1, 0, 1 };
     const ended = try drawText(&opened, gpa, recorder.interface(), .{ 10, 20 }, &text, .{ 1, 1, 1, 1 }, .left, 1);
-    try std.testing.expectEqual(2, recorder.drawn.items.len);
+    try std.testing.expectEqual(2, recorder.draws.items.len);
+    for (recorder.draws.items) |made| {
+        try std.testing.expectEqual(device.Primitive.fan, made.primitive);
+        try std.testing.expectEqual(4, made.count);
+    }
 
     // The first glyph stands where the line does, and the second follows the first's width along,
     // the code with no glyph having moved nothing.
     const width: f32 = @floatFromInt(opened.widths[1]);
-    try std.testing.expectEqual(10, recorder.drawn.items[0][0].x);
-    try std.testing.expectEqual(20, recorder.drawn.items[0][0].y);
-    try std.testing.expectEqual(10 + width, recorder.drawn.items[1][0].x);
+    try std.testing.expectEqual(10, recorder.drawn(0)[0].x);
+    try std.testing.expectEqual(20, recorder.drawn(0)[0].y);
+    try std.testing.expectEqual(10 + width, recorder.drawn(1)[0].x);
     try std.testing.expectEqual(@as(i32, @intFromFloat(10 + width * 2)), ended);
 
     // Each is as tall as the font and as wide as the glyph, and drawn over the scene.
     const height: f32 = @floatFromInt(opened.font.header.height);
-    try std.testing.expectEqual(10 + width, recorder.drawn.items[0][2].x);
-    try std.testing.expectEqual(20 + height, recorder.drawn.items[0][2].y);
-    try std.testing.expect(!recorder.states.items[0].depth.testing);
-    try std.testing.expect(!recorder.states.items[0].depth.writing);
-    try std.testing.expectEqual(srd3d.factors(.alpha), recorder.states.items[0].blend);
+    try std.testing.expectEqual(10 + width, recorder.drawn(0)[2].x);
+    try std.testing.expectEqual(20 + height, recorder.drawn(0)[2].y);
+    const state = recorder.draws.items[0].state;
+    try std.testing.expect(!state.depth.testing);
+    try std.testing.expect(!state.depth.writing);
+    try std.testing.expectEqual(srd3d.factors(.alpha), state.blend);
+    try std.testing.expectEqual(overlayState(state.texture), state);
 
     // Drawn twice the size, a glyph covers twice as much and the line is twice as long.
-    recorder.drawn.clearRetainingCapacity();
+    recorder.clear();
     _ = try drawText(&opened, gpa, recorder.interface(), .{ 0, 0 }, text[0..1], .{ 1, 1, 1, 1 }, .left, 2);
-    try std.testing.expectEqual(width * 2, recorder.drawn.items[0][2].x);
-    try std.testing.expectEqual(height * 2, recorder.drawn.items[0][2].y);
+    try std.testing.expectEqual(width * 2, recorder.drawn(0)[2].x);
+    try std.testing.expectEqual(height * 2, recorder.drawn(0)[2].y);
 }
 
 /// What `hud_init` loads for the display to draw with.
@@ -987,11 +1033,53 @@ pub fn novaShown(slot: *const create.Slot) bool {
     return !object.gun_mode.all and groupLead(slot) == .nova_cannon;
 }
 
+test "blind fire, and the charge arc for the Nova Cannon" {
+    const barrel = struct {
+        fn of(kind: guns.GunType) guns.Fitted {
+            return .{ .turret = .{ .fixed = .{ .muzzle = undefined, .type = kind } } };
+        }
+    }.of;
+    var fitted = [_]guns.Fitted{ barrel(.pulse_cannon), barrel(.nova_cannon) };
+    const table: [guns.max_groups]guns.Group = table: {
+        var groups = guns.no_groups;
+        groups[0] = .{ .first = 0 };
+        groups[1] = .{ .first = 1 };
+        break :table groups;
+    };
+    const combat = std.mem.zeroInit(create.ShipCombat, .{ .gun_groups = 2 });
+    var slot: create.Slot = .{ .object = std.mem.zeroes(gameobj.GameObject), .combat = &combat, .guns = &fitted, .gun_groups = &table };
+    var state: State = .{};
+
+    // Blind fire aims where the ship carries it and has it on.
+    try std.testing.expectEqual(BlindFire.off, blindFire(&state, &slot));
+    state.blind_fire_fitted = true;
+    try std.testing.expectEqual(BlindFire.on, blindFire(&state, &slot));
+    state.blind_fire = false;
+    try std.testing.expectEqual(BlindFire.off, blindFire(&state, &slot));
+    state.blind_fire = true;
+    // Not with every group of two firing, and not for a group the Nova Cannon leads.
+    slot.object.gun_mode.all = true;
+    try std.testing.expectEqual(BlindFire.off, blindFire(&state, &slot));
+    slot.object.gun_mode.all = false;
+    slot.object.gun_mode.group = 1;
+    try std.testing.expectEqual(BlindFire.excluded, blindFire(&state, &slot));
+
+    // The charge arc shows the cannon's charge on a Phoenix firing the cannon's group alone.
+    try std.testing.expect(!novaShown(&slot));
+    slot.object.type = .phoenix;
+    try std.testing.expect(novaShown(&slot));
+    slot.object.gun_mode.all = true;
+    try std.testing.expect(!novaShown(&slot));
+    slot.object.gun_mode.all = false;
+    slot.object.gun_mode.group = 0;
+    try std.testing.expect(!novaShown(&slot));
+}
+
 /// The readouts `hud_draw` puts in a row across the top of the screen, each a shape with a number
 /// centred under it. All three stand half of the way across, at the offsets it hands `hud_place`.
 pub const Readout = enum {
-    /// The seconds of afterburner fuel left, `afterburner_fuel` being in hundredths, under a ship
-    /// with its engines burning.
+    /// The seconds of afterburner fuel left, `afterburner_fuel` being in ticks, under a ship with
+    /// its engines burning.
     fuel,
     /// The pilot's kills over the campaign, `skull_count` (`0x00562DF4`, `input.Player.Kills`),
     /// under a skull and crossbones.
@@ -1046,15 +1134,6 @@ pub const Readout = enum {
     }
 };
 
-/// `point` moved by an offset the display measures in its own pixels.
-fn scaled(point: [2]i32, offset: [2]i32, scale: f32) [2]i32 {
-    var at: [2]i32 = undefined;
-    for (&at, point, offset) |*out, from, by| {
-        out.* = from + round(@as(f32, @floatFromInt(by)) * scale);
-    }
-    return at;
-}
-
 test Readout {
     // The three stand in a row across the top, half of the way across and rising to the right.
     var last: i32 = 0;
@@ -1088,11 +1167,16 @@ pub fn instrumented(last_view: camera.View) bool {
 /// measures both from the screen's edge rather than placing the text with `hud_place`.
 pub const view_name_down: i32 = 10;
 
-/// Whether `hud_draw` names `last_view` at the top of the screen: every view but 0, and but the
-/// fly-bys, `0x24` to `0x26`.
+/// The last of the fly-bys, views `0x24` (`camera.View.flyby`) to `0x26`, whose names `hud_draw`
+/// leaves out.
+const last_flyby: camera.View = @enumFromInt(0x26);
+
+/// Whether `hud_draw` names `last_view` at the top of the screen: every view but the one ahead
+/// from the cockpit, and but the fly-bys.
 pub fn namesView(last_view: camera.View) bool {
+    if (last_view == .cockpit) return false;
     const n = @intFromEnum(last_view);
-    return n != 0 and (n < 0x24 or n > 0x26);
+    return n < @intFromEnum(camera.View.flyby) or n > @intFromEnum(last_flyby);
 }
 
 /// Draws the name of `last_view` where `hud_draw` does, the view table's string for it out of
@@ -1110,7 +1194,7 @@ pub fn drawViewName(
 ) Allocator.Error!void {
     if (!namesView(last_view)) return;
     const text = strings.string(last_view.name() orelse return) orelse return;
-    const at: [2]i32 = .{ @intCast(screen[0] >> 1), round(@as(f32, @floatFromInt(view_name_down)) * scale) };
+    const at: [2]i32 = .{ @intCast(screen[0] >> 1), pixels(view_name_down, scale) };
     _ = try drawText(opened, gpa, target, at, text, colour, .centre, scale);
 }
 
@@ -1213,6 +1297,15 @@ pub const Light = enum(u16) {
     }
 };
 
+test "Light.charged" {
+    // Each device's light shows its charge; the rest have no bar.
+    inline for (comptime std.enums.values(Device)) |kind| {
+        try std.testing.expectEqual(kind, @field(Light, @tagName(kind)).charged().?);
+    }
+    try std.testing.expectEqual(null, Light.enemy_lock.charged());
+    try std.testing.expectEqual(null, Light.reverse_thrust.charged());
+}
+
 /// Which lights' conditions hold, a bit a light, named and ordered as `Light` has them.
 pub const Lit = packed struct(u9) {
     match_speed: bool = false,
@@ -1283,6 +1376,13 @@ pub const Icons = struct {
     pub const Slot = extern struct {
         state: IconState = .off,
         ticks: i32 = 0,
+
+        comptime {
+            // Twenty of them run from `0x00566558` up to `ecm_charge` (`0x005665F8`).
+            assert(@offsetOf(Slot, "ticks") == 4);
+            assert(@sizeOf(Slot) == 8);
+            assert(0x00566558 + count * @sizeOf(Slot) == 0x005665F8);
+        }
     };
 
     slots: [count]Slot = @splat(.{}),
@@ -1575,24 +1675,25 @@ pub const State = struct {
     pub fn targetChanged(state: *State, all: *create.Objects, multiplayer: bool) void {
         const entry = ai.playerControlEntry(all) orelse return;
         state.show(all, entry.target, multiplayer);
-        if (entry.target.index < 0) {
+        const index = state.shown.ship() orelse {
             state.windows.close(.target);
             state.windows.close(.big_target);
             return;
-        }
-        const window = targetWindow(&all.slots[@intCast(entry.target.index)]);
+        };
+        const window = targetWindow(&all.slots[index]);
         if (state.bringUp(window, multiplayer)) state.windows.status.getPtr(window).held = true;
     }
 
     /// Shows `target`'s index and component, and draws its object while the player can aim at it,
-    /// a friendly one cloaked too outside a multiplayer game.
+    /// a friendly one cloaked too outside a multiplayer game. What the display shows is always a
+    /// ship (`shown`), whatever kind `target` names.
     fn show(state: *State, all: *const create.Objects, target: aigeneric.Target, multiplayer: bool) void {
         state.shown.index = target.index;
         state.shown.component = target.component;
-        const index = state.shown.index;
-        const friendly = index >= 0 and index < all.slots.len and all.slots[@intCast(index)].object.side == .friendly;
+        const shown_ship = state.shown.ship();
+        const friendly = if (shown_ship) |index| index < all.slots.len and all.slots[index].object.side == .friendly else false;
         const allowed: gameobj.GameObject.Flags = .{ .cloaked = friendly and !multiplayer };
-        state.target = if (ai.targetValid(all, state.shown, allowed)) @intCast(index) else null;
+        state.target = if (ai.targetValid(all, state.shown, allowed)) shown_ship else null;
     }
 
     /// Opens `window`, one of the target display's forms, closing the other if it is up. Returns
@@ -1695,7 +1796,7 @@ pub const State = struct {
         scale: f32,
     ) (spr.Error || Allocator.Error)!void {
         if (!state.ejected and !state.icons.lit(.ejected, frame_duration)) return;
-        const at = scaled(place(screen, marker_offset, 0.5, 0.5, scale), .{ 0, 0x26 }, scale);
+        const at = scaled(place(screen, marker_offset, 0.5, 0.5, scale), eject_drop, scale);
         if (Flash.slow.step(&state.eject_ticks, frame_duration)) {
             try drawShape(art, gpa, target, eject_shape, at, colour, scale);
         }
@@ -1732,7 +1833,7 @@ pub const State = struct {
         for (std.enums.values(Readout)) |readout| {
             if (!state.shows(readout, frame_duration)) continue;
             const value: i32 = switch (readout) {
-                .fuel => @divTrunc(live.afterburner_fuel, 100),
+                .fuel => @divTrunc(live.afterburner_fuel, main.ticks_per_second),
                 .skull => frame.player.kills.count,
                 .coil => live.countermeasures,
             };
@@ -1780,8 +1881,9 @@ pub const JumpPrompt = struct {
 };
 
 /// Where the eject marker and the scanner stand, from the middle of the screen; the marker hangs
-/// `0x26` below.
+/// `eject_drop` below (`hud_eject_marker`, `0x004830B0`).
 pub const marker_offset: [2]i32 = .{ -16, -100 };
+pub const eject_drop: [2]i32 = .{ 0, 0x26 };
 pub const eject_shape: u16 = 0xC2;
 pub const scanner_shape: u16 = 0xD1;
 pub const scanner_frames = 5;
@@ -1815,11 +1917,7 @@ pub fn drawLine(target: device.Device, from: Point, to: Point, colour: [4]f32, w
     for (&corners, [4]Point{ start - along - across, end + along - across, end + along + across, start - along + across }) |*corner, at| {
         corner.* = .{ .x = at[0], .y = at[1], .z = 1, .rhw = 1, .diffuse = tint };
     }
-    target.draw(.{
-        .texture = null,
-        .depth = srd3d.depth(.overlay, .alpha),
-        .blend = srd3d.factors(.alpha),
-    }, .fan, &corners, null);
+    target.draw(overlayState(null), .fan, &corners, null);
 }
 
 /// How far the object at `index` is from the player's ship, in whole kilometres of a thousand of
@@ -1850,6 +1948,22 @@ pub fn targetWindow(slot: *const create.Slot) windows.Window {
     return if (combat.display == .large) .big_target else .target;
 }
 
+test "targetWindow and State.bringUp" {
+    var slot: create.Slot = .{ .object = std.mem.zeroes(gameobj.GameObject) };
+    try std.testing.expectEqual(windows.Window.target, targetWindow(&slot));
+    const large = std.mem.zeroInit(create.ShipCombat, .{ .display = .large });
+    slot.combat = &large;
+    try std.testing.expectEqual(windows.Window.big_target, targetWindow(&slot));
+
+    // Bringing one form up closes the other.
+    var state: State = .{};
+    try std.testing.expect(state.bringUp(.target, false));
+    try std.testing.expect(state.windows.up(.target));
+    try std.testing.expect(state.bringUp(.big_target, false));
+    try std.testing.expect(!state.windows.up(.target));
+    try std.testing.expect(state.windows.up(.big_target));
+}
+
 /// The camera and its projection, as Surrender last drew the scene with them (`sr + 0x30`, and
 /// the screen's size and projection from `sr + 0x1666`): what the display finds where objects
 /// stand on the screen by.
@@ -1859,7 +1973,7 @@ pub const Sight = struct {
 
     /// A point of the world in the camera's frame.
     pub fn view(sight: Sight, point: Vector) Vector {
-        return math.transformTransposed(sight.place.orientation, point - sight.place.position);
+        return sight.place.inverse(point);
     }
 
     /// Where a point in the camera's frame falls on the screen, rounded to a pixel.
@@ -1895,9 +2009,9 @@ pub const reticle_reach: i32 = 0x20;
 /// `reticle_reach` of the middle of the screen, drawn `scale` times its size.
 pub fn underReticle(all: *const create.Objects, sight: Sight, scale: f32) ?u16 {
     const middle = sight.middle();
-    const reach = round(@as(f32, @floatFromInt(reticle_reach)) * scale);
+    const reach = pixels(reticle_reach, scale);
     for (all.slots[0..all.count], 0..) |*slot, index| {
-        if (index == all.player or slot.object.type.number() >= 0x100) continue;
+        if (index == all.player or !slot.object.type.hasStats()) continue;
         const seen = sight.view(slot.drawn.position);
         if (!(seen[2] > 0)) continue;
         const at = sight.pixel(seen);
@@ -1992,13 +2106,14 @@ pub fn targetKeys(state: *State, keys: Keys) void {
         beep(keys.world, if (found) .done else .refused);
     }
     if (devices.active(.target_under_reticule, true)) {
-        const found: aigeneric.Target = .{ .kind = .ship, .index = if (state.under_reticle) |index| @intCast(index) else -1, .component = -1 };
-        if (ai.targetValid(all, found, .{})) {
+        const under: aigeneric.Target = if (state.under_reticle) |index| .at(index, null) else .none;
+        const aimed = if (ai.targetValid(all, under, .{})) state.under_reticle else null;
+        if (aimed) |index| {
             beep(keys.world, .done);
             if (controlled) {
-                current.target.index = found.index;
-                current.target.component = -1;
-                _ = state.bringUp(targetWindow(&all.slots[@intCast(found.index)]), keys.multiplayer);
+                current.target.index = under.index;
+                current.target.component = aigeneric.Target.whole;
+                _ = state.bringUp(targetWindow(&all.slots[index]), keys.multiplayer);
             }
         } else beep(keys.world, .refused);
     }
@@ -2079,8 +2194,8 @@ fn pickTarget(state: *State, all: *create.Objects, step: input.Step, among: inpu
 /// Whether the player's `target` lists components and isn't friendly, which a subtarget key needs
 /// to find one.
 fn listsComponents(all: *const create.Objects, target: aigeneric.Target) bool {
-    if (target.index < 0) return false;
-    const object = &all.slots[@intCast(target.index)].object;
+    const index = std.math.cast(usize, target.index) orelse return false;
+    const object = &all.slots[index].object;
     return object.flags.components and object.side != .friendly;
 }
 
@@ -2165,6 +2280,18 @@ const TargetingTest = struct {
 /// A camera at the origin looking along Z at a screen of 640 by 480.
 fn testSight() Sight {
     return .{ .place = .{}, .projection = .init(640, 480, .{ 0, 0, 1, 1 }, .{ 1, 1 }) };
+}
+
+test Sight {
+    const sight = testSight();
+    try std.testing.expectEqual([2]i32{ 639, 479 }, sight.last());
+    try std.testing.expect(sight.onScreen(.{ 0, 0 }));
+    try std.testing.expect(sight.onScreen(.{ 639, 479 }));
+    try std.testing.expect(!sight.onScreen(.{ 640, 0 }));
+    try std.testing.expect(!sight.onScreen(.{ -1, 5 }));
+    try std.testing.expectEqual([2]i32{ 320, 240 }, sight.middle());
+    // Straight ahead falls on the middle.
+    try std.testing.expectEqual(sight.middle(), sight.pixel(sight.view(.{ 0, 0, 1000 })));
 }
 
 test "the display follows the player's target" {
@@ -2501,12 +2628,13 @@ pub const ShipStatus = struct {
 
     /// How much of an arc is drawn: the quadrant's value over the ship's shield power, for a
     /// shield, or its armour class, for the armour, cut down to a whole number as the runtime's
-    /// `__ftol` does, less one. An arc of 0 or less is not drawn. A ship with none of either has no
-    /// arcs of it; the game divides by nothing regardless.
+    /// `__ftol` does (`math.ftol`), less one, in the game's 32-bit arithmetic. An arc of 0 or less
+    /// is not drawn. A ship with none of either has no arcs of it; the game divides by nothing
+    /// regardless.
     pub fn level(value: f32, per_arc: i32) i32 {
         if (per_arc == 0) return 0;
         const share = value / @as(f32, @floatFromInt(per_arc));
-        return @as(i32, @intFromFloat(std.math.clamp(@trunc(share), -1e9, 1e9))) - 1;
+        return math.ftol(share) -% 1;
     }
 
     /// The rings of the ship of `slot`, or null for a comms relay or a deathmatch beacon, which
@@ -2521,7 +2649,7 @@ pub const ShipStatus = struct {
         for (&found.shields, &found.armor, object.shields.values(), object.armor.values()) |*shield, *armor, has, left| {
             shield.* = level(has, combat.shield_power);
             armor.* = level(left, combat.armor_class);
-            if (invulnerable) armor.* = @divTrunc(2 * armor.* + 6, 3);
+            if (invulnerable) armor.* = @divTrunc(2 *% armor.* +% 6, 3);
         }
         return found;
     }
@@ -2612,9 +2740,11 @@ test ShipStatus {
     try std.testing.expectEqual(5, ShipStatus.level(6 * 3, 3));
     // Down to under twice the power, none are left.
     try std.testing.expectEqual(0, ShipStatus.level(5, 3));
-    // The runtime cuts toward zero rather than rounding.
+    // The runtime cuts toward zero rather than rounding, and past an `int` keeps the low half of
+    // the 64-bit whole number, as `__ftol` does.
     try std.testing.expectEqual(1, ShipStatus.level(2.99 * 3, 3));
     try std.testing.expectEqual(0, ShipStatus.level(10, 0));
+    try std.testing.expectEqual(-1294967297, ShipStatus.level(3e9, 1));
 
     // In both modes, the armour's arcs are shapes 0x85 to 0x98 and the shields' 0x99 to 0xAC,
     // five an arc, each arc's following on from the last's.
@@ -2663,12 +2793,24 @@ test "the rings follow the shields and the armour" {
     found = ShipStatus.rings(slot).?;
     try std.testing.expectEqual(1, found.armor[0]);
     try std.testing.expectEqual(5, found.armor[1]);
-    // A comms relay has no rings.
+    // A comms relay has no rings, and so nothing shifted for mode 0 to show.
     slot.object.type = .comms_relay;
     try std.testing.expectEqual(null, ShipStatus.rings(slot));
+    var own_hits: Hits = .initEmpty();
+    const shield_power: f32 = @floatFromInt(combat.shield_power);
+    try std.testing.expectEqual(null, ShipStatus.ofPlayer(slot, &own_hits, .{ .fore = 5 * shield_power }).reserves);
+
+    // Mode 0 shows what SHIELD BALANCING shifted as levels of the shield power.
+    slot.object.type = .sabre;
+    own_hits.insert(.aft);
+    const player = ShipStatus.ofPlayer(slot, &own_hits, .{ .fore = 5 * shield_power, .aft = 0 });
+    try std.testing.expectEqual([2]i32{ 4, -1 }, player.reserves.?);
+    try std.testing.expect(player.rings != null);
+    // With no schematic loaded, the hits stay for the next time.
+    try std.testing.expectEqual(null, player.schematic);
+    try std.testing.expect(own_hits.contains(.aft));
 
     // Mode 1 takes the hits and leaves none behind, for a hostile target of the small form.
-    slot.object.type = .sabre;
     var hits: Hits = .initEmpty();
     hits.insert(.fore);
     const without = ShipStatus.ofTarget(slot, &hits);
@@ -2687,9 +2829,16 @@ test "the rings follow the shields and the armour" {
 pub const Cluster = struct {
     /// The left arc; the right one is the same shape drawn mirrored.
     pub const arc_shape: u16 = 0x7F;
-    /// How far either arc stands from the middle: this share of the screen's width, cut down to
-    /// a whole number as `__ftol` does. The arcs part as the screen widens.
+    /// How far either arc stands from the middle: this share of the screen's width (`apart`),
+    /// which `hud_draw` holds at `0x004DC8F4` for the left arc and negated at `0x004DC8F8` for the
+    /// right. The arcs part as the screen widens.
     pub const spread: f32 = 0.15625;
+
+    /// How far either arc stands from the middle of a screen `width` across: `spread` of it, cut
+    /// down to a whole number as `__ftol` does.
+    pub fn apart(width: i32) i32 {
+        return math.ftol(@as(f32, @floatFromInt(width)) * spread);
+    }
     /// How far above the middle the arcs' tops stand.
     pub const up: i32 = 0x4A;
     /// How far left of its place the right arc is drawn, near the arc's own width.
@@ -2779,10 +2928,10 @@ pub fn drawCluster(
 ) (spr.Error || Allocator.Error)!void {
     const width: i32 = @intCast(screen[0]);
     const height: i32 = @intCast(screen[1]);
-    const apart: i32 = @intFromFloat(@trunc(@as(f32, @floatFromInt(width)) * Cluster.spread));
-    const top = (height >> 1) - round(@as(f32, Cluster.up) * scale);
+    const apart = Cluster.apart(width);
+    const top = (height >> 1) - pixels(Cluster.up, scale);
     const left: [2]i32 = .{ (width >> 1) - apart, top };
-    const right: [2]i32 = .{ (width >> 1) + apart - round(@as(f32, Cluster.mirror_shift) * scale), top };
+    const right: [2]i32 = .{ (width >> 1) + apart - pixels(Cluster.mirror_shift, scale), top };
     try drawShapeWith(art, gpa, target, Cluster.arc_shape, right, colour, scale, .{ .mirror = .{ .across = true }, .shake = shake });
     try drawShapeWith(art, gpa, target, Cluster.arc_shape, left, colour, scale, .{ .shake = shake });
 
@@ -2828,11 +2977,7 @@ fn drawFill(
     const at = scaled(arc, fill.offset, scale);
     const x: f32 = @floatFromInt(at[0]);
     const y: f32 = @floatFromInt(at[1]);
-    const edge = struct {
-        fn of(from: f32, pixels: i32, by: f32) f32 {
-            return from + @as(f32, @floatFromInt(pixels)) * by;
-        }
-    }.of;
+    const edge = Clip.edge;
     const pane_left = x - scale;
     const pane_right = edge(x, Cluster.pane_width - 1, scale);
     try drawShapeWith(art, gpa, target, fill.lit, at, colour, scale, .{ .clip = .{
@@ -2898,13 +3043,10 @@ pub fn drawReticle(
         state.reticle_bright = false;
         return false;
     };
-    const near = round(@as(f32, @floatFromInt(under_reticle)) * scale);
+    const near = pixels(under_reticle, scale);
     var bright = found[0] > middle[0] - near and found[0] < middle[0] + near and
         found[1] > middle[1] - near and found[1] < middle[1] + near;
-    const reach: [2]i32 = .{
-        round(@as(f32, @floatFromInt(blind_fire_reach[0])) * scale),
-        round(@as(f32, @floatFromInt(blind_fire_reach[1])) * scale),
-    };
+    const reach: [2]i32 = .{ pixels(blind_fire_reach[0], scale), pixels(blind_fire_reach[1], scale) };
     const apart: [2]i32 = .{ found[0] - middle[0], found[1] - middle[1] };
     var at = middle;
     var aims = false;
@@ -2916,8 +3058,8 @@ pub fn drawReticle(
         bright = true;
     } else if (!(within and blind_fire == .excluded)) {
         var sight = state.sight orelse middle;
-        const rest = round(@as(f32, @floatFromInt(sight_rest)) * scale);
-        const glide = round(@as(f32, @floatFromInt(frame_duration)) * scale);
+        const rest = pixels(sight_rest, scale);
+        const glide = pixels(frame_duration, scale);
         for (0..2) |axis| {
             if (sight[axis] < middle[axis] - rest) {
                 sight[axis] += glide;
@@ -3030,7 +3172,7 @@ pub const Edge = enum(u2) {
 /// offset to it in the ship's frame, across and down, made a unit. A target straight ahead or
 /// behind, which leaves no way, is pointed at from below; the game divides by nothing there.
 pub fn pointerDirection(ship: math.Place, at: Vector) [2]f32 {
-    const offset = math.transformTransposed(ship.orientation, at - ship.position);
+    const offset = ship.inverse(at);
     const length = @sqrt(offset[0] * offset[0] + offset[1] * offset[1]);
     if (!(length > 0)) return .{ 0, 1 };
     return .{ offset[0] / length, offset[1] / length };
@@ -3087,25 +3229,23 @@ pub fn drawTarget(
 
     // The node's box, the component's for a subtarget, as the camera sees it.
     const box = if (part) |found| partBox(found) else [2]Vector{ gameobj.vector(struck.object.bounds_min), gameobj.vector(struck.object.bounds_max) };
-    var low: Point = @splat(100000);
-    var high: Point = @splat(-100000);
+    var low: Point = @splat(box_seed);
+    var high: Point = @splat(-box_seed);
     for (0..8) |n| {
-        const corner: Corner = @bitCast(@as(u3, @intCast(n)));
-        const point: Vector = .{ box[corner.x][0], box[corner.y][1], box[corner.z][2] };
-        const on: Point = sight.projection.project(sight.view(math.transform(node.orientation, point) + node.position));
+        const on: Point = sight.projection.project(sight.view(node.point(math.Corner.of(n).in(box))));
         low = @min(low, on);
         high = @max(high, on);
     }
     high = @max(high, low + @as(Point, @splat(least_brackets * scale)));
 
     // The brackets dim as a missile's lock builds, and go at a tenth.
-    const brightness = @min(@as(f32, @floatFromInt(state.lock.count)) * 0.01, 1);
-    if (brightness > 0.1) {
+    const brightness = @min(@as(f32, @floatFromInt(state.lock.count)) * lock_dimming, 1);
+    if (brightness > least_bright) {
         const dim: [4]f32 = .{ colour[0] * brightness, colour[1] * brightness, colour[2] * brightness, colour[3] };
         const first = brackets_shape.of(hostile);
         const ends = [2]Point{ low, high };
         for (0..4) |n| {
-            const corner: Corner = @bitCast(@as(u3, @intCast(n)));
+            const corner: math.Corner = .of(n);
             const at: [2]i32 = .{ round(ends[corner.x][0]), round(ends[corner.y][1]) };
             try drawShape(art, gpa, target, first + n, at, dim, scale);
         }
@@ -3134,9 +3274,19 @@ fn partBox(part: *const objects.Model.Part) [2]Vector {
     return levels[part.object.level].mesh.bounds;
 }
 
-/// A corner of a box: which of its two ends it takes on each axis. The brackets' four take the
-/// first two.
-const Corner = packed struct(u3) { x: u1, y: u1, z: u1 };
+/// What `drawTarget` seeds the target's box on the screen with, its low corner at this across and
+/// down and its high one at as much less (numbers in its code).
+const box_seed: f32 = 100_000;
+
+/// How much of their brightness the brackets keep for each unit of the missile lock's count, which
+/// makes them whole at `missile_lock.idle_count` (`0x004DC730`), and the least they are drawn at
+/// (`0x004DC420`).
+const lock_dimming: f32 = 0.01;
+const least_bright: f32 = 0.1;
+
+comptime {
+    assert(lock_dimming == 1.0 / @as(f32, missile_lock.idle_count));
+}
 
 /// The lead cursor's line: from `lead_gap` out of the cursor at `aim`, along the axis on which
 /// the target at `toward` lies farther, to the target, shorter by `lock_shortening` for each unit
@@ -3319,7 +3469,7 @@ pub const Radar = struct {
                 if (!nav_point and !shown(all, index)) continue;
                 const apart = slot.drawn.position - own.drawn.position;
                 if (!(math.length(apart) < it.reach)) continue;
-                const placed = math.transformTransposed(own.drawn.orientation, apart) * it.factors;
+                const placed = own.drawn.inverse(slot.drawn.position) * it.factors;
                 const height = round(placed[1]);
                 const at: [2]i32 = .{ round(placed[0]), round(-placed[2]) + height };
                 const look: Look = if (nav_point)
@@ -3359,7 +3509,7 @@ pub const Radar = struct {
 /// rings start moving to that range's. Returns whether it moved.
 pub fn nextRadarRange(state: *State, view: camera.View, game_ticks: u32) bool {
     if (view != .cockpit or state.radar_zoom != null) return false;
-    state.radar_range = if (state.radar_range >= 2) 0 else state.radar_range + 1;
+    state.radar_range = if (state.radar_range >= Radar.ranges.len - 1) 0 else state.radar_range + 1;
     state.radar_zoom = .{
         .to = Radar.range_rings[state.radar_range],
         .down = state.radar_range == 0,
@@ -3476,9 +3626,9 @@ test pointerDirection {
     try std.testing.expectEqual([2]f32{ 0, 1 }, pointerDirection(.{}, .{ 0, 0, -10 }));
 }
 
-/// What `drawTarget`'s tests draw with: no shapes, a font, and a device that counts the lines.
+/// What `drawTarget`'s tests draw with: no shapes, a font, and a device that keeps what it draws.
 const TargetDrawing = struct {
-    lines: usize = 0,
+    recorder: device.testing.Recorder,
     art: Art,
     fonts: TargetFonts,
 
@@ -3486,12 +3636,14 @@ const TargetDrawing = struct {
         const empty = comptime std.mem.toBytes(spr.Header{ .version = spr.magic.*, .shape_count = 0 });
         const font = try fnt.Font.parse(comptime fnt.testing.font(true));
         drawing.* = .{
+            .recorder = .{ .gpa = gpa },
             .art = try .init(gpa, try .parse(&empty), null),
             .fonts = .{ .small = .open(font, null), .new = .open(font, null) },
         };
     }
 
     fn deinit(drawing: *TargetDrawing, gpa: Allocator) void {
+        drawing.recorder.deinit();
         drawing.art.deinit(gpa);
         drawing.fonts.small.deinit(gpa);
         drawing.fonts.new.deinit(gpa);
@@ -3499,15 +3651,14 @@ const TargetDrawing = struct {
 
     /// Draws `state`'s target in `scene`, and says where the lead cursor stands.
     fn draw(drawing: *TargetDrawing, gpa: Allocator, state: *State, scene: TargetScene) !?[2]i32 {
-        const into: device.Device = .{ .ptr = drawing, .vtable = &.{ .begin = ignore, .end = ignore, .draw = count, .overlay = ignore } };
-        return drawTarget(state, &drawing.art, &drawing.fonts, gpa, into, scene, .from_tip, .{ 1, 1, 1, 1 }, 1);
+        return drawTarget(state, &drawing.art, &drawing.fonts, gpa, drawing.recorder.interface(), scene, .from_tip, .{ 1, 1, 1, 1 }, 1);
     }
 
-    fn ignore(_: *anyopaque) void {}
-
-    fn count(context: *anyopaque, state: device.State, _: device.Primitive, _: []const device.Vertex, _: ?[]const u16) void {
-        const drawing: *TargetDrawing = @ptrCast(@alignCast(context));
-        if (state.texture == null) drawing.lines += 1;
+    /// How many lines it has drawn, which are what it draws untextured.
+    fn lines(drawing: *const TargetDrawing) usize {
+        var count: usize = 0;
+        for (drawing.recorder.draws.items) |made| count += @intFromBool(made.state.texture == null);
+        return count;
     }
 };
 
@@ -3526,13 +3677,13 @@ test "a target out of sight gets an arrow and a marker" {
     // From the cockpit, three lines of the arrow, and no lead cursor.
     const scene: TargetScene = .{ .sight = testSight(), .all = all, .mode = .cockpit };
     try std.testing.expectEqual(null, try drawing.draw(gpa, &t.state, scene));
-    try std.testing.expectEqual(3, drawing.lines);
+    try std.testing.expectEqual(3, drawing.lines());
     // The chase view draws none.
-    drawing.lines = 0;
+    drawing.recorder.clear();
     var from_behind = scene;
     from_behind.mode = .chase;
     _ = try drawing.draw(gpa, &t.state, from_behind);
-    try std.testing.expectEqual(0, drawing.lines);
+    try std.testing.expectEqual(0, drawing.lines());
 }
 
 test "a hostile target ahead gets the lead cursor, whose point blind fire aims at" {
@@ -3644,11 +3795,11 @@ test Cluster {
 }
 
 test "the arcs part as the screen widens" {
-    // At 640 across the arcs stand 100 either side of the middle; at 1024, 160.
-    const narrow: i32 = @intFromFloat(@trunc(640 * Cluster.spread));
-    const wide: i32 = @intFromFloat(@trunc(1024 * Cluster.spread));
-    try std.testing.expectEqual(100, narrow);
-    try std.testing.expectEqual(160, wide);
+    // At 640 across the arcs stand 100 either side of the middle; at 1024, 160; at 1366, 213,
+    // the fraction cut off.
+    try std.testing.expectEqual(100, Cluster.apart(640));
+    try std.testing.expectEqual(160, Cluster.apart(1024));
+    try std.testing.expectEqual(213, Cluster.apart(1366));
 }
 
 test "the sight glides back to the middle" {
@@ -3656,14 +3807,9 @@ test "the sight glides back to the middle" {
     const screen: [2]u32 = .{ 640, 480 };
     // With a target off the reach of blind fire, the sight moves a pixel a tick toward the
     // middle, and rests within two of it.
-    const Null = struct {
-        fn begin(_: *anyopaque) void {}
-        fn end(_: *anyopaque) void {}
-        fn mark(_: *anyopaque) void {}
-        fn draw(_: *anyopaque, _: device.State, _: device.Primitive, _: []const device.Vertex, _: ?[]const u16) void {}
-    };
-    var nothing: u8 = 0;
-    const target: device.Device = .{ .ptr = &nothing, .vtable = &.{ .begin = Null.begin, .end = Null.end, .draw = Null.draw, .overlay = Null.mark } };
+    var recorder: device.testing.Recorder = .{ .gpa = std.testing.allocator };
+    defer recorder.deinit();
+    const target = recorder.interface();
     var art: Art = .{ .set = undefined, .images = &.{} };
     const aims = try drawReticle(&state, &art, std.testing.allocator, target, screen, .chase, .{ 600, 400 }, .on, 10, .{ 1, 1, 1, 1 }, 1, null);
     try std.testing.expect(!aims);
@@ -3768,24 +3914,37 @@ test rowShift {
 }
 
 test "a shaken image is drawn a row at a time" {
-    const Counter = struct {
-        draws: usize = 0,
-        fn ignore(_: *anyopaque) void {}
-        fn count(context: *anyopaque, _: device.State, _: device.Primitive, _: []const device.Vertex, _: ?[]const u16) void {
-            const counter: *@This() = @ptrCast(@alignCast(context));
-            counter.draws += 1;
-        }
-    };
-    var counter: Counter = .{};
-    const into: device.Device = .{ .ptr = &counter, .vtable = &.{ .begin = Counter.ignore, .end = Counter.ignore, .draw = Counter.count, .overlay = Counter.ignore } };
-    const pixels = [_]u8{0xFF} ** (2 * 3 * 4);
-    var level = [_]srtexture.Level{.{ .width = 2, .height = 3, .rgba = &pixels }};
+    var recorder: device.testing.Recorder = .{ .gpa = std.testing.allocator };
+    defer recorder.deinit();
+    const into = recorder.interface();
+    const texels = [_]u8{0xFF} ** (2 * 3 * 4);
+    var level = [_]srtexture.Level{.{ .width = 2, .height = 3, .rgba = &texels }};
     var image: srtexture.Image = .{ .levels = &level };
     var random: libcmt.Rand = .{};
 
     drawImage(into, &image, .{ 0, 0 }, .{ 1, 1, 1, 1 }, 1, .{});
-    try std.testing.expectEqual(1, counter.draws);
+    try std.testing.expectEqual(1, recorder.draws.items.len);
     const shake: Shake = .{ .hit_shake = 1, .interference = 0.3, .random = &random };
     drawImage(into, &image, .{ 0, 0 }, .{ 1, 1, 1, 1 }, 1, .{ .shake = shake });
-    try std.testing.expectEqual(1 + 3, counter.draws);
+    try std.testing.expectEqual(1 + 3, recorder.draws.items.len);
+}
+
+test "an image cut to a clip keeps the part of it inside" {
+    var recorder: device.testing.Recorder = .{ .gpa = std.testing.allocator };
+    defer recorder.deinit();
+    const into = recorder.interface();
+    const texels = [_]u8{0xFF} ** (4 * 2 * 4);
+    var level = [_]srtexture.Level{.{ .width = 4, .height = 2, .rgba = &texels }};
+    var image: srtexture.Image = .{ .levels = &level };
+
+    // Its right half cut away: the texture's right edge moves to its middle.
+    drawImage(into, &image, .{ 10, 20 }, .{ 1, 1, 1, 1 }, 1, .{ .clip = .{ .left = 0, .top = 0, .right = 12, .bottom = 100 } });
+    const corners = recorder.last();
+    try std.testing.expectEqual(12, corners[1].x);
+    try std.testing.expectEqual(0.5, corners[1].u);
+    try std.testing.expectEqual(1, corners[2].v);
+    // Wholly outside, nothing is drawn.
+    recorder.clear();
+    drawImage(into, &image, .{ 10, 20 }, .{ 1, 1, 1, 1 }, 1, .{ .clip = .{ .left = 50, .top = 0, .right = 60, .bottom = 100 } });
+    try std.testing.expectEqual(0, recorder.draws.items.len);
 }

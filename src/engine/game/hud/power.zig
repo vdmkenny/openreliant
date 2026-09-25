@@ -40,8 +40,43 @@ const most_jitter = 20;
 /// The width of the image the ball is drawn into, with room for the shake.
 pub const image_width = size + most_jitter;
 
-/// A step across the ball, from one pixel to the next: its radius is 1 in the tables' sums.
-const step: f32 = 1.0 / 31.0;
+/// A step across the ball, from one pixel to the next: its radius is 1 in the tables' sums
+/// (`0x004DC8D4`).
+const step: f32 = 1.0 / @as(f32, radius);
+
+/// The sphere `fillSphere` maps the texture onto: its radius squared (`0x004DC480`), and the texels
+/// from the texture's middle to a half turn round it, across and down (`0x004DC8C8`, and negated
+/// for down at `0x004DC8CC`).
+const sphere_squared: f32 = 2;
+const half_turn_texels: f32 = 138;
+
+/// What `hud_init` takes off each point of the sphere's offset into the texture, a number in its
+/// code: in 16 bits, the same as adding `0x8080`, the texture's middle, row 128 and column 128.
+const middle_offset = 0x7F80;
+
+/// How `fillShade` lights the ball: each pixel stands for the point `shade_shift` further along
+/// either axis on a sphere of radius 1 (`0x004DC4C0`), so that the brightest spot is up and to the
+/// left of the middle; the light stands `light_distance` in front (a number in `hud_init`'s code);
+/// and a point facing it straight on gets `shade_scale` (`0x004DC554`).
+const shade_shift: f32 = 0.3;
+const light_distance: f32 = 8;
+const shade_scale: f32 = 64;
+
+/// How `fillColours` colours the ball: a level of light is its share of the brightest,
+/// `light_share` (`0x004DC8C4`), squared, plus `least_brightness` (`0x004DC3D4`); what that comes
+/// to past 1 adds a white highlight of `highlight_level` times it to every channel
+/// (`0x004DC6CC`). The texture's level makes the red and the green, `orange` times it
+/// (`0x004DC8C0`, `0x004DC8BC`).
+const light_share: f32 = 1.0 / @as(f32, lights - 1);
+const least_brightness: f32 = 0.25;
+const highlight_level: f32 = 255;
+const orange = [2]f32{ 184, 67 };
+
+comptime {
+    // The tables' fractions are the game's own constants, worked out from the ball's sizes.
+    std.debug.assert(step == 1.0 / 31.0);
+    std.debug.assert(light_share == 1.0 / 63.0);
+}
 
 /// The tables the ball is drawn from, and the image OpenReliant draws it into.
 pub const Ball = struct {
@@ -99,12 +134,12 @@ pub const Ball = struct {
     }
 };
 
-/// `x` cut down to a whole number, as the runtime's `__ftol` does.
-fn whole(x: f32) i32 {
-    return std.math.lossyCast(i32, @trunc(x));
-}
+/// `x` cut down to a whole number, as the runtime's `__ftol` does, which `hud_init` and the
+/// window's case call for each.
+const whole = math.ftol;
 
-/// `0x00482DE0`: a colour channel, cut down to a whole number and kept within 0 and 255.
+/// `hud_channel` (`0x00482DE0`): a colour channel, cut down to a whole number and kept within 0
+/// and 255.
 fn channel(x: f32) u8 {
     return @intCast(std.math.clamp(whole(x), 0, 255));
 }
@@ -119,8 +154,8 @@ fn fillTexture(texture: *[texture_size * texture_size]u8, picture: tga.Image) vo
 }
 
 /// Each pixel of the ball as a point on a sphere of radius √2 seen from the front, and where it
-/// falls on the texture: 138 texels to the half turn from its middle, `x` to the right and `y`
-/// down. A pixel outside the circle is pulled in toward it.
+/// falls on the texture: `half_turn_texels` to the half turn from its middle, `x` to the right and
+/// `y` down. A pixel outside the circle is pulled in toward it.
 fn fillSphere(sphere: *[size * size]u16) void {
     for (0..size) |row| {
         const y = centred(row) * step;
@@ -128,31 +163,32 @@ fn fillSphere(sphere: *[size * size]u16) void {
         for (0..size) |column| {
             const x = centred(column) * step;
             const at = inside(x, y, x * x + y_squared);
-            const z = @sqrt(2 - at.squared);
+            const z = @sqrt(sphere_squared - at.squared);
             const across: f32 = std.math.asin(at.x / z);
-            const down = whole(std.math.asin(at.y / z) * (1.0 / std.math.pi) * -138);
-            const offset = whole(across * (1.0 / std.math.pi) * 138) - down * texture_size - 0x7F80;
+            const down = whole(std.math.asin(at.y / z) * (1.0 / std.math.pi) * -half_turn_texels);
+            const offset = whole(across * (1.0 / std.math.pi) * half_turn_texels) - down * texture_size - middle_offset;
             sphere[row * size + column] = @truncate(@as(u32, @bitCast(offset)));
         }
     }
 }
 
 /// How much light each pixel of the ball gets, from 0 to 63: the pixel at `x`, `y` stands for the
-/// point `(x + 0.3, y + 0.3)` on a sphere of radius 1, so the brightest spot is up and to the left
-/// of the middle, and gets 64 times the cosine of the angle between the sphere's surface there and
-/// a light at 8 in front. Returns the `x` of the last pixel's point, which the colours start from.
+/// point `(x + shade_shift, y + shade_shift)` on a sphere of radius 1, so the brightest spot is up
+/// and to the left of the middle, and gets `shade_scale` times the cosine of the angle between the
+/// sphere's surface there and a light `light_distance` in front. Returns the `x` of the last
+/// pixel's point, which the colours start from.
 fn fillShade(shade: *[size * size]u8) f32 {
-    const light: math.Vector = .{ 0, 0, 8 };
+    const light: math.Vector = .{ 0, 0, light_distance };
     var left_over: f32 = 0;
     for (0..size) |row| {
-        const y = centred(row) * step + 0.3;
+        const y = centred(row) * step + shade_shift;
         const y_squared = y * y;
         for (0..size) |column| {
-            const x = centred(column) * step + 0.3;
+            const x = centred(column) * step + shade_shift;
             const at = inside(x, y, x * x + y_squared);
             const point: math.Vector = .{ at.x, at.y, @sqrt(1 - at.squared) };
             const towards = light - point;
-            const lit = math.dot(towards, point) * 64 / math.length(towards);
+            const lit = math.dot(towards, point) * shade_scale / math.length(towards);
             shade[row * size + column] = @intCast(std.math.clamp(whole(lit), 0, lights - 1));
             left_over = at.x;
         }
@@ -167,15 +203,15 @@ fn fillShade(shade: *[size * size]u8) f32 {
 fn fillColours(colours: *[lights][levels][3]u8, left_over: f32) void {
     var highlight = left_over;
     for (colours, 0..) |*light, row| {
-        const t = @as(f32, @floatFromInt(row)) * (1.0 / 63.0);
+        const t = @as(f32, @floatFromInt(row)) * light_share;
         for (light, 0..) |*colour, level| {
-            var brightness = t * t + 0.25;
+            var brightness = t * t + least_brightness;
             if (brightness > 1) {
-                highlight = (brightness - 1) * 255;
+                highlight = (brightness - 1) * highlight_level;
                 brightness = 1;
             }
             const value = @as(f32, @floatFromInt(level)) * step * brightness;
-            colour.* = .{ channel(value * 184 + highlight), channel(value * 67 + highlight), channel(highlight) };
+            colour.* = .{ channel(value * orange[0] + highlight), channel(value * orange[1] + highlight), channel(highlight) };
         }
     }
 }
@@ -208,13 +244,14 @@ pub const Shown = struct {
 const title = 0xA7;
 const title_at = [2]i32{ 2, -77 };
 
-/// The shares as whole percentages, which `hud_window_draw` rounds from each share and then, where
-/// they come to 101, takes one from the first that is 34.
+/// The shares as whole percentages, which `hud_window_draw` rounds from each share times
+/// `percent` (`0x004DC440`) as `sr_round` does and then, where they come to 101, takes one from the
+/// first that is 34.
 pub fn percentages(setting: [2]f32) std.EnumArray(input_power.System, i32) {
     const shares = input_power.shares(setting);
     var found: std.EnumArray(input_power.System, i32) = undefined;
     for (std.enums.values(input_power.System)) |system| {
-        found.set(system, @intFromFloat(math.roundEven(shares.get(system) * 100)));
+        found.set(system, math.round(shares.get(system) * percent));
     }
     if (found.get(.shields) + found.get(.guns) + found.get(.engines) == 101) {
         for (std.enums.values(input_power.System)) |system| {
@@ -237,23 +274,31 @@ const Bar = struct {
     pane: *const fn (share: f32) [4]i32,
 };
 
+/// What a share of the power is multiplied by for its percentage.
+const percent: f32 = 100;
+
+/// The bars' lengths in the display's own pixels: the shields' across the top (`0x004DC908`), the
+/// guns' and the engines' down the sides (`0x004DC90C`).
+const across_length: f32 = 54;
+const down_length: f32 = 48;
+
 const bars = std.EnumArray(input_power.System, Bar).init(.{
     // Across the top, emptying from the left.
     .shields = .{ .empty = 0x83, .full = 0x80, .at = .{ 41, -32 }, .pane = struct {
         fn pane(share: f32) [4]i32 {
-            return .{ 40 + math.round(54 - share * 54), -33, 94, -17 };
+            return .{ 40 + math.round(across_length - share * across_length), -33, 94, -17 };
         }
     }.pane },
     // Up the left side, filling from the foot.
     .guns = .{ .empty = 0x84, .full = 0x81, .at = .{ 34, -13 }, .pane = struct {
         fn pane(share: f32) [4]i32 {
-            return .{ 33, -14 + math.round(48 - share * 48), 64, 34 };
+            return .{ 33, -14 + math.round(down_length - share * down_length), 64, 34 };
         }
     }.pane },
     // Down the right side, filling from the top.
     .engines = .{ .empty = 0x85, .full = 0x82, .at = .{ 70, -13 }, .pane = struct {
         fn pane(share: f32) [4]i32 {
-            return .{ 69, -14, 100, -14 + math.round(share * 48) };
+            return .{ 69, -14, 100, -14 + math.round(share * down_length) };
         }
     }.pane },
 });
