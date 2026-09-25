@@ -72,7 +72,20 @@ pub const Tag = enum(u16) {
     /// Ends the stream.
     end = 0xFFFF,
     _,
+
+    pub fn format(tag: Tag, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        return layout.formatTag(Tag, tag, writer);
+    }
 };
+
+/// What an index field holds for none: a root part's parent, a vertex's counterpart in a level
+/// that has none, and a leaf node's children.
+pub const no_index: i32 = -1;
+
+/// The index `field` holds, or null for none: `no_index`, or any other negative value.
+fn indexOrNone(field: i32) ?u32 {
+    return std.math.cast(u32, field);
+}
 
 pub const ChunkHeader = extern struct {
     tag: Tag,
@@ -143,7 +156,7 @@ pub const Part = extern struct {
     /// and the mass of a unit of volume. **Unverified:** that the sums are over the part's volume;
     /// the engine uses them as such.
     density: f32,
-    /// Index of the parent part, or `-1` for a root.
+    /// Index of the parent part, or `no_index` for a root.
     parent: i32,
     /// A point on the part, at the far end of guns and the base of mounts.
     mount_point: Vec3,
@@ -198,7 +211,12 @@ pub const Part = extern struct {
     };
 
     pub fn name(part: *const Part) []const u8 {
-        return sliceName(&part.name_bytes);
+        return std.mem.sliceTo(&part.name_bytes, 0);
+    }
+
+    /// The index of its parent part, or null for a root.
+    pub fn parentIndex(part: *const Part) ?u32 {
+        return indexOrNone(part.parent);
     }
 
     /// The turret a part with a turret's class makes of its assembly (part `+0xF4`).
@@ -298,8 +316,13 @@ pub const TreeNode = extern struct {
     half_size: Vec3,
     /// The box's centre in the part's frame.
     centre: Vec3,
-    /// The two nodes it splits into, as indices into the part's nodes, or -1.
+    /// The two nodes it splits into, as indices into the part's nodes, or `no_index`.
     children: [2]i32,
+
+    /// The index of its child `which`, or null for none.
+    pub fn child(node: *const TreeNode, which: u1) ?u32 {
+        return indexOrNone(node.children[which]);
+    }
 
     comptime {
         assert(@offsetOf(TreeNode, "half_size") == 0x28);
@@ -566,9 +589,14 @@ pub const Vertex = extern struct {
     position: Vec3,
     normal: Vec3,
     unknown_18: u32,
-    /// This vertex's counterpart in the next, coarser level, for geomorphing. `-1` when it has
-    /// none, and absent from 28-byte records, where it reads as zero.
+    /// This vertex's counterpart in the next, coarser level, for geomorphing. `no_index` when it
+    /// has none, and absent from 28-byte records, where it reads as zero.
     next_lod_vertex: i32,
+
+    /// The index of its counterpart in the next level, or null for none.
+    pub fn nextLod(vertex: *const Vertex) ?u32 {
+        return indexOrNone(vertex.next_lod_vertex);
+    }
 
     comptime {
         assert(@sizeOf(Vertex) == 32);
@@ -665,18 +693,13 @@ pub const Material = extern struct {
     name_bytes: [64]u8,
 
     pub fn name(material: *const Material) []const u8 {
-        return sliceName(&material.name_bytes);
+        return std.mem.sliceTo(&material.name_bytes, 0);
     }
 
     comptime {
         assert(@sizeOf(Material) == 64);
     }
 };
-
-fn sliceName(bytes: []const u8) []const u8 {
-    const end = std.mem.indexOfScalar(u8, bytes, 0) orelse bytes.len;
-    return bytes[0..end];
-}
 
 // --- reading ----------------------------------------------------------------------------------
 
@@ -960,7 +983,7 @@ fn buildTestModel(buffer: []u8) []u8 {
     const part: *align(1) Part = @ptrCast(buffer[pos..][0..@sizeOf(Part)]);
     part.* = std.mem.zeroes(Part);
     @memcpy(part.name_bytes[0..4], "Hull");
-    part.parent = -1;
+    part.parent = no_index;
     part.class = .turret;
     pos += @sizeOf(Part);
 
@@ -1029,7 +1052,7 @@ test "parses a model" {
 
     const part = model.parts[0];
     try std.testing.expectEqualStrings("Hull", part.part.name());
-    try std.testing.expectEqual(@as(i32, -1), part.part.parent);
+    try std.testing.expectEqual(null, part.part.parentIndex());
     try std.testing.expectEqual(@as(usize, 1), part.meshes.len);
 
     const mesh = part.meshes[0];
@@ -1105,6 +1128,31 @@ test "righting a model is a half turn, not a mirror" {
     const y = (Vec3{ .x = 0, .y = 1, .z = 0 }).toYUp();
     const cross_z = x.x * y.y - x.y * y.x;
     try std.testing.expectEqual(@as(f32, 1), cross_z);
+}
+
+test "indices and none" {
+    var part = std.mem.zeroes(Part);
+    part.parent = no_index;
+    try std.testing.expectEqual(null, part.parentIndex());
+    part.parent = 3;
+    try std.testing.expectEqual(3, part.parentIndex().?);
+
+    var node = std.mem.zeroes(TreeNode);
+    node.children = .{ 1, no_index };
+    try std.testing.expectEqual(1, node.child(0).?);
+    try std.testing.expectEqual(null, node.child(1));
+
+    var vertex = std.mem.zeroes(Vertex);
+    try std.testing.expectEqual(0, vertex.nextLod().?);
+    vertex.next_lod_vertex = no_index;
+    try std.testing.expectEqual(null, vertex.nextLod());
+}
+
+test Tag {
+    var buffer: [16]u8 = undefined;
+    try std.testing.expectEqualStrings("tree_node", try std.fmt.bufPrint(&buffer, "{f}", .{Tag.tree_node}));
+    // A tag the format does not name prints as its number.
+    try std.testing.expectEqualStrings("17", try std.fmt.bufPrint(&buffer, "{f}", .{@as(Tag, @enumFromInt(0x11))}));
 }
 
 test "record sizes and field offsets match the format" {
@@ -1185,7 +1233,7 @@ fn collect(
 fn testPart(name: []const u8, component: bool, attachments: []Attachment) PartData {
     var part = std.mem.zeroes(Part);
     @memcpy(part.name_bytes[0..name.len], name);
-    part.parent = -1;
+    part.parent = no_index;
     part.flags.component = component;
     return .{
         .part = part,

@@ -115,7 +115,7 @@ fn printValue(ctx: Context, value: anytype) !void {
             // Render into a buffer first: `formatTag` does not pad, and the column must.
             var buffer: [16]u8 = undefined;
             var writer: Io.Writer = .fixed(&buffer);
-            openreliant.dte.formatTag(T, value, &writer) catch {};
+            openreliant.layout.formatTag(T, value, &writer) catch {};
             try ctx.stdout.print(" {s:>14}", .{writer.buffered()});
         },
         else => @compileError("no column format for " ++ @typeName(T)),

@@ -30,6 +30,22 @@ pub fn array(comptime T: type, bytes: []const u8, count: usize) Error![]align(1)
     return std.mem.bytesAsSlice(T, bytes[0..size]);
 }
 
+/// `count` records of type `T` from the start of `bytes`, to write.
+pub fn arrayMut(comptime T: type, bytes: []u8, count: usize) Error![]align(1) T {
+    const size = std.math.mul(usize, count, @sizeOf(T)) catch return error.Truncated;
+    if (bytes.len < size) return error.Truncated;
+    return std.mem.bytesAsSlice(T, bytes[0..size]);
+}
+
+/// Writes a value of an open enum read from a file: its tag's name, or its number where the enum
+/// names none. Printing with `{t}` would panic on such a value, which files hold often.
+pub fn formatTag(comptime T: type, value: T, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    return switch (value) {
+        _ => writer.print("{d}", .{@intFromEnum(value)}),
+        inline else => |tag| writer.writeAll(@tagName(tag)),
+    };
+}
+
 /// An integer stored big-endian, as a field of an `extern struct`.
 pub fn Big(comptime T: type) type {
     return extern struct {
@@ -66,6 +82,22 @@ test array {
     const words = try array(u16, &bytes, 2);
     try std.testing.expectEqual(2, words[1]);
     try std.testing.expectError(error.Truncated, array(u16, &bytes, 3));
+    try std.testing.expectError(error.Truncated, array(u16, &bytes, std.math.maxInt(usize)));
+
+    var out = bytes;
+    (try arrayMut(u16, &out, 2))[1] = 0x0504;
+    try std.testing.expectEqualSlices(u8, &.{ 1, 0, 4, 5, 3 }, &out);
+    try std.testing.expectError(error.Truncated, arrayMut(u16, &out, 3));
+}
+
+test formatTag {
+    const Kind = enum(u8) { pause = 1, wave = 2, _ };
+    var buffer: [8]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buffer);
+    try formatTag(Kind, .wave, &writer);
+    try writer.writeByte(' ');
+    try formatTag(Kind, @enumFromInt(9), &writer);
+    try std.testing.expectEqualStrings("wave 9", writer.buffered());
 }
 
 test Big {
