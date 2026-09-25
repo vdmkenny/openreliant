@@ -63,9 +63,25 @@ pub fn memberName(buffer: *[128]u8, name: []const u8) []const u8 {
     return copy;
 }
 
-/// Whether a member starts as RefPack does, `10 FB`, the one form the game expands.
+/// The start of a member the game expands, which `hog_read_file` compares its first word with,
+/// read big-endian, as `0x10FB`: RefPack's flags with only `magic` set, then its `signature`.
+const packed_start = [2]u8{
+    @bitCast(refpack.Header.Flags{ .compressed_size_present = false, ._unused = 0, .magic = 1, ._unused2 = 0, .wide_sizes = false }),
+    refpack.signature,
+};
+
+/// Whether a member starts as `packed_start`, the one form the game expands. A RefPack stream
+/// with other flags, which `refpack.looksCompressed` takes, the game reads as it is.
 fn refPacked(raw: []const u8) bool {
-    return raw.len >= 2 and raw[0] == 0x10 and raw[1] == 0xFB;
+    return std.mem.startsWith(u8, raw, &packed_start);
+}
+
+test refPacked {
+    try std.testing.expect(refPacked(&.{ 0x10, 0xFB, 0x00, 0x00, 0x05 }));
+    // Sizes of four bytes, or the packed size given, are not the game's form.
+    try std.testing.expect(!refPacked(&.{ 0x90, 0xFB, 0x00, 0x00, 0x00, 0x05 }));
+    try std.testing.expect(!refPacked(&.{ 0x11, 0xFB }));
+    try std.testing.expect(!refPacked(&.{0x10}));
 }
 
 test memberName {

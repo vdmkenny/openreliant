@@ -25,8 +25,8 @@ pub const WingSlots = [wing_size]?u16;
 /// the last is emptied. A group of more ships than the wing holds lists as many as fit.
 ///
 /// **Fix:** the game empties only the slot after the last, and the slots past it keep the ships of
-/// the mission before, which the wing status window shows again where they are in the wing. The
-/// port empties every slot first.
+/// the mission before, which the wing status window shows again where they are in the wing.
+/// OpenReliant empties every slot first.
 pub fn listPlayerWing(all: *create.Objects, ships: []const u16) void {
     all.wing = @splat(null);
     for (all.wing[0..@min(ships.len, wing_size)], ships[0..@min(ships.len, wing_size)]) |*slot, ship| {

@@ -74,7 +74,7 @@ pub const Pilot = extern struct {
             pilot.turn_limit = preset[0];
             pilot.turn_ease = preset[1];
             pilot.aim_interval = @bitCast(preset[2]);
-            if (level == 2) pilot.timings.countermeasures = @bitCast(stats.tier_c_level_2_override);
+            if (record.tier_c == .level_2) pilot.timings.countermeasures = @bitCast(stats.tier_c_level_2_override);
         }
         return pilot;
     }
