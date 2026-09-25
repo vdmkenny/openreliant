@@ -9,6 +9,10 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
 const layout = @import("layout.zig");
+const riff = @import("riff.zig");
+
+/// The RIFF form of an effect file.
+pub const form = "FORC";
 
 pub const Error = error{NotAnEffectFile} || Allocator.Error;
 
@@ -150,20 +154,19 @@ const GroupRecord = extern struct {
     }
 };
 
-const ChunkHeader = extern struct { id: [4]u8, size: u32 };
-
 /// A file's effects, in the order it holds them. They point into the file's bytes.
 pub const File = struct {
     effects: []const Effect,
 
     pub fn parse(gpa: Allocator, bytes: []const u8) Error!File {
-        const riff = layout.view(ChunkHeader, bytes) catch return error.NotAnEffectFile;
-        if (!std.mem.eql(u8, &riff.id, "RIFF") or bytes.len < 12 or !std.mem.eql(u8, bytes[8..12], "FORC")) return error.NotAnEffectFile;
+        const header = riff.header(bytes, form) orelse return error.NotAnEffectFile;
         var effects: std.ArrayList(Effect) = .empty;
         errdefer effects.deinit(gpa);
         var id: ?u32 = null;
-        var chunks: Chunks = .{ .rest = bytes[12..@min(bytes.len, 8 + @as(usize, riff.size))] };
-        while (try chunks.next()) |chunk| {
+        // The chunks, as far as the header says they run, each list's walked in its place.
+        const rest = bytes[@sizeOf(riff.Header)..];
+        var chunks: riff.Chunks = .{ .rest = rest[0..@min(rest.len, header.size -| riff.form_len)], .into_lists = true };
+        while (chunks.next() catch return error.NotAnEffectFile) |chunk| {
             if (std.mem.eql(u8, &chunk.id, "id  ")) {
                 id = (layout.view(u32, chunk.body) catch return error.NotAnEffectFile).*;
             } else if (std.mem.eql(u8, &chunk.id, "data")) {
@@ -198,31 +201,6 @@ pub const File = struct {
             }
         }
         return false;
-    }
-};
-
-/// Walks a RIFF body's chunks, going into each list.
-const Chunks = struct {
-    rest: []const u8,
-
-    const Chunk = struct { id: [4]u8, body: []const u8 };
-
-    fn next(chunks: *Chunks) Error!?Chunk {
-        while (chunks.rest.len > 0) {
-            const header = layout.view(ChunkHeader, chunks.rest) catch return error.NotAnEffectFile;
-            const after = chunks.rest[@sizeOf(ChunkHeader)..];
-            if (header.size > after.len) return error.NotAnEffectFile;
-            // A list's body is its form and then its chunks, which are walked in turn.
-            if (std.mem.eql(u8, &header.id, "LIST")) {
-                if (header.size < 4) return error.NotAnEffectFile;
-                chunks.rest = after[4..];
-                continue;
-            }
-            // Chunks are padded to an even length.
-            chunks.rest = after[@min(after.len, header.size + (header.size & 1))..];
-            return .{ .id = header.id, .body = after[0..header.size] };
-        }
-        return null;
     }
 };
 
@@ -324,27 +302,22 @@ pub const testing = struct {
             try efct.appendSlice(gpa, "efct");
             try appendChunk(gpa, &efct, "id  ", std.mem.asBytes(&made.id));
             try appendChunk(gpa, &efct, "data", data.items);
-            try appendChunk(gpa, &trak, "LIST", efct.items);
+            try appendChunk(gpa, &trak, riff.list_id, efct.items);
         }
         var body: std.ArrayList(u8) = .empty;
         defer body.deinit(gpa);
-        try body.appendSlice(gpa, "FORC");
-        try appendChunk(gpa, &body, "LIST", "INFO");
+        try body.appendSlice(gpa, form);
+        try appendChunk(gpa, &body, riff.list_id, "INFO");
         try appendChunk(gpa, &body, "trgt", &@as([16]u8, @splat(0)));
         const tracks = try std.mem.concat(gpa, u8, &.{ "trak", trak.items });
         defer gpa.free(tracks);
-        try appendChunk(gpa, &body, "LIST", tracks);
+        try appendChunk(gpa, &body, riff.list_id, tracks);
         var out: std.ArrayList(u8) = .empty;
-        try appendChunk(gpa, &out, "RIFF", body.items);
+        try appendChunk(gpa, &out, riff.Header.riff_id, body.items);
         return out.toOwnedSlice(gpa);
     }
 
-    fn appendChunk(gpa: Allocator, out: *std.ArrayList(u8), id: *const [4]u8, body: []const u8) Allocator.Error!void {
-        try out.appendSlice(gpa, id);
-        try out.appendSlice(gpa, std.mem.asBytes(&@as(u32, @intCast(body.len))));
-        try out.appendSlice(gpa, body);
-        if (body.len & 1 != 0) try out.append(gpa, 0);
-    }
+    const appendChunk = riff.testing.appendChunk;
 };
 
 test File {
