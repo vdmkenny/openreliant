@@ -855,10 +855,10 @@ pub fn pitchFactor(n: i32) f32 {
     return std.math.pow(f32, 2, @as(f32, @floatFromInt(clamped)) / quarter_tones_per_octave);
 }
 
-/// The byte a piece of music loops back to: the loop table's, for the piece whose name the file's
-/// name starts with, ignoring case, or 0.
+/// The byte a piece of music loops back to (`music_play`): the loop table's, for the piece whose
+/// name starts what follows the path's first `\`, ignoring case, or 0.
 pub fn musicLoopStart(path: []const u8) i32 {
-    const name = std.fs.path.basenameWindows(path);
+    const name = if (std.mem.indexOfScalar(u8, path, '\\')) |at| path[at + 1 ..] else path;
     for (music_loops) |piece| {
         if (name.len >= piece.name.len and std.ascii.eqlIgnoreCase(name[0..piece.name.len], piece.name)) return piece.loop_start;
     }
@@ -1133,6 +1133,8 @@ test pitchFactor {
 
 test musicLoopStart {
     try std.testing.expectEqual(188318, musicLoopStart("music\\New_Mission01.wav"));
-    try std.testing.expectEqual(297178, musicLoopStart("music/New_Searching Mission 01.wav"));
+    try std.testing.expectEqual(297178, musicLoopStart("music\\New_Searching Mission 01.wav"));
+    // Only the first folder is taken off, as the game takes it.
+    try std.testing.expectEqual(0, musicLoopStart("music\\mine\\New_Mission01.wav"));
     try std.testing.expectEqual(0, musicLoopStart("music\\New_Takeoff - Music.wav"));
 }
