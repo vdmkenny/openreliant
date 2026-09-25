@@ -439,7 +439,7 @@ pub const Driver = struct {
             start = driver.vertices.items.len;
         }
         if (driver.indices.items.len == 0) return;
-        if (pass == 0 and drawn.object.flags.sun_occluder) {
+        if (hidesSun(drawn, material, pass)) {
             var t: usize = 0;
             while (t < driver.indices.items.len and driver.context.sun_visibility > 0) : (t += 3) {
                 const i = driver.indices.items[t..][0..3];
@@ -476,8 +476,8 @@ pub const Driver = struct {
     }
 
     /// `draw_polygon` (`0x10006F90`): one polygon as a fan, or its lines. **Improvement:** the
-    /// driver tests a blended polygon's triangles against the sun with indices left over from the
-    /// last list it drew; the port tests the polygon's own.
+    /// driver tests a sorted polygon's triangles against the sun with indices left over from the
+    /// last list it drew; the port tests the polygon's own, where it is solid (`hidesSun`).
     fn drawPolygon(driver: *Driver, drawn: *const srmesh.Drawn, v: srmesh.Visible, material: Material, pass: u1, st: device.State) Allocator.Error!void {
         const p = drawn.mesh.polygons[v.polygon];
         driver.single.clearRetainingCapacity();
@@ -485,7 +485,7 @@ pub const Driver = struct {
         const vertices = driver.single.items;
         if (p.kind == .lines) return driver.target.draw(st, .lines, vertices, null);
         driver.target.draw(st, .fan, vertices, null);
-        if (pass == 0 and drawn.object.flags.sun_occluder) {
+        if (hidesSun(drawn, material, pass)) {
             var i: usize = 2;
             while (i < vertices.len and driver.context.sun_visibility > 0) : (i += 1) driver.sunTest(vertices[0], vertices[i - 1], vertices[i]);
         }
@@ -528,7 +528,7 @@ pub const Driver = struct {
                 continue;
             }
             driver.target.draw(st, .fan, vertices, null);
-            if (pass == 0 and drawn.object.flags.sun_occluder) {
+            if (hidesSun(drawn, material, pass)) {
                 var i: usize = 2;
                 while (i < vertices.len and driver.context.sun_visibility > 0) : (i += 1) driver.sunTest(vertices[0], vertices[i - 1], vertices[i]);
             }
@@ -632,6 +632,13 @@ pub const Driver = struct {
                 driver.target.draw(st, .points, &.{head}, null);
             }
         }
+    }
+
+    /// Whether a polygon's first pass, drawn with `material`, is tested against the sun: an object
+    /// flagged `sun_occluder` has its polygons tested. **Improvement:** only a solid one, which
+    /// blends with nothing; the port lets the sun through what is blended, such as a canopy's glass.
+    fn hidesSun(drawn: *const srmesh.Drawn, material: Material, pass: u1) bool {
+        return pass == 0 and drawn.object.flags.sun_occluder and material.blend[0] == .off;
     }
 
     /// `sun_test` (`0x10001FD0`): lessens the sun's visibility to a triangle's nearest edge, measured

@@ -77,6 +77,23 @@ The sun's direction comes from the sun marker's orientation, or is `(1, -0.5, 0.
 
 The six flares are drawn on the overlay layer on the line through the sun and the middle of the view, at a multiple of the sun's offset from the middle: `sunflare2` at 0.5, `sunflare1` at 0.33, `sunflare3` at 0.2, `sunflare2` at -0.2, `sunflare3` at -0.6 and `sunflare4` at -0.5, each at size 1 and grey `f`, while `f` is above 0. They show in every view but the cockpit's ahead, and in that one too while the cockpit mode is the chase view and any of the sun shows (`camera_view`, `0x00539A34`; `cockpit_mode`, `0x00539A9C`). Each sorts as if at the near plane.
 
+### The port's sun
+
+**Improvement:** the port draws each of the sun's and the flares' textures again, eight times finer each way, from the rings it is made of ([`backdrop/rings.zig`](../../src/engine/game/backdrop/rings.zig)), so that they stay round and crisp however large they are drawn. The sprites keep the size the game's textures give them.
+
+- It finds the middle the texture is roundest about: of the points a quarter of a texel apart within two texels of its centre, the one about which the texels stray least from the mean of their ring.
+- It measures the rings eight to a texel, by how far out each texel's centre lies. Where every texel in a ring has one colour, over half a texel or more, the ring is flat. Elsewhere a ring takes the mean of the texels within half a texel of it.
+- Between two flat rings less than 1.5 texels apart lies an edge. It stands where the light the rings measure there is kept, weighted by how far out it lies, in the channel that changes most.
+- A run of three or more edges of one level of a 16-bit texture each, the same way, is a gradient that rounding cut into steps. Each of its edges is smoothed out to the nearer ring's middle, and no further than four texels. Any other edge stays crisp, one texel of the finer texture wide, so a flare's bands keep their exact colours.
+- For `sunlayer1` and `sunlayer2`, what is not round is added back, enlarged with a Catmull-Rom filter: the ragged rim and the rays. Each texel's difference from its ring is averaged two texels either way along its line from the middle, and kept where it is more than half a level of a 16-bit texture. What strays less, or not along a ray, is rounding and is left out.
+- The result is dithered to 8 bits with interleaved gradient noise, and has every mipmap level down to a texel.
+
+Drawn back at the game's size, each redrawn texture keeps the original's light to within about 1% in each channel.
+
+**Improvement:** the sun's visibility reaches as far as `sunlayer1` does on the screen, its texture's width times its size times the view's scale over 768, rather than 10 pixels. The brightness `f` takes it as the same share of 10. `sunlayer3`'s grey is multiplied by the visibility's share of its most, where the game draws it whole above 0.5 and not at all below. The glow and the flares therefore dim as the sun's disc goes behind what hides it, however large the screen, rather than going out at once. Only solid polygons hide the sun: the canopies' glass, which is added, lets it through ([Renderer](../port/renderer.md#improvements)).
+
+`--original` draws the game's textures and keeps its visibility.
+
 ## Lights
 
 `backdrop_create` makes six lights; `backdrop_place` (`0x004A5A00`) aims the key lights along the sun and the fill lights along the nebula marker's forward axis, or `(-1, 0.5, 0)` without one.
