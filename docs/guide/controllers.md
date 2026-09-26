@@ -65,7 +65,16 @@ These are StarLancer's own defaults. Button numbers start at 0, as shown by `ope
 ./openreliant joysticks StarLancer
 ```
 
-On Windows, use `.\openreliant.exe` instead of `./openreliant`. `StarLancer` is the folder the game is installed in; the tool reads your settings from there.
+On Windows, use `.\openreliant.exe` instead of `./openreliant`. `StarLancer` is the folder the game is installed in; the tool reads your settings from there. For a joystick it prints something like this:
+
+```text
+1. Logitech Extreme 3D (used by the game)
+   joystick, USB ID 046d:c215, 4 axes, 12 buttons, 1 hat
+   X: axis 0, Y: axis 1, throttle: axis 3 (automatic), twist: axis 2 (automatic)
+   To choose it: Joystick=Logitech Extreme 3D
+```
+
+The third line says which axis the game uses for what. `(automatic)` marks OpenReliant's guess from the number of axes, and `(ThrottleAxis)` or `(TwistAxis)` marks a choice from your `starlancer.ini`. The last line is the setting that picks this controller when several are connected.
 
 To see live input as the game reads it, add `--watch`:
 
@@ -73,7 +82,16 @@ To see live input as the game reads it, add `--watch`:
 ./openreliant joysticks StarLancer --watch
 ```
 
-Move each axis and press each button to find its number. Press Ctrl+C to stop.
+```text
+X  1000  Y     0  throttle   500  twist  1000  hat   -
+Buttons down: 0
+Axis  0:  100% (X)
+Axis  1:    0% (Y)
+Axis  2:  100% (twist)
+Axis  3:    0% (throttle)
+```
+
+The view updates in place as you move the controls. The first line shows the values as the game reads them. The second shows the buttons held down, by their numbers; on a gamepad, each with its name. For a joystick, a line for each axis follows: its number, how far it is moved, from -100% to 100% of its travel, and what the game uses it for. Move a control or press a button and see which number changes: that is the number to give `ThrottleAxis`, `TwistAxis` or `JOY BUTTON`. Axis and button numbers start at 0. Press Ctrl+C to stop.
 
 ## Settings
 

@@ -178,7 +178,7 @@ Deliberate differences from the original's joystick support:
 
 ### Listing controllers
 
-`openreliant joysticks [<game-directory>] [--watch]` lists the connected controllers, shows which one the game will use and, for joysticks, which axis is used for what. It reads the settings from the game's `starlancer.ini`. With `--watch`, it prints the selected controller's state as the game sees it whenever it changes, until you press Ctrl+C.
+`openreliant joysticks [<game-directory>] [--watch]` lists the connected controllers, shows which one the game will use and the `Joystick=` setting that picks each, and for joysticks which axis is used for what, marking whether the throttle's and the twist's come from `starlancer.ini` or the automatic choice. It reads the settings from the game's `starlancer.ini`. With `--watch`, it shows the selected controller's state as the game sees it until you press Ctrl+C: the values the game reads, the buttons held down by number, with a gamepad's name for each, and for a joystick every axis by its number, as a share of its travel, with what the game uses it for. On a terminal it redraws the view in place with ANSI escape codes, each line cut to 79 columns so that it does not wrap; otherwise, as into a file, it prints each view that differs from the last after a blank line.
 
 ### Testing
 
