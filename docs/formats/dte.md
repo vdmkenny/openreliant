@@ -108,13 +108,17 @@ Stride `0x4C`, one per placed object, nav points included.
 | `0x04` | u16 | Name, as a string pool offset |
 | `0x08` | f32 x3 | Position, copied from `0x1C` when the mission loads |
 | `0x14` | u8 | Flight group, or `0xFF` for none |
-| `0x15` | u8 | Pilot: the record of `pilotstats.bin` the ship gets. 255 marks the player's own record |
+| `0x15` | u8 | Pilot: the record of `pilotstats.bin` that flies the ship, or `0xFF` for none, as the player's own record, the nav points and the planets have |
 | `0x17` | u8 | Flags, the engine's own: bit 0 marks the ship destroyed. Zero in the files |
-| `0x18` | u16 | Role. Ships stay below `0x100`; nav points and markers use 999 and `0x3E3` to `0x3E8`, waypoints `0x3E5` |
+| `0x18` | u16 | Kind: the ship's type below `0x100`; nav points and markers use 999 and `0x3E3` to `0x3E8`, waypoints `0x3E5` |
 | `0x1B` | u8 | Set for a waypoint once binding the mission has listed it |
 | `0x1C` | f32 x3 | Position as authored |
+| `0x28` | u16 | The kind of the ship it launches from, the first of the mission's ships of that kind |
+| `0x2B` | u8 | The gate of that ship it launches through, or `0xFF` for a ship that does not launch |
 | `0x2E`, `0x3A`, `0x4A` | i16 | Yaw, pitch, roll, in whole degrees |
 | `0x30` | u32 | The ship's intact components, a bit each |
+| `0x34` | u16 | The formation point Formation Regroup flies the ship to, or `0xFFFF` for none |
+| `0x3D` | u8 | The loadout tier its missile racks are fitted by (`create.settledTier`): 0 or 255, as most records hold, asks for the campaign's |
 
 When the mission's script starts, the engine clears the flags at `0x17` and sets every bit at
 `0x30`. Destroying component `n` of the ship clears bit `n & 31`, and destroying the ship sets bit 0
@@ -131,6 +135,7 @@ Stride `0x14`.
 | Offset | Type | Field |
 |---|---|---|
 | `0x00` | u16 | Object ID |
+| `0x04` | u16 | Name, as a string pool offset, such as `(FG)Reliant` |
 | `0x08` | u8 | The wing the mission lists the group's ships in: 0 the player's, 1 and 2 two more, `0xFF` none |
 | `0x09` | u8 | How many of the mission's ships are in the group |
 | `0x0C` | u32 | Where the group's first ship stands in the list of the groups' ships, or -1 |

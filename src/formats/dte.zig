@@ -169,8 +169,9 @@ pub const Ship = extern struct {
     runtime_position: [3]f32,
     /// Index of the ship's flight group, or `no_flight_group`.
     flight_group: u8,
-    /// Side. 255 marks the player's own record.
-    iff: u8,
+    /// The record of `pilotstats.bin` that flies the ship (`object_set_pilot`), or `no_pilot`, as
+    /// the player's own record, the nav points and the planets have.
+    pilot: u8,
     _unknown_16: u8,
     /// The engine's own state: zero in the files, and cleared for every ship when the mission's
     /// script starts.
@@ -183,25 +184,44 @@ pub const Ship = extern struct {
     waypoint_listed: u8,
     /// As authored. The loader copies it into `runtime_position`.
     position: [3]f32,
-    _unknown_28: u32,
+    /// The kind of the ship it launches from, where `launch_gate` names a gate: the first of the
+    /// mission's ships of that kind (`mission_ship_create`).
+    launch_from: u16,
+    _unknown_2a: u8,
+    /// The gate of that ship it launches through, which its Launch order takes as its target's
+    /// component, or `no_launch`.
+    launch_gate: u8,
     runtime_yaw: i16,
     /// Whole degrees. The engine scales it by pi/180, which is what proves the unit.
     yaw: i16,
     /// The ship's components that are still intact, a bit each. Set to all ones when the mission's
     /// script starts; destroying component `n` clears bit `n & 31`.
     intact_components: u32,
-    _unknown_34: u32,
+    /// The point of section `formation_points` that Formation Regroup flies the ship to
+    /// (`order_formation_regroup_init`), or `no_formation_point`.
+    formation_point: u16,
+    _unknown_36: u16,
     runtime_pitch: i16,
     pitch: i16,
-    _unknown_3c: [12]u8,
+    _unknown_3c: u8,
+    /// The loadout tier its missile racks are fitted by (`create_object`), as `create.settledTier`
+    /// settles it: 0 or 255, as most records hold, asks for the campaign's.
+    tier: u8,
+    _unknown_3e: [10]u8,
     runtime_roll: i16,
     roll: i16,
 
     /// The `flight_group` of a ship in none.
     pub const no_flight_group: u8 = 0xFF;
 
-    /// The `iff` of the player's own record.
-    pub const player_iff: u8 = 0xFF;
+    /// The `pilot` of a record flown by no pilot of `pilotstats.bin`.
+    pub const no_pilot: u8 = 0xFF;
+
+    /// The `launch_gate` of a ship that does not launch.
+    pub const no_launch: u8 = 0xFF;
+
+    /// The `formation_point` of a ship in no formation.
+    pub const no_formation_point: u16 = 0xFFFF;
 
     /// The `kind` of a waypoint: a point a flight group's Patrol Route flies through, in the order
     /// the mission lists them.
@@ -212,9 +232,14 @@ pub const Ship = extern struct {
         return if (ship.flight_group == no_flight_group) null else ship.flight_group;
     }
 
-    /// Whether it is the player's own record.
-    pub fn isPlayer(ship: Ship) bool {
-        return ship.iff == player_iff;
+    /// Its pilot, where it has one.
+    pub fn pilotRecord(ship: Ship) ?u8 {
+        return if (ship.pilot == no_pilot) null else ship.pilot;
+    }
+
+    /// The gate it launches through, where it launches.
+    pub fn launchGate(ship: Ship) ?u8 {
+        return if (ship.launch_gate == no_launch) null else ship.launch_gate;
     }
 
     /// Whether it is a waypoint (`waypoint_kind`).
@@ -230,11 +255,15 @@ pub const Ship = extern struct {
 
     comptime {
         assert(@offsetOf(Ship, "name") == 0x04);
-        assert(@offsetOf(Ship, "iff") == 0x15);
+        assert(@offsetOf(Ship, "pilot") == 0x15);
         assert(@offsetOf(Ship, "kind") == 0x18);
         assert(@offsetOf(Ship, "position") == 0x1C);
+        assert(@offsetOf(Ship, "launch_from") == 0x28);
+        assert(@offsetOf(Ship, "launch_gate") == 0x2B);
         assert(@offsetOf(Ship, "yaw") == 0x2E);
+        assert(@offsetOf(Ship, "formation_point") == 0x34);
         assert(@offsetOf(Ship, "pitch") == 0x3A);
+        assert(@offsetOf(Ship, "tier") == 0x3D);
         assert(@offsetOf(Ship, "roll") == 0x4A);
         assert(@sizeOf(Ship) == 0x4C);
     }
@@ -572,7 +601,10 @@ pub const OpenReliantName = extern struct {
 /// of the groups' ships that binding the mission makes.
 pub const FlightGroup = extern struct {
     object_id: u16,
-    _unknown_02: [6]u8,
+    _unknown_02: u16,
+    /// Byte offset into the string pool, such as `(FG)Reliant`.
+    name: u16,
+    _unknown_06: u16,
     /// The wing the mission lists the group's ships in (`mission_wings_build`): 0 the player's, 1
     /// and 2 two more, or `no_wing`.
     wing: u8,
@@ -593,6 +625,7 @@ pub const FlightGroup = extern struct {
     }
 
     comptime {
+        assert(@offsetOf(FlightGroup, "name") == 0x04);
         assert(@offsetOf(FlightGroup, "wing") == 0x08);
         assert(@offsetOf(FlightGroup, "ship_count") == 0x09);
         assert(@offsetOf(FlightGroup, "first_ship") == 0x0C);
@@ -1275,12 +1308,12 @@ pub const Mission = struct {
         return mission.records(Ship, .ships);
     }
 
-    /// The player's own record, the first whose `iff` is `Ship.player_iff`; null for none.
+    /// The player's own record: the first, since in a single-player game the player's ship is the
+    /// first object (`player_index`), and the mission's ships take the objects' places in turn
+    /// (`mission_ship_create`). Null for a mission with no ships.
     pub fn player(mission: Mission) Error!?Ship {
-        for (try mission.ships()) |ship| {
-            if (ship.isPlayer()) return ship;
-        }
-        return null;
+        const all = try mission.ships();
+        return if (all.len > 0) all[0] else null;
     }
 
     pub fn triggers(mission: Mission) Error![]align(1) const Trigger {
@@ -1434,7 +1467,7 @@ test "directory and records line up" {
     ship.* = std.mem.zeroes(Ship);
     ship.object_id = 3;
     ship.name = 0;
-    ship.iff = 255;
+    ship.pilot = Ship.no_pilot;
     ship.kind = 999;
     ship.yaw = 90;
     ship.roll = -1;
@@ -1446,7 +1479,7 @@ test "directory and records line up" {
     try std.testing.expectEqual(@as(u16, 999), list[0].kind);
     try std.testing.expectEqual(@as(i16, 90), list[0].yaw);
 
-    // The player's own record is the one of the player's side.
+    // The player's own record is the first.
     try std.testing.expectEqual(@as(u32, 3), (try mission.player()).?.object_id);
     // Without OpenReliant's section, the mission has no name of OpenReliant's.
     try std.testing.expectEqual(null, mission.openReliantName());
@@ -1536,13 +1569,18 @@ test "the records' none values" {
     var ship = std.mem.zeroes(Ship);
     ship.flight_group = Ship.no_flight_group;
     ship.kind = Ship.waypoint_kind;
+    ship.pilot = Ship.no_pilot;
+    ship.launch_gate = Ship.no_launch;
     try std.testing.expectEqual(null, ship.flightGroup());
     try std.testing.expect(ship.isWaypoint());
-    try std.testing.expect(!ship.isPlayer());
+    try std.testing.expectEqual(null, ship.pilotRecord());
+    try std.testing.expectEqual(null, ship.launchGate());
     ship.flight_group = 3;
-    ship.iff = Ship.player_iff;
+    ship.pilot = 42;
+    ship.launch_gate = 2;
     try std.testing.expectEqual(3, ship.flightGroup());
-    try std.testing.expect(ship.isPlayer());
+    try std.testing.expectEqual(42, ship.pilotRecord());
+    try std.testing.expectEqual(2, ship.launchGate());
 
     var group = std.mem.zeroes(FlightGroup);
     group.first_ship = FlightGroup.no_ship;

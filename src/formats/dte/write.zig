@@ -144,7 +144,7 @@ test write {
     const gpa = std.testing.allocator;
     var ship = std.mem.zeroes(dte.Ship);
     ship.name = 0;
-    ship.iff = dte.Ship.player_iff;
+    ship.pilot = dte.Ship.no_pilot;
     ship.kind = 43;
     var sections: Sections = @splat(.{});
     sections[@intFromEnum(Section.strings)] = .{ .count = 7, .bytes = "Player\x00" };
