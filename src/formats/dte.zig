@@ -73,8 +73,11 @@ pub const Section = enum(u8) {
     openreliant_name = 21,
     operands_b = 22,
     unknown_23 = 23,
-    /// One `u16` of flags per Executor command. `command` passes bit 0, inverted, to the engine
-    /// before each call. **Unknown:** what the flags mean.
+    /// One `u16` of flags per Executor command, which `command` sets its flag by before each call:
+    /// with bit 0 clear, `for_each_ship` passes over the players' ships in a flight group or a
+    /// squad. In the missions of the writer's template each word has a bit for each of the
+    /// command's parameters, save six whose word is 0 (`write.template.command_flags`); the other
+    /// missions leave the section empty, which clears the bit for every command.
     command_flags = 24,
     /// The same for the second, empty command catalogue.
     command_flags_b = 25,

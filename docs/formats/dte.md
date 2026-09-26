@@ -68,9 +68,13 @@ directory's 128 slots before the first section, at `0x400`, the binder reads the
 holds the file's size in most missions and is unused in the rest, and slots 28 on are unused in
 all of them. Section 24, where a mission has it, holds one
 entry per command of the [catalogue](#commands): `command` passes bit 0 of the entry, inverted, to
-the engine before each call. **Unknown:** what the flags mean; their values are cumulative masks
-such as 1, 3 and 7. In every mission `script_flags` holds twice
-the count of section 6: one entry per script byte.
+the engine before each call, and with the bit clear `for_each_ship` passes over the players' ships
+in a flight group or a squad ([Script VM](../engine/script-vm.md)). In the 36 missions of the
+template each entry has a bit for each of the command's parameters, save the entries of
+`ClearAI`, `SetPatrolRoute`, `SetTriggerState`, `SetAnyTriggerState`, `MovingShipFollowCurve` and
+`MovingShipBackupCurve`, which are 0. The other 8 missions leave the section empty, which clears
+the bit for every command. In every mission `script_flags` holds twice the count of section 6: one
+entry per script byte.
 
 ## OpenReliant's mission name
 

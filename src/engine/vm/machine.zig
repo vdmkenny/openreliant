@@ -514,9 +514,9 @@ pub const Machine = struct {
     /// ships run in the mission's order, and a squad's members in theirs, a member that is a flight
     /// group or a squad for each of its ships, one that names a component of a ship with the
     /// component tagged on the first argument (`argumentComponent`). While the command's flag is
-    /// set (`command_flag`), the players' ships in a flight group are passed over. Each ship's object
-    /// names the first ship the walk ran for (`GameObject._unknown_698`), or none for the first.
-    /// Nothing runs without a game.
+    /// set (`command_flag`), the players' ships in a flight group are passed over. Each ship's
+    /// object names the first ship the walk ran for (`GameObject._unknown_698`), or none for the
+    /// first. Nothing runs without a game.
     pub fn forEachShip(call: Call, each: ShipImplementation) void {
         const machine = call.machine;
         if (machine.game == null or call.args.len == 0) return;

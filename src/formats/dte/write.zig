@@ -7,6 +7,7 @@ const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
 const dte = @import("../dte.zig");
+const commands = @import("../../engine/game/executor/commands.zig");
 const Section = dte.Section;
 const DirectoryEntry = dte.DirectoryEntry;
 
@@ -24,6 +25,27 @@ pub const template = struct {
     pub const slots = offsets[0] / @sizeOf(DirectoryEntry);
     /// The flags every entry of the template's missions carries.
     pub const formats: DirectoryEntry.Formats = .all;
+
+    /// Section 24 as the template's missions hold it (`Section.command_flags`): for each command
+    /// of the catalogue a word with a bit for each of its parameters, save the commands that leave
+    /// the players' ships out of a flight group or a squad (`unflagged_commands`), whose word is 0.
+    pub const command_flags: [commands.table.len]u16 = flags: {
+        @setEvalBranchQuota(10_000);
+        var words: [commands.table.len]u16 = undefined;
+        for (&words, commands.table) |*word, command| {
+            word.* = (1 << command.params.len) - 1;
+            for (unflagged_commands) |name| {
+                if (std.mem.eql(u8, name, command.name)) word.* = 0;
+            }
+        }
+        break :flags words;
+    };
+
+    /// The commands whose word of section 24 is 0 in the template's missions.
+    pub const unflagged_commands = [_][]const u8{
+        "ClearAI",               "SetPatrolRoute",        "SetTriggerState",
+        "MovingShipFollowCurve", "MovingShipBackupCurve", "SetAnyTriggerState",
+    };
 
     /// The bytes section `index` has before the next section, or the file's end: none for section
     /// 21, which starts where section 22 does.

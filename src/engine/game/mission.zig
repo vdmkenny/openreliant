@@ -1,6 +1,6 @@
 //! `C:\lancer\game\mission.cpp`: a mission in play. Its file bound (`bind`), its script run each
-//! frame (`process`), its ships kept where their objects are (`syncShips`), and its flight groups
-//! listed in the wings (`buildWings`).
+//! frame (`Loaded.process`), its ships kept where their objects are (`syncShips`), and its flight
+//! groups listed in the wings (`buildWings`).
 //!
 //! Not ported: the second and third wings' lists (`0x00515D7C`, `0x00515D94`), which nothing reads,
 //! and the events and the triggers ([#37](https://github.com/vdmkenny/openreliant/issues/37)).
@@ -54,6 +54,42 @@ pub const Loaded = struct {
         gpa.destroy(loaded);
     }
 
+    /// The script's start as binding the mission ends (`vm_clock_start`, `mission_script_start`),
+    /// its clock counting the seconds from `game`'s, then what the mission's start does next with
+    /// the mission: the ships' records kept where their objects are (`syncShips`), the script's
+    /// clock back to 0, the objects' count set to the mission's ships' (`game_object_count`), so
+    /// that the ships the script makes later take the first slots, and the frame's work run once
+    /// (`process`). The script acts on the game through `game`.
+    pub fn start(loaded: *Loaded, game: aigeneric.Context) !void {
+        loaded.clock_from = game.clock.game_ticks;
+        loaded.script.game = game;
+        try loaded.script.start();
+        const ships = try loaded.bound.ships();
+        syncShips(game.world.objects, ships);
+        loaded.script.clock = 0;
+        game.world.objects.count = @intCast(@min(ships.len, gameobj.max_objects));
+        loaded.process(game);
+    }
+
+    /// `process_mission` (`0x0045A570`), once a frame from `mission_frame`: the script's threads
+    /// run on (`vm.Machine.runThreads`), the mission's ships take their objects' places
+    /// (`syncShips`), and once the script's clock has ticked, its timers run. The script acts on
+    /// the game through `game`.
+    ///
+    /// Not ported: the script debugger's pause, which holds the threads and the timers, and the
+    /// checks of the proximity conditions after the timers (`0x0045AF60`), which are the triggers'
+    /// ([#37](https://github.com/vdmkenny/openreliant/issues/37)).
+    pub fn process(loaded: *Loaded, game: aigeneric.Context) void {
+        const script = &loaded.script;
+        script.game = game;
+        script.runThreads();
+        syncShips(game.world.objects, loaded.bound.ships() catch &.{});
+        if (script.ticked and script.timers_running) {
+            script.runTimers();
+            script.ticked = false;
+        }
+    }
+
     /// `vm_clock_tick` (`0x00458910`), the script's clock ticking once a second of the mission
     /// (`vm.Machine.tick`), for each second `game_ticks` has run past it since the clock started.
     ///
@@ -65,29 +101,11 @@ pub const Loaded = struct {
     }
 };
 
-/// `process_mission` (`0x0045A570`), once a frame from `mission_frame`: the script's threads run
-/// on (`vm.Machine.runThreads`), the mission's ships take their objects' places (`syncShips`), and
-/// once the script's clock has ticked, its timers run. The script acts on the game through `game`.
-///
-/// Not ported: the script debugger's pause, which holds the threads and the timers, and the checks
-/// of the proximity conditions after the timers (`0x0045AF60`), which are the triggers'
-/// ([#37](https://github.com/vdmkenny/openreliant/issues/37)).
-pub fn process(loaded: *Loaded, game: aigeneric.Context) void {
-    const script = &loaded.script;
-    script.game = game;
-    script.runThreads();
-    syncShips(game.world.objects, loaded.bound.ships() catch &.{});
-    if (script.ticked and script.timers_running) {
-        script.runTimers();
-        script.ticked = false;
-    }
-}
-
-/// `mission_ships_sync` (`0x0045A5F0`): each mission ship's run-time place becomes its object's, and
-/// its run-time yaw and pitch the heading of the object's nose (`heading`), in whole degrees: the
-/// yaw about Y from 0 to 360, and the pitch about X, reversed where the nose points ahead of a right
-/// angle from the Z axis and folded under 180 there. A ship not made yet takes the place of its
-/// slot's stand-in. The run-time roll stays as it is.
+/// `mission_ships_sync` (`0x0045A5F0`): each mission ship's run-time place becomes its object's,
+/// and its run-time yaw and pitch the heading of the object's nose (`heading`), in whole degrees:
+/// the yaw about Y from 0 to 360, and the pitch about X, reversed where the nose points ahead of a
+/// right angle from the Z axis and folded under 180 there. A ship not made yet takes the place of
+/// its slot's stand-in. The run-time roll stays as it is.
 ///
 /// **Fix:** the game takes a ship past the last object's slot for an object past its array;
 /// OpenReliant stops there.

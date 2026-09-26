@@ -485,13 +485,14 @@ pub const Objects = struct {
     /// `mission_ship_create` give the player's wing the `t_` twins of the player's ships from
     /// `twins_from_mission` on.
     mission_number: u16 = 0,
-    /// `mission25_second_part` (`0x00587CDC`): whether mission 25's first part is won and its second
-    /// is played, before which the player flies a Kamov.
+    /// `mission25_second_part` (`0x00587CDC`): whether mission 25's first part is won and its
+    /// second is played, before which the player flies a Kamov.
     mission25_second_part: bool = false,
     /// The ship the loadout screen chose for each player's slot (`player_loadouts`, `0x00588400`,
-    /// the first word of each), which `create_object` makes the player's ship of (`slotType`). Until
-    /// the loadout screen is ported ([#44](https://github.com/vdmkenny/openreliant/issues/44)),
-    /// OpenReliant's driver chooses it, and where it chooses none the mission's own kind stands.
+    /// the first word of each), which `create_object` makes the player's ship of (`slotType`).
+    /// Until the loadout screen is ported
+    /// ([#44](https://github.com/vdmkenny/openreliant/issues/44)), OpenReliant's driver chooses it,
+    /// and where it chooses none the mission's own kind stands.
     loadout_ships: [max_loadouts]?gameobj.Type = @splat(null),
     /// `0x005185A8`, while the byte at `0x005185B1` is set: the number the next order pushed takes
     /// (`aigeneric.Entry.sequence`), as `SetAI` numbers a group's orders
