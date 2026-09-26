@@ -3,13 +3,12 @@
 //! `resource.hog` and the texture cache from it as the game does. `openreliant install` installs
 //! the game's files from its discs; see `install.zig`.
 //!
-//! So far it runs a sandbox of its own: the player's ship in space with three wingmen, the Reliant
-//! standing still ahead of it, and a wing of Coalition fighters flying at it, drawn through
-//! Surrender's pipeline and its Direct3D driver with the GPU, or onto the software device, from the
-//! camera's views, which the game's camera keys pick and steer. Added for OpenReliant: F2 and F3
-//! start the sandbox again in the previous or next ship type, F4 brings another wing, Alt and Enter
-//! switch to the full screen and back. Escape opens the game's pause menu, whose LEAVE MISSION
-//! quits.
+//! It plays a mission, which starts again as each attempt ends: by default mission 0, OpenReliant's
+//! own sandbox (`mission0.zig`), which it carries, or the game's mission `--mission` names. It draws
+//! through Surrender's pipeline and its Direct3D driver with the GPU, or onto the software device,
+//! from the camera's views, which the game's camera keys pick and steer. Added for OpenReliant: the
+//! test keys (`test_keys.zig`), and Alt and Enter, which switch to the full screen and back. Escape
+//! opens the game's pause menu, whose LEAVE MISSION quits.
 
 const std = @import("std");
 const Io = std.Io;
@@ -32,12 +31,15 @@ const camera = game.camera;
 const help = @import("help.zig");
 const install = @import("install.zig");
 const joysticks = @import("joysticks.zig");
+const mission0 = @import("mission0.zig");
 const missions = @import("missions.zig");
+const test_keys = @import("test_keys.zig");
 const version = @import("version.zig");
 
 /// Everything `openreliant` takes on its command line, in the order the help page lists them.
 const Arg = enum {
     @"--original",
+    @"--mission",
     @"--ship",
     @"--view",
     @"--difficulty",
@@ -78,7 +80,7 @@ const Arg = enum {
 /// The help page's sections, in order.
 const Section = enum {
     original,
-    sandbox,
+    mission,
     display,
     graphics,
     sound,
@@ -87,7 +89,7 @@ const Section = enum {
     fn title(section: Section) []const u8 {
         return switch (section) {
             .original => "The original",
-            .sandbox => "The sandbox",
+            .mission => "The mission",
             .display => "Display",
             .graphics => "Graphics",
             .sound => "Sound",
@@ -108,11 +110,12 @@ const Doc = struct {
 /// Every option's help, which the compiler holds to having one for each.
 const docs: std.enums.EnumArray(Arg, Doc) = .init(.{
     .@"--original" = .{ .section = .original, .text = "the original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, light worked out on encoded colours, no shadows, motion that moves on with the game's ticks, lights from the latest shots only, muzzle flashes that light nothing and none from the turrets, the force feedback's own effects only, a blow shaking the camera only while the controller rumbles, an explosion's debris lit by every light, its fireballs, rings, particles and burning bits as few, plain and brief as the original's, the Uber Explode as coarse, unlit and tied to the frame rate as the original's, a damaged ship's smoke as even as the original's, the shields' bubbles as coarse as the original's, the sun and its lens flares from their small textures and the sun's glow going out at once behind what hides it, the levels of detail changing as near as the original's, as little drawn a frame as the original allows, the marker for a target out of sight placed as the original misplaces it, a missile's sound left where it was launched, and the sound mixed plainly in stereo" },
-    .@"--ship" = .{ .section = .sandbox, .value = "<type>", .text = "the ship type to fly, by its number in shipstats.bin; 0, the Predator, by default" },
-    .@"--view" = .{ .section = .sandbox, .value = "<0|1|2>", .text = "the view it starts in, as the game's settings keep it: 0 the cockpit; 1 the chase view; 2 no cockpit. The settings' own by default, which the pause menu's video screen changes" },
-    .@"--difficulty" = .{ .section = .sandbox, .value = "<easy|medium|hard>", .text = "the game's difficulty: how hard hits land on your ship, and shots on the enemy; medium by default, as in the game" },
-    .@"--music" = .{ .section = .sandbox, .value = "<file>", .text = "the piece from the game's music folder it plays, or none; New_Mission01.wav by default" },
-    .@"--no-pause-menu" = .{ .section = .sandbox, .text = "start flying, where the sandbox otherwise starts in the game's pause menu, as there is no front end yet" },
+    .@"--mission" = .{ .section = .mission, .value = "<number>", .text = "the mission to play, by the number the game names its file by, mission<number>.dte, from the game's missions folder or resource.hog; 0 by default, OpenReliant's own sandbox, which openreliant carries where the game has no mission 0" },
+    .@"--ship" = .{ .section = .mission, .value = "<type>", .text = "the ship type to fly, by its number in shipstats.bin, in place of the loadout screen's choice, with its default missiles; the mission's own by default" },
+    .@"--view" = .{ .section = .mission, .value = "<0|1|2>", .text = "the view it starts in, as the game's settings keep it: 0 the cockpit; 1 the chase view; 2 no cockpit. The settings' own by default, which the pause menu's video screen changes" },
+    .@"--difficulty" = .{ .section = .mission, .value = "<easy|medium|hard>", .text = "the game's difficulty: how hard hits land on your ship, and shots on the enemy; medium by default, as in the game" },
+    .@"--music" = .{ .section = .mission, .value = "<file>", .text = "the piece from the game's music folder it plays, or none; New_Mission01.wav by default" },
+    .@"--no-pause-menu" = .{ .section = .mission, .text = "start flying, where the mission otherwise starts in the game's pause menu, as there is no front end yet" },
     .@"--fullscreen" = .{ .section = .display, .text = "fill the display; Alt and Enter switch while playing" },
     .@"--size" = .{ .section = .display, .value = "<width>x<height>", .text = "draw frames of this size in pixels whatever the window's, which shows them scaled; for a screenshot larger than the display" },
     .@"--fps" = .{ .section = .display, .value = "<rate>", .text = "frames a second at most; without vsync, the display's rate by default; 0 for no limit" },
@@ -166,7 +169,7 @@ const help_page = page: {
     break :page out ++ "\nWhile playing:\n" ++
         help.paragraph("The flight keys are the game's own, as starlancer.ini binds them. OpenReliant adds:", 2) ++
         help.table(&.{
-            .{ .typed = "F2, F3", .text = "start again in the previous or next ship type" },
+            .{ .typed = "F2, F3", .text = "start the mission again in the previous or next ship type" },
             .{ .typed = "F4", .text = "bring in another wing" },
             .{ .typed = "Alt+Enter", .text = "switch between the window and the full screen" },
             .{ .typed = "Escape", .text = "the pause menu, whose LEAVE MISSION quits" },
@@ -206,14 +209,18 @@ const Problem = union(enum) {
 
 const Options = struct {
     directory: []const u8 = ".",
-    ship: usize = 0,
+    /// The mission to play, by its number.
+    mission: u16 = mission0.number,
+    /// The ship the player flies, in place of the loadout screen's choice; null for the mission's
+    /// own.
+    ship: ?u8 = null,
     /// The options' cockpit setting, for the run; the ini's `[Device] View` without it.
     cockpit: ?camera.CockpitSetting = null,
     difficulty: game.collision.Difficulty = .medium,
     screenshot: ?[]const u8 = null,
     /// The game ticks a screenshot runs before it is taken, one a frame.
     screenshot_ticks: u32 = minimum_screenshot_ticks,
-    /// Whether the sandbox starts in the pause menu.
+    /// Whether the mission starts in the pause menu.
     pause_menu: bool = true,
     fullscreen: bool = false,
     software: bool = false,
@@ -257,7 +264,7 @@ const Options = struct {
     sound: ?platform.audio.Options = .{},
     /// Where a missile's sound is heard from.
     missile_sound: game.sound3d.MissileSound = .follows,
-    /// The piece of music the sandbox plays, from `music\`, or none.
+    /// The piece of music the mission plays, from `music\`, or none.
     music: ?[]const u8 = default_music,
 
     const default_music = "New_Mission01.wav";
@@ -321,9 +328,9 @@ const Options = struct {
                 if (options.sound) |*sound| sound.* = .{ .player = .software, .master = null };
                 options.missile_sound = .stays;
             },
+            .@"--mission" => options.mission = std.fmt.parseInt(u16, value, 10) catch return error.BadValue,
             .@"--ship" => {
-                const ship = std.fmt.parseInt(usize, value, 0) catch return error.BadValue;
-                if (ship >= game.create.models.ship_types.len) return error.BadValue;
+                const ship = std.fmt.parseInt(u8, value, 0) catch return error.BadValue;
                 if (game.create.models.ship_types[ship].model == null) return error.BadValue;
                 options.ship = ship;
             },
@@ -447,7 +454,7 @@ pub fn main(init: std.process.Init) !u8 {
         },
     };
     run(init.io, init.gpa, arena, options) catch |err| switch (err) {
-        error.MissingGameFiles => return 1,
+        error.MissingGameFiles, error.MissingMission => return 1,
         else => return err,
     };
     return 0;
@@ -582,23 +589,33 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     // The display's shapes, whose global palette the ships' schematics are drawn with too.
     const shapes = try spr.Sprite.parse(try resources.readFile(arena, game.hud.hardware_shapes));
     const global_palette = game.hud.globalPalette(shapes);
-    // The ship types' stats as `stats_load_ships` leaves them, and the objects as a mission's start
-    // does, every slot standing in; then the sandbox's own ships.
+    // The ship types' stats as `stats_load_ships` leaves them, their models, loaded as the objects
+    // need them, and the cockpit a mission's start loads for the player's ship.
     const tables = try arena.create(game.create.Stats);
     tables.* = .initial;
     tables.load(ship_stats);
-    var sandbox: Sandbox = try .init(gpa, tables, gun_stats, missile_stats, pilot_stats, &rand, .{
+    var cockpit: game.main.cockpit.Cockpit = .{};
+    defer cockpit.deinit();
+    var types: game.create.library.TypeCache = .{
         .gpa = gpa,
         .resources = &resources,
         .textures = &textures,
         .looks = .{ .light_sprites = try .load(&textures), .glows = &glows, .flashes = &flashes },
         .global_palette = global_palette,
-    });
-    defer sandbox.deinit();
+    };
+    defer types.deinit();
+    // The objects, every slot standing in until a mission's start makes them, with every gun's,
+    // missile's and pilot's figures; the loadout's ship, where one is chosen.
+    const objects = try game.create.Objects.create(gpa, &rand);
+    defer objects.destroy();
+    objects.gun_stats.load(gun_stats);
+    objects.missile_stats.load(missile_stats);
+    objects.pilots.load(pilot_stats);
+    if (options.ship) |ship| objects.loadout_ships[objects.player] = @enumFromInt(ship);
     // What the shots are drawn with, built once (`guns_init`); the Turret Flak's shell is loaded as
     // each mission starts.
-    sandbox.objects.bullets.looks = try game.guns.Looks.create(arena, &textures);
-    sandbox.objects.bullets.shot_lights = options.shot_lights;
+    objects.bullets.looks = try game.guns.Looks.create(arena, &textures);
+    objects.bullets.shot_lights = options.shot_lights;
     var player: engine.input.Player = .{};
     var devices: engine.input.Devices = .{};
     // The game's settings file, which `load_key_config` reads the input settings from and the
@@ -626,7 +643,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     sound.init(if (output) |open| open.driver() else null, sound_voices, .{ .gpa = gpa, .io = io, .dir = directory });
     defer sound.shutdown();
     sound.volumes = .read(settings_file.profile);
-    sound.objects = sandbox.objects;
+    sound.objects = objects;
     sound.missile_sound = options.missile_sound;
     // `bank_stdsmp`, which the positional sounds of a frame play from, and `smp3d.fat`, which the
     // 3D sounds do.
@@ -640,7 +657,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     const video = game.hudoptions.screens.Video;
     var cockpit_setting: camera.CockpitSetting = options.cockpit orelse @enumFromInt(settings_file.profile.int(video.section, video.view_key, 0));
     var brightness = @as(f32, @floatFromInt(settings_file.profile.int(video.section, video.gamma_key, video.gamma_scale))) / video.gamma_scale;
-    var view: camera.Camera = .{ .cockpit_mode = cockpit_setting.mode(), .missiles = &sandbox.objects.missiles };
+    var view: camera.Camera = .{ .cockpit_mode = cockpit_setting.mode(), .missiles = &objects.missiles };
     var last_view = view.view;
     // The mission's clocks, which `mission_run` zeroes before it loops.
     var clock: game.main.Clock = .{};
@@ -687,22 +704,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
     while (lacking.next()) |effect| std.log.warn("forces\\{s} is missing or isn't an effect file: it plays nothing", .{effect.fileName()});
     var force_feedback: engine.input.force.Forces = .{ .library = &found_forces.library, .settings = options.forces };
     // What the objects run in, the camera's view brought up to date each frame.
-    var world: game.gameobj.World = .{ .forces = &force_feedback, .objects = sandbox.objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = sandbox.random, .difficulty = options.difficulty, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .smoke = &smoke, .gun_particles = &gun_particles, .shockwaves = &shockwaves, .trails = &trails, .countermeasures = &countermeasures, .sparks = &sparks, .shields = &shields, .rays = &rays, .tractors = &tractors, .flash = &flash, .spawn = .{ .tables = sandbox.tables, .types = sandbox.types.types() } };
-    try sandbox.start(.{ .world = world, .clock = &clock, .devices = &devices }, @intCast(options.ship));
-    // The music, as a mission's script starts it (`cmd_PlayMusic`): from `music\`, for ever, at 80.
-    if (options.music) |name| {
-        const path = try std.fmt.allocPrint(arena, "music\\{s}", .{name});
-        sound.playMusic(path, 0, 80, true);
-    }
-    _ = view.setView(startingView(sandbox.player(), view.cockpit_mode), sandbox.objects.player, false, false, 0);
-    // A screenshot waits for the chase view to settle, then runs its ticks, one a frame, at least
-    // until the second frame, which draws the sun by how much of it the first found showing.
-    var frames_left: ?usize = null;
-    if (options.screenshot != null) {
-        const subject = camera.Subject.of(sandbox.player());
-        for (0..settling_frames) |_| _ = view.frame(.{ .object = subject, .player = subject, .ticks = 1 });
-        frames_left = options.screenshot_ticks;
-    }
+    var world: game.gameobj.World = .{ .forces = &force_feedback, .objects = objects, .player = &player, .clock = &clock, .view = view.view, .shake = &view.hit_shake, .random = &rand, .difficulty = options.difficulty, .hearing = hearing, .camera = &view, .explosions = &explosions, .particles = &particles, .smoke = &smoke, .gun_particles = &gun_particles, .shockwaves = &shockwaves, .trails = &trails, .countermeasures = &countermeasures, .sparks = &sparks, .shields = &shields, .rays = &rays, .tractors = &tractors, .flash = &flash, .spawn = .{ .tables = tables, .types = types.types() } };
 
     // The pause menu, which stands in the display's place while the game is paused.
     var pause_menu: game.hudoptions.PauseMenu = .{};
@@ -714,7 +716,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         .gpa = arena,
         .target = undefined,
         .screen = .{ 0, 0 },
-        .sandbox = &sandbox,
+        .objects = objects,
+        .play = undefined,
         .clock = &clock,
         .player = &player,
         .view = &view,
@@ -731,9 +734,37 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .brightness = &brightness,
         },
     };
-    // What the mission's start readies the display with, once `hud_init` has set it up.
-    readyDisplay(&display.state, &sandbox);
     world.display = &display.state;
+
+    // The mission, read once from the game's files, or for mission 0, where the game has none, from
+    // the copy `openreliant` carries, and started; it starts again as each attempt ends.
+    var play: Play = .{
+        .gpa = gpa,
+        .number = options.mission,
+        .file = try missionFile(io, arena, directory, &resources, options.mission),
+        .clock = &clock,
+        .tables = tables,
+        .types = &types,
+        .cockpit = &cockpit,
+        .display = &display.state,
+        .view = &view,
+    };
+    defer play.end();
+    display.play = &play;
+    try play.start(.{ .world = world, .clock = &clock, .devices = &devices });
+    // The music, as a mission's script starts it (`cmd_PlayMusic`): from `music\`, for ever, at 80.
+    if (options.music) |name| {
+        const path = try std.fmt.allocPrint(arena, "music\\{s}", .{name});
+        sound.playMusic(path, 0, 80, true);
+    }
+    // A screenshot waits for the chase view to settle, then runs its ticks, one a frame, at least
+    // until the second frame, which draws the sun by how much of it the first found showing.
+    var frames_left: ?usize = null;
+    if (options.screenshot != null) {
+        const subject = camera.Subject.of(&objects.slots[objects.player]);
+        for (0..settling_frames) |_| _ = view.frame(.{ .object = subject, .player = subject, .ticks = 1 });
+        frames_left = options.screenshot_ticks;
+    }
 
     var scene: srcore.Scene = .{};
     defer scene.deinit(arena);
@@ -743,7 +774,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
 
     // The window's activation, which a screenshot doesn't wait on.
     var app: game.winmain.App = .{};
-    // What `game_pause` pauses the game with, and resumes it. With no front end yet, the sandbox
+    // What `game_pause` pauses the game with, and resumes it. With no front end yet, the mission
     // starts in the pause menu; a screenshot never does.
     const pausing: game.main.Pausing = .{
         .gpa = gpa,
@@ -753,7 +784,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         .archive = resources,
         .view_setting = &cockpit_setting,
         .camera = &view,
-        .player = &sandbox.objects.player,
+        .player = &objects.player,
     };
     if (options.pause_menu and frames_left == null) try game.main.pause(pausing, true);
     // Whether the system's pointer shows over the window, and whether the window holds the mouse.
@@ -791,24 +822,16 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         // While the communications window is open the keys 1 to 8 are its menu's.
         devices.keyboard.numbers_taken = display.state.windows.status.get(.comms).phase == .open;
         world.view = view.view;
-        world.cockpit = if (sandbox.cockpit.shown) |*cockpit| &cockpit.model else null;
+        world.cockpit = if (cockpit.shown) |*shown| &shown.model else null;
         const orders: game.aigeneric.Context = .{ .world = world, .clock = &clock, .devices = &devices };
         while (clock.nextTick(&devices, world)) |_| {}
         clock.frameBegin();
-        const ticks = clock.frameTicks();
-        const at = clock.viewTime();
-        const slot = sandbox.player();
+        const slot = &objects.slots[objects.player];
         // `mission_frame` looks for Escape before its work, and pausing into the menu leaves the
         // work out.
         if (!clock.paused and devices.keyboard.pressed(engine.input.scan.escape, .none, true)) try game.main.pause(pausing, true);
         if (clock.paused) {
-            // `mission_paused_frame`: the keys and the joystick are read, which lets go of the
-            // keys that are up, the music plays on, the frame's sounds are played and placed, and
-            // the menu reads the pointer as it is drawn over the scene as it stood.
-            devices.read();
-            sound.frame(stdsmp, hearing.scene(world));
-            // Nothing rumbles while the game is paused.
-            devices.joystick.rumble(.{});
+            game.main.pausedFrame(&devices, hearing, world);
         } else {
             // The force feedback plays while the controller rumbles and its setting lets it.
             force_feedback.feedback = devices.joystick.rumbles;
@@ -817,83 +840,29 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             // the player's controls, and then, before anything is drawn, has every object's frames
             // drawn between its last two places, as far into the step as the clock is; the camera
             // follows the player's.
-            const over = game.main.missionFrame(orders, .of(&clock, options.smooth_motion));
+            const over = game.main.missionFrame(orders, .of(&clock, options.smooth_motion), play.loaded);
             // The mission over, once the camera has watched the player's end or the pilot's pickup,
-            // the sandbox starts again where a mission would go to its debriefing.
-            if (over) try restartSandbox(&player, &sandbox, orders, &display, &view, at);
-            for (ship_keys) |step| {
-                if (!devices.keyboard.pressed(@intFromEnum(step[0]), .none, true)) continue;
-                const was = sandbox.player_type;
-                var candidate: usize = was;
-                while (true) {
-                    candidate = nextShipType(candidate, step[1]);
-                    // Types whose files the game lacks are passed over; with none to go to, the
-                    // sandbox starts again as it was.
-                    const next: u8 = @intCast(candidate);
-                    sandbox.start(orders, next) catch |err| {
-                        if (next == was) return err;
-                        std.log.warn("ship type {d} left out: {s}", .{ candidate, @errorName(err) });
-                        continue;
-                    };
-                    break;
-                }
-                settleStart(&display, &sandbox, &view, at);
+            // or once its script ends it, it starts again where the game would go to its
+            // debriefing.
+            if (over) try play.again(orders);
+            for (test_keys.ship_keys) |step| {
+                if (devices.keyboard.pressed(@intFromEnum(step[0]), .none, true)) try play.changeShip(orders, step[1]);
             }
-            if (devices.keyboard.pressed(@intFromEnum(wing_key), .none, true)) _ = sandbox.bringWing(orders);
+            if (devices.keyboard.pressed(@intFromEnum(test_keys.wing_key), .none, true)) test_keys.bringWing(orders);
 
-            // `frame_controls` and the camera run once a frame, over the ticks the frame spans.
-            view.frameControls(&devices, sandbox.objects.player, ticks, at);
-            // After the camera's keys, `frame_controls` reads the targeting keys, then its own.
-            game.hud.targetKeys(&display.state, .{
+            game.main.controlsFrame(.{
+                .orders = orders,
                 .devices = &devices,
-                .player = &player,
-                .all = sandbox.objects,
-                .sight = display.sight,
-                .last_view = last_view,
-                .scale = game.hud.scaleFor(display.screen),
-                .multiplayer = false,
-                .world = world,
-            });
-            engine.input.frameKeys(.{
+                .camera = &view,
                 .display = &display.state,
-                .player = &player,
-                .devices = &devices,
-                .slot = slot,
-                .view = view.view,
-                .game_ticks = display.clock.game_ticks,
-                .multiplayer = false,
-                .world = world,
+                .sight = display.sight,
+                .screen = display.screen,
+                .last_view = last_view,
+                .cockpit = if (cockpit.shown) |*shown| shown else null,
+                .forces = &force_feedback,
+                .random = &rand,
+                .smooth_motion = options.smooth_motion,
             });
-            // What moves the cockpit's model: the ship's rates of turn over its full ones, and its
-            // speed over its cruise speed.
-            const cockpit_input: ?camera.Cockpit.Input = if (sandbox.cockpit.shown) |*cockpit| input: {
-                const live = &slot.object;
-                const flight = slot.flight.?;
-                const rates: [3]f32 = .{
-                    live.pitch_rate / flight.pitch_rate,
-                    live.yaw_rate / flight.yaw_rate,
-                    live.roll_rate / flight.roll_rate,
-                };
-                const speed = live.speed / game.ai.cruiseSpeed(live, flight, view.view);
-                break :input game.main.cockpit.input(&cockpit.model, cockpit.source, rates, speed);
-            } else null;
-            const subject = camera.Subject.of(slot);
-            // The view's own object, which the ejection's views show, and the player's ship
-            // otherwise.
-            const shown = if (view.object) |seen| camera.Subject.of(&sandbox.objects.slots[seen]) else subject;
-            const marker = if (explosions.marker) |left| left.position else null;
-            if (view.frame(.{ .object = shown, .player = subject, .ticks = ticks, .now = at, .ahead = game.objects.pastTick(&clock, options.smooth_motion), .marker = marker, .cockpit = cockpit_input, .random = &rand, .forces = &force_feedback })) |next| {
-                _ = view.setView(next, sandbox.objects.player, false, true, at);
-            }
-            // From its cockpit, the ship is not drawn, as `camera_set_view` sees to.
-            slot.object.flags.hidden = view.inside(sandbox.objects.player);
-            // The frame's sound, heard from where the camera now is: the fades `tick_timer` steps,
-            // the music waiting its turn, the positional sounds gathered, and the 3D sounds placed
-            // again (`mission_frame`).
-            sound.timerTick(clock.game_ticks);
-            sound.frame(stdsmp, hearing.scene(world));
-            // OpenReliant's: the effects playing turn the controller's motors (`input.force`).
-            devices.joystick.rumble(force_feedback.motors(clock.frame_start));
         }
 
         // The GPU draws at the display's own resolution; the software device at the window's size
@@ -913,7 +882,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         context.camera = .{ .position = view.place.position, .orientation = view.place.orientation };
         context.projection = view.projection(size[0], size[1]);
         // The cockpit's model hangs from the camera, and the radar's backing stands on the radar.
-        if (sandbox.cockpit.shown) |*cockpit| if (view.cockpit_place) |placed| game.main.cockpit.place(&cockpit.model, view.place, placed);
+        if (cockpit.shown) |*shown| if (view.cockpit_place) |placed| game.main.cockpit.place(&shown.model, view.place, placed);
         backing.place(context.projection, view.place, game.hud.scaleFor(size));
         _ = frame_arena.reset(.retain_capacity);
         display.target = screen.interface();
@@ -922,8 +891,8 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         display.last_view = last_view;
         display.cockpit_mode = view.cockpit_mode;
         try game.main.drawFrame(arena, frame_arena.allocator(), &scene, &context, .{
-            .objects = sandbox.objects,
-            .seat = if (slot.object.flags.hidden) sandbox.objects.player else null,
+            .objects = objects,
+            .seat = if (slot.object.flags.hidden) objects.player else null,
             .showing = player.showing,
             .space = space,
             .sky = sky,
@@ -931,7 +900,7 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             .cockpit_mode = view.cockpit_mode,
             .last_view = last_view,
             .overlay = display.overlay(),
-            .cockpit = if (sandbox.cockpit.shown) |*cockpit| &cockpit.model else null,
+            .cockpit = if (cockpit.shown) |*shown| &shown.model else null,
             // The paused frame hides the radar's backing, whose radar the menu stands in place of.
             .backing = if (clock.paused) null else backing,
             .kills_shown = devices.active(.display_kills, false),
@@ -963,12 +932,12 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         }, driver.interface());
         last_view = view.view;
         // What the menu's choice ends the pause in, as `mission_paused_frame` acts on it: the
-        // sandbox starts again for RESTART, and LEAVE MISSION leaves it.
+        // mission starts again for RESTART, and LEAVE MISSION leaves it.
         if (pause_menu.outcome()) |outcome| {
             try game.main.pause(pausing, false);
             switch (outcome) {
                 .continue_mission => {},
-                .restart => try restartSandbox(&player, &sandbox, orders, &display, &view, at),
+                .restart => try play.again(orders),
                 .leave_mission => return,
             }
         }
@@ -1009,9 +978,9 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
 
 /// The view a ship is shown in at first: view 0, as a mission's launch ends in, in `mode`. The
 /// chase mode sits a fixed distance behind, which the camera keeps per ship type, so a ship whose
-/// own radius is larger than that distance would not fit in it: the sandbox flies ships the game
-/// never gives the player. Those are shown in the external view, which orbits at a distance
-/// worked out from the ship's own size.
+/// own radius is larger than that distance would not fit in it, as the ships `--ship` and the test
+/// keys give the player that the game never does. Those are shown in the external view, which
+/// orbits at a distance worked out from the ship's own size.
 fn startingView(slot: *const game.create.Slot, mode: camera.CockpitMode) camera.View {
     if (mode != .chase) return .cockpit;
     const behind = camera.Chase.offset(slot.object.type).distance;
@@ -1032,281 +1001,80 @@ fn save(io: Io, gpa: Allocator, path: []const u8, rgba: []const u8, size: [2]u32
     try writer.interface.flush();
 }
 
-/// The keys OpenReliant adds, which the original leaves unbound: F2 and F3 start the sandbox again
-/// in the previous or next ship type, and F4 brings another wing.
-const ship_keys = [_]struct { engine.input.Key, isize }{ .{ .f2, -1 }, .{ .f3, 1 } };
-const wing_key: engine.input.Key = .f4;
-
-/// The sandbox's mission: the objects, the ship types' tables and the models they loaded, and the
-/// cockpit the mission's start loads for the player's ship. Its ships are the player's, at the
-/// origin facing along Z, with its wingmen, the Reliant standing still ahead of it, and a wing of
-/// Coalition fighters flying at it.
-const Sandbox = struct {
+/// The mission being played: the file it starts from, and the mission loaded for play, which
+/// starts again as each attempt ends, with what each start readies (`game.main.startMission`).
+const Play = struct {
     gpa: Allocator,
-    objects: *game.create.Objects,
+    number: u16,
+    /// The mission's file as read, of which each start binds a copy, as the game reads the file
+    /// again for each.
+    file: []const u8,
+    loaded: ?*game.mission.Loaded = null,
+    clock: *game.main.Clock,
     tables: *game.create.Stats,
     types: *game.create.library.TypeCache,
-    random: *engine.libcmt.Rand,
-    player_type: u8 = 0,
-    /// The cockpit's frame model, for a ship the player can fly, which the view ahead from the
-    /// cockpit draws over the world.
-    cockpit: game.main.cockpit.Cockpit = .{},
+    cockpit: *game.main.cockpit.Cockpit,
+    display: *game.hud.State,
+    /// The camera, which shows the player's ship in the view it starts in (`startingView`).
+    view: *camera.Camera,
 
-    /// The Reliant, which the sandbox starts ahead of the player and turned across its way. It
-    /// flies its heading at `crawl_speed`, a tenth of the 100 its type cruises at, which carries it
-    /// slowly across the player's way.
-    const reliant_at: math.Vector = .{ 6000, -9000, 48000 };
-    const crawl_turn: f32 = 1.1;
-    const crawl_speed: i32 = 10;
-    /// The Badanov, the smallest of the Coalition's capital ships, which the sandbox starts beyond
-    /// the wing, crawling alongside the Reliant: turned as it is, flying as fast.
-    const badanov_at: math.Vector = .{ 6000, -9000, 190000 };
-    /// A little field of rocks beyond the Badanov, outside the action's sphere: `field_rows` rows
-    /// of `field_columns`, `field_spacing` apart about `field_centre`, each strayed up to
-    /// `field_stray` along and across and `field_height` up or down.
-    const field_centre: math.Vector = .{ 6000, -9000, 250000 };
-    const field_rows = 3;
-    const field_columns = 4;
-    const field_spacing: f32 = 26000;
-    const field_stray: f32 = 7000;
-    const field_height: f32 = 12000;
-    /// Each rock is the asteroid this many on from the last, so neighbours differ.
-    const field_step = 3;
-    /// A wing: four Sabres, `wing_ahead` in front of the player, beyond the Reliant, and
-    /// `wing_spacing` apart. Their models are drawn once they are within 75000, where a fighter's
-    /// last level of detail ends at the high detail setting.
-    const wing_size = 4;
-    const wing_ahead: f32 = 150000;
-    const wing_spacing: f32 = 3000;
-    /// The player's wingmen, of these types, each standing this far from the player's ship in its
-    /// own frame. They fly each at a Sabre of the wing in turn, not in formation.
-    const wingmen = [_]struct { type: game.gameobj.Type, at: math.Vector }{
-        .{ .type = .grendel, .at = .{ -4000, 0, -3000 } },
-        .{ .type = .wolverine, .at = .{ 4000, 0, -3000 } },
-        .{ .type = .reaper, .at = .{ 0, 1500, -6000 } },
-    };
-    /// The wing's pilot, record 42 of `pilotstats.bin` (`Jackel Plt`), where a mission names each
-    /// ship's own and `create_object` gives a Sabre the sharp pilot of record 66: one of the
-    /// file's weakest, who drops a countermeasure every 300 to 600 ticks while a missile homes
-    /// on it, with no sharp pilot's bonus to draw the missile away, so the player's missiles
-    /// mostly reach it.
-    const wing_pilot = 42;
-
-    fn init(gpa: Allocator, tables: *game.create.Stats, gun_stats: []align(1) const stats.Gun, missile_stats: []align(1) const stats.Missile, pilot_stats: []align(1) const stats.Pilot, random: *engine.libcmt.Rand, types: game.create.library.TypeCache) !Sandbox {
-        const cache = try gpa.create(game.create.library.TypeCache);
-        errdefer gpa.destroy(cache);
-        cache.* = types;
-        const objects = try game.create.Objects.create(gpa, random);
-        objects.gun_stats.load(gun_stats);
-        objects.missile_stats.load(missile_stats);
-        objects.pilots.load(pilot_stats);
-        return .{
-            .gpa = gpa,
-            .objects = objects,
-            .tables = tables,
-            .types = cache,
-            .random = random,
-        };
+    /// Starts the mission, letting go of the one before.
+    fn start(play: *Play, orders: game.aigeneric.Context) !void {
+        play.end();
+        play.loaded = try game.main.startMission(play.gpa, .{
+            .orders = orders,
+            .clock = play.clock,
+            .tables = play.tables,
+            .types = play.types,
+            .cockpit = play.cockpit,
+            .display = play.display,
+        }, try play.gpa.dupe(u8, play.file), play.number);
+        const all = orders.world.objects;
+        _ = play.view.setView(startingView(&all.slots[all.player], play.view.cockpit_mode), all.player, false, true, play.clock.viewTime());
     }
 
-    fn deinit(sandbox: *Sandbox) void {
-        sandbox.objects.destroy();
-        sandbox.types.deinit();
-        sandbox.gpa.destroy(sandbox.types);
-        sandbox.cockpit.deinit();
+    /// Starts the mission again as an attempt ends, the kills kept where the ending keeps them, as
+    /// when the ejected pilot is picked up by a nanny ship (`gameflow.endMission`).
+    fn again(play: *Play, orders: game.aigeneric.Context) !void {
+        game.gameflow.endMission(orders.world.player);
+        try play.start(orders);
     }
 
-    fn player(sandbox: *Sandbox) *game.create.Slot {
-        return &sandbox.objects.slots[sandbox.objects.player];
-    }
-
-    /// Whether the player's ship can cloak: its model's flag.
-    fn canCloak(sandbox: *Sandbox) bool {
-        const loaded = sandbox.player().type orelse return false;
-        return loaded.model.header.flags.cloak;
-    }
-
-    /// Starts the mission again, as the game's does: every slot a stand-in, then the player in a
-    /// ship of `ship_type` on its own controls, the Reliant flying its slow way across, a wing, and
-    /// the player's wingmen flying at it, listed in the player's wing.
-    /// The types no object uses any more are let go. Fails where the game has no model for the
-    /// player's type.
-    fn start(sandbox: *Sandbox, orders: game.aigeneric.Context, ship_type: u8) !void {
-        if (orders.world.hearing) |hearing| game.sound3d.endAll(hearing.sound);
-        orders.world.player.ending = .playing;
-        orders.world.player.showing = .everything;
-        orders.world.player.rescue_odds = sandbox_rescue_odds;
-        // A mission's start puts back the pilot's kills as the last mission the pilot came through
-        // kept them, undoing a failed attempt's.
-        game.winmain.startMission(orders.world.player);
-        if (orders.world.explosions) |explosions| explosions.reset();
-        if (orders.world.shockwaves) |waves| waves.reset();
-        if (orders.world.sparks) |thrown| thrown.reset();
-        if (orders.world.particles) |pool| pool.reset();
-        if (orders.world.smoke) |pools| pools.reset();
-        if (orders.world.gun_particles) |pools| pools.reset();
-        sandbox.objects.missiles.reset(sandbox.objects.gpa);
-        if (orders.world.trails) |trails| trails.reset();
-        if (orders.world.rays) |rays| rays.reset();
-        if (orders.world.tractors) |tractors| tractors.reset();
-        if (orders.world.flash) |lit| lit.* = .{};
-        if (orders.world.display) |display| display.interference = .{};
-        if (orders.world.countermeasures) |dropped| dropped.reset();
-        sandbox.objects.reset(sandbox.random);
-        // The Turret Flak's shell and the debris models, counted as used so the sweep below keeps
-        // them (`guns_load_shell`, `explosions_init`).
-        if (sandbox.objects.bullets.looks) |looks| looks.loadShell(sandbox.objects, sandbox.types.types());
-        if (orders.world.explosions) |explosions| explosions.debris = .load(sandbox.objects, sandbox.types.types());
-        const index = try sandbox.create(@enumFromInt(ship_type), @splat(0));
-        if (sandbox.objects.slots[index].model == null) return error.NoModel;
-        // The engine's sound, which a mission starts as the player's ship launches (`launch_run`).
-        if (orders.world.hearing) |hearing| {
-            const engine_sound = game.sound3d.engineSound(@enumFromInt(ship_type));
-            _ = game.sound3d.play(hearing.sound, hearing.scene(orders.world), null, null, index, engine_sound, 0, .player_engines);
-        }
-        // The order a mission's start gives the player's ship, which its controls fly it by.
-        _ = game.aigeneric.push(orders, index, .player_control, .none) catch |err| {
-            std.log.warn("the player's controls are left out: {s}", .{@errorName(err)});
-        };
-        sandbox.crawl(orders, .reliant, "Reliant", reliant_at);
-        sandbox.crawl(orders, .badanov, "Badanov", badanov_at);
-        sandbox.scatterRocks(orders);
-        const sabres = sandbox.bringWing(orders);
-        sandbox.bringWingmen(orders, index, &sabres);
-        sandbox.types.sweep(&sandbox.objects.types);
-        // Each mission's start makes the cockpit afresh, as an ejection leaves it lit red.
-        try sandbox.cockpit.load(sandbox.types.resources, sandbox.types.textures, @enumFromInt(ship_type));
-        sandbox.player_type = ship_type;
-    }
-
-    /// A capital ship of `ship_type`, `name`d in the warning, at `at`, turned across the player's
-    /// way, crawling along its heading at `crawl_speed`. Left out, with a warning, where it can't
-    /// be made.
-    fn crawl(sandbox: *Sandbox, orders: game.aigeneric.Context, ship_type: game.gameobj.Type, name: []const u8, at: math.Vector) void {
-        const index = sandbox.create(ship_type, at) catch |err| {
-            std.log.warn("the {s} is left out: {s}", .{ name, @errorName(err) });
-            return;
-        };
-        const slot = &sandbox.objects.slots[index];
-        game.objects.setOrientation(&slot.object, &slot.drawn, math.rotation(.y, crawl_turn));
-        // Fly with nothing to fly to holds the heading it starts on, at the speed in its data.
-        if (game.aigeneric.push(orders, index, .fly, .none) catch false) {
-            if (game.aigeneric.current(sandbox.objects, index)) |entry| entry.data.fly = crawl_speed;
+    /// Starts the mission again with the loadout's ship the type `step` on from the player's
+    /// (`test_keys.nextShipType`), passing over the types whose models the game lacks; with none
+    /// to go to, in the ship it was.
+    fn changeShip(play: *Play, orders: game.aigeneric.Context, step: isize) !void {
+        const all = orders.world.objects;
+        const was: usize = all.slots[all.player].object.type.untwinned().number();
+        var candidate = was;
+        while (true) {
+            candidate = test_keys.nextShipType(candidate, step);
+            all.loadout_ships[all.player] = @enumFromInt(candidate);
+            try play.start(orders);
+            if (all.slots[all.player].type != null or candidate == was) return;
+            std.log.warn("ship type {d} is left out: the game has no model for it", .{candidate});
         }
     }
 
-    /// The field of rocks: each of the seven asteroids in turn, turned at random and tumbling
-    /// slowly (Random Spin Slow). The rocks past the last slot are left out.
-    fn scatterRocks(sandbox: *Sandbox, orders: game.aigeneric.Context) void {
-        for (0..field_rows * field_columns) |n| {
-            const at = rockPlace(n, sandbox.random);
-            const index = sandbox.create(.asteroid(n * field_step), at) catch |err| {
-                std.log.warn("the rocks are left out: {s}", .{@errorName(err)});
-                return;
-            };
-            const slot = &sandbox.objects.slots[index];
-            game.objects.setOrientation(&slot.object, &slot.drawn, math.fromAngleVector(sandbox.random.fractionVector(@splat(std.math.tau))));
-            _ = game.aigeneric.push(orders, index, .random_spin_slow, .none) catch {};
-        }
-    }
-
-    /// Where rock `n` of the field stands: its place on the grid, strayed at random.
-    fn rockPlace(n: usize, random: *engine.libcmt.Rand) math.Vector {
-        const column: f32 = @floatFromInt(n % field_columns);
-        const row: f32 = @floatFromInt(n / field_columns);
-        const middle: [2]f32 = .{ @as(f32, field_columns - 1) / 2, @as(f32, field_rows - 1) / 2 };
-        const on_grid: math.Vector = .{ (column - middle[0]) * field_spacing, 0, (row - middle[1]) * field_spacing };
-        return field_centre + on_grid + random.centredVector(.{ 2 * field_stray, 2 * field_height, 2 * field_stray });
-    }
-
-    fn create(sandbox: *Sandbox, ship_type: game.gameobj.Type, at: math.Vector) game.create.Error!u16 {
-        return game.create.createObject(sandbox.objects, sandbox.tables, sandbox.types.types(), null, ship_type, 0, at, sandbox.random);
-    }
-
-    /// A wing of fighters `wing_ahead` in front of the player, side by side and facing it, each
-    /// under a Fight order against the player: their slots, or null for those left out past the
-    /// last slot.
-    fn bringWing(sandbox: *Sandbox, orders: game.aigeneric.Context) [wing_size]?u16 {
-        var brought: [wing_size]?u16 = @splat(null);
-        const ship = &sandbox.player().object;
-        const from = ship.nextPosition();
-        const facing = math.product(ship.root.next_orientation, math.rotation(.y, std.math.pi));
-        for (0..wing_size) |place| {
-            const across = (@as(f32, @floatFromInt(place)) - @as(f32, wing_size - 1) / 2) * wing_spacing;
-            const at = from + math.transform(ship.root.next_orientation, .{ across, 0, wing_ahead });
-            const index = sandbox.create(.sabre, at) catch |err| {
-                std.log.warn("the wing is left out: {s}", .{@errorName(err)});
-                return brought;
-            };
-            brought[place] = index;
-            const slot = &sandbox.objects.slots[index];
-            game.objects.setOrientation(&slot.object, &slot.drawn, facing);
-            game.pilots.setPilot(&slot.object, wing_pilot);
-            _ = game.aigeneric.pushShip(orders, index, .fight, sandbox.objects.player, -1) catch |err| {
-                std.log.warn("a Sabre won't fight: {s}", .{@errorName(err)});
-            };
-        }
-        return brought;
-    }
-
-    /// The player's `wingmen`, around the player's ship in slot `player` and turned as it is, each
-    /// under a Fight order against the next of the `sabres` there are, and listed after the player
-    /// in the player's wing, as a mission lists its flight group (`mission.listPlayerWing`), which
-    /// the mission's start then finishes (`main.startWing`). The wingmen past the last slot are
-    /// left out.
-    fn bringWingmen(sandbox: *Sandbox, orders: game.aigeneric.Context, player_index: u16, sabres: []const ?u16) void {
-        var wing: [1 + wingmen.len]u16 = undefined;
-        wing[0] = player_index;
-        var count: usize = 1;
-        const ship = &sandbox.player().object;
-        const from = ship.nextPosition();
-        const targets = sabres[0 .. std.mem.indexOfScalar(?u16, sabres, null) orelse sabres.len];
-        for (wingmen, 0..) |wingman, place| {
-            const index = sandbox.create(wingman.type, from + math.transform(ship.root.next_orientation, wingman.at)) catch |err| {
-                std.log.warn("the wingmen are left out: {s}", .{@errorName(err)});
-                break;
-            };
-            const slot = &sandbox.objects.slots[index];
-            game.objects.setOrientation(&slot.object, &slot.drawn, ship.root.next_orientation);
-            if (targets.len > 0) {
-                _ = game.aigeneric.pushShip(orders, index, .fight, targets[place % targets.len].?, -1) catch |err| {
-                    std.log.warn("a wingman won't fight: {s}", .{@errorName(err)});
-                };
-            }
-            wing[count] = index;
-            count += 1;
-        }
-        game.mission.listPlayerWing(sandbox.objects, wing[0..count]);
-        game.main.startWing(sandbox.objects);
+    fn end(play: *Play) void {
+        if (play.loaded) |loaded| loaded.destroy();
+        play.loaded = null;
     }
 };
 
-/// The sandbox's odds of how the pilot fares after ejecting: picked up by a nanny ship, by the
-/// enemy, and killed, each as likely, where a mission's start has the pilot always picked up.
-const sandbox_rescue_odds: game.aieject.RescueOdds = .{ .rescued = 1, .captured = 1, .killed = 1 };
-
-/// What a mission's start readies the display with for the player's ship: its devices fitted
-/// (`fitDevices`), its missiles in the missile display once the ships are made (`mission_start`),
-/// and no missile lock (`mission_run`).
-fn readyDisplay(state: *game.hud.State, sandbox: *Sandbox) void {
-    // `hud_init` has the eject marker out.
-    state.ejected = false;
-    game.main.fitDevices(state, @enumFromInt(sandbox.player_type), sandbox.canCloak());
-    state.missiles.build(&sandbox.player().object);
-    state.lock.reset();
+/// The file of mission `number`, as the game reads it (`game.mission.bind.read`): from the game's
+/// `missions` folder, or from `resource.hog`. Mission 0, OpenReliant's own, comes from the copy
+/// `openreliant` carries where the game has none.
+fn missionFile(io: Io, arena: Allocator, directory: Io.Dir, resources: *const game.bigfile.Hog, number: u16) ![]const u8 {
+    var path_buffer: [game.winmain.mission_path_size]u8 = undefined;
+    const path = game.winmain.missionPath(&path_buffer, number, false, false);
+    if (try game.mission.bind.read(io, arena, directory, resources, path)) |file| return file.image;
+    if (number == mission0.number) return @embedFile("mission0.dte");
+    std.debug.print("openreliant: the game has no mission {d}: neither its missions folder nor {s} holds {s}\n", .{ number, game.bigfile.resource_name, std.fs.path.basenameWindows(path) });
+    return error.MissingMission;
 }
 
-/// What a start of the sandbox leaves the player: the display readied for the ship, and the camera
-/// where a start puts it, since a ship of another size wants another view to be seen in.
-fn settleStart(display: *Display, sandbox: *Sandbox, view: *camera.Camera, at: u32) void {
-    readyDisplay(&display.state, sandbox);
-    // The start let go of the types no object is of any more, whose schematics what the target
-    // display last showed may hold.
-    display.state.target_pictures = .{};
-    _ = view.setView(startingView(sandbox.player(), view.cockpit_mode), sandbox.objects.player, false, true, at);
-}
-
-/// What draws the head-up display over the finished scene: `hud_draw`, given the sandbox's game.
+/// What draws the head-up display over the finished scene: `hud_draw`, given the mission's game.
 /// `srcore.render` reaches it where Surrender reaches `hud_draw`, through the overlay it is handed.
 const Display = struct {
     resources: game.hud.Resources,
@@ -1323,8 +1091,10 @@ const Display = struct {
     sight: ?game.hud.Sight = null,
     /// Where the line starts that places the marker for a target out of sight.
     edge_line: game.hud.EdgeLine,
-    /// The sandbox, whose player's ship the display shows.
-    sandbox: *Sandbox,
+    /// The objects, whose player's ship the display shows, and the mission being played, whose
+    /// script has what is ready for JUMP DRIVE; filled in once the mission is ready to start.
+    objects: *game.create.Objects,
+    play: *const Play,
     clock: *const game.main.Clock,
     player: *const engine.input.Player,
     /// The camera, whose shake shakes the power ball too.
@@ -1333,8 +1103,8 @@ const Display = struct {
     random: *engine.libcmt.Rand,
     /// The display's own state, `hud.cpp`'s globals.
     state: game.hud.State = .{},
-    /// What the mission has ready for JUMP DRIVE. The sandbox runs no mission, so nothing is.
-    ready: game.hud.Readiness = .{},
+    /// What the display shows ready for JUMP DRIVE while no mission is loaded: nothing.
+    idle: game.hud.Readiness = .{},
     /// The game's strings, which the views without the instruments are named by.
     strings: *const game.language.Language,
     /// The pause menu, which stands in the display's place while the game is paused, the devices
@@ -1369,13 +1139,12 @@ const Display = struct {
             .settings = display.settings,
             .version = version.string,
         });
-        const sandbox = display.sandbox;
         try game.hud.draw(&display.state, &display.resources, .{
             .gpa = display.gpa,
             .target = display.target,
             .screen = display.screen,
             .sight = display.sight,
-            .all = sandbox.objects,
+            .all = display.objects,
             .player = display.player,
             .clock = display.clock,
             .last_view = display.last_view,
@@ -1385,81 +1154,23 @@ const Display = struct {
             .view = display.view.view,
             .sound = display.settings.sound,
             .random = display.random,
-            .ready = &display.ready,
+            .ready = if (display.play.loaded) |loaded| &loaded.script.variables.ready else &display.idle,
             .edge_line = display.edge_line,
         });
     }
 };
 
-/// Starts the sandbox again as a mission's attempt ends: keeping the kills where its ending keeps
-/// them, as when the ejected pilot is picked up by a nanny ship.
-fn restartSandbox(player: *engine.input.Player, sandbox: *Sandbox, orders: game.aigeneric.Context, display: *Display, view: *camera.Camera, at: u32) !void {
-    game.gameflow.endMission(player);
-    try sandbox.start(orders, sandbox.player_type);
-    settleStart(display, sandbox, view, at);
-}
-
-/// The ship type `step` from `from` that has a model, going round the table.
-fn nextShipType(from: usize, step: isize) usize {
-    const types = game.create.models.ship_types;
-    var at = from;
-    for (types) |_| {
-        at = @intCast(@mod(@as(isize, @intCast(at)) + step, @as(isize, types.len)));
-        if (types[at].model != null) return at;
-    }
-    return from;
-}
-
 test {
     _ = install;
     _ = joysticks;
+    _ = mission0;
     _ = missions;
+    _ = test_keys;
     _ = version;
 }
 
-test nextShipType {
-    // The Predator's neighbours: the Nagi after it, and the last type with a model before it.
-    try std.testing.expectEqual(1, nextShipType(0, 1));
-    const last = nextShipType(0, -1);
-    try std.testing.expect(game.create.models.ship_types[last].model != null);
-    try std.testing.expectEqual(0, nextShipType(last, 1));
-}
-
-test "the sandbox's rocks lie beyond the action's sphere, apart" {
-    var random: engine.libcmt.Rand = .{};
-    var places: [Sandbox.field_rows * Sandbox.field_columns]math.Vector = undefined;
-    for (&places, 0..) |*at, n| at.* = Sandbox.rockPlace(n, &random);
-    const sphere = game.aigeneric.ActionSphere.default.radius;
-    for (places, 0..) |at, n| {
-        try std.testing.expect(math.length(at) > sphere);
-        // No two stand closer than the grid's spacing less both strays, across and along.
-        for (places[n + 1 ..]) |other| {
-            const off = at - other;
-            try std.testing.expect(@max(@abs(off[0]), @abs(off[2])) >= Sandbox.field_spacing - 2 * Sandbox.field_stray);
-        }
-    }
-    // Every one of the seven asteroids is among them.
-    var seen = std.StaticBitSet(7).initEmpty();
-    for (0..places.len) |n| seen.set(game.gameobj.Type.asteroid(n * Sandbox.field_step).number() - game.gameobj.Type.asteroid(0).number());
-    try std.testing.expectEqual(7, seen.count());
-}
-
-test "the sandbox's Reliant flies at a crawl" {
-    // Its type cruises at 100 (`shipstats.bin`, type 0x0C). Fly holds the throttle at the speed in
-    // its data over that, and the flight model settles the nose speed there, so the sandbox's
-    // Reliant makes its 10 a step.
-    const cruise = 100;
-    var flight = game.gameobj.testing.flight;
-    flight.max_speed = cruise;
-    var object = game.gameobj.testing.object();
-    object.throttle = @as(f32, @floatFromInt(Sandbox.crawl_speed)) / cruise;
-    for (0..200) |_| game.motion.Motion.forward.run(&object, &flight, .chase);
-    const crawl: f32 = @floatFromInt(Sandbox.crawl_speed);
-    try std.testing.expectApproxEqAbs(crawl, math.length(game.gameobj.vector(object.velocity)), 0.01);
-}
-
 /// The options `args` play with, for the tests.
-fn play(args: []const [:0]const u8) error{Usage}!Options {
+fn parsed(args: []const [:0]const u8) error{Usage}!Options {
     return switch (Options.parse(args)) {
         .play => |options| options,
         .help, .version, .wrong => error.Usage,
@@ -1467,33 +1178,38 @@ fn play(args: []const [:0]const u8) error{Usage}!Options {
 }
 
 test Options {
-    try std.testing.expectEqualStrings(".", (try play(&.{})).directory);
-    const given = try play(&.{ "game/install", "--ship", "3" });
+    try std.testing.expectEqualStrings(".", (try parsed(&.{})).directory);
+    const given = try parsed(&.{ "game/install", "--ship", "3" });
     try std.testing.expectEqualStrings("game/install", given.directory);
     try std.testing.expectEqual(3, given.ship);
     try std.testing.expectEqual(null, given.cockpit);
-    try std.testing.expectEqual(camera.CockpitSetting.chase, (try play(&.{ "--view", "1" })).cockpit.?);
-    try std.testing.expectError(error.Usage, play(&.{ "--view", "3" }));
-    try std.testing.expectError(error.Usage, play(&.{"--ship"}));
-    try std.testing.expectError(error.Usage, play(&.{ "--ship", "0x0E" }));
-    try std.testing.expectError(error.Usage, play(&.{"--bogus"}));
-    try std.testing.expectEqualStrings("shot.png", (try play(&.{ "--screenshot", "shot.png" })).screenshot.?);
+    try std.testing.expectEqual(camera.CockpitSetting.chase, (try parsed(&.{ "--view", "1" })).cockpit.?);
+    try std.testing.expectError(error.Usage, parsed(&.{ "--view", "3" }));
+    try std.testing.expectError(error.Usage, parsed(&.{"--ship"}));
+    // The mission by its number, mission 0 by default.
+    try std.testing.expectEqual(mission0.number, (try parsed(&.{})).mission);
+    try std.testing.expectEqual(25, (try parsed(&.{ "--mission", "25" })).mission);
+    try std.testing.expectEqual(null, (try parsed(&.{})).ship);
+    try std.testing.expectError(error.Usage, parsed(&.{ "--mission", "x" }));
+    try std.testing.expectError(error.Usage, parsed(&.{ "--ship", "0x0E" }));
+    try std.testing.expectError(error.Usage, parsed(&.{"--bogus"}));
+    try std.testing.expectEqualStrings("shot.png", (try parsed(&.{ "--screenshot", "shot.png" })).screenshot.?);
     // Medium, the game's own default, unless told otherwise.
-    try std.testing.expectEqual(.medium, (try play(&.{})).difficulty);
-    try std.testing.expectEqual(.hard, (try play(&.{ "--difficulty", "hard" })).difficulty);
-    try std.testing.expectEqual(.medium, (try play(&.{ "--original", "--difficulty", "medium" })).difficulty);
-    try std.testing.expectError(error.Usage, play(&.{ "--difficulty", "ace" }));
+    try std.testing.expectEqual(.medium, (try parsed(&.{})).difficulty);
+    try std.testing.expectEqual(.hard, (try parsed(&.{ "--difficulty", "hard" })).difficulty);
+    try std.testing.expectEqual(.medium, (try parsed(&.{ "--original", "--difficulty", "medium" })).difficulty);
+    try std.testing.expectError(error.Usage, parsed(&.{ "--difficulty", "ace" }));
 
     // The improvements on by default; the original's look, and single settings after it.
-    const plain = try play(&.{});
+    const plain = try parsed(&.{});
     try std.testing.expectEqual(platform.gpu.Settings{}, plain.settings);
     try std.testing.expectEqual(null, plain.fps);
-    const retro = try play(&.{ "--original", "--msaa", "8", "--no-vsync", "--fps", "0" });
+    const retro = try parsed(&.{ "--original", "--msaa", "8", "--no-vsync", "--fps", "0" });
     try std.testing.expect(retro.settings.sixteen_bit);
     try std.testing.expectEqual(.off, retro.settings.shadows);
-    try std.testing.expectEqual(.low, (try play(&.{ "--shadows", "low" })).settings.shadows);
-    try std.testing.expect(!(try play(&.{"--no-cockpit-shadows"})).settings.cockpit_shadows);
-    try std.testing.expect(!(try play(&.{"--gamma-space"})).settings.linear_light);
+    try std.testing.expectEqual(.low, (try parsed(&.{ "--shadows", "low" })).settings.shadows);
+    try std.testing.expect(!(try parsed(&.{"--no-cockpit-shadows"})).settings.cockpit_shadows);
+    try std.testing.expect(!(try parsed(&.{"--gamma-space"})).settings.linear_light);
     try std.testing.expect(!retro.settings.linear_light);
     try std.testing.expectEqual(.original, retro.settings.filter);
     try std.testing.expectEqual(8, retro.settings.samples);
@@ -1524,37 +1240,37 @@ test Options {
     try std.testing.expectEqual(.original, retro.detail_reach);
     try std.testing.expectEqual(.roomy, plain.draw_budget);
     try std.testing.expectEqual(.original, retro.draw_budget);
-    try std.testing.expect(!(try play(&.{"--no-smooth-motion"})).smooth_motion);
-    try std.testing.expectEqual(.latest_two, (try play(&.{"--few-shot-lights"})).shot_lights);
+    try std.testing.expect(!(try parsed(&.{"--no-smooth-motion"})).smooth_motion);
+    try std.testing.expectEqual(.latest_two, (try parsed(&.{"--few-shot-lights"})).shot_lights);
     // Sound is on, with the first mission's music, unless told otherwise.
-    try std.testing.expect((try play(&.{})).sound.?.player == .openal);
-    try std.testing.expectEqual(null, (try play(&.{"--no-sound"})).sound);
-    try std.testing.expectEqual(null, (try play(&.{ "--no-sound", "--hrtf" })).sound);
+    try std.testing.expect((try parsed(&.{})).sound.?.player == .openal);
+    try std.testing.expectEqual(null, (try parsed(&.{"--no-sound"})).sound);
+    try std.testing.expectEqual(null, (try parsed(&.{ "--no-sound", "--hrtf" })).sound);
     // The original's sound is the plain mixer with no master bus; OpenAL's settings bring OpenAL
     // back.
-    const original_sound = (try play(&.{"--original"})).sound.?;
+    const original_sound = (try parsed(&.{"--original"})).sound.?;
     try std.testing.expect(original_sound.player == .software and original_sound.master == null);
-    const headphones = (try play(&.{ "--original", "--hrtf", "--no-reverb" })).sound.?;
+    const headphones = (try parsed(&.{ "--original", "--hrtf", "--no-reverb" })).sound.?;
     try std.testing.expect(headphones.player.openal.hrtf == .on and !headphones.player.openal.reverb);
-    try std.testing.expectEqual(.auto, (try play(&.{})).sound.?.player.openal.hrtf);
-    try std.testing.expectEqual(.off, (try play(&.{"--no-hrtf"})).sound.?.player.openal.hrtf);
-    const uncompressed = (try play(&.{"--no-compressor"})).sound.?.master.?;
+    try std.testing.expectEqual(.auto, (try parsed(&.{})).sound.?.player.openal.hrtf);
+    try std.testing.expectEqual(.off, (try parsed(&.{"--no-hrtf"})).sound.?.player.openal.hrtf);
+    const uncompressed = (try parsed(&.{"--no-compressor"})).sound.?.master.?;
     try std.testing.expectEqual(1, uncompressed.ratio);
-    try std.testing.expectEqualStrings(Options.default_music, (try play(&.{})).music.?);
-    try std.testing.expectEqualStrings("New_Sim01.wav", (try play(&.{ "--music", "New_Sim01.wav" })).music.?);
-    try std.testing.expectEqual(null, (try play(&.{ "--music", "none" })).music);
-    try std.testing.expect((try play(&.{})).smooth_motion);
-    try std.testing.expectEqual([2]u32{ 3840, 2160 }, (try play(&.{ "--size", "3840x2160" })).settings.size.?);
+    try std.testing.expectEqualStrings(Options.default_music, (try parsed(&.{})).music.?);
+    try std.testing.expectEqualStrings("New_Sim01.wav", (try parsed(&.{ "--music", "New_Sim01.wav" })).music.?);
+    try std.testing.expectEqual(null, (try parsed(&.{ "--music", "none" })).music);
+    try std.testing.expect((try parsed(&.{})).smooth_motion);
+    try std.testing.expectEqual([2]u32{ 3840, 2160 }, (try parsed(&.{ "--size", "3840x2160" })).settings.size.?);
     for ([_][:0]const u8{ "3840", "0x100", "100x", "1x2x3", "99999x100" }) |bad| {
-        try std.testing.expectError(error.Usage, play(&.{ "--size", bad }));
+        try std.testing.expectError(error.Usage, parsed(&.{ "--size", bad }));
     }
-    const chosen = try play(&.{ "--filter", "trilinear", "--16-bit", "--software", "--fullscreen" });
+    const chosen = try parsed(&.{ "--filter", "trilinear", "--16-bit", "--software", "--fullscreen" });
     try std.testing.expectEqual(.trilinear, chosen.settings.filter);
     try std.testing.expect(chosen.settings.sixteen_bit and chosen.software and chosen.fullscreen);
-    try std.testing.expectError(error.Usage, play(&.{ "--msaa", "3" }));
-    try std.testing.expectError(error.Usage, play(&.{ "--filter", "sharp" }));
-    try std.testing.expectError(error.Usage, play(&.{ "--fps", "-1" }));
-    try std.testing.expectError(error.Usage, play(&.{ "--fps", "nan" }));
+    try std.testing.expectError(error.Usage, parsed(&.{ "--msaa", "3" }));
+    try std.testing.expectError(error.Usage, parsed(&.{ "--filter", "sharp" }));
+    try std.testing.expectError(error.Usage, parsed(&.{ "--fps", "-1" }));
+    try std.testing.expectError(error.Usage, parsed(&.{ "--fps", "nan" }));
 }
 
 test "Options asks for help or the version, and says what is wrong" {

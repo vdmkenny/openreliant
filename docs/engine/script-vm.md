@@ -114,6 +114,29 @@ A command pops as many arguments as the catalogue gives it, whatever the script 
 801's script calls `StartDirectorCam` with four where it takes five, so the command takes the
 caller's block end for its first, and the part's `return` goes astray.
 
+Before each call, `command` sets `vm_command_flag` (`0x00537584`) to bit 0 of the command's word in
+section 24, inverted ([`.DTE` missions](../formats/dte.md)).
+
+Many commands act on a ship, a flight group or a squad, which their first argument names by its
+record's address. They hand `for_each_ship` (`0x0045D460`) a routine of their own for one ship, with
+their arguments after the first, and it walks the entity (`0x0045D480`):
+
+- A ship runs the routine once.
+- A flight group runs it for each of its ships, in the mission's order (`flight_group_ships`),
+  passing over the players' ships while `vm_command_flag` is set.
+- A squad runs it for each of its members in turn, from its first in `squad_members`, until a record
+  of another squad: a member that is a ship for the ship, with the component the member names
+  tagged on the first argument (`vm_tag_component`) and untagged after (`0x0045D8E0`); a flight
+  group for each of its ships, as above; and a squad for each of its own, a squad down.
+
+Before the routine runs for a ship, its object's `+0x698` becomes a reference (`dte.Reference`) to
+the first ship the walk ran for, none for the first (`0x0045D720`). **Unknown:** what reads it.
+
+`SetAI` numbers the orders it gives from 0 as it walks (`0x0040CBC0`, `0x0040CBE0`): each order
+pushed takes the next number (`0x005185A8`) while the byte at `0x005185B1` is set, and 0 otherwise.
+The escort, the formations, the jumps, Launch and Warp Out read the number, a ship's place among
+its group's.
+
 ## The clock and timers
 
 `vm_clock` (`0x538C9C`) counts the seconds of the mission: `vm_clock_start` (`0x00457C10`) zeroes it
@@ -207,9 +230,13 @@ matcher never compares it. The catalogue is also generated into
 ## In OpenReliant
 
 [`vm/machine.zig`](../../src/engine/vm/machine.zig) runs the VM: the threads, the interpreter, the
-clock, the timers, and the commands that lie beside the interpreter (`CreateTimer`, `DestroyTimer`,
-`Wait`, `InterruptTriggerCode` and `KillAllScriptExecutionExecptMe`). A command not ported yet does
-nothing and gives 1, which lets the thread run on, and is logged the first time it runs
+clock, the timers, `for_each_ship`, and the commands that lie beside the interpreter
+(`CreateTimer`, `DestroyTimer`, `Wait`, `InterruptTriggerCode` and
+`KillAllScriptExecutionExecptMe`). [`game/executor.zig`](../../src/engine/game/executor.zig) has
+the commands that act on the game: `CreateFlightGroup` ([Missions](missions.md#the-missions-ships)),
+`SetAI`, `Fly` and `SetRescueProbabilities`. They act on it through the world the mission's start
+and its frame give the machine, which the game reaches through its globals. A command not ported
+yet does nothing and gives 1, which lets the thread run on, and is logged the first time it runs
 ([#36](https://github.com/vdmkenny/openreliant/issues/36),
 [#281](https://github.com/vdmkenny/openreliant/issues/281)).
 
@@ -226,7 +253,9 @@ integer division by zero, a stack that runs past its 32 places or below its firs
 handler, an instruction or a record past the image, an argument read with no frame, a store with no
 target, a local past the fifth, and squads that hold one another round in a circle. The entries of a
 part table past the mission's parts have no block, where the game leaves them as `malloc` gave them.
+`for_each_ship` stops at a squad that holds itself round, which the game walks for ever, and passes
+over a member no record stands for, and a ship past the last object's slot.
 
 Not ported: the script debugger, the table of curve weights `mission_script_start` fills
-(`0x00456F00`), and the objects it creates for the ships the mission launches
-([#279](https://github.com/vdmkenny/openreliant/issues/279)).
+(`0x00456F00`), and the objects it creates for the ships the mission launches, with the launches
+([#280](https://github.com/vdmkenny/openreliant/issues/280)).

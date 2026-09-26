@@ -1864,8 +1864,9 @@ pub const State = struct {
     }
 };
 
-/// What the mission has ready for JUMP DRIVE.
-pub const Readiness = struct {
+/// What the mission has ready for JUMP DRIVE: the first two of the game's variables a script sets
+/// (`vm.Variables`).
+pub const Readiness = extern struct {
     jump: Ready = .no,
     warp: Ready = .no,
 };

@@ -36,8 +36,9 @@ pub const File = struct {
 /// directory `dir`. The loose file comes first, where there is one (`file_exists`,
 /// `0x004AD6E0`), found whatever the case of its names, as Windows finds it, and read as it is,
 /// no further than `loose_limit`; then the member of `resources` it names (`hog_load`),
-/// expanded where RefPack packed it. Null where there is neither, on which the mission's start
-/// stops the game: "The mission number is invalid".
+/// expanded where RefPack packed it. Null where there is neither, on which the archive's reader
+/// reports the member missing and the mission's start stops the game: "The mission number is
+/// invalid". OpenReliant leaves saying so to the caller.
 pub fn read(io: Io, gpa: Allocator, dir: Io.Dir, resources: *const bigfile.Hog, path: []const u8) !?File {
     if (try files.readFile(io, gpa, dir, path, .limited(files.max_file_size))) |bytes| {
         if (bytes.len <= loose_limit) return .{ .image = bytes, .source = .loose };
@@ -46,11 +47,8 @@ pub fn read(io: Io, gpa: Allocator, dir: Io.Dir, resources: *const bigfile.Hog, 
         defer gpa.free(bytes);
         return .{ .image = try gpa.dupe(u8, bytes[0..loose_limit]), .source = .loose };
     }
-    const bytes = resources.readFile(gpa, path) catch |err| switch (err) {
-        error.FileMissing => return null,
-        else => |other| return other,
-    };
-    return .{ .image = bytes, .source = .archive };
+    if (!resources.has(path)) return null;
+    return .{ .image = try resources.readFile(gpa, path), .source = .archive };
 }
 
 /// A mission bound for play: its image, from which its records are read and into which the engine
@@ -366,4 +364,6 @@ test read {
     defer gpa.free(two.image);
     try std.testing.expectEqualStrings("archive two", two.image);
     try std.testing.expectEqual(.archive, two.source);
+    // A mission in neither is none.
+    try std.testing.expectEqual(null, try read(io, gpa, tmp.dir, &resources, ".\\missions\\mission3.dte"));
 }

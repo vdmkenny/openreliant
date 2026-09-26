@@ -16,15 +16,16 @@ OpenReliant improves on the original's look and sound. `--original` turns the im
 |---|---|
 | `--original` | The original's look and sound: 16-bit colour, one sample a pixel, bilinear filtering, lighting each vertex, light worked out on encoded colours, no shadows, motion that moves on with the game's ticks, lights from the latest shots only, muzzle flashes that light nothing and none from the turrets, the force feedback's own effects only, a blow shaking the camera only while the controller rumbles, an explosion's debris lit by every light, its fireballs, rings, particles and burning bits as few, plain and brief as the original's, a damaged ship's smoke as even as the original's, the shields' bubbles as coarse as the original's, the sun and its lens flares from their small textures and the sun's glow going out at once behind what hides it, the levels of detail changing as near as the original's, as little drawn a frame as the original allows, the marker for a target out of sight placed as the original misplaces it, a missile's sound left where it was launched, and the sound mixed plainly in stereo |
 
-## The sandbox
+## The mission
 
 | Option | Description |
 |---|---|
-| `--ship <type>` | The ship type to fly, by its number in `shipstats.bin`; 0, the Predator, by default |
+| `--mission <number>` | The mission to play, by the number the game names its file by, `mission<number>.dte`, from the game's `missions` folder or `resource.hog`; 0 by default, OpenReliant's own sandbox, which `openreliant` carries where the game has no mission 0 |
+| `--ship <type>` | The ship type to fly, by its number in `shipstats.bin`, in place of the loadout screen's choice, with its default missiles; the mission's own by default, the Predator in mission 0 |
 | `--view <0\|1\|2>` | The view it starts in, as the game's settings keep it: 0 the cockpit; 1 the chase view; 2 no cockpit. The settings' own by default, which the pause menu's video screen changes, or 0 without them |
 | `--difficulty <easy\|medium\|hard>` | The game's difficulty: how hard hits land on your ship, and shots on the enemy; medium by default, as in the game |
 | `--music <file>` | The piece from the game's music folder it plays, or none; `New_Mission01.wav` by default |
-| `--no-pause-menu` | Start flying immediately, where the sandbox otherwise starts in the game's pause menu |
+| `--no-pause-menu` | Start flying immediately, where the mission otherwise starts in the game's pause menu |
 
 ## Display
 
@@ -97,7 +98,7 @@ The flight keys are the game's own, as `starlancer.ini` binds them. OpenReliant 
 
 | Key | Action |
 |---|---|
-| F2, F3 | Start again in the previous or next ship type |
+| F2, F3 | Start the mission again in the previous or next ship type |
 | F4 | Bring in another wing |
 | Alt+Enter | Switch between windowed and fullscreen mode |
 | Escape | Open the pause menu, whose LEAVE MISSION quits and RESTART restarts |

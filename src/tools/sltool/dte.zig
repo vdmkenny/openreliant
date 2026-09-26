@@ -92,7 +92,7 @@ fn info(ctx: Context, mission: dte.Mission) !void {
         (try mission.globals()).len,
         mission.entry(.strings).count,
         mission.stringPoolEnd() -| mission.entry(.strings).offset,
-        mission.entry(.script).count,
+        (try mission.script()).len,
     });
     if (player) |name| try ctx.stdout.print("player:    {s}\n", .{name});
 }
@@ -114,17 +114,21 @@ fn sections(ctx: Context, mission: dte.Mission) !void {
 }
 
 fn ships(ctx: Context, mission: dte.Mission) !void {
-    try ctx.stdout.writeAll("index  object  group  side  kind  name                           position                                  yaw  pitch  roll\n");
+    try ctx.stdout.writeAll("index  object  group  pilot  kind  name                           position                                  yaw  pitch  roll\n");
     for (try mission.ships(), 0..) |ship, i| {
         var group: [4]u8 = undefined;
-        try ctx.stdout.print("{d:>5}  {d:>6}  {s:>5}  {d:>4}  {d:>4}  {s:<30} ({d:>12.0}, {d:>12.0}, {d:>12.0})  {d:>4}  {d:>5}  {d:>4}{s}\n", .{
+        var pilot: [4]u8 = undefined;
+        try ctx.stdout.print("{d:>5}  {d:>6}  {s:>5}  {s:>5}  {d:>4}  {s:<30} ({d:>12.0}, {d:>12.0}, {d:>12.0})  {d:>4}  {d:>5}  {d:>4}{s}\n", .{
             i,
             ship.object_id,
             if (ship.flightGroup()) |in_group|
                 std.fmt.bufPrint(&group, "{d}", .{in_group}) catch "?"
             else
                 "-",
-            ship.iff,
+            if (ship.pilotRecord()) |flown_by|
+                std.fmt.bufPrint(&pilot, "{d}", .{flown_by}) catch "?"
+            else
+                "-",
             ship.kind,
             mission.name(ship.name),
             ship.position[0],

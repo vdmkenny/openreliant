@@ -97,6 +97,24 @@ pub fn build(b: *std.Build) void {
     openreliant.root_module.addOptions("build_options", build_options);
     b.installArtifact(openreliant);
 
+    // Mission 0, OpenReliant's own: the sandbox as a standard mission file, which a tool built for
+    // the host writes (`src/openreliant/mission0.zig`). The game plays it as its default mission,
+    // from the copy it carries, and the build installs it too, for `sltool` and the original.
+    const mission0 = b.addExecutable(.{
+        .name = "mission0",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/openreliant/mission0.zig"),
+            .target = b.graph.host,
+            .imports = &.{.{ .name = "openreliant", .module = b.createModule(.{
+                .root_source_file = b.path("src/root.zig"),
+                .target = b.graph.host,
+            }) }},
+        }),
+    });
+    const mission0_file = b.addRunArtifact(mission0).addOutputFileArg("mission0.dte");
+    openreliant.root_module.addAnonymousImport("mission0.dte", .{ .root_source_file = mission0_file });
+    b.getInstallStep().dependOn(&b.addInstallFile(mission0_file, "missions/mission0.dte").step);
+
     const play_step = b.step("play", "Run the game");
     const play_cmd = b.addRunArtifact(openreliant);
     play_step.dependOn(&play_cmd.step);

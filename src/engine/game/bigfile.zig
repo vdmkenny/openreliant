@@ -33,6 +33,12 @@ pub const Hog = struct {
         archive.archive.close(gpa);
     }
 
+    /// Whether the archive holds the member `name` names, as `readFile` looks it up.
+    pub fn has(archive: Hog, name: []const u8) bool {
+        var buffer: [128]u8 = undefined;
+        return archive.archive.find(memberName(&buffer, name)) != null;
+    }
+
     /// The member `name` names, expanded when RefPack packed it (`hog_read_file`, `0x004C7F60`).
     /// The game looks it up by `memberName`, ignoring case (`hog_seek`, `0x004C8370`), and takes
     /// it as packed when it starts `10 FB`.

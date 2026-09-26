@@ -68,9 +68,13 @@ directory's 128 slots before the first section, at `0x400`, the binder reads the
 holds the file's size in most missions and is unused in the rest, and slots 28 on are unused in
 all of them. Section 24, where a mission has it, holds one
 entry per command of the [catalogue](#commands): `command` passes bit 0 of the entry, inverted, to
-the engine before each call. **Unknown:** what the flags mean; their values are cumulative masks
-such as 1, 3 and 7. In every mission `script_flags` holds twice
-the count of section 6: one entry per script byte.
+the engine before each call, and with the bit clear `for_each_ship` passes over the players' ships
+in a flight group or a squad ([Script VM](../engine/script-vm.md)). In the 36 missions of the
+template each entry has a bit for each of the command's parameters, save the entries of
+`ClearAI`, `SetPatrolRoute`, `SetTriggerState`, `SetAnyTriggerState`, `MovingShipFollowCurve` and
+`MovingShipBackupCurve`, which are 0. The other 8 missions leave the section empty, which clears
+the bit for every command. In every mission `script_flags` holds twice the count of section 6: one
+entry per script byte.
 
 ## OpenReliant's mission name
 
@@ -108,13 +112,17 @@ Stride `0x4C`, one per placed object, nav points included.
 | `0x04` | u16 | Name, as a string pool offset |
 | `0x08` | f32 x3 | Position, copied from `0x1C` when the mission loads |
 | `0x14` | u8 | Flight group, or `0xFF` for none |
-| `0x15` | u8 | Pilot: the record of `pilotstats.bin` the ship gets. 255 marks the player's own record |
+| `0x15` | u8 | Pilot: the record of `pilotstats.bin` that flies the ship, or `0xFF` for none, as the player's own record, the nav points and the planets have |
 | `0x17` | u8 | Flags, the engine's own: bit 0 marks the ship destroyed. Zero in the files |
-| `0x18` | u16 | Role. Ships stay below `0x100`; nav points and markers use 999 and `0x3E3` to `0x3E8`, waypoints `0x3E5` |
+| `0x18` | u16 | Kind: the ship's type below `0x100`; nav points and markers use 999 and `0x3E3` to `0x3E8`, waypoints `0x3E5` |
 | `0x1B` | u8 | Set for a waypoint once binding the mission has listed it |
 | `0x1C` | f32 x3 | Position as authored |
+| `0x28` | u16 | The kind of the ship it launches from, the first of the mission's ships of that kind |
+| `0x2B` | u8 | The gate of that ship it launches through, or `0xFF` for a ship that does not launch |
 | `0x2E`, `0x3A`, `0x4A` | i16 | Yaw, pitch, roll, in whole degrees |
 | `0x30` | u32 | The ship's intact components, a bit each |
+| `0x34` | u16 | The formation point Formation Regroup flies the ship to, or `0xFFFF` for none |
+| `0x3D` | u8 | The loadout tier its missile racks are fitted by (`create.settledTier`): 0 or 255, as most records hold, asks for the campaign's |
 
 When the mission's script starts, the engine clears the flags at `0x17` and sets every bit at
 `0x30`. Destroying component `n` of the ship clears bit `n & 31`, and destroying the ship sets bit 0
@@ -131,6 +139,7 @@ Stride `0x14`.
 | Offset | Type | Field |
 |---|---|---|
 | `0x00` | u16 | Object ID |
+| `0x04` | u16 | Name, as a string pool offset, such as `(FG)Reliant` |
 | `0x08` | u8 | The wing the mission lists the group's ships in: 0 the player's, 1 and 2 two more, `0xFF` none |
 | `0x09` | u8 | How many of the mission's ships are in the group |
 | `0x0C` | u32 | Where the group's first ship stands in the list of the groups' ships, or -1 |
@@ -504,6 +513,11 @@ and 11 holds one record in every mission. Section 20's is not known, and no miss
 `sltool dte check <mission>` writes a mission again and checks what comes back. The 36 missions of
 the template, written again from their sections' whole rooms, stale bytes and all, come back byte for
 byte. Every mission, written again from its records alone, reads back the same records.
+
+A mission of OpenReliant's making holds what the template's missions hold: its section 24 is theirs
+(`write.template.command_flags`), and its records carry the values most of theirs carry where their
+fields are not known. Mission 0, the sandbox, is written so by the build
+([`mission0.zig`](../../src/openreliant/mission0.zig)).
 
 ### Writing the script
 

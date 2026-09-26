@@ -3,11 +3,11 @@
 //! the two lie after `language.cpp`'s code, where `main.cpp`'s begins; by what they do they are
 //! this file's.
 //!
-//! Ported so far: the clocks and the pacing, how `mission_frame` frames the objects and puts the
-//! scene together and draws it, the damaged ships' smoke (`smoke`), what the mission's start
-//! (`0x004934F0`) fits the player's ship with, the armour's conditions (`0x00492370`), and the
-//! pause (`game_pause`). Not yet: the rest of the effects and of what it adds to the scene, and
-//! `mission_paused_frame`, which `openreliant`'s loop stands in for.
+//! Ported so far: the clocks and the pacing, the mission's start (`startMission`), how
+//! `mission_frame` runs the mission's script, frames the objects, reads the controls, moves the
+//! camera, plays the frame's sound and puts the scene together and draws it, the damaged ships'
+//! smoke (`smoke`), the armour's conditions (`0x00492370`), the pause (`game_pause`) and the paused
+//! frame (`pausedFrame`). Not yet: the rest of the effects and of what it adds to the scene.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -50,6 +50,8 @@ const nebula = @import("nebula.zig");
 const objects = @import("objects.zig");
 const srofiles = @import("srofiles.zig");
 const xtrabits = @import("xtrabits.zig");
+const winmain = @import("winmain.zig");
+const Loaded = @import("mission.zig").Loaded;
 
 pub const smoke = @import("main/smoke.zig");
 
@@ -330,6 +332,106 @@ pub fn pause(pausing: Pausing, on: bool) !void {
     }
 }
 
+/// `mission_paused_frame` (`0x00491FC0`)'s work before the frame is drawn, each frame while the
+/// game is paused: the keyboard and the joystick read, which lets go of the keys that are up, and
+/// the frame's sounds played and placed, the music playing on (`hog_snd.Sound.frame`), heard from
+/// `hearing` in `world`. OpenReliant's: the controller stops rumbling. The pause menu reads the
+/// pointer as it is drawn over the scene as it stood (`menu_mouse_update`), and its choice ends the
+/// pause once the frame is drawn.
+///
+/// Not ported: the paused clock (`paused_clock`), the radar's backing's flag, and a multiplayer
+/// game's messages, its chat line and the players it drops.
+pub fn pausedFrame(devices: *input.Devices, hearing: hog_snd.Hearing, world: gameobj.World) void {
+    devices.read();
+    if (hearing.sound.stdsmp) |bank| hearing.sound.frame(bank, hearing.scene(world));
+    devices.joystick.rumble(.{});
+}
+
+/// What the frame's controls, its camera and its sound run with (`controlsFrame`).
+pub const Controls = struct {
+    /// The world, its clock, and the devices the controls read.
+    orders: aigeneric.Context,
+    devices: *input.Devices,
+    camera: *camera.Camera,
+    display: *hud.State,
+    /// The scene as last drawn, which the targeting keys find the object under the reticle by, and
+    /// the screen's size in pixels.
+    sight: ?hud.Sight,
+    screen: [2]u32,
+    /// Last frame's view (`camera_view_last`).
+    last_view: camera.View,
+    /// The cockpit's model, where the player's ship has one, which the camera's frame moves.
+    cockpit: ?*cockpit.Cockpit.Shown,
+    forces: *input.force.Forces,
+    random: *libcmt.Rand,
+    /// Whether what moves is drawn between the game's ticks (`objects.pastTick`).
+    smooth_motion: bool,
+};
+
+/// `mission_frame`'s work for the controls, the camera and the sound, once a frame over the ticks
+/// it spans: `frame_controls` (the camera's keys, then the targeting keys, `hud.targetKeys`, then
+/// its own, `input.frameKeys`); the camera's frame, of the view's own object, which the ejection's
+/// views show, or else the player's ship, the cockpit's model moved by the ship's rates of turn
+/// over its full ones and its speed over its cruise speed; the player's ship left undrawn from its
+/// cockpit, as `camera_set_view` sees to; and the frame's sound, heard from where the camera now is:
+/// the fades `tick_timer` steps, the music waiting its turn, the positional sounds gathered, and
+/// the 3D sounds placed again. OpenReliant's: the effects playing turn the controller's motors
+/// (`input.force`).
+pub fn controlsFrame(controls: Controls) void {
+    const world = controls.orders.world;
+    const clock = controls.orders.clock;
+    const all = world.objects;
+    const view = controls.camera;
+    const devices = controls.devices;
+    const ticks = clock.frameTicks();
+    const at = clock.viewTime();
+    const slot = &all.slots[all.player];
+    view.frameControls(devices, all.player, ticks, at);
+    hud.targetKeys(controls.display, .{
+        .devices = devices,
+        .player = world.player,
+        .all = all,
+        .sight = controls.sight,
+        .last_view = controls.last_view,
+        .scale = hud.scaleFor(controls.screen),
+        .multiplayer = false,
+        .world = world,
+    });
+    input.frameKeys(.{
+        .display = controls.display,
+        .player = world.player,
+        .devices = devices,
+        .slot = slot,
+        .view = view.view,
+        .game_ticks = clock.game_ticks,
+        .multiplayer = false,
+        .world = world,
+    });
+    const cockpit_input: ?camera.Cockpit.Input = if (controls.cockpit) |shown| moved: {
+        const live = &slot.object;
+        const flight = slot.flight orelse break :moved null;
+        const rates: [3]f32 = .{
+            live.pitch_rate / flight.pitch_rate,
+            live.yaw_rate / flight.yaw_rate,
+            live.roll_rate / flight.roll_rate,
+        };
+        const speed = live.speed / ai.cruiseSpeed(live, flight, view.view);
+        break :moved cockpit.input(&shown.model, shown.source, rates, speed);
+    } else null;
+    const subject = camera.Subject.of(slot);
+    const seen = if (view.object) |object| camera.Subject.of(&all.slots[object]) else subject;
+    const marker = if (world.explosions) |explosions| if (explosions.marker) |left| left.position else null else null;
+    if (view.frame(.{ .object = seen, .player = subject, .ticks = ticks, .now = at, .ahead = objects.pastTick(clock, controls.smooth_motion), .marker = marker, .cockpit = cockpit_input, .random = controls.random, .forces = controls.forces })) |next| {
+        _ = view.setView(next, all.player, false, true, at);
+    }
+    slot.object.flags.hidden = view.inside(all.player);
+    if (world.hearing) |hearing| {
+        hearing.sound.timerTick(clock.game_ticks);
+        if (hearing.sound.stdsmp) |bank| hearing.sound.frame(bank, hearing.scene(world));
+    }
+    devices.joystick.rumble(controls.forces.motors(clock.frame_start));
+}
+
 /// `mission_frame` (`0x004924B0`), as far as the objects go: the player's ship uncloaked where
 /// the display ran the cloak's charge dry last frame (`hud.State.uncloakSpent`), then every
 /// object's orders, which fly the ships and read the player's controls, then the frames they are
@@ -342,12 +444,27 @@ pub fn pause(pausing: Pausing, on: bool) !void {
 /// controller (`input.force.Forces.pushFrame`). A mission and the sandbox alike run this once a
 /// frame, before the camera's own frame and anything drawn.
 ///
-/// Whether the mission is over, as the camera has it (`missionOver`).
+/// Before the orders, in a frame that runs ticks while the mission plays on and its scene isn't
+/// the landing's, the mission's script (`loaded`) runs its frame's work (`mission.Loaded.process`),
+/// its clock ticking first for the seconds past (`mission.Loaded.tickClock`).
 ///
-/// Not ported: the rest of the frame's work, which is the mission's events and its scripts
-/// ([#30](https://github.com/vdmkenny/openreliant/issues/30)).
-pub fn missionFrame(orders: aigeneric.Context, timing: objects.Timing) bool {
+/// Whether the mission is over: as the camera has it (`missionOver`), which sets the script's
+/// `mission_over`, or as the script has it, which ends the mission before the frame's work.
+///
+/// Not ported: the rest of the frame's work, which is the mission's events
+/// ([#37](https://github.com/vdmkenny/openreliant/issues/37)).
+pub fn missionFrame(orders: aigeneric.Context, timing: objects.Timing, loaded: ?*Loaded) bool {
     const over = missionOver(orders.world);
+    const player = orders.world.player;
+    if (loaded) |playing| {
+        const variables = &playing.script.variables;
+        if (over) variables.mission_over = 1;
+        if (variables.mission_over != 0) return true;
+        if (orders.clock.frame_duration != 0 and player.ending == .playing and player.showing != ._unknown_3) {
+            playing.tickClock(orders.clock.game_ticks);
+            playing.process(orders);
+        }
+    }
     if (orders.world.display) |display| display.uncloakSpent(orders.world);
     aigeneric.ordersUpdate(orders);
     frameObjects(orders.world.objects, timing, orders.clock.frame_start);
@@ -1105,8 +1222,9 @@ pub const PlayerShip = struct {
 
 /// The twelve ships the player can fly, by ship type.
 ///
-/// **Unverified:** the start also loads `kamg_frm.shp` for any ship when the word at `0x00562DC8`,
-/// which looks like the mission's number, is 25 and `0x00587CDC` is clear.
+/// In mission 25's first part (`mission_number`, `mission25_second_part`), the start loads the
+/// Kamov's cockpit, `kamg_frm.shp`, whatever the ship, which OpenReliant does not yet
+/// ([#301](https://github.com/vdmkenny/openreliant/issues/301)).
 pub const player_ships = [_]PlayerShip{
     .{ .cockpit = "preg_frm.shp", .wire_frame = 0x116, .wing_icon = 0xFC, .blind_fire = true },
     .{ .cockpit = "nagg_frm.shp", .wire_frame = 0x10E, .wing_icon = 0xFA, .spectral_shields = true },
@@ -1161,6 +1279,117 @@ test startWing {
     try std.testing.expectEqual(0, all.slots[capital].object.wing_icon);
 }
 
+/// What a mission's start readies the mission in, and starts it with.
+pub const Start = struct {
+    /// What the objects' orders and the mission's script act on: the world, whose pools the start
+    /// empties and whose objects it makes afresh, and its clock.
+    orders: aigeneric.Context,
+    /// The mission's clocks, whose frame the start resets (`frame_reset`).
+    clock: *Clock,
+    /// The ship types' stats, and their models, which the objects are made from: the start lets go
+    /// of the models no object is of any more, and loads each type the mission places
+    /// (`ship_type_load`).
+    tables: *create.Stats,
+    types: *create.library.TypeCache,
+    /// The cockpit it loads for the player's ship, and the display it readies for it.
+    cockpit: *cockpit.Cockpit,
+    display: *hud.State,
+};
+
+/// Where the mission's start makes the camera's marker (`0x00588390`), which the flyby and target
+/// views move about (`frame_controls`, `camera_set_view`): an immediate of `mission_start`.
+/// OpenReliant's camera keeps its own place for those views, and nothing reads the marker.
+const camera_marker_at: math.Vector = .{ 0, 0, -8000 };
+
+/// A mission's start: the loading before `mission_start` (`0x004AD0A0`) and `mission_start`
+/// (`0x004934F0`), for the mission `image`, made in `gpa`, which the mission then owns, played as
+/// mission `number`. Returns the mission loaded for play, which the caller destroys once it ends.
+///
+/// The loading empties the effects' pools and the missiles in flight, puts a stand-in in every
+/// object's slot (`create.Objects.reset`), and loads the Turret Flak's shell and the debris
+/// (`guns_load_shell`, `explosions_init`). Then the start:
+/// 1. ends the 3D sounds, has the mission play with everything shown and the ejected pilot always
+///    picked up, and puts back the pilot's kills (`winmain.startMission`);
+/// 2. binds the mission and starts its script (`mission.Loaded.start`), whose start part makes the
+///    mission's first ships and gives them their orders;
+/// 3. lists the player's wing's icons (`startWing`), and makes the camera's marker in the next
+///    slot;
+/// 4. lets go of the types no object is of any more, and loads the model of each type the mission
+///    places;
+/// 5. resets the frame's clock (`frame_reset`), loads the cockpit of the player's ship, and readies
+///    the display for it as `hud_init` and the start have it: its devices fitted (`fitDevices`),
+///    its missiles in the missile display, no missile lock, and the eject marker out.
+///
+/// A stand-in: the player's engine starts sounding, which the launch starts (`launch_run`), until
+/// the launches are ported ([#280](https://github.com/vdmkenny/openreliant/issues/280)).
+///
+/// The start clears the keyboard's state (`0x004BD7E0`), which the next read of the keyboard fills
+/// again; OpenReliant's keeps what the device reports.
+///
+/// Not ported: the renderer's and the textures' setting up and the loading screen, which are the
+/// front end's ([#43](https://github.com/vdmkenny/openreliant/issues/43)); the chat line and a
+/// multiplayer game; and what the start does for the campaign: the pilots it gives the player's
+/// wing, mission 25's first part's cockpit, and the pilot's profile
+/// ([#301](https://github.com/vdmkenny/openreliant/issues/301)).
+pub fn startMission(gpa: Allocator, start: Start, image: []u8, number: u16) !*Loaded {
+    const types = start.types.types();
+    var orders = start.orders;
+    orders.world.spawn = .{ .tables = start.tables, .types = types };
+    const world = orders.world;
+    const all = world.objects;
+    if (world.explosions) |explosions| explosions.reset();
+    if (world.shockwaves) |waves| waves.reset();
+    if (world.sparks) |thrown| thrown.reset();
+    if (world.particles) |pool| pool.reset();
+    if (world.smoke) |pools| pools.reset();
+    if (world.gun_particles) |pools| pools.reset();
+    all.missiles.reset(all.gpa);
+    if (world.trails) |trails| trails.reset();
+    if (world.rays) |rays| rays.reset();
+    if (world.tractors) |tractors| tractors.reset();
+    if (world.flash) |lit| lit.* = .{};
+    start.display.interference = .{};
+    if (world.countermeasures) |dropped| dropped.reset();
+    all.reset(world.random);
+    // The shell and the debris, counted as used so the sweep below keeps them.
+    if (all.bullets.looks) |looks| looks.loadShell(all, types);
+    if (world.explosions) |explosions| explosions.debris = .load(all, types);
+
+    if (world.hearing) |hearing| sound3d.endAll(hearing.sound);
+    world.player.ending = .playing;
+    world.player.showing = .everything;
+    world.player.rescue_odds = .{};
+    winmain.startMission(world.player);
+    all.mission_number = number;
+    const loaded = try Loaded.create(gpa, image, world.random);
+    errdefer loaded.destroy();
+    try loaded.start(orders);
+
+    startWing(all);
+    _ = create.createObject(all, start.tables, types, null, .marker, 0, camera_marker_at, world.random) catch |err| {
+        std.log.warn("the camera's marker is left out: {s}", .{@errorName(err)});
+    };
+    start.types.sweep(&all.types);
+    // The schematics the target display last showed went with the types let go.
+    start.display.target_pictures = .{};
+    for (try loaded.bound.ships()) |ship| {
+        if (std.math.cast(u8, ship.kind)) |kind| _ = types.load(types.context, kind);
+    }
+    start.clock.frameReset();
+
+    const player = &all.slots[all.player];
+    const player_type = all.slotType(all.player, if (try loaded.bound.file.player()) |record| @enumFromInt(record.kind) else player.object.type);
+    try start.cockpit.load(start.types.resources, start.types.textures, player_type);
+    start.display.ejected = false;
+    fitDevices(start.display, player_type, if (player.type) |loaded_type| loaded_type.model.header.flags.cloak else false);
+    start.display.missiles.build(&player.object);
+    start.display.lock.reset();
+    if (player.object.created) if (world.hearing) |hearing| {
+        _ = sound3d.play(hearing.sound, hearing.scene(world), null, null, all.player, sound3d.engineSound(player.object.type), 0, .player_engines);
+    };
+    return loaded;
+}
+
 /// Fits the display's devices to the player's ship, as the start does after `hud_init` has set
 /// the display up: every ship carries an ECM, the ships of `player_ships` that say so spectral
 /// shields and blind fire, and a ship whose model can cloak (`shp.Header.Flags.cloak`) a cloak.
@@ -1196,6 +1425,89 @@ test fitDevices {
     try std.testing.expectEqual(null, playerShip(@enumFromInt(0x0D)));
 }
 
+test startMission {
+    const gpa = std.testing.allocator;
+    const dte = @import("../../formats/dte.zig");
+    const vm = @import("../vm.zig");
+    // The start part: the player's flight group, then the other ship's, which fights the player.
+    var routine: vm.machine.testing.Routine = .init(gpa);
+    defer routine.deinit();
+    for (0..2) |group| {
+        try routine.op(.push_flight_group, &.{@intCast(group)});
+        try routine.command("CreateFlightGroup");
+    }
+    try routine.op(.push_flight_group, &.{1});
+    try routine.op(.push_byte, &.{@intCast(@intFromEnum(ai.orders.Order.fight))});
+    try routine.op(.push_byte, &.{1});
+    try routine.op(.push_ship, &.{0});
+    try routine.command("SetAI");
+    try routine.op(.push_byte, &.{1});
+    try routine.op(.@"return", &.{});
+    const code = try routine.finish();
+    defer gpa.free(code);
+    var ships: [2]dte.Ship = @splat(std.mem.zeroes(dte.Ship));
+    // The player flies a torpedo, a type with a model but no schematic nor cockpit, and the other
+    // is of a type the game names no model for.
+    const torpedo: gameobj.Type = @enumFromInt(74);
+    const modelless: gameobj.Type = @enumFromInt(14);
+    for (&ships, [_]gameobj.Type{ torpedo, modelless }, 0..) |*ship, kind, index| {
+        ship.object_id = @intCast(index);
+        ship.flight_group = @intCast(index);
+        ship.kind = @intCast(kind.number());
+        ship.pilot = dte.Ship.no_pilot;
+        ship.launch_gate = dte.Ship.no_launch;
+        ship.position = .{ 0, 0, @floatFromInt(index * 5000) };
+    }
+    var groups: [2]dte.FlightGroup = @splat(std.mem.zeroes(dte.FlightGroup));
+    groups[0].wing = 0;
+    groups[1].wing = dte.FlightGroup.no_wing;
+    var part = std.mem.zeroes(dte.Part);
+    part.flags.start = true;
+    part.length = @intCast(code.len / @sizeOf(u16));
+    var sections: dte.write.Sections = @splat(.{});
+    sections[@intFromEnum(dte.Section.ships)] = .{ .count = ships.len, .bytes = std.mem.sliceAsBytes(&ships) };
+    sections[@intFromEnum(dte.Section.flight_groups)] = .{ .count = groups.len, .bytes = std.mem.sliceAsBytes(&groups) };
+    sections[@intFromEnum(dte.Section.script)] = .{ .count = @intCast(code.len / @sizeOf(u16)), .bytes = code };
+    sections[@intFromEnum(dte.Section.parts)] = .{ .count = 1, .bytes = std.mem.asBytes(&part) };
+    const image = try dte.write.write(gpa, &sections, .{});
+
+    // The game's files: the torpedo's model alone.
+    var files: create.library.testing.Files = try .init(gpa, create.models.ship_types[torpedo.number()].model.?);
+    defer files.deinit(gpa);
+    var types: create.library.TypeCache = .{ .gpa = gpa, .resources = &files.resources, .textures = &files.textures.table, .looks = .{}, .global_palette = null };
+    defer types.deinit();
+    var shown: cockpit.Cockpit = .{};
+    defer shown.deinit();
+    var state: hud.State = .{ .ejected = true };
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(gpa);
+    defer mission.deinit();
+    mission.player.rescue_odds = .{ .rescued = 1, .captured = 1, .killed = 1 };
+    const loaded = try startMission(gpa, .{
+        .orders = mission.orders(),
+        .clock = &mission.clock,
+        .tables = &mission.tables,
+        .types = &types,
+        .cockpit = &shown,
+        .display = &state,
+    }, image, 0);
+    defer loaded.destroy();
+
+    // The mission's ships in the first slots, the player's with its model, then the camera's marker.
+    const all = mission.objects;
+    try std.testing.expectEqual(3, all.count);
+    try std.testing.expect(all.slots[0].type != null);
+    try std.testing.expectEqual(gameobj.Type.marker, all.slots[2].object.type);
+    try std.testing.expectEqual(camera_marker_at[2], all.slots[2].object.root.position.z);
+    // The player's ship on its controls, and the other under the order the script gave it.
+    try std.testing.expectEqual(ai.orders.Order.player_control, all.slots[0].orders[0].order);
+    try std.testing.expectEqual(ai.orders.Order.fight, all.slots[1].orders[0].order);
+    // The player first in the wing, the pilot always picked up, and the display readied.
+    try std.testing.expectEqual(0, all.wing[0].?);
+    try std.testing.expectEqual(100, mission.player.rescue_odds.rescued);
+    try std.testing.expect(!state.ejected);
+}
+
 test missionFrame {
     var mission: gameobj.testing.Mission = undefined;
     try mission.init(std.testing.allocator);
@@ -1205,7 +1517,7 @@ test missionFrame {
     const orders = mission.orders();
     try std.testing.expect(try aigeneric.push(orders, 1, .slow_rotate, .{ .kind = .ship, .index = -1, .component = -1 }));
 
-    _ = missionFrame(orders, .{});
+    _ = missionFrame(orders, .{}, null);
     // The frame ran the ship's order, and framed every object where it is drawn.
     try std.testing.expect(mission.objects.slots[1].object.yaw_input > 0);
     try std.testing.expect(!mission.objects.slots[1].object.root.flags.unframed);

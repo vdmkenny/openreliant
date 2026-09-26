@@ -73,8 +73,8 @@ Run the executable with the installed folder:
 
 The game starts in the pause menu:
 - Choose CONTINUE (or press Escape) to start flying.
-- Escape reopens the pause menu at any time. In the pause menu, LEAVE MISSION quits, and RESTART restarts the sandbox.
-- Press F2 or F3 to cycle through available player ships.
+- Escape reopens the pause menu at any time. In the pause menu, LEAVE MISSION quits, and RESTART restarts the mission.
+- Press F2 or F3 to start the mission again in the previous or next ship.
 - Press F4 to bring in another enemy wing.
 - Keys 1 to 8 switch camera views: 1 cockpit, 2 left, 3 right, 4 rear, 5 flyby, 6 target, 7 external, and 8 missile.
 

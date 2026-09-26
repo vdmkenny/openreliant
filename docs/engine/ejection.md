@@ -182,7 +182,8 @@ too.
 - **Fix:** `tractor_create` returns -1 with all five tractors in use, which Scoop Up then reads past
   the five with; OpenReliant has the ship take the pod in without beams, bubble or light.
 - **Fix:** odds of nothing at all divide by zero in the game; OpenReliant has the pilot rescued.
-- The sandbox gives the three fates even odds, and starts again once the mission is over.
+- Mission 0, OpenReliant's sandbox, gives the three fates even odds, and `openreliant` starts a
+  mission again once it is over.
 
 Not ported: the radio's words ([#48](https://github.com/vdmkenny/openreliant/issues/48)); the
 mission's Destroyed and Scooped events ([#37](https://github.com/vdmkenny/openreliant/issues/37));

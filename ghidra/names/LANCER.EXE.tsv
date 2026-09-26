@@ -1511,3 +1511,18 @@ address	kind	name	type	comment
 00537580	data	vm_clock_ticked	byte	Set as the clock ticks (vm_clock_tick); process_mission runs the timers once, then clears it
 00537400	data	vm_timers_running	byte	Whether process_mission runs the timers; set as the script starts
 00537410	data	vm_first_finished	uint	Set once the thread pool's first thread, the first start part's, finishes
+004ad0a0	function	mission_load	void (void)	The loading before each mission_start: the renderer and the textures set up again, hud_init, the loading screen, then objects_reset, guns_load_shell, explosions_init and the rest of the effects' setting up
+0040cbc0	function	orders_numbering_start	void (void)	From now on each order order_push pushes takes the next number as its sequence, from 0 (order_number): SetAI's orders for a group numbered in turn
+0040cbe0	function	orders_numbering_stop	void (void)	Orders pushed from now on take sequence 0 again
+005185a8	data	order_number	int	The sequence the next order pushed takes while orders_numbered is set
+005185b1	data	orders_numbered	byte	Set while SetAI numbers the orders it gives (orders_numbering_start)
+00452060	function	flight_group_index	uint __fastcall (FlightGroup *group)	Index of a flight group record, or 0xFFFF for none (0, -1 or 0xFFFF)
+00452500	function	heading_degrees	float __stdcall (float x, float y)	The angle of the direction (x, y) from the Y axis round to the X axis, in degrees half a turn on, from 0 up to 360, from sr_atan2 (mission_ships_sync)
+00453590	function	record_kind	ushort __fastcall (void *record)	Which of the mission's records a value names: 0 a ship's, 1 a flight group's, 2 a squad's, the place past each section's last counted in; 0xFFFF for anything else
+0045d480	function	for_each_ship_walk	void __fastcall (void *entity, uint *args, VmShipCommand *callback, byte depth)	for_each_ship's walk: the callback for a ship; for each of a flight group's ships, passing over the players' while vm_command_flag is set; and for each of a squad's members in turn, a component member tagged on the first argument
+0045d700	function	for_each_ship_run	void __fastcall (MissionShip *ship, uint *args, VmShipCommand *callback)	for_each_ship's work for one ship: for_each_ship_note, then the callback
+0045d720	function	for_each_ship_note	void __fastcall (MissionShip *ship)	Has the ship's object name the walk's first ship at +0x698, none for the first, and counts the ship
+00537418	data	for_each_ship_first	MissionShip *	The first ship the running for_each_ship has run its callback for
+00537575	data	for_each_ship_count	byte	The ships the running for_each_ship has run its callback for
+0045d8e0	function	vm_tag_pop	void (void)	Takes the last tag off vm_component_tag_list
+00588390	data	camera_marker	short	The camera's marker, which mission_start makes at (0, 0, -8000) in the slot after the mission's ships, and the flyby and target views move about

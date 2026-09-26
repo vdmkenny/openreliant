@@ -13,6 +13,7 @@ const dte = @import("../formats/dte.zig");
 const commands = @import("game/executor/commands.zig");
 const Command = @import("game/executor.zig").Command;
 const engine = @import("../engine.zig");
+const hud = @import("game/hud.zig");
 const Code = engine.Code;
 const Pointer = engine.Pointer;
 
@@ -166,10 +167,9 @@ pub const Parts = [part_table_size]Part;
 /// dwords from `jump_ready` (`0x0052A3F0`) on. **Unknown:** most of them, and where the block
 /// ends. The shipped missions use the first 38.
 pub const Variables = extern struct {
-    /// `jump_ready`: whether the mission has a jump ready for JUMP DRIVE (`hud.Ready`).
-    jump_ready: u32 = 0,
-    /// `warp_ready`: as `jump_ready`, for a warp.
-    warp_ready: u32 = 0,
+    /// `jump_ready` and `warp_ready`: whether the mission has a jump or a warp ready for JUMP
+    /// DRIVE, which the display's prompt reads (`hud.Readiness`).
+    ready: hud.Readiness = .{},
     _unknown_2: [2]u32 = @splat(0),
     /// `player_missiles_left`: the missile display's counts together.
     player_missiles_left: u32 = 0,
@@ -198,7 +198,7 @@ test Variables {
     variables.slot(0).* = 1;
     variables.slot(9).* = 1;
     variables.slot(255).* = 7;
-    try std.testing.expectEqual(1, variables.jump_ready);
+    try std.testing.expectEqual(.newly, variables.ready.jump);
     try std.testing.expectEqual(1, variables.mission_over);
     try std.testing.expectEqual(7, variables.beyond[217]);
 }
