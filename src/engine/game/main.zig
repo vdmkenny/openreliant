@@ -460,6 +460,7 @@ pub fn controlsFrame(controls: Controls) void {
         .forces = controls.forces,
         .dropping = launch.dropping(all, all.player),
         .showing = &world.player.showing,
+        .game = world,
     })) |next| {
         _ = view.setView(next, all.player, false, true, at);
     }
@@ -1388,8 +1389,9 @@ const camera_marker_at: math.Vector = .{ 0, 0, -8000 };
 /// debris (`guns_load_shell`, `explosions_init`), and clears the mark of the player's ship jumping
 /// in (`jump_init`). Then the start:
 /// 1. ends the 3D sounds, has the mission play with everything shown, no ship the player launched
-///    from, no primary target, the camera in the cockpit mode the options' setting picks and the
-///    ejected pilot always picked up, and puts back the pilot's kills (`winmain.startMission`);
+///    from, no primary target, the camera free in view 0 on the player's ship, in the cockpit mode
+///    the options' setting picks, and the ejected pilot always picked up, and puts back the pilot's
+///    kills (`winmain.startMission`);
 /// 2. binds the mission, whose records the orders then reach (`gameobj.World.mission`), and starts
 ///    its script (`mission.Loaded.start`), whose start part makes the mission's first ships and
 ///    gives them their orders, a launch among them;
@@ -1444,7 +1446,12 @@ pub fn startMission(gpa: Allocator, start: Start, image: []u8, number: u16) !*Lo
     world.player.jumping_in = false;
     world.player.flyback = .{};
     world.player.primary_target = null;
-    if (world.camera) |view| view.cockpit_mode = view.setting.mode();
+    if (world.camera) |view| {
+        view.view = .cockpit;
+        view.object = all.player;
+        view.locked = false;
+        view.cockpit_mode = view.setting.mode();
+    }
     winmain.startMission(world.player);
     all.mission_number = number;
     const loaded = try Loaded.create(gpa, image, world.random);
