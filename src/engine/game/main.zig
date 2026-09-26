@@ -260,6 +260,8 @@ pub const Frame = struct {
     jumping_in: bool = false,
     /// Last frame's view (`camera_view_last`, `0x00539A64`).
     last_view: camera.View,
+    /// Whether the camera has switched view since the last frame drawn (`camera.Camera.cut`).
+    cut: bool = false,
     /// What the models' own lights and engine glows are drawn by; each object's own offset into
     /// its lights' blinks and its glow come from its record.
     attachments: objects.View = .{},
@@ -676,7 +678,7 @@ pub fn frameObjects(all: *create.Objects, timing: objects.Timing, now: i32) void
 
 /// Puts the frame's scene together and draws it, in `mission_frame`'s order: the objects
 /// (`drawObjects`), the backdrop, the sky; the star streaks are reset when the view has changed
-/// since the last frame; then `sr_render`. `arena` holds what the frame needs until it is drawn.
+/// since the last frame, or the camera has switched view (`camera_set_view`); then `sr_render`. `arena` holds what the frame needs until it is drawn.
 pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context: *srapi.Context, frame: Frame, driver: srcore.Driver) Allocator.Error!void {
     scene.clear();
     // How far off an object stops being worth drawing follows the frame's own projection, so the
@@ -733,7 +735,7 @@ pub fn drawFrame(gpa: Allocator, arena: Allocator, scene: *srcore.Scene, context
             }
         }
     }
-    if (frame.view != frame.last_view) frame.space.resetStreaks();
+    if (frame.view != frame.last_view or frame.cut) frame.space.resetStreaks();
     try srcore.render(arena, context, scene, driver, frame.overlay);
 }
 

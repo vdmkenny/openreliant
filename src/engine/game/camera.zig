@@ -389,6 +389,9 @@ pub const Camera = struct {
     /// `0x00539938`).
     held: ?shots.Held = null,
     holding: ?shots.Held = null,
+    /// Set as the view switches, which resets the star streaks (`backdrop_reset_streaks`), so that
+    /// the frame drawn next draws none, even where the view switches back to what it was.
+    cut: bool = false,
 
     /// Bars grow this share of the screen a tick, times their speed (`camera_frame`, `0x004DC418`).
     pub const bar_rate: f32 = 0.001;
@@ -408,6 +411,7 @@ pub const Camera = struct {
             camera.missile_gone = false;
         }
         if (camera.view == .director) if (camera.held) |held| held.hold(false);
+        camera.cut = true;
         if (view.letterboxed()) {
             camera.bar_speed = 1;
         } else {
@@ -1439,9 +1443,14 @@ test Camera {
     _ = camera.frame(.{ .object = ship, .player = ship, .ticks = 3 });
     try std.testing.expect(camera.place.position[2] > 1000);
 
-    // A locked camera refuses a switch unless forced; cutaways bring in the bars.
+    // A locked camera refuses a switch unless forced; cutaways bring in the bars. A switch that
+    // goes ahead is a cut, which the frame drawn next draws no streaks across.
+    camera.cut = false;
     try std.testing.expect(camera.setView(.pull_back, 0, true, false, 20));
+    try std.testing.expect(camera.cut);
+    camera.cut = false;
     try std.testing.expect(!camera.setView(.external, 0, false, false, 30));
+    try std.testing.expect(!camera.cut);
     try std.testing.expectEqual(1, camera.bar_speed);
     for (0..40) |_| _ = camera.frame(.{ .object = ship, .player = ship, .ticks = 3 });
     try std.testing.expectEqual(letterbox, camera.bars);
