@@ -107,11 +107,12 @@ files stay the standard format:
   file: a mission does what its file says, through the engine every mission goes through. What the
   original executable itself does by mission number, such as mission 25's second part, is ported as
   the engine's own behaviour.
-- **No format of OpenReliant's own.** OpenReliant's own missions, such as the sandbox, are standard
-  `.DTE` files. Anything OpenReliant adds stays outside the file format, so that the files work in
-  the original too. The one exception is a mission's name, which OpenReliant keeps in a section the
-  game never reads ([OpenReliant's mission name](docs/formats/dte.md#openreliants-mission-name)): it
-  is optional, OpenReliant never depends on it, and the game ignores it.
+- **No format of OpenReliant's own.** OpenReliant's own missions, such as mission 0, the sandbox,
+  are standard `.DTE` files. Anything OpenReliant adds stays outside the file format, so that the
+  files work in the original too. The one exception is a mission's name, which OpenReliant keeps in
+  a section the game never reads
+  ([OpenReliant's mission name](docs/formats/dte.md#openreliants-mission-name)): it is optional,
+  OpenReliant never depends on it, and the game ignores it.
 
 `openreliant missions` binds every mission a game's folder holds; run `make check-missions` after a
 change to how missions load or run.

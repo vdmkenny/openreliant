@@ -136,6 +136,11 @@ pub const TypeCache = struct {
     }
 };
 
+/// Files for the tests of what reads models.
+pub const testing = struct {
+    pub const Files = TestFiles;
+};
+
 /// An archive of one model, `file`, whose material is `Yank_1`, in a directory of its own, and a
 /// texture table holding that texture.
 const TestFiles = struct {
@@ -143,7 +148,7 @@ const TestFiles = struct {
     resources: bigfile.Hog,
     textures: *srtexture.testing.Textures,
 
-    fn init(gpa: Allocator, file: []const u8) !TestFiles {
+    pub fn init(gpa: Allocator, file: []const u8) !TestFiles {
         const io = std.testing.io;
         var tmp = std.testing.tmpDir(.{});
         errdefer tmp.cleanup();
@@ -154,7 +159,7 @@ const TestFiles = struct {
         return .{ .tmp = tmp, .resources = resources, .textures = try .init(gpa, &.{ "yank_1", "lyank_1", "cloak64" }) };
     }
 
-    fn deinit(files: *TestFiles, gpa: Allocator) void {
+    pub fn deinit(files: *TestFiles, gpa: Allocator) void {
         files.textures.deinit(gpa);
         files.resources.close(gpa);
         files.tmp.cleanup();

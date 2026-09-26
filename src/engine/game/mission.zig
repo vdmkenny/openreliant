@@ -201,6 +201,21 @@ fn radians(degrees: i16) f32 {
     return std.math.degreesToRadians(@as(f32, @floatFromInt(degrees)));
 }
 
+test "Loaded.tickClock" {
+    const gpa = std.testing.allocator;
+    const image = try bind.testing.image(gpa, .{});
+    var random: libcmt.Rand = .{};
+    const loaded = try Loaded.create(gpa, image, &random);
+    defer loaded.destroy();
+    // The clock counts the whole seconds of the game's ticks since it started.
+    loaded.clock_from = 250;
+    loaded.tickClock(250 + 2 * ticks_per_second - 1);
+    try std.testing.expectEqual(1, loaded.script.clock);
+    try std.testing.expect(loaded.script.ticked);
+    loaded.tickClock(250 + 3 * ticks_per_second);
+    try std.testing.expectEqual(3, loaded.script.clock);
+}
+
 test listPlayerWing {
     var mission: gameobj.testing.Mission = undefined;
     try mission.init(std.testing.allocator);

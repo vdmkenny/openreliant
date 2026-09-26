@@ -1393,6 +1393,24 @@ test collectComponents {
     try std.testing.expectEqual(gameobj.max_components, slot.object.component_count);
 }
 
+test "Objects.slotType" {
+    var random: libcmt.Rand = .{};
+    const all = try Objects.create(std.testing.allocator, &random);
+    defer all.destroy();
+    // With no loadout, the player's slot takes the mission's own kind; other slots always do.
+    try std.testing.expectEqual(gameobj.Type.grendel, all.slotType(0, .grendel));
+    all.loadout_ships[0] = .reaper;
+    try std.testing.expectEqual(gameobj.Type.reaper, all.slotType(0, .grendel));
+    try std.testing.expectEqual(gameobj.Type.sabre, all.slotType(1, .sabre));
+    // From the 14th mission on the loadout's twin, and in mission 25's first part a Kamov.
+    all.mission_number = twins_from_mission;
+    try std.testing.expectEqual(gameobj.Type.reaper.twin().?, all.slotType(0, .grendel));
+    all.mission_number = kamov_mission;
+    try std.testing.expectEqual(gameobj.Type.kamov, all.slotType(0, .grendel));
+    all.mission25_second_part = true;
+    try std.testing.expectEqual(gameobj.Type.reaper.twin().?, all.slotType(0, .grendel));
+}
+
 test settledTier {
     // A fighter asked for 0 or 255 takes the campaign's tier; asked for 4 or 5, tier 0.
     try std.testing.expectEqual(2, settledTier(0, .predator, 2));

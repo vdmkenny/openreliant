@@ -92,7 +92,7 @@ fn info(ctx: Context, mission: dte.Mission) !void {
         (try mission.globals()).len,
         mission.entry(.strings).count,
         mission.stringPoolEnd() -| mission.entry(.strings).offset,
-        mission.entry(.script).count,
+        (try mission.script()).len,
     });
     if (player) |name| try ctx.stdout.print("player:    {s}\n", .{name});
 }

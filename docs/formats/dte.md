@@ -514,6 +514,11 @@ and 11 holds one record in every mission. Section 20's is not known, and no miss
 the template, written again from their sections' whole rooms, stale bytes and all, come back byte for
 byte. Every mission, written again from its records alone, reads back the same records.
 
+A mission of OpenReliant's making holds what the template's missions hold: its section 24 is theirs
+(`write.template.command_flags`), and its records carry the values most of theirs carry where their
+fields are not known. Mission 0, the sandbox, is written so by the build
+([`mission0.zig`](../../src/openreliant/mission0.zig)).
+
 ### Writing the script
 
 [`dte/assemble.zig`](../../src/formats/dte/assemble.zig) builds a routine as the shipped scripts

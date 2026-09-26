@@ -1335,6 +1335,89 @@ test fitDevices {
     try std.testing.expectEqual(null, playerShip(@enumFromInt(0x0D)));
 }
 
+test startMission {
+    const gpa = std.testing.allocator;
+    const dte = @import("../../formats/dte.zig");
+    const vm = @import("../vm.zig");
+    // The start part: the player's flight group, then the other ship's, which fights the player.
+    var routine: vm.machine.testing.Routine = .init(gpa);
+    defer routine.deinit();
+    for (0..2) |group| {
+        try routine.op(.push_flight_group, &.{@intCast(group)});
+        try routine.command("CreateFlightGroup");
+    }
+    try routine.op(.push_flight_group, &.{1});
+    try routine.op(.push_byte, &.{@intCast(@intFromEnum(ai.orders.Order.fight))});
+    try routine.op(.push_byte, &.{1});
+    try routine.op(.push_ship, &.{0});
+    try routine.command("SetAI");
+    try routine.op(.push_byte, &.{1});
+    try routine.op(.@"return", &.{});
+    const code = try routine.finish();
+    defer gpa.free(code);
+    var ships: [2]dte.Ship = @splat(std.mem.zeroes(dte.Ship));
+    // The player flies a torpedo, a type with a model but no schematic nor cockpit, and the other
+    // is of a type the game names no model for.
+    const torpedo: gameobj.Type = @enumFromInt(74);
+    const modelless: gameobj.Type = @enumFromInt(14);
+    for (&ships, [_]gameobj.Type{ torpedo, modelless }, 0..) |*ship, kind, index| {
+        ship.object_id = @intCast(index);
+        ship.flight_group = @intCast(index);
+        ship.kind = @intCast(kind.number());
+        ship.pilot = dte.Ship.no_pilot;
+        ship.launch_gate = dte.Ship.no_launch;
+        ship.position = .{ 0, 0, @floatFromInt(index * 5000) };
+    }
+    var groups: [2]dte.FlightGroup = @splat(std.mem.zeroes(dte.FlightGroup));
+    groups[0].wing = 0;
+    groups[1].wing = dte.FlightGroup.no_wing;
+    var part = std.mem.zeroes(dte.Part);
+    part.flags.start = true;
+    part.length = @intCast(code.len / @sizeOf(u16));
+    var sections: dte.write.Sections = @splat(.{});
+    sections[@intFromEnum(dte.Section.ships)] = .{ .count = ships.len, .bytes = std.mem.sliceAsBytes(&ships) };
+    sections[@intFromEnum(dte.Section.flight_groups)] = .{ .count = groups.len, .bytes = std.mem.sliceAsBytes(&groups) };
+    sections[@intFromEnum(dte.Section.script)] = .{ .count = @intCast(code.len / @sizeOf(u16)), .bytes = code };
+    sections[@intFromEnum(dte.Section.parts)] = .{ .count = 1, .bytes = std.mem.asBytes(&part) };
+    const image = try dte.write.write(gpa, &sections, .{});
+
+    // The game's files: the torpedo's model alone.
+    var files: create.library.testing.Files = try .init(gpa, create.models.ship_types[torpedo.number()].model.?);
+    defer files.deinit(gpa);
+    var types: create.library.TypeCache = .{ .gpa = gpa, .resources = &files.resources, .textures = &files.textures.table, .looks = .{}, .global_palette = null };
+    defer types.deinit();
+    var shown: cockpit.Cockpit = .{};
+    defer shown.deinit();
+    var state: hud.State = .{ .ejected = true };
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(gpa);
+    defer mission.deinit();
+    mission.player.rescue_odds = .{ .rescued = 1, .captured = 1, .killed = 1 };
+    const loaded = try startMission(gpa, .{
+        .orders = mission.orders(),
+        .clock = &mission.clock,
+        .tables = &mission.tables,
+        .types = &types,
+        .cockpit = &shown,
+        .display = &state,
+    }, image, 0);
+    defer loaded.destroy();
+
+    // The mission's ships in the first slots, the player's with its model, then the camera's marker.
+    const all = mission.objects;
+    try std.testing.expectEqual(3, all.count);
+    try std.testing.expect(all.slots[0].type != null);
+    try std.testing.expectEqual(gameobj.Type.marker, all.slots[2].object.type);
+    try std.testing.expectEqual(camera_marker_at[2], all.slots[2].object.root.position.z);
+    // The player's ship on its controls, and the other under the order the script gave it.
+    try std.testing.expectEqual(ai.orders.Order.player_control, all.slots[0].orders[0].order);
+    try std.testing.expectEqual(ai.orders.Order.fight, all.slots[1].orders[0].order);
+    // The player first in the wing, the pilot always picked up, and the display readied.
+    try std.testing.expectEqual(0, all.wing[0].?);
+    try std.testing.expectEqual(100, mission.player.rescue_odds.rescued);
+    try std.testing.expect(!state.ejected);
+}
+
 test missionFrame {
     var mission: gameobj.testing.Mission = undefined;
     try mission.init(std.testing.allocator);

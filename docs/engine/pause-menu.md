@@ -14,7 +14,7 @@ While a mission is paused, the game draws a configuration menu in place of the h
 - The pointer is where the system's is over the window, rather than DirectInput's motion added up.
 - Losing the window's focus pauses into the menu in single player too.
 - OpenReliant's version is written, dimmed, in the bottom right corner.
-- With no front end yet, the sandbox starts in the menu; `--no-pause-menu` starts it flying.
+- With no front end yet, the mission starts in the menu; `--no-pause-menu` starts it flying.
 
 **Fixes** of the game's bugs, each marked so in the code:
 

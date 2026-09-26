@@ -1159,6 +1159,14 @@ test "GameObject.letGo" {
     try std.testing.expectEqual(0, object.roll_input);
 }
 
+test "Type.twin" {
+    // The first twelve types have their twins from `player_twins_first`, which stand for them again.
+    try std.testing.expectEqual(Type.t_phoenix, Type.phoenix.twin().?);
+    try std.testing.expectEqual(Type.grendel, Type.grendel.twin().?.untwinned());
+    try std.testing.expectEqual(null, Type.reliant.twin());
+    try std.testing.expectEqual(null, Type.t_phoenix.twin());
+}
+
 test "Type.rock" {
     try std.testing.expectEqual(.asteroid, Type.rock(@enumFromInt(0x7F)));
     try std.testing.expectEqual(.turret, Type.rock(@enumFromInt(0x85)));

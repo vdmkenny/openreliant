@@ -613,7 +613,8 @@ half of the way across and down:
   the last move. `mission_frame` beeps meanwhile at an interval of 10 to 200 ticks that it works out
   from the object's distance and bearing.
 
-OpenReliant draws all three; the sandbox runs no mission, so none of them shows there.
+OpenReliant draws all three, the jump prompt by the mission script's variables (`vm.Variables`).
+Mission 0 readies no jump and scans nothing.
 
 ## Art
 
@@ -805,7 +806,7 @@ Predator's bar shows a row lost. OpenReliant counts from what a ship starts with
 ships of the mission before, which the window shows again where they are in the wing. OpenReliant
 empties every slot first.
 
-The sandbox lists the player and three wingmen in the player's wing.
+Mission 0 lists the player and three wingmen in the player's wing.
 
 ## The power distribution
 
