@@ -159,8 +159,10 @@ clock ticking once for each 100 of the game's ticks the pause does not hold. The
 A stand-in: the mission's start plays the player's engine, which the launch starts (`launch_run`),
 until the launches are ported ([#280](https://github.com/vdmkenny/openreliant/issues/280)).
 
-Not ported: the rest of the loading and of `mission_start` (the renderer's and the textures' setting
-up, the loading screen, the chat line, a multiplayer game, the pilots the campaign gives the
-player's wing, and the pilot's profile saved), the triggers
-([#37](https://github.com/vdmkenny/openreliant/issues/37)), and mission 25's first part's cockpit,
-the Kamov's.
+Not ported: the rest of the loading and of `mission_start`: the renderer's and the textures'
+setting up and the loading screen, which are the front end's
+([#43](https://github.com/vdmkenny/openreliant/issues/43)), the chat line, a multiplayer game, and
+what the start does for the campaign, the pilots it gives the player's wing, mission 25's first
+part's cockpit, the Kamov's, and the pilot's profile
+([#301](https://github.com/vdmkenny/openreliant/issues/301)); and the triggers
+([#37](https://github.com/vdmkenny/openreliant/issues/37)).

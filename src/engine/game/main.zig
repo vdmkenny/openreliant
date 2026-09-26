@@ -1222,8 +1222,9 @@ pub const PlayerShip = struct {
 
 /// The twelve ships the player can fly, by ship type.
 ///
-/// **Unverified:** the start also loads `kamg_frm.shp` for any ship when the word at `0x00562DC8`,
-/// which looks like the mission's number, is 25 and `0x00587CDC` is clear.
+/// In mission 25's first part (`mission_number`, `mission25_second_part`), the start loads the
+/// Kamov's cockpit, `kamg_frm.shp`, whatever the ship, which OpenReliant does not yet
+/// ([#301](https://github.com/vdmkenny/openreliant/issues/301)).
 pub const player_ships = [_]PlayerShip{
     .{ .cockpit = "preg_frm.shp", .wire_frame = 0x116, .wing_icon = 0xFC, .blind_fire = true },
     .{ .cockpit = "nagg_frm.shp", .wire_frame = 0x10E, .wing_icon = 0xFA, .spectral_shields = true },
@@ -1322,10 +1323,14 @@ const camera_marker_at: math.Vector = .{ 0, 0, -8000 };
 /// A stand-in: the player's engine starts sounding, which the launch starts (`launch_run`), until
 /// the launches are ported ([#280](https://github.com/vdmkenny/openreliant/issues/280)).
 ///
-/// Not ported: the renderer's and the textures' setting up, the loading screen, the chat line, a
-/// multiplayer game, the pilots the campaign gives the player's wing (`0x0049CD70`, `0x0058A95A`),
-/// the keyboard's state cleared (`0x004BD7E0`), the pilot's profile saved (`profile.bin`), and
-/// mission 25's first part's cockpit, the Kamov's (`kamg_frm.shp`).
+/// The start clears the keyboard's state (`0x004BD7E0`), which the next read of the keyboard fills
+/// again; OpenReliant's keeps what the device reports.
+///
+/// Not ported: the renderer's and the textures' setting up and the loading screen, which are the
+/// front end's ([#43](https://github.com/vdmkenny/openreliant/issues/43)); the chat line and a
+/// multiplayer game; and what the start does for the campaign: the pilots it gives the player's
+/// wing, mission 25's first part's cockpit, and the pilot's profile
+/// ([#301](https://github.com/vdmkenny/openreliant/issues/301)).
 pub fn startMission(gpa: Allocator, start: Start, image: []u8, number: u16) !*Loaded {
     const types = start.types.types();
     var orders = start.orders;
