@@ -95,7 +95,7 @@ const lead_ticks: f32 = 4;
 /// Game ticks to a second (`0x004DC440`).
 const ticks_per_second: f32 = 100;
 
-/// `order_follow_curve_init` (`0x00403340`): the ship in slot `index` follows the path from its
+/// `order_ship_follow_curve_init` (`0x00403340`): the ship in slot `index` follows the path from its
 /// order's curve: its path is Ship Follow Curve's at its full speed, its length measured, where its
 /// offset ship stands noted, and the order's curve begun (`beginCurve`).
 pub fn init(ctx: Context, index: u16) void {
@@ -104,7 +104,7 @@ pub fn init(ctx: Context, index: u16) void {
     beginCurve(ctx, index, data.curve);
 }
 
-/// `order_follow_curve_back_init` (`0x004036C0`): `init` for the path backwards, which begins at the
+/// `order_ship_follow_curve_backwards_init` (`0x004036C0`): `init` for the path backwards, which begins at the
 /// path's last curve (`lastCurve`).
 pub fn backwardsInit(ctx: Context, index: u16) void {
     start(ctx, index, .curve_backwards);
@@ -180,7 +180,7 @@ fn lastCurve(ctx: Context, index: u16, before: ?u32) void {
     state.ticks = curveTicks(ctx.world, state.*, data, at);
 }
 
-/// `order_follow_curve` (`0x004033A0`), a step at a time (`Step`). Arriving, the ship flies to the
+/// `order_ship_follow_curve` (`0x004033A0`), a step at a time (`Step`). Arriving, the ship flies to the
 /// path's start, turned toward its point a step on, at the pace the path keeps there (`ai.arrive`),
 /// the curve's clock held at its start. Following, it flies `motion_follow`, or
 /// `motion_follow_backwards` where it was flying tail first, and once the path is over the order
@@ -200,7 +200,7 @@ pub fn update(ctx: Context, index: u16) void {
     }
 }
 
-/// `order_follow_curve_back` (`0x00403720`): `update` for the path backwards. Arriving, the ship
+/// `order_ship_follow_curve_backwards` (`0x00403720`): `update` for the path backwards. Arriving, the ship
 /// flies its own motion ahead (`motion_forward`) to the curve's end, turned toward its point a step
 /// back; following, it flies `motion_follow`.
 pub fn backwardsUpdate(ctx: Context, index: u16) void {
@@ -238,14 +238,14 @@ fn arriveAt(ctx: Context, index: u16, from: f32, lead: f32) bool {
     return ai.arrive(world, index, here, math.lookAt(next - here), pace);
 }
 
-/// `order_follow_curve_exit` (`0x00403550`): the ship flies its own motion again, ahead, or astern
+/// `order_ship_follow_curve_exit` (`0x00403550`): the ship flies its own motion again, ahead, or astern
 /// where it followed the path tail first.
 pub fn exit(ctx: Context, index: u16) void {
     const slot = &ctx.world.objects.slots[index];
     slot.motion = if (slot.motion == .follow_backwards) .backward else .forward;
 }
 
-/// `order_follow_curve_back_exit` (`0x004038C0`): the ship flies its own motion ahead again.
+/// `order_ship_follow_curve_backwards_exit` (`0x004038C0`): the ship flies its own motion ahead again.
 pub fn backwardsExit(ctx: Context, index: u16) void {
     ctx.world.objects.slots[index].motion = .forward;
 }
