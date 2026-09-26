@@ -17,8 +17,8 @@ const srtexture = @import("../../surrender/surrenderlib/srtexture.zig");
 const matmanager = @import("../matmanager.zig");
 const xtrabits = @import("../xtrabits.zig");
 
-/// How far across the sight's squares and blind fire's mark are, and the pointer, which stands
-/// `pointer_drop` below its middle (`0x004DC5A8`).
+/// How far across the sight's squares and blind fire's mark are, and the pointers, whose squares
+/// stand `pointer_drop` above the point they turn about (`0x004DC5A8`).
 const sight_size: f32 = 600;
 const pointer_size: f32 = 200;
 const pointer_drop: f32 = 400;
@@ -39,20 +39,20 @@ pub const Pointer = struct {
     hostile: bool,
 
     /// The pointer for a target the way `way` from the ship, across and down in its frame
-    /// (`hud.pointerDirection`): turned so that it points that way, the way's angle from straight
-    /// up, going round to the right, and half a turn more.
-    ///
+    /// (`hud.pointerDirection`), turned so that it points that way (`rollToward`).
     pub fn toward(way: [2]f32, hostile: bool) Pointer {
         return .{ .roll = rollToward(way), .hostile = hostile };
     }
 
     /// The roll that turns a pointer the way `way`, as the pointers to the target and to the nav
-    /// point are turned alike.
+    /// point are turned alike: the way's angle from straight up, going round to the right.
+    /// `hud_target` works the angle out from the way `hud_pointer_direction` gives, the way turned
+    /// half round, and turns it half a turn more, which comes to the same.
     ///
     /// **Improvement:** the game takes the angle from `sr_atan`'s table, a quadrant at a time;
     /// OpenReliant computes it.
     pub fn rollToward(way: [2]f32) f32 {
-        return std.math.atan2(way[0], -way[1]) + std.math.pi;
+        return std.math.atan2(way[0], -way[1]);
     }
 };
 
@@ -76,9 +76,9 @@ const Square = struct {
 
     const corners = 4;
 
-    /// The mesh `size` across, standing `drop` below its middle, facing along Z as two triangles
-    /// over the whole of `image`, added to what is drawn and coloured by `own` colours, or at full
-    /// strength without them.
+    /// The mesh `size` across, standing `drop` above the point it turns about, facing along Z as
+    /// two triangles over the whole of `image`, added to what is drawn and coloured by `own`
+    /// colours, or at full strength without them.
     fn init(square: *Square, gpa: Allocator, size: f32, drop: f32, image: *srtexture.Image, own: ?[4]f32) Allocator.Error!void {
         var mesh: srapiext.Mesh = try .create(gpa, .{ .polygons = 2, .vertices = corners, .indices = 6 });
         errdefer mesh.deinit(gpa);
@@ -182,11 +182,13 @@ pub const Chase = struct {
 };
 
 test "the pointer points the way to the target" {
-    // Straight up the view the pointer, which hangs below its middle, is turned half round.
-    try std.testing.expectApproxEqAbs(std.math.pi, Pointer.toward(.{ 0, -1 }, true).roll, 1e-6);
-    // To the right a quarter more, and down a whole turn.
-    try std.testing.expectApproxEqAbs(1.5 * std.math.pi, Pointer.toward(.{ 1, 0 }, true).roll, 1e-6);
-    try std.testing.expectApproxEqAbs(2 * std.math.pi, Pointer.toward(.{ 0, 1 }, false).roll, 1e-6);
+    // Straight up the view the pointer, whose square stands above the point it turns about, is
+    // not turned; to the right it turns a quarter round, down half round, and to the left a
+    // quarter round back.
+    try std.testing.expectApproxEqAbs(0, Pointer.toward(.{ 0, -1 }, true).roll, 1e-6);
+    try std.testing.expectApproxEqAbs(0.5 * std.math.pi, Pointer.toward(.{ 1, 0 }, true).roll, 1e-6);
+    try std.testing.expectApproxEqAbs(std.math.pi, Pointer.toward(.{ 0, 1 }, false).roll, 1e-6);
+    try std.testing.expectApproxEqAbs(-0.5 * std.math.pi, Pointer.rollToward(.{ -1, 0 }), 1e-6);
 }
 
 test Square {
@@ -195,7 +197,7 @@ test Square {
     var square: Square = undefined;
     try square.init(gpa, pointer_size, pointer_drop, &image, half_grey);
     defer square.mesh.deinit(gpa);
-    // The pointer's square hangs below its middle, and colours itself half grey.
+    // The pointer's square stands above the point it turns about, and colours itself half grey.
     try std.testing.expectEqual(@as(Vector, .{ -100, -500, 0 }), square.mesh.positions[0]);
     try std.testing.expectEqual(@as(Vector, .{ 100, -300, 0 }), square.mesh.positions[2]);
     try std.testing.expect(square.object.flags.baked_object);

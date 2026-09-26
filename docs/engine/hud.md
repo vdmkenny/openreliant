@@ -235,8 +235,8 @@ added to what is drawn, never culled and always drawn.
 | `chase_sight_near` (`0x005799E4`) | 600 | at full strength |
 | `chase_sight_far` (`0x00566780`) | 600 | by its own colours, half grey |
 | `chase_blind_mark` (`0x00566784`) | 600 | by its own colours, white |
-| `chase_target_pointer` (`0x0057BC58`) | 200, 400 below its middle | at full strength |
-| `chase_nav_pointer` (`0x005667AC`) | 200, 400 below its middle | at full strength, `chasepointat` |
+| `chase_target_pointer` (`0x0057BC58`) | 200, 400 above the point it turns about | at full strength |
+| `chase_nav_pointer` (`0x005667AC`) | 200, 400 above the point it turns about | at full strength, `chasepointat` |
 
 `camera_chase` stands the sight's squares 6000 and 12000 ahead of the player's ship, turned as it
 is. In view 0 in the chase mode, `hud_missile_lock` gives the two squares `chasetarget2` while
@@ -248,9 +248,10 @@ fire aims.
 
 `hud_target` hides both pointers each frame. In the chase mode, for the target out of sight, and
 for the nav point, it shows the pointer and turns it as the ship is and then about its nose by the
-way's angle from straight up, going round to the right, and half a turn more (`chase_pointer_roll`,
-`0x00566788`, worked out a quadrant at a time with `sr_atan`), with `chasepointat2` for a hostile
-target and `chasepointat3` for the rest.
+angle from straight up, going round to the right, of the way `hud_pointer_direction` gives, and
+half a turn more (`chase_pointer_roll`, `0x00566788`, worked out a quadrant at a time with
+`sr_atan`), with `chasepointat2` for a hostile target and `chasepointat3` for the rest. That way is
+the way to what it points to turned half round, so the pointer stands that side of the middle.
 
 OpenReliant draws them (`hud.chase`). **Improvement:** it computes the pointers' angle with
 `atan2`.
