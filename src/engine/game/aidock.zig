@@ -24,7 +24,6 @@ const events = @import("mission/events.zig");
 const gameobj = @import("gameobj.zig");
 const motion = @import("motion.zig");
 const objects = @import("objects.zig");
-const Order = @import("ai/orders.zig").Order;
 const sound3d = @import("sound3d.zig");
 
 /// How a ship docks, by what it is and what it docks at (`order_dock_init`).
@@ -46,7 +45,7 @@ pub const Style = enum(u8) {
 pub const Data = extern struct {
     style: Style,
     _unknown_01: u8,
-    /// The ship and the port the search for a free port found (`choosePort`), before the order
+    /// The ship and the port the search for a free port found (`PortSearch`), before the order
     /// takes them for its target.
     found_ship: i16 align(1),
     found_port: u8,
@@ -160,7 +159,7 @@ const czar_docked: gameobj.Type = @enumFromInt(0x84);
 const nanny: gameobj.Type = @enumFromInt(0x18);
 
 /// `order_dock_init` (`0x00406B80`): where the order names no port, or a flight group or a squad
-/// rather than a ship, the first free port of the ships it names (`choosePort`) becomes its
+/// rather than a ship, the first free port of the ships it names (`PortSearch`) becomes its
 /// target. Then the style, by what the ship is and what it docks at, and the style's init.
 pub fn init(ctx: Context, index: u16) void {
     const all = ctx.world.objects;
@@ -283,7 +282,7 @@ pub fn exit(ctx: Context, index: u16) void {
 /// Whether both were found.
 ///
 /// **Fix:** the game stops with "Docking information not defined on %s" where either has none;
-/// OpenReliant logs it, and the order ends.
+/// OpenReliant logs it, and the order ends, as it does where the station has gone.
 fn findPoints(ctx: Context, index: u16) bool {
     const all = ctx.world.objects;
     const slot = &all.slots[index];
@@ -359,13 +358,19 @@ fn stationInit(ctx: Context, index: u16) void {
 /// on, it flies `motion_follow` down the port's line (`way`), at `slide_limit` of its top speed,
 /// the station stopped dead where it is. Once it is in, it is set in its berth, stopped, heard
 /// docking, and has its Docked; the order ends.
+///
+/// **Fix:** the game goes on reading the frames of a station that has gone; OpenReliant ends the
+/// order.
 fn stationUpdate(ctx: Context, index: u16) void {
     const world = ctx.world;
     const all = world.objects;
     const slot = &all.slots[index];
     const object = &slot.object;
     const state = &slot.state.dock;
-    const at = berth(world, index) orelse return;
+    const at = berth(world, index) orelse {
+        _ = aigeneric.pop(ctx, index);
+        return;
+    };
     const offset: Vector = switch (@as(Step, @enumFromInt(state.step))) {
         .beside => .{ -aside, 0, 0 },
         .beside_behind => .{ -aside, 0, -aside },
@@ -395,11 +400,10 @@ fn stationUpdate(ctx: Context, index: u16) void {
             _ = aigeneric.pop(ctx, index);
             return;
         },
-        .no_port => {
+        .no_port, _ => {
             _ = aigeneric.pop(ctx, index);
             return;
         },
-        _ => return,
     };
     const side: Vector = if (state.from_right != 0) .{ -1, 1, 1 } else .{ 1, 1, 1 };
     const point = math.transform(at.orientation, offset * side) + at.position;
@@ -558,4 +562,16 @@ test "a ship without a port given takes the first free one" {
     }
     try std.testing.expectEqual(0, dock.game.slot(dock.freighters[0]).orders[0].target.component);
     try std.testing.expectEqual(1, dock.game.slot(dock.freighters[1]).orders[0].target.component);
+}
+
+test "a ship docks nowhere at a ship with no docking point" {
+    var dock: TestDock = undefined;
+    try dock.init();
+    defer dock.deinit();
+    const index = dock.freighters[0];
+    // The player's ship, in the first slot, has no model, and so no port.
+    try std.testing.expect(try aigeneric.push(dock.orders(), index, .dock, .at(0, 0)));
+    aigeneric.objectOrders(dock.orders(), index);
+    aigeneric.objectOrders(dock.orders(), index);
+    try std.testing.expectEqual(0, dock.game.slot(index).object.order_count);
 }
