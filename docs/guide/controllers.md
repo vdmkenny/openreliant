@@ -83,11 +83,15 @@ To see live input as the game reads it, add `--watch`:
 ```
 
 ```text
-X 0  Y 0  throttle 500  twist 1000  hat -  buttons down: 0
-  axes:  0: 0% (X)  1: 0% (Y)  2: 100% (twist)  3: 0% (throttle)
+X  1000  Y     0  throttle   500  twist  1000  hat   -
+Buttons down: 0
+Axis  0:  100% (X)
+Axis  1:    0% (Y)
+Axis  2:  100% (twist)
+Axis  3:    0% (throttle)
 ```
 
-The first line shows the values as the game reads them. The second shows every axis of a joystick by its number, from -100% to 100% of its travel, and what the game uses it for. Move a control and see which number changes: that is the number to give `ThrottleAxis` or `TwistAxis`. Axis and button numbers start at 0. Press Ctrl+C to stop.
+The view updates in place as you move the controls. The first line shows the values as the game reads them. The second shows the buttons held down, by their numbers; on a gamepad, each with its name. For a joystick, a line for each axis follows: its number, how far it is moved, from -100% to 100% of its travel, and what the game uses it for. Move a control or press a button and see which number changes: that is the number to give `ThrottleAxis`, `TwistAxis` or `JOY BUTTON`. Axis and button numbers start at 0. Press Ctrl+C to stop.
 
 ## Settings
 
