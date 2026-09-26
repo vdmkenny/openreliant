@@ -134,7 +134,7 @@ The cabinet is unpacked with [libarchive](https://libarchive.org), which [`deps/
 
 ## Missions
 
-`openreliant missions [<game-directory>]` ([`missions.zig`](../../src/openreliant/missions.zig)) lists the missions a game's folder holds, the loose files in its `missions` folder and the members of `resource.hog`, and reads and binds each as a mission's start does ([Missions](../engine/missions.md)), showing where each comes from and what its file holds: its counts of ships, flight groups, triggers and script bytes, its format flags, and the ship type and name of the player's own record. It exits with status 1 where a mission fails to bind, so a mission of one's own can be checked before it is played. `make check-missions` runs it on `game/install`.
+`openreliant missions [<game-directory>]` ([`missions.zig`](../../src/openreliant/missions.zig)) lists the missions a game's folder holds, the loose files in its `missions` folder and the members of `resource.hog`, with OpenReliant's own mission 0, built in, where the game has none, and reads and binds each as a mission's start does ([Missions](../engine/missions.md)), showing where each comes from and what its file holds: its counts of ships, flight groups, triggers and script bytes, its format flags, and the ship type and name of the player's own record. It exits with status 1 where a mission fails to bind, so a mission of one's own can be checked before it is played. `make check-missions` runs it on `game/install`.
 
 ## Joysticks and gamepads
 
