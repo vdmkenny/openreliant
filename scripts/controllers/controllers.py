@@ -72,7 +72,8 @@ def run(*args):
 
 
 def watch(device, steps, directory="."):
-    """Runs `joysticks --watch`, sends each step's events, and returns the last state line."""
+    """Runs `joysticks --watch`, sends each step's events, and returns the last state line, with
+    the line of the joystick's axes after it where there is one."""
     process = subprocess.Popen([BINARY, "joysticks", directory, "--watch"], stdout=subprocess.PIPE,
                                stderr=subprocess.STDOUT, text=True)
     time.sleep(1.5)
@@ -83,8 +84,13 @@ def watch(device, steps, directory="."):
         time.sleep(0.5)
     process.terminate()
     output, _ = process.communicate(timeout=5)
-    lines = [line for line in output.splitlines() if line.startswith("X ")]
-    return lines[-1] if lines else output
+    lines = output.splitlines()
+    states = [index for index, line in enumerate(lines) if line.startswith("X ")]
+    if not states:
+        return output
+    last = states[-1]
+    axes = lines[last + 1] if last + 1 < len(lines) and lines[last + 1].startswith("  axes:") else ""
+    return lines[last] + "\n" + axes
 
 
 def check(name, text, expected):
@@ -101,9 +107,12 @@ listing = run()
 check("Xbox 360 controller is a gamepad", listing, ["Xbox 360 Controller\n   gamepad"])
 check("DualShock 4 is a gamepad", listing, ["Sony Interactive Entertainment Wireless Controller\n   gamepad"])
 check("Extreme 3D Pro layout, and it is used", listing,
-      ["Logitech Extreme 3D (used by the game)", "X: axis 0, Y: axis 1, throttle: axis 3, twist: axis 2"])
-check("X52 layout", listing, ["X52 Flight Control System\n   joystick, USB ID 06a3:0255, 7 axes, 32 buttons, 1 hat\n   X: axis 0, Y: axis 1, throttle: axis 2, twist: axis 5"])
-check("gameport stick layout", listing, ["2 axes, 4 buttons, 0 hats\n   X: axis 0, Y: axis 1, throttle: none, twist: none"])
+      ["Logitech Extreme 3D (used by the game)",
+       "X: axis 0, Y: axis 1, throttle: axis 3 (automatic), twist: axis 2 (automatic)",
+       "To choose it: Joystick=Logitech Extreme 3D"])
+check("X52 layout", listing, ["X52 Flight Control System\n   joystick, USB ID 06a3:0255, 7 axes, 32 buttons, 1 hat\n"
+                              "   X: axis 0, Y: axis 1, throttle: axis 2 (automatic), twist: axis 5 (automatic)"])
+check("gameport stick layout", listing, ["2 axes, 4 buttons, 0 hats\n   X: axis 0, Y: axis 1, throttle: none (automatic), twist: none (automatic)"])
 for device in devices:
     device.close()
 time.sleep(1)
@@ -139,7 +148,8 @@ state = watch(stick, [
     [(e.EV_ABS, e.ABS_HAT0X, -1)],      # hat left
     [(e.EV_KEY, e.BTN_TRIGGER, 1)],     # trigger: button 0
 ])
-check("Extreme 3D Pro input", state, ["X 1000", "throttle 0", "twist 1000", "hat 270", "buttons down: 0"])
+check("Extreme 3D Pro input", state, ["X 1000", "throttle 0", "twist 1000", "hat 270", "buttons down: 0",
+                                      "0: 100% (X)", "1: 0% (Y)", "2: 100% (twist)", "3: -100% (throttle)"])
 stick.close()
 time.sleep(1)
 
@@ -149,7 +159,7 @@ state = watch(stick, [
     [(e.EV_ABS, e.ABS_RZ, 0)],          # twist left
     [(e.EV_KEY, e.BTN_TRIGGER_HAPPY1 + 8, 1)],
 ])
-check("X52 input", state, ["throttle 500", "twist -1000", "buttons down: 20"])
+check("X52 input", state, ["throttle 500", "twist -1000", "buttons down: 20", "2: 0% (throttle)", "5: -100% (twist)"])
 stick.close()
 time.sleep(1)
 

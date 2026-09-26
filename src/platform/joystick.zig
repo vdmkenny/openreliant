@@ -64,6 +64,11 @@ pub fn buttonCount(plain: *c.SDL_Joystick) u32 {
     return @intCast(@max(c.SDL_GetNumJoystickButtons(plain), 0));
 }
 
+/// The reading of a joystick's axis `index`, from -32768 to 32767, as SDL gives it.
+pub fn axisValue(plain: *c.SDL_Joystick, index: u32) i16 {
+    return c.SDL_GetJoystickAxis(plain, @intCast(index));
+}
+
 pub fn hatCount(plain: *c.SDL_Joystick) u32 {
     return @intCast(@max(c.SDL_GetNumJoystickHats(plain), 0));
 }
@@ -243,7 +248,37 @@ pub const Layout = struct {
     fn sources(layout: Layout) [4]struct { Axis, ?u8 } {
         return .{ .{ .x, layout.x }, .{ .y, layout.y }, .{ .z, layout.throttle }, .{ .rz, layout.twist } };
     }
+
+    /// What a joystick's axes are used for.
+    pub const Role = enum { x, y, throttle, twist };
+
+    /// What the game reads axis `index` as, or null for an axis it doesn't read.
+    pub fn role(layout: Layout, index: u8) ?Role {
+        if (layout.x == index) return .x;
+        if (layout.y == index) return .y;
+        if (layout.throttle == index) return .throttle;
+        if (layout.twist == index) return .twist;
+        return null;
+    }
+
+    /// The axis used for `which`, or null for none.
+    pub fn axisFor(layout: Layout, which: Role) ?u8 {
+        return switch (which) {
+            .x => layout.x,
+            .y => layout.y,
+            .throttle => layout.throttle,
+            .twist => layout.twist,
+        };
+    }
 };
+
+test "Layout.role" {
+    const layout: Layout = .{ .x = 0, .y = 1, .throttle = 2, .twist = 4 };
+    try std.testing.expectEqual(.throttle, layout.role(2));
+    try std.testing.expectEqual(.twist, layout.role(4));
+    try std.testing.expectEqual(null, layout.role(3));
+    try std.testing.expectEqual(4, layout.axisFor(.twist));
+}
 
 /// A hat's position as SDL reports it: one bit per direction.
 const Hat = packed struct(u8) {
