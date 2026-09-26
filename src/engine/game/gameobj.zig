@@ -358,6 +358,9 @@ pub const Type = enum(u32) {
     /// The markers `backdrop_place` reads a mission's sun and nebula from.
     sun_marker = 0x3DC,
     nebula_marker = 0x3DD,
+    /// What `mission_ship_create` makes of a mission's nav points and markers, and the mission's
+    /// start of the camera's marker.
+    marker = 1000,
     /// What a slot holds until `create_object` fills it, and what a destroyed object becomes.
     stand_in = 1001,
     _,
@@ -454,6 +457,16 @@ pub const Type = enum(u32) {
     pub fn untwinned(object_type: Type) Type {
         const at = object_type.number();
         return @enumFromInt(if (at >= player_twins_first) at - player_twins_first else at);
+    }
+
+    /// How many of the player's ship types have twins: the first twelve, from 0.
+    pub const player_twins = 0x100 - player_twins_first;
+
+    /// Its twin among the second set of the player's ship types, for one of the first set's; null
+    /// for any other.
+    pub fn twin(object_type: Type) ?Type {
+        const at = object_type.number();
+        return if (at < player_twins) @enumFromInt(at + player_twins_first) else null;
     }
 
     /// Whether it is a Phoenix, the ship that carries the Nova Cannon, or its twin.

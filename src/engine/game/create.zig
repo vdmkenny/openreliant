@@ -481,6 +481,22 @@ pub const Objects = struct {
     /// `0x005185AC`: the tick at which `aigeneric.ordersUpdate` next clears what every object has
     /// lately taken.
     damage_cleared_at: u32 = 0,
+    /// `mission_number` (`0x00562DC8`): the mission being played, by which `create_object` and
+    /// `mission_ship_create` give the player's wing the `t_` twins of the player's ships from
+    /// `twins_from_mission` on.
+    mission_number: u16 = 0,
+    /// `mission25_second_part` (`0x00587CDC`): whether mission 25's first part is won and its second
+    /// is played, before which the player flies a Kamov.
+    mission25_second_part: bool = false,
+    /// The ship the loadout screen chose for each player's slot (`player_loadouts`, `0x00588400`,
+    /// the first word of each), which `create_object` makes the player's ship of (`slotType`). Until
+    /// the loadout screen is ported ([#44](https://github.com/vdmkenny/openreliant/issues/44)),
+    /// OpenReliant's driver chooses it, and where it chooses none the mission's own kind stands.
+    loadout_ships: [max_loadouts]?gameobj.Type = @splat(null),
+    /// `0x005185A8`, while the byte at `0x005185B1` is set: the number the next order pushed takes
+    /// (`aigeneric.Entry.sequence`), as `SetAI` numbers a group's orders
+    /// (`aigeneric.startNumbering`); null otherwise, when an order takes 0.
+    order_number: ?i32 = null,
     /// The sphere the action keeps to.
     action_sphere: aigeneric.ActionSphere = .default,
     /// The ships whose engine exhaust burns the player's ship, which the game keeps in
@@ -544,6 +560,20 @@ pub const Objects = struct {
         return use.loaded;
     }
 
+    /// The type `create_object` makes an object asked for as `asked` of in slot `index`: in a
+    /// player's slot, a Kamov in mission 25's first part, or else the ship the loadout chose, its
+    /// `t_` twin from `twins_from_mission` on; in any other slot, `asked`.
+    ///
+    /// Not ported: a multiplayer game, where every slot takes `asked`, and the rule of
+    /// `0x00524FE4` by which a type 13 becomes a Reliant.
+    pub fn slotType(all: *const Objects, index: u16, asked: gameobj.Type) gameobj.Type {
+        if (index >= all.players or index >= all.loadout_ships.len) return asked;
+        if (all.mission_number == kamov_mission and !all.mission25_second_part) return .kamov;
+        const chosen = all.loadout_ships[index] orelse return asked;
+        if (all.mission_number < twins_from_mission) return chosen;
+        return chosen.twin() orelse chosen;
+    }
+
     /// The slots the loops over the objects walk, in their order.
     pub fn walk(all: *const Objects) Walk {
         return .{ .all = all };
@@ -569,6 +599,15 @@ pub const Objects = struct {
         }
     };
 };
+
+/// The players' loadouts `player_loadouts` (`0x00588400`) holds, a slot each.
+pub const max_loadouts = 8;
+
+/// The first mission in which the player's wing flies the `t_` twins of the player's ships, and the
+/// mission whose first part has the player fly a Kamov (immediates in `create_object` and
+/// `mission_ship_create`).
+pub const twins_from_mission = 14;
+pub const kamov_mission = 25;
 
 /// What goes wrong in `create_object`, which stops the game with a fatal error for either.
 pub const Error = error{
@@ -635,17 +674,18 @@ pub fn wreckMade(world: gameobj.World, index: u16) void {
 /// second number takes the other's stats (`donor`), and its number once it is made.
 ///
 /// Its missile racks are fitted by the loadout `tier` a mission's ship record asks for, as
-/// `settledTier` settles it (`loadoutByTier`, `fitRacks`), with 5000 more of the afterburner's fuel
-/// for each fuel pod.
+/// `settledTier` settles it for the type asked for (`loadoutByTier`, `fitRacks`), with 5000 more of
+/// the afterburner's fuel for each fuel pod. Given a player's slot, it makes the type the loadout
+/// chose (`Objects.slotType`).
 ///
 /// Not ported: the components (#40); what it does for capital ships, planets, gates and other
-/// single types but the wrecks (#233, `wreckMade`); for a player's slot, the ship and the missiles
-/// the player chose on the loadout screen (#44), where OpenReliant fits a player's ship by the tier
-/// as the game does when the briefing is skipped, and its `t_` twin from the 14th mission on; and
-/// what differs in a multiplayer game.
-pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, ship_type: gameobj.Type, tier: i32, at: Vector, random: *libcmt.Rand) Error!u16 {
+/// single types but the wrecks (#233, `wreckMade`); for a player's slot, the missiles the player
+/// chose on the loadout screen (#44), where OpenReliant fits a player's ship by the tier as the
+/// game does when the briefing is skipped; and what differs in a multiplayer game.
+pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, asked: gameobj.Type, tier: i32, at: Vector, random: *libcmt.Rand) Error!u16 {
     const index = wanted orelse all.count;
     if (index >= gameobj.max_objects) return error.Overrun;
+    const ship_type = if (wanted != null) all.slotType(index, asked) else asked;
     const slot = &all.slots[index];
     const object = &slot.object;
     if (object.created) return error.CreatedTwice;
@@ -796,7 +836,7 @@ pub fn createObject(all: *Objects, tables: *Stats, types: Types, wanted: ?u16, s
     object.rounds = combat.rounds;
     object.gun_mode = .created(combat.gun_groups);
     if (slot.model) |*model| {
-        loadoutByTier(object, model, settledTier(tier, ship_type, all.campaign_tier));
+        loadoutByTier(object, model, settledTier(tier, asked, all.campaign_tier));
         try fitRacks(all.gpa, object, model, if (slot.type) |loaded| loaded.effects else .{});
     }
     for (object.fittedRacks()) |rack| {

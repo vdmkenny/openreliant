@@ -102,7 +102,9 @@ test Target {
 pub const Entry = extern struct {
     order: Order,
     target: Target,
-    /// A running count from `0x5185A8` while the byte at `0x5185B1` is set, otherwise zero.
+    /// Its place among the orders `SetAI` gives a flight group or a squad, counted from 0 while it
+    /// numbers them (`startNumbering`), and 0 otherwise. The escort, the formations, the jumps,
+    /// Launch and Warp Out read it.
     sequence: i16,
     /// The order's own data, zero when the order is pushed.
     data: Data,
@@ -269,10 +271,25 @@ pub fn push(ctx: Context, index: u16, order: Order, target: Target) Error!bool {
     if (object.order_count >= max_stack) return false;
     var at: u16 = @intCast(object.order_count);
     while (at > 0) : (at -= 1) slot.orders[at] = slot.orders[at - 1];
-    slot.orders[0] = .{ .order = order, .target = target, .sequence = 0, .data = .{ .words = @splat(0) } };
+    const sequence: i16 = if (all.order_number) |*next| numbered: {
+        defer next.* +%= 1;
+        break :numbered @truncate(next.*);
+    } else 0;
+    slot.orders[0] = .{ .order = order, .target = target, .sequence = sequence, .data = .{ .words = @splat(0) } };
     if (orders.info(order)) |info| if (!info.flags.one_shot) start(slot);
     object.order_count += 1;
     return true;
+}
+
+/// `0x0040CBC0`: the orders pushed from now on are numbered from 0 (`Entry.sequence`), as `SetAI`
+/// numbers the orders it gives a flight group's or a squad's ships.
+pub fn startNumbering(all: *create.Objects) void {
+    all.order_number = 0;
+}
+
+/// `0x0040CBE0`: the orders pushed from now on take 0 again.
+pub fn stopNumbering(all: *create.Objects) void {
+    all.order_number = null;
 }
 
 /// The order an object is running, which is the entry on top of its stack; null where it has none.
@@ -542,6 +559,29 @@ test push {
     // A full stack takes no more.
     slot.object.order_count = max_stack;
     try std.testing.expect(!try push(ctx, index, .fly, .none));
+}
+
+test startNumbering {
+    var mission: gameobj.testing.Mission = undefined;
+    try mission.init(std.testing.allocator);
+    defer mission.deinit();
+    const all = mission.objects;
+    const ctx = mission.orders();
+    const first = try mission.addOther(@splat(0));
+    const second = try mission.addOther(.{ 1000, 0, 0 });
+
+    // While the orders are numbered, each pushed takes the next number, whatever its ship.
+    startNumbering(all);
+    _ = try push(ctx, first, .fly, .none);
+    _ = try push(ctx, second, .fly, .none);
+    _ = try push(ctx, first, .slow_rotate, .none);
+    try std.testing.expectEqual(2, all.slots[first].orders[0].sequence);
+    try std.testing.expectEqual(1, all.slots[second].orders[0].sequence);
+    // Otherwise each takes 0.
+    stopNumbering(all);
+    _ = try push(ctx, second, .slow_rotate, .none);
+    try std.testing.expectEqual(0, all.slots[second].orders[0].sequence);
+    try std.testing.expectEqual(1, all.slots[second].orders[1].sequence);
 }
 
 test "a player's ship refuses the orders that are not its own" {

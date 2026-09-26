@@ -24,6 +24,7 @@ const math = @import("../surrender/math.zig");
 const vm = @import("../vm.zig");
 const executor = @import("../game/executor.zig");
 const bind = @import("../game/mission/bind.zig");
+const aigeneric = @import("../game/aigeneric.zig");
 
 /// The value `push_null` pushes: no object.
 pub const none: u32 = 0xFFFF_FFFF;
@@ -142,6 +143,11 @@ pub const Tags = struct {
     fn clear(tags: *Tags) void {
         tags.count = 0;
     }
+
+    /// `0x0045D8E0`: the last tag taken off the list.
+    fn pop(tags: *Tags) void {
+        if (tags.count > 0) tags.count -= 1;
+    }
 };
 
 /// A free timer, as `mission_script_start` fills the table: every byte `0xFF`.
@@ -187,6 +193,15 @@ pub const Machine = struct {
     event_values: []vm.ObjectEvents = &.{},
     /// The commands not ported yet that have run, each logged the first time.
     logged: std.StaticBitSet(executor.commands.table.len) = .initEmpty(),
+    /// What the commands act on the game through, which the game's code reaches through its
+    /// globals: the world and its clock, as the mission's start and its frame give them. Null where
+    /// there is no game, as in a test of the script alone, and the commands that act on it then do
+    /// nothing.
+    game: ?aigeneric.Context = null,
+    /// `0x00537418`: the first ship the running `forEachShip` has run its command for, which each
+    /// later one's object names (`GameObject._unknown_698`); and `0x00537575`, how many it has.
+    walk_first: ?u16 = null,
+    walk_count: u8 = 0,
 
     pub fn init(gpa: Allocator, mission: *bind.Mission, random: *libcmt.Rand) Machine {
         return .{ .gpa = gpa, .mission = mission, .random = random };
@@ -438,6 +453,162 @@ pub const Machine = struct {
             if (tag.place -% first == index) return tag.component;
         }
         return null;
+    }
+
+    // --- The mission's records, as the script names them ------------------------------------
+
+    /// `ship_index` (`0x004531C0`): the index among the mission's ships of the ship at `place`,
+    /// the value the script names it by; null for none, zero, `none` or `0xFFFF`, which the game
+    /// gives as `0xFFFF`. Like the game, it takes any other place for a ship's.
+    pub fn shipIndex(machine: *const Machine, place: u32) ?u16 {
+        return machine.recordIndex(.ships, place);
+    }
+
+    /// `flight_group_index` (`0x00452060`): the same for a flight group.
+    pub fn flightGroupIndex(machine: *const Machine, place: u32) ?u16 {
+        return machine.recordIndex(.flight_groups, place);
+    }
+
+    /// `squad_index` (`0x00453070`): the same for a squad.
+    pub fn squadIndex(machine: *const Machine, place: u32) ?u16 {
+        return machine.recordIndex(.squads, place);
+    }
+
+    fn recordIndex(machine: *const Machine, section: dte.Section, place: u32) ?u16 {
+        if (place == 0 or place == none or place == no_record) return null;
+        const offset = machine.mission.file.entry(section).offset;
+        return @truncate((place -% offset) / section.stride().?);
+    }
+
+    /// The value the game gives a record index for none, and takes as none.
+    const no_record = 0xFFFF;
+
+    /// `record_kind` (`0x00453590`): whether `place` is a ship's, a flight group's or a squad's,
+    /// taking the place just past a section's last record for one of its own, as the game does;
+    /// null for anything else.
+    pub fn recordKind(machine: *const Machine, place: u32) ?dte.Object.Kind {
+        const file = machine.mission.file;
+        for ([_]struct { dte.Section, dte.Object.Kind }{
+            .{ .ships, .ship },
+            .{ .flight_groups, .flight_group },
+            .{ .squads, .squad },
+        }) |pair| {
+            const entry = file.entry(pair[0]);
+            if (place >= entry.offset and place <= entry.offset + @as(u32, entry.count) * pair[0].stride().?) return pair[1];
+        }
+        return null;
+    }
+
+    /// Whether `place` lies among the records section `section` holds.
+    fn holds(machine: *const Machine, section: dte.Section, place: u32) bool {
+        const entry = machine.mission.file.entry(section);
+        return entry.count != 0 and place >= entry.offset and place < entry.offset + @as(u32, entry.count) * section.stride().?;
+    }
+
+    /// A command's work for each ship `forEachShip` runs it for: the command's call, with its
+    /// arguments after the first, and the ship by its index among the mission's ships.
+    pub const ShipImplementation = *const fn (call: Call, ship: u16) void;
+
+    /// `for_each_ship` (`0x0045D460`): runs `each` for each ship of the ship, flight group or squad
+    /// the command's first argument names, with its arguments after the first. A flight group's
+    /// ships run in the mission's order, and a squad's members in theirs, a member that is a flight
+    /// group or a squad for each of its ships, one that names a component of a ship with the
+    /// component tagged on the first argument (`argumentComponent`). While the command's flag is
+    /// set (`command_flag`), the players' ships in a flight group are passed over. Each ship's object
+    /// names the first ship the walk ran for (`GameObject._unknown_698`), or none for the first.
+    /// Nothing runs without a game.
+    pub fn forEachShip(call: Call, each: ShipImplementation) void {
+        const machine = call.machine;
+        if (machine.game == null or call.args.len == 0) return;
+        machine.walk_first = null;
+        machine.walk_count = 0;
+        const rest: Call = .{ .machine = machine, .thread = call.thread, .args = call.args[1..] };
+        machine.walkEntity(rest, call.args[0], each, 0) catch |fault| {
+            log.warn("a command's ships are walked no further: {s}", .{@errorName(fault)});
+        };
+    }
+
+    /// `for_each_ship`'s walk of `entity` (`0x0045D480`), `depth` squads down.
+    ///
+    /// **Fix:** the game walks a squad that holds itself round for ever, and walks a member of the
+    /// object table no record stands for from address zero; OpenReliant stops once the walk has
+    /// gone down more squads than the mission has, and passes over the member.
+    fn walkEntity(machine: *Machine, call: Call, entity: u32, each: ShipImplementation, depth: usize) Fault!void {
+        if (entity == 0) return;
+        if (machine.holds(.ships, entity)) return machine.walkShip(call, entity, each);
+        if (machine.holds(.flight_groups, entity)) return machine.walkGroup(call, entity, each);
+        if (!machine.holds(.squads, entity)) return;
+        const squads = try machine.records(dte.Squad, .squads);
+        if (depth > squads.len) return error.SquadCycle;
+        // The game takes a squad whose first member's low byte is `0xFF` for one with none.
+        const first = try machine.halfword(entity + @offsetOf(dte.Squad, "first_member"));
+        if (first & 0xFF == 0xFF) return;
+        const own = machine.squadIndex(entity) orelse return;
+        const members = machine.mission.file.entry(.squad_members);
+        const objects = try machine.records(dte.Object, .objects);
+        const end = members.offset + @as(u32, members.count) * @sizeOf(dte.SquadMember);
+        var member = members.offset + @as(u32, first) * @sizeOf(dte.SquadMember);
+        while (member < end) : (member += @sizeOf(dte.SquadMember)) {
+            if (try machine.halfword(member + @offsetOf(dte.SquadMember, "squad")) != own) return;
+            const id = try machine.halfword(member + @offsetOf(dte.SquadMember, "object_id"));
+            if (id >= objects.len) continue;
+            const record = machine.mission.records[id] orelse continue;
+            switch (objects[id].kind) {
+                .ship => {
+                    const ship = switch (record) {
+                        .ship => |at| machine.recordPlace(.ships, at),
+                        else => continue,
+                    };
+                    const component = try machine.byte(member + @offsetOf(dte.SquadMember, "component"));
+                    const tagged = component != dte.Trigger.whole_object;
+                    if (tagged) machine.tags.add(component, machine.threads[call.thread].top);
+                    try machine.walkShip(call, ship, each);
+                    if (tagged) machine.tags.pop();
+                },
+                .flight_group => switch (record) {
+                    .flight_group => |at| try machine.walkGroup(call, machine.recordPlace(.flight_groups, at), each),
+                    else => {},
+                },
+                .squad => switch (record) {
+                    .squad => |at| try machine.walkEntity(call, machine.recordPlace(.squads, at), each, depth + 1),
+                    else => {},
+                },
+                _ => {},
+            }
+        }
+    }
+
+    /// Each ship of the flight group at `group`, as binding the mission listed them, the players'
+    /// ones passed over while the command's flag is set.
+    ///
+    /// **Fix:** the game reads a group's list past the end where its first ship's place runs past
+    /// it; OpenReliant stops there.
+    fn walkGroup(machine: *Machine, call: Call, group: u32, each: ShipImplementation) Fault!void {
+        const count = try machine.byte(group + @offsetOf(dte.FlightGroup, "ship_count"));
+        const first = try machine.word(group + @offsetOf(dte.FlightGroup, "first_ship"));
+        const listed = machine.mission.group_ships;
+        const players = machine.game.?.world.objects.players;
+        for (0..count) |n| {
+            const at = @as(usize, first) + n;
+            if (at >= listed.len) return;
+            const ship = listed[at];
+            if (machine.command_flag and ship < players) continue;
+            try machine.walkShip(call, machine.recordPlace(.ships, ship), each);
+        }
+    }
+
+    /// `0x0045D700`, `for_each_ship`'s work for one ship: its object names the first ship of the
+    /// walk (`0x0045D720`), then the command runs for it. **Fix:** the game takes a ship past the
+    /// last object's slot for an object past its array; OpenReliant passes over it.
+    fn walkShip(machine: *Machine, call: Call, ship: u32, each: ShipImplementation) Fault!void {
+        const index = machine.shipIndex(ship) orelse return;
+        const all = machine.game.?.world.objects;
+        if (index >= all.slots.len) return;
+        const first: dte.Reference = .{ .index = machine.walk_first orelse dte.Reference.unset, .tag = .ship, ._unknown_24 = 0xFF };
+        all.slots[index].object._unknown_698 = @bitCast(first);
+        if (machine.walk_first == null) machine.walk_first = index;
+        machine.walk_count +%= 1;
+        each(call, index);
     }
 
     /// `vm_run` (`0x0045C980`): runs the thread from its instruction pointer, an opcode at a time,
