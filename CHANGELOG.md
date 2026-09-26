@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.5.0](https://github.com/vdmkenny/openreliant/compare/v0.4.0...v0.5.0) (2026-09-26)
+
+
+### Features
+
+* Find New Target, Escort and Mill ([#315](https://github.com/vdmkenny/openreliant/issues/315)) ([ab6a94b](https://github.com/vdmkenny/openreliant/commit/ab6a94b01f4ec1ef8282289ac8708a268528ce78))
+* joysticks --watch shows every axis and button by its number, in place ([#299](https://github.com/vdmkenny/openreliant/issues/299)) ([53e34b6](https://github.com/vdmkenny/openreliant/commit/53e34b6f3256082937034541821c9085fd6a2e24))
+* mission 1's convoy commands, PRIMARY TARGET and the nav pointer ([#313](https://github.com/vdmkenny/openreliant/issues/313)) ([1d42b08](https://github.com/vdmkenny/openreliant/commit/1d42b08bfc0c45ece4b8168b3bf29632a4539c5d))
+* missions load and bind as a mission's start does ([#284](https://github.com/vdmkenny/openreliant/issues/284)) ([ee4a103](https://github.com/vdmkenny/openreliant/commit/ee4a1038a0091025c6947005523821f3a6f6d58e))
+* Object Attach and Toggle Cloak ([#316](https://github.com/vdmkenny/openreliant/issues/316)) ([4c6fb2e](https://github.com/vdmkenny/openreliant/commit/4c6fb2ecf1a0c84604b617b770c6a06320af4c4c))
+* ships dock at a station's port ([#321](https://github.com/vdmkenny/openreliant/issues/321)) ([9d14cd8](https://github.com/vdmkenny/openreliant/commit/9d14cd8f7e9cc376c061f9112acc7f4fbadee9cd))
+* ships follow the mission's curves ([#319](https://github.com/vdmkenny/openreliant/issues/319)) ([7994c25](https://github.com/vdmkenny/openreliant/commit/7994c254bfefeb723b8d892a3575207434ebb4d9))
+* ships jump out and jump in ([#311](https://github.com/vdmkenny/openreliant/issues/311)) ([2bb2dc6](https://github.com/vdmkenny/openreliant/commit/2bb2dc6a177c593301518578216786d16e71e988))
+* ships launch from the Reliant, and the commands mission 1's launch needs ([#306](https://github.com/vdmkenny/openreliant/issues/306)) ([fe4022e](https://github.com/vdmkenny/openreliant/commit/fe4022e55313449fa1ad55bebc65ec9c554dc548))
+* the director's camera flies the mission's curves ([#318](https://github.com/vdmkenny/openreliant/issues/318)) ([d57726d](https://github.com/vdmkenny/openreliant/commit/d57726d07ff32539f935e6d7af229486af0b4add))
+* the mission's events fire its triggers ([#308](https://github.com/vdmkenny/openreliant/issues/308)) ([6cf624b](https://github.com/vdmkenny/openreliant/commit/6cf624b32391142d888e97de0f9acdd79e1eba71))
+* the Ripper lifts cargo pods onto the Mammoth ([#325](https://github.com/vdmkenny/openreliant/issues/325)) ([98d294d](https://github.com/vdmkenny/openreliant/commit/98d294dcde08b76498b9bd589e5351a1cb0d7845))
+* the sandbox is mission 0, a mission file played through the mission's start ([#302](https://github.com/vdmkenny/openreliant/issues/302)) ([8f9a795](https://github.com/vdmkenny/openreliant/commit/8f9a795719230406191279ddd325dc6fa0f3f649))
+* the script VM runs a mission's threads, calls, clock and timers ([#296](https://github.com/vdmkenny/openreliant/issues/296)) ([63192ab](https://github.com/vdmkenny/openreliant/commit/63192ab0c3f30dba4290032223328fb2c6456209))
+* write mission files and assemble their scripts ([#286](https://github.com/vdmkenny/openreliant/issues/286)) ([88ef23c](https://github.com/vdmkenny/openreliant/commit/88ef23c37fad77e027e243ac7ca199a81ac7b1c5))
+
+
+### Fixes
+
+* a point in front of the camera's plane no longer overflows the display's pixels ([#327](https://github.com/vdmkenny/openreliant/issues/327)) ([723cc58](https://github.com/vdmkenny/openreliant/commit/723cc5879480dd9cf844fa1be1a8fcba0a5fa3a3))
+* capital ships turn flat, as the executable's flight stats have them ([#323](https://github.com/vdmkenny/openreliant/issues/323)) ([830c803](https://github.com/vdmkenny/openreliant/commit/830c803ec88b0e628ec9fa8923ac9c6c2b6b62a1))
+* the sandbox's capital ships hold their fire until the wing is out ([#336](https://github.com/vdmkenny/openreliant/issues/336)) ([8baa2d2](https://github.com/vdmkenny/openreliant/commit/8baa2d2df3b8a955012139033791aaa90558e87b))
+
 ## [0.4.0](https://github.com/vdmkenny/openreliant/compare/v0.3.0...v0.4.0) (2026-09-25)
 
 
