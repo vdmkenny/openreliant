@@ -3,11 +3,11 @@
 //! the two lie after `language.cpp`'s code, where `main.cpp`'s begins; by what they do they are
 //! this file's.
 //!
-//! Ported so far: the clocks and the pacing, how `mission_frame` frames the objects and puts the
-//! scene together and draws it, the damaged ships' smoke (`smoke`), what the mission's start
-//! (`0x004934F0`) fits the player's ship with, the armour's conditions (`0x00492370`), and the
-//! pause (`game_pause`). Not yet: the rest of the effects and of what it adds to the scene, and
-//! `mission_paused_frame`, which `openreliant`'s loop stands in for.
+//! Ported so far: the clocks and the pacing, the mission's start (`startMission`), how
+//! `mission_frame` runs the mission's script, frames the objects, reads the controls, moves the
+//! camera, plays the frame's sound and puts the scene together and draws it, the damaged ships'
+//! smoke (`smoke`), the armour's conditions (`0x00492370`), the pause (`game_pause`) and the paused
+//! frame (`pausedFrame`). Not yet: the rest of the effects and of what it adds to the scene.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -345,6 +345,91 @@ pub fn pausedFrame(devices: *input.Devices, hearing: hog_snd.Hearing, world: gam
     devices.read();
     if (hearing.sound.stdsmp) |bank| hearing.sound.frame(bank, hearing.scene(world));
     devices.joystick.rumble(.{});
+}
+
+/// What the frame's controls, its camera and its sound run with (`controlsFrame`).
+pub const Controls = struct {
+    /// The world, its clock, and the devices the controls read.
+    orders: aigeneric.Context,
+    devices: *input.Devices,
+    camera: *camera.Camera,
+    display: *hud.State,
+    /// The scene as last drawn, which the targeting keys find the object under the reticle by, and
+    /// the screen's size in pixels.
+    sight: ?hud.Sight,
+    screen: [2]u32,
+    /// Last frame's view (`camera_view_last`).
+    last_view: camera.View,
+    /// The cockpit's model, where the player's ship has one, which the camera's frame moves.
+    cockpit: ?*cockpit.Cockpit.Shown,
+    forces: *input.force.Forces,
+    random: *libcmt.Rand,
+    /// Whether what moves is drawn between the game's ticks (`objects.pastTick`).
+    smooth_motion: bool,
+};
+
+/// `mission_frame`'s work for the controls, the camera and the sound, once a frame over the ticks
+/// it spans: `frame_controls` (the camera's keys, then the targeting keys, `hud.targetKeys`, then
+/// its own, `input.frameKeys`); the camera's frame, of the view's own object, which the ejection's
+/// views show, or else the player's ship, the cockpit's model moved by the ship's rates of turn
+/// over its full ones and its speed over its cruise speed; the player's ship left undrawn from its
+/// cockpit, as `camera_set_view` sees to; and the frame's sound, heard from where the camera now is:
+/// the fades `tick_timer` steps, the music waiting its turn, the positional sounds gathered, and
+/// the 3D sounds placed again. OpenReliant's: the effects playing turn the controller's motors
+/// (`input.force`).
+pub fn controlsFrame(controls: Controls) void {
+    const world = controls.orders.world;
+    const clock = controls.orders.clock;
+    const all = world.objects;
+    const view = controls.camera;
+    const devices = controls.devices;
+    const ticks = clock.frameTicks();
+    const at = clock.viewTime();
+    const slot = &all.slots[all.player];
+    view.frameControls(devices, all.player, ticks, at);
+    hud.targetKeys(controls.display, .{
+        .devices = devices,
+        .player = world.player,
+        .all = all,
+        .sight = controls.sight,
+        .last_view = controls.last_view,
+        .scale = hud.scaleFor(controls.screen),
+        .multiplayer = false,
+        .world = world,
+    });
+    input.frameKeys(.{
+        .display = controls.display,
+        .player = world.player,
+        .devices = devices,
+        .slot = slot,
+        .view = view.view,
+        .game_ticks = clock.game_ticks,
+        .multiplayer = false,
+        .world = world,
+    });
+    const cockpit_input: ?camera.Cockpit.Input = if (controls.cockpit) |shown| moved: {
+        const live = &slot.object;
+        const flight = slot.flight orelse break :moved null;
+        const rates: [3]f32 = .{
+            live.pitch_rate / flight.pitch_rate,
+            live.yaw_rate / flight.yaw_rate,
+            live.roll_rate / flight.roll_rate,
+        };
+        const speed = live.speed / ai.cruiseSpeed(live, flight, view.view);
+        break :moved cockpit.input(&shown.model, shown.source, rates, speed);
+    } else null;
+    const subject = camera.Subject.of(slot);
+    const seen = if (view.object) |object| camera.Subject.of(&all.slots[object]) else subject;
+    const marker = if (world.explosions) |explosions| if (explosions.marker) |left| left.position else null else null;
+    if (view.frame(.{ .object = seen, .player = subject, .ticks = ticks, .now = at, .ahead = objects.pastTick(clock, controls.smooth_motion), .marker = marker, .cockpit = cockpit_input, .random = controls.random, .forces = controls.forces })) |next| {
+        _ = view.setView(next, all.player, false, true, at);
+    }
+    slot.object.flags.hidden = view.inside(all.player);
+    if (world.hearing) |hearing| {
+        hearing.sound.timerTick(clock.game_ticks);
+        if (hearing.sound.stdsmp) |bank| hearing.sound.frame(bank, hearing.scene(world));
+    }
+    devices.joystick.rumble(controls.forces.motors(clock.frame_start));
 }
 
 /// `mission_frame` (`0x004924B0`), as far as the objects go: the player's ship uncloaked where

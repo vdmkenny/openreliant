@@ -826,8 +826,6 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
         const orders: game.aigeneric.Context = .{ .world = world, .clock = &clock, .devices = &devices };
         while (clock.nextTick(&devices, world)) |_| {}
         clock.frameBegin();
-        const ticks = clock.frameTicks();
-        const at = clock.viewTime();
         const slot = &objects.slots[objects.player];
         // `mission_frame` looks for Escape before its work, and pausing into the menu leaves the
         // work out.
@@ -852,59 +850,19 @@ fn run(io: Io, gpa: Allocator, arena: Allocator, options: Options) !void {
             }
             if (devices.keyboard.pressed(@intFromEnum(test_keys.wing_key), .none, true)) test_keys.bringWing(orders);
 
-            // `frame_controls` and the camera run once a frame, over the ticks the frame spans.
-            view.frameControls(&devices, objects.player, ticks, at);
-            // After the camera's keys, `frame_controls` reads the targeting keys, then its own.
-            game.hud.targetKeys(&display.state, .{
+            game.main.controlsFrame(.{
+                .orders = orders,
                 .devices = &devices,
-                .player = &player,
-                .all = objects,
-                .sight = display.sight,
-                .last_view = last_view,
-                .scale = game.hud.scaleFor(display.screen),
-                .multiplayer = false,
-                .world = world,
-            });
-            engine.input.frameKeys(.{
+                .camera = &view,
                 .display = &display.state,
-                .player = &player,
-                .devices = &devices,
-                .slot = slot,
-                .view = view.view,
-                .game_ticks = display.clock.game_ticks,
-                .multiplayer = false,
-                .world = world,
+                .sight = display.sight,
+                .screen = display.screen,
+                .last_view = last_view,
+                .cockpit = if (cockpit.shown) |*shown| shown else null,
+                .forces = &force_feedback,
+                .random = &rand,
+                .smooth_motion = options.smooth_motion,
             });
-            // What moves the cockpit's model: the ship's rates of turn over its full ones, and its
-            // speed over its cruise speed.
-            const cockpit_input: ?camera.Cockpit.Input = if (cockpit.shown) |*shown| input: {
-                const live = &slot.object;
-                const flight = slot.flight.?;
-                const rates: [3]f32 = .{
-                    live.pitch_rate / flight.pitch_rate,
-                    live.yaw_rate / flight.yaw_rate,
-                    live.roll_rate / flight.roll_rate,
-                };
-                const speed = live.speed / game.ai.cruiseSpeed(live, flight, view.view);
-                break :input game.main.cockpit.input(&shown.model, shown.source, rates, speed);
-            } else null;
-            const subject = camera.Subject.of(slot);
-            // The view's own object, which the ejection's views show, and the player's ship
-            // otherwise.
-            const seen = if (view.object) |object| camera.Subject.of(&objects.slots[object]) else subject;
-            const marker = if (explosions.marker) |left| left.position else null;
-            if (view.frame(.{ .object = seen, .player = subject, .ticks = ticks, .now = at, .ahead = game.objects.pastTick(&clock, options.smooth_motion), .marker = marker, .cockpit = cockpit_input, .random = &rand, .forces = &force_feedback })) |next| {
-                _ = view.setView(next, objects.player, false, true, at);
-            }
-            // From its cockpit, the ship is not drawn, as `camera_set_view` sees to.
-            slot.object.flags.hidden = view.inside(objects.player);
-            // The frame's sound, heard from where the camera now is: the fades `tick_timer` steps,
-            // the music waiting its turn, the positional sounds gathered, and the 3D sounds placed
-            // again (`mission_frame`).
-            sound.timerTick(clock.game_ticks);
-            sound.frame(stdsmp, hearing.scene(world));
-            // OpenReliant's: the effects playing turn the controller's motors (`input.force`).
-            devices.joystick.rumble(force_feedback.motors(clock.frame_start));
         }
 
         // The GPU draws at the display's own resolution; the software device at the window's size
